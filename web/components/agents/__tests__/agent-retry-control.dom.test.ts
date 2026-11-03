@@ -736,3 +736,74 @@ it("keeps an unknown old batch explicitly recoverable after history selection ch
   expect(bodies[1]).toBe(bodies[0]);
   expect(reads).toBe(2);
 });
+
+it("refreshes the displayed canonical task request when the runner changes and submits that exact decision", async () => {
+  const bodies: string[] = [];
+  const request = {
+    taskId: "task",
+    agentId: "agent",
+    workspace: "none",
+    relaunchOfRunId: "source",
+    runnerId: "current",
+    expectedTaskRevision: 7,
+    expectedSettingsToken: "current-token",
+  };
+  const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === "POST") {
+      bodies.push(String(init.body));
+
+      return response({
+        retryIntentId: "intent",
+        sourceRunId: "source",
+        runId: null,
+        intentState: "accepted",
+        runStatus: null,
+        queueReason: null,
+        refusalReason: null,
+        cleanup: null,
+      });
+    }
+    const selected = url.includes("runnerId=alphabetical")
+      ? "alphabetical"
+      : "current";
+
+    return response({
+      ...options,
+      selectedRunnerId: selected,
+      launchRequest: {
+        ...request,
+        runnerId: selected,
+        expectedSettingsToken: `${selected}-token`,
+      },
+      launchPreview: {
+        title: "Retry current specification",
+        prompt: "The exact reviewed task input",
+      },
+    });
+  });
+
+  vi.stubGlobal("fetch", fetcher);
+  render();
+  await click("retry");
+  expect(
+    document.querySelector('[data-testid="retry-task-preview"]')?.textContent,
+  ).toContain("The exact reviewed task input");
+  const select = document.querySelector("select")!;
+
+  await act(async () => {
+    select.value = "alphabetical";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(
+    fetcher.mock.calls.some(([url]) => url.endsWith("?runnerId=alphabetical")),
+  ).toBe(true);
+  await click("confirmRetry");
+  expect(JSON.parse(bodies[0])).toMatchObject({
+    runnerId: "alphabetical",
+    launchRequest: {
+      ...request,
+      runnerId: "alphabetical",
+      expectedSettingsToken: "alphabetical-token",
+    },
+  });
+});

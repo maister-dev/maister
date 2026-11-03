@@ -5,10 +5,24 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { randomUUID } from "node:crypto";
+import { rm } from "node:fs/promises";
 
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
+import {
+  seedAcceptedRepositoryQualification,
+  createEngineFixtureRepository,
+  isolateEngineFixtureFilesystem,
+} from "@/test-support/repository-qualification";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
@@ -24,7 +38,11 @@ import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import { runFlow } from "@/lib/flows/runner";
 import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-worker";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
-import { launchRun } from "@/lib/services/runs";
+import {
+  launchQualifiedEngineRun as launchRun,
+  acceptQualifiedEngineFixture,
+} from "@/test-support/launch-engine-response";
+import { prepareTaskLaunchIntent } from "@/lib/tasks/launch-dispatch";
 import { getRunDetail } from "@/lib/queries/run";
 import { acceptAgentMessage } from "@/lib/agents/turns";
 import { claimAgentMessage } from "@/lib/agents/turn-claim";
@@ -48,6 +66,8 @@ import {
 const schema = schemaModule as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
+const repositories: string[] = [];
+let restoreEngineRuntime: (() => Promise<void>) | undefined;
 let db: NodePgDatabase;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
@@ -68,11 +88,37 @@ vi.mock("@/lib/worktree", async (importOriginal) => {
 
   return {
     ...actual,
-    addWorktree: async () => undefined,
-    removeWorktree: async () => undefined,
     listBranches: async () => ["main"],
-    resolveBaseCommit: async () => "feedface00000000000000000000000000000000",
     listRemoteUrls: async () => [],
+  };
+});
+
+const pressureDispatch = vi.hoisted(() => ({
+  ids: null as string[] | null,
+  active: new Set<Promise<void>>(),
+}));
+
+vi.mock("@/lib/flows/runner", async (original) => {
+  const actual = await original<typeof import("@/lib/flows/runner")>();
+
+  return {
+    ...actual,
+    runFlow: async (...args: Parameters<typeof actual.runFlow>) => {
+      if (pressureDispatch.ids) {
+        pressureDispatch.ids.push(args[0]);
+
+        return;
+      }
+
+      const active = actual.runFlow(...args);
+
+      pressureDispatch.active.add(active);
+      try {
+        return await active;
+      } finally {
+        pressureDispatch.active.delete(active);
+      }
+    },
   };
 });
 
@@ -166,12 +212,15 @@ async function seedLaunchableTask(): Promise<{ taskId: string }> {
   const flowId = randomUUID();
   const taskId = randomUUID();
 
+  const repoPath = await createEngineFixtureRepository();
+
+  repositories.push(repoPath);
   await db.insert(schema.projects).values({
     taskKey: `T${randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug,
     name: slug,
-    repoPath: `/repos/${slug}`,
+    repoPath,
     mainBranch: "main",
     maisterYamlPath: `/repos/${slug}/maister.yaml`,
   });
@@ -184,7 +233,7 @@ async function seedLaunchableTask(): Promise<{ taskId: string }> {
     manifestDigest: `digest-${projectId}`,
     manifest: instructManifest,
     schemaVersion: 1,
-    installedPath: `/cache/${projectId}`,
+    installedPath: `${repoPath}/.fixture-flow`,
     setupStatus: "not_required",
     packageStatus: "Installed",
   });
@@ -194,7 +243,7 @@ async function seedLaunchableTask(): Promise<{ taskId: string }> {
     flowRefId: "bugfix",
     source: "github.com/x/y",
     version: "v1.0.0",
-    installedPath: `/cache/${projectId}`,
+    installedPath: `${repoPath}/.fixture-flow`,
     manifest: instructManifest,
     schemaVersion: 1,
     enabledRevisionId: revisionId,
@@ -209,6 +258,8 @@ async function seedLaunchableTask(): Promise<{ taskId: string }> {
     prompt: "do it",
     flowId,
   });
+
+  await seedAcceptedRepositoryQualification(testDatabase.db, projectId, taskId);
 
   return { taskId };
 }
@@ -258,6 +309,7 @@ async function sessionFor(runId: string) {
 }
 
 beforeAll(async () => {
+  restoreEngineRuntime = await isolateEngineFixtureFilesystem();
   testDatabase = await startMainPostgresTestDb({
     databaseName: "eh_launch_paths_test",
   });
@@ -273,42 +325,86 @@ beforeAll(async () => {
   resetResolverForTests();
 }, 180_000);
 
+async function drainTrackedGraphDrivers(): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    await Promise.race([
+      (async () => {
+        while (pressureDispatch.active.size > 0)
+          await Promise.allSettled([...pressureDispatch.active]);
+      })(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                "Execution-host fixture graph drivers did not drain before teardown",
+              ),
+            ),
+          20_000,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+afterEach(drainTrackedGraphDrivers);
+
 afterAll(async () => {
-  await testDatabase?.stop();
+  const failures: unknown[] = [];
+
+  try {
+    await drainTrackedGraphDrivers();
+  } catch (error) {
+    failures.push(error);
+  }
+  const cleanups = await Promise.allSettled([
+    restoreEngineRuntime?.(),
+    testDatabase?.stop(),
+    ...repositories.map((repo) => rm(repo, { recursive: true, force: true })),
+  ]);
+
+  for (const result of cleanups)
+    if (result.status === "rejected") failures.push(result.reason);
+  if (failures.length > 0)
+    throw new AggregateError(
+      failures,
+      "Execution-host fixture teardown failed",
+    );
 });
 
 // These run before P2–P4, whose fake host replaces the registered local host.
 describe("ADR-183 D5a — the host-pressure admission fence", () => {
-  it("a launch while the host is pressured queues Pending{queueReason: host_pressured}; the sweep's clear starts it", async () => {
+  it("a launch while the host is pressured keeps its accepted intent queued without a Run; the sweep clear binds and starts it", async () => {
     const hostId = await setHostPressure(new Date(Date.now() - 5_000));
 
     scheduling.real = true;
     try {
       const { taskId } = await seedLaunchableTask();
-      const launched = await launchRun(
+      const { receipt } = await acceptQualifiedEngineFixture(
         { taskId },
         { authorize: async () => {} },
-        db as never,
+        testDatabase.db,
       );
 
-      expect(launched).toMatchObject({
-        status: "Pending",
-        queueReason: "host_pressured",
-      });
-      const [task] = (await db
+      expect(
+        await prepareTaskLaunchIntent(testDatabase.db, receipt.intentId),
+      ).toMatchObject({ state: "queued", runId: null });
+      expect(await runsForTask(taskId)).toEqual([]);
+      const [task] = await db
         .select({ status: schema.tasks.status })
         .from(schema.tasks)
-        .where(eq(schema.tasks.id, taskId))) as Array<{ status: string }>;
+        .where(eq(schema.tasks.id, taskId));
 
-      expect(task.status).toBe("InFlight");
-      expect(await runStatus(launched.runId)).toBe("Pending");
-      // The run page reads the reason off the record — there is no column.
-      expect((await getRunDetail(launched.runId))?.queueReason).toBe(
-        "host_pressured",
-      );
+      expect(task.status).toBe("Backlog");
 
       // A freed slot while the record is set admits nothing.
       const dispatched: string[] = [];
+
+      pressureDispatch.ids = dispatched;
       const runFlow = async (id: string) => {
         dispatched.push(id);
       };
@@ -320,7 +416,7 @@ describe("ADR-183 D5a — the host-pressure admission fence", () => {
       expect(
         await applyHostPressureSample(healthSample(true), { runFlow }),
       ).toMatchObject({ hostId, transition: "held", promoted: 0 });
-      expect(await runStatus(launched.runId)).toBe("Pending");
+      expect(await runsForTask(taskId)).toEqual([]);
 
       // The host reports it caught up: the clear lifts the fence AND starts the
       // work it queued.
@@ -331,10 +427,17 @@ describe("ADR-183 D5a — the host-pressure admission fence", () => {
       expect(cleared).toMatchObject({ hostId, transition: "cleared" });
       expect(cleared?.promoted).toBeGreaterThanOrEqual(1);
       expect(await hostPressuredSince(hostId)).toBeNull();
-      expect(await runStatus(launched.runId)).toBe("Running");
-      expect((await getRunDetail(launched.runId))?.queueReason).toBeNull();
-      await until(async () => dispatched.includes(launched.runId));
+      const [launched] = await runsForTask(taskId);
+
+      expect(launched).toBeTruthy();
+      expect(await runStatus(launched.id)).toBe("Running");
+      expect(
+        await getActiveAssignment(testDatabase.db, launched.id),
+      ).toMatchObject({ epoch: 1, state: "active", placementReason: "launch" });
+      expect((await getRunDetail(launched.id))?.queueReason).toBeNull();
+      await until(async () => dispatched.includes(launched.id));
     } finally {
+      pressureDispatch.ids = null;
       scheduling.real = false;
       await setHostPressure(null);
     }
@@ -559,24 +662,30 @@ describe("ADR-183 amendment — the fence follows the host's new-work signal", (
     scheduling.real = true;
     try {
       const { taskId } = await seedLaunchableTask();
-      const launched = await launchRun(
+      const { receipt } = await acceptQualifiedEngineFixture(
         { taskId },
         { authorize: async () => {} },
-        db as never,
+        testDatabase.db,
       );
+
+      expect(
+        await prepareTaskLaunchIntent(testDatabase.db, receipt.intentId),
+      ).toMatchObject({ state: "queued", runId: null });
       const dispatched: string[] = [];
+
+      pressureDispatch.ids = dispatched;
       const runFlow = async (id: string) => {
         dispatched.push(id);
       };
 
-      expect(launched).toMatchObject({ status: "Pending" });
+      expect(await runsForTask(taskId)).toEqual([]);
       expect(
         await applyHostPressureSample(healthSampleRefusing("physical"), {
           runFlow,
         }),
       ).toMatchObject({ hostId, transition: "held", promoted: 0 });
       expect(await hostPressuredSince(hostId)).not.toBeNull();
-      expect(await runStatus(launched.runId)).toBe("Pending");
+      expect(await runsForTask(taskId)).toEqual([]);
 
       const cleared = await applyHostPressureSample(
         healthSampleRefusing(null),
@@ -588,9 +697,12 @@ describe("ADR-183 amendment — the fence follows the host's new-work signal", (
       expect(cleared).toMatchObject({ hostId, transition: "cleared" });
       expect(cleared?.promoted).toBeGreaterThanOrEqual(1);
       expect(await hostPressuredSince(hostId)).toBeNull();
-      expect(await runStatus(launched.runId)).toBe("Running");
-      await until(async () => dispatched.includes(launched.runId));
+      const [launched] = await runsForTask(taskId);
+
+      expect(await runStatus(launched.id)).toBe("Running");
+      await until(async () => dispatched.includes(launched.id));
     } finally {
+      pressureDispatch.ids = null;
       scheduling.real = false;
       await setHostPressure(null);
     }
@@ -624,27 +736,42 @@ describe("flow launch + graph driver (ADR-166 T4.1)", () => {
   it("P1: launchRun mints epoch 1 `launch` in the SAME transaction as the run — a tx abort leaves neither", async () => {
     const aborted = await seedLaunchableTask();
 
-    await expect(
-      launchRun(
-        { taskId: aborted.taskId },
-        {
-          authorize: async () => {},
-          recordSuccessAudit: async () => {
-            throw new Error("injected: launch audit write failed");
-          },
-        },
-        db as never,
-      ),
-    ).rejects.toThrow(/injected/);
+    const assignmentsBefore = await db
+      .select({ id: schema.executionAssignments.id })
+      .from(schema.executionAssignments);
+
+    await testDatabase.pool.query(
+      `CREATE FUNCTION fail_engine_fixture_assignment() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF EXISTS (SELECT 1 FROM runs WHERE id=NEW.run_id AND task_id='${aborted.taskId}') THEN RAISE EXCEPTION 'injected: assignment binding failed' USING ERRCODE='40001'; END IF; RETURN NEW; END $$`,
+    );
+    await testDatabase.pool.query(
+      `CREATE TRIGGER fail_engine_fixture_assignment BEFORE INSERT ON execution_assignments FOR EACH ROW EXECUTE FUNCTION fail_engine_fixture_assignment()`,
+    );
+    try {
+      await expect(
+        launchRun(
+          { taskId: aborted.taskId },
+          { authorize: async () => {} },
+          testDatabase.db,
+        ),
+      ).rejects.toMatchObject({
+        code: "CRASH",
+        details: { sqlState: "40001" },
+      });
+    } finally {
+      await testDatabase.pool.query(
+        `DROP TRIGGER fail_engine_fixture_assignment ON execution_assignments`,
+      );
+      await testDatabase.pool.query(
+        `DROP FUNCTION fail_engine_fixture_assignment()`,
+      );
+    }
 
     expect(await runsForTask(aborted.taskId)).toHaveLength(0);
-    const assignments = (await db
-      .select()
-      .from(schema.executionAssignments)) as unknown as Array<{
-      runId: string;
-    }>;
-
-    expect(assignments.map((a) => a.runId)).not.toContain(aborted.taskId);
+    expect(
+      await db
+        .select({ id: schema.executionAssignments.id })
+        .from(schema.executionAssignments),
+    ).toEqual(assignmentsBefore);
 
     const launched = await seedLaunchableTask();
     const result = await launchRun(

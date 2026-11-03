@@ -200,6 +200,7 @@ export function externalTaskLaunchContinuation(
   request: Request,
   contract: ExternalTaskLaunchOperation,
   work: (context: ExtCtx) => Promise<NextResponse>,
+  onCommittedReplay: (receipt: TaskLaunchReceipt) => void,
 ): ExtOperationContinuation {
   return {
     replay: async (operation, context) => {
@@ -234,6 +235,8 @@ export function externalTaskLaunchContinuation(
 
             return current;
           });
+
+          onCommittedReplay(receipt);
 
           return externalTaskLaunchReceiptResponse(
             receipt,

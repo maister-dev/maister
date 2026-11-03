@@ -39,6 +39,10 @@ import {
   isStoredAnswerDeliveryReason,
 } from "@/lib/hitl-response-contract";
 import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
+import {
+  budgetRestartPreviewSchema,
+  type BudgetRestartPreview,
+} from "@/lib/tasks/launch-budget-restart-contract";
 import { useOptionalFeedback } from "@/components/feedback/feedback-provider";
 import {
   isStaleViewErrorCode,
@@ -256,6 +260,9 @@ export function RunHitlResponse({
   const [budgetBranchName, setBudgetBranchName] = useState("");
   const [budgetDropWorkspace, setBudgetDropWorkspace] = useState(false);
   const [confirmingBudgetAbandon, setConfirmingBudgetAbandon] = useState(false);
+  const [budgetRestartPreview, setBudgetRestartPreview] =
+    useState<BudgetRestartPreview | null>(null);
+  const [loadingBudgetRestart, setLoadingBudgetRestart] = useState(false);
   // Pre-fill the raise input with the suggested ceiling = breached current × 2
   // (spec §6.2). `current` ≥ the breached limit at escalate, so current × 2 is
   // always a valid suggestion (> limit). Empty for non-budget kinds.
@@ -385,8 +392,19 @@ export function RunHitlResponse({
         startTransition(() => router.refresh());
       }
     } catch {
-      if (activeRequestKey.current === requestKey)
+      if (activeRequestKey.current === requestKey) {
+        if (
+          kind === "budget_breach" &&
+          payload.optionId === "restart" &&
+          payload.restartLaunch
+        )
+          setLocalAnswer({
+            requestKey,
+            payload: payload as HitlStoredResponse,
+            reconciling: false,
+          });
         setError(t("deliveryUnconfirmed"));
+      }
     } finally {
       setBusyRequestKey((current) => (current === requestKey ? null : current));
     }
@@ -477,10 +495,11 @@ export function RunHitlResponse({
 
   const activeBudgetClaim =
     kind === "budget_breach" &&
-    claimStage !== null &&
+    claimStage != null &&
     claimStage !== "failed" &&
     claimStage !== "relaunch_failed";
-  const disabled = busy || pending || !canAct || activeBudgetClaim;
+  const disabled =
+    busy || pending || loadingBudgetRestart || !canAct || activeBudgetClaim;
 
   // M11a graph review HITL: the row's schema declares the allow-list.
   const reviewSchema =
@@ -564,8 +583,26 @@ export function RunHitlResponse({
     });
   }
 
-  function handleBudgetRestart(): void {
-    void post({ optionId: "restart" });
+  async function handleBudgetRestart(): Promise<void> {
+    setLoadingBudgetRestart(true);
+    try {
+      const result = await fetch(
+        `/api/runs/${encodeURIComponent(runId)}/hitl/${encodeURIComponent(hitlRequestId)}/restart-preview`,
+        { cache: "no-store" },
+      );
+
+      if (!result.ok) throw new Error("Restart preview unavailable");
+      const preview = budgetRestartPreviewSchema.parse(await result.json());
+
+      if (activeRequestKey.current === requestKey)
+        setBudgetRestartPreview(preview);
+    } catch {
+      if (activeRequestKey.current === requestKey)
+        setError(t("budgetRestartPreviewUnavailable"));
+    } finally {
+      if (activeRequestKey.current === requestKey)
+        setLoadingBudgetRestart(false);
+    }
   }
 
   function handleBudgetPark(): void {
@@ -812,7 +849,7 @@ export function RunHitlResponse({
       onBudgetPark={handleBudgetPark}
       onBudgetParkModeChange={setBudgetParkMode}
       onBudgetRaise={handleBudgetRaise}
-      onBudgetRestart={handleBudgetRestart}
+      onBudgetRestart={() => void handleBudgetRestart()}
       onCommentsChange={setComments}
       onDecision={handleDecision}
       onFormFieldChange={handleFormFieldChange}
@@ -947,6 +984,104 @@ export function RunHitlResponse({
           </p>
         ) : null}
       </div>
+      {budgetRestartPreview ? (
+        <ConfirmDialog
+          body={t("budgetRestartPreviewHint")}
+          busy={busy}
+          cancelLabel={t("reviewPreviewCancel")}
+          testId="budget-restart-preview"
+          title={t("budgetRestartPreviewTitle")}
+          titleId="budget-restart-preview-title"
+          onClose={() => setBudgetRestartPreview(null)}
+        >
+          <div className="grid gap-3">
+            <p className="font-semibold">{budgetRestartPreview.title}</p>
+            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+              <dt>{t("budgetRestartPreviewRevision")}</dt>
+              <dd>{budgetRestartPreview.request.expectedTaskRevision}</dd>
+              <dt>
+                {t(
+                  budgetRestartPreview.request.agentId
+                    ? "budgetRestartPreviewAgent"
+                    : "budgetRestartPreviewFlow",
+                )}
+              </dt>
+              <dd>{budgetRestartPreview.flowName}</dd>
+              <dt>{t("budgetRestartPreviewTargetRevision")}</dt>
+              <dd>{budgetRestartPreview.targetRevision}</dd>
+              <dt>{t("budgetRestartPreviewRunner")}</dt>
+              <dd>{budgetRestartPreview.runnerLabel}</dd>
+              <dt>{t("budgetRestartPreviewDelivery")}</dt>
+              <dd>
+                {t(
+                  budgetRestartPreview.settings.deliveryPolicy.strategy ===
+                    "pull_request"
+                    ? "budgetRestartDeliveryPr"
+                    : budgetRestartPreview.settings.deliveryPolicy.strategy ===
+                        "merge"
+                      ? "budgetRestartDeliveryMerge"
+                      : "budgetRestartDeliveryNone",
+                )}
+              </dd>
+              <dt>{t("budgetRestartPreviewPolicy")}</dt>
+              <dd>
+                {t(
+                  `budgetRestartPreset.${budgetRestartPreview.settings.executionPolicy.preset}`,
+                )}
+              </dd>
+              <dt>{t("budgetRestartPreviewPromotion")}</dt>
+              <dd>
+                {t(
+                  budgetRestartPreview.settings.autoPromote
+                    ? "budgetRestartYes"
+                    : "budgetRestartNo",
+                )}
+              </dd>
+              <dt>{t("budgetRestartPreviewBrain")}</dt>
+              <dd>
+                {t(
+                  budgetRestartPreview.settings.brainContext === null
+                    ? "budgetRestartInherit"
+                    : budgetRestartPreview.settings.brainContext
+                      ? "budgetRestartYes"
+                      : "budgetRestartNo",
+                )}
+              </dd>
+              {budgetRestartPreview.settings.workspace !== "none" ? (
+                <>
+                  <dt>{t("budgetRestartPreviewBranch")}</dt>
+                  <dd>{budgetRestartPreview.settings.targetBranch}</dd>
+                </>
+              ) : null}
+            </dl>
+            <pre className="max-h-64 overflow-auto rounded-lg border border-line bg-ivory p-3 whitespace-pre-wrap text-sm">
+              {budgetRestartPreview.prompt}
+            </pre>
+            <details>
+              <summary>{t("budgetRestartPreviewOverrides")}</summary>
+              <pre className="max-h-40 overflow-auto whitespace-pre-wrap text-xs">
+                {JSON.stringify(
+                  budgetRestartPreview.settings.executionPolicy.overrides,
+                  null,
+                  2,
+                )}
+              </pre>
+            </details>
+            <Button
+              data-testid="budget-restart-preview-confirm"
+              isDisabled={busy}
+              onPress={() => {
+                const restartLaunch = budgetRestartPreview.request;
+
+                setBudgetRestartPreview(null);
+                void post({ optionId: "restart", restartLaunch });
+              }}
+            >
+              {t("budgetRestartPreviewConfirm")}
+            </Button>
+          </div>
+        </ConfirmDialog>
+      ) : null}
       {pendingReviewRework ? (
         <ConfirmDialog
           body={t("reviewPreviewBody", {

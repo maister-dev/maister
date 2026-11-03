@@ -1,11 +1,13 @@
 import "server-only";
 
 import type { Run, RunStatus, TaskStatus } from "@/lib/db/schema";
+import type { TriageFlagOrigin } from "@/lib/tasks/manual-launch-hold";
 
 import { and, desc, eq } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { isManualTriageHold } from "@/lib/tasks/manual-launch-hold";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { runs, workspaces } = schemaModule as unknown as Record<string, any>;
@@ -19,6 +21,7 @@ export type TaskLaunchability =
   | "crashed"
   | "target_terminal"
   | "flagged"
+  | "queue_paused"
   | "clarification_pending"
   | "blocked"
   | "unconfigured";
@@ -116,20 +119,17 @@ export function classifyTaskLaunchability(
   return base;
 }
 
-// Shared task-gate predicates (DRY) — the only refusals force mode honours and
-// the lowest-precedence arms of the manual/launch classifiers.
-function isFlaggedTask(task: {
-  triageStatus: "triaged" | "flagged" | null;
-}): boolean {
-  return task.triageStatus === "flagged";
-}
-
 function hasOpenBlockers(relationGate?: RelationGate): boolean {
   return (relationGate?.openBlockers.length ?? 0) > 0;
 }
 
 export function classifyManualTaskLaunchability(
-  task: { status: TaskStatus; triageStatus: "triaged" | "flagged" | null },
+  task: {
+    status: TaskStatus;
+    triageStatus: "triaged" | "flagged" | null;
+    triageFlagOrigin?: TriageFlagOrigin | null;
+    queuePaused?: boolean;
+  },
   latestRun: { status: RunStatus } | null,
   relationGate: RelationGate | undefined,
   clarificationGate: ClarificationGate,
@@ -141,12 +141,11 @@ export function classifyManualTaskLaunchability(
         : "launchable"
       : MANUAL_RUN_STATUS_LAUNCHABILITY[latestRun.status];
 
-  // `flagged` is held on the manual relaunch path too (ADR-112): a confirmed
-  // duplicate / rejected intake is not relaunchable until resolved. Precedence
-  // mirrors the launch path — busy/crashed/target_terminal still win (flagged
-  // never masks an active/terminal run state), flagged outranks blocked.
+  // Qualification findings advise manual launch. Independent and historical
+  // holds remain effective until a separate authorized decision resolves them.
   if (base === "launchable") {
-    if (isFlaggedTask(task)) {
+    if (task.queuePaused) return "queue_paused";
+    if (isManualTriageHold(task)) {
       return "flagged";
     }
 
@@ -171,12 +170,18 @@ export function classifyManualTaskLaunchability(
 // silently change force behaviour. `latestRun` is part of the signature for
 // symmetry with the manual classifier and is intentionally unused.
 export function classifyForceRelaunchLaunchability(
-  task: { status: TaskStatus; triageStatus: "triaged" | "flagged" | null },
+  task: {
+    status: TaskStatus;
+    triageStatus: "triaged" | "flagged" | null;
+    triageFlagOrigin?: TriageFlagOrigin | null;
+    queuePaused?: boolean;
+  },
   _latestRun: { status: RunStatus } | null,
   relationGate: RelationGate | undefined,
   clarificationGate: ClarificationGate,
 ): TaskLaunchability {
-  if (isFlaggedTask(task)) {
+  if (task.queuePaused) return "queue_paused";
+  if (isManualTriageHold(task)) {
     return "flagged";
   }
 

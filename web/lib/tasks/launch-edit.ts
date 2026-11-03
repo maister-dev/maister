@@ -7,7 +7,7 @@ import pino from "pino";
 
 import { lockTaskLaunchReservation } from "./launch-locks";
 import { loadTaskSemanticInput } from "./launch-input";
-import { taskLaunchConfiguration } from "./launch-resolution";
+import { taskLaunchSelectedConfiguration } from "./launch-resolution";
 import { emitTaskLaunchChanged } from "./launch-events";
 
 import { runs, taskLaunchIntents, projects } from "@/lib/db/schema";
@@ -97,11 +97,15 @@ export async function holdChangedTaskLaunches(
     throw new MaisterError("PRECONDITION", "Launch project is missing", {
       details: { reason: "launch_task_missing" },
     });
-  const inputDigest = retryDigest(snapshot);
-  const settingsDigest = retryDigest(taskLaunchConfiguration(task, project));
+  const settingsDigest = retryDigest(taskLaunchSelectedConfiguration(task));
 
   for (const intent of locked.intents) {
     if (intent.dispatchCommittedAt || intent.state === "held") continue;
+    const inputDigest = retryDigest({
+      ...snapshot,
+      target: intent.inputSnapshot.target,
+      deliveryTarget: intent.inputSnapshot.deliveryTarget,
+    });
     const reason = task.queuePaused
       ? "queue_paused"
       : intent.inputDigest !== inputDigest

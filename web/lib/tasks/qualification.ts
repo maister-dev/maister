@@ -24,6 +24,7 @@ import {
   taskQualifications,
   type Run,
   tasks,
+  taskLaunchIntents,
 } from "@/lib/db/schema";
 import { validateVerdictRefs } from "@/lib/services/triage";
 import { recordTaskActivity, actorForUserId } from "@/lib/social/activity";
@@ -242,6 +243,10 @@ export async function prepareTaskQualification(
     taskId: string;
     author: TaskQualificationAuthor;
     request: TaskQualificationWrite;
+    humanAuthoring?: Readonly<{
+      requestDigest: string;
+      evidenceSha: string | null;
+    }>;
   },
 ): Promise<PreparedTaskQualification> {
   const author = input.author;
@@ -252,17 +257,28 @@ export async function prepareTaskQualification(
       details: { reason: "qualification_invalid", issues: parsed.error.issues },
     });
   const request = parsed.data;
-  const payloadDigest = createHash("sha256")
-    .update(
-      canonicalCommandJson({
-        request,
-        author:
-          author.kind === "agent_run"
-            ? { kind: author.kind, runId: author.runId }
-            : { kind: author.kind, identity: author.identity },
-      }),
-    )
-    .digest("hex");
+
+  if (
+    input.humanAuthoring &&
+    (author.kind !== "user" ||
+      !/^[a-f0-9]{64}$/.test(input.humanAuthoring.requestDigest))
+  )
+    throw new MaisterError("CONFIG", "Invalid human authoring provenance", {
+      details: { reason: "qualification_author_scope" },
+    });
+  const payloadDigest =
+    input.humanAuthoring?.requestDigest ??
+    createHash("sha256")
+      .update(
+        canonicalCommandJson({
+          request,
+          author:
+            author.kind === "agent_run"
+              ? { kind: author.kind, runId: author.runId }
+              : { kind: author.kind, identity: author.identity },
+        }),
+      )
+      .digest("hex");
   const [existing] = await db
     .select()
     .from(taskQualifications)
@@ -328,12 +344,26 @@ export async function prepareTaskQualification(
   const evidenceSha = existing
     ? existing.evidenceSha
     : (frozen?.sha ??
-      (request.qualification.decision === "ready"
+      (request.qualification.decision === "ready" ||
+      input.humanAuthoring?.evidenceSha
         ? await resolveBaseCommit({
             projectRepoPath: project.repoPath,
             baseRef: before.target,
           })
         : null));
+
+  if (
+    !existing &&
+    input.humanAuthoring &&
+    input.humanAuthoring.evidenceSha !== evidenceSha
+  )
+    throw new MaisterError(
+      "CONFLICT",
+      "Repository evidence changed while assessing",
+      {
+        details: { reason: "qualification_stale" },
+      },
+    );
 
   return {
     apply: async (tx) => {
@@ -520,6 +550,8 @@ export async function prepareTaskQualification(
         })
         .returning();
 
+      let routingApplication: QualificationRoutingApplication | null = null;
+
       if (agent) {
         await emitDomainEvent({
           db: tx,
@@ -535,7 +567,7 @@ export async function prepareTaskQualification(
           },
         });
       } else {
-        await acceptTaskQualification(tx, assessment);
+        routingApplication = await acceptTaskQualification(tx, assessment);
       }
       await recordTaskActivity(tx, {
         projectId: input.projectId,
@@ -549,6 +581,7 @@ export async function prepareTaskQualification(
           qualificationRevision: assessment.revision,
           publicationState: assessment.publicationState,
           decision: assessment.value.decision,
+          ...(routingApplication ? { routingApplication } : {}),
         },
       });
       log.info(
@@ -568,13 +601,47 @@ export async function prepareTaskQualification(
   };
 }
 
+type QualificationRoutingApplication = Readonly<{
+  outcome:
+    "applied" | "not_applied_active_launch" | "not_applied_independent_hold";
+  intentId: string | null;
+  proposal: Readonly<{
+    flowId: string | null;
+    runnerId: string | null;
+    enqueue: boolean;
+  }>;
+}>;
+
 async function acceptTaskQualification(
   tx: Db,
   assessment: typeof taskQualifications.$inferSelect,
-): Promise<void> {
+): Promise<QualificationRoutingApplication> {
   const routing = assessment.routing;
   const ready = assessment.value.decision === "ready";
-  const enqueue = ready && routing.enqueue && routing.flowId !== null;
+  const [current] = await tx
+    .select()
+    .from(tasks)
+    .where(eq(tasks.id, assessment.taskId));
+  const retainFlag =
+    current?.triageStatus === "flagged" &&
+    current.triageFlagOrigin !== "qualification";
+  const [activeLaunch] = await tx
+    .select({ id: taskLaunchIntents.id })
+    .from(taskLaunchIntents)
+    .where(
+      and(
+        eq(taskLaunchIntents.taskId, assessment.taskId),
+        sql`${taskLaunchIntents.state} IN ('queued','preparing','run_bound','held')`,
+      ),
+    )
+    .limit(1);
+  const preserveSelection = Boolean(activeLaunch);
+  const enqueue =
+    ready &&
+    !retainFlag &&
+    !preserveSelection &&
+    routing.enqueue &&
+    routing.flowId !== null;
   const arm = sql`${enqueue} AND ${taskTriageAutoEnqueuePredicate()}`;
 
   await tx
@@ -582,14 +649,47 @@ async function acceptTaskQualification(
     .set({
       currentQualificationId: assessment.id,
       currentQualificationRevision: assessment.revision,
-      triageStatus: ready ? "triaged" : "flagged",
-      flowId: routing.flowId,
-      runnerId: routing.runnerId,
-      launchMode: sql`CASE WHEN ${arm} THEN 'auto' ELSE NULL END`,
-      launchArmedAt: sql`CASE WHEN ${arm} THEN ${new Date()}::timestamptz ELSE NULL END`,
-      queueClaimedAt: null,
+      triageStatus: retainFlag ? "flagged" : ready ? "triaged" : "flagged",
+      triageFlagOrigin: retainFlag
+        ? current.triageFlagOrigin
+        : ready
+          ? null
+          : "qualification",
+      flowId: preserveSelection ? current.flowId : routing.flowId,
+      runnerId: preserveSelection ? current.runnerId : routing.runnerId,
+      launchMode: preserveSelection
+        ? current.launchMode
+        : sql`CASE WHEN ${arm} THEN 'auto' ELSE NULL END`,
+      launchArmedAt: preserveSelection
+        ? current.launchArmedAt
+        : sql`CASE WHEN ${arm} THEN ${new Date()}::timestamptz ELSE NULL END`,
+      queueClaimedAt: preserveSelection ? current.queueClaimedAt : null,
     })
     .where(eq(tasks.id, assessment.taskId));
+  if (preserveSelection)
+    log.info(
+      {
+        taskId: assessment.taskId,
+        qualificationId: assessment.id,
+        intentId: activeLaunch.id,
+        outcome: "not_applied_active_launch",
+      },
+      "qualification routing retained as proposal",
+    );
+
+  return {
+    outcome: preserveSelection
+      ? "not_applied_active_launch"
+      : retainFlag
+        ? "not_applied_independent_hold"
+        : "applied",
+    intentId: activeLaunch?.id ?? null,
+    proposal: {
+      flowId: routing.flowId,
+      runnerId: routing.runnerId,
+      enqueue: routing.enqueue,
+    },
+  };
 }
 
 type QualificationPublication = {
@@ -831,7 +931,25 @@ export async function prepareQualificationPublication(
           .update(taskQualifications)
           .set({ publicationState: "accepted", publishedAt: new Date() })
           .where(eq(taskQualifications.id, candidate.id));
-        await acceptTaskQualification(tx, candidate);
+        const routingApplication = await acceptTaskQualification(tx, candidate);
+
+        await recordTaskActivity(tx, {
+          projectId: run.projectId,
+          taskId: candidate.taskId,
+          actor:
+            run.sourceAgentId || run.agentId
+              ? { type: "agent", id: (run.sourceAgentId ?? run.agentId)! }
+              : { type: "system", id: null },
+          eventKind: "triage_set",
+          payload: {
+            qualificationId: candidate.id,
+            qualificationRevision: candidate.revision,
+            publicationState: "accepted",
+            sourceRunId: run.id,
+            decision: candidate.value.decision,
+            routingApplication,
+          },
+        });
         await emitDomainEvent({
           db: tx,
           kind: "task.qualification_changed",

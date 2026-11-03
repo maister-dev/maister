@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { TriageFlagOrigin } from "@/lib/tasks/manual-launch-hold";
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { BoardColumn, CrashAction } from "@/lib/board";
 import type { RunStatus } from "@/lib/db/schema";
@@ -130,6 +131,7 @@ export interface BacklogCard {
   // M34 (ADR-089) launch-verdict fields — pre-fill the card's launch popover.
   flowId: string | null;
   triageStatus: "triaged" | "flagged" | null;
+  triageFlagOrigin?: TriageFlagOrigin | null;
   runnerId: string | null;
   baseBranch: string | null;
   targetBranch: string | null;
@@ -181,6 +183,7 @@ export interface FlightCard {
   // task flagged for review) suppresses the "Run again" affordance and shows the
   // chip; non-launchable even with a flow set (mirrors the backlog card).
   triageStatus: "triaged" | "flagged" | null;
+  triageFlagOrigin?: TriageFlagOrigin | null;
   runId: string;
   agent: BoardAgent | null;
   status: CardStatus;
@@ -376,6 +379,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       enabledRevisionEngineMax: flowRevisions.engineMax,
       flowId: tasks.flowId,
       triageStatus: tasks.triageStatus,
+      triageFlagOrigin: tasks.triageFlagOrigin,
       priority: tasks.priority,
       queuePaused: tasks.queuePaused,
       triageConfidence: tasks.triageConfidence,
@@ -389,7 +393,10 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
     .leftJoin(flows, eq(flows.id, tasks.flowId))
     .leftJoin(flowRevisions, eq(flowRevisions.id, flows.enabledRevisionId))
     .where(
-      and(eq(tasks.projectId, projectId), sql`NOT ${incomingWorkPredicate()}`),
+      and(
+        eq(tasks.projectId, projectId),
+        sql`(${tasks.flowId} IS NOT NULL OR NOT ${incomingWorkPredicate()})`,
+      ),
     )
     .orderBy(desc(tasks.createdAt));
 
@@ -762,6 +769,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
         flowId: task.flowId ?? null,
         triageStatus: (task.triageStatus ?? null) as
           "triaged" | "flagged" | null,
+        triageFlagOrigin: task.triageFlagOrigin,
         runnerId: task.runnerId ?? null,
         baseBranch: task.baseBranch ?? null,
         targetBranch: task.targetBranch ?? null,
@@ -838,6 +846,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       runCount: runCountByTask.get(task.taskId) ?? 0,
       runStatus: run.status,
       triageStatus: (task.triageStatus ?? null) as "triaged" | "flagged" | null,
+      triageFlagOrigin: task.triageFlagOrigin,
       ...workStageFields,
       runId: run.runId,
       agent: takeover

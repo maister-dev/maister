@@ -136,7 +136,8 @@ export async function claimAgentPreparation(
         resourceId,
         incarnation: previous?.incarnation ?? randomUUID(),
         phase: "claimed",
-        resolvedCommit: previous?.resolvedCommit ?? null,
+        resolvedCommit:
+          previous?.runId === run.id ? previous.resolvedCommit : null,
         leaseExpiresAt: sql`clock_timestamp() + interval '60 seconds'`,
       })
       .returning();

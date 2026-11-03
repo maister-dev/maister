@@ -1,5 +1,6 @@
 "use client";
 
+import type { TaskLaunchRequest } from "@/lib/tasks/launch-schema";
 import type { AgentRetryOptions } from "@/lib/agents/retry-preparation";
 import type { AgentRetryReceipt } from "@/lib/agents/retry";
 import type { ReactElement } from "react";
@@ -20,6 +21,7 @@ type AcceptedRequest = {
   requestKey: string;
   previewFingerprint: string;
   strategy: AgentRetryOptions["strategy"];
+  launchRequest?: TaskLaunchRequest;
 };
 const button =
   "inline-flex min-h-8 items-center rounded-lg border border-line bg-ivory px-3 text-xs font-semibold text-ink hover:border-mute disabled:opacity-50";
@@ -40,14 +42,17 @@ export function AgentRetryControl({ runId }: { runId: string }): ReactElement {
   } | null>(null);
   const [previewRefused, setPreviewRefused] = useState(false);
   const [refreshed, setRefreshed] = useState(false);
-  const load = async (): Promise<void> => {
+  const load = async (selectedRunner?: string): Promise<void> => {
     setBusy(true);
     setError(null);
     setRefreshed(false);
     try {
-      const response = await fetch(`/api/runs/${runId}/retry-options`, {
-        cache: "no-store",
-      });
+      const response = await fetch(
+        `/api/runs/${runId}/retry-options${selectedRunner ? `?runnerId=${encodeURIComponent(selectedRunner)}` : ""}`,
+        {
+          cache: "no-store",
+        },
+      );
 
       if (!response.ok) {
         setError(
@@ -62,9 +67,11 @@ export function AgentRetryControl({ runId }: { runId: string }): ReactElement {
       setRunnerId((current) =>
         next.existingIntentId && request
           ? request.runnerId
-          : next.runners.some((item) => item.id === current && item.ready)
-            ? current
-            : (next.selectedRunnerId ?? ""),
+          : next.launchRequest
+            ? (next.selectedRunnerId ?? "")
+            : next.runners.some((item) => item.id === current && item.ready)
+              ? current
+              : (next.selectedRunnerId ?? ""),
       );
       if (!next.existingIntentId) {
         setReceipt(null);
@@ -98,6 +105,9 @@ export function AgentRetryControl({ runId }: { runId: string }): ReactElement {
       requestKey: crypto.randomUUID(),
       previewFingerprint: options.previewFingerprint,
       strategy: options.strategy,
+      ...(options.launchRequest
+        ? { launchRequest: options.launchRequest }
+        : {}),
     };
 
     setRequest(acceptedRequest);
@@ -326,6 +336,28 @@ export function AgentRetryControl({ runId }: { runId: string }): ReactElement {
                     )}
                   </span>
                 </p>
+                {options.launchPreview && options.launchRequest ? (
+                  <div
+                    className="rounded-lg border border-line p-3"
+                    data-testid="retry-task-preview"
+                  >
+                    <p className="font-semibold">
+                      {options.launchPreview.title}
+                    </p>
+                    <p className="text-xs text-mute">
+                      {t("retryTaskRevision", {
+                        revision: options.launchRequest.expectedTaskRevision,
+                      })}
+                    </p>
+                    <p className="whitespace-pre-wrap break-words">
+                      {options.launchPreview.prompt}
+                    </p>
+                    <p>
+                      {t("retryTarget")}: {options.launchRequest.agentId} ·{" "}
+                      {t(`retryWorkspace.${options.launchRequest.workspace}`)}
+                    </p>
+                  </div>
+                ) : null}
                 {options.differences.length ? (
                   <details>
                     <summary className="font-semibold">
@@ -367,7 +399,10 @@ export function AgentRetryControl({ runId }: { runId: string }): ReactElement {
                     disabled={busy || request !== null}
                     id={`retry-runner-${runId}`}
                     value={runnerId}
-                    onChange={(event) => setRunnerId(event.target.value)}
+                    onChange={(event) => {
+                      setRunnerId(event.target.value);
+                      if (options.launchRequest) void load(event.target.value);
+                    }}
                   >
                     <option value="">{t("chooseRunner")}</option>
                     {options.runners.map((item) => (

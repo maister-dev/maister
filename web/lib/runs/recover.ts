@@ -3,6 +3,7 @@ import "server-only";
 import type { ExecutionAssignment } from "@/lib/db/schema";
 import type { CreateSessionInput } from "@/lib/execution-host";
 import type { ExecutionHosts } from "@/lib/execution-host";
+import type { TaskLaunchRecoveryAuthority } from "@/lib/tasks/launch-continuation";
 
 import { and, count, eq, inArray, isNull, notInArray } from "drizzle-orm";
 import pino from "pino";
@@ -14,7 +15,8 @@ import {
 } from "@/lib/acp-runners/spawn-intent";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { isMaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
+import { prepareTaskLaunchRecovery } from "@/lib/tasks/launch-continuation";
 import { resolveNodeRecoverInfo } from "@/lib/flows/graph/current-node-kind";
 import {
   authorizeGateCrashRecovery,
@@ -95,6 +97,7 @@ export type RecoverResult =
   // lease, or a parked PR finalize) owns the worktree — retry once it settles.
   | { state: "workspace-busy" }
   | { state: "conflict" }
+  | { state: "launch-conflict" }
   | { state: "unresumable" }
   | { state: "transient" };
 
@@ -111,6 +114,7 @@ export type RunFlowResumeOpts = {
 };
 
 export interface ResumeCrashedRunOptions {
+  recoveryAuthority?: TaskLaunchRecoveryAuthority;
   db?: Db;
   executionHosts?: ExecutionHosts;
   runFlow?: (id: string, runOpts?: RunFlowResumeOpts) => Promise<void> | void;
@@ -161,8 +165,23 @@ export async function resumeCrashedRun(
   type Phase1 =
     RecoverResult | { state: "drive"; assignment: ExecutionAssignment };
 
-  const phase1: Phase1 = await db.transaction(async (tx: Db) => {
+  const claim: Promise<Phase1> = db.transaction(async (tx: Db) => {
     await takeSchedulerLock(tx);
+    const reservation = await prepareTaskLaunchRecovery(
+      tx,
+      runId,
+      opts.recoveryAuthority,
+    );
+
+    if (reservation?.kind === "conflict") {
+      log.warn(
+        { runId, reason: "launch_recovery_conflict" },
+        "[FIX:LA08] a newer launch owns the task reservation",
+      );
+
+      return { state: "launch-conflict" };
+    }
+    if (reservation?.kind === "unresumable") return { state: "unresumable" };
 
     const rows = await tx
       .select({
@@ -297,6 +316,7 @@ export async function resumeCrashedRun(
     if (liveCount >= cap) {
       // Cap full → re-admit into the Pending queue, KEEPING acpSessionId so
       // promoteNextPending resumes (not re-runs) it. NO createSession here.
+      if (reservation?.kind === "prepared") await reservation.apply();
       const updated = await tx
         .update(runs)
         .set({
@@ -313,7 +333,12 @@ export async function resumeCrashedRun(
         .where(and(eq(runs.id, runId), eq(runs.status, "Crashed")))
         .returning({ id: runs.id });
 
-      if (updated.length === 0) return { state: "conflict" };
+      if (updated.length === 0)
+        throw new MaisterError(
+          "CONFLICT",
+          "Recovery status changed before commit",
+          { details: { reason: "recover_cas_lost" } },
+        );
 
       await mintPlacement(tx, {
         runId,
@@ -329,6 +354,7 @@ export async function resumeCrashedRun(
     }
 
     // Slot free → durable flip Crashed→Running BEFORE the side-effect.
+    if (reservation?.kind === "prepared") await reservation.apply();
     const updated = await tx
       .update(runs)
       .set({
@@ -341,7 +367,12 @@ export async function resumeCrashedRun(
       .where(and(eq(runs.id, runId), eq(runs.status, "Crashed")))
       .returning({ id: runs.id });
 
-    if (updated.length === 0) return { state: "conflict" };
+    if (updated.length === 0)
+      throw new MaisterError(
+        "CONFLICT",
+        "Recovery status changed before commit",
+        { details: { reason: "recover_cas_lost" } },
+      );
 
     const assignment = await mintPlacement(tx, {
       runId,
@@ -355,6 +386,15 @@ export async function resumeCrashedRun(
     );
 
     return { state: "drive", assignment };
+  });
+  const phase1: Phase1 = await claim.catch((error: unknown): RecoverResult => {
+    if (
+      isMaisterError(error) &&
+      error.code === "CONFLICT" &&
+      error.details?.reason === "recover_cas_lost"
+    )
+      return { state: "conflict" };
+    throw error;
   });
 
   // Terminal Phase-1 outcomes (no side-effect required).

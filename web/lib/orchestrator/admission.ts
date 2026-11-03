@@ -43,7 +43,10 @@ const DELEGATION_LOCK_NAMESPACE = 0x646c6774;
  * Keyed on the parent run id, two children of DIFFERENT orchestrators never
  * wait on each other while two children of the SAME one always do.
  */
-async function takeDelegationLock(tx: Db, parentRunId: string): Promise<void> {
+export async function lockDelegationParent(
+  tx: Db,
+  parentRunId: string,
+): Promise<void> {
   await tx.execute(
     sql`SELECT pg_advisory_xact_lock(${DELEGATION_LOCK_NAMESPACE}::int, hashtext(${parentRunId})::int)`,
   );
@@ -100,14 +103,24 @@ async function walkAncestorChain(
  * All statuses on purpose: this is a "how much work has this coordinator caused"
  * budget, not a liveness question. A terminal child already spent its tokens.
  */
-async function countRunSubtree(tx: Db, ancestorId: string): Promise<number> {
+async function countRunSubtree(
+  tx: Db,
+  ancestorId: string,
+  ownedTaskId: string | null,
+): Promise<number> {
   const result: unknown = await tx.execute(sql`
     WITH RECURSIVE subtree AS (
       SELECT id FROM runs WHERE parent_run_id = ${ancestorId}
       UNION ALL
       SELECT r.id FROM runs r JOIN subtree s ON r.parent_run_id = s.id
     )
-    SELECT count(*)::int AS n FROM subtree
+    SELECT ((SELECT count(*) FROM subtree) + (
+      SELECT count(*) FROM tasks child
+      WHERE child.qualification_mode='execution_child'
+        AND child.qualification_child_proof->>'parentRunId' IN (SELECT id FROM subtree UNION SELECT ${ancestorId})
+        AND child.id IS DISTINCT FROM ${ownedTaskId}
+        AND NOT EXISTS(SELECT 1 FROM runs WHERE task_id=child.id)
+    ))::int AS n
   `);
   // node-postgres returns `{ rows }`; some drizzle drivers return the array
   // directly. Handle both rather than assume one — the shape difference is a
@@ -134,6 +147,7 @@ async function countRunSubtree(tx: Db, ancestorId: string): Promise<number> {
 async function countLiveDelegatedChildren(
   tx: Db,
   parentRunId: string,
+  launchIntentId: string | null,
 ): Promise<number> {
   const rows = (await tx
     .select({ n: sql<number>`count(*)::int` })
@@ -145,7 +159,12 @@ async function countLiveDelegatedChildren(
       ),
     )) as { n: number }[];
 
-  return rows[0]?.n ?? 0;
+  const reservations =
+    await tx.execute(sql`SELECT count(*)::int n FROM task_launch_intents
+    WHERE state='preparing' AND run_id IS NULL AND id IS DISTINCT FROM ${launchIntentId}
+      AND settings_snapshot->'serverExecution'->'execution'->>'parentRunId'=${parentRunId}`);
+
+  return (rows[0]?.n ?? 0) + Number(reservations.rows[0]?.n ?? 0);
 }
 
 /**
@@ -160,13 +179,26 @@ async function countLiveDelegatedChildren(
  */
 export async function admitDelegatedChild(
   tx: Db,
-  args: { parentRunId: string; incoming?: number },
+  args: { parentRunId: string; incoming?: number; launchIntentId?: string },
 ): Promise<void> {
   const incoming = args.incoming ?? 1;
 
-  await takeDelegationLock(tx, args.parentRunId);
+  await lockDelegationParent(tx, args.parentRunId);
 
   // ONE walk for all three checks below.
+  const [ownedIntent] = args.launchIntentId
+    ? (
+        await tx.execute(sql`SELECT task_id FROM task_launch_intents
+    WHERE id=${args.launchIntentId} AND settings_snapshot->'serverExecution'->'execution'->>'parentRunId'=${args.parentRunId}`)
+      ).rows
+    : [];
+
+  if (args.launchIntentId && !ownedIntent)
+    throw new MaisterError(
+      "CONFLICT",
+      "Delegated launch does not own this parent reservation",
+      { details: { reason: "delegation_intent_fenced" } },
+    );
   const chain = await walkAncestorChain(tx, args.parentRunId);
   const depth = chain.length - 1;
   const parentBounds = chain[0]?.bounds ?? null;
@@ -203,7 +235,11 @@ export async function admitDelegatedChild(
     );
   }
 
-  const live = await countLiveDelegatedChildren(tx, args.parentRunId);
+  const live = await countLiveDelegatedChildren(
+    tx,
+    args.parentRunId,
+    args.launchIntentId ?? null,
+  );
   const envFanout = orchestratorMaxFanout();
   const maxFanout = Math.min(envFanout, parentBounds?.maxFanout ?? envFanout);
 
@@ -222,6 +258,12 @@ export async function admitDelegatedChild(
     throw new MaisterError(
       "CONFIG",
       `orchestrator fan-out limit reached (${maxFanout}); ${live} live child run(s) already`,
+      {
+        details: {
+          reason: "delegation_fanout_exhausted",
+          parentRunId: args.parentRunId,
+        },
+      },
     );
   }
 
@@ -243,7 +285,7 @@ export async function admitDelegatedChild(
   const rootRunId = chain.at(-1)?.id;
 
   if (rootRunId && rootRunId !== args.parentRunId) {
-    await takeDelegationLock(tx, rootRunId);
+    await lockDelegationParent(tx, rootRunId);
   }
 
   for (const ancestor of chain) {
@@ -251,7 +293,11 @@ export async function admitDelegatedChild(
 
     if (cap === undefined) continue;
 
-    const descendants = await countRunSubtree(tx, ancestor.id);
+    const descendants = await countRunSubtree(
+      tx,
+      ancestor.id,
+      ownedIntent?.task_id ?? null,
+    );
 
     if (descendants + incoming > cap) {
       log.warn(

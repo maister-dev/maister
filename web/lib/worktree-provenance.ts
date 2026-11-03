@@ -1,6 +1,6 @@
 import "server-only";
 
-import { access, chmod, readFile } from "node:fs/promises";
+import { access, chmod, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
@@ -10,6 +10,7 @@ import pino from "pino";
 import { atomicWriteText } from "@/lib/atomic";
 import { ensureWorktreeGitExclude } from "@/lib/capabilities/materialize";
 import { MaisterError } from "@/lib/errors";
+import { assertSafeAgentMaterializationPath } from "@/lib/agents/materialization-manifest";
 import {
   composeCommitMessage,
   type MaisterProvenance,
@@ -235,6 +236,52 @@ else
   reject_unexpected_trailer "Maister-Node"
 fi
 `;
+}
+
+/** Unbound checkout cleanup may discard only the exact installed platform metadata. */
+export async function assertWorktreeProvenancePristine(
+  worktreePath: string,
+): Promise<void> {
+  const paths = managedPaths(worktreePath);
+
+  await assertSafeAgentMaterializationPath(worktreePath, ".maister-managed");
+  const metadata = await readWorktreeProvenanceMetadata(worktreePath);
+  const expected = [
+    [paths.metadata, metadataText(metadata)],
+    [paths.template, templateText(metadata)],
+    [paths.hook, hookText()],
+    [paths.currentNode, ""],
+  ] as const;
+  const entries = (await readdir(paths.directory)).sort();
+  const hooks = await readdir(path.dirname(paths.hook));
+
+  if (
+    entries.join("\0") !==
+      ["commit-template", "current-node", "hooks", "provenance"].join("\0") ||
+    hooks.length !== 1 ||
+    hooks[0] !== "prepare-commit-msg"
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "Managed provenance contains unknown files",
+      {
+        details: { reason: "launch_preparation_metadata_changed" },
+      },
+    );
+  for (const [file, content] of expected) {
+    await assertSafeAgentMaterializationPath(
+      worktreePath,
+      path.relative(worktreePath, file),
+    );
+    if ((await readFile(file, "utf8")) !== content)
+      throw new MaisterError(
+        "PRECONDITION",
+        "Managed provenance was modified",
+        {
+          details: { reason: "launch_preparation_metadata_changed" },
+        },
+      );
+  }
 }
 
 async function runGit(

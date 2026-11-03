@@ -12,6 +12,7 @@ import path from "node:path";
 import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { taskLaunchPreparationOwnsWorktree } from "@/lib/tasks/launch-preparation-ownership";
 import { CONFIG_PERSISTENCE_DIRECTORY } from "@/lib/project-config-persistence/review-files";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { getDb } from "@/lib/db/client";
@@ -496,6 +497,17 @@ async function checkFinalOrphanRemovalPreconditions(args: {
 
   if (project === null) return "trust_lost";
 
+  if (
+    args.candidate.worktreePath &&
+    (await taskLaunchPreparationOwnsWorktree(args.database, {
+      runId: provenance.runId,
+      worktreePath: args.candidate.worktreePath,
+      parentRepoPath: provenance.parentRepoPath,
+      projectId: project.id,
+    }))
+  )
+    return "ownership_reappeared";
+
   const liveSessions = args.liveSessions;
   const [workspaceRows, runRows] = await Promise.all([
     args.database
@@ -572,6 +584,25 @@ async function processTrustedCandidate(args: {
     })
     .from(runs)
     .where(eq(runs.id, provenance.runId));
+
+  if (
+    await taskLaunchPreparationOwnsWorktree(args.database, {
+      runId: provenance.runId,
+      worktreePath,
+      parentRepoPath: provenance.parentRepoPath,
+      projectId: project.id,
+    })
+  ) {
+    await holdReconciliationFinding({
+      database: args.database,
+      claim: args.claim,
+      resultCode: "launch_intent_owned",
+      now: args.now(),
+    });
+    args.summary.retained += 1;
+
+    return;
+  }
 
   const retryOwners = await args.database
     .execute(sql`SELECT id FROM agent_retry_intents

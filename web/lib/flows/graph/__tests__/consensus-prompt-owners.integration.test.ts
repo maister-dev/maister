@@ -2,10 +2,12 @@ import type { Db } from "@/lib/execution-host/db";
 import type { RealSupervisor } from "@/test-support/real-supervisor";
 import type { ProjectionWorker } from "@/lib/execution-host/events/projection-worker";
 import type { FlowYamlV1 } from "@/lib/config.schema";
+import type { TaskLaunchReceipt } from "@/lib/tasks/launch-types";
 
 import { randomUUID } from "node:crypto";
 import { fork, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { and, eq, inArray, sql } from "drizzle-orm";
@@ -22,6 +24,12 @@ import {
   hitlRequests,
   nodeAttempts,
   runs,
+  tasks,
+  workspaces,
+  platformAcpRunners,
+  agentSchedules,
+  agentProjectLinks,
+  projects,
 } from "@/lib/db/schema";
 import { buildOrchestratorResumeConsumer } from "@/lib/domain-events/orchestrator-resume";
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
@@ -54,8 +62,27 @@ import { startProjectionWorker } from "@/lib/execution-host/events/projection-wo
 import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
-import { seedGraphRun } from "@/test-support/graph-run-seed";
-import { addWorktree, initRepo } from "@/test-support/git-fixture";
+import {
+  seedTaskLaunchFixture,
+  type TaskLaunchFixture,
+} from "@/test-support/task-launch-admission";
+import {
+  mkdtempReal,
+  resolveTestWorktreesRoot,
+} from "@/test-support/worktree-test-root";
+import { interactiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
+import {
+  acceptInteractiveTaskLaunch,
+  taskLaunchSettingsToken,
+} from "@/lib/tasks/launch-intent";
+import { bindAcceptedEngineFixture } from "@/test-support/launch-engine-response";
+import { tryStartRun } from "@/lib/scheduler";
+import { interactiveTaskLaunchRecoveryAuthority } from "@/lib/tasks/launch-continuation";
+import { launchAgentRun } from "@/lib/agents/launch";
+import { claimCronAgentAttempt } from "@/lib/agents/trigger-attempts";
+import { prepareTaskQualification } from "@/lib/tasks/qualification";
+import { qualificationFixture } from "@/test-support/task-qualification";
+import { seedTaskAgentFlowFacadeFixture } from "@/test-support/task-agent-flow-facade";
 import {
   holdChildProjection,
   suppressIncarnations,
@@ -191,6 +218,14 @@ let worker: ProjectionWorker;
 let restoreUrl: () => void = () => {};
 let originalFlowCap: string | undefined;
 let originalAgentCap: string | undefined;
+let activeUserId: string;
+let taskSequence = 0;
+
+vi.mock("@/lib/db/client", () => ({ getDb: () => database.db }));
+vi.mock("@/lib/authz", async (original) => ({
+  ...(await original<typeof import("@/lib/authz")>()),
+  requireActiveSession: async () => ({ id: activeUserId }),
+}));
 
 beforeAll(async () => {
   // Every case seeds its own project and leaves its parent parked; the global
@@ -204,7 +239,14 @@ beforeAll(async () => {
   database = await startMainPostgresTestDb({
     databaseName: "consensus_prompt_owners",
   });
+  const supervisorRoot = await mkdtempReal("consensus-owner-supervisor-");
+
   supervisor = await startRealSupervisor({
+    runtimeRoot: supervisorRoot,
+    workspaceRoots: [
+      supervisorRoot,
+      resolveTestWorktreesRoot("vitest", process.env),
+    ],
     fixtureArgs: ["--hang", "--lines", "0", "--supports-resume"],
   });
   restoreUrl = useRealSupervisorUrl(supervisor.url);
@@ -261,25 +303,48 @@ async function seedConsensusFlow(
   },
   scheduledRequest?: string,
 ) {
-  const name = randomUUID();
-  const repoPath = await initRepo(`${supervisor.runtimeRoot}/repo-${name}`);
-  const worktreePath = await addWorktree(
-    repoPath,
-    `${supervisor.runtimeRoot}/wt-${name}`,
-    `maister/${name}`,
+  const fixtureRoot = path.join(
+    supervisor.runtimeRoot,
+    `launch-${randomUUID()}`,
   );
+
+  await mkdir(fixtureRoot);
+  const fixture = await seedTaskLaunchFixture(database, fixtureRoot);
+
+  activeUserId = fixture.userId;
+  await database.db
+    .update(projects)
+    .set({ taskKey: `C${randomUUID().slice(0, 8)}`.toUpperCase() })
+    .where(eq(projects.id, fixture.projectId));
+  await database.db
+    .update(platformAcpRunners)
+    .set({
+      adapter: "claude",
+      capabilityAgent: "claude",
+      model: "claude-sonnet-4-6",
+      provider: { kind: "anthropic" },
+    })
+    .where(eq(platformAcpRunners.id, fixture.runnerId));
   const nodes: FlowYamlV1["nodes"] = [
     {
       id: "decide",
       type: "consensus",
       prompt,
       participants: [
-        { id: "architect", runner: "primary" },
-        { id: "qa", runner: "primary" },
+        { id: "architect", runner: fixture.runnerId },
+        { id: "qa", runner: fixture.runnerId },
       ],
       material_axes: [...AXES],
       rounds,
-      synthesizer: { runner: "primary" },
+      workspace: { mode: "repo_read" },
+      on_no_consensus: "escalate",
+      synthesizer: { runner: fixture.runnerId },
+      output: {
+        produces: [
+          { id: "consensus_plan", kind: "plan", current: true },
+          { id: "debate_log", kind: "human_note", current: true },
+        ],
+      },
       transitions: { success: "done" },
     },
   ] as unknown as FlowYamlV1["nodes"];
@@ -297,63 +362,181 @@ async function seedConsensusFlow(
     compat: { engine_min: "1.5.0" },
     nodes,
   };
-  const seeded = await seedGraphRun(database.db, manifest, {
-    repoPath,
-    run: scheduledRequest
-      ? {
-          scheduledRequestSnapshot: {
-            version: 1,
-            scheduleId: randomUUID(),
-            triggerAttemptId: randomUUID(),
-            requestAtLaunch: scheduledRequest,
-          },
-        }
-      : undefined,
-    flowRevision: true,
-    workspace: {
-      worktreePath,
-      parentRepoPath: repoPath,
-      branch: `maister/${name}`,
-    },
-  });
+  const [flow] = await database.db
+    .select()
+    .from(flows)
+    .where(eq(flows.id, fixture.flowId));
 
-  // Every seeded project adds a platform runner, so intent auto-match becomes
-  // ambiguous across suites: bind each slot to this run's concrete runner id.
-  const bound = JSON.parse(
-    JSON.stringify(manifest).replaceAll('"primary"', `"${seeded.executorId}"`),
-  );
-
-  await database.db
-    .update(flowRevisions)
-    .set({ manifest: bound })
-    .where(eq(flowRevisions.id, seeded.flowRevisionId!));
-  await database.db
-    .update(flows)
-    .set({ manifest: bound })
-    .where(eq(flows.id, seeded.flowId));
-
-  return seeded;
-}
-
-async function replaceConsensusPrompt(
-  flowRevisionId: string,
-  flowId: string,
-  prompt: string,
-): Promise<void> {
-  const [revision] = await database.db
-    .select({ manifest: flowRevisions.manifest })
-    .from(flowRevisions)
-    .where(eq(flowRevisions.id, flowRevisionId));
-  const manifest = structuredClone(revision.manifest) as {
-    nodes: Array<{ prompt: string }>;
-  };
-
-  manifest.nodes[0].prompt = prompt;
   await database.db
     .update(flowRevisions)
     .set({ manifest })
-    .where(eq(flowRevisions.id, flowRevisionId));
-  await database.db.update(flows).set({ manifest }).where(eq(flows.id, flowId));
+    .where(eq(flowRevisions.id, flow.enabledRevisionId!));
+  await database.db
+    .update(flows)
+    .set({ manifest })
+    .where(eq(flows.id, fixture.flowId));
+  const taskId = randomUUID();
+
+  await database.db.insert(tasks).values({
+    id: taskId,
+    projectId: fixture.projectId,
+    number: ++taskSequence,
+    title: "Consensus command ownership",
+    prompt: "Complete the bounded consensus fixture",
+    flowId: fixture.flowId,
+    runnerId: fixture.runnerId,
+  });
+  const accepted = scheduledRequest
+    ? await acceptScheduledConsensus(fixture, taskId, scheduledRequest)
+    : await acceptInteractiveTaskLaunch(
+        database.db,
+        await interactiveTaskLaunchPrincipal(),
+        {
+          taskId,
+          expectedTaskRevision: 0,
+          expectedSettingsToken: await taskLaunchSettingsToken(
+            database.db,
+            taskId,
+          ),
+          autoPromote: false,
+        },
+        randomUUID(),
+      );
+  const bound = await bindAcceptedEngineFixture(database.db, accepted);
+
+  expect(bound.runId).toEqual(expect.any(String));
+  const runId = bound.runId!;
+  const [parent] = await database.db
+    .select()
+    .from(runs)
+    .where(eq(runs.id, runId));
+
+  expect(parent).toMatchObject({
+    taskId,
+    taskLaunchIntentId: accepted.intentId,
+    taskAdmissionSnapshot: {
+      version: 2,
+      basis: scheduledRequest ? "automatic" : "manual",
+    },
+  });
+  if (scheduledRequest)
+    expect(parent.scheduledRequestSnapshot).toMatchObject({
+      requestAtLaunch: scheduledRequest,
+    });
+
+  expect(await tryStartRun(runId, { db: database.db })).toMatchObject({
+    started: true,
+  });
+  const [workspace] = await database.db
+    .select()
+    .from(workspaces)
+    .where(eq(workspaces.runId, runId));
+
+  return {
+    projectId: fixture.projectId,
+    taskId,
+    executorId: fixture.runnerId,
+    flowId: fixture.flowId,
+    flowRevisionId: flow.enabledRevisionId!,
+    runId,
+    worktreePath: workspace.worktreePath,
+    repoPath: fixture.repo,
+    runtimeRoot: supervisor.runtimeRoot,
+    slug: fixture.projectId,
+  };
+}
+
+async function acceptScheduledConsensus(
+  fixture: TaskLaunchFixture,
+  taskId: string,
+  scheduledRequest: string,
+): Promise<TaskLaunchReceipt> {
+  const { agentId } = await seedTaskAgentFlowFacadeFixture(database, {
+    root: supervisor.runtimeRoot,
+    projectId: fixture.projectId,
+    flowId: fixture.flowId,
+  });
+
+  await database.db
+    .update(agentProjectLinks)
+    .set({ runnerOverrideId: fixture.runnerId })
+    .where(eq(agentProjectLinks.agentId, agentId));
+  const assessment = await prepareTaskQualification(database.db, {
+    projectId: fixture.projectId,
+    taskId,
+    author: { kind: "user", identity: fixture.userId, userId: fixture.userId },
+    request: {
+      requestKey: randomUUID(),
+      expectedInputRevision: 1,
+      expectedQualificationRevision: null,
+      qualification: qualificationFixture(),
+      enqueue: false,
+    },
+  });
+
+  await database.db.transaction(assessment.apply);
+  const scheduleId = randomUUID();
+  const now = new Date();
+
+  await database.db.insert(agentSchedules).values({
+    id: scheduleId,
+    projectId: fixture.projectId,
+    agentId,
+    triggerType: "cron",
+    cronExpr: "* * * * *",
+    timezone: "UTC",
+    nextFireAt: now,
+    requestAtLaunch: scheduledRequest,
+  });
+  const attempt = await claimCronAgentAttempt(
+    database.db,
+    scheduleId,
+    now,
+    new Date(now.getTime() + 60_000),
+  );
+
+  if (!attempt)
+    throw new Error(
+      "Consensus fixture did not acquire its scheduled occurrence",
+    );
+  const launched = await launchAgentRun({
+    agentId,
+    projectId: fixture.projectId,
+    taskId,
+    runId: attempt.reservedRunId,
+    agentScheduleId: scheduleId,
+    agentTriggerReservation: {
+      attemptId: attempt.id,
+      runId: attempt.reservedRunId,
+    },
+    trigger: { source: "cron" },
+    db: database.db,
+  });
+
+  if (!("queued" in launched))
+    throw new Error("Scheduled consensus bypassed durable task admission");
+
+  return launched.receipt;
+}
+
+async function synthesisResponseFixture(response: {
+  text: string;
+  stopReason: "end_turn" | "max_tokens";
+}): Promise<{ file: string; prompt: string }> {
+  const file = path.join(
+    supervisor.runtimeRoot,
+    `synthesis-response-${randomUUID()}.json`,
+  );
+
+  await writeFile(file, JSON.stringify(response));
+  const declared = JSON.parse(
+    consensusPrompt("agree").slice("fixture-output:".length),
+  ) as { bytes: number; text: string };
+
+  return {
+    file,
+    prompt: `fixture-output:${JSON.stringify({ ...declared, consensusSynthesisResponseFile: file })}`,
+  };
 }
 
 function drive(runId: string): Promise<unknown> {
@@ -2013,19 +2196,14 @@ describe("Consensus prompt owners through the production graph driver", () => {
     expect(children).toHaveLength(2);
   }, 180_000);
   it("P0-5: incomplete synthesis keeps its text and Recover mints a fresh generation", async () => {
-    const originalPrompt = consensusPrompt("agree");
-    const seeded = await seedConsensusFlow(originalPrompt);
+    const response = await synthesisResponseFixture({
+      text: "partial synthesis text",
+      stopReason: "max_tokens",
+    });
+    const seeded = await seedConsensusFlow(response.prompt);
 
     await drive(seeded.runId);
-    // This test changes the immutable fixture's authored prompt between the
-    // draft and synthesis drives so the same adapter can return a different
-    // terminal stop reason for synthesis without changing supervisor code.
     await waitForDraftsDone(seeded.runId);
-    await replaceConsensusPrompt(
-      seeded.flowRevisionId!,
-      seeded.flowId,
-      `fixture-output:${JSON.stringify({ bytes: 0, text: "partial synthesis text", stopReason: "max_tokens" })}`,
-    );
     await settleDraftsAndResume(seeded.runId);
     const [failed] = await database.db
       .select()
@@ -2053,9 +2231,13 @@ describe("Consensus prompt owners through the production graph driver", () => {
     if (oldSynthesis.locator.kind !== "inline")
       throw new Error("incomplete synthesis requires inline evidence");
     const hosts = createExecutionHosts({ db: database.db as unknown as Db });
+    const recoveryAuthority = interactiveTaskLaunchRecoveryAuthority(
+      await interactiveTaskLaunchPrincipal(),
+    );
     const recover = () =>
       resumeCrashedRun(seeded.runId, {
         db: database.db as unknown as Db,
+        recoveryAuthority,
         executionHosts: hosts,
         runFlow: (runId, options) =>
           runFlow(runId, {
@@ -2117,10 +2299,14 @@ describe("Consensus prompt owners through the production graph driver", () => {
       .where(eq(nodeAttempts.runId, seeded.runId));
 
     expect(preRecoverAttempts).toHaveLength(1);
-    await replaceConsensusPrompt(
-      seeded.flowRevisionId!,
-      seeded.flowId,
-      originalPrompt,
+    // The provider boundary changes its next response; the accepted Flow and
+    // task input remain immutable across Recover.
+    await writeFile(
+      response.file,
+      JSON.stringify({
+        text: "complete recovered synthesis",
+        stopReason: "end_turn",
+      }),
     );
     const result = await recover();
 
@@ -2167,15 +2353,14 @@ describe("Consensus prompt owners through the production graph driver", () => {
     expect((await recover()).state).toBe("discard-only");
   }, 180_000);
   it("P0-5: an empty end_turn synthesis is a named recoverable crash", async () => {
-    const seeded = await seedConsensusFlow(consensusPrompt("agree"));
+    const response = await synthesisResponseFixture({
+      text: "",
+      stopReason: "end_turn",
+    });
+    const seeded = await seedConsensusFlow(response.prompt);
 
     await drive(seeded.runId);
     await waitForDraftsDone(seeded.runId);
-    await replaceConsensusPrompt(
-      seeded.flowRevisionId!,
-      seeded.flowId,
-      `fixture-output:${JSON.stringify({ bytes: 0, text: "", stopReason: "end_turn" })}`,
-    );
     await settleDraftsAndResume(seeded.runId);
     const [run] = await database.db
       .select({ status: runs.status })

@@ -509,7 +509,7 @@ it.each(["ready", "needs_information"] as const)(
         sql`INSERT INTO task_qualifications(id,project_id,task_id,revision,input_revision,input_digest,request_key,payload_digest,author_kind,author_identity,evidence_target,evidence_sha,value,routing,publication_state,published_at) VALUES (${qualificationId},${complete.projectId},${complete.taskId},1,${input.inputRevision},${input.inputDigest},${randomUUID()},${"a".repeat(64)},'project_token','verified-human-token','main',${sha},${JSON.stringify(assessment)}::jsonb,'{"flowId":null,"runnerId":null,"baseBranch":null,"enqueue":false}'::jsonb,'accepted',now())`,
       );
       await tx.execute(
-        sql`UPDATE tasks SET current_qualification_id=${qualificationId},current_qualification_revision=1,qualification_revision_counter=1,triage_status=${decision === "ready" ? "triaged" : "flagged"} WHERE id=${complete.taskId}`,
+        sql`UPDATE tasks SET current_qualification_id=${qualificationId},current_qualification_revision=1,qualification_revision_counter=1,triage_status=${decision === "ready" ? "triaged" : "flagged"},triage_flag_origin=${decision === "ready" ? null : "qualification"} WHERE id=${complete.taskId}`,
       );
     });
     expect(

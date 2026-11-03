@@ -248,8 +248,14 @@ export async function runContextMountGcSweep(
       id: string;
       status: string;
       agentKind: string | null;
+      taskLaunchIntentId?: string | null;
     }> = await db
-      .select({ id: runs.id, status: runs.status, agentKind: runs.agentKind })
+      .select({
+        id: runs.id,
+        status: runs.status,
+        agentKind: runs.agentKind,
+        taskLaunchIntentId: runs.taskLaunchIntentId,
+      })
       .from(runs)
       .where(and(inArray(runs.id, runIds)));
     const liveIds = new Set(
@@ -257,6 +263,7 @@ export async function runContextMountGcSweep(
         .filter(
           (row) =>
             row.agentKind === "operational" ||
+            (Boolean(row.taskLaunchIntentId) && row.status === "Crashed") ||
             (CONTEXT_MOUNT_LIVE_RUN_STATUSES as readonly string[]).includes(
               row.status,
             ),
@@ -264,6 +271,13 @@ export async function runContextMountGcSweep(
         .map((row) => row.id),
     );
     const knownIds = new Set(ownerRows.map((row) => row.id));
+    const acceptedIds = new Set(
+      ownerRows
+        .filter(
+          (row) => row.agentKind === "code_delivery" && row.taskLaunchIntentId,
+        )
+        .map((row) => row.id),
+    );
 
     for (const candidate of candidates) {
       summary.scanned += 1;
@@ -379,11 +393,20 @@ export async function runContextMountGcSweep(
       }
 
       try {
-        await remove({
-          projectRepoPath: repoPath,
-          worktreePath: candidate.mountPath,
-          force: true,
-        });
+        const clean = async (): Promise<void> => {
+          await remove({
+            projectRepoPath: repoPath,
+            worktreePath: candidate.mountPath,
+            force: true,
+          });
+        };
+
+        if (acceptedIds.has(candidate.runId)) {
+          const { withAcceptedAgentCleanup } =
+            await import("@/lib/agents/accepted-cleanup");
+
+          await withAcceptedAgentCleanup(db, candidate.runId, clean);
+        } else await clean();
         touchedRepos.add(repoPath);
         await rm(candidate.markerPath, { force: true });
         summary.removed += 1;

@@ -66,6 +66,7 @@ export type BudgetBreachAvailabilityContext = {
   taskId: string | null;
   flowId: string | null;
   agentId: string | null;
+  agentKind?: "code_delivery" | "operational" | null;
   parentRunId: string | null;
   agentWorkspace: BudgetBreachAgentWorkspace;
   hasOwnedWorkspace: boolean;
@@ -438,7 +439,10 @@ function isRestartAvailable(context: BudgetBreachAvailabilityContext): boolean {
   return (
     context.runKind === "agent" &&
     context.agentId !== null &&
-    context.agentWorkspace === "worktree"
+    context.agentKind !== "operational" &&
+    (context.agentWorkspace === "worktree" ||
+      (context.agentKind === "code_delivery" &&
+        context.agentWorkspace !== null))
   );
 }
 

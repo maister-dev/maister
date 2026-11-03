@@ -25,6 +25,12 @@ const REFUSALS = [
     reason: "recover_cas_lost",
   },
   {
+    state: "launch-conflict",
+    httpStatus: 409,
+    code: "CONFLICT",
+    reason: "launch_recovery_conflict",
+  },
+  {
     state: "workspace-removed",
     httpStatus: 409,
     code: "PRECONDITION",

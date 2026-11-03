@@ -33,6 +33,7 @@ import {
 import { applyCreateAck } from "./create-ack";
 import { hostPressuredError, isHostPressureRefusal } from "./host-pressure";
 import { issueCommand } from "./ledger";
+import { lockConsensusDraftCommandAdmission } from "./consensus-command-admission";
 import { casTransition, markFailed, requeueDelivering } from "./commands";
 import { ensureSessionOutputIntents } from "./session-output-intents";
 import { isReadoptableWorkspaceError } from "./adoption";
@@ -297,6 +298,7 @@ export async function createOwnedSession(input: {
       const predecessor = original;
 
       original = await db.transaction(async (tx) => {
+        await lockConsensusDraftCommandAdmission(tx, authority.runId);
         await assertOwner(tx);
         if (owner.variant === "agent")
           await assertAgentResumeCreateRequest(tx, owner.turnId, normalized);
@@ -474,6 +476,7 @@ export async function createOwnedSession(input: {
     }
     if (current.state === "delivering") {
       await db.transaction(async (tx) => {
+        await lockConsensusDraftCommandAdmission(tx, current.runId);
         await assertOwner(tx);
         await requeueDelivering(tx, current.id, { logger });
       });

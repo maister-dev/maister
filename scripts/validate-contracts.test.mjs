@@ -214,6 +214,124 @@ test("external HITL success and pending bodies accept the shipped runStatus vari
   assert.equal(pending({ ok: true, state: "delivered" }), false);
 });
 
+test("task launch request contracts preserve complete delivery and execution settings without accepting client authority", () => {
+  const request = {
+    taskId: "task-fixture",
+    expectedTaskRevision: 0,
+    expectedSettingsToken: "resolution-fixture",
+    flowId: "flow-fixture",
+    runnerId: "runner-fixture",
+    baseBranch: "main",
+    baseCommit: "a".repeat(40),
+    targetBranch: "main",
+    deliveryPolicy: {
+      strategy: "pull_request",
+      push: "on_success",
+      trigger: "auto_on_ready",
+      targetBranch: null,
+    },
+    executionPolicy: {
+      preset: "assisted",
+      overrides: {
+        reworkExhaustion: "escalate",
+        crashRetry: "auto_retry",
+        checks: "strict",
+        permissions: "ask",
+        humanGate: "stop",
+        onStuck: "escalate",
+        promotion: "manual",
+        commits: "keep_all",
+        dirtyResolve: "ask",
+        onBudgetBreach: "terminate_restorable",
+        budget: {
+          run: {
+            maxTokens: 1000,
+            hardMaxTokens: 2000,
+            consecutiveFailures: 2,
+            wallClockMinutes: 3,
+            warnAtPct: 80,
+          },
+          task: { maxTokens: null },
+          tree: {},
+        },
+      },
+    },
+    autoPromote: true,
+  };
+
+  for (const file of [
+    "../docs/api/web.openapi.yaml",
+    "../docs/api/external/operations.openapi.yaml",
+  ]) {
+    const document = readContract(file);
+    const launch = schemaValidator(
+      document,
+      `launch-request-${file}`,
+      "TaskLaunchBody",
+    );
+    const replace = schemaValidator(
+      document,
+      `replace-request-${file}`,
+      "TaskLaunchReplaceBody",
+    );
+    const cancel = schemaValidator(
+      document,
+      `cancel-request-${file}`,
+      "TaskLaunchCancelBody",
+    );
+
+    assertValidExample(launch, request);
+    const agentRequest = {
+      taskId: request.taskId,
+      expectedTaskRevision: request.expectedTaskRevision,
+      expectedSettingsToken: request.expectedSettingsToken,
+      agentId: "core:implementer",
+      workspace: "none",
+      runnerId: "codex-sol",
+    };
+
+    assertValidExample(launch, agentRequest);
+    assertValidExample(replace, { ...agentRequest, expectedStateVersion: 1 });
+    assert.equal(launch({ ...request, agentId: agentRequest.agentId }), false);
+    assert.equal(launch({ ...request, workspace: "none" }), false);
+    assert.equal(launch({ ...agentRequest, workspace: "invalid" }), false);
+    assertValidExample(replace, { ...request, expectedStateVersion: 1 });
+    assertValidExample(cancel, { expectedStateVersion: 1 });
+    assert.equal(launch({ ...request, mode: "manual" }), false);
+    assert.equal(launch({ ...request, baseCommit: "invalid-ref" }), false);
+    assert.equal(
+      launch({ ...request, expectedTaskRevision: Number.MAX_SAFE_INTEGER + 1 }),
+      false,
+    );
+    assert.equal(
+      launch({
+        ...request,
+        executionPolicy: {
+          preset: "assisted",
+          overrides: { budget: { run: { maxTokens: 0 } } },
+        },
+      }),
+      false,
+    );
+    assert.equal(
+      launch({
+        ...request,
+        executionPolicy: {
+          preset: "assisted",
+          overrides: { skipProtection: true },
+        },
+      }),
+      false,
+    );
+    assert.equal(replace(request), false);
+    assert.equal(cancel({ expectedStateVersion: 0 }), false);
+    assert.equal(
+      cancel({ expectedStateVersion: 1, actorUserId: "forged" }),
+      false,
+    );
+  }
+});
+
 test("task launch receipts validate their real examples and distinguish Flow and repository-free agent snapshots", () => {
   for (const file of [
     "../docs/api/web.openapi.yaml",
@@ -226,6 +344,74 @@ test("task launch receipts validate their real examples and distinguish Flow and
       "TaskLaunchReceipt",
     );
     const example = document.components.schemas.TaskLaunchReceipt.example;
+    const error = schemaValidator(
+      document,
+      `launch-error-${file}`,
+      "TaskLaunchError",
+    );
+    const conflict = {
+      code: "CONFLICT",
+      message: "This task already has accepted delivery work",
+      details: {
+        reason: "launch_already_reserved",
+        existing: {
+          intentId: "earlier-intent",
+          runId: null,
+          basis: "automatic",
+        },
+      },
+    };
+
+    assertValidExample(error, conflict);
+    assertValidExample(error, {
+      code: "EXECUTOR_UNAVAILABLE",
+      message: "Assign an available runner to the indicated Flow slot",
+      details: {
+        reason: "flow_runner_unresolved",
+        slotKey: "session:implementation",
+        label: "Implementation",
+      },
+    });
+    if (file.includes("/external/")) {
+      assertValidExample(error, {
+        code: "UNAUTHORIZED",
+        message: "insufficient scope",
+        details: { requiredScope: "runs:launch" },
+      });
+      assertValidExample(error, {
+        code: "UNAUTHORIZED",
+        message: "owner role does not allow launch",
+        details: { requiredAction: "launchRun" },
+      });
+      assertValidExample(error, {
+        code: "CONFLICT",
+        message: "effect already succeeded",
+        details: {
+          reason: "duplicate_of_operation",
+          operationId: "existing-operation",
+        },
+      });
+    }
+    assert.equal(
+      error({
+        ...conflict,
+        details: {
+          ...conflict.details,
+          existing: { intentId: null, runId: null, basis: "manual" },
+        },
+      }),
+      false,
+    );
+    assert.equal(
+      error({
+        ...conflict,
+        details: {
+          ...conflict.details,
+          existing: { ...conflict.details.existing, token: "private" },
+        },
+      }),
+      false,
+    );
 
     assertValidExample(validate, example);
     assert.equal(

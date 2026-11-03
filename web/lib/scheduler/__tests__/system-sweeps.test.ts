@@ -30,6 +30,7 @@ const runSweepTickMock = vi.hoisted(() => vi.fn());
 const runReconcileSweepMock = vi.hoisted(() => vi.fn());
 const reconcileTerminalCostRollupsMock = vi.hoisted(() => vi.fn());
 const runWorkspaceGcSweepMock = vi.hoisted(() => vi.fn());
+const sweepTaskLaunchPreparationCleanupMock = vi.hoisted(() => vi.fn());
 const runWorkspaceReconciliationSweepMock = vi.hoisted(() => vi.fn());
 const runRevisionGcSweepMock = vi.hoisted(() => vi.fn());
 const runCapabilitiesCleanupSweepMock = vi.hoisted(() => vi.fn());
@@ -76,6 +77,9 @@ vi.mock("@/lib/runs/cost-reconcile-sweep", () => ({
 }));
 vi.mock("@/lib/gc/workspace-gc", () => ({
   runWorkspaceGcSweep: runWorkspaceGcSweepMock,
+}));
+vi.mock("@/lib/tasks/launch-preparation-cleanup", () => ({
+  sweepTaskLaunchPreparationCleanup: sweepTaskLaunchPreparationCleanupMock,
 }));
 vi.mock("@/lib/gc/operational-disposition", () => ({
   sweepOperationalDispositions: vi.fn(async () => ({
@@ -261,6 +265,13 @@ describe("scheduler system sweeps", () => {
       .mockReset()
       .mockResolvedValue({ candidates: 0, reconciled: 0 });
     runWorkspaceGcSweepMock.mockReset().mockResolvedValue(workspaceSummary);
+    sweepTaskLaunchPreparationCleanupMock.mockReset().mockResolvedValue({
+      visited: 0,
+      none: 0,
+      busy: 0,
+      removed: 0,
+      retained: 0,
+    });
     runWorkspaceReconciliationSweepMock.mockReset().mockResolvedValue({
       scanned: 0,
       retained: 0,
@@ -469,6 +480,7 @@ describe("scheduler system sweeps", () => {
     await runSystemSweep();
 
     expect(runWorkspaceGcSweepMock).toHaveBeenCalledTimes(1);
+    expect(sweepTaskLaunchPreparationCleanupMock).toHaveBeenCalledTimes(1);
     expect(runWorkspaceReconciliationSweepMock).toHaveBeenCalledTimes(1);
     expect(runRevisionGcSweepMock).toHaveBeenCalledTimes(1);
     expect(runCapabilitiesCleanupSweepMock).toHaveBeenCalledTimes(1);

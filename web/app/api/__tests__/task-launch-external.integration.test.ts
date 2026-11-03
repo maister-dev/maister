@@ -34,6 +34,13 @@ let fixture: TaskLaunchFixture;
 let root: string;
 let sequence = 0;
 
+// The real Next request lifecycle runs these callbacks in the browser lane.
+// Direct handler tests exercise admission without starting autonomous workers.
+vi.mock("next/server", async (original) => ({
+  ...(await original<typeof import("next/server")>()),
+  after: vi.fn(),
+}));
+
 vi.mock("@/lib/db/client", () => ({ getDb: () => database.db }));
 
 beforeAll(async () => {

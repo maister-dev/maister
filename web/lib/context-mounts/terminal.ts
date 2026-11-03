@@ -137,6 +137,7 @@ export async function releaseRunContextMounts(args: {
     .select({
       status: runs.status,
       agentKind: runs.agentKind,
+      taskLaunchIntentId: runs.taskLaunchIntentId,
       contextMounts: runs.contextMounts,
       agentId: runs.agentId,
       projectId: runs.projectId,
@@ -146,6 +147,7 @@ export async function releaseRunContextMounts(args: {
     .where(eq(runs.id, args.runId))) as Array<{
     status: string;
     agentKind: string | null;
+    taskLaunchIntentId: string | null;
     contextMounts: ContextMountSnapshot[] | null;
     agentId: string | null;
     projectId: string | null;
@@ -174,73 +176,84 @@ export async function releaseRunContextMounts(args: {
       { details: { reason: "operational_context_owner_required" } },
     );
 
-  let dirty = 0;
+  const release = async (): Promise<ReleaseRunContextMountsResult> => {
+    let dirty = 0;
 
-  for (const mount of snapshot) {
-    const verdict = await checkContextMountDirt(mount.mountPath);
+    for (const mount of snapshot) {
+      const verdict = await checkContextMountDirt(mount.mountPath);
 
-    if (verdict.kind === "clean" || verdict.kind === "gone") continue;
+      if (verdict.kind === "clean" || verdict.kind === "gone") continue;
 
-    dirty += 1;
+      dirty += 1;
 
-    const violation =
-      verdict.kind === "dirty"
-        ? verdict.porcelain.slice(0, 512)
-        : `dirt check indeterminate: ${verdict.error.slice(0, 512)}`;
+      const violation =
+        verdict.kind === "dirty"
+          ? verdict.porcelain.slice(0, 512)
+          : `dirt check indeterminate: ${verdict.error.slice(0, 512)}`;
 
-    log.warn(
+      log.warn(
+        {
+          runId: args.runId,
+          siblingSlug: mount.slug,
+          mountPath: mount.mountPath,
+          committish: mount.committish,
+          porcelain: violation,
+        },
+        "[FIX:context-mount-dirty] read-only context mount was written to — L2 bypassed",
+      );
+
+      // Quarantine evidence in the ADR-090 dirty-watchdog shape (one transaction:
+      // agent flag + reason, plus the system comment + activity entry when the run
+      // is task-bound). A flow run with no driving agent has no catalog row to
+      // flag, so the WARN above is the whole record for that case.
+      if (run.agentId && run.projectId) {
+        await db
+          .transaction(async (tx: Db) => {
+            await quarantineAgentInTx({
+              tx,
+              agentId: run.agentId as string,
+              runId: args.runId,
+              projectId: run.projectId as string,
+              taskId: run.taskId,
+              reason: `read-only context mount "${mount.slug}" at ${mount.mountPath} was modified: ${violation}`,
+            });
+          })
+          .catch((err: unknown) => {
+            log.error(
+              {
+                runId: args.runId,
+                siblingSlug: mount.slug,
+                err: err instanceof Error ? err.message : String(err),
+              },
+              "context mount quarantine evidence write failed",
+            );
+          });
+      }
+    }
+
+    const removal = await releaseContextMounts(snapshot);
+
+    log.info(
       {
         runId: args.runId,
-        siblingSlug: mount.slug,
-        mountPath: mount.mountPath,
-        committish: mount.committish,
-        porcelain: violation,
+        status: run.status,
+        released: removal.released,
+        dirty,
       },
-      "[FIX:context-mount-dirty] read-only context mount was written to — L2 bypassed",
+      "context mounts released at the terminal choke",
     );
 
-    // Quarantine evidence in the ADR-090 dirty-watchdog shape (one transaction:
-    // agent flag + reason, plus the system comment + activity entry when the run
-    // is task-bound). A flow run with no driving agent has no catalog row to
-    // flag, so the WARN above is the whole record for that case.
-    if (run.agentId && run.projectId) {
-      await db
-        .transaction(async (tx: Db) => {
-          await quarantineAgentInTx({
-            tx,
-            agentId: run.agentId as string,
-            runId: args.runId,
-            projectId: run.projectId as string,
-            taskId: run.taskId,
-            reason: `read-only context mount "${mount.slug}" at ${mount.mountPath} was modified: ${violation}`,
-          });
-        })
-        .catch((err: unknown) => {
-          log.error(
-            {
-              runId: args.runId,
-              siblingSlug: mount.slug,
-              err: err instanceof Error ? err.message : String(err),
-            },
-            "context mount quarantine evidence write failed",
-          );
-        });
-    }
+    return { released: removal.released, dirty, skippedLive: false };
+  };
+
+  if (run.agentKind === "code_delivery" && run.taskLaunchIntentId) {
+    const { withAcceptedAgentCleanup } =
+      await import("@/lib/agents/accepted-cleanup");
+
+    return withAcceptedAgentCleanup(db, args.runId, release);
   }
 
-  const removal = await releaseContextMounts(snapshot);
-
-  log.info(
-    {
-      runId: args.runId,
-      status: run.status,
-      released: removal.released,
-      dirty,
-    },
-    "context mounts released at the terminal choke",
-  );
-
-  return { released: removal.released, dirty, skippedLive: false };
+  return release();
 }
 
 /** Called only by operational disposition, after immutable ownership and evidence checks. */

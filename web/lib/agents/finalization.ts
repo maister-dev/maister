@@ -77,6 +77,7 @@ import {
   recordInvalidRunResult,
 } from "@/lib/run-results/ledger";
 import { gcAgeDays, worktreesRoot } from "@/lib/instance-config";
+import { withAcceptedAgentCleanup } from "@/lib/agents/accepted-cleanup";
 import { removeOwnedPlainAgentDirectory } from "@/lib/gc/plain-agent-directory-gc";
 import { removeWorktree } from "@/lib/worktree";
 import { promoteNextPending } from "@/lib/scheduler";
@@ -272,6 +273,7 @@ type FinalizationContext = Readonly<{
     | "operationalIntegrityBaseline"
     | "operationalTerminal"
     | "taskQualificationSnapshot"
+    | "taskLaunchIntentId"
   > & { projectId: string };
   workspaceRows: readonly Pick<Workspace, "id" | "worktreePath">[];
   workspaceContext: Awaited<ReturnType<typeof loadAgentWorkspaceContext>>;
@@ -321,6 +323,7 @@ async function loadFinalizationContext(
       operationalIntegrityBaseline: runs.operationalIntegrityBaseline,
       operationalTerminal: runs.operationalTerminal,
       taskQualificationSnapshot: runs.taskQualificationSnapshot,
+      taskLaunchIntentId: runs.taskLaunchIntentId,
     })
     .from(runs)
     .where(eq(runs.id, runId));
@@ -1128,6 +1131,31 @@ async function prepareAgentFinalization(
       );
 
     if (original.run.agentKind === "operational") {
+      // Qualification publication and terminalization are committed before a
+      // delivery intent reads their current pointers or resolves repository state.
+      if (original.run.taskId) {
+        const { enqueueQualifiedAutomaticTaskLaunch } =
+          await import("@/lib/tasks/launch-automatic-enqueue");
+
+        try {
+          const intent = await enqueueQualifiedAutomaticTaskLaunch(
+            _db,
+            original.run.taskId,
+          );
+
+          if (intent?.basis === "automatic")
+            await promoteNextPending({ db: _db, pool: "flow" });
+        } catch (error) {
+          log.error(
+            {
+              runId,
+              taskId: original.run.taskId,
+              errorType: error instanceof Error ? error.name : "unknown",
+            },
+            "qualified-delivery-enqueue-deferred",
+          );
+        }
+      }
       log.info(
         { runId, status: result.status },
         "operational-terminal-cleanup-armed",
@@ -1155,89 +1183,107 @@ async function prepareAgentFinalization(
       return;
     }
 
-    let materializationReleaseFailedFor: string | null = null;
+    const cleanupAcceptedResources = async (): Promise<void> => {
+      let materializationReleaseFailedFor: string | null = null;
 
-    if (materializationCleanup) {
-      const cleanup = materializationCleanup as {
+      if (materializationCleanup) {
+        const cleanup = materializationCleanup as {
+          cwd: string;
+          workspace: "none" | "repo_read" | "worktree";
+        };
+
+        await restoreAgentMaterialization(cleanup.cwd, runId).catch(
+          (err: unknown) => {
+            materializationReleaseFailedFor = cleanup.cwd;
+            log.error(
+              {
+                runId,
+                workspace: cleanup.workspace,
+                errorType: err instanceof Error ? err.name : "unknown",
+              },
+              "post-commit agent materialization release failed",
+            );
+          },
+        );
+      }
+
+      log.info(
+        {
+          runId,
+          outcome,
+          status: result.status,
+          hasReason: Boolean(opts.reason),
+        },
+        "agent run finalized",
+      );
+
+      if (ephemeralCleanup) {
+        const cleanup = ephemeralCleanup as {
+          repoPath: string;
+          worktreePath: string;
+        };
+
+        if (materializationReleaseFailedFor === cleanup.worktreePath) {
+          log.warn(
+            { runId, workspace: "repo_read" },
+            "ephemeral checkout retained because materialization release must be retried",
+          );
+        } else {
+          await removeWorktree({
+            projectRepoPath: cleanup.repoPath,
+            worktreePath: cleanup.worktreePath,
+            force: true,
+          }).catch((err: unknown) => {
+            log.warn(
+              {
+                runId,
+                errorType: err instanceof Error ? err.name : "unknown",
+              },
+              "ephemeral checkout removal failed — next spawn recreates it",
+            );
+          });
+        }
+      }
+
+      const plainAgentCleanup = materializationCleanup as {
         cwd: string;
         workspace: "none" | "repo_read" | "worktree";
-      };
+      } | null;
 
-      await restoreAgentMaterialization(cleanup.cwd, runId).catch(
-        (err: unknown) => {
-          materializationReleaseFailedFor = cleanup.cwd;
-          log.error(
-            {
-              runId,
-              workspace: cleanup.workspace,
-              errorType: err instanceof Error ? err.name : "unknown",
-            },
-            "post-commit agent materialization release failed",
-          );
-        },
-      );
-    }
-
-    log.info(
-      {
-        runId,
-        outcome,
-        status: result.status,
-        hasReason: Boolean(opts.reason),
-      },
-      "agent run finalized",
-    );
-
-    if (ephemeralCleanup) {
-      const cleanup = ephemeralCleanup as {
-        repoPath: string;
-        worktreePath: string;
-      };
-
-      if (materializationReleaseFailedFor === cleanup.worktreePath) {
-        log.warn(
-          { runId, workspace: "repo_read" },
-          "ephemeral checkout retained because materialization release must be retried",
-        );
-      } else {
-        await removeWorktree({
-          projectRepoPath: cleanup.repoPath,
-          worktreePath: cleanup.worktreePath,
-          force: true,
+      if (
+        plainAgentCleanup?.workspace === "none" &&
+        materializationReleaseFailedFor !== plainAgentCleanup.cwd
+      ) {
+        await removeOwnedPlainAgentDirectory({
+          root: worktreesRoot(),
+          directoryPath: plainAgentCleanup.cwd,
         }).catch((err: unknown) => {
           log.warn(
             {
               runId,
               errorType: err instanceof Error ? err.name : "unknown",
             },
-            "ephemeral checkout removal failed — next spawn recreates it",
+            "plain agent directory removal failed and will retry during GC",
           );
         });
       }
-    }
+    };
 
-    const plainAgentCleanup = materializationCleanup as {
-      cwd: string;
-      workspace: "none" | "repo_read" | "worktree";
-    } | null;
-
-    if (
-      plainAgentCleanup?.workspace === "none" &&
-      materializationReleaseFailedFor !== plainAgentCleanup.cwd
-    ) {
-      await removeOwnedPlainAgentDirectory({
-        root: worktreesRoot(),
-        directoryPath: plainAgentCleanup.cwd,
-      }).catch((err: unknown) => {
+    if (original.run.taskLaunchIntentId) {
+      try {
+        await withAcceptedAgentCleanup(_db, runId, cleanupAcceptedResources);
+      } catch (error) {
         log.warn(
           {
             runId,
-            errorType: err instanceof Error ? err.name : "unknown",
+            status: result.status,
+            reason: "launch_cleanup_deferred",
+            errorType: error instanceof Error ? error.name : "unknown",
           },
-          "plain agent directory removal failed and will retry during GC",
+          "accepted agent cleanup deferred to its durable terminal-run GC candidate",
         );
-      });
-    }
+      }
+    } else await cleanupAcceptedResources();
 
     // ADR-157 (T32): release this run's read-only sibling mounts from the SAME
     // post-commit choke that releases the ephemeral `-ro` checkout. Reads the

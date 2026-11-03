@@ -22,6 +22,7 @@ import { canonicalCommandJson } from "../../../runtime/command-json";
 
 import { ADMISSIBLE_PROMPT_INCARNATION_STATES } from "./session-binding";
 import { isAdmissible } from "./assignments";
+import { lockConsensusDraftCommandAdmission } from "./consensus-command-admission";
 import { insertCommand, markFenced } from "./commands";
 import { asAssignmentId, asCommandId } from "./types";
 import { PromptOwnerSchema } from "./prompt-owner-contract";
@@ -351,6 +352,7 @@ export async function issueOwnedPrompt(
   assertUpgradeMaintenanceAllows("prompt_turn");
 
   return db.transaction(async (tx) => {
+    await lockConsensusDraftCommandAdmission(tx, input.assignment.runId);
     const admission = await input.admitOwner(tx);
     const parsed = PromptOwnerSchema.safeParse(admission.owner);
 

@@ -4,23 +4,25 @@ import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 
+import { NextRequest } from "next/server";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
-import { eq } from "drizzle-orm";
 
 import { POST } from "@/app/api/task-launch-intents/route";
+import { GET as PREVIEW } from "@/app/api/runs/launch-options/route";
 import { GET } from "@/app/api/task-launch-intents/[intentId]/route";
 import { POST as CANCEL } from "@/app/api/task-launch-intents/[intentId]/cancel/route";
 import { POST as REPLACE } from "@/app/api/task-launch-intents/[intentId]/replace/route";
-import { tasks, taskLaunchIntents } from "@/lib/db/schema";
+import { tasks } from "@/lib/db/schema";
 import { updateTask } from "@/lib/services/tasks";
 import * as worktree from "@/lib/worktree";
 import { mintAssignment } from "@/lib/execution-host/assignments";
-import {
-  seedLocalHost,
-  seedWorkspace,
-} from "@/test-support/execution-host-seed";
+import { seedWorkspace } from "@/test-support/execution-host-seed";
 import { MaisterError } from "@/lib/errors";
 import { taskLaunchSettingsToken } from "@/lib/tasks/launch-intent";
+import { prepareTaskLaunchFirstDispatch } from "@/lib/tasks/launch-first-dispatch";
+import { takeSchedulerLock } from "@/lib/scheduler";
+import { prepareTaskLaunchIntent } from "@/lib/tasks/launch-dispatch";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import { mkdtempReal } from "@/test-support/worktree-test-root";
 import {
   seedTaskLaunchFixture,
@@ -35,19 +37,33 @@ import {
 let database: StartedPostgresTestDb;
 let root: string;
 let fixture: TaskLaunchFixture;
+let fixtureHostId: string;
 let sessionActive = true;
 let sessionUserId: string | null = null;
 let seq = 0;
 
+// The real Next request lifecycle runs these callbacks in the browser lane.
+// Direct handler tests exercise admission without starting autonomous workers.
+vi.mock("next/server", async (original) => ({
+  ...(await original<typeof import("next/server")>()),
+  after: vi.fn(),
+}));
+
 vi.mock("@/lib/db/client", () => ({ getDb: () => database.db }));
+vi.mock("@/lib/supervisor-client", async (original) => ({
+  ...(await original<typeof import("@/lib/supervisor-client")>()),
+  checkSupervisorHealth: async () => ({ kind: "available" }),
+  listSessions: async () => [],
+}));
 vi.mock("@/lib/authz", async (original) => ({
   ...(await original<typeof import("@/lib/authz")>()),
   requireActiveSession: async () => {
     if (!sessionActive)
       throw new MaisterError("UNAUTHENTICATED", "Session is required");
 
-    return { id: sessionUserId ?? fixture.userId };
+    return { id: sessionUserId ?? fixture.userId, role: "admin" };
   },
+  requireProjectAction: async () => ({ role: "owner" }),
 }));
 
 beforeAll(async () => {
@@ -56,10 +72,14 @@ beforeAll(async () => {
   });
   root = await mkdtempReal("task-launch-http-");
   fixture = await seedTaskLaunchFixture(database, root);
+  ({ hostId: fixtureHostId } = await fakeExecutionHosts(database.db));
+  vi.stubEnv("MAISTER_WORKTREES_ROOT", path.join(root, "worktrees"));
+  vi.stubEnv("MAISTER_RUNTIME_ROOT", path.join(root, "runtime"));
 }, 180_000);
 afterAll(async () => {
   await database?.stop();
   if (root) await rm(root, { recursive: true, force: true });
+  vi.unstubAllEnvs();
 });
 
 async function body() {
@@ -96,6 +116,45 @@ function request(
     body: JSON.stringify(payload),
   });
 }
+
+it("LA10 preview supplies the displayed revision, automatic triage state and existing launch without executing", async () => {
+  const input = await body();
+  const url = `http://localhost/api/runs/launch-options?taskId=${input.taskId}`;
+  const before = await PREVIEW(new NextRequest(url));
+
+  expect(before.status).toBe(200);
+  const preview = await before.json();
+
+  expect(preview.task.revision).toBe(input.expectedTaskRevision);
+  expect(preview.settingsToken).toBe(input.expectedSettingsToken);
+  expect(preview.canManagePackages).toBe(true);
+  expect(preview.canCutPackages).toBe(true);
+  expect(preview.qualification).toMatchObject({
+    required: true,
+    freshness: "unassessed",
+    blockedReason: "qualification_required",
+  });
+  expect(preview.activeLaunch).toBeNull();
+  const accepted = await (await POST(request(input))).json();
+  const after = await (await PREVIEW(new NextRequest(url))).json();
+
+  expect(after.activeLaunch).toEqual(accepted);
+  expect(JSON.stringify(after.activeLaunch)).not.toContain(
+    "Private execution input",
+  );
+  const runs = await database.pool.query(
+    "SELECT id FROM runs WHERE task_id=$1",
+    [input.taskId],
+  );
+
+  expect(runs.rows).toEqual([]);
+  const malformed = new URL(url);
+
+  malformed.searchParams.set("packageVersions", "{");
+  expect((await PREVIEW(new NextRequest(malformed))).status).toBe(422);
+  malformed.searchParams.set("packageVersions", '{"package":"adopt"}');
+  expect((await PREVIEW(new NextRequest(malformed))).status).toBe(422);
+});
 
 it("LA13 accepts a recoverable intent-only response, replays its key, and GET exposes no input or mutation", async () => {
   const input = await body();
@@ -157,6 +216,27 @@ it("LA13 accepts a recoverable intent-only response, replays its key, and GET ex
       [fixture.projectId],
     );
   }
+});
+
+it("LA06 reports the existing request and its basis without accepting a competing decision", async () => {
+  const input = await body();
+  const accepted = await (await POST(request(input))).json();
+  const refused = await POST(request(input));
+
+  expect(refused.status).toBe(409);
+  expect(await refused.json()).toMatchObject({
+    code: "CONFLICT",
+    details: {
+      reason: "launch_already_reserved",
+      existing: { intentId: accepted.intentId, runId: null, basis: "manual" },
+    },
+  });
+  const intents = await database.pool.query(
+    "SELECT id,basis->>'kind' AS basis FROM task_launch_intents WHERE task_id=$1",
+    [input.taskId],
+  );
+
+  expect(intents.rows).toEqual([{ id: accepted.intentId, basis: "manual" }]);
 });
 
 it("LA07 authenticates before body parsing and refuses client admission authority fields", async () => {
@@ -271,7 +351,7 @@ it("LA08/13 cancels accepted work exactly once, replays the cancellation key and
   try {
     cancelled = await CANCEL(request(cancellation, key), params);
   } finally {
-    vi.unstubAllEnvs();
+    vi.stubEnv("MAISTER_UPGRADE_MAINTENANCE", undefined);
   }
 
   expect(cancelled.status).toBe(200);
@@ -383,41 +463,45 @@ it("LA05/08/13 replaces held work atomically, rolls back a refused replacement a
 });
 
 it("LA08 cancels a bound Pending run through the terminal owner and refuses cancellation after commitment", async () => {
-  const host = await seedLocalHost(database.db);
-
   for (const commitment of [false, true]) {
     const input = await body();
     const accepted = await (await POST(request(input))).json();
-    const bound = await bindPendingTaskLaunchFixture(
-      database,
-      accepted.intentId,
-    );
     const db: Db = database.db;
+    let bound: { runId: string; stateVersion: number };
 
-    await db.transaction((tx) =>
-      mintAssignment(tx, {
+    if (commitment) {
+      const prepared = await prepareTaskLaunchIntent(db, accepted.intentId);
+
+      if (!prepared.runId)
+        throw new Error("Expected a real prepared Pending run");
+      bound = { runId: prepared.runId, stateVersion: prepared.stateVersion };
+    } else {
+      bound = await bindPendingTaskLaunchFixture(database, accepted.intentId);
+      await db.transaction((tx) =>
+        mintAssignment(tx, {
+          runId: bound.runId,
+          hostId: fixtureHostId,
+          reason: "launch",
+        }),
+      );
+      await seedWorkspace(database.db, {
         runId: bound.runId,
-        hostId: host.id,
-        reason: "launch",
-      }),
-    );
-    await seedWorkspace(database.db, {
-      runId: bound.runId,
-      projectId: fixture.projectId,
-      worktreePath: path.join(root, `pending-${bound.runId}`),
-      parentRepoPath: fixture.repo,
-    });
+        projectId: fixture.projectId,
+        worktreePath: path.join(root, `pending-${bound.runId}`),
+        parentRepoPath: fixture.repo,
+      });
+    }
     let expectedStateVersion = bound.stateVersion;
 
     if (commitment) {
       expectedStateVersion += 1;
-      await database.db
-        .update(taskLaunchIntents)
-        .set({
-          dispatchCommittedAt: new Date(),
-          stateVersion: expectedStateVersion,
-        })
-        .where(eq(taskLaunchIntents.id, accepted.intentId));
+      const dispatch = await prepareTaskLaunchFirstDispatch(db, bound.runId);
+
+      if (!dispatch) throw new Error("Expected an undispatched bound fixture");
+      await db.transaction(async (tx) => {
+        await takeSchedulerLock(tx);
+        await dispatch.apply(tx);
+      });
     }
     const response = await CANCEL(request({ expectedStateVersion }), {
       params: Promise.resolve({ intentId: accepted.intentId }),
@@ -499,4 +583,56 @@ it("LA08 leaves cancellation available during slow replacement Git preflight and
       )
     ).rows[0].n,
   ).toBe(1);
+});
+
+it("LA14 unresolved runner refusal identifies the actionable Flow slot without accepting work or exposing task input", async () => {
+  const input = await body();
+
+  await database.pool.query(
+    "UPDATE platform_acp_runners SET enabled=false WHERE id=$1",
+    [fixture.runnerId],
+  );
+  try {
+    const response = await POST(
+      request({
+        ...input,
+        expectedSettingsToken: await taskLaunchSettingsToken(
+          database.db,
+          input.taskId,
+        ),
+      }),
+    );
+    const error = await response.json();
+
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(error).toMatchObject({
+      details: {
+        reason: "flow_runner_unresolved",
+        slotKey: expect.any(String),
+        label: expect.any(String),
+      },
+    });
+    expect(error.message).toMatch(/runner/i);
+    expect(JSON.stringify(error)).not.toContain("Private execution input");
+    expect(
+      (
+        await database.pool.query(
+          "SELECT id FROM task_launch_intents WHERE task_id=$1",
+          [input.taskId],
+        )
+      ).rows,
+    ).toEqual([]);
+    expect(
+      (
+        await database.pool.query("SELECT id FROM runs WHERE task_id=$1", [
+          input.taskId,
+        ])
+      ).rows,
+    ).toEqual([]);
+  } finally {
+    await database.pool.query(
+      "UPDATE platform_acp_runners SET enabled=true WHERE id=$1",
+      [fixture.runnerId],
+    );
+  }
 });

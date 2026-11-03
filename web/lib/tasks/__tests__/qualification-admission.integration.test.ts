@@ -11,6 +11,7 @@ import { launchRun } from "@/lib/services/runs";
 import {
   prepareTaskDeliveryAdmission,
   assertTaskAdmissionForDispatch,
+  assertLegacyTriageOrCurrentQualification,
 } from "@/lib/tasks/qualification-admission";
 import {
   prepareTaskQualification,
@@ -71,7 +72,10 @@ it("IT-UX-19 refuses unassessed delivery and legacy triage bypass, pins current 
       { actorUserId: userId, authorize: async () => undefined },
       database.db,
     ),
-  ).rejects.toMatchObject({ details: { reason: "qualification_required" } });
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "task_launch_intent_required" },
+  });
   await expect(
     prepareTaskDeliveryAdmission(database.db, { projectId, taskId }),
   ).rejects.toMatchObject({
@@ -193,14 +197,15 @@ it("IT-UX-19 refuses unassessed delivery and legacy triage bypass, pins current 
     "INSERT INTO tasks(id,project_id,number,title,prompt) VALUES ($1,$2,1,'Existing behavior','Legacy')",
     [legacyTask, legacy],
   );
-  expect(
-    (
-      await prepareTaskDeliveryAdmission(database.db, {
-        projectId: legacy,
-        taskId: legacyTask,
-      })
-    ).snapshot.mode,
-  ).toBe("legacy");
+  await expect(
+    prepareTaskDeliveryAdmission(database.db, {
+      projectId: legacy,
+      taskId: legacyTask,
+    }),
+  ).rejects.toMatchObject({ details: { reason: "qualification_required" } });
+  await expect(
+    assertLegacyTriageOrCurrentQualification(database.db, legacy, legacyTask),
+  ).resolves.toBeUndefined();
   await database.db.transaction((tx) =>
     requireTaskRequalification(tx as unknown as Db, legacy, legacyTask),
   );

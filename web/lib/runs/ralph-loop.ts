@@ -14,7 +14,8 @@ import { isGraphOnlyCutoverFailure } from "@/lib/domain-events/cutover";
 import { ralphMaxAttempts } from "@/lib/instance-config";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { crashRetryFromSnapshot } from "@/lib/runs/execution-policy";
-import { launchRun } from "@/lib/services/runs";
+import { acceptRalphRetryTaskLaunch } from "@/lib/runs/ralph-task-launch";
+import { queryErrorDiagnostics } from "@/lib/db/pg-error";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { runs, tasks } = schemaModule as unknown as Record<string, any>;
@@ -55,7 +56,7 @@ export function buildRalphLoopConsumer(
     startFrom: "now",
     async handle(events: DomainEventRow[]): Promise<void> {
       const _db = opts.db ?? getDb();
-      const launch = opts.launch ?? launchRun;
+      const launch = opts.launch;
       const max = (opts.maxAttempts ?? ralphMaxAttempts)();
 
       for (const event of events) {
@@ -65,6 +66,24 @@ export function buildRalphLoopConsumer(
             { eventId: event.id, runId: event.runId, reason: "graph-cutover" },
             "ralph relaunch skipped terminal upgrade cut-over",
           );
+          continue;
+        }
+
+        if (!launch) {
+          try {
+            await acceptRalphRetryTaskLaunch(_db, event.runId);
+          } catch (error) {
+            log.warn(
+              {
+                eventId: event.id,
+                runId: event.runId,
+                code: isMaisterError(error) ? error.code : "UNKNOWN",
+                reason: isMaisterError(error) ? error.details?.reason : null,
+                ...queryErrorDiagnostics(error),
+              },
+              "automatic retry admission deferred",
+            );
+          }
           continue;
         }
 

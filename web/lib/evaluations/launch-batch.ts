@@ -3,10 +3,11 @@ import "server-only";
 import type { Db } from "@/lib/evaluations/db";
 import type { EvaluationControlledRecipeDefinition } from "@/lib/evaluations/recipe-schema";
 
-import { and, eq, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
+import { queryErrorDiagnostics } from "@/lib/db/pg-error";
 import {
   evaluationLaunchBatchItems,
   evaluationLaunchBatches,
@@ -24,15 +25,12 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// The run-launch seam (M47 D17). The default adapter (co-evolve, T6.4 wiring)
-// calls `launchRun({ autoPromote: false, ... })` with the T6.2-resolved slot map;
-// tests inject a stub so the durable batch FSM (crash/partial/dedup/retry +
-// launched-participant lineage) is verified without the whole run-launch stack —
-// the same injectable-seam discipline as the T4.1 judge-spawn seam.
-// CONTRACT: `launchKey` (the batch item id, stable across retries) is the
-// adapter's dedup handle — a re-driven item re-invokes the seam with the SAME
-// key and MUST get the same run back, never a second one. The crash-recovery
-// paths below are convergent only under this contract.
+// A stable batch-item key identifies one canonical launch intent. Acceptance
+// remains pending until the execution owner binds a real run; only that run
+// can acquire participant lineage. Re-entry never issues a fresh decision.
+export type ControlledLaunchResult =
+  Readonly<{ runId: string }> | Readonly<{ accepted: true; intentId: string }>;
+
 export interface LaunchRunSeam {
   (args: {
     studyId: string;
@@ -43,7 +41,7 @@ export interface LaunchRunSeam {
     replicateOrdinal: number;
     launchKey: string;
     requestedByUserId: string | null;
-  }): Promise<{ runId: string }>;
+  }): Promise<ControlledLaunchResult>;
 }
 
 export interface CreateLaunchBatchArgs {
@@ -527,7 +525,10 @@ export async function runControlledLaunchBatch(
           eq(evaluationLaunchBatchItems.version, item.version),
         ),
       )
-      .returning({ id: evaluationLaunchBatchItems.id });
+      .returning({
+        id: evaluationLaunchBatchItems.id,
+        version: evaluationLaunchBatchItems.version,
+      });
 
     if (!claim.length) {
       skipped += 1;
@@ -546,7 +547,7 @@ export async function runControlledLaunchBatch(
         .where(eq(evaluationRecipes.id, item.recipeId));
       const definition = parseControlledRecipe(recipe.definition);
 
-      const { runId } = await seam({
+      const accepted = await seam({
         studyId: batch.studyId,
         projectId: study.projectId,
         taskId: study.taskId,
@@ -556,6 +557,32 @@ export async function runControlledLaunchBatch(
         launchKey: item.id,
         requestedByUserId: batch.requestedByUserId ?? null,
       });
+
+      if (!("runId" in accepted)) {
+        // Acceptance is not a run. The existing dispatcher re-drives this stable
+        // item key after capacity/preparation, without inventing a participant.
+        await d
+          .update(evaluationLaunchBatchItems)
+          .set({
+            status: "queued",
+            errorReason: null,
+            updatedAt: new Date(),
+            version: sql`${evaluationLaunchBatchItems.version} + 1`,
+          })
+          .where(
+            and(
+              eq(evaluationLaunchBatchItems.id, item.id),
+              eq(evaluationLaunchBatchItems.status, "launching"),
+              eq(evaluationLaunchBatchItems.version, claim[0].version),
+            ),
+          );
+        log.info(
+          { batchId, itemId: item.id, intentId: accepted.intentId },
+          "controlled launch accepted; awaiting actual run binding",
+        );
+        continue;
+      }
+      const { runId } = accepted;
 
       // Participant creation, the draft→open flip, and the item bookkeeping
       // commit ATOMICALLY — a crash never leaves a participant without its
@@ -585,6 +612,24 @@ export async function runControlledLaunchBatch(
             `study ${batch.studyId} became non-launchable during the launch`,
           );
         }
+
+        const [liveItem] = await tx
+          .select({
+            status: evaluationLaunchBatchItems.status,
+            version: evaluationLaunchBatchItems.version,
+          })
+          .from(evaluationLaunchBatchItems)
+          .where(eq(evaluationLaunchBatchItems.id, item.id))
+          .for("update");
+
+        if (
+          liveItem?.status !== "launching" ||
+          liveItem.version !== claim[0].version
+        )
+          throw new MaisterError(
+            "CONFLICT",
+            "Evaluation launch item ownership changed before participant binding",
+          );
 
         // ADR-150 provenance: record the ACTUAL revision the run launched with,
         // read back from the run row — never the recipe's declared pin taken on
@@ -682,6 +727,7 @@ export async function runControlledLaunchBatch(
             and(
               eq(evaluationLaunchBatchItems.id, item.id),
               eq(evaluationLaunchBatchItems.status, "launching"),
+              eq(evaluationLaunchBatchItems.version, claim[0].version),
             ),
           )
           .returning({ id: evaluationLaunchBatchItems.id });
@@ -698,14 +744,13 @@ export async function runControlledLaunchBatch(
       });
       launched += 1;
     } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      // The persisted reason is a bounded typed code, never raw error text
-      // (a message may embed host paths); the full error stays in the log.
+      // Neither stored reasons nor logs expose SQL parameters, task contents,
+      // or filesystem paths from an inner database failure.
       const errorCode = err instanceof MaisterError ? err.code : "CRASH";
 
       // Status-guarded: a slow concurrent drive that already finalized this
       // item to `launched` must not be clobbered by a stale failure.
-      await d
+      const terminalized = await d
         .update(evaluationLaunchBatchItems)
         .set({
           status: "failed",
@@ -718,11 +763,20 @@ export async function runControlledLaunchBatch(
           and(
             eq(evaluationLaunchBatchItems.id, item.id),
             eq(evaluationLaunchBatchItems.status, "launching"),
+            eq(evaluationLaunchBatchItems.version, claim[0].version),
           ),
-        );
-      failed += 1;
+        )
+        .returning({ id: evaluationLaunchBatchItems.id });
+
+      if (terminalized.length) failed += 1;
+      else skipped += 1;
       log.warn(
-        { batchId, itemId: item.id, reason, code: errorCode },
+        {
+          batchId,
+          itemId: item.id,
+          code: errorCode,
+          ...queryErrorDiagnostics(err),
+        },
         "controlled launch batch item failed",
       );
     }
@@ -731,6 +785,33 @@ export async function runControlledLaunchBatch(
   await finalizeBatchStatus(batchId, d);
 
   return { launched, failed, skipped };
+}
+
+/** Existing evaluation dispatch owns bounded recovery of accepted launch batches. */
+export async function reconcileControlledLaunchBatches(
+  seam: LaunchRunSeam,
+  db: Db,
+): Promise<void> {
+  const pending = await db
+    .select({ id: evaluationLaunchBatches.id })
+    .from(evaluationLaunchBatches)
+    .where(inArray(evaluationLaunchBatches.status, ["queued", "launching"]))
+    .orderBy(
+      asc(evaluationLaunchBatches.updatedAt),
+      asc(evaluationLaunchBatches.id),
+    )
+    .limit(20);
+
+  for (const batch of pending) {
+    try {
+      await runControlledLaunchBatch(batch.id, seam, db);
+    } catch (error) {
+      log.warn(
+        { batchId: batch.id, ...queryErrorDiagnostics(error) },
+        "controlled launch batch reconciliation deferred",
+      );
+    }
+  }
 }
 
 // Recompute + persist the batch-level status from its items' terminal states.

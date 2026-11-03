@@ -5,12 +5,20 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { agentsErrorResponse } from "@/lib/agents/admin-shared";
-import { launchAgentRun } from "@/lib/agents/launch";
+import { launchAgentRun, loadAgentContext } from "@/lib/agents/launch";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { decodeRouteParam } from "@/lib/route-params";
+import { interactiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
+import { acceptInteractiveTaskLaunch } from "@/lib/tasks/launch-intent";
+import {
+  assertInteractiveLaunchOrigin,
+  taskLaunchRequestKey,
+  taskLaunchErrorResponse,
+} from "@/lib/tasks/launch-http";
+import { wakeAcceptedTaskLaunch } from "@/lib/tasks/launch-wake";
 
 const { projects } = schemaModule as unknown as Record<string, any>;
 
@@ -19,6 +27,8 @@ const bodySchema = z
     taskId: z.string().guid().optional(),
     runnerId: z.string().min(1).max(128).optional(),
     workspace: z.enum(["none", "repo_read", "worktree"]).optional(),
+    expectedTaskRevision: z.number().int().nonnegative().optional(),
+    expectedSettingsToken: z.string().min(1).max(256).optional(),
   })
   .strict();
 
@@ -36,7 +46,7 @@ export async function POST(
     await requireActiveSession();
     const agentId = decodeRouteParam(rawAgentId, "agentId");
 
-    const db = getDb() as unknown as { select: any };
+    const db = getDb();
     const projectRows = await db
       .select()
       .from(projects)
@@ -65,17 +75,74 @@ export async function POST(
       body = parsed.data;
     }
 
-    const result = await launchAgentRun({
+    const input = {
       agentId,
       projectId: project.id,
       taskId: body.taskId ?? null,
       launchOverrideRunnerId: body.runnerId ?? null,
       workspace: body.workspace ?? null,
-      trigger: { source: "manual" },
-    });
+      trigger: { source: "manual" as const },
+    };
+
+    if (body.taskId) {
+      const context = await loadAgentContext(db, input);
+
+      if (context.effective.parsed.kind === "code_delivery") {
+        assertInteractiveLaunchOrigin(req);
+        const principal = await interactiveTaskLaunchPrincipal();
+
+        if (
+          body.expectedTaskRevision === undefined ||
+          !body.expectedSettingsToken
+        )
+          throw new MaisterError(
+            "CONFIG",
+            "Read the task launch preview before launching this agent",
+            { details: { reason: "launch_request_upgrade_required" } },
+          );
+        const metadata = {
+          taskId: body.taskId,
+          expectedTaskRevision: body.expectedTaskRevision,
+          expectedSettingsToken: body.expectedSettingsToken,
+          ...(body.runnerId ? { runnerId: body.runnerId } : {}),
+        };
+        const receipt = await acceptInteractiveTaskLaunch(
+          db,
+          principal,
+          {
+            ...metadata,
+            agentId,
+            ...(body.workspace ? { workspace: body.workspace } : {}),
+          },
+          taskLaunchRequestKey(req),
+        );
+
+        wakeAcceptedTaskLaunch(db, receipt);
+
+        return NextResponse.json(receipt, {
+          status: 202,
+          headers: {
+            Location: `/api/task-launch-intents/${receipt.intentId}`,
+            "Cache-Control": "no-store",
+          },
+        });
+      }
+    }
+    const result = await launchAgentRun(input);
 
     if ("deduped" in result) {
       throw new MaisterError("CONFLICT", "agent trigger already claimed");
+    }
+    if ("queued" in result) {
+      wakeAcceptedTaskLaunch(db, result.receipt);
+
+      return NextResponse.json(result.receipt, {
+        status: 202,
+        headers: {
+          Location: `/api/task-launch-intents/${result.receipt.intentId}`,
+          "Cache-Control": "no-store",
+        },
+      });
     }
 
     return NextResponse.json(
@@ -95,6 +162,13 @@ export async function POST(
         new MaisterError("CONFIG", `invalid JSON body: ${err.message}`),
       );
     }
+
+    if (
+      err instanceof MaisterError &&
+      typeof err.details?.reason === "string" &&
+      String(err.details.reason).startsWith("launch_")
+    )
+      return taskLaunchErrorResponse(err);
 
     return agentsErrorResponse(err);
   }

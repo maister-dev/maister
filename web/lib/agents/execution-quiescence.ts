@@ -8,6 +8,7 @@ import { lockAgentPermissionResult } from "./permission-result";
 
 import {
   executionCommands,
+  executionAssignments,
   runSessionIncarnations,
   runSessions,
 } from "@/lib/db/schema";
@@ -159,6 +160,58 @@ export async function assertAgentCancellationExecutionQuiescent(
   if (!run.executionAssignmentId) return;
   await projectCanonicalSessionLifecycle({ db, runId: run.id });
   await assertAgentCancellationBindingsQuiescent(db, run);
+  await assertNoLiveAgentSessions(db, run);
+}
+
+/** Terminal cleanup checks the retained assignment, including a first launch released before create. */
+export async function assertTerminalAgentCleanupExecutionQuiescent(
+  db: Db,
+  run: AgentExecutionIdentity,
+): Promise<void> {
+  if (!run.executionAssignmentId) return;
+  await projectCanonicalSessionLifecycle({ db, runId: run.id });
+  const [assignment] = await db
+    .select()
+    .from(executionAssignments)
+    .where(
+      and(
+        eq(executionAssignments.id, run.executionAssignmentId),
+        eq(executionAssignments.runId, run.id),
+      ),
+    );
+
+  if (!assignment || assignment.state !== "released")
+    throw new MaisterError(
+      "PRECONDITION",
+      "Terminal agent cleanup requires its released execution assignment",
+      {
+        details: {
+          reason: "agent_execution_quiescence_unproven",
+          runId: run.id,
+          assignmentId: run.executionAssignmentId,
+        },
+      },
+    );
+  const [incarnation] = await db
+    .select({ id: runSessionIncarnations.id })
+    .from(runSessionIncarnations)
+    .where(
+      and(
+        eq(runSessionIncarnations.runId, run.id),
+        eq(runSessionIncarnations.executionAssignmentId, assignment.id),
+      ),
+    )
+    .limit(1);
+  const evidence = await readAgentDispatchEvidence(db, run.id);
+
+  if (
+    assignment.placementReason !== "launch" ||
+    assignment.epoch !== 1 ||
+    incarnation ||
+    evidence.hasOwnedCommand ||
+    evidence.hasBoundSession
+  )
+    await assertAgentSessionBindingsQuiescent(db, run);
   await assertNoLiveAgentSessions(db, run);
 }
 

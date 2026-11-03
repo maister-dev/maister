@@ -496,9 +496,41 @@ describe("RunHitlResponse stored answer", () => {
   });
 
   it("lets a failed budget claim choose a different available recovery", async () => {
-    const fetchMock = vi.fn(
-      async (_url: string, _init?: RequestInit) =>
-        new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    const request = {
+      taskId: "task-1",
+      expectedTaskRevision: 2,
+      expectedSettingsToken: "fresh-shown-settings",
+      relaunchOfRunId: "run-1",
+      flowId: "flow-1",
+      runnerId: "runner-1",
+    };
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) =>
+      init?.method === "POST"
+        ? Response.json(
+            { ok: true, state: "restart_queued", intentId: "intent-1" },
+            { status: 202 },
+          )
+        : Response.json({
+            request,
+            title: "Current request",
+            prompt: "Current task specification",
+            flowName: "Delivery",
+            runnerLabel: "codex · current model",
+            targetRevision: "v1",
+            settings: {
+              deliveryPolicy: {
+                strategy: "pull_request",
+                push: "on_success",
+                trigger: "auto_on_ready",
+                targetBranch: "main",
+              },
+              executionPolicy: { preset: "supervised", overrides: {} },
+              autoPromote: false,
+              brainContext: null,
+              targetBranch: "main",
+              workspace: "worktree",
+            },
+          }),
     );
 
     vi.stubGlobal("fetch", fetchMock);
@@ -533,8 +565,17 @@ describe("RunHitlResponse stored answer", () => {
 
     expect(restart?.disabled).toBe(false);
     await click(en.run.budgetRestart);
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+    expect(fetchMock.mock.calls[0]?.[0]).toContain("restart-preview");
+    expect(fetchMock.mock.calls[0]?.[1]?.body).toBeUndefined();
+    const confirm = document.querySelector<HTMLButtonElement>(
+      "[data-testid=budget-restart-preview-confirm]",
+    );
+
+    expect(confirm).not.toBeNull();
+    await act(async () => confirm!.click());
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
       optionId: "restart",
+      restartLaunch: request,
     });
   });
 

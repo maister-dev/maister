@@ -3040,6 +3040,10 @@ table task_launch_intents {
   terminal_outcome text
   dispatch_committed_at "timestamp with time zone"
   cancellation_receipt jsonb
+  preparation_identity jsonb
+  preparation_phase text
+  cleanup_state text
+  dispatch_receipt jsonb
   accepted_at "timestamp with time zone" [not null, default: `now()`]
   updated_at "timestamp with time zone" [not null, default: `now()`]
 
@@ -3051,6 +3055,7 @@ table task_launch_intents {
     replaces_intent_id [name: 'task_launch_intents_replace_uq', unique]
     (state, due_at, id) [name: 'task_launch_intents_recovery_idx']
     (project_id, task_id, accepted_at) [name: 'task_launch_intents_history_idx']
+
 
 
 
@@ -3165,6 +3170,7 @@ table tasks {
   stage text [not null, default: 'Backlog']
   attempt_number integer [not null, default: 1]
   triage_status text
+  triage_flag_origin text
   runner_id text
   base_branch text
   target_branch text
@@ -3191,6 +3197,7 @@ table tasks {
     (project_id, number) [name: 'tasks_project_number_uq', unique]
     (project_id, status) [name: 'tasks_project_status_idx']
     (agent_id, trigger_event_id) [name: 'tasks_agent_trigger_event_uq', unique]
+
 
 
 

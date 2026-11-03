@@ -16,6 +16,8 @@ import {
 } from "@/lib/scheduler/c2-eligibility";
 import { countLiveRuns, effectivePoolCap } from "@/lib/scheduler";
 import { launchRun } from "@/lib/services/runs";
+import { enqueueQualifiedAutomaticTaskLaunch } from "@/lib/tasks/launch-automatic-enqueue";
+import { reconcileTaskLaunchIntents } from "@/lib/tasks/launch-dispatch";
 import {
   projectShareAllowsC2,
   reserveAllowsC2,
@@ -87,6 +89,47 @@ export async function runAutoLaunchTriagedJob(
     skipped: 0,
     gaveUp: 0,
   };
+
+  if (!opts.launch) {
+    for (const candidate of candidates) {
+      try {
+        const eligibility = await evaluateC2Candidate(
+          db,
+          candidate,
+          Date.now(),
+        );
+
+        if (eligibility.kind === "give-up") {
+          if (await giveUpC2Task(db, candidate, eligibility))
+            summary.gaveUp += 1;
+          else summary.skipped += 1;
+          continue;
+        }
+        if (eligibility.kind !== "eligible") {
+          summary.skipped += 1;
+          continue;
+        }
+        if (await enqueueQualifiedAutomaticTaskLaunch(db, candidate.taskId))
+          summary.launched += 1;
+        else summary.skipped += 1;
+      } catch (error) {
+        summary.skipped += 1;
+        log.warn(
+          {
+            taskId: candidate.taskId,
+            code: isMaisterError(error) ? error.code : "UNKNOWN",
+            reason: isMaisterError(error)
+              ? error.details?.reason
+              : "automatic_acceptance_failed",
+          },
+          "automatic launch acceptance deferred",
+        );
+      }
+    }
+    await reconcileTaskLaunchIntents(db);
+
+    return summary;
+  }
 
   // ADR-121 capacity context (computed once, then tracked per launch this tick).
   const { cap: flowCap } = await effectivePoolCap(db, "flow");

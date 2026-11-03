@@ -229,6 +229,33 @@ async function runAgentConfig(
   return res.rows[0].agent_config as Record<string, unknown> | null;
 }
 
+async function seedOperationalQuestionTriager(): Promise<string> {
+  const agentId = await seedTriager(null);
+  const source = (
+    await pool.query<{ source_path: string }>(
+      "SELECT source_path FROM agents WHERE id=$1",
+      [agentId],
+    )
+  ).rows[0].source_path;
+
+  await writeFile(
+    source,
+    (await readFile(source, "utf8")).replace(
+      "mode: session",
+      "kind: operational\ncompletion: {contract: operational_v1}\nmode: session",
+    ),
+  );
+  await pool.query(
+    "UPDATE agents SET kind='operational', completion_contract=$2::jsonb WHERE id=$1",
+    [agentId, JSON.stringify({ contract: "operational_v1" })],
+  );
+  await pool.query("UPDATE package_installs SET manifest=$1::jsonb", [
+    JSON.stringify({ spec: { compat: { engine_min: "3.9.0" } } }),
+  ]);
+
+  return agentId;
+}
+
 describe("ADR-111 launch-time config snapshot", () => {
   it("retains independent claimed requests through queued launches after schedule deletion", async () => {
     const agentId = await seedTriager({ intake_mode: "triage_only" });
@@ -378,7 +405,8 @@ describe("ADR-111 launch-time config snapshot", () => {
       db,
     });
 
-    if ("deduped" in result) throw new Error("unexpected dedup");
+    if ("deduped" in result || "queued" in result)
+      throw new Error("expected an immediate operational or taskless run");
     const run = (
       await pool.query(
         "SELECT agent_kind, result_contract, execution_policy, source_agent_id, launched_at, activity_sort_at, agent_activity_snapshot FROM runs WHERE id = $1",
@@ -578,7 +606,7 @@ describe("ADR-111 launch-time config snapshot", () => {
     ).toBe(0);
   });
   it("supersedes every open agent question only after the new task-bound standalone run is durable", async () => {
-    const agentId = await seedTriager(null);
+    const agentId = await seedOperationalQuestionTriager();
     const schema = await import("@/lib/db/schema");
     const taskId = randomUUID();
     const sourceRunId = randomUUID();
@@ -663,7 +691,8 @@ describe("ADR-111 launch-time config snapshot", () => {
       db,
     });
 
-    if ("deduped" in result) throw new Error("unexpected dedup");
+    if ("deduped" in result || "queued" in result)
+      throw new Error("expected an immediate operational or taskless run");
 
     const [question] = await db
       .select({
@@ -695,7 +724,7 @@ describe("ADR-111 launch-time config snapshot", () => {
   });
 
   it("rolls back the successor when superseding an active question fails", async () => {
-    const agentId = await seedTriager(null);
+    const agentId = await seedOperationalQuestionTriager();
     const schema = await import("@/lib/db/schema");
     const taskId = randomUUID();
     const sourceRunId = randomUUID();
@@ -854,7 +883,8 @@ describe("ADR-111 launch-time config snapshot", () => {
       db,
     });
 
-    if ("deduped" in result) throw new Error("unexpected dedup");
+    if ("deduped" in result || "queued" in result)
+      throw new Error("expected an immediate operational or taskless run");
 
     // intake_mode overridden by the instance; detect_duplicates is the default.
     expect(await runAgentConfig(result.runId)).toEqual({
@@ -873,7 +903,8 @@ describe("ADR-111 launch-time config snapshot", () => {
       db,
     });
 
-    if ("deduped" in result) throw new Error("unexpected dedup");
+    if ("deduped" in result || "queued" in result)
+      throw new Error("expected an immediate operational or taskless run");
 
     expect(await runAgentConfig(result.runId)).toEqual({
       detect_duplicates: true,
@@ -891,7 +922,8 @@ describe("ADR-111 launch-time config snapshot", () => {
       db,
     });
 
-    if ("deduped" in result) throw new Error("unexpected dedup");
+    if ("deduped" in result || "queued" in result)
+      throw new Error("expected an immediate operational or taskless run");
 
     const snapshotBefore = await runAgentConfig(result.runId);
 

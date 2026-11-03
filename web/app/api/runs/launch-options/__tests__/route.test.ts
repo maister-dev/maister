@@ -85,6 +85,25 @@ vi.mock("@/lib/worktree", () => ({ listBranches: mocks.listBranches }));
 vi.mock("@/lib/local-packages/versions", () => ({
   detectAvailablePackageVersions: async () => [],
 }));
+vi.mock("@/lib/tasks/launch-preview", () => ({
+  taskLaunchPreview: async () => ({
+    settingsToken: "preview-resolution",
+    qualification: null,
+    activeLaunch: null,
+  }),
+}));
+vi.mock("@/lib/tasks/launch-package-selection", () => ({
+  selectedTaskLaunchRevision: async (
+    _db: unknown,
+    _projectId: string,
+    flow: { enabledRevisionId: string; packageInstallId?: string },
+  ) => ({
+    revision:
+      state.flow_revisions.find((row) => row.id === flow.enabledRevisionId) ??
+      null,
+    packageInstallId: flow.packageInstallId ?? null,
+  }),
+}));
 
 // A runner-bearing node with no `settings.runner` joins the implicit `default`
 // session (resolved via the project/platform default chain). A node with
@@ -468,7 +487,10 @@ function seedBase(): void {
   ];
   state.project_flow_runner_defaults = [];
   state.flow_runner_remaps = [];
-  mocks.requireActiveSession.mockResolvedValue({ id: "user-1" });
+  mocks.requireActiveSession.mockResolvedValue({
+    id: "user-1",
+    role: "member",
+  });
   mocks.requireProjectAction.mockResolvedValue({ role: "member" });
   mocks.getLatestFlowRun.mockResolvedValue(null);
   mocks.getOpenRelationBlockers.mockResolvedValue(new Map());

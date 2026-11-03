@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
+import { interactiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
+import { wakeTaskLaunchQueue } from "@/lib/tasks/launch-wake";
 import { resolveAgentActivityAccess } from "@/lib/agents/activity-access";
 import { acceptAgentRetryBatch } from "@/lib/agents/retry-batch";
 import {
@@ -21,6 +23,7 @@ export async function POST(
   try {
     const { slug, agentId } = await params;
     const access = await resolveAgentActivityAccess(slug, agentId);
+    const principal = await interactiveTaskLaunchPrincipal();
     const result = await acceptAgentRetryBatch(
       access.db,
       {
@@ -29,10 +32,12 @@ export async function POST(
         userId: access.actor.id,
       },
       await readAgentRetryJson(request),
+      principal,
     );
     const accepted = result.items.some((item) => item.state === "accepted");
 
-    if (accepted)
+    if (accepted) {
+      wakeTaskLaunchQueue(access.db);
       queueMicrotask(() => {
         void runAgentRetryAdmissionSweep(access.db).catch((error: unknown) =>
           log.warn(
@@ -45,6 +50,7 @@ export async function POST(
           ),
         );
       });
+    }
 
     return NextResponse.json(result, { status: accepted ? 202 : 200 });
   } catch (error) {

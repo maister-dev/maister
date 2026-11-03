@@ -507,7 +507,9 @@ describe("A1 production tick admission backstop", () => {
         logger: {
           logQuery(query: string, params: unknown[]): void {
             if (
-              query.includes('for update of "runs" skip locked') &&
+              query.includes('from "runs" left join "tasks"') &&
+              query.includes(" order by ") &&
+              query.includes(" limit ") &&
               params.includes("scratch")
             )
               queries.push({ query, params });

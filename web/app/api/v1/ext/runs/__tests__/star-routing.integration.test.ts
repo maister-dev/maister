@@ -24,6 +24,7 @@ import {
   vi,
 } from "vitest";
 
+import { bindQueuedDelegationResponse } from "@/test-support/queued-delegation";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
@@ -94,8 +95,15 @@ beforeAll(async () => {
   ({ issueAgentRunToken, issueOrchestratorRunToken } =
     await import("@/lib/agents/tokens"));
   ({ POST: messagePost } = await import("@/app/api/v1/ext/runs/message/route"));
-  ({ POST: delegatePost } =
-    await import("@/app/api/v1/ext/runs/delegate/route"));
+  const delegatePostEndpoint = (
+    await import("@/app/api/v1/ext/runs/delegate/route")
+  ).POST;
+
+  delegatePost = async (request, context) =>
+    bindQueuedDelegationResponse(
+      db as unknown as import("@/lib/execution-host/db").Db,
+      await delegatePostEndpoint(request, context),
+    );
 }, 180_000);
 
 afterAll(async () => {

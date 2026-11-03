@@ -5,6 +5,7 @@ import { getDb } from "@/lib/db/client";
 import { handleExt } from "@/lib/tokens/ext-handler";
 import { cancelTokenTaskLaunch } from "@/lib/tasks/launch-cancel";
 import { taskLaunchRequestKey } from "@/lib/tasks/launch-http";
+import { wakeTaskLaunchQueue } from "@/lib/tasks/launch-wake";
 import {
   externalTaskLaunchAudit,
   externalTaskLaunchContinuation,
@@ -40,6 +41,8 @@ export async function POST(
         externalTaskLaunchAudit(context, CONTRACT),
       );
 
+      wakeTaskLaunchQueue(db);
+
       return externalTaskLaunchReceiptResponse(receipt, CONTRACT.statusCode);
     } catch (error) {
       return externalTaskLaunchErrorResponse(error);
@@ -70,6 +73,7 @@ export async function POST(
             request,
             CONTRACT,
             cancel,
+            () => wakeTaskLaunchQueue(db),
           ),
         },
       },

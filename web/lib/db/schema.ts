@@ -5,6 +5,9 @@ import type {
   TaskLaunchInputSnapshot,
   TaskLaunchSettingsSnapshot,
   TaskLaunchCancellationReceipt,
+  TaskLaunchPreparationIdentity,
+  TaskLaunchPreparationPhase,
+  TaskLaunchDispatchReceipt,
 } from "@/lib/tasks/launch-types";
 import type {
   TaskQualificationMode,
@@ -1628,6 +1631,9 @@ export const tasks = pgTable(
     // M34 (ADR-089) launch-verdict columns: written by the ext triage op /
     // the card popover PATCH; runner rides the launchOverride tier at launch.
     triageStatus: text("triage_status", { enum: ["triaged", "flagged"] }),
+    triageFlagOrigin: text("triage_flag_origin", {
+      enum: ["qualification", "explicit", "dispatch_failure", "unknown"],
+    }),
     runnerId: text("runner_id").references(() => platformAcpRunners.id, {
       onDelete: "set null",
     }),
@@ -1733,6 +1739,10 @@ export const tasks = pgTable(
     launchIntentCheck: check(
       "tasks_launch_intent_check",
       sql`${t.launchIntent} IS NULL OR ${t.launchIntent} IN ('none', 'triage_only', 'triage_then_launch')`,
+    ),
+    triageFlagOriginCheck: check(
+      "tasks_triage_flag_origin_check",
+      sql`((${t.triageStatus}='flagged' AND ${t.triageFlagOrigin} IN ('qualification','explicit','dispatch_failure','unknown')) OR (${t.triageStatus} IS DISTINCT FROM 'flagged' AND ${t.triageFlagOrigin} IS NULL)) IS TRUE`,
     ),
   }),
 );
@@ -2350,7 +2360,22 @@ export const runs = pgTable(
     ),
     taskAdmissionShape: check(
       "runs_task_admission_snapshot_check",
-      sql`${t.taskAdmissionSnapshot} IS NULL OR (${t.taskId} IS NOT NULL AND jsonb_typeof(${t.taskAdmissionSnapshot})='object' AND jsonb_typeof(${t.taskAdmissionSnapshot}->'inputRevision')='number' AND (${t.taskAdmissionSnapshot}->>'mode'<>'required' OR jsonb_typeof(${t.taskAdmissionSnapshot}->'qualificationId')='string' AND jsonb_typeof(${t.taskAdmissionSnapshot}->'qualificationRevision')='number' AND ${t.taskAdmissionSnapshot}->>'evidenceSha' ~ '^[a-f0-9]{40}([a-f0-9]{24})?$') AND (${t.taskAdmissionSnapshot}->>'mode'<>'execution_child' OR jsonb_typeof(${t.taskAdmissionSnapshot}->'parent')='object') AND ((${t.taskLaunchIntentId} IS NULL AND ${t.taskAdmissionSnapshot}->'version'='1'::jsonb AND ${t.taskAdmissionSnapshot}->'policyVersion'='1'::jsonb AND ${t.taskAdmissionSnapshot}->>'mode' IN ('legacy','required','execution_child')) OR (${t.taskLaunchIntentId} IS NOT NULL AND ${t.taskAdmissionSnapshot}->'version'='2'::jsonb AND ${t.taskAdmissionSnapshot}->'policyVersion'='2'::jsonb AND ${t.taskAdmissionSnapshot}->>'intentId'=${t.taskLaunchIntentId} AND ${t.taskAdmissionSnapshot}->>'mode' IN ('manual','required','execution_child') AND ${t.taskAdmissionSnapshot}->>'basis'=CASE ${t.taskAdmissionSnapshot}->>'mode' WHEN 'manual' THEN 'manual' WHEN 'required' THEN 'automatic' ELSE 'execution_child' END AND ${t.taskAdmissionSnapshot}-ARRAY['version','policyVersion','mode','inputRevision','qualificationId','qualificationRevision','evidenceTarget','evidenceSha','parent','intentId','basis']='{}'::jsonb AND (${t.taskAdmissionSnapshot}->>'mode'<>'manual' OR ${t.taskAdmissionSnapshot}->'qualificationId'='null'::jsonb AND ${t.taskAdmissionSnapshot}->'qualificationRevision'='null'::jsonb AND ${t.taskAdmissionSnapshot}->'parent'='null'::jsonb AND (${t.taskAdmissionSnapshot}->>'evidenceSha' ~ '^[a-f0-9]{40}([a-f0-9]{24})?$' OR ${t.runKind}='agent' AND ${t.agentWorkspace}='none' AND ${t.taskAdmissionSnapshot}->'evidenceSha'='null'::jsonb))))) IS TRUE`,
+      sql`${t.taskAdmissionSnapshot} IS NULL OR (${t.taskId} IS NOT NULL AND jsonb_typeof(${t.taskAdmissionSnapshot})='object' AND jsonb_typeof(${t.taskAdmissionSnapshot}->'inputRevision')='number' AND (${t.taskAdmissionSnapshot}->>'mode'<>'required' OR jsonb_typeof(${t.taskAdmissionSnapshot}->'qualificationId')='string' AND jsonb_typeof(${t.taskAdmissionSnapshot}->'qualificationRevision')='number' AND ${t.taskAdmissionSnapshot}->>'evidenceSha' ~ '^[a-f0-9]{40}([a-f0-9]{24})?$') AND (${t.taskAdmissionSnapshot}->>'mode'<>'execution_child' OR jsonb_typeof(${t.taskAdmissionSnapshot}->'parent')='object') AND ((${t.taskLaunchIntentId} IS NULL AND ${t.taskAdmissionSnapshot}->'version'='1'::jsonb AND ${t.taskAdmissionSnapshot}->'policyVersion'='1'::jsonb AND ${t.taskAdmissionSnapshot}->>'mode' IN ('legacy','required','execution_child')) OR (${t.taskLaunchIntentId} IS NOT NULL AND ${t.taskAdmissionSnapshot}->'version'='2'::jsonb AND ${t.taskAdmissionSnapshot}->'policyVersion'='2'::jsonb AND ${t.taskAdmissionSnapshot}->>'intentId'=${t.taskLaunchIntentId} AND ${t.taskAdmissionSnapshot}->>'mode' IN ('manual','required','execution_child') AND ${t.taskAdmissionSnapshot}->>'basis'=CASE ${t.taskAdmissionSnapshot}->>'mode' WHEN 'manual' THEN 'manual' WHEN 'required' THEN 'automatic' ELSE 'execution_child' END AND ${t.taskAdmissionSnapshot}-ARRAY['version','policyVersion','mode','inputRevision','qualificationId','qualificationRevision','evidenceTarget','evidenceSha','parent','intentId','basis']='{}'::jsonb AND (${t.taskAdmissionSnapshot}->>'mode'<>'manual' OR ${t.taskAdmissionSnapshot}->'qualificationId'='null'::jsonb AND ${t.taskAdmissionSnapshot}->'qualificationRevision'='null'::jsonb AND ${t.taskAdmissionSnapshot}->'parent'='null'::jsonb AND (${t.taskAdmissionSnapshot}->>'evidenceSha' ~ '^[a-f0-9]{40}([a-f0-9]{24})?$' OR ${t.runKind}='agent' AND ${t.agentWorkspace}='none' AND ${t.taskAdmissionSnapshot}->'evidenceSha'='null'::jsonb))) OR (${t.taskLaunchIntentId} IS NULL AND ${t.runKind}='agent' AND ${t.persistent}=false
+        AND ${t.taskAdmissionSnapshot}->'version'='3'::jsonb AND ${t.taskAdmissionSnapshot}->'policyVersion'='3'::jsonb
+        AND ${t.taskAdmissionSnapshot}->>'mode'='execution_child' AND ${t.taskAdmissionSnapshot}->>'basis'='execution_child' AND ${t.taskAdmissionSnapshot}->>'scope'='consensus_draft'
+        AND (${t.taskAdmissionSnapshot}->>'inputRevision')::numeric>0 AND (${t.taskAdmissionSnapshot}->>'inputRevision')::numeric=trunc((${t.taskAdmissionSnapshot}->>'inputRevision')::numeric)
+        AND ${t.taskAdmissionSnapshot}->'parent'->>'parentRunId'=${t.parentRunId} AND ${t.taskAdmissionSnapshot}->'parent'->>'parentTaskId'=${t.taskId}
+        AND ${t.taskAdmissionSnapshot}->'parent'->>'rootRunId'=${t.rootRunId}
+        AND ${t.taskAdmissionSnapshot}->'parent'->>'parentAdmissionDigest' ~ '^[0-9a-f]{64}$'
+        AND length(${t.taskAdmissionSnapshot}->'parent'->>'nodeAttemptId') BETWEEN 1 AND 256 AND length(${t.taskAdmissionSnapshot}->'parent'->>'nodeId') BETWEEN 1 AND 256
+        AND jsonb_typeof(${t.taskAdmissionSnapshot}->'parent'->'round')='number' AND (${t.taskAdmissionSnapshot}->'parent'->>'round')::numeric>0 AND (${t.taskAdmissionSnapshot}->'parent'->>'round')::numeric=trunc((${t.taskAdmissionSnapshot}->'parent'->>'round')::numeric)
+        AND length(${t.taskAdmissionSnapshot}->'parent'->>'participantId') BETWEEN 1 AND 256 AND ${t.taskAdmissionSnapshot}->'parent'->>'participantKind' IN ('runner','agent')
+        AND length(${t.taskAdmissionSnapshot}->'parent'->>'runnerId') BETWEEN 1 AND 256
+        AND (${t.taskAdmissionSnapshot}->'parent'->>'agentId' IS NOT DISTINCT FROM ${t.agentId})
+        AND ${t.taskAdmissionSnapshot}->'parent'->>'promptDigest' ~ '^[0-9a-f]{64}$' AND ${t.taskAdmissionSnapshot}->'parent'->>'manifestDigest' ~ '^[0-9a-f]{64}$'
+        AND ${t.taskAdmissionSnapshot}-ARRAY['version','policyVersion','mode','basis','scope','inputRevision','parent']='{}'::jsonb
+        AND (${t.taskAdmissionSnapshot}->'parent')-ARRAY['parentRunId','parentTaskId','rootRunId','parentAdmissionDigest','nodeAttemptId','nodeId','round','participantId','participantKind','runnerId','agentId','promptDigest','manifestDigest']='{}'::jsonb
+      ))) IS TRUE`,
     ),
     launchIntentUnique: unique("runs_task_launch_intent_uq").on(
       t.taskLaunchIntentId,
@@ -2388,7 +2413,7 @@ export const runs = pgTable(
     ),
     operationalBaselineCheck: check(
       "runs_operational_baseline_check",
-      sql`${t.operationalIntegrityBaseline} IS NULL OR (${t.agentKind} = 'operational' AND jsonb_typeof(${t.operationalIntegrityBaseline}) = 'object' AND ${t.operationalIntegrityBaseline}->'version' = '1'::jsonb AND jsonb_typeof(${t.operationalIntegrityBaseline}->'generation') = 'number' AND jsonb_typeof(${t.operationalIntegrityBaseline}->'source') = 'array' AND jsonb_typeof(${t.operationalIntegrityBaseline}->'platform') = 'array' AND pg_column_size(${t.operationalIntegrityBaseline}) <= 16777216) IS TRUE`,
+      sql`${t.operationalIntegrityBaseline} IS NULL OR ((${t.agentKind} = 'operational' OR ${t.runKind}='agent' AND ${t.agentKind}='code_delivery' AND ${t.taskLaunchIntentId} IS NOT NULL) AND jsonb_typeof(${t.operationalIntegrityBaseline}) = 'object' AND ${t.operationalIntegrityBaseline}->'version' = '1'::jsonb AND jsonb_typeof(${t.operationalIntegrityBaseline}->'generation') = 'number' AND jsonb_typeof(${t.operationalIntegrityBaseline}->'source') = 'array' AND jsonb_typeof(${t.operationalIntegrityBaseline}->'platform') = 'array' AND pg_column_size(${t.operationalIntegrityBaseline}) <= 16777216) IS TRUE`,
     ),
     operationalCleanupCheck: check(
       "runs_operational_cleanup_check",
@@ -3059,6 +3084,16 @@ export const taskLaunchIntents = pgTable(
     cancellationReceipt: jsonb(
       "cancellation_receipt",
     ).$type<TaskLaunchCancellationReceipt>(),
+    preparationIdentity: jsonb(
+      "preparation_identity",
+    ).$type<TaskLaunchPreparationIdentity>(),
+    preparationPhase:
+      text("preparation_phase").$type<TaskLaunchPreparationPhase>(),
+    cleanupState: text("cleanup_state", {
+      enum: ["pending", "removed", "retained"],
+    }),
+    dispatchReceipt:
+      jsonb("dispatch_receipt").$type<TaskLaunchDispatchReceipt>(),
     acceptedAt: timestamp("accepted_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -3118,6 +3153,29 @@ export const taskLaunchIntents = pgTable(
     snapshotCheck: check(
       "task_launch_intents_snapshot_check",
       sql`(jsonb_typeof(${t.inputSnapshot})='object' AND ${t.inputSnapshot}->'version' IN ('1'::jsonb,'2'::jsonb) AND ${t.inputSnapshot}->>'projectId'=${t.projectId} AND ${t.inputSnapshot}->>'taskId'=${t.taskId} AND jsonb_typeof(${t.inputSnapshot}->'title')='string' AND jsonb_typeof(${t.inputSnapshot}->'prompt')='string' AND jsonb_typeof(${t.inputSnapshot}->'clarifications')='array' AND jsonb_array_length(${t.inputSnapshot}->'clarifications')<=1000 AND octet_length(${t.inputSnapshot}::text)<=262144 AND jsonb_typeof(${t.settingsSnapshot})='object' AND ${t.settingsSnapshot}->'version' IN ('1'::jsonb,'2'::jsonb) AND (${t.settingsSnapshot}->>'kind'='flow' AND jsonb_typeof(${t.settingsSnapshot}->'flowId')='string' AND jsonb_typeof(${t.settingsSnapshot}->'flowRevisionId')='string' AND ${t.settingsSnapshot}->'agentId'='null'::jsonb AND ${t.settingsSnapshot}->'definitionSha256'='null'::jsonb OR ${t.settingsSnapshot}->>'kind'='agent' AND ${t.settingsSnapshot}->'flowId'='null'::jsonb AND ${t.settingsSnapshot}->'flowRefId'='null'::jsonb AND ${t.settingsSnapshot}->'flowRevisionId'='null'::jsonb AND jsonb_typeof(${t.settingsSnapshot}->'agentId')='string' AND ${t.settingsSnapshot}->>'definitionSha256' ~ '^[0-9a-f]{64}$') AND jsonb_typeof(${t.settingsSnapshot}->'sessions')='array' AND jsonb_array_length(${t.settingsSnapshot}->'sessions') BETWEEN 1 AND 64 AND (${t.settingsSnapshot}->>'baseCommit' ~ '^[0-9a-f]{40}([0-9a-f]{24})?$' OR ${t.settingsSnapshot}->>'kind'='agent' AND ${t.settingsSnapshot}->>'workspace'='none' AND ${t.settingsSnapshot}->'baseCommit'='null'::jsonb) AND jsonb_typeof(${t.settingsSnapshot}->'autoPromote')='boolean' AND jsonb_typeof(${t.settingsSnapshot}->'executionPolicy')='object' AND jsonb_typeof(${t.settingsSnapshot}->'deliveryPolicy')='object' AND octet_length(${t.settingsSnapshot}::text)<=131072 AND jsonb_typeof(${t.basis})='object' AND ${t.basis}->>'kind' IN ('manual','automatic','execution_child') AND (${t.basis}->>'kind'<>'manual' OR ${t.principalKind}='session_user' AND ${t.actorUserId}=${t.principalId} AND ${t.basis}->>'userId'=${t.actorUserId}) AND (${t.basis}->>'kind'<>'automatic' OR jsonb_typeof(${t.basis}->'qualificationId')='string' AND jsonb_typeof(${t.basis}->'qualificationRevision')='number' AND ${t.basis}->>'qualificationInputDigest' ~ '^[0-9a-f]{64}$' AND ${t.basis}->>'evidenceSha' ~ '^[0-9a-f]{40}([0-9a-f]{24})?$') AND (${t.basis}->>'kind'<>'execution_child' OR jsonb_typeof(${t.basis}->'parent')='object')) IS TRUE`,
+    ),
+    preparationCheck: check(
+      "task_launch_intents_preparation_check",
+      sql`((${t.preparationIdentity} IS NULL AND ${t.preparationPhase} IS NULL) OR (
+        jsonb_typeof(${t.preparationIdentity})='object' AND ${t.preparationIdentity} ?& ARRAY['runId','taskAttemptNumber','branch','parentRepoPath','worktreePath','resourceId','incarnationId','baseCommit','inputDigest','settingsDigest']
+        AND length(${t.preparationIdentity}->>'runId') BETWEEN 1 AND 256
+        AND jsonb_typeof(${t.preparationIdentity}->'taskAttemptNumber')='number' AND (${t.preparationIdentity}->>'taskAttemptNumber')::numeric>0 AND (${t.preparationIdentity}->>'taskAttemptNumber')::numeric=trunc((${t.preparationIdentity}->>'taskAttemptNumber')::numeric)
+        AND ${t.preparationIdentity}->>'resourceId' ~ '^[0-9a-f]{64}$' AND length(${t.preparationIdentity}->>'incarnationId') BETWEEN 1 AND 256
+        AND jsonb_typeof(${t.preparationIdentity}->'worktreePath')='string' AND length(${t.preparationIdentity}->>'worktreePath') BETWEEN 1 AND 4096
+        AND (${t.preparationIdentity}->>'baseCommit' IS NOT DISTINCT FROM ${t.settingsSnapshot}->>'baseCommit')
+        AND ${t.preparationIdentity}->>'inputDigest'=${t.inputDigest} AND ${t.preparationIdentity}->>'settingsDigest'=${t.settingsDigest}
+        AND (${t.preparationIdentity}->'version'='1'::jsonb AND ${t.settingsSnapshot}->>'kind'='flow'
+          AND jsonb_typeof(${t.preparationIdentity}->'branch')='string' AND jsonb_typeof(${t.preparationIdentity}->'parentRepoPath')='string'
+          AND ${t.preparationIdentity}->>'baseCommit' ~ '^[0-9a-f]{40}([0-9a-f]{24})?$'
+          OR ${t.preparationIdentity}->'version'='2'::jsonb AND ${t.preparationIdentity}->>'kind'='agent' AND ${t.settingsSnapshot}->>'kind'='agent'
+          AND ${t.preparationIdentity}->>'workspace'=${t.settingsSnapshot}->>'workspace'
+          AND jsonb_typeof(${t.preparationIdentity}->'runtimePath')='string' AND length(${t.preparationIdentity}->>'runtimePath') BETWEEN 1 AND 4096
+          AND (${t.preparationIdentity}->>'workspace'='none' AND ${t.preparationIdentity}->'parentRepoPath'='null'::jsonb AND ${t.preparationIdentity}->'branch'='null'::jsonb AND ${t.preparationIdentity}->'baseCommit'='null'::jsonb
+            OR ${t.preparationIdentity}->>'workspace' IN ('repo_read','worktree') AND jsonb_typeof(${t.preparationIdentity}->'parentRepoPath')='string'
+              AND ${t.preparationIdentity}->>'baseCommit' ~ '^[0-9a-f]{40}([0-9a-f]{24})?$'
+              AND (${t.preparationIdentity}->>'workspace'='repo_read' AND ${t.preparationIdentity}->'branch'='null'::jsonb OR ${t.preparationIdentity}->>'workspace'='worktree' AND jsonb_typeof(${t.preparationIdentity}->'branch')='string')))
+        AND ${t.preparationPhase} IN ('reserved','checkout_ready','materializing','materialized','run_bound') AND octet_length(${t.preparationIdentity}::text)<=16384
+      )) IS TRUE AND (${t.cleanupState} IS NULL OR ${t.cleanupState} IN ('pending','removed','retained'))`,
     ),
   }),
 );

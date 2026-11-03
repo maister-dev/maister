@@ -50,20 +50,38 @@ vi.mock("@/lib/worktree", async (importOriginal) => {
 
   return {
     ...actual,
-    addWorktree: (input: unknown) => addWorktreeMock(input),
-    removeWorktree: (input: unknown) => removeWorktreeMock(input),
+    addWorktree: async (input: Parameters<typeof actual.addWorktree>[0]) => {
+      await addWorktreeMock(input);
+
+      return actual.addWorktree(input);
+    },
+    removeWorktree: async (
+      input: Parameters<typeof actual.removeWorktree>[0],
+    ) => {
+      await removeWorktreeMock(input);
+
+      return actual.removeWorktree(input);
+    },
     listBranches: async () => ["main", "develop"],
-    resolveBaseCommit: async () => "feedface00000000000000000000000000000000",
     listRemoteUrls: async () => [],
   };
 });
 // Keep launched runs Pending — no scheduler slot, no runner spawn.
-vi.mock("@/lib/scheduler", () => ({
+vi.mock("@/lib/scheduler", async (original) => ({
+  ...(await original<typeof import("@/lib/scheduler")>()),
   tryStartRun: vi.fn(async () => ({ started: false, queuePosition: 1 })),
 }));
 
 import { closeDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import {
+  seedAcceptedRepositoryQualification,
+  isolateEngineFixtureRuntime,
+} from "@/test-support/repository-qualification";
+import { launchEvaluationEngineFixture } from "@/test-support/evaluation-engine-launch";
+import { mkdtempReal } from "@/test-support/worktree-test-root";
+import { runtimeRoot } from "@/lib/runtime-root";
+import { initRepo as initFixtureRepo } from "@/test-support/git-fixture";
 import { gitCommitWorkingDir } from "@/lib/local-packages/git";
 import {
   addFlowToLocalPackage,
@@ -78,7 +96,13 @@ import {
   listEligiblePinInstalls,
   resolvePinnedFlowRevisionForRefId,
 } from "@/lib/packages/pin";
-import { launchRun } from "@/lib/services/runs";
+import { launchQualifiedEngineRun as launchRun } from "@/test-support/launch-engine-response";
+import { MaisterError } from "@/lib/errors";
+import {
+  createScheduledLaunch,
+  claimScheduledLaunch,
+  dispatchClaimedScheduledLaunch,
+} from "@/lib/scheduled-launches/service";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import {
   startMainPostgresTestDb,
@@ -98,7 +122,7 @@ let homeDir: string;
 let runtimeRootDir: string;
 let originalHome: string | undefined;
 let originalDbUrl: string | undefined;
-let originalRuntimeRoot: string | undefined;
+let restoreEngineRuntime: (() => Promise<void>) | undefined;
 let userId: string;
 
 // nodes[] DSL only (plan rule — no legacy steps[]). All-instruct settings pass
@@ -200,19 +224,21 @@ beforeAll(async () => {
   container = testDatabase.container;
   db = testDatabase.db;
 
-  homeDir = await mkdtemp(join(tmpdir(), "launchpin-int-home-"));
+  homeDir = await mkdtempReal("launchpin-int-home-");
   originalHome = process.env.HOME;
   process.env.HOME = homeDir;
   originalDbUrl = process.env.DB_URL;
   process.env.DB_URL = container.getConnectionUri();
-  runtimeRootDir = await mkdtemp(join(tmpdir(), "launchpin-int-rt-"));
-  originalRuntimeRoot = process.env.MAISTER_RUNTIME_ROOT;
-  process.env.MAISTER_RUNTIME_ROOT = runtimeRootDir;
+  restoreEngineRuntime = await isolateEngineFixtureRuntime();
+  runtimeRootDir = runtimeRoot();
 
   userId = randomUUID();
-  await db
-    .insert(schema.users)
-    .values({ id: userId, email: `u-${userId}@x.test`, name: "Pin Author" });
+  await db.insert(schema.users).values({
+    id: userId,
+    email: `u-${userId}@x.test`,
+    name: "Pin Author",
+    accountStatus: "active",
+  });
   await db
     .insert(schema.platformAcpRunners)
     .values(testPlatformRunnerRow("claude-default", "claude"));
@@ -227,11 +253,10 @@ afterAll(async () => {
   else process.env.HOME = originalHome;
   if (originalDbUrl === undefined) delete process.env.DB_URL;
   else process.env.DB_URL = originalDbUrl;
-  if (originalRuntimeRoot === undefined)
-    delete process.env.MAISTER_RUNTIME_ROOT;
-  else process.env.MAISTER_RUNTIME_ROOT = originalRuntimeRoot;
+  await restoreEngineRuntime?.();
   await closeDb();
   await testDatabase?.stop();
+  if (homeDir) await rm(homeDir, { recursive: true, force: true });
 });
 
 beforeEach(() => {
@@ -248,7 +273,7 @@ async function createProject(): Promise<{
   const slug = `pin-${id.slice(0, 8)}`;
   const repoPath = join(homeDir, `repo-${id.slice(0, 8)}`);
 
-  await mkdir(repoPath, { recursive: true });
+  await initFixtureRepo(repoPath);
   await db.insert(schema.projects).values({
     taskKey: `T${randomUUID().slice(0, 8)}`.toUpperCase(),
     id,
@@ -256,6 +281,10 @@ async function createProject(): Promise<{
     name: `Pin Proj ${slug}`,
     repoPath,
   });
+
+  await db
+    .insert(schema.projectMembers)
+    .values({ id: randomUUID(), projectId: id, userId, role: "owner" });
 
   return { id, slug, repoPath };
 }
@@ -415,6 +444,7 @@ async function seedTask(taskId: string, projectId: string, flowRowId: string) {
     prompt: "do it",
     flowId: flowRowId,
   });
+  await seedAcceptedRepositoryQualification(testDatabase.db, projectId, taskId);
 }
 
 async function attachmentRow(
@@ -480,7 +510,7 @@ describe("launchRun packagePin (integration, real Postgres)", () => {
     const result = await launchRun(
       {
         taskId: "task-pin-1",
-        packagePin: { packageInstallId: fx.cut2InstallId },
+        packageVersions: { [fx.pinInstallId]: "try_once" },
       },
       ctx(),
       db as never,
@@ -516,7 +546,7 @@ describe("launchRun packagePin (integration, real Postgres)", () => {
     const next = await launchRun(
       {
         taskId: "task-pin-runner-change",
-        packagePin: { packageInstallId: fx.cut2InstallId },
+        packageVersions: { [fx.pinInstallId]: "try_once" },
       },
       ctx(),
       db as never,
@@ -582,15 +612,24 @@ describe("launchRun packagePin (integration, real Postgres)", () => {
     const before = await attachmentRow(fx.attachmentId);
 
     await expect(
+      resolvePinnedFlowRevisionForRefId(db, {
+        flowRefId: "flow-main",
+        packageInstallId: strangerInstallId,
+      }),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+    await expect(
       launchRun(
         {
           taskId: "task-refuse-1",
-          packagePin: { packageInstallId: strangerInstallId },
+          packageVersions: { [strangerInstallId]: "try_once" },
         },
         ctx(),
-        db as never,
+        db,
       ),
-    ).rejects.toMatchObject({ code: "CONFIG" });
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "launch_package_changed" },
+    });
 
     const runRows = await db
       .select()
@@ -617,10 +656,10 @@ describe("launchRun packagePin (integration, real Postgres)", () => {
     const before = await attachmentRow(fx.attachmentId);
     const pinned = await revisionOfInstall(fx.cut2InstallId, "flow-evalpin");
 
-    const result = await launchRun(
-      { taskId: "task-evalpin-1", evaluationFlowRevisionId: pinned.id },
+    const result = await launchEvaluationEngineFixture(
+      db,
+      { taskId: "task-evalpin-1", flowRevisionId: pinned.id },
       ctx(),
-      db as never,
     );
 
     const [run] = await db
@@ -653,13 +692,10 @@ describe("launchRun packagePin (integration, real Postgres)", () => {
     await seedTask("task-evalforeign-1", project.id, fx.flowRowId);
 
     await expect(
-      launchRun(
-        {
-          taskId: "task-evalforeign-1",
-          evaluationFlowRevisionId: foreign.id,
-        },
+      launchEvaluationEngineFixture(
+        db,
+        { taskId: "task-evalforeign-1", flowRevisionId: foreign.id },
         ctx(),
-        db as never,
       ),
     ).rejects.toMatchObject({ code: "PRECONDITION" });
 
@@ -678,17 +714,33 @@ describe("launchRun packagePin (integration, real Postgres)", () => {
 
     await seedTask("task-evalform-1", project.id, fx.flowRowId);
 
-    const result = await launchRun(
+    await expect(
+      launchEvaluationEngineFixture(
+        db,
+        {
+          taskId: "task-evalform-1",
+          formInputs: {
+            environment: "staging",
+            notes: "controlled run",
+            unknownField: "not declared by the node",
+          },
+        },
+        ctx(),
+      ),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+    expect(
+      await db
+        .select()
+        .from(schema.runs)
+        .where(eq(schema.runs.taskId, "task-evalform-1")),
+    ).toEqual([]);
+    const result = await launchEvaluationEngineFixture(
+      db,
       {
         taskId: "task-evalform-1",
-        evaluationFormInputs: {
-          environment: "staging",
-          notes: "controlled run",
-          unknownField: "not declared by the node",
-        },
+        formInputs: { environment: "staging", notes: "controlled run" },
       },
       ctx(),
-      db as never,
     );
 
     const artifactPath = join(
@@ -768,7 +820,7 @@ describe("launchRun packagePin (integration, real Postgres)", () => {
       launchRun(
         {
           taskId: "task-parity-1",
-          packagePin: { packageInstallId: fx.cut2InstallId },
+          packageVersions: { [fx.pinInstallId]: "try_once" },
         },
         ctx(),
         db as never,
@@ -788,4 +840,254 @@ describe("launchRun packagePin (integration, real Postgres)", () => {
     expect(addWorktreeMock).not.toHaveBeenCalled();
     expect(await attachmentRow(fx.attachmentId)).toEqual(before);
   });
+});
+
+describe("canonical pin consumer boundary matrix", () => {
+  it("refuses unknown, removed and untrusted persisted installs with typed errors and no execution effects", async () => {
+    const project = await createProject();
+    const fx = await forkAttachWithNewerCut(
+      project,
+      "matrix-install",
+      "flow-matrix-install",
+    );
+    const before = await attachmentRow(fx.attachmentId);
+
+    const missing = resolvePinnedFlowRevisionForRefId(db, {
+      flowRefId: "flow-matrix-install",
+      packageInstallId: randomUUID(),
+    });
+
+    await expect(missing).rejects.toBeInstanceOf(MaisterError);
+    await expect(missing).rejects.toMatchObject({ code: "CONFIG" });
+    for (const patch of [
+      { packageStatus: "Removed" as const },
+      {
+        packageStatus: "Installed" as const,
+        trustStatus: "untrusted" as const,
+      },
+    ]) {
+      await db
+        .update(schema.packageInstalls)
+        .set(patch)
+        .where(eq(schema.packageInstalls.id, fx.cut2InstallId));
+      await expect(
+        resolvePinnedFlowRevisionForRefId(db, {
+          flowRefId: "flow-matrix-install",
+          packageInstallId: fx.cut2InstallId,
+        }),
+      ).rejects.toMatchObject({ name: "MaisterError", code: "PRECONDITION" });
+    }
+    await testDatabase.pool.query(
+      "UPDATE package_installs SET package_status='Installed',trust_status='pending' WHERE id=$1",
+      [fx.cut2InstallId],
+    );
+    await expect(
+      resolvePinnedFlowRevisionForRefId(db, {
+        flowRefId: "flow-matrix-install",
+        packageInstallId: fx.cut2InstallId,
+      }),
+    ).rejects.toMatchObject({ name: "MaisterError", code: "PRECONDITION" });
+    expect(await attachmentRow(fx.attachmentId)).toEqual(before);
+    expect(
+      await db
+        .select()
+        .from(schema.runs)
+        .where(eq(schema.runs.projectId, project.id)),
+    ).toEqual([]);
+    expect(addWorktreeMock).not.toHaveBeenCalled();
+  });
+
+  it("canonical try_once preserves schema, engine, setup and project enablement gates before any checkout or Run", async () => {
+    const project = await createProject();
+    const fx = await forkAttachWithNewerCut(
+      project,
+      "matrix-revision",
+      "flow-matrix-revision",
+    );
+    const revision = await revisionOfInstall(
+      fx.cut2InstallId,
+      "flow-matrix-revision",
+    );
+    const taskId = randomUUID();
+
+    await seedTask(taskId, project.id, fx.flowRowId);
+    const before = await attachmentRow(fx.attachmentId);
+
+    for (const [patch, code] of [
+      [{ schemaVersion: 999 }, "CONFIG"],
+      [{ engineMin: "999.0.0" }, "CONFIG"],
+      [{ setupStatus: "pending" }, "PRECONDITION"],
+      [{ setupStatus: "failed" }, "PRECONDITION"],
+    ] as const) {
+      await db
+        .update(schema.flowRevisions)
+        .set(patch)
+        .where(eq(schema.flowRevisions.id, revision.id));
+      await expect(
+        launchRun(
+          { taskId, packageVersions: { [fx.pinInstallId]: "try_once" } },
+          ctx(),
+          db,
+        ),
+      ).rejects.toMatchObject({ code });
+      await db
+        .update(schema.flowRevisions)
+        .set({
+          schemaVersion: revision.schemaVersion,
+          engineMin: revision.engineMin,
+          setupStatus: revision.setupStatus,
+        })
+        .where(eq(schema.flowRevisions.id, revision.id));
+    }
+    await db
+      .update(schema.flows)
+      .set({ enablementState: "Disabled" })
+      .where(eq(schema.flows.id, fx.flowRowId));
+    await expect(
+      launchRun(
+        { taskId, packageVersions: { [fx.pinInstallId]: "try_once" } },
+        ctx(),
+        db,
+      ),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+    expect(
+      await db.select().from(schema.runs).where(eq(schema.runs.taskId, taskId)),
+    ).toEqual([]);
+    expect(
+      await db
+        .select()
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.projectId, project.id)),
+    ).toEqual([]);
+    expect(await attachmentRow(fx.attachmentId)).toEqual(before);
+    expect(addWorktreeMock).not.toHaveBeenCalled();
+  });
+
+  it("a real controlled recipe binds an upstream revision without attaching its install and retains the project's pin", async () => {
+    const project = await createProject();
+    const fx = await forkAttachWithNewerCut(
+      project,
+      "matrix-local",
+      "flow-matrix-upstream",
+    );
+    const upstreamInstallId = await installSource(
+      "matrix-upstream",
+      "flow-matrix-upstream",
+    );
+    const upstream = await revisionOfInstall(
+      upstreamInstallId,
+      "flow-matrix-upstream",
+    );
+    const taskId = randomUUID();
+
+    await seedTask(taskId, project.id, fx.flowRowId);
+    const before = await attachmentRow(fx.attachmentId);
+    const launched = await launchEvaluationEngineFixture(
+      db,
+      { taskId, flowRevisionId: upstream.id },
+      ctx(),
+    );
+    const [run] = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, launched.runId));
+
+    expect(run.flowRevisionId).toBe(upstream.id);
+    expect(run.flowRevision).toBe(upstream.resolvedRevision);
+    expect(run.flowVersion).toBe(upstream.versionLabel);
+    expect(
+      await db
+        .select()
+        .from(schema.projectPackageAttachments)
+        .where(
+          and(
+            eq(schema.projectPackageAttachments.projectId, project.id),
+            eq(
+              schema.projectPackageAttachments.packageInstallId,
+              upstreamInstallId,
+            ),
+          ),
+        ),
+    ).toEqual([]);
+    expect(await attachmentRow(fx.attachmentId)).toEqual(before);
+  });
+});
+
+it("retains a completed scheduled package adoption when a later admission gate refuses execution", async () => {
+  const project = await createProject();
+  const fx = await forkAttachWithNewerCut(
+    project,
+    "scheduled-adopt",
+    "flow-scheduled-adopt",
+  );
+  const taskId = randomUUID();
+  const now = new Date();
+
+  await seedTask(taskId, project.id, fx.flowRowId);
+  const created = await createScheduledLaunch({
+    projectId: project.id,
+    taskId,
+    actorUserId: userId,
+    idempotencyKey: randomUUID(),
+    scheduledLocalTime: new Date(now.getTime() - 60_000)
+      .toISOString()
+      .slice(0, 16),
+    timezone: "UTC",
+    now: new Date(now.getTime() - 3600_000),
+    launchRequest: {
+      flowId: fx.flowRowId,
+      packageVersions: { [fx.pinInstallId]: "adopt" },
+    },
+    db,
+  });
+  const claim = await claimScheduledLaunch({
+    scheduledLaunchId: created.intent.id,
+    projectId: project.id,
+    source: "tick",
+    now,
+    db,
+  });
+
+  await testDatabase.pool.query(
+    `CREATE FUNCTION pause_after_fixture_package_adoption() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id='${fx.attachmentId}' AND NEW.package_install_id IS DISTINCT FROM OLD.package_install_id THEN UPDATE tasks SET queue_paused=true WHERE id='${taskId}'; END IF; RETURN NEW; END $$`,
+  );
+  await testDatabase.pool.query(
+    `CREATE TRIGGER pause_after_fixture_package_adoption AFTER UPDATE ON project_package_attachments FOR EACH ROW EXECUTE FUNCTION pause_after_fixture_package_adoption()`,
+  );
+  try {
+    expect(
+      await dispatchClaimedScheduledLaunch({
+        projectId: project.id,
+        ...claim,
+        now,
+        db,
+      }),
+    ).toEqual({ state: "Failed" });
+  } finally {
+    await testDatabase.pool.query(
+      `DROP TRIGGER pause_after_fixture_package_adoption ON project_package_attachments`,
+    );
+    await testDatabase.pool.query(
+      `DROP FUNCTION pause_after_fixture_package_adoption()`,
+    );
+  }
+  expect((await attachmentRow(fx.attachmentId)).packageInstallId).toBe(
+    fx.cut2InstallId,
+  );
+  const [task] = await db
+    .select()
+    .from(schema.tasks)
+    .where(eq(schema.tasks.id, taskId));
+
+  expect(task.queuePaused).toBe(true);
+  expect(
+    await db.select().from(schema.runs).where(eq(schema.runs.taskId, taskId)),
+  ).toEqual([]);
+  expect(
+    await db
+      .select()
+      .from(schema.taskLaunchIntents)
+      .where(eq(schema.taskLaunchIntents.taskId, taskId)),
+  ).toEqual([]);
+  expect(addWorktreeMock).not.toHaveBeenCalled();
 });

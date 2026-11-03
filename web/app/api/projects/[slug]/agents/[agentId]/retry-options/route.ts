@@ -21,7 +21,9 @@ export async function GET(
 
     if (
       [...search.keys()].some(
-        (key) => key !== "cursor" || search.getAll(key).length !== 1,
+        (key) =>
+          !["cursor", "runnerId"].includes(key) ||
+          search.getAll(key).length !== 1,
       )
     )
       throw new MaisterError("CONFIG", "Invalid batch retry preview filters");
@@ -34,7 +36,12 @@ export async function GET(
           agentId: access.agentId,
           userId: access.actor.id,
         },
-        search.has("cursor") ? { cursor: search.get("cursor")! } : {},
+        {
+          ...(search.has("cursor") ? { cursor: search.get("cursor")! } : {}),
+          ...(search.has("runnerId")
+            ? { runnerId: search.get("runnerId")! }
+            : {}),
+        },
       ),
     );
   } catch (error) {

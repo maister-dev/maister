@@ -1,272 +1,147 @@
 import "server-only";
 
-import { NextRequest, NextResponse } from "next/server";
-import pino from "pino";
+import { eq } from "drizzle-orm";
+import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { wakeAcceptedTaskLaunch } from "@/lib/tasks/launch-wake";
+import { getDb } from "@/lib/db/client";
+import { runs } from "@/lib/db/schema";
+import { interactiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
 import {
-  requireActiveSession,
-  requireProjectAction,
-  type ProjectAction,
-} from "@/lib/authz";
-import { isMaisterError, MaisterError } from "@/lib/errors";
-import { storedDeliveryPolicySchema } from "@/lib/runs/delivery-policy";
-import { executionPolicySchema } from "@/lib/runs/execution-policy";
+  acceptConcurrentInteractiveTaskLaunch,
+  acceptInteractiveTaskLaunch,
+} from "@/lib/tasks/launch-intent";
 import {
-  formatLaunchErrorFrame,
-  formatLaunchProgressFrame,
-  formatLaunchResultFrame,
-  readLaunchErrorDetails,
-  type LaunchProgressEvent,
-} from "@/lib/runs/launch-progress";
-import { launchRun, launchRunStaged } from "@/lib/services/runs";
+  assertInteractiveLaunchOrigin,
+  readTaskLaunchBody,
+  taskLaunchErrorResponse,
+  taskLaunchRequestKey,
+} from "@/lib/tasks/launch-http";
+import {
+  taskLaunchBodySchema,
+  taskLaunchFieldsSchema,
+  validateTaskLaunchTarget,
+} from "@/lib/tasks/launch-schema";
+import { MaisterError } from "@/lib/errors";
 
-const log = pino({
-  name: "api-runs",
-  level: process.env.LOG_LEVEL ?? "info",
-});
-
-const baseCommitSchema = z
-  .string()
-  .min(7)
-  .max(64)
-  .regex(/^[0-9a-fA-F]+$/, "baseCommit must be a hex commit SHA");
-
-const postBodySchema = z
-  .object({
-    taskId: z.string().min(1),
-    flowId: z.string().min(1).optional(),
-    runnerId: z.string().min(1).optional(),
-    baseBranch: z.string().min(1).optional(),
-    baseCommit: baseCommitSchema.optional(),
-    relaunchOfRunId: z.string().min(1).optional(),
-    targetBranch: z.string().min(1).optional(),
-    deliveryPolicy: storedDeliveryPolicySchema.optional(),
-    executionPolicy: executionPolicySchema.optional(),
-    // ADR-132: `try_once` = ephemeral per-run pin to the newest cut — the
-    // attachment is never advanced. Offered exactly when `adopt` is offered;
-    // server-constrained like the other options (unoffered → CONFLICT).
+// Preserve legacy field recognition while refusing operations that require a
+// separate setup decision. None of these fields can grant admission authority.
+const compatibilityBodySchema = taskLaunchFieldsSchema
+  .partial({ expectedTaskRevision: true, expectedSettingsToken: true })
+  .extend({
+    allowConcurrent: z.boolean().optional(),
+    relaunchOfRunId: z.string().min(1).max(256).optional(),
     packageVersions: z
       .record(
-        z.string().min(1),
-        z.enum(["keep", "adopt", "cut_and_adopt", "try_once"]),
+        z.string().min(1).max(256),
+        z.enum(["keep", "try_once", "adopt", "cut_and_adopt"]),
       )
+      .refine((choices) => Object.keys(choices).length <= 64)
       .optional(),
-    // ADR-119: force-relaunch flag — selects the force launchability gate
-    // (every run status launchable; task gates flagged/blocked still refuse) for
-    // an additive concurrent run. Defaults false ⇒ the manual busy gate.
-    allowConcurrent: z.boolean().optional().default(false),
-    // ADR-122 (T5.3): opt this run into ambient Project Brain context. Persisted
-    // to runs.brain_context; null/absent = inherit the flow default at
-    // ambient-inject time (T4.3). No recall/embedding runs at launch.
-    brainContext: z.boolean().nullable().optional(),
-    // ADR-126 T10: opt this run OUT of auto-promotion. Default true; `false`
-    // persists a `launch`-sourced promotion_hold at run INSERT so the sweep
-    // never considers it.
-    autoPromote: z.boolean().optional(),
   })
-  .strict();
+  .strict()
+  .superRefine(validateTaskLaunchTarget);
 
-function errorResponse(err: unknown): NextResponse {
-  if (isMaisterError(err)) {
-    const status = httpStatusForCode(err.code);
+type CompatibilityReason =
+  "launch_request_upgrade_required" | "launch_request_setup_required";
 
-    log.warn(
-      { code: err.code, message: err.message, status },
-      "POST /api/runs refused",
+function compatibilityDecisionRequired(
+  taskId: string,
+  reason: CompatibilityReason,
+): NextResponse {
+  return NextResponse.json(
+    {
+      code: "CONFIG",
+      message:
+        reason === "launch_request_upgrade_required"
+          ? "Refresh launch options, then submit the displayed revision and settings token with a stable Idempotency-Key. Preserve that exact request when retrying."
+          : "Complete package setup through /api/projects/{slug}/flow-packages/{flowRefId}/upgrade or /api/studio/local-packages/{id}/cut-version, then refresh launch options. For legacy lineage, choose a new explicit launch in the task launcher. This request did not authorize a launch.",
+      details: {
+        reason,
+        optionsEndpoint: `/api/runs/launch-options?taskId=${encodeURIComponent(taskId)}`,
+        intentEndpoint: "/api/task-launch-intents",
+      },
+    },
+    { status: 422, headers: { "Cache-Control": "no-store" } },
+  );
+}
+
+/** The compatibility route accepts the same one-shot decision as the intent API. Acceptance never implies model start. */
+export async function POST(request: Request): Promise<NextResponse> {
+  try {
+    const principal = await interactiveTaskLaunchPrincipal();
+
+    assertInteractiveLaunchOrigin(request);
+    const parsed = compatibilityBodySchema.safeParse(
+      await readTaskLaunchBody(request),
     );
+
+    if (!parsed.success)
+      throw new MaisterError("CONFIG", "Task launch body is invalid", {
+        details: { reason: "launch_request_invalid" },
+      });
+    const body = parsed.data;
+
+    if (
+      body.expectedTaskRevision === undefined ||
+      body.expectedSettingsToken === undefined ||
+      !request.headers.get("idempotency-key")
+    )
+      return compatibilityDecisionRequired(
+        body.taskId,
+        "launch_request_upgrade_required",
+      );
+    const requestKey = taskLaunchRequestKey(request);
+
+    if (
+      Object.values(body.packageVersions ?? {}).some(
+        (choice) => choice === "adopt" || choice === "cut_and_adopt",
+      )
+    )
+      return compatibilityDecisionRequired(
+        body.taskId,
+        "launch_request_setup_required",
+      );
+    const { allowConcurrent, ...selection } = body;
+    const canonical = taskLaunchBodySchema.parse(selection);
+    const db = getDb();
+    const receipt = allowConcurrent
+      ? await acceptConcurrentInteractiveTaskLaunch(
+          db,
+          principal,
+          canonical,
+          requestKey,
+        )
+      : await acceptInteractiveTaskLaunch(db, principal, canonical, requestKey);
+    const location = `/api/task-launch-intents/${receipt.intentId}`;
+
+    wakeAcceptedTaskLaunch(db, receipt);
+    const headers = { Location: location, "Cache-Control": "no-store" };
+
+    if (receipt.runId) {
+      const [run] = await db
+        .select({ id: runs.id, status: runs.status })
+        .from(runs)
+        .where(eq(runs.id, receipt.runId));
+
+      if (run?.status === "Pending" || run?.status === "Running")
+        return NextResponse.json(
+          { runId: run.id, status: run.status },
+          { status: 202, headers },
+        );
+    }
 
     return NextResponse.json(
       {
-        code: err.code,
-        message: err.message,
-        details: readLaunchErrorDetails(err.details),
+        accepted: true,
+        code: "launch_pending",
+        intentId: receipt.intentId,
+        location,
       },
-      { status },
+      { status: 202, headers },
     );
+  } catch (error) {
+    return taskLaunchErrorResponse(error);
   }
-  const message = err instanceof Error ? err.message : String(err);
-
-  log.error({ err: message }, "POST /api/runs unhandled error");
-
-  return NextResponse.json(
-    { code: "CRASH", message: "internal error" },
-    { status: 500 },
-  );
-}
-
-function httpStatusForCode(code: string): number {
-  switch (code) {
-    case "UNAUTHENTICATED":
-      return 401;
-    case "UNAUTHORIZED":
-    case "PASSWORD_CHANGE_REQUIRED":
-      return 403;
-    case "PRECONDITION":
-    case "CONFLICT":
-      return 409;
-    case "EXECUTOR_UNAVAILABLE":
-      return 503;
-    case "CONFIG":
-      return 400;
-    default:
-      return 500;
-  }
-}
-
-function frameErrorFor(err: unknown): { code: string; message: string } {
-  if (isMaisterError(err)) return { code: err.code, message: err.message };
-
-  return { code: "CRASH", message: "internal error" };
-}
-
-// Phase 6 (FR-F1/F2, T6.3): content-negotiated launch. A board client that
-// sends `Accept: text/event-stream` gets the staged launch progress on this
-// response (precondition → worktree_created → materializing → terminal
-// `scratch.launch_result` wrapping `{runId,status,queuePosition?}`); every other
-// caller (programmatic, tests) gets the unchanged JSON 202. Preconditions throw
-// BEFORE the stream opens either way → JSON error with the right HTTP status.
-export async function POST(req: NextRequest): Promise<Response> {
-  // Auth-first: authenticate AND clear the forced-password-change gate BEFORE
-  // reading or validating the body, so an unauthenticated / password-gated
-  // caller gets the auth response — never a body-shape CONFIG error and never a
-  // resource probe. Project-role authz happens once projectId is derived from
-  // the task row inside launchRun (taskId is body-controlled — never trust a
-  // body projectId).
-  let user: Awaited<ReturnType<typeof requireActiveSession>>;
-
-  try {
-    user = await requireActiveSession();
-  } catch (err) {
-    return errorResponse(err);
-  }
-
-  let body: z.infer<typeof postBodySchema>;
-
-  try {
-    body = postBodySchema.parse(await req.json());
-  } catch (err) {
-    return errorResponse(
-      new MaisterError(
-        "CONFIG",
-        `invalid POST body: ${(err as Error).message}`,
-      ),
-    );
-  }
-
-  const input = {
-    taskId: body.taskId,
-    flowId: body.flowId,
-    runnerId: body.runnerId,
-    baseBranch: body.baseBranch,
-    baseCommit: body.baseCommit,
-    relaunchOfRunId: body.relaunchOfRunId,
-    targetBranch: body.targetBranch,
-    deliveryPolicy: body.deliveryPolicy,
-    executionPolicy: body.executionPolicy,
-    packageVersions: body.packageVersions,
-    allowConcurrent: body.allowConcurrent,
-    brainContext: body.brainContext,
-    autoPromote: body.autoPromote,
-  };
-  const ctx = {
-    actorUserId: user.id,
-    authorize: async (
-      projectId: string,
-      action: ProjectAction = "launchRun",
-    ) => {
-      await requireProjectAction(projectId, action);
-    },
-  };
-
-  const wantsStream = (req.headers.get("accept") ?? "").includes(
-    "text/event-stream",
-  );
-
-  if (!wantsStream) {
-    try {
-      const result = await launchRun(input, ctx);
-
-      return NextResponse.json(
-        result.status === "Running"
-          ? { runId: result.runId, status: "Running" }
-          : {
-              runId: result.runId,
-              status: "Pending",
-              queuePosition: result.queuePosition,
-              ...(result.queueReason
-                ? { queueReason: result.queueReason }
-                : {}),
-            },
-        { status: 202 },
-      );
-    } catch (err) {
-      return errorResponse(err);
-    }
-  }
-
-  const gen = launchRunStaged(input, ctx, undefined, { signal: req.signal });
-
-  // Run the head (all preconditions) up to the first `precondition` yield. A
-  // throw here predates any side-effect → JSON error with its HTTP status.
-  let first: IteratorResult<LaunchProgressEvent, unknown>;
-
-  try {
-    first = await gen.next();
-  } catch (err) {
-    return errorResponse(err);
-  }
-
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const enqueue = (frame: string) => {
-        try {
-          controller.enqueue(encoder.encode(frame));
-        } catch {
-          /* consumer gone — server-side compensation still runs */
-        }
-      };
-
-      try {
-        if (!first.done) enqueue(formatLaunchProgressFrame(first.value));
-
-        let step: IteratorResult<LaunchProgressEvent, unknown> = first.done
-          ? first
-          : await gen.next();
-
-        while (!step.done) {
-          enqueue(formatLaunchProgressFrame(step.value));
-          step = await gen.next();
-        }
-        enqueue(formatLaunchResultFrame(step.value));
-      } catch (err) {
-        const { code, message } = frameErrorFor(err);
-
-        log.warn({ code, message }, "flow launch stream failed");
-        enqueue(
-          formatLaunchErrorFrame(
-            code,
-            message,
-            isMaisterError(err) ? err.details : undefined,
-          ),
-        );
-      } finally {
-        try {
-          controller.close();
-        } catch {
-          /* already closed */
-        }
-      }
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-    },
-  });
 }

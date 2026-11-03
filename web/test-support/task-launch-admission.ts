@@ -1,6 +1,8 @@
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
+import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 
 import { randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
 import { eq } from "drizzle-orm";
@@ -28,6 +30,10 @@ export type TaskLaunchFixture = Readonly<{
 export async function bindPendingTaskLaunchFixture(
   database: StartedPostgresTestDb,
   intentId: string,
+  initialRunContext: Readonly<{
+    agentId?: string;
+    scheduledRequestSnapshot?: ScheduledAgentRequestSnapshot;
+  }> = {},
 ): Promise<{ runId: string; stateVersion: number }> {
   return database.db.transaction(async (tx) => {
     const [intent] = await tx
@@ -35,15 +41,18 @@ export async function bindPendingTaskLaunchFixture(
       .from(taskLaunchIntents)
       .where(eq(taskLaunchIntents.id, intentId))
       .for("update");
+
+    if (!intent)
+      throw new Error("Pending launch control requires an accepted intent");
     const settings = intent.settingsSnapshot;
 
     if (
       settings.version !== 2 ||
       settings.kind !== "flow" ||
-      intent.basis.kind !== "manual"
+      (intent.basis.kind !== "manual" && intent.basis.kind !== "automatic")
     )
       throw new Error(
-        "Pending launch control requires a current manual Flow intent",
+        "Pending launch control requires a current ordinary Flow intent",
       );
     await tx
       .update(taskLaunchIntents)
@@ -68,15 +77,23 @@ export async function bindPendingTaskLaunchFixture(
       taskLaunchIntentId: intentId,
       executionPolicy: settings.executionPolicy,
       resolvedCapabilitySet: settings.resolvedCapabilitySet,
+      agentId: initialRunContext.agentId,
+      scheduledRequestSnapshot: initialRunContext.scheduledRequestSnapshot,
       taskAdmissionSnapshot: {
         version: 2,
         policyVersion: 2,
-        mode: "manual",
-        basis: "manual",
+        mode: intent.basis.kind === "automatic" ? "required" : "manual",
+        basis: intent.basis.kind,
         intentId,
         inputRevision: intent.inputRevision,
-        qualificationId: null,
-        qualificationRevision: null,
+        qualificationId:
+          intent.basis.kind === "automatic"
+            ? intent.basis.qualificationId
+            : null,
+        qualificationRevision:
+          intent.basis.kind === "automatic"
+            ? intent.basis.qualificationRevision
+            : null,
         evidenceTarget: settings.baseBranch,
         evidenceSha: settings.baseCommit,
         parent: null,
@@ -105,6 +122,9 @@ export async function seedTaskLaunchFixture(
   root: string,
 ): Promise<TaskLaunchFixture> {
   const repo = await initRepo(path.join(root, "repo"));
+  const flowInstallPath = path.join(root, "flow");
+
+  await mkdir(flowInstallPath, { recursive: true });
 
   const userId = randomUUID();
   const projectId = randomUUID();
@@ -157,7 +177,7 @@ export async function seedTaskLaunchFixture(
     manifestDigest: "a".repeat(64),
     manifest,
     schemaVersion: 1,
-    installedPath: root,
+    installedPath: flowInstallPath,
     setupStatus: "not_required",
     packageStatus: "Installed",
     execTrust: "trusted",
@@ -168,7 +188,7 @@ export async function seedTaskLaunchFixture(
     flowRefId: flowId,
     source: "local",
     version: "v1",
-    installedPath: root,
+    installedPath: flowInstallPath,
     manifest,
     schemaVersion: 1,
     enabledRevisionId: revisionId,

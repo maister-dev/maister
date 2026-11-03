@@ -1,5 +1,7 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
+import { z } from "zod";
+
 import taskQualificationSchema from "../../runtime/task-qualification.schema.json";
 import askHumanInputSchema from "../../runtime/ask-human-input.schema.json";
 
@@ -10,6 +12,14 @@ import {
   restResponseToToolError,
 } from "./rest";
 import { isToolsetName, TOOLSETS } from "./toolsets";
+import {
+  isTaskLaunchTool,
+  isLaunchAdmissionTool,
+  LEGACY_RUN_LAUNCH_TOOL_SPEC,
+  taskLaunchArgumentIssues,
+  taskLaunchRouting,
+  TASK_LAUNCH_TOOL_SPECS,
+} from "./task-launch-tools";
 
 export type ToolSpec = {
   description: string;
@@ -17,6 +27,7 @@ export type ToolSpec = {
 };
 
 export const TOOL_SPECS: Record<string, ToolSpec> = {
+  ...TASK_LAUNCH_TOOL_SPECS,
   task_create: {
     description:
       "Create a new task in a project (flowId optional — a flowless task is a simple-intent task awaiting triage). `flowId` accepts either the flow's UUID or its ref (e.g. `aif-bugfix`), as returned by `flow_list` (`id` or `ref`).",
@@ -472,28 +483,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       required: ["slug", "taskId"],
     },
   },
-  run_launch: {
-    description:
-      "Launch a run for a task. `runnerId` is an optional per-launch platform ACP runner override (highest priority in runner resolution). `baseBranch`/`targetBranch` (M18) optionally set the worktree base and the promotion target — both server-validated against the project's branch allow-list. `executorOverrideId` is the DEPRECATED alias for `runnerId`; send `runnerId` instead — the route refuses both when they conflict.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        taskId: { type: "string" },
-        runnerId: { type: "string", minLength: 1 },
-        executorOverrideId: { type: "string", minLength: 1 },
-        baseBranch: { type: "string", minLength: 1 },
-        targetBranch: { type: "string", minLength: 1 },
-        operationKey: {
-          type: "string",
-          minLength: 1,
-          maxLength: 128,
-          description:
-            "Idempotency key for this effect (sent as the Idempotency-Key header). Required when acting as the librarian: reuse the SAME key when retrying the same effect, and a new key for a new effect.",
-        },
-      },
-      required: ["taskId"],
-    },
-  },
+  run_launch: LEGACY_RUN_LAUNCH_TOOL_SPEC,
   run_get: {
     description:
       "Get a run by ID. A Failed, Crashed or Abandoned run carries terminalCause {code, reason?, source} — why it ended; null otherwise.",
@@ -538,10 +528,28 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   run_delegate: {
     description:
-      "Delegate work to a governed child run. Supply EXACTLY ONE target: target.agentId = a single-purpose catalog agent (one session, one turn-loop, package-qualified <flowRefId>:<stem>); target.flowId = a governed multi-node process from the project's enabled+trusted flows (its own graph, gates, review). Flow targets accept only title and runnerOverride — workspace, workspaceMode, persistent, addressableKey are agent-only and are refused, not ignored; a flow child always gets a linked board task (childTaskId is always returned) and run_rework/run_message do not apply to it. For an agent target, mode:'task' also creates a child board task linked parent_of under the orchestrator's task and mode:'run' spawns a board-less child; for a flow target mode is only recorded (the carrier task always exists). The parent orchestrator run is derived from the calling token — never accepted in the body. An untrusted/disabled/incompatible target, or one with no Ready platform runner, is refused and no child run is created.",
+      "Delegate work to a governed child run. Task-backed delivery effects require operationKey; accepted queued responses return intentId with null runId/childRunId until real binding. Reuse the same key and body after an uncertain response. Supply EXACTLY ONE target: target.agentId = a single-purpose catalog agent (one session, one turn-loop, package-qualified <flowRefId>:<stem>); target.flowId = a governed multi-node process from the project's enabled+trusted flows (its own graph, gates, review). An agent target whose definition names a Flow requires mode:task. Flow targets and these agent facades accept only title and runnerOverride — workspace, workspaceMode, persistent, addressableKey, resultProfile are standalone-agent-only and are refused, not ignored; a flow child always gets a linked board task (childTaskId is always returned) and run_rework/run_message do not apply to it. For an agent target, mode:'task' also creates a child board task linked parent_of under the orchestrator's task and mode:'run' spawns a board-less child; for a flow target mode is only recorded (the carrier task always exists). The parent orchestrator run is derived from the calling token — never accepted in the body. An untrusted/disabled/incompatible target, or one with no Ready platform runner, is refused and no child run is created.",
     inputSchema: {
       type: "object",
+      additionalProperties: false,
+      anyOf: [
+        { required: ["operationKey"] },
+        {
+          properties: {
+            mode: { const: "run" },
+            target: { required: ["agentId"] },
+          },
+          required: ["mode", "target"],
+        },
+      ],
       properties: {
+        operationKey: {
+          type: "string",
+          minLength: 1,
+          maxLength: 256,
+          description:
+            "Required stable key for every task-backed effect; replay the same key/body after an uncertain response.",
+        },
         target: {
           oneOf: [
             {
@@ -606,14 +614,23 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   run_plan: {
     description:
-      "Emit a task-DAG of as-plan child tasks under the calling orchestrator. Each entry supplies EXACTLY ONE target — target.agentId (a catalog agent) or target.flowId (a governed multi-node process from the project's enabled+trusted flows) — plus a unique `key` and a `dependsOn` list of in-batch keys; a batch may mix both kinds and the DAG must be acyclic. `workspace` is agent-only and is refused on a flow entry, not ignored. Every task is created launch_mode='auto' and linked parent_of under the orchestrator's task; dependencies become success-gated `requires` relations. Source tasks (empty dependsOn) are launched right after the DAG commits: a refused source is reported on its result row as `launchError` (and as a system comment on the task) and is retried when a sibling child next settles; when EVERY source is refused the committed DAG is abandoned and the call fails with the refusal's code — re-plan. Downstream tasks auto-launch once their requires-dependencies all complete successfully. The orchestrator run is derived from the calling token — never accepted in the body. Returns { tasks: [{ key, taskId, childRunId?, launchError? }] } (childRunId only for launched sources, launchError only for refused ones).",
+      "Emit a task-DAG of as-plan child tasks under the calling orchestrator. Requires operationKey; replay the exact whole plan/key after an uncertain response. Accepted source entries may have intentId, accepted:true and null runId/childRunId before actual binding. Each entry supplies EXACTLY ONE target — target.agentId (a catalog agent) or target.flowId (a governed multi-node process from the project's enabled+trusted flows) — plus a unique `key` and a `dependsOn` list of in-batch keys; a batch may mix both kinds and the DAG must be acyclic. `workspace` is agent-only and is refused on a flow entry, not ignored. Every task is created launch_mode='auto' and linked parent_of under the orchestrator's task; dependencies become success-gated `requires` relations. Source tasks (empty dependsOn) are launched right after the DAG commits: a refused source is reported on its result row as `launchError` (and as a system comment on the task) and is retried when a sibling child next settles; when EVERY source is refused the committed DAG is abandoned and the call fails with the refusal's code — re-plan. Downstream tasks auto-launch once their requires-dependencies all complete successfully. The orchestrator run is derived from the calling token — never accepted in the body. Returns { tasks: [{ key, taskId, childRunId?, launchError? }] } (childRunId only for launched sources, launchError only for refused ones).",
     inputSchema: {
       type: "object",
+      additionalProperties: false,
       properties: {
+        operationKey: {
+          type: "string",
+          minLength: 1,
+          maxLength: 256,
+          description:
+            "Required stable operation key; reuse it with the same entire plan after an uncertain response.",
+        },
         tasks: {
           type: "array",
           items: {
             type: "object",
+            additionalProperties: false,
             properties: {
               key: { type: "string", minLength: 1 },
               target: {
@@ -664,7 +681,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
           },
         },
       },
-      required: ["tasks"],
+      required: ["tasks", "operationKey"],
     },
   },
   run_collect: {
@@ -1171,6 +1188,12 @@ type DispatchResult =
       publicBody?: Record<string, unknown>;
     };
 
+export function isDelegationAdmissionTool(
+  name: string,
+): name is "run_delegate" | "run_plan" {
+  return name === "run_delegate" || name === "run_plan";
+}
+
 export async function dispatchTool(opts: {
   name: string;
   args: Record<string, unknown>;
@@ -1184,6 +1207,56 @@ export async function dispatchTool(opts: {
 
   if (!authHeader) {
     return { isError: true, status: 401, message: "Missing bearer token" };
+  }
+
+  if (isDelegationAdmissionTool(name)) {
+    const schema = Object.fromEntries(
+      Object.entries(TOOL_SPECS[name].inputSchema).filter(
+        ([key]) => key !== "anyOf",
+      ),
+    );
+    const parsed = z
+      .fromJSONSchema(schema as z.core.JSONSchema.JSONSchema)
+      .safeParse(args);
+    const taskBacked =
+      name === "run_plan" ||
+      args.mode !== "run" ||
+      args.target === null ||
+      typeof args.target !== "object" ||
+      !("agentId" in args.target);
+
+    if (!parsed.success || (taskBacked && args.operationKey === undefined)) {
+      const publicBody = {
+        code: "CONFIG",
+        message:
+          "Delegation launch arguments are invalid; supply a stable operationKey for task-backed work",
+        details: {
+          reason: "delegation_launch_arguments_invalid",
+          issues: parsed.success
+            ? [{ path: ["operationKey"], code: "required" }]
+            : parsed.error.issues.map((issue) => ({
+                path: issue.path.map(String),
+                code: issue.code,
+              })),
+        },
+      };
+
+      return { isError: true, status: 422, ...publicBody, publicBody };
+    }
+  }
+
+  if (isLaunchAdmissionTool(name)) {
+    const issues = taskLaunchArgumentIssues(name, args);
+
+    if (issues) {
+      const publicBody = {
+        code: "CONFIG",
+        message: "Task launch arguments are invalid",
+        details: { reason: "task_launch_arguments_invalid", issues },
+      };
+
+      return { isError: true, status: 422, ...publicBody, publicBody };
+    }
   }
 
   // ADR-187: the librarian's operation key rides the `Idempotency-Key` header,
@@ -1217,7 +1290,12 @@ export async function dispatchTool(opts: {
   }
 
   if (!res.ok) {
-    if (name === "hitl_respond" || name === "ask_human")
+    if (
+      name === "hitl_respond" ||
+      name === "ask_human" ||
+      isLaunchAdmissionTool(name) ||
+      isDelegationAdmissionTool(name)
+    )
       return structuredResponseToToolError(res);
 
     return restResponseToToolError(res);
@@ -1283,6 +1361,8 @@ function resolveRouting(
   path: string;
   body?: unknown;
 } {
+  if (isTaskLaunchTool(name)) return taskLaunchRouting(name, args);
+
   switch (name) {
     case "project_list":
       return { method: "GET", path: `/api/v1/ext/projects` };
@@ -1660,15 +1740,29 @@ function resolveRouting(
       };
     }
     case "run_launch": {
-      const { taskId, runnerId, executorOverrideId, baseBranch, targetBranch } =
-        args as {
-          taskId: string;
-          runnerId?: string;
-          executorOverrideId?: string;
-          baseBranch?: string;
-          targetBranch?: string;
-        };
+      const {
+        taskId,
+        expectedTaskRevision,
+        expectedSettingsToken,
+        runnerId,
+        executorOverrideId,
+        baseBranch,
+        targetBranch,
+      } = args as {
+        taskId: string;
+        expectedTaskRevision?: number;
+        expectedSettingsToken?: string;
+        runnerId?: string;
+        executorOverrideId?: string;
+        baseBranch?: string;
+        targetBranch?: string;
+      };
       const body: Record<string, unknown> = { taskId };
+
+      if (expectedTaskRevision !== undefined)
+        body.expectedTaskRevision = expectedTaskRevision;
+      if (expectedSettingsToken !== undefined)
+        body.expectedSettingsToken = expectedSettingsToken;
 
       if (runnerId !== undefined) body.runnerId = runnerId;
       if (executorOverrideId !== undefined)

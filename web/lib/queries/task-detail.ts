@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { TriageFlagOrigin } from "@/lib/tasks/manual-launch-hold";
 import type { ActorDTO } from "@/lib/social/actors";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 import type { TaskPriority } from "@/lib/tasks/criticality";
@@ -191,6 +192,7 @@ export type TaskDetailData = {
     status: string;
     // M34: the triager's verdict mark (nullable 'triaged').
     triageStatus: "triaged" | "flagged" | null;
+    triageFlagOrigin?: TriageFlagOrigin | null;
     // ADR-121: first-class criticality priority + queue-pause + advisory triage
     // confidence (0..1, null when unscored).
     priority: TaskPriority;
@@ -570,6 +572,7 @@ async function taskExtrasOf(
   executionPolicy: ExecutionPolicy | null;
   revision: number;
   triageStatus: "triaged" | "flagged" | null;
+  triageFlagOrigin?: TriageFlagOrigin | null;
   priority: TaskPriority;
   queuePaused: boolean;
   triageConfidence: number | null;
@@ -585,6 +588,7 @@ async function taskExtrasOf(
       executionPolicy: schemaModule.tasks.executionPolicy,
       revision: schemaModule.tasks.revision,
       triageStatus: schemaModule.tasks.triageStatus,
+      triageFlagOrigin: schemaModule.tasks.triageFlagOrigin,
       priority: schemaModule.tasks.priority,
       queuePaused: schemaModule.tasks.queuePaused,
       triageConfidence: schemaModule.tasks.triageConfidence,
@@ -600,6 +604,7 @@ async function taskExtrasOf(
     executionPolicy: ExecutionPolicy | null;
     revision: number;
     triageStatus: "triaged" | "flagged" | null;
+    triageFlagOrigin?: TriageFlagOrigin | null;
     priority: TaskPriority | null;
     queuePaused: boolean | null;
     triageConfidence: string | null;
@@ -619,6 +624,7 @@ async function taskExtrasOf(
     executionPolicy: rows[0]?.executionPolicy ?? null,
     revision: rows[0]?.revision ?? 0,
     triageStatus: rows[0]?.triageStatus ?? null,
+    triageFlagOrigin: rows[0]?.triageFlagOrigin ?? null,
     priority: rows[0]?.priority ?? "normal",
     queuePaused: rows[0]?.queuePaused ?? false,
     triageConfidence:

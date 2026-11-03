@@ -15,6 +15,7 @@ import {
   vi,
 } from "vitest";
 
+import { bindQueuedDelegationResponse } from "@/test-support/queued-delegation";
 import {
   countRows,
   type DelegationSeedCtx,
@@ -75,7 +76,14 @@ beforeAll(async () => {
   await fakeExecutionHosts(db);
 
   ({ issueOrchestratorRunToken } = await import("@/lib/agents/tokens"));
-  ({ POST: planPost } = await import("@/app/api/v1/ext/runs/plan/route"));
+  const planPostEndpoint = (await import("@/app/api/v1/ext/runs/plan/route"))
+    .POST;
+
+  planPost = async (request, context) =>
+    bindQueuedDelegationResponse(
+      db as unknown as import("@/lib/execution-host/db").Db,
+      await planPostEndpoint(request, context),
+    );
 }, 180_000);
 
 afterAll(async () => {
@@ -471,4 +479,76 @@ it("IT-UX-19 refuses an unadmitted required parent before writing any plan DAG",
       ])
     ).rows,
   ).toEqual([]);
+});
+
+it("returns the original mixed plan intent receipts on same-key replay without duplicating its DAG", async () => {
+  const { POST: endpoint } = await import("@/app/api/v1/ext/runs/plan/route");
+  const key = crypto.randomUUID();
+  const body = {
+    tasks: [
+      {
+        key: "source:flow",
+        target: { flowId },
+        prompt: "Inspect through the Flow",
+        dependsOn: [],
+      },
+      {
+        key: "source:agent",
+        target: { agentId: workerAgentId },
+        prompt: "Inspect through the agent",
+        dependsOn: [],
+      },
+      {
+        key: "dependent",
+        target: { flowId },
+        prompt: "Continue after both",
+        dependsOn: ["source:flow", "source:agent"],
+      },
+    ],
+  };
+  const before = await countRows(ctx, "tasks");
+  const response = await endpoint(planRequest(secret, body, key), {});
+  const receipt = await response.json();
+
+  expect(response.status).toBe(202);
+  expect(receipt.tasks.slice(0, 2)).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        key: "source:flow",
+        accepted: true,
+        runId: null,
+        childRunId: null,
+        intentId: expect.any(String),
+      }),
+      expect.objectContaining({
+        key: "source:agent",
+        accepted: true,
+        runId: null,
+        childRunId: null,
+        intentId: expect.any(String),
+      }),
+    ]),
+  );
+  expect(
+    receipt.tasks.find((item: { key: string }) => item.key === "dependent")
+      .intentId,
+  ).toBeUndefined();
+  const replay = await endpoint(planRequest(secret, body, key), {});
+
+  expect(replay.status).toBe(202);
+  expect(await replay.json()).toEqual(receipt);
+  expect(await countRows(ctx, "tasks")).toBe(before + 3);
+  const conflict = await endpoint(
+    planRequest(
+      secret,
+      { tasks: [{ ...body.tasks[0], prompt: "Changed plan" }] },
+      key,
+    ),
+    {},
+  );
+
+  expect(conflict.status).toBe(409);
+  expect(await conflict.json()).toMatchObject({
+    details: { reason: "delegation_launch_key_conflict" },
+  });
 });

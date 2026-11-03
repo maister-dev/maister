@@ -21,6 +21,7 @@ import {
   vi,
 } from "vitest";
 
+import { bindQueuedDelegationResponse } from "@/test-support/queued-delegation";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
@@ -36,6 +37,10 @@ let pool: Pool;
 let db: NodePgDatabase;
 let agentsRoot: string;
 
+vi.mock("next/server", async (original) => ({
+  ...(await original<typeof import("next/server")>()),
+  after: vi.fn(),
+}));
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 vi.mock("@/lib/scheduler", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/scheduler")>();
@@ -62,7 +67,14 @@ beforeAll(async () => {
   await fakeExecutionHosts(db);
 
   ({ issueOrchestratorRunToken } = await import("@/lib/agents/tokens"));
-  ({ POST: planPost } = await import("@/app/api/v1/ext/runs/plan/route"));
+  const planPostEndpoint = (await import("@/app/api/v1/ext/runs/plan/route"))
+    .POST;
+
+  planPost = async (request, context) =>
+    bindQueuedDelegationResponse(
+      db as unknown as import("@/lib/execution-host/db").Db,
+      await planPostEndpoint(request, context),
+    );
 }, 180_000);
 
 afterAll(async () => {
@@ -73,17 +85,9 @@ let projectId: string;
 let executorId: string;
 
 beforeEach(async () => {
-  await pool.query(`DELETE FROM "runs"`);
-  await pool.query(`DELETE FROM "task_relations"`);
-  await pool.query(`DELETE FROM "tasks"`);
-  await pool.query(`DELETE FROM "project_tokens"`);
-  await pool.query(`DELETE FROM "agent_project_links"`);
-  await pool.query(`DELETE FROM "agents"`);
-  await pool.query(`DELETE FROM "project_package_attachments"`);
-  await pool.query(`DELETE FROM "package_installs"`);
-  await pool.query(`DELETE FROM "flows"`);
-  await pool.query(`DELETE FROM "flow_revisions"`);
-  await pool.query(`DELETE FROM "projects"`);
+  await pool.query(
+    "TRUNCATE runs,task_relations,tasks,project_tokens,agent_project_links,agents,project_package_attachments,package_installs,flows,flow_revisions,projects RESTART IDENTITY CASCADE",
+  );
 
   projectId = randomUUID();
   executorId = randomUUID();
@@ -230,7 +234,10 @@ async function seedOrchestratorTask(): Promise<string> {
 function planRequest(secret: string | null, body: unknown): NextRequest {
   const req = new NextRequest("http://localhost/api/v1/ext/runs/plan", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "idempotency-key": randomUUID(),
+    },
     body: JSON.stringify(body),
   });
 

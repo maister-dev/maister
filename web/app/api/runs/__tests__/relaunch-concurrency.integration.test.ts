@@ -1,5 +1,7 @@
 import type { PlatformStatus } from "@/types/platform-status";
 
+import { rm } from "node:fs/promises";
+
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { eq } from "drizzle-orm";
 import {
@@ -12,6 +14,12 @@ import {
   vi,
 } from "vitest";
 
+import { git as fixtureGit } from "@/test-support/git-fixture";
+import {
+  seedAcceptedRepositoryQualification,
+  createEngineFixtureRepository,
+  isolateEngineFixtureRuntime,
+} from "@/test-support/repository-qualification";
 import {
   readyExecutionHostCapabilities,
   TEST_HOST_IDENTITY,
@@ -22,20 +30,34 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import {
+  launchQualifiedEngineRun as launchRun,
+  acceptConcurrentEngineFixture,
+  bindClaimedEngineFixture,
+} from "@/test-support/launch-engine-response";
+import {
+  assertTaskLaunchFlowClaim,
+  claimTaskLaunchIntent,
+} from "@/lib/tasks/launch-dispatch-claim";
 
-// ADR-119 / Phase 2 — atomic attempt-number allocation under concurrent launches.
-// Real Postgres (Testcontainers); the git side is mocked so the assertion is the
-// per-launch branch/attempt-number distinctness the allocation guarantees, not
-// real `git worktree add`. With the OLD stale-read allocation both concurrent
-// force-launches of one task compute the SAME `attempt-N` ⇒ identical branch
-// (the latent CONFLICT the busy gate used to make unreachable). The atomic
-// `UPDATE … RETURNING` makes each launch reserve a DISTINCT number ⇒ distinct
-// branch. Mocked-unit tests cannot see this row-level race — it MUST be real PG.
+// ADR-119: simultaneous authorized concurrent decisions claim distinct attempts
+// under real Postgres row locks. Their physical checkout effects then run under
+// the actual repository fence; both resulting branches and Run bindings exist.
+// A mocked database cannot prove this allocation invariant.
 
 const schema = schemaModule as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
+const repositories: string[] = [];
+let restoreEngineRuntime: (() => Promise<void>) | undefined;
 let db: NodePgDatabase;
+
+vi.mock("@/auth", () => ({
+  auth: async () => ({ user: { id: "u-member" } }),
+  signIn: vi.fn(),
+  signOut: vi.fn(),
+  handlers: {},
+}));
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 
@@ -60,7 +82,13 @@ const addWorktreeMock = vi.fn(async (_input: unknown) => undefined);
 const removeWorktreeMock = vi.fn(async (_input: unknown) => undefined);
 const listBranchesMock = vi.fn(async (_repo: string) => ["main", "develop"]);
 const resolveBaseCommitMock = vi.fn(
-  async (_args: unknown) => "feedface00000000000000000000000000000000",
+  async (args: { projectRepoPath: string; baseRef: string }) =>
+    fixtureGit(
+      args.projectRepoPath,
+      "rev-parse",
+      "--verify",
+      `${args.baseRef}^{commit}`,
+    ),
 );
 
 vi.mock("@/lib/supervisor-client", async (importOriginal) => {
@@ -74,14 +102,28 @@ vi.mock("@/lib/supervisor-client", async (importOriginal) => {
   };
 });
 
-vi.mock("@/lib/worktree", () => ({
-  addWorktree: (input: unknown) => addWorktreeMock(input),
-  removeWorktree: (input: unknown) => removeWorktreeMock(input),
-  listBranches: (repo: string) => listBranchesMock(repo),
-  resolveBaseCommit: (args: unknown) => resolveBaseCommitMock(args),
-}));
+vi.mock("@/lib/worktree", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/worktree")>();
 
-let launchRun: typeof import("@/lib/services/runs").launchRun;
+  return {
+    ...actual,
+    addWorktree: async (input: Parameters<typeof actual.addWorktree>[0]) => {
+      await addWorktreeMock(input);
+
+      return actual.addWorktree(input);
+    },
+    removeWorktree: async (
+      input: Parameters<typeof actual.removeWorktree>[0],
+    ) => {
+      await removeWorktreeMock(input);
+
+      return actual.removeWorktree(input);
+    },
+    listBranches: (repo: string) => listBranchesMock(repo),
+    resolveBaseCommit: (args: Parameters<typeof resolveBaseCommitMock>[0]) =>
+      resolveBaseCommitMock(args),
+  };
+});
 
 const instructManifest = {
   schemaVersion: 1,
@@ -98,12 +140,15 @@ const instructManifest = {
 };
 
 async function seedProject(id: string, slug: string): Promise<void> {
+  const repoPath = await createEngineFixtureRepository();
+
+  repositories.push(repoPath);
   await db.insert(schema.projects).values({
     taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id,
     slug,
     name: slug,
-    repoPath: `/repos/${slug}`,
+    repoPath,
     mainBranch: "main",
     maisterYamlPath: `/repos/${slug}/maister.yaml`,
   });
@@ -119,7 +164,7 @@ async function seedProject(id: string, slug: string): Promise<void> {
     manifestDigest: `digest-${id}`,
     manifest: instructManifest,
     schemaVersion: 1,
-    installedPath: `/cache/${id}`,
+    installedPath: `${repoPath}/.fixture-flow`,
     setupStatus: "not_required",
     packageStatus: "Installed",
   });
@@ -129,7 +174,7 @@ async function seedProject(id: string, slug: string): Promise<void> {
     flowRefId: "bugfix",
     source: "github.com/x/y",
     version: "v1.0.0",
-    installedPath: `/cache/${id}`,
+    installedPath: `${repoPath}/.fixture-flow`,
     manifest: instructManifest,
     schemaVersion: 1,
     enabledRevisionId: revisionId,
@@ -153,6 +198,7 @@ async function seedTask(taskId: string, projectId: string): Promise<void> {
     prompt: "do it",
     flowId: `flow-${projectId}`,
   });
+  await seedAcceptedRepositoryQualification(testDatabase.db, projectId, taskId);
 }
 
 const ctx = {
@@ -161,6 +207,7 @@ const ctx = {
 };
 
 beforeAll(async () => {
+  restoreEngineRuntime = await isolateEngineFixtureRuntime();
   testDatabase = await startMainPostgresTestDb({
     databaseName: "relaunch_concurrency_test",
   });
@@ -181,12 +228,14 @@ beforeAll(async () => {
     id: "singleton",
     defaultRunnerId: "claude-default",
   });
-
-  ({ launchRun } = await import("@/lib/services/runs"));
 }, 180_000);
 
 afterAll(async () => {
+  await restoreEngineRuntime?.();
   await testDatabase?.stop();
+  await Promise.all(
+    repositories.map((repo) => rm(repo, { recursive: true, force: true })),
+  );
 });
 
 beforeEach(() => {
@@ -200,10 +249,35 @@ describe("launchRun — atomic attempt-number allocation (ADR-119, integration)"
     await seedProject("proj-race", "proj-race");
     await seedTask("task-race", "proj-race");
 
-    const [a, b] = await Promise.all([
-      launchRun({ taskId: "task-race", allowConcurrent: true }, ctx, db),
-      launchRun({ taskId: "task-race", allowConcurrent: true }, ctx, db),
+    const accepted = await Promise.all([
+      acceptConcurrentEngineFixture(
+        { taskId: "task-race" },
+        ctx,
+        testDatabase.db,
+      ),
+      acceptConcurrentEngineFixture(
+        { taskId: "task-race" },
+        ctx,
+        testDatabase.db,
+      ),
     ]);
+    const claims = await Promise.all(
+      accepted.map(({ receipt }) =>
+        claimTaskLaunchIntent(testDatabase.db, receipt.intentId),
+      ),
+    );
+    const launched: Array<{ runId: string; status: string }> = [];
+
+    expect(claims).toHaveLength(2);
+    for (const claim of claims) {
+      if (!claim)
+        throw new Error(
+          "Concurrent accepted fixture did not acquire its allocation",
+        );
+      assertTaskLaunchFlowClaim(claim);
+      launched.push(await bindClaimedEngineFixture(testDatabase.db, claim));
+    }
+    const [a, b] = launched;
 
     // Both launches succeed (no git CONFLICT — distinct branches).
     expect(a.runId).toBeTruthy();
@@ -256,7 +330,11 @@ describe("launchRun — atomic attempt-number allocation (ADR-119, integration)"
     await seedTask("task-noburn", "proj-noburn");
 
     await expect(
-      launchRun({ taskId: "task-noburn", baseBranch: "ghost-branch" }, ctx, db),
+      launchRun(
+        { taskId: "task-noburn", baseBranch: "ghost-branch" },
+        ctx,
+        testDatabase.db,
+      ),
     ).rejects.toMatchObject({ code: "PRECONDITION" });
 
     const [taskRow] = await db

@@ -15,6 +15,7 @@ import {
   vi,
 } from "vitest";
 
+import { bindQueuedDelegationResponse } from "@/test-support/queued-delegation";
 import {
   delegateRequest,
   type DelegationSeedCtx,
@@ -82,8 +83,15 @@ beforeAll(async () => {
   await fakeExecutionHosts(db);
 
   ({ issueOrchestratorRunToken } = await import("@/lib/agents/tokens"));
-  ({ POST: delegatePost } =
-    await import("@/app/api/v1/ext/runs/delegate/route"));
+  const delegatePostEndpoint = (
+    await import("@/app/api/v1/ext/runs/delegate/route")
+  ).POST;
+
+  delegatePost = async (request, context) =>
+    bindQueuedDelegationResponse(
+      db as unknown as import("@/lib/execution-host/db").Db,
+      await delegatePostEndpoint(request, context),
+    );
 }, 180_000);
 
 afterAll(async () => {
@@ -153,15 +161,39 @@ describe("delegated children draw their own pool (ADR-163 REQ-17)", () => {
     );
 
     expect(res.status).toBe(202);
-    const { childRunId } = (await res.json()) as { childRunId: string };
+    const receipt = await res.json();
 
-    // 202 with the child queued — a full pool is backpressure, not a refusal.
-    expect(await statusOf(childRunId)).toBe("Pending");
+    expect(receipt).toMatchObject({
+      accepted: true,
+      childRunId: null,
+      runId: null,
+      status: "Queued",
+    });
+    expect(
+      (
+        await pool.query("SELECT count(*)::int n FROM runs WHERE task_id=$1", [
+          receipt.childTaskId,
+        ])
+      ).rows[0].n,
+    ).toBe(0);
 
     // Free the slot and drive the FLOW pool's queue.
     await pool.query(`UPDATE "runs" SET "status" = 'Done' WHERE "id" = $1`, [
       hogRunId,
     ]);
+
+    const { prepareTaskLaunchIntent } =
+      await import("@/lib/tasks/launch-dispatch");
+    const bound = await prepareTaskLaunchIntent(
+      db as unknown as import("@/lib/execution-host/db").Db,
+      receipt.intentId,
+    );
+
+    if (!bound.runId)
+      throw new Error(`Capacity release did not bind: ${bound.reason}`);
+    const childRunId = bound.runId;
+
+    expect(await statusOf(childRunId)).toBe("Pending");
 
     const { promoteNextPending } = await import("@/lib/scheduler");
     const promoted = await promoteNextPending({

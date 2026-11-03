@@ -1,19 +1,20 @@
 /**
  * T1.4 — launch-gate capability ref validation (M14).
  *
- * POST /api/runs rebuilds the project capability registry from the hydrated
+ * The synchronous delivery engine rebuilds the project capability registry from the hydrated
  * capability_records catalog and rejects node settings.mcps/skills/restrictions/
  * settingsProfile refs absent from it (CONFIG → 400), BEFORE any side-effect.
  * Imports (agent_definition / flow-package) resolve for any kind; a CLEARed
  * (disabled) record no longer resolves (R-SYM).
  */
+import type { LaunchRunInput } from "@/lib/services/runs";
 import type { PlatformStatus } from "@/types/platform-status";
 
+import { rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { eq } from "drizzle-orm";
-import { NextRequest } from "next/server";
 import {
   afterAll,
   beforeAll,
@@ -24,6 +25,13 @@ import {
   vi,
 } from "vitest";
 
+import { git as fixtureGit } from "@/test-support/git-fixture";
+import {
+  seedAcceptedRepositoryQualification,
+  createEngineFixtureRepository,
+  isolateEngineFixtureRuntime,
+} from "@/test-support/repository-qualification";
+import { launchEngineResponse } from "@/test-support/launch-engine-response";
 import {
   readyExecutionHostCapabilities,
   TEST_HOST_IDENTITY,
@@ -38,6 +46,8 @@ import {
 const schema = schemaModule as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
+const repositories: string[] = [];
+let restoreEngineRuntime: (() => Promise<void>) | undefined;
 let db: NodePgDatabase;
 
 const sessionRef: { value: unknown } = { value: null };
@@ -50,6 +60,11 @@ vi.mock("@/auth", () => ({
 }));
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+
+// These assertions stop at launch preparation; model execution has separate coverage.
+vi.mock("@/lib/flows/runner", () => ({
+  runFlow: vi.fn(async () => undefined),
+}));
 
 function readyPlatformStatus(): PlatformStatus {
   return {
@@ -82,21 +97,46 @@ vi.mock("@/lib/supervisor-client", async (importOriginal) => {
   };
 });
 
-vi.mock("@/lib/worktree", () => ({
-  addWorktree: (input: unknown) => addWorktreeMock(input),
-  removeWorktree: (input: unknown) => removeWorktreeMock(input),
-  listBranches: async () => ["main"],
-  resolveBaseCommit: async () => "0000000000000000000000000000000000000000",
-}));
+vi.mock("@/lib/worktree", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/worktree")>();
 
-let POST: typeof import("@/app/api/runs/route").POST;
+  return {
+    ...actual,
+    addWorktree: async (input: Parameters<typeof actual.addWorktree>[0]) => {
+      await addWorktreeMock(input);
 
-function request(taskId: string): NextRequest {
-  return new NextRequest("http://localhost/api/runs", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ taskId }),
+      return actual.addWorktree(input);
+    },
+    removeWorktree: async (
+      input: Parameters<typeof actual.removeWorktree>[0],
+    ) => {
+      await removeWorktreeMock(input);
+
+      return actual.removeWorktree(input);
+    },
+    listBranches: async () => ["main"],
+    resolveBaseCommit: async (args: {
+      projectRepoPath: string;
+      baseRef: string;
+    }) =>
+      fixtureGit(
+        args.projectRepoPath,
+        "rev-parse",
+        "--verify",
+        `${args.baseRef}^{commit}`,
+      ),
+  };
+});
+
+function launchResponse(input: LaunchRunInput): Promise<Response> {
+  return launchEngineResponse(testDatabase.db, input, {
+    actorUserId: "u-member",
+    authorize: async () => undefined,
   });
+}
+
+function request(taskId: string): LaunchRunInput {
+  return { taskId };
 }
 
 function aiCodingManifest(name: string, settings: unknown): unknown {
@@ -150,12 +190,15 @@ async function seedProject(
   manifest: unknown,
   capabilities: CapabilitySeed[] = [],
 ): Promise<void> {
+  const repoPath = await createEngineFixtureRepository();
+
+  repositories.push(repoPath);
   await db.insert(schema.projects).values({
     taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id,
     slug: id,
     name: id,
-    repoPath: `/repos/${id}`,
+    repoPath,
     maisterYamlPath: `/repos/${id}/maister.yaml`,
   });
 
@@ -170,7 +213,7 @@ async function seedProject(
     manifestDigest: `digest-${id}`,
     manifest,
     schemaVersion: 1,
-    installedPath: `/cache/${id}`,
+    installedPath: `${repoPath}/.fixture-flow`,
     setupStatus: "not_required",
     packageStatus: "Installed",
   });
@@ -180,7 +223,7 @@ async function seedProject(
     flowRefId: "bugfix",
     source: "github.com/x/y",
     version: "v1.0.0",
-    installedPath: `/cache/${id}`,
+    installedPath: `${repoPath}/.fixture-flow`,
     manifest,
     schemaVersion: 1,
     enabledRevisionId: revisionId,
@@ -225,6 +268,7 @@ async function seedProject(
       disabledAt: cap.disabledAt ?? null,
     });
   }
+  await seedAcceptedRepositoryQualification(testDatabase.db, id, `task-${id}`);
 }
 
 async function seedPlatformDefaultRunner(): Promise<void> {
@@ -246,6 +290,7 @@ async function seedPlatformDefaultRunner(): Promise<void> {
 }
 
 beforeAll(async () => {
+  restoreEngineRuntime = await isolateEngineFixtureRuntime();
   testDatabase = await startMainPostgresTestDb({
     databaseName: "runs_capref_test",
   });
@@ -359,15 +404,17 @@ beforeAll(async () => {
       },
     ],
   );
-
-  ({ POST } = await import("@/app/api/runs/route"));
 }, 180_000);
 
 afterAll(async () => {
+  await restoreEngineRuntime?.();
   await testDatabase?.stop();
+  await Promise.all(
+    repositories.map((repo) => rm(repo, { recursive: true, force: true })),
+  );
 });
 
-describe("POST /api/runs — capability ref launch gate (M14 T1.4)", () => {
+describe("Delivery engine — capability ref launch gate (M14 T1.4)", () => {
   beforeEach(() => {
     checkSupervisorHealthMock.mockResolvedValue(readyPlatformStatus());
     addWorktreeMock.mockClear();
@@ -376,7 +423,7 @@ describe("POST /api/runs — capability ref launch gate (M14 T1.4)", () => {
   });
 
   it("rejects an unknown skill ref with 400 CONFIG and NO side-effect", async () => {
-    const res = await POST(request("task-proj-unknown-skill"));
+    const res = await launchResponse(request("task-proj-unknown-skill"));
 
     expect(res.status).toBe(400);
 
@@ -396,7 +443,7 @@ describe("POST /api/runs — capability ref launch gate (M14 T1.4)", () => {
   });
 
   it("rejects an unknown mcp ref with 400 CONFIG", async () => {
-    const res = await POST(request("task-proj-unknown-mcp"));
+    const res = await launchResponse(request("task-proj-unknown-mcp"));
 
     expect(res.status).toBe(400);
 
@@ -407,14 +454,14 @@ describe("POST /api/runs — capability ref launch gate (M14 T1.4)", () => {
   });
 
   it("rejects a ref backed only by a DISABLED record (R-SYM) with 400 CONFIG", async () => {
-    const res = await POST(request("task-proj-disabled-ref"));
+    const res = await launchResponse(request("task-proj-disabled-ref"));
 
     expect(res.status).toBe(400);
     expect((await res.json()).code).toBe("CONFIG");
   });
 
   it("launches (202) when the skill ref resolves to a project capability_record", async () => {
-    const res = await POST(request("task-proj-known-skill"));
+    const res = await launchResponse(request("task-proj-known-skill"));
 
     expect(res.status).toBe(202);
     expect(addWorktreeMock).toHaveBeenCalledTimes(1);
@@ -443,14 +490,14 @@ describe("POST /api/runs — capability ref launch gate (M14 T1.4)", () => {
   });
 
   it("launches (202) when the ref resolves to an imported (flow-package) capability", async () => {
-    const res = await POST(request("task-proj-import-backed"));
+    const res = await launchResponse(request("task-proj-import-backed"));
 
     expect(res.status).toBe(202);
     expect(addWorktreeMock).toHaveBeenCalledTimes(1);
   });
 
   it("rejects an unknown package-level mcp ref with 400 CONFIG and NO side-effect (C6-top)", async () => {
-    const res = await POST(request("task-proj-unknown-pkg-mcp"));
+    const res = await launchResponse(request("task-proj-unknown-pkg-mcp"));
 
     expect(res.status).toBe(400);
 
@@ -469,14 +516,14 @@ describe("POST /api/runs — capability ref launch gate (M14 T1.4)", () => {
   });
 
   it("launches (202) when the package-level mcp ref resolves to a project record (C6-top)", async () => {
-    const res = await POST(request("task-proj-known-pkg-mcp"));
+    const res = await launchResponse(request("task-proj-known-pkg-mcp"));
 
     expect(res.status).toBe(202);
     expect(addWorktreeMock).toHaveBeenCalledTimes(1);
   });
 
   it("refuses a required mcp whose record excludes the executor agent (503 EXECUTOR_UNAVAILABLE) (C8b)", async () => {
-    const res = await POST(request("task-proj-req-mcp-unsupported"));
+    const res = await launchResponse(request("task-proj-req-mcp-unsupported"));
 
     expect(res.status).toBe(503);
 
@@ -495,7 +542,7 @@ describe("POST /api/runs — capability ref launch gate (M14 T1.4)", () => {
   });
 
   it("launches (202) when the required mcp supports the executor agent (C8b)", async () => {
-    const res = await POST(request("task-proj-req-mcp-supported"));
+    const res = await launchResponse(request("task-proj-req-mcp-supported"));
 
     expect(res.status).toBe(202);
     expect(addWorktreeMock).toHaveBeenCalledTimes(1);
@@ -506,14 +553,14 @@ describe("POST /api/runs — capability ref launch gate (M14 T1.4)", () => {
   // launch; the refusal arm is covered at the unit level, where the adapter can
   // be varied.
   it("launches (202) for a required sse ref on claude — claude accepts sse", async () => {
-    const res = await POST(request("task-proj-req-mcp-sse"));
+    const res = await launchResponse(request("task-proj-req-mcp-sse"));
 
     expect(res.status).toBe(202);
     expect(addWorktreeMock).toHaveBeenCalledTimes(1);
   });
 
   it("launches (202) for a required http ref", async () => {
-    const res = await POST(request("task-proj-req-mcp-http"));
+    const res = await launchResponse(request("task-proj-req-mcp-http"));
 
     expect(res.status).toBe(202);
     expect(addWorktreeMock).toHaveBeenCalledTimes(1);

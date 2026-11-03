@@ -1,7 +1,14 @@
 #!/usr/bin/env node
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { appendFile, open, readFile, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  open,
+  readFile,
+  realpath,
+  writeFile,
+} from "node:fs/promises";
+import path from "node:path";
 import { Readable, Writable } from "node:stream";
 
 import * as acp from "@agentclientprotocol/sdk/unstable";
@@ -153,6 +160,61 @@ function fixtureOutputLine(params) {
   const text = params.prompt.find((block) => block.type === "text")?.text;
 
   return text?.split("\n").find((line) => line.startsWith("fixture-output:"));
+}
+
+async function consensusSynthesisSpec(params, declaredSpec) {
+  if (
+    declaredSpec.consensusSynthesisResponseFile === undefined ||
+    !steerText(params.prompt)
+      .split("\n")
+      .includes("Synthesize the final consensus answer.")
+  )
+    return declaredSpec;
+  const fixtureRoot = process.env.MAISTER_RUNTIME_ROOT;
+
+  if (
+    !fixtureRoot ||
+    typeof declaredSpec.consensusSynthesisResponseFile !== "string"
+  )
+    throw new Error(
+      "Consensus synthesis fixture requires an owned response file",
+    );
+  const root = await realpath(fixtureRoot);
+  const file = await realpath(declaredSpec.consensusSynthesisResponseFile);
+  const relative = path.relative(root, file);
+
+  if (
+    !relative ||
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  )
+    throw new Error(
+      "Consensus synthesis response must belong to the fixture root",
+    );
+  const bytes = await readFile(file);
+
+  if (bytes.length > 4096)
+    throw new Error("Consensus synthesis response exceeds 4 KiB");
+  const response = JSON.parse(bytes.toString("utf8"));
+
+  if (
+    !response ||
+    typeof response !== "object" ||
+    Array.isArray(response) ||
+    Object.keys(response).sort().join(",") !== "stopReason,text" ||
+    typeof response.text !== "string" ||
+    !["end_turn", "max_tokens"].includes(response.stopReason)
+  )
+    throw new Error(
+      "Consensus synthesis response requires only text and a supported stopReason",
+    );
+
+  return {
+    ...declaredSpec,
+    text: response.text,
+    stopReason: response.stopReason,
+  };
 }
 
 class LifecycleAgent {
@@ -445,7 +507,10 @@ class LifecycleAgent {
     const fixtureLine = fixtureOutputLine(params);
     if (fixtureLine) {
       // Flow nodes may surround the fixture line with resume and run context.
-      const spec = JSON.parse(fixtureLine.slice("fixture-output:".length));
+      const spec = await consensusSynthesisSpec(
+        params,
+        JSON.parse(fixtureLine.slice("fixture-output:".length)),
+      );
       if (spec.failMessage)
         throw new acp.RequestError(-32603, spec.failMessage);
       if (spec.usageTokens) {
@@ -539,7 +604,8 @@ class LifecycleAgent {
       let responseText = spec.text ?? "";
       if (spec.textFile) {
         const responseBytes = await readFile(spec.textFile);
-        if (responseBytes.length > 65536) throw new Error("Fixture response exceeds 64 KiB");
+        if (responseBytes.length > 65536)
+          throw new Error("Fixture response exceeds 64 KiB");
         responseText = responseBytes.toString("utf8");
       }
       const text =

@@ -15,6 +15,7 @@ import {
   scheduledTaskLaunchAttempts,
   scheduledTaskLaunchEvents,
   scheduledTaskLaunches,
+  taskLaunchIntents,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { worktreesRoot } from "@/lib/instance-config";
@@ -56,6 +57,7 @@ type StaleDispatch = {
   reservation: ScheduledLaunchReservation;
   scheduledForAt: Date;
   scheduledLaunchId: string;
+  acceptedIntentId: string | null;
 };
 
 type DispatchSummary = {
@@ -128,6 +130,7 @@ async function reclaimOneStaleDispatch(input: {
       id: string;
       launchRequest: { baseCommit?: string };
       projectId: string;
+      requestHash: string;
       projectRepoPath: string;
       projectSlug: string;
       scheduledForAt: Date | string;
@@ -135,6 +138,7 @@ async function reclaimOneStaleDispatch(input: {
       SELECT
         l.id,
         l.project_id AS "projectId",
+        l.request_hash AS "requestHash",
         l.claim_id AS "claimId",
         l.claim_fence AS "claimFence",
         l.launch_request AS "launchRequest",
@@ -174,7 +178,12 @@ async function reclaimOneStaleDispatch(input: {
     const reservations = await tx
       .select()
       .from(scheduledTaskLaunchAttempts)
-      .where(eq(scheduledTaskLaunchAttempts.scheduledLaunchId, row.id));
+      .where(
+        and(
+          eq(scheduledTaskLaunchAttempts.scheduledLaunchId, row.id),
+          eq(scheduledTaskLaunchAttempts.requestHash, row.requestHash),
+        ),
+      );
     const storedReservation = reservations[0];
 
     if (linkedRunId) {
@@ -225,11 +234,25 @@ async function reclaimOneStaleDispatch(input: {
       return null;
     }
 
+    const [accepted] = await tx
+      .select({ id: taskLaunchIntents.id })
+      .from(taskLaunchIntents)
+      .where(
+        and(
+          eq(taskLaunchIntents.principalKind, "system"),
+          eq(taskLaunchIntents.requestKey, storedReservation.id),
+          sql`${taskLaunchIntents.settingsSnapshot}->'serverExecution'->>'kind'='scheduled_task' AND ${taskLaunchIntents.settingsSnapshot}->'serverExecution'->'execution'->'scheduledReservation'->>'id'=${storedReservation.id}`,
+        ),
+      );
     const claimFence = row.claimFence + 1;
 
     await tx
       .update(scheduledTaskLaunchAttempts)
-      .set({ state: "Reserved", claimFence, updatedAt: input.now })
+      .set({
+        ...(accepted ? {} : { state: "Reserved" as const }),
+        claimFence,
+        updatedAt: input.now,
+      })
       .where(eq(scheduledTaskLaunchAttempts.id, storedReservation.id));
     await tx
       .update(scheduledTaskLaunches)
@@ -257,6 +280,7 @@ async function reclaimOneStaleDispatch(input: {
     });
 
     return {
+      acceptedIntentId: accepted?.id ?? null,
       scheduledLaunchId: row.id,
       projectId: row.projectId,
       projectRepoPath: row.projectRepoPath,
@@ -437,7 +461,19 @@ async function dispatchRecoveredStale(input: {
   db: ScheduledLaunchDb;
   stale: StaleDispatch;
   now: Date;
-}): Promise<"Launched" | "RetryWaiting" | "Failed"> {
+}): Promise<"Launched" | "RetryWaiting" | "Failed" | "Dispatching"> {
+  if (input.stale.acceptedIntentId) {
+    const result = await dispatchClaimedScheduledLaunch({
+      projectId: input.stale.projectId,
+      claimId: input.stale.claimId,
+      claimFence: input.stale.claimFence,
+      reservation: input.stale.reservation,
+      now: input.now,
+      db: input.db,
+    });
+
+    return result.state;
+  }
   const cleanup = await cleanVerifiedReservationWorktree({
     db: input.db,
     stale: input.stale,

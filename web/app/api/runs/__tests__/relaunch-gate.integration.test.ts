@@ -1,4 +1,8 @@
+import type { LaunchRunInput } from "@/lib/services/runs";
 import type { PlatformStatus } from "@/types/platform-status";
+
+import path from "node:path";
+import { mkdir, rm } from "node:fs/promises";
 
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
@@ -12,6 +16,13 @@ import {
   vi,
 } from "vitest";
 
+import { git as fixtureGit } from "@/test-support/git-fixture";
+import {
+  seedAcceptedRepositoryQualification,
+  createEngineFixtureRepository,
+  isolateEngineFixtureRuntime,
+} from "@/test-support/repository-qualification";
+import { launchEngineResponse } from "@/test-support/launch-engine-response";
 import {
   readyExecutionHostCapabilities,
   TEST_HOST_IDENTITY,
@@ -31,6 +42,8 @@ import {
 const schema = schemaModule as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
+const repositories: string[] = [];
+let restoreEngineRuntime: (() => Promise<void>) | undefined;
 let db: NodePgDatabase;
 
 const sessionRef: { value: unknown } = { value: null };
@@ -43,6 +56,11 @@ vi.mock("@/auth", () => ({
 }));
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+
+// These assertions stop at launch preparation; model execution has separate coverage.
+vi.mock("@/lib/flows/runner", () => ({
+  runFlow: vi.fn(async () => undefined),
+}));
 
 function readyPlatformStatus(): PlatformStatus {
   return {
@@ -65,7 +83,13 @@ const addWorktreeMock = vi.fn(async (_input: unknown) => undefined);
 const removeWorktreeMock = vi.fn(async (_input: unknown) => undefined);
 const listBranchesMock = vi.fn(async (_repo: string) => ["main", "develop"]);
 const resolveBaseCommitMock = vi.fn(
-  async (_args: unknown) => "feedface00000000000000000000000000000000",
+  async (args: { projectRepoPath: string; baseRef: string }) =>
+    fixtureGit(
+      args.projectRepoPath,
+      "rev-parse",
+      "--verify",
+      `${args.baseRef}^{commit}`,
+    ),
 );
 
 vi.mock("@/lib/supervisor-client", async (importOriginal) => {
@@ -79,14 +103,35 @@ vi.mock("@/lib/supervisor-client", async (importOriginal) => {
   };
 });
 
-vi.mock("@/lib/worktree", () => ({
-  addWorktree: (input: unknown) => addWorktreeMock(input),
-  removeWorktree: (input: unknown) => removeWorktreeMock(input),
-  listBranches: (repo: string) => listBranchesMock(repo),
-  resolveBaseCommit: (args: unknown) => resolveBaseCommitMock(args),
-}));
+vi.mock("@/lib/worktree", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/worktree")>();
 
-let POST: typeof import("@/app/api/runs/route").POST;
+  return {
+    ...actual,
+    addWorktree: async (input: Parameters<typeof actual.addWorktree>[0]) => {
+      await addWorktreeMock(input);
+
+      return actual.addWorktree(input);
+    },
+    removeWorktree: async (
+      input: Parameters<typeof actual.removeWorktree>[0],
+    ) => {
+      await removeWorktreeMock(input);
+
+      return actual.removeWorktree(input);
+    },
+    listBranches: (repo: string) => listBranchesMock(repo),
+    resolveBaseCommit: (args: Parameters<typeof resolveBaseCommitMock>[0]) =>
+      resolveBaseCommitMock(args),
+  };
+});
+
+function launchResponse(input: LaunchRunInput): Promise<Response> {
+  return launchEngineResponse(testDatabase.db, input, {
+    actorUserId: "u-member",
+    authorize: async () => undefined,
+  });
+}
 let LAUNCH_OPTIONS_GET: typeof import("@/app/api/runs/launch-options/route").GET;
 
 const instructManifest = {
@@ -104,12 +149,16 @@ const instructManifest = {
 };
 
 async function seedProject(id: string, slug: string): Promise<void> {
+  const repoPath = await createEngineFixtureRepository();
+
+  repositories.push(repoPath);
+  await mkdir(path.join(repoPath, ".fixture-flow"), { recursive: true });
   await db.insert(schema.projects).values({
     taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id,
     slug,
     name: slug,
-    repoPath: `/repos/${slug}`,
+    repoPath,
     mainBranch: "main",
     maisterYamlPath: `/repos/${slug}/maister.yaml`,
   });
@@ -125,7 +174,7 @@ async function seedProject(id: string, slug: string): Promise<void> {
     manifestDigest: `digest-${id}`,
     manifest: instructManifest,
     schemaVersion: 1,
-    installedPath: `/cache/${id}`,
+    installedPath: path.join(repoPath, ".fixture-flow"),
     setupStatus: "not_required",
     packageStatus: "Installed",
   });
@@ -135,7 +184,7 @@ async function seedProject(id: string, slug: string): Promise<void> {
     flowRefId: "bugfix",
     source: "github.com/x/y",
     version: "v1.0.0",
-    installedPath: `/cache/${id}`,
+    installedPath: path.join(repoPath, ".fixture-flow"),
     manifest: instructManifest,
     schemaVersion: 1,
     enabledRevisionId: revisionId,
@@ -162,17 +211,16 @@ async function seedTask(
     title: "gate task",
     prompt: "do it",
     flowId: `flow-${projectId}`,
-    ...(opts.triageStatus ? { triageStatus: opts.triageStatus } : {}),
+    ...(opts.triageStatus
+      ? { triageStatus: opts.triageStatus, triageFlagOrigin: "explicit" }
+      : {}),
     ...(opts.status ? { status: opts.status } : {}),
   });
+  await seedAcceptedRepositoryQualification(testDatabase.db, projectId, taskId);
 }
 
-function postRequest(body: Record<string, unknown>): NextRequest {
-  return new NextRequest("http://localhost/api/runs", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
+function postRequest(body: LaunchRunInput): LaunchRunInput {
+  return body;
 }
 
 function launchOptionsRequest(taskId: string): NextRequest {
@@ -182,6 +230,7 @@ function launchOptionsRequest(taskId: string): NextRequest {
 }
 
 beforeAll(async () => {
+  restoreEngineRuntime = await isolateEngineFixtureRuntime();
   testDatabase = await startMainPostgresTestDb({
     databaseName: "relaunch_gate_test",
   });
@@ -247,13 +296,16 @@ beforeAll(async () => {
     flowId: "flow-disabled",
   });
 
-  ({ POST } = await import("@/app/api/runs/route"));
   ({ GET: LAUNCH_OPTIONS_GET } =
     await import("@/app/api/runs/launch-options/route"));
 }, 180_000);
 
 afterAll(async () => {
+  await restoreEngineRuntime?.();
   await testDatabase?.stop();
+  await Promise.all(
+    repositories.map((repo) => rm(repo, { recursive: true, force: true })),
+  );
 });
 
 beforeEach(() => {
@@ -262,21 +314,24 @@ beforeEach(() => {
   sessionRef.value = { user: { id: "u-member", role: "member" } };
 });
 
-describe("POST /api/runs — allowConcurrent gate (ADR-119, integration)", () => {
-  it("a busy task: absent allowConcurrent is refused PRECONDITION; allowConcurrent:true succeeds", async () => {
+describe("Delivery engine — allowConcurrent gate (ADR-119, integration)", () => {
+  it("a busy task: the ordinary reservation conflicts; an authorized concurrent decision succeeds", async () => {
     // First launch makes the task busy (latest run Pending/Running).
-    const first = await POST(postRequest({ taskId: "task-busy" }));
+    const first = await launchResponse(postRequest({ taskId: "task-busy" }));
 
     expect(first.status).toBe(202);
 
     // Manual gate (default) refuses while busy.
-    const refused = await POST(postRequest({ taskId: "task-busy" }));
+    const refused = await launchResponse(postRequest({ taskId: "task-busy" }));
 
     expect(refused.status).toBe(409);
-    expect((await refused.json()).code).toBe("PRECONDITION");
+    expect(await refused.json()).toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "launch_already_reserved" },
+    });
 
     // Force gate launches an additive concurrent run.
-    const forced = await POST(
+    const forced = await launchResponse(
       postRequest({ taskId: "task-busy", allowConcurrent: true }),
     );
 
@@ -284,7 +339,7 @@ describe("POST /api/runs — allowConcurrent gate (ADR-119, integration)", () =>
   });
 
   it("a blocked task: allowConcurrent:true is STILL refused PRECONDITION (task gate not bypassed)", async () => {
-    const res = await POST(
+    const res = await launchResponse(
       postRequest({ taskId: "task-blocked", allowConcurrent: true }),
     );
 
@@ -292,13 +347,16 @@ describe("POST /api/runs — allowConcurrent gate (ADR-119, integration)", () =>
     expect((await res.json()).code).toBe("PRECONDITION");
   });
 
-  it("a flagged task: allowConcurrent:true is STILL refused PRECONDITION", async () => {
-    const res = await POST(
+  it("a flagged task: an authorized concurrent decision still refuses the explicit hold", async () => {
+    const res = await launchResponse(
       postRequest({ taskId: "task-flagged", allowConcurrent: true }),
     );
 
     expect(res.status).toBe(409);
-    expect((await res.json()).code).toBe("PRECONDITION");
+    expect(await res.json()).toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "launch_task_held" },
+    });
   });
 });
 

@@ -134,6 +134,7 @@ import {
   type RestrictionPathSet,
 } from "./mutation-check";
 
+import { taskLaunchClarificationsForRun } from "@/lib/tasks/launch-execution-input";
 import { resolveNodeResumeSessionId } from "@/lib/runs/node-resume-session";
 import { createHitlRequest } from "@/lib/runs/hitl-create";
 import { staleSessionBinding } from "@/lib/execution-host/session-binding";
@@ -149,7 +150,6 @@ import {
   setWorktreeProvenanceNode,
 } from "@/lib/worktree-provenance";
 import { getAmbientBrainProjection } from "@/lib/brain/ambient";
-import { getTaskClarificationProjection } from "@/lib/queries/task-clarifications";
 import { gateAndOverlayMcpServers } from "@/lib/mcp/materialization-gate";
 import { materializeProjectBundlesIntoWorktree } from "@/lib/capabilities/materialize-bundle";
 import {
@@ -2815,9 +2815,9 @@ export async function runGraph(
     return false;
   });
 
-  const clarificationContext = await getTaskClarificationProjection(
+  const clarificationContext = await taskLaunchClarificationsForRun(
     db,
-    loaded.task.id,
+    { ...loaded.run, taskId: loaded.task.id },
     loaded.task.prompt,
   );
 

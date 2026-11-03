@@ -13,6 +13,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: mocks.refresh }),
 }));
 vi.mock("next-intl", () => ({
+  useLocale: () => "en",
   useTranslations:
     (namespace: string) => (key: string, values?: Record<string, string>) =>
       `${namespace}.${key}${values?.role ? ` ${values.role}` : ""}${values?.runner ? ` ${values.runner}` : ""}`,
@@ -136,7 +137,10 @@ function preview(
     },
     executionPolicyDefault: { preset: "supervised" },
     availablePackageVersions: [],
-    task: { projectSlug: "demo", number: 1, flowId: "flow-1" },
+    task: { projectSlug: "demo", number: 1, flowId: "flow-1", revision: 1 },
+    settingsToken: "settings-token",
+    qualification: null,
+    activeLaunch: null,
   };
 }
 
@@ -212,6 +216,7 @@ let container: HTMLDivElement;
 
 beforeEach(() => {
   vi.resetAllMocks();
+  sessionStorage.clear();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("fetch", mocks.fetch);
   container = document.createElement("div");
@@ -237,6 +242,65 @@ async function openDialog(): Promise<void> {
   });
   await click(button("Open launch"));
 }
+
+describe("frozen execution policy", () => {
+  const policy = {
+    preset: "supervised",
+    overrides: {
+      budget: { run: { maxTokens: 1000 } },
+      crashRetry: "auto_retry",
+      onBudgetBreach: "terminate_restorable",
+    },
+  };
+
+  it.each([false, true])(
+    "preserves saved policy axes when checks edited=%s",
+    async (editChecks) => {
+      mocks.fetch.mockImplementation(async (url: string) => {
+        if (url.startsWith("/api/runs/launch-options?"))
+          return Response.json({
+            ...preview("codex-ready"),
+            executionPolicyDefault: policy,
+          });
+
+        return Response.json(
+          { details: { reason: "launch_technical_precondition" } },
+          { status: 422 },
+        );
+      });
+      await openDialog();
+      if (editChecks) {
+        await click(button("launch.execAdvancedShow"));
+        const checks = [
+          ...document.querySelectorAll<HTMLSelectElement>(
+            "select[aria-labelledby]",
+          ),
+        ].find(
+          (item) =>
+            document.getElementById(item.getAttribute("aria-labelledby") ?? "")
+              ?.textContent === "launch.execChecks",
+        );
+
+        if (!checks) throw new Error("Checks control missing");
+        await choose(checks, "advisory");
+      }
+      await click(button("launch.createRun"));
+      const request = mocks.fetch.mock.calls.find(
+        ([url]) => url === "/api/task-launch-intents",
+      );
+
+      expect(request).toBeDefined();
+      expect(JSON.parse(request![1].body).executionPolicy).toEqual(
+        editChecks
+          ? {
+              ...policy,
+              overrides: { ...policy.overrides, checks: "advisory" },
+            }
+          : policy,
+      );
+    },
+  );
+});
 
 describe("consensus runner binding interaction", () => {
   it("keeps preview current when selecting the same default and allows saving that runner as an explicit role binding", async () => {
@@ -601,5 +665,126 @@ describe("consensus runner binding interaction", () => {
       "launch.runnerBindingAdminNeeded",
     );
     expect(mocks.fetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+const packageVersion = {
+  packageInstallId: "package-old",
+  attachmentId: "attachment-1",
+  packageName: "core",
+  localPackageId: "local-1",
+  localPackageName: "Core package",
+  currentVersionLabel: "v1",
+  newerCutInstallId: "package-new",
+  newerVersionLabel: "v2",
+  hasUncutEdits: true,
+  offeredOptions: ["keep", "adopt", "cut_and_adopt", "try_once"],
+};
+
+function packageSelect(): HTMLSelectElement {
+  const select = [
+    ...document.querySelectorAll<HTMLSelectElement>("select[aria-labelledby]"),
+  ].find(
+    (item) =>
+      document.getElementById(item.getAttribute("aria-labelledby") ?? "")
+        ?.textContent === packageVersion.localPackageName,
+  );
+
+  if (!select) throw new Error("Package choice control is missing");
+
+  return select;
+}
+
+describe("explicit package setup and immutable one-time preview", () => {
+  const packageOptions = () => ({
+    ...preview("codex-ready"),
+    canManagePackages: true,
+    canCutPackages: true,
+    task: { ...preview("codex-ready").task, projectId: "project-1" },
+    availablePackageVersions: [packageVersion],
+  });
+
+  it("revalidates a try-once package selection before enabling launch", async () => {
+    const refreshed = deferredResponse();
+
+    mocks.fetch
+      .mockResolvedValueOnce(Response.json(packageOptions()))
+      .mockReturnValueOnce(refreshed.promise);
+    await openDialog();
+    await choose(packageSelect(), "try_once");
+    expect(button("launch.createRun").disabled).toBe(true);
+    expect(
+      JSON.parse(
+        new URL(mocks.fetch.mock.calls[1][0], "http://test").searchParams.get(
+          "packageVersions",
+        ) ?? "null",
+      ),
+    ).toEqual({ "package-old": "try_once" });
+    await act(async () =>
+      refreshed.resolve(
+        Response.json({
+          ...packageOptions(),
+          settingsToken: "selected-cut-token",
+        }),
+      ),
+    );
+    expect(button("launch.createRun").disabled).toBe(false);
+  });
+
+  it("applies adoption separately, then refreshes settings without launching", async () => {
+    const refreshed = packageOptions();
+
+    mocks.fetch
+      .mockResolvedValueOnce(Response.json(refreshed))
+      .mockResolvedValueOnce(Response.json({ status: "adopted" }))
+      .mockResolvedValueOnce(
+        Response.json({
+          ...refreshed,
+          availablePackageVersions: [],
+          settingsToken: "adopted-token",
+        }),
+      );
+    await openDialog();
+    await choose(packageSelect(), "adopt");
+    expect(button("launch.createRun").disabled).toBe(true);
+    await click(button("launch.admission.applyPackage"));
+    expect(mocks.fetch.mock.calls[1][0]).toBe(
+      "/api/projects/demo/packages/attachment-1/upgrade",
+    );
+    expect(JSON.parse(mocks.fetch.mock.calls[1][1].body)).toEqual({
+      packageInstallId: "package-new",
+    });
+    expect(
+      mocks.fetch.mock.calls.filter(
+        ([url]) => url === "/api/task-launch-intents",
+      ),
+    ).toHaveLength(0);
+    expect(button("launch.createRun").disabled).toBe(false);
+  });
+
+  it("shows a cut's adoption failure even when the cut endpoint returns201", async () => {
+    mocks.fetch
+      .mockResolvedValueOnce(Response.json(packageOptions()))
+      .mockResolvedValueOnce(
+        Response.json(
+          { adoptions: [{ projectId: "project-1", status: "failed" }] },
+          { status: 201 },
+        ),
+      )
+      .mockResolvedValueOnce(Response.json(packageOptions()));
+    await openDialog();
+    await choose(packageSelect(), "cut_and_adopt");
+    await click(button("launch.admission.applyPackage"));
+    expect(mocks.fetch.mock.calls[1][0]).toBe(
+      "/api/studio/local-packages/local-1/cut-version",
+    );
+    expect(document.body.textContent).toContain(
+      "launch.admission.setupPartial",
+    );
+    expect(
+      mocks.fetch.mock.calls.filter(
+        ([url]) => url === "/api/task-launch-intents",
+      ),
+    ).toHaveLength(0);
   });
 });

@@ -21,11 +21,41 @@ import {
   librarianConversations,
   runs,
   users,
+  taskLaunchIntents,
 } from "@/lib/db/schema";
 import { retryDigest } from "@/lib/agents/retry-guards";
 import { ACTIVE_AGENT_RUN_STATUSES } from "@/lib/agents/activity-status";
 
 const tokenAuthority = Symbol("verified task launch token");
+
+/** Only persisted immutable origin is accepted here; callers cannot supply an origin or actor. */
+export async function assertStoredTaskLaunchTokenAuthority(
+  db: Db,
+  intentId: string,
+  actions: readonly ProjectAction[],
+): Promise<void> {
+  const [intent] = await db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.id, intentId));
+
+  if (
+    !intent ||
+    intent.basis.kind !== "automatic" ||
+    !intent.basis.origin ||
+    intent.principalId !== intent.basis.origin.tokenId
+  )
+    throw tokenAuthorityRevoked();
+  await assertTaskLaunchTokenAuthority(
+    db,
+    {
+      [tokenAuthority]: true,
+      origin: intent.basis.origin,
+    },
+    intent.projectId,
+    actions,
+  );
+}
 
 export type TokenTaskLaunchPrincipal = Readonly<{
   [tokenAuthority]: true;
@@ -272,4 +302,57 @@ export async function assertTaskLaunchTokenAuthority(
     (actions.includes("editTask") && !tokenHasScope(scopes, "tasks:update"))
   )
     throw tokenAuthorityRevoked();
+}
+
+/** Recovery continues the same run; launch scope cannot substitute for its distinct permission. */
+export async function assertTaskLaunchRecoveryTokenAuthority(
+  db: Db,
+  principal: TokenTaskLaunchPrincipal,
+  projectId: string,
+): Promise<void> {
+  await assertTaskLaunchTokenVisibility(db, principal, projectId);
+  const ownerId = taskLaunchTokenActorUserId(principal.origin);
+
+  if (ownerId) {
+    await assertTaskLaunchUserAuthority(db, projectId, ownerId, ["recoverRun"]);
+  } else {
+    const [project] = await db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(and(eq(projects.id, projectId), isNull(projects.archivedAt)))
+      .for("share");
+
+    if (!project) throw tokenAuthorityRevoked();
+  }
+  const scopes = await assertLiveTaskLaunchToken(db, principal);
+
+  if (!tokenHasScope(scopes, "runs:recover")) throw tokenAuthorityRevoked();
+}
+
+/** A delegated child keeps its exact run-bound token scope; launch scope cannot impersonate this parent decision. */
+export async function assertTaskLaunchDelegationTokenAuthority(
+  db: Db,
+  origin: TaskLaunchTokenOrigin,
+  projectId: string,
+  parentRunId: string,
+): Promise<void> {
+  if (
+    origin.boundRunId !== parentRunId ||
+    (origin.projectId !== null && origin.projectId !== projectId) ||
+    origin.tokenKind === "librarian"
+  )
+    throw tokenAuthorityRevoked();
+  const principal: TokenTaskLaunchPrincipal = {
+    [tokenAuthority]: true,
+    origin,
+  };
+
+  await assertTaskLaunchTokenVisibility(db, principal, projectId);
+  const scopes = await assertLiveTaskLaunchToken(db, principal);
+
+  if (!tokenHasScope(scopes, "runs:delegate")) throw tokenAuthorityRevoked();
+  const owner = taskLaunchTokenActorUserId(origin);
+
+  if (owner)
+    await assertTaskLaunchUserAuthority(db, projectId, owner, ["launchRun"]);
 }

@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
 import { TOOL_SPECS } from "@/tools";
+import { isTaskLaunchTool } from "@/task-launch-tools";
 
 // Contract guard: the MCP facade `TOOL_SPECS` are a HAND-MAINTAINED mirror of
 // the ext route zod schemas, and `dispatchTool` silently drops unknown args —
@@ -32,17 +33,95 @@ type JsonSchema = {
   items?: JsonSchema;
   allOf?: JsonSchema[];
   oneOf?: JsonSchema[];
-  additionalProperties?: boolean;
+  additionalProperties?: boolean | JsonSchema;
+  propertyNames?: JsonSchema;
+  "x-propertyNames"?: JsonSchema;
+  maxProperties?: number;
   $ref?: string;
   minimum?: number;
   maximum?: number;
   minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+  exclusiveMinimum?: boolean | number;
+  anyOf?: JsonSchema[];
   const?: unknown;
 };
 
 // Bounds the facade must mirror when the spec declares them — a bounds-only
 // drift (tool max 200 vs spec max 100) is as silent as a type drift.
 const MIRRORED_BOUNDS = ["minimum", "maximum", "minLength"] as const;
+
+function inclusiveMinimum(schema: JsonSchema): number | undefined {
+  if (
+    schema.type === "integer" &&
+    typeof schema.exclusiveMinimum === "number"
+  ) {
+    return Math.floor(schema.exclusiveMinimum) + 1;
+  }
+
+  return schema.minimum;
+}
+
+// Compare the generated draft-07 inputs with OpenAPI's nullable/ref syntax,
+// keeping every execution-policy restriction in the transport contract.
+function inputContractShape(raw: JsonSchema): Record<string, unknown> {
+  const schema = deref(raw);
+  const nullableBranch = schema.anyOf?.find((branch) => branch.type === "null");
+  const valueBranch = schema.anyOf?.find((branch) => branch.type !== "null");
+  const propertyNames = schema.propertyNames ?? schema["x-propertyNames"];
+
+  if (nullableBranch && valueBranch && schema.anyOf?.length === 2) {
+    return { ...inputContractShape(valueBranch), nullable: true };
+  }
+
+  return {
+    ...(schema.type
+      ? {
+          type: Array.isArray(schema.type)
+            ? schema.type.filter((type) => type !== "null")[0]
+            : schema.type,
+        }
+      : {}),
+    ...(schema.nullable ||
+    (Array.isArray(schema.type) && schema.type.includes("null"))
+      ? { nullable: true }
+      : {}),
+    ...(schema.enum ? { enum: schema.enum } : {}),
+    ...(schema.properties
+      ? {
+          properties: Object.fromEntries(
+            Object.entries(schema.properties).map(([key, value]) => [
+              key,
+              inputContractShape(value),
+            ]),
+          ),
+        }
+      : {}),
+    ...(schema.required ? { required: [...schema.required].sort() } : {}),
+    ...(schema.additionalProperties !== undefined
+      ? {
+          additionalProperties:
+            typeof schema.additionalProperties === "boolean"
+              ? schema.additionalProperties
+              : inputContractShape(schema.additionalProperties),
+        }
+      : {}),
+    ...(propertyNames
+      ? { propertyNames: inputContractShape(propertyNames) }
+      : {}),
+    ...(schema.maxProperties !== undefined
+      ? { maxProperties: schema.maxProperties }
+      : {}),
+    ...(inclusiveMinimum(schema) !== undefined
+      ? { minimum: inclusiveMinimum(schema) }
+      : {}),
+    ...(schema.maximum !== undefined ? { maximum: schema.maximum } : {}),
+    ...(schema.minLength !== undefined ? { minLength: schema.minLength } : {}),
+    ...(schema.maxLength !== undefined ? { maxLength: schema.maxLength } : {}),
+    ...(schema.pattern !== undefined ? { pattern: schema.pattern } : {}),
+  };
+}
 
 type OpenApiDoc = {
   paths: Record<
@@ -134,6 +213,23 @@ const TOOL_OP: Record<string, { method: string; path: string }> = {
     path: "/api/v1/ext/evaluations/result",
   },
   run_launch: { method: "post", path: "/api/v1/ext/runs" },
+  task_launch: { method: "post", path: "/api/v1/ext/task-launch-intents" },
+  task_launch_options: {
+    method: "get",
+    path: "/api/v1/ext/task-launch-intents/options",
+  },
+  task_launch_status: {
+    method: "get",
+    path: "/api/v1/ext/task-launch-intents/{intentId}",
+  },
+  task_launch_cancel: {
+    method: "post",
+    path: "/api/v1/ext/task-launch-intents/{intentId}/cancel",
+  },
+  task_launch_replace: {
+    method: "post",
+    path: "/api/v1/ext/task-launch-intents/{intentId}/replace",
+  },
   run_get: { method: "get", path: "/api/v1/ext/runs/{runId}" },
   activity_pulse: { method: "get", path: "/api/v1/ext/activity" },
   run_activity: {
@@ -319,6 +415,7 @@ type OpParameter = {
   name?: string;
   in?: string;
   schema?: JsonSchema;
+  content?: Record<string, { schema?: JsonSchema }>;
   required?: boolean;
 };
 
@@ -344,7 +441,7 @@ function queryParamSchemas(op: {
     const p = deref(raw);
 
     if (p.in === "query" && p.name && !isDesigned(p))
-      out[p.name] = (p.schema ?? {}) as JsonSchema;
+      out[p.name] = p.schema ?? p.content?.["application/json"]?.schema ?? {};
   }
 
   return out;
@@ -527,13 +624,25 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
         }
 
         for (const bound of MIRRORED_BOUNDS) {
-          const specBound = openapiField[bound];
+          const specBound =
+            bound === "minimum"
+              ? inclusiveMinimum(openapiField)
+              : openapiField[bound];
 
           if (specBound !== undefined) {
-            expect(toolField[bound], `${toolName}.${field} ${bound}`).toBe(
-              specBound,
-            );
+            expect(
+              bound === "minimum"
+                ? inclusiveMinimum(toolField)
+                : toolField[bound],
+              `${toolName}.${field} ${bound}`,
+            ).toBe(specBound);
           }
+        }
+        if (isTaskLaunchTool(toolName)) {
+          expect(
+            inputContractShape(toolField),
+            `${toolName}.${field} complete nested contract`,
+          ).toEqual(inputContractShape(openapiField));
         }
       }
     });

@@ -95,11 +95,15 @@ export async function POST(
             launchIntent: body.launchIntent,
           });
 
+          const [updated] = await tx
+            .select({ triageStatus: tasks.triageStatus })
+            .from(tasks)
+            .where(eq(tasks.id, taskId));
           const result = {
             ok: true,
             taskId,
             launchIntent: body.launchIntent,
-            triageStatus: null,
+            triageStatus: updated.triageStatus,
           };
 
           await recordRequiredTokenAudit(

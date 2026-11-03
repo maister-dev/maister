@@ -11,6 +11,7 @@ import {
 } from "@/lib/tasks/launch-http";
 import { taskLaunchBodySchema } from "@/lib/tasks/launch-schema";
 import { MaisterError } from "@/lib/errors";
+import { wakeAcceptedTaskLaunch } from "@/lib/tasks/launch-wake";
 
 export async function POST(request: Request): Promise<NextResponse> {
   try {
@@ -32,6 +33,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       parsed.data,
       requestKey,
     );
+
+    wakeAcceptedTaskLaunch(getDb(), receipt);
 
     return NextResponse.json(receipt, {
       status: 202,

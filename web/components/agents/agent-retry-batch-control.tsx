@@ -58,20 +58,29 @@ export function AgentRetryBatchControl({
   const selectedIds = runIds?.join(",") ?? "";
   const endpoint = `/api/projects/${slug}/agents/${encodeURIComponent(agentId)}`;
   const loadPreview = useCallback(
-    async (cursor: string | null, offset: number): Promise<void> => {
+    async (
+      cursor: string | null,
+      offset: number,
+      selectedRunner?: string,
+    ): Promise<void> => {
       setBusy(true);
       setError(null);
       setRefreshed(false);
       try {
+        const search = new URLSearchParams();
+
+        if (cursor) search.set("cursor", cursor);
+        if (selectedRunner) search.set("runnerId", selectedRunner);
         const response = await fetch(
-          cursor
-            ? `${endpoint}/retry-options?cursor=${encodeURIComponent(cursor)}`
-            : `${endpoint}/retry-options`,
+          `${endpoint}/retry-options${search.size ? `?${search}` : ""}`,
           selectedIds && cursor === null
             ? {
                 method: "POST",
                 headers: { "content-type": "application/json" },
-                body: JSON.stringify({ runIds: selectedIds.split(",") }),
+                body: JSON.stringify({
+                  runIds: selectedIds.split(","),
+                  ...(selectedRunner ? { runnerId: selectedRunner } : {}),
+                }),
               }
             : { cache: "no-store" },
         );
@@ -97,9 +106,11 @@ export function AgentRetryBatchControl({
         setRequest(null);
         setPreviewRefused(false);
         setRunnerId((current) =>
-          next.runners.some((item) => item.id === current && item.ready)
-            ? current
-            : (next.selectedRunnerId ?? ""),
+          next.items.some((item) => item.options?.launchRequest)
+            ? (next.selectedRunnerId ?? "")
+            : next.runners.some((item) => item.id === current && item.ready)
+              ? current
+              : (next.selectedRunnerId ?? ""),
         );
         setRefreshed(true);
         if (offerAfterRunnerChange && next.totalFailed === 0) {
@@ -140,6 +151,9 @@ export function AgentRetryBatchControl({
         requestKey: crypto.randomUUID(),
         previewFingerprint: item.options!.previewFingerprint,
         strategy: item.options!.strategy,
+        ...(item.options!.launchRequest
+          ? { launchRequest: item.options!.launchRequest }
+          : {}),
       })),
     };
 
@@ -385,7 +399,15 @@ export function AgentRetryBatchControl({
                   disabled={busy || request !== null}
                   id={`batch-runner-${agentId}`}
                   value={runnerId}
-                  onChange={(event) => setRunnerId(event.target.value)}
+                  onChange={(event) => {
+                    const selected = event.target.value;
+
+                    setRunnerId(selected);
+                    if (
+                      options.items.some((item) => item.options?.launchRequest)
+                    )
+                      void loadPreview(windowCursor, windowStart, selected);
+                  }}
                 >
                   <option value="">{t("chooseRunner")}</option>
                   {options.runners.map((item) => (
@@ -446,6 +468,28 @@ export function AgentRetryBatchControl({
                             {item.title}
                           </Link>
                         </label>
+                        {item.options?.launchPreview &&
+                        item.options.launchRequest ? (
+                          <details>
+                            <summary>
+                              {t("retryTaskRevision", {
+                                revision:
+                                  item.options.launchRequest
+                                    .expectedTaskRevision,
+                              })}
+                            </summary>
+                            <p className="whitespace-pre-wrap break-words">
+                              {item.options.launchPreview.prompt}
+                            </p>
+                            <p>
+                              {t("retryTarget")}:{" "}
+                              {item.options.launchRequest.agentId} ·{" "}
+                              {t(
+                                `retryWorkspace.${item.options.launchRequest.workspace}`,
+                              )}
+                            </p>
+                          </details>
+                        ) : null}
                         {result ? (
                           <>
                             <p>

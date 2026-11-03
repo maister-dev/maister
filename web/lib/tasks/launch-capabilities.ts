@@ -5,10 +5,55 @@ import type { ResolvedCapabilitySet } from "@/lib/db/schema";
 
 import { and, asc, eq, isNull } from "drizzle-orm";
 
-import { capabilityRecords } from "@/lib/db/schema";
+import { capabilityRecords, capabilityImports } from "@/lib/db/schema";
 import { buildResolvedCapabilitySet } from "@/lib/capabilities/resolver";
 import { loadProjectMcpBindings } from "@/lib/mcp/binding-service";
 import { retryDigest } from "@/lib/agents/retry-guards";
+import { localDirectoryContentDigest } from "@/lib/flows";
+import { MaisterError } from "@/lib/errors";
+
+/** Filesystem hashing is performed only in preflight, outside the acceptance transaction. */
+export async function captureTaskLaunchCapabilityBundles(
+  db: Db,
+  projectId: string,
+): Promise<
+  ReadonlyArray<
+    Readonly<{
+      id: string;
+      revision: string;
+      manifestDigest: string;
+      contentDigest: string;
+    }>
+  >
+> {
+  const imports = await db
+    .select()
+    .from(capabilityImports)
+    .where(
+      and(
+        eq(capabilityImports.projectId, projectId),
+        eq(capabilityImports.packageStatus, "Installed"),
+      ),
+    )
+    .orderBy(asc(capabilityImports.id))
+    .limit(65);
+
+  if (imports.length > 64)
+    throw new MaisterError(
+      "CONFIG",
+      "Task launch exceeds the supported capability bundle count",
+      { details: { reason: "launch_input_limit" } },
+    );
+
+  return Promise.all(
+    imports.map(async (bundle) => ({
+      id: bundle.id,
+      revision: bundle.resolvedRevision,
+      manifestDigest: bundle.manifestDigest,
+      contentDigest: await localDirectoryContentDigest(bundle.installedPath),
+    })),
+  );
+}
 
 /** Retain reference identities and a configuration fence, never copy capability material or credentials. */
 export async function resolveTaskLaunchCapabilities(
@@ -50,6 +95,23 @@ export async function resolveTaskLaunchCapabilities(
   const bindings = [
     ...(await loadProjectMcpBindings(input.projectId, db)),
   ].sort((a, b) => a.refId.localeCompare(b.refId));
+  const imports = await db
+    .select({
+      id: capabilityImports.id,
+      revision: capabilityImports.resolvedRevision,
+      manifestDigest: capabilityImports.manifestDigest,
+      installedPath: capabilityImports.installedPath,
+      setupStatus: capabilityImports.setupStatus,
+      trustStatus: capabilityImports.trustStatus,
+    })
+    .from(capabilityImports)
+    .where(
+      and(
+        eq(capabilityImports.projectId, input.projectId),
+        eq(capabilityImports.packageStatus, "Installed"),
+      ),
+    )
+    .orderBy(asc(capabilityImports.id));
 
   return {
     resolvedCapabilitySet: buildResolvedCapabilitySet({
@@ -58,6 +120,11 @@ export async function resolveTaskLaunchCapabilities(
       flowOrigin: input.flowSource.startsWith("/") ? "authored" : "git",
       mcpBindings: bindings,
     }),
-    capabilityResolutionDigest: retryDigest({ version: 1, records, bindings }),
+    capabilityResolutionDigest: retryDigest({
+      version: 2,
+      records,
+      bindings,
+      imports,
+    }),
   };
 }

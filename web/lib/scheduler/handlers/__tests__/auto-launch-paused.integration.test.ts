@@ -8,6 +8,7 @@ import { and, eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { seedAcceptedAutomaticQualification } from "@/test-support/automatic-qualification";
 import * as fullSchema from "@/lib/db/schema";
 import { runAutoLaunchTriagedJob } from "@/lib/scheduler/handlers/auto-launch-triaged";
 import {
@@ -96,6 +97,8 @@ async function seedArmedTask(
     queuePaused: opts.paused,
     priority: opts.priority ?? "normal",
   });
+
+  await seedAcceptedAutomaticQualification(testDatabase, projectId, id);
 
   return id;
 }

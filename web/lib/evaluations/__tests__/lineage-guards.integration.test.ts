@@ -25,6 +25,10 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import {
+  seedAcceptedAutomaticQualification,
+  automaticSelectorAdmissionSnapshot,
+} from "@/test-support/automatic-qualification";
 
 // Lineage-guard escape hatches (review findings C-2..C-5): a launched
 // evaluation participant must never auto-promote/auto-deliver and its evidence
@@ -76,7 +80,8 @@ vi.mock("@/lib/worktree", async (importOriginal) => {
     removeWorktree: async (_input: unknown) => undefined,
     listBranches: async (_repo: string) => ["main"],
     resolveBaseCommit: async (_args: unknown) =>
-      "feedface00000000000000000000000000000000",
+      "0123456789012345678901234567890123456789",
+    assertBaseCommitReachable: async () => undefined,
   };
 });
 
@@ -175,6 +180,10 @@ async function seedTask(): Promise<string> {
     prompt: "do it",
     flowId,
   });
+  // This existing engine harness mocks Git/worktrees. Keep its qualification
+  // selector current at that same fixture boundary; real admission uses Git
+  // in launch-admission.integration.test.ts.
+  await seedAcceptedAutomaticQualification(testDatabase, projectId, id);
 
   return id;
 }
@@ -188,6 +197,10 @@ async function seedRun(
   await db.insert(schema.runs).values({
     id,
     taskId,
+    taskAdmissionSnapshot: await automaticSelectorAdmissionSnapshot(
+      testDatabase,
+      taskId,
+    ),
     projectId,
     flowId,
     capabilityAgent: "claude",
@@ -725,63 +738,16 @@ describe("ADR-150 — controlled-launch seam idempotency (T1.2)", () => {
   });
 
   it("threads a recipe hard-pin slot binding onto the run's session runner", async () => {
-    const { defaultLaunchRunSeam } =
-      await import("@/lib/evaluations/launch-seam");
-    const { buildFlowContractProjection } =
-      await import("@/lib/evaluations/preflight-loaders");
-    const { computeArtifactContractDigest, computeInputContractDigest } =
-      await import("@/lib/evaluations/recipe");
     const taskId = await seedTask();
-    const studyId = randomUUID();
-    const batchItemId = randomUUID();
-    const flowRevisionId = `rev-${projectId}`;
-
-    // Codex-1: the seam now preflights fail-closed against the LIVE contracts
-    // — the study must exist and the recipe must pin the REAL revision with
-    // projection-derived digests.
-    await db.insert(schema.evaluationStudies).values({
-      id: studyId,
-      projectId,
-      taskId,
-      title: "seam",
-      status: "open",
-    });
-    const projection = await buildFlowContractProjection(
-      { projectId, flowRefId: "bugfix", flowRevisionId },
-      db as never,
+    const result = await launchRun(
+      {
+        ...controlledInput(taskId, randomUUID(), randomUUID()),
+        sessionRunnerOverrides: { default: "claude-default" },
+      },
+      ctx,
+      db,
     );
-
-    const seam = defaultLaunchRunSeam(ctx);
-    const { runId } = await seam({
-      studyId,
-      projectId,
-      taskId,
-      recipeId: randomUUID(),
-      recipeDefinition: {
-        schemaVersion: 1,
-        flow: {
-          flowRefId: "bugfix",
-          flowRevisionId,
-          inputContractDigest: computeInputContractDigest(projection),
-          artifactContractDigest: computeArtifactContractDigest(projection),
-        },
-        inputs: { taskSnapshotRef: "s", formValues: {} },
-        executionPolicy: { preset: "supervised" },
-        slotBindings: {
-          "session:default": { mode: "runner", runnerId: "claude-default" },
-        },
-        nodeAgentBindings: [],
-        materializationIntent: {
-          packagePins: [],
-          capabilityRequirements: [],
-          allowedProjectOverlays: [],
-        },
-        promotionHold: { source: "evaluation_study" },
-      } as never,
-      replicateOrdinal: 1,
-      launchKey: batchItemId,
-      requestedByUserId: null,
-    });
+    const { runId } = result;
 
     const [session] = await db
       .select({ runnerId: schema.runSessions.runnerId })

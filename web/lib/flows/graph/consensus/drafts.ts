@@ -1,3 +1,4 @@
+import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import type {
   FlowRunnerConfig,
   NodeDef,
@@ -10,10 +11,15 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
-import { resolveConsensusRunnerSlot } from "./roles";
+import { resolveConsensusRunnerForParent } from "./roles";
+import { prepareConsensusDraftAdmission } from "./admission";
 
 import { defaultRunSessionValues } from "@/lib/acp-runners/resolve";
-import { launchAgentRun, startAgentSession } from "@/lib/agents/launch";
+import {
+  launchAgentRun,
+  launchConsensusDraftAgentRun,
+  startAgentSession,
+} from "@/lib/agents/launch";
 import * as schemaModule from "@/lib/db/schema";
 import { type DelegationSnapshot } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -148,6 +154,16 @@ async function existingDraftRun(
   if (!row) return null;
 
   const payload = row.triggerPayload as ConsensusDraftPayload;
+  const expectedPrompt = input.prompts.find(
+    (item) => item.participantId === participantId,
+  )?.prompt;
+
+  if (payload.prompt !== expectedPrompt)
+    throw new MaisterError(
+      "CONFLICT",
+      "Consensus draft request changed on replay",
+      { details: { reason: "consensus_draft_prompt_changed" } },
+    );
 
   return {
     participantId,
@@ -185,8 +201,9 @@ async function defaultCreateRunnerDraftRun(
   payload: ConsensusDraftPayload,
   runtime: ConsensusDraftRuntimeDeps = { startAgentSession, tryStartRun },
 ): Promise<ConsensusDraftLaunchResult> {
-  const resolved = await resolveConsensusRunnerSlot({
+  const resolved = await resolveConsensusRunnerForParent({
     db: input.db,
+    parentRunId: input.parentRunId,
     slot: participant.runner,
     slotKey: `consensus:${input.nodeId}:${participant.id}`,
     projectId: input.projectId,
@@ -198,58 +215,94 @@ async function defaultCreateRunnerDraftRun(
   const snapshot = resolved.runnerSnapshot;
   const runId = randomUUID();
   const executionDataPlaneMode = await executionDataPlaneModeForParent(input);
-  const delegationSnapshot = {
-    kind: "runner",
-    runnerId: snapshot.id,
-    participantId: participant.id,
-    nodeId: input.nodeId,
-    nodeAttemptId: input.nodeAttemptId,
-    round: input.round,
-    workspaceMode: payload.workspaceMode,
-  } satisfies DelegationSnapshot;
+  const allocated = await input.db.transaction(async (tx: ExecutionDb) => {
+    await tx.execute(
+      sql`SELECT id FROM runs WHERE id=${input.parentRunId} FOR UPDATE`,
+    );
+    await tx.execute(
+      sql`SELECT id FROM node_attempts WHERE id=${input.nodeAttemptId} FOR UPDATE`,
+    );
+    const existing = await existingDraftRun(
+      { ...input, db: tx },
+      participant.id,
+    );
 
-  const runRow = {
-    id: runId,
-    runKind: "agent",
-    executionDataPlaneMode,
-    agentId: null,
-    triggerSource: "flow",
-    triggerPayload: payload,
-    agentWorkspace: payload.workspaceMode,
-    taskId: input.taskId,
-    projectId: input.projectId,
-    flowId: null,
-    // M42 (ADR-114): runner identity lives on `run_sessions` (inserted below).
-    status: "Pending",
-    currentStepId: "consensus-draft",
-    flowVersion: "agent",
-    flowRevision: "manual",
-    parentRunId: input.parentRunId,
-    rootRunId: input.rootRunId,
-    launchMode: "manual",
-    delegationSnapshot,
-    persistent: false,
-    workspaceMode: "own",
-  };
+    if (existing) return { existing };
+    const admission =
+      input.taskId === null
+        ? null
+        : await prepareConsensusDraftAdmission(tx, {
+            parentRunId: input.parentRunId,
+            rootRunId: input.rootRunId,
+            taskId: input.taskId,
+            projectId: input.projectId,
+            nodeId: input.nodeId,
+            nodeAttemptId: input.nodeAttemptId,
+            round: input.round,
+            participantId: participant.id,
+            participantKind: "runner",
+            runnerId: snapshot.id,
+            agentId: null,
+            prompt: payload.prompt,
+          });
+    const delegationSnapshot = {
+      kind: "runner",
+      runnerId: snapshot.id,
+      participantId: participant.id,
+      nodeId: input.nodeId,
+      nodeAttemptId: input.nodeAttemptId,
+      round: input.round,
+      workspaceMode: payload.workspaceMode,
+    } satisfies DelegationSnapshot;
 
-  assertRunKindInvariant({
-    id: runId,
-    runKind: "agent",
-    taskId: runRow.taskId,
-    flowId: runRow.flowId,
-    flowRevisionId: null,
-    flowVersion: runRow.flowVersion,
-    flowRevision: runRow.flowRevision,
-    agentId: runRow.agentId,
-    delegationSnapshot: runRow.delegationSnapshot,
+    const runRow = {
+      id: runId,
+      runKind: "agent",
+      executionDataPlaneMode,
+      ...(admission ? { taskAdmissionSnapshot: admission.snapshot } : {}),
+      agentId: null,
+      triggerSource: "flow",
+      triggerPayload: payload,
+      agentWorkspace: payload.workspaceMode,
+      taskId: input.taskId,
+      projectId: input.projectId,
+      flowId: null,
+      // M42 (ADR-114): runner identity lives on `run_sessions` (inserted below).
+      status: "Pending",
+      currentStepId: "consensus-draft",
+      flowVersion: "agent",
+      flowRevision: "manual",
+      parentRunId: input.parentRunId,
+      rootRunId: input.rootRunId,
+      launchMode: "manual",
+      delegationSnapshot,
+      persistent: false,
+      workspaceMode: "own",
+    };
+
+    assertRunKindInvariant({
+      id: runId,
+      runKind: "agent",
+      taskId: runRow.taskId,
+      flowId: runRow.flowId,
+      flowRevisionId: null,
+      flowVersion: runRow.flowVersion,
+      flowRevision: runRow.flowRevision,
+      agentId: runRow.agentId,
+      delegationSnapshot: runRow.delegationSnapshot,
+    });
+
+    await tx.insert(runs).values(runRow);
+    // M42 (ADR-114): a consensus draft child is a single-`default`-session agent run.
+    await tx.insert(runSessions).values({
+      id: randomUUID(),
+      ...defaultRunSessionValues(runId, resolved),
+    });
+
+    return { created: true as const };
   });
 
-  await input.db.insert(runs).values(runRow);
-  // M42 (ADR-114): a consensus draft child is a single-`default`-session agent run.
-  await input.db.insert(runSessions).values({
-    id: randomUUID(),
-    ...defaultRunSessionValues(runId, resolved),
-  });
+  if (allocated.existing) return allocated.existing;
 
   const startResult = await runtime.tryStartRun(runId, { db: input.db });
 
@@ -293,7 +346,6 @@ export async function launchConsensusDraftRuns(
   input: ConsensusDraftLaunchInput,
   deps: ConsensusDraftDeps = {},
 ): Promise<ConsensusDraftLaunchResult[]> {
-  const launch = deps.launchAgent ?? launchAgentRun;
   const createRunnerDraftRun =
     deps.createRunnerDraftRun ?? defaultCreateRunnerDraftRun;
   const runtime = {
@@ -340,7 +392,24 @@ export async function launchConsensusDraftRuns(
     );
 
     if ("agent" in participant && participant.agent) {
-      const launched = await launch({
+      const admission =
+        input.taskId === null
+          ? null
+          : await prepareConsensusDraftAdmission(input.db, {
+              parentRunId: input.parentRunId,
+              rootRunId: input.rootRunId,
+              taskId: input.taskId,
+              projectId: input.projectId,
+              nodeId: input.nodeId,
+              nodeAttemptId: input.nodeAttemptId,
+              round: input.round,
+              participantId: participant.id,
+              participantKind: "agent",
+              runnerId: null,
+              agentId: participant.agent,
+              prompt: payload.prompt,
+            });
+      const target: Parameters<LaunchAgent>[0] = {
         agentId: participant.agent,
         projectId: input.projectId,
         taskId: input.taskId,
@@ -353,15 +422,35 @@ export async function launchConsensusDraftRuns(
         launchMode: "manual",
         workspaceMode: "own",
         workspace: payload.workspaceMode,
+        ...(admission
+          ? { launchOverrideRunnerId: admission.snapshot.parent.runnerId }
+          : {}),
         db: input.db,
-      });
+      };
+      const launched = deps.launchAgent
+        ? await deps.launchAgent(target)
+        : admission
+          ? await launchConsensusDraftAgentRun(target, admission, input.rootDb)
+          : await launchAgentRun(target);
 
       if ("deduped" in launched) {
+        const winner = await existingDraftRun(input, participant.id);
+
+        if (winner) {
+          results.push(winner);
+          continue;
+        }
         throw new MaisterError(
           "CONFLICT",
           `consensus agent participant "${participant.id}" unexpectedly deduped trigger ${launched.triggerEventId}`,
         );
       }
+      if ("queued" in launched)
+        throw new MaisterError(
+          "PRECONDITION",
+          "Consensus participant requires a parent-derived child Run, not a root launch intent",
+          { details: { reason: "consensus_child_run_required" } },
+        );
 
       results.push({
         participantId: participant.id,

@@ -39,14 +39,24 @@ async function pathExists(p: string): Promise<boolean> {
 // and skipping existing entries avoids that. Returns which subtrees were present
 // in the bundle (i.e. a copy was attempted) plus the exact entries MAIster wrote,
 // so only generated content can be hidden from the run diff.
-export async function copyBundleArtifactsToWorktree(args: {
+type BundleArtifactRequest = Readonly<{
   installedPath: string;
   worktreePath: string;
-}): Promise<{
+}>;
+type CopiedBundleArtifacts = {
   skills: boolean;
   agents: boolean;
   materializedPaths: string[];
-}> {
+};
+type BundleEntryCopier = (source: string, destination: string) => Promise<void>;
+type BundleArtifactCopier = (
+  args: BundleArtifactRequest,
+) => Promise<CopiedBundleArtifacts>;
+
+async function copyBundleArtifacts(
+  args: BundleArtifactRequest,
+  copyEntry: BundleEntryCopier,
+): Promise<CopiedBundleArtifacts> {
   const worktreePath = path.resolve(args.worktreePath);
   const copied = {
     skills: false,
@@ -69,11 +79,7 @@ export async function copyBundleArtifactsToWorktree(args: {
       // Repo-local entry (skill dir / agent file) wins whole — skip it.
       if (await pathExists(destEntry)) continue;
 
-      await cp(path.join(src, entry), destEntry, {
-        recursive: true,
-        force: false,
-        errorOnExist: false,
-      });
+      await copyEntry(path.join(src, entry), destEntry);
       copied.materializedPaths.push(destEntry);
     }
 
@@ -86,6 +92,32 @@ export async function copyBundleArtifactsToWorktree(args: {
   );
 
   return copied;
+}
+
+export function copyBundleArtifactsToWorktree(
+  args: BundleArtifactRequest,
+): Promise<CopiedBundleArtifacts> {
+  return copyBundleArtifacts(args, (source, destination) =>
+    cp(source, destination, {
+      recursive: true,
+      force: false,
+      errorOnExist: false,
+    }),
+  );
+}
+
+function copyCapturedBundleArtifactsToWorktree(
+  args: BundleArtifactRequest,
+): Promise<CopiedBundleArtifacts> {
+  return copyBundleArtifacts(args, (source, destination) =>
+    cp(source, destination, {
+      recursive: true,
+      force: false,
+      errorOnExist: false,
+      dereference: false,
+      verbatimSymlinks: true,
+    }),
+  );
 }
 
 // Best-effort: mark a tracked file `--skip-worktree` so local edits never show in
@@ -258,12 +290,41 @@ export async function materializeProjectBundlesIntoWorktree(args: {
       ),
     );
 
-  if (installedImports.length === 0) return { bundles: 0 };
+  return materializeBundleSet(
+    {
+      bundles: installedImports,
+      worktreePath: args.worktreePath,
+      baseBranch: args.baseBranch,
+    },
+    copyBundleArtifactsToWorktree,
+  );
+}
+
+export type CapabilityBundleSource = Readonly<{ installedPath: string }>;
+
+/** Materialize an explicit bundle set; accepted launches supply only verified private captures. */
+type BundleSetMaterialization = Readonly<{
+  bundles: ReadonlyArray<CapabilityBundleSource>;
+  worktreePath: string;
+  baseBranch: string;
+}>;
+
+export function materializeCapabilityBundlesIntoWorktree(
+  args: BundleSetMaterialization,
+): Promise<{ bundles: number }> {
+  return materializeBundleSet(args, copyCapturedBundleArtifactsToWorktree);
+}
+
+async function materializeBundleSet(
+  args: BundleSetMaterialization,
+  copyArtifacts: BundleArtifactCopier,
+): Promise<{ bundles: number }> {
+  if (args.bundles.length === 0) return { bundles: 0 };
 
   const materializedPaths: string[] = [];
 
-  for (const imp of installedImports) {
-    const copied = await copyBundleArtifactsToWorktree({
+  for (const imp of args.bundles) {
+    const copied = await copyArtifacts({
       installedPath: imp.installedPath,
       worktreePath: args.worktreePath,
     });
@@ -278,12 +339,11 @@ export async function materializeProjectBundlesIntoWorktree(args: {
 
   log.debug(
     {
-      projectId: args.projectId,
       worktreePath: args.worktreePath,
-      bundles: installedImports.length,
+      bundles: args.bundles.length,
     },
     "[capabilities.bundle] materialized project bundles into worktree",
   );
 
-  return { bundles: installedImports.length };
+  return { bundles: args.bundles.length };
 }

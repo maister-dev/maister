@@ -18,6 +18,7 @@ export async function automaticTaskLaunchBasis(
   db: Db,
   task: typeof tasks.$inferSelect,
   settings: TaskLaunchSettingsSnapshot,
+  currentBaseCommit: string | null,
 ): Promise<Extract<TaskLaunchBasis, { kind: "automatic" }>> {
   const input = await loadTaskQualificationInput(db, task.projectId, task.id);
 
@@ -48,7 +49,9 @@ export async function automaticTaskLaunchBasis(
   )
     throw launchRefusal("qualification_stale", "PRECONDITION");
   if (
-    assessment.evidenceSha !== settings.baseCommit ||
+    (settings.workspace !== "none" &&
+      assessment.evidenceSha !== settings.baseCommit) ||
+    assessment.evidenceSha !== currentBaseCommit ||
     assessment.evidenceTarget !== settings.baseBranch
   )
     throw launchRefusal("qualification_evidence_stale", "PRECONDITION");
@@ -68,8 +71,14 @@ export async function armedAutomaticTaskLaunchBasis(
   db: Db,
   task: typeof tasks.$inferSelect,
   settings: TaskLaunchSettingsSnapshot,
+  currentBaseCommit: string | null,
 ): Promise<Extract<TaskLaunchBasis, { kind: "automatic" }>> {
-  const basis = await automaticTaskLaunchBasis(db, task, settings);
+  const basis = await automaticTaskLaunchBasis(
+    db,
+    task,
+    settings,
+    currentBaseCommit,
+  );
 
   if (
     task.launchMode !== "auto" ||

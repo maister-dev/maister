@@ -3,7 +3,8 @@
 import type { Key, ReactElement } from "react";
 import type { FlowRunnerSlotPreview } from "@/lib/acp-runners/flow-preflight";
 import type { ConsensusRunnerSlotPreview } from "@/lib/acp-runners/consensus-preflight";
-import type { LaunchStage } from "@/lib/runs/launch-progress";
+import type { TaskLaunchReceipt } from "@/lib/tasks/launch-types";
+import type { TaskQualificationSummary } from "@/lib/tasks/qualification-queries";
 import type {
   BudgetAxis,
   BudgetLimits,
@@ -35,11 +36,14 @@ import { createPortal } from "react-dom";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
+import { useTaskLaunchIntent } from "./use-task-launch-intent";
 import {
-  readLaunchErrorDetails,
-  readLaunchStream,
-} from "@/lib/runs/launch-progress";
-import { resolveUiErrorMessageKey } from "@/lib/ui-error-message";
+  TaskLaunchIntentStatus,
+  taskLaunchReasonKey,
+} from "./task-launch-intent-status";
+
+import { useModalFocusTrap } from "@/components/feedback/use-modal-focus-trap";
+import { readLaunchErrorDetails } from "@/lib/runs/launch-progress";
 import {
   blindShipLockedOptions,
   expandExecutionPolicy,
@@ -76,6 +80,9 @@ type VersionChoice = "keep" | "adopt" | "cut_and_adopt" | "try_once";
 
 type AvailablePackageVersion = {
   packageInstallId: string;
+  attachmentId: string;
+  localPackageId: string;
+  newerCutInstallId: string | null;
   packageName: string;
   localPackageName: string;
   currentVersionLabel: string;
@@ -153,6 +160,8 @@ type LaunchOptions = {
   consensusRunnerSlots?: ConsensusRunnerSlotPreview[];
   selectedFlowRevisionId?: string | null;
   canConfigureRunnerBindings?: boolean;
+  canManagePackages?: boolean;
+  canCutPackages?: boolean;
   selectedFlowId: string;
   selectedRunnerId: string | null;
   selectedRunnerWarning?: RunnerResolutionWarning | null;
@@ -162,7 +171,16 @@ type LaunchOptions = {
   deliveryPolicyDefault: DeliveryPolicy;
   executionPolicyDefault: ExecutionPolicy;
   availablePackageVersions: AvailablePackageVersion[];
-  task: { projectSlug: string; number: number; flowId?: string | null };
+  task: {
+    projectSlug: string;
+    projectId: string;
+    number: number;
+    flowId?: string | null;
+    revision: number;
+  };
+  settingsToken: string;
+  qualification: TaskQualificationSummary | null;
+  activeLaunch: TaskLaunchReceipt | null;
 };
 
 // Only the non-keep choices are sent — the server treats keep (and an absent
@@ -197,9 +215,15 @@ const LAUNCH_UNAVAILABLE_REASON_KEY: Record<string, string> = {
   target_terminal: "launchUnavailableReason.targetTerminal",
   unsupported_schema: "launchUnavailableReason.unsupportedSchema",
   runner_unresolved: "launchUnavailableReason.runnerUnresolved",
+  queue_paused: "launchUnavailableReason.queuePaused",
+  launch_task_held: "launchUnavailableReason.flagged",
 };
 
-type LaunchPreviewSelection = { flowId: string; runnerId: string };
+type LaunchPreviewSelection = {
+  flowId: string;
+  runnerId: string;
+  packageVersions?: string;
+};
 
 export function launchPreviewMatches(
   preview: LaunchPreviewSelection | null,
@@ -207,7 +231,8 @@ export function launchPreviewMatches(
 ): boolean {
   return (
     preview?.flowId === selection.flowId &&
-    preview.runnerId === selection.runnerId
+    preview.runnerId === selection.runnerId &&
+    (preview.packageVersions ?? "") === (selection.packageVersions ?? "")
   );
 }
 
@@ -257,8 +282,8 @@ export function effectiveLaunchVerdict<
   return options.launchability;
 }
 
-// ADR-119: the POST /api/runs body builder — stamps allowConcurrent = the
-// force-relaunch flag so the server selects the force launchability gate.
+// Selection data carries no admission authority. The caller chooses the explicit
+// launch operation and adds the server revision/settings token separately.
 export function buildLaunchBody(args: {
   taskId: string;
   flowId: string;
@@ -269,7 +294,6 @@ export function buildLaunchBody(args: {
   deliveryPolicy: DeliveryPolicy;
   executionPolicy: ExecutionPolicy;
   packageVersions?: Record<string, VersionChoice>;
-  forceRelaunch: boolean;
 }): Record<string, unknown> {
   const body: Record<string, unknown> = {
     taskId: args.taskId,
@@ -277,7 +301,6 @@ export function buildLaunchBody(args: {
     deliveryPolicy: args.deliveryPolicy,
     executionPolicy: args.executionPolicy,
     packageVersions: nonKeepPackageVersions(args.packageVersions ?? {}),
-    allowConcurrent: args.forceRelaunch,
   };
 
   if (args.runnerId && args.runnerId !== args.initialRunnerId)
@@ -298,7 +321,6 @@ export function buildScheduledLaunchBody(args: {
   deliveryPolicy: DeliveryPolicy;
   executionPolicy: ExecutionPolicy;
   packageVersions?: Record<string, VersionChoice>;
-  forceRelaunch: boolean;
   scheduledLocalTime: string;
   timezone: string;
   disambiguation: "earlier" | "later";
@@ -309,11 +331,7 @@ export function buildScheduledLaunchBody(args: {
   disambiguation: "earlier" | "later";
   launchRequest: Record<string, unknown>;
 } {
-  const {
-    allowConcurrent: _allowConcurrent,
-    taskId: _taskId,
-    ...launchRequest
-  } = buildLaunchBody({ ...args, forceRelaunch: false });
+  const { taskId: _taskId, ...launchRequest } = buildLaunchBody(args);
 
   return {
     taskId: args.taskId,
@@ -349,7 +367,7 @@ export function launchUnavailableReasonMessage(
 ): string {
   const key = LAUNCH_UNAVAILABLE_REASON_KEY[reason];
 
-  return key ? translate(key) : reason;
+  return translate(key ?? "launchUnavailableReason.technical");
 }
 
 export function launchVerdictReasonMessage(
@@ -509,6 +527,48 @@ export function pruneBudgetText(text: BudgetTextAxis): BudgetAxis | null {
   return Object.keys(axis).length > 0 ? axis : null;
 }
 
+function launchBudgetText(budget: BudgetAxis): BudgetTextAxis {
+  return Object.fromEntries(
+    (Object.keys(BUDGET_SCOPE_FIELDS) as BudgetScope[]).map((scope) => [
+      scope,
+      Object.fromEntries(
+        BUDGET_SCOPE_FIELDS[scope].flatMap((field) => {
+          const value = budget[scope]?.[field];
+
+          return value == null ? [] : [[field, String(value)]];
+        }),
+      ),
+    ]),
+  );
+}
+
+/** Overlay only edited fields, retaining ceilings the compact form does not expose. */
+function editedLaunchBudget(
+  budget: BudgetAxis,
+  changes: BudgetTextAxis,
+): BudgetAxis | null {
+  const next: BudgetAxis = Object.fromEntries(
+    Object.entries(budget).map(([scope, limits]) => [scope, { ...limits }]),
+  );
+
+  for (const scope of Object.keys(BUDGET_SCOPE_FIELDS) as BudgetScope[]) {
+    if (!changes[scope]) continue;
+    const limits = { ...next[scope] };
+
+    for (const field of BUDGET_SCOPE_FIELDS[scope]) {
+      const raw = changes[scope]?.[field];
+
+      if (raw === undefined) continue;
+      if (raw.trim() === "") delete limits[field];
+      else if (!isBudgetFieldInvalid(field, raw)) limits[field] = Number(raw);
+    }
+    if (Object.keys(limits).length) next[scope] = limits;
+    else delete next[scope];
+  }
+
+  return Object.keys(next).length ? next : null;
+}
+
 export function BudgetScopeFields(props: {
   scope: BudgetScope;
   heading: string;
@@ -577,10 +637,27 @@ export function LaunchPopover({
 }: LaunchPopoverProps): ReactElement {
   const t = useTranslations("launch");
   const tRun = useTranslations("run");
+  const statusUnavailableMessage = t("admission.reason.statusUnavailable");
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [localBusy, setBusy] = useState(false);
+  const intent = useTaskLaunchIntent(
+    taskId,
+    forceRelaunch ? "concurrent" : "ordinary",
+  );
+  const busy = localBusy || intent.busy;
+  const [replacementDraft, setReplacement] = useState<{
+    intentId: string;
+    stateVersion: number;
+  } | null>(null);
+  const replacement =
+    replacementDraft &&
+    (!intent.receipt || intent.receipt.intentId === replacementDraft.intentId)
+      ? replacementDraft
+      : null;
+  const tracking =
+    !replacement && (intent.receipt !== null || intent.uncertain);
   const [scheduleMode, setScheduleMode] = useState(false);
   const [scheduledLocalTime, setScheduledLocalTime] = useState("");
   const [scheduleTimezone, setScheduleTimezone] = useState(
@@ -602,7 +679,6 @@ export function LaunchPopover({
       return null;
     }
   }, [scheduledLocalTime, scheduleDisambiguation, scheduleTimezone]);
-  const [launchStage, setLaunchStage] = useState<LaunchStage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [options, setOptions] = useState<LaunchOptions | null>(null);
   const [optionsError, setOptionsError] = useState(false);
@@ -637,15 +713,88 @@ export function LaunchPopover({
   // policy; the prune step coerces to positive ints (NaN / ≤0 dropped).
   const [execBudget, setExecBudget] = useState<BudgetTextAxis>({});
   const [execBudgetOpen, setExecBudgetOpen] = useState(false);
+  const [executionBaseline, setExecutionBaseline] =
+    useState<ExecutionPolicy | null>(null);
+  const [executionEdits, setExecutionEdits] = useState<
+    ReadonlySet<"preset" | "checks" | "humanGate" | "promotion" | "budget">
+  >(new Set());
+  const [budgetChanges, setBudgetChanges] = useState<BudgetTextAxis>({});
   // M39 Stream B (ADR-107): per-package version-adopt choice (default keep).
   const [packageVersions, setPackageVersions] = useState<
     Record<string, VersionChoice>
   >({});
   const [packageVersionsOpen, setPackageVersionsOpen] = useState(false);
+  const [setupNotice, setSetupNotice] = useState<string | null>(null);
+  const packagePreview = useMemo(() => {
+    const entries = Object.entries(packageVersions)
+      .filter(([, choice]) => choice === "try_once")
+      .sort(([left], [right]) => left.localeCompare(right));
+
+    return entries.length ? JSON.stringify(Object.fromEntries(entries)) : "";
+  }, [packageVersions]);
+  const hasPackageSetup = Object.values(packageVersions).some(
+    (choice) => choice === "adopt" || choice === "cut_and_adopt",
+  );
   const dialogId = useId();
   const openerRef = useRef<HTMLButtonElement | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
-  const disabled = busy || pending || Boolean(disabledReason);
+  const dialogRef = useRef<HTMLElement | null>(null);
+
+  useModalFocusTrap(dialogRef, () => setOpen(false), open);
+  const disabled = busy || pending || (Boolean(disabledReason) && !tracking);
+
+  useEffect(() => {
+    if (
+      !forceRelaunch &&
+      options?.activeLaunch &&
+      !intent.receipt &&
+      !intent.attempt
+    )
+      intent.observe(options.activeLaunch);
+  }, [
+    forceRelaunch,
+    options?.activeLaunch,
+    intent.receipt,
+    intent.attempt,
+    intent.observe,
+  ]);
+
+  useEffect(() => {
+    if (
+      !open ||
+      forceRelaunch ||
+      intent.errorReason !== "launch_already_reserved"
+    )
+      return;
+    const controller = new AbortController();
+
+    // A competing launch may have committed since the original preview. Show
+    // its actual admission basis rather than treating our losing click as accepted.
+    void fetch(
+      `/api/runs/launch-options?taskId=${encodeURIComponent(taskId)}`,
+      { signal: controller.signal },
+    )
+      .then(async (response) => {
+        if (!response.ok)
+          throw new Error("Competing task launch status is unavailable");
+        const payload = (await response.json()) as LaunchOptions;
+
+        if (!controller.signal.aborted && payload.activeLaunch)
+          intent.observe(payload.activeLaunch);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setError(statusUnavailableMessage);
+      });
+
+    return () => controller.abort();
+  }, [
+    forceRelaunch,
+    intent.errorReason,
+    intent.observe,
+    open,
+    statusUnavailableMessage,
+    taskId,
+  ]);
 
   useEffect(() => {
     if (!open || options) return;
@@ -681,6 +830,10 @@ export function LaunchPopover({
 
         const eff = expandExecutionPolicy(payload.executionPolicyDefault);
 
+        setExecutionBaseline(payload.executionPolicyDefault);
+        setExecutionEdits(new Set());
+        setBudgetChanges({});
+        setExecBudget(launchBudgetText(eff.budget));
         setExecPreset(eff.preset);
         setExecChecks(eff.checks);
         setExecHumanGate(eff.humanGate);
@@ -714,7 +867,11 @@ export function LaunchPopover({
     if (
       !open ||
       !options ||
-      launchPreviewMatches(previewSelection, { flowId, runnerId })
+      launchPreviewMatches(previewSelection, {
+        flowId,
+        runnerId,
+        packageVersions: packagePreview,
+      })
     )
       return;
 
@@ -727,6 +884,7 @@ export function LaunchPopover({
 
     if (flowId) query.set("flowId", flowId);
     if (hasRunnerOverride) query.set("runnerId", runnerId);
+    if (packagePreview) query.set("packageVersions", packagePreview);
 
     fetch(`/api/runs/launch-options?${query}`, { signal: controller.signal })
       .then(async (response) => {
@@ -748,7 +906,11 @@ export function LaunchPopover({
             : payload.selectedRunnerId,
         });
         if (!hasRunnerOverride) setRunnerId(resolvedRunnerId);
-        setPreviewSelection({ flowId, runnerId: resolvedRunnerId });
+        setPreviewSelection({
+          flowId,
+          runnerId: resolvedRunnerId,
+          packageVersions: packagePreview,
+        });
       })
       .catch(() => {
         if (!controller.signal.aborted) setOptionsError(true);
@@ -761,32 +923,21 @@ export function LaunchPopover({
     previewSelection,
     flowId,
     runnerId,
+    packagePreview,
     taskId,
     previewRequestVersion,
   ]);
 
   useEffect(() => {
-    if (!open) return;
-    closeRef.current?.focus();
+    const dialog = dialogRef.current;
 
-    const previousOverflow = document.body.style.overflow;
-
-    document.body.style.overflow = "hidden";
-
-    function onKeyDown(event: KeyboardEvent): void {
-      if (event.key === "Escape") {
-        setOpen(false);
-        openerRef.current?.focus();
-      }
-    }
-
-    window.addEventListener("keydown", onKeyDown);
-
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [open]);
+    if (open && dialog && !dialog.contains(document.activeElement))
+      (
+        dialog.querySelector<HTMLElement>(
+          "button:not([disabled]),select:not([disabled]),input:not([disabled])",
+        ) ?? dialog
+      ).focus();
+  }, [open, tracking, loadingOptions, optionsError]);
 
   const currentPolicy = useMemo<DeliveryPolicy>(
     () => ({
@@ -805,22 +956,57 @@ export function LaunchPopover({
     setExecChecks(eff.checks);
     setExecHumanGate(eff.humanGate);
     setExecPromotion(eff.promotion);
+    setExecutionEdits(
+      (current) =>
+        new Set([...current, "preset", "checks", "humanGate", "promotion"]),
+    );
   }
 
-  const budgetAxis = useMemo(() => pruneBudgetText(execBudget), [execBudget]);
+  const budgetAxis = useMemo(
+    () =>
+      editedLaunchBudget(
+        executionBaseline?.overrides?.budget ?? {},
+        budgetChanges,
+      ),
+    [executionBaseline, budgetChanges],
+  );
   const currentExecutionPolicy = useMemo<ExecutionPolicy>(() => {
+    if (executionBaseline && executionEdits.size === 0)
+      return executionBaseline;
     const base = expandExecutionPolicy({ preset: execPreset });
-    const overrides: ExecutionPolicyOverrides = {};
+    const overrides: ExecutionPolicyOverrides = {
+      ...executionBaseline?.overrides,
+    };
 
-    if (execChecks !== base.checks) overrides.checks = execChecks;
-    if (execHumanGate !== base.humanGate) overrides.humanGate = execHumanGate;
-    if (execPromotion !== base.promotion) overrides.promotion = execPromotion;
-    if (budgetAxis) overrides.budget = budgetAxis;
+    if (executionEdits.has("checks")) {
+      if (execChecks === base.checks) delete overrides.checks;
+      else overrides.checks = execChecks;
+    }
+    if (executionEdits.has("humanGate")) {
+      if (execHumanGate === base.humanGate) delete overrides.humanGate;
+      else overrides.humanGate = execHumanGate;
+    }
+    if (executionEdits.has("promotion")) {
+      if (execPromotion === base.promotion) delete overrides.promotion;
+      else overrides.promotion = execPromotion;
+    }
+    if (executionEdits.has("budget")) {
+      if (budgetAxis) overrides.budget = budgetAxis;
+      else delete overrides.budget;
+    }
 
-    return Object.keys(overrides).length > 0
+    return Object.keys(overrides).length
       ? { preset: execPreset, overrides }
       : { preset: execPreset };
-  }, [budgetAxis, execChecks, execHumanGate, execPreset, execPromotion]);
+  }, [
+    budgetAxis,
+    execChecks,
+    execHumanGate,
+    execPreset,
+    execPromotion,
+    executionBaseline,
+    executionEdits,
+  ]);
 
   // AC-UI-2: a non-numeric / negative token value blocks Create (positive ints
   // only; empty stays allowed). The hint below is informational only.
@@ -842,7 +1028,11 @@ export function LaunchPopover({
     options?.runnerSlots ?? options?.consensusRunnerSlots ?? [];
   const previewPending =
     options !== null &&
-    !launchPreviewMatches(previewSelection, { flowId, runnerId });
+    !launchPreviewMatches(previewSelection, {
+      flowId,
+      runnerId,
+      packageVersions: packagePreview,
+    });
   const hasFailedBinding = runnerSlots.some(
     (slot) =>
       bindingFeedback[`${options?.selectedFlowRevisionId}:${slot.slotKey}`] ===
@@ -908,9 +1098,77 @@ export function LaunchPopover({
     setPreviewRequestVersion((version) => version + 1);
   }
 
+  async function applyPackageUpdate(
+    pkg: AvailablePackageVersion,
+  ): Promise<void> {
+    if (!options || !options.canManagePackages || busy) return;
+    const choice = packageVersions[pkg.packageInstallId];
+
+    if (choice !== "adopt" && choice !== "cut_and_adopt") return;
+    setBusy(true);
+    setSetupNotice(null);
+    setError(null);
+    try {
+      if (choice === "adopt" && !pkg.newerCutInstallId) {
+        setError(t("admission.setupFailed"));
+
+        return;
+      }
+      const response = await fetch(
+        choice === "adopt"
+          ? `/api/projects/${encodeURIComponent(options.task.projectSlug)}/packages/${encodeURIComponent(pkg.attachmentId)}/upgrade`
+          : `/api/studio/local-packages/${encodeURIComponent(pkg.localPackageId)}/cut-version`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(
+            choice === "adopt"
+              ? { packageInstallId: pkg.newerCutInstallId }
+              : { adoptInProjectIds: [options.task.projectId] },
+          ),
+        },
+      );
+      const payload = (await response.json()) as {
+        adoptions?: Array<{ projectId: string; status: string }>;
+      };
+
+      if (!response.ok)
+        setError(
+          t(
+            response.status === 403
+              ? "admission.packageForbidden"
+              : response.status === 409
+                ? "admission.packageConflict"
+                : "admission.setupFailed",
+          ),
+        );
+      else if (
+        choice === "cut_and_adopt" &&
+        !payload.adoptions?.some(
+          (adoption) =>
+            adoption.projectId === options.task.projectId &&
+            adoption.status === "adopted",
+        )
+      )
+        setError(t("admission.setupPartial"));
+      else setSetupNotice(t("admission.setupApplied"));
+    } catch {
+      setError(t("admission.setupUnknown"));
+    } finally {
+      // A cut can persist even if its adoption or response fails. Re-read the
+      // real pin/options; never automatically repeat a cut or start execution.
+      setPackageVersions((current) => ({
+        ...current,
+        [pkg.packageInstallId]: "keep",
+      }));
+      retryPreview();
+      setBusy(false);
+    }
+  }
+
   async function launch(): Promise<void> {
-    if (!options) return;
     if (
+      !options ||
       !effectiveLaunchVerdict(options, forceRelaunch).launchable ||
       previewPending ||
       savingBinding !== null ||
@@ -918,118 +1176,39 @@ export function LaunchPopover({
       optionsError
     )
       return;
+    if (
+      Object.values(packageVersions).some(
+        (choice) => choice === "adopt" || choice === "cut_and_adopt",
+      )
+    )
+      return;
+    const selection = buildLaunchBody({
+      taskId,
+      flowId,
+      runnerId,
+      initialRunnerId:
+        flowId === options.selectedFlowId ? options.selectedRunnerId : null,
+      baseBranch,
+      targetBranch,
+      deliveryPolicy: currentPolicy,
+      executionPolicy: currentExecutionPolicy,
+      packageVersions,
+    });
+    const endpoint = replacement
+      ? `/api/task-launch-intents/${encodeURIComponent(replacement.intentId)}/replace`
+      : forceRelaunch
+        ? "/api/task-launch-intents/concurrent"
+        : "/api/task-launch-intents";
 
-    setBusy(true);
-    setError(null);
-
-    try {
-      if (unconfigured) {
-        // Owner answer #3: "Set up & launch" PATCHes the task's flow FIRST —
-        // the task stays configured for every later launch.
-        const patched = await fetch(
-          `/api/projects/${options.task.projectSlug}/tasks/${options.task.number}`,
-          {
-            method: "PATCH",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ flowId }),
-          },
-        );
-
-        if (!patched.ok) {
-          const data = (await patched.json().catch(() => null)) as {
-            code?: string;
-            message?: string;
-          } | null;
-
-          setError(tRun(resolveUiErrorMessageKey(data?.code)));
-
-          return;
-        }
-      }
-
-      setLaunchStage("precondition");
-
-      const res = await fetch("/api/runs", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: "text/event-stream",
-        },
-        body: JSON.stringify(
-          buildLaunchBody({
-            taskId,
-            flowId,
-            runnerId,
-            initialRunnerId:
-              flowId === options.selectedFlowId
-                ? options.selectedRunnerId
-                : null,
-            baseBranch,
-            targetBranch,
-            deliveryPolicy: currentPolicy,
-            executionPolicy: currentExecutionPolicy,
-            packageVersions,
-            forceRelaunch,
-          }),
-        ),
-      });
-
-      // A pre-stream precondition failure stays a JSON error with its status.
-      if (
-        !(res.headers.get("content-type") ?? "").includes("text/event-stream")
-      ) {
-        const data = (await res.json().catch(() => null)) as {
-          code?: string;
-          message?: string;
-        } | null;
-
-        const role = runnerLaunchErrorLabel(data);
-        const preconditionMessage = launchPreconditionMessage(data);
-
-        setError(
-          role
-            ? t("runnerSlotUnresolved", { role })
-            : (preconditionMessage ??
-                tRun(resolveUiErrorMessageKey(data?.code))),
-        );
-
-        return;
-      }
-
-      const streamed = await readLaunchStream<{
-        runId: string;
-        status: string;
-      }>(res, setLaunchStage);
-
-      if (streamed.error) {
-        const role = runnerLaunchErrorLabel(streamed.error);
-        const preconditionMessage = launchPreconditionMessage(streamed.error);
-
-        setError(
-          role
-            ? t("runnerSlotUnresolved", { role })
-            : (preconditionMessage ??
-                tRun(resolveUiErrorMessageKey(streamed.error.code))),
-        );
-
-        return;
-      }
-      if (!streamed.result) {
-        setError(tRun("error.generic"));
-
-        return;
-      }
-
-      setOpen(false);
-      const runId = streamed.result.runId;
-
-      startTransition(() => router.push(`/runs/${runId}`));
-    } catch {
-      setError(tRun("error.generic"));
-    } finally {
-      setLaunchStage(null);
-      setBusy(false);
-    }
+    await intent.submit(endpoint, {
+      ...selection,
+      expectedTaskRevision: options.task.revision,
+      expectedSettingsToken: options.settingsToken,
+      autoPromote: currentPolicy.trigger === "auto_on_ready",
+      ...(replacement
+        ? { expectedStateVersion: replacement.stateVersion }
+        : {}),
+    });
   }
 
   async function scheduleLaunch(): Promise<void> {
@@ -1059,7 +1238,6 @@ export function LaunchPopover({
         deliveryPolicy: currentPolicy,
         executionPolicy: currentExecutionPolicy,
         packageVersions,
-        forceRelaunch: false,
         scheduledLocalTime,
         timezone: scheduleTimezone,
         disambiguation: scheduleDisambiguation,
@@ -1199,12 +1377,15 @@ export function LaunchPopover({
     pending ||
     loadingOptions ||
     optionsError ||
+    Boolean(intent.attempt) ||
+    intent.errorReason === "launch_storage_unavailable" ||
     !launchVerdict?.launchable ||
     previewPending ||
     savingBinding !== null ||
     hasFailedBinding ||
     !flowId ||
     !baseBranch ||
+    hasPackageSetup ||
     budgetInvalid;
   const scheduleDisabled = createDisabled || schedulePreview === null;
   const budgetFieldLabels: Record<BudgetField, string> = {
@@ -1232,6 +1413,11 @@ export function LaunchPopover({
       ...prev,
       [scope]: { ...(prev[scope] ?? {}), [field]: value },
     }));
+    setBudgetChanges((prev) => ({
+      ...prev,
+      [scope]: { ...(prev[scope] ?? {}), [field]: value },
+    }));
+    setExecutionEdits((current) => new Set([...current, "budget"]));
   }
 
   return (
@@ -1280,8 +1466,11 @@ export function LaunchPopover({
                 }}
               />
               <section
+                ref={dialogRef}
+                aria-labelledby={`${dialogId}-title`}
                 className="relative w-full max-w-[620px] rounded-[12px] border border-line bg-paper p-5 shadow-[0_24px_80px_-28px_rgba(22,20,15,0.45)]"
                 data-testid="task-launch-dialog"
+                tabIndex={-1}
               >
                 <div className="mb-4 flex items-start justify-between gap-3">
                   <div>
@@ -1312,7 +1501,65 @@ export function LaunchPopover({
                   </button>
                 </div>
 
-                {loadingOptions ? (
+                {intent.conflict ? (
+                  <p
+                    className="mb-3 rounded-md border border-amber-line bg-amber-soft p-3 text-sm"
+                    role="alert"
+                  >
+                    {t("admission.conflictNotAccepted")}{" "}
+                    {t(`admission.existingBasis.${intent.conflict.basis}`)}{" "}
+                    {intent.conflict.runId ? (
+                      <a
+                        className="underline"
+                        href={`/runs/${encodeURIComponent(intent.conflict.runId)}`}
+                      >
+                        {t("admission.openExistingRun")}
+                      </a>
+                    ) : intent.conflict.intentId ? (
+                      <button
+                        className="underline"
+                        disabled={busy}
+                        type="button"
+                        onClick={() => void intent.inspectConflict()}
+                      >
+                        {t("admission.inspectExistingLaunch")}
+                      </button>
+                    ) : null}
+                  </p>
+                ) : null}
+                {tracking ? (
+                  <TaskLaunchIntentStatus
+                    busy={intent.busy}
+                    errorReason={intent.errorReason}
+                    receipt={intent.receipt}
+                    uncertain={intent.uncertain}
+                    onCancel={async () => {
+                      if (!intent.receipt) return;
+                      await intent.submit(
+                        `/api/task-launch-intents/${encodeURIComponent(intent.receipt.intentId)}/cancel`,
+                        {
+                          expectedStateVersion: intent.receipt.stateVersion,
+                        },
+                      );
+                    }}
+                    onNewLaunch={() => {
+                      intent.clearCompleted();
+                      setOptions(null);
+                      setOptionsError(false);
+                    }}
+                    onRefresh={intent.refresh}
+                    onReplace={() => {
+                      if (!intent.receipt) return;
+                      setReplacement({
+                        intentId: intent.receipt.intentId,
+                        stateVersion: intent.receipt.stateVersion,
+                      });
+                      setOptions(null);
+                      setOptionsError(false);
+                    }}
+                    onRetryRequest={intent.retryRequest}
+                  />
+                ) : loadingOptions ? (
                   <p className="font-mono text-[12px] text-mute">
                     {t("loading")}
                   </p>
@@ -1325,7 +1572,58 @@ export function LaunchPopover({
                     {t("optionsError")}
                   </p>
                 ) : options ? (
-                  <div className="flex flex-col gap-4">
+                  <fieldset
+                    className="flex min-w-0 flex-col gap-4"
+                    disabled={busy || Boolean(intent.attempt)}
+                  >
+                    <p
+                      className="rounded-md border border-line-soft bg-ivory/50 px-3 py-2 text-sm text-ink-2"
+                      role="note"
+                    >
+                      {t(
+                        options.qualification?.freshness === "current" &&
+                          options.qualification.decision === "ready"
+                          ? "admission.triageAccepted"
+                          : options.qualification?.freshness === "stale"
+                            ? "admission.triageStale"
+                            : options.qualification?.decision &&
+                                options.qualification.decision !== "ready"
+                              ? "admission.triageNegative"
+                              : options.qualification?.sourceFailure ||
+                                  options.qualification?.candidate
+                                    ?.publicationReason ===
+                                    "qualification_source_failed"
+                                ? "admission.triageFailed"
+                                : "admission.triageMissing",
+                      )}
+                    </p>
+                    {options.qualification?.sourceFailure ? (
+                      <p className="text-sm text-ink-2" role="note">
+                        {t("admission.beforeModelFailure")}{" "}
+                        <a
+                          className="underline"
+                          href={`/runs/${encodeURIComponent(options.qualification.sourceFailure.runId)}`}
+                        >
+                          {t("admission.openFailure")}
+                        </a>
+                      </p>
+                    ) : null}
+                    {replacement ? (
+                      <p role="note">
+                        {t("admission.replaceHint")}{" "}
+                        {t("admission.replacementRevision", {
+                          previous:
+                            intent.receipt?.taskRevision ??
+                            options.task.revision,
+                          current: options.task.revision,
+                        })}
+                      </p>
+                    ) : null}
+                    {intent.errorReason ? (
+                      <p role="alert">
+                        {t(taskLaunchReasonKey(intent.errorReason))}
+                      </p>
+                    ) : null}
                     {previewPending && !optionsError ? (
                       <p role="status">{t("loading")}</p>
                     ) : null}
@@ -1661,7 +1959,7 @@ export function LaunchPopover({
                           </p>
                           <div className="flex flex-col gap-3">
                             {options.availablePackageVersions.map((pkg) => (
-                              <label
+                              <div
                                 key={pkg.packageInstallId}
                                 className="flex flex-col gap-1"
                               >
@@ -1682,6 +1980,11 @@ export function LaunchPopover({
                                   label={pkg.localPackageName}
                                   options={pkg.offeredOptions.map((opt) => ({
                                     id: opt,
+                                    disabled:
+                                      (opt === "adopt" &&
+                                        !options.canManagePackages) ||
+                                      (opt === "cut_and_adopt" &&
+                                        !options.canCutPackages),
                                     label: t(`packageVersionOption.${opt}`),
                                   }))}
                                   value={
@@ -1696,13 +1999,44 @@ export function LaunchPopover({
                                   }
                                 />
                                 {packageVersions[pkg.packageInstallId] ===
+                                  "adopt" ||
+                                packageVersions[pkg.packageInstallId] ===
+                                  "cut_and_adopt" ? (
+                                  <div className="flex flex-col gap-2">
+                                    <p role="note">
+                                      {t("admission.setupRequired")}
+                                    </p>
+                                    <Button
+                                      isDisabled={
+                                        busy ||
+                                        (packageVersions[
+                                          pkg.packageInstallId
+                                        ] === "cut_and_adopt"
+                                          ? !options.canCutPackages
+                                          : !options.canManagePackages)
+                                      }
+                                      size="sm"
+                                      type="button"
+                                      variant="outline"
+                                      onClick={() =>
+                                        void applyPackageUpdate(pkg)
+                                      }
+                                    >
+                                      {t("admission.applyPackage")}
+                                    </Button>
+                                  </div>
+                                ) : null}
+                                {packageVersions[pkg.packageInstallId] ===
                                 "try_once" ? (
                                   <span className="font-mono text-[10px] text-mute">
                                     {t("packageVersionTryOnceHint")}
                                   </span>
                                 ) : null}
-                              </label>
+                              </div>
                             ))}
+                            {setupNotice ? (
+                              <p role="status">{setupNotice}</p>
+                            ) : null}
                           </div>
                         </details>
                       ) : null}
@@ -1799,7 +2133,12 @@ export function LaunchPopover({
                               label={t("execChecks")}
                               options={execChecksOptions}
                               value={execChecks}
-                              onChange={setExecChecks}
+                              onChange={(value) => {
+                                setExecChecks(value);
+                                setExecutionEdits(
+                                  (current) => new Set([...current, "checks"]),
+                                );
+                              }}
                             />
                           </label>
                           <label className="flex flex-col gap-1">
@@ -1810,7 +2149,13 @@ export function LaunchPopover({
                               label={t("execHumanGate")}
                               options={execHumanGateOptions}
                               value={execHumanGate}
-                              onChange={setExecHumanGate}
+                              onChange={(value) => {
+                                setExecHumanGate(value);
+                                setExecutionEdits(
+                                  (current) =>
+                                    new Set([...current, "humanGate"]),
+                                );
+                              }}
                             />
                           </label>
                           <label className="flex flex-col gap-1">
@@ -1821,7 +2166,13 @@ export function LaunchPopover({
                               label={t("execPromotion")}
                               options={execPromotionOptions}
                               value={execPromotion}
-                              onChange={setExecPromotion}
+                              onChange={(value) => {
+                                setExecPromotion(value);
+                                setExecutionEdits(
+                                  (current) =>
+                                    new Set([...current, "promotion"]),
+                                );
+                              }}
                             />
                           </label>
                         </div>
@@ -2013,22 +2364,10 @@ export function LaunchPopover({
                         variant="primary"
                         onClick={() => void launch()}
                       >
-                        {busy || pending
-                          ? launchStage
-                            ? {
-                                precondition: t("launchStage.precondition"),
-                                worktree_created: t(
-                                  "launchStage.worktree_created",
-                                ),
-                                materializing: t("launchStage.materializing"),
-                                spawning: t("launchStage.spawning"),
-                                session_ready: t("launchStage.session_ready"),
-                              }[launchStage]
-                            : t("creating")
-                          : t("createRun")}
+                        {busy || pending ? t("creating") : t("createRun")}
                       </Button>
                     </div>
-                  </div>
+                  </fieldset>
                 ) : null}
               </section>
             </div>,

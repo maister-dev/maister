@@ -16,8 +16,9 @@ import Link from "next/link";
 
 import { TaskQualificationControl } from "@/components/agents/task-qualification-control";
 import { getTaskQualificationSummaries } from "@/lib/tasks/qualification-queries";
-import { isRequestAccepted } from "@/lib/work/stage";
 import { LaunchPopover } from "@/components/board/launch-popover";
+import { TaskLaunchHoldControl } from "@/components/board/task-launch-hold-control";
+import { isManualTriageHold } from "@/lib/tasks/manual-launch-hold";
 import {
   TaskCardEditModal,
   TaskInlineEditableField,
@@ -237,6 +238,8 @@ export default async function TaskDetailPage({
     {
       status: detail.task.status as TaskStatus,
       triageStatus: detail.task.triageStatus,
+      triageFlagOrigin: detail.task.triageFlagOrigin,
+      queuePaused: detail.task.queuePaused,
     },
     detail.latestFlowRun
       ? { status: detail.latestFlowRun.status as RunStatus }
@@ -247,11 +250,8 @@ export default async function TaskDetailPage({
   const qualification = (
     await getTaskQualificationSummaries(getDb(), [detail.task.id])
   ).get(detail.task.id);
-  const qualificationHeld = qualification && !isRequestAccepted(qualification);
-  const tQualification = await getTranslations("taskQualification");
-  const launchDisabledReason = qualificationHeld
-    ? tQualification("launchHeld")
-    : platformStatus.kind !== "ready"
+  const launchDisabledReason =
+    platformStatus.kind !== "ready"
       ? t("launchSupervisorUnavailable")
       : manualLaunchability === "launchable"
         ? undefined
@@ -268,6 +268,8 @@ export default async function TaskDetailPage({
     {
       status: detail.task.status as TaskStatus,
       triageStatus: detail.task.triageStatus,
+      triageFlagOrigin: detail.task.triageFlagOrigin,
+      queuePaused: detail.task.queuePaused,
     },
     detail.latestFlowRun
       ? { status: detail.latestFlowRun.status as RunStatus }
@@ -275,9 +277,8 @@ export default async function TaskDetailPage({
     { openBlockers: detail.openBlockers },
     { openBlocking },
   );
-  const forceLaunchDisabledReason = qualificationHeld
-    ? tQualification("launchHeld")
-    : platformStatus.kind !== "ready"
+  const forceLaunchDisabledReason =
+    platformStatus.kind !== "ready"
       ? t("launchSupervisorUnavailable")
       : forceLaunchability === "launchable"
         ? undefined
@@ -309,6 +310,9 @@ export default async function TaskDetailPage({
         .map((row) => ({
           id: row.agent.id as string,
           name: row.agent.name as string,
+          flowRef: (row.agent.flowRef as string | null) ?? null,
+          kind: row.agent.kind as "operational" | "code_delivery",
+          workspace: row.agent.workspace as "none" | "repo_read" | "worktree",
         }))
     : [];
 
@@ -711,6 +715,19 @@ export default async function TaskDetailPage({
           taskNumber={detail.task.number}
         />
       </header>
+      {isManualTriageHold(detail.task) ? (
+        <TaskLaunchHoldControl
+          canAct={canAct}
+          origin={
+            detail.task.triageFlagOrigin === "explicit" ||
+            detail.task.triageFlagOrigin === "dispatch_failure"
+              ? detail.task.triageFlagOrigin
+              : "unknown"
+          }
+          revision={detail.task.revision}
+          taskId={detail.task.id}
+        />
+      ) : null}
       {qualification ? (
         <TaskQualificationControl
           canAct={canAct}

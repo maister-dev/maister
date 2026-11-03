@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { InteractiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
 import type { Db } from "@/lib/execution-host/db";
 import type {
   AgentRetryBatchItem,
@@ -11,6 +12,7 @@ import { sql } from "drizzle-orm";
 import pino from "pino";
 import { z } from "zod";
 
+import { taskLaunchBodySchema } from "@/lib/tasks/launch-schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { assertRetryAuthority, retryRefusal } from "@/lib/agents/retry-guards";
 import { acceptAgentRetry, getAgentRetryOptions } from "@/lib/agents/retry";
@@ -36,6 +38,7 @@ const filterSchema = z
   .object({
     runIds: runIdsSchema.optional(),
     cursor: z.string().min(1).max(2048).optional(),
+    runnerId: z.string().min(1).max(256).optional(),
   })
   .strict()
   .refine(
@@ -53,6 +56,7 @@ const requestSchema = z
             requestKey: z.string().uuid(),
             previewFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
             strategy: z.enum(["pre_work_retry", "fresh_qualification"]),
+            launchRequest: taskLaunchBodySchema.optional(),
           })
           .strict(),
       )
@@ -157,7 +161,12 @@ export async function getAgentRetryBatchOptions(
 
   for (const row of page) {
     try {
-      const options = await getAgentRetryOptions(db, row.runId, scope.userId);
+      const options = await getAgentRetryOptions(
+        db,
+        row.runId,
+        scope.userId,
+        parsed.data.runnerId,
+      );
       const duplicate =
         options.eligible &&
         row.taskId !== null &&
@@ -228,6 +237,7 @@ export async function acceptAgentRetryBatch(
   db: Db,
   scope: AgentRetryBatchScope,
   body: unknown,
+  principal?: InteractiveTaskLaunchPrincipal,
 ): Promise<AgentRetryBatchResult> {
   await assertRetryAuthority(db, scope.projectId, scope.userId);
   const parsed = requestSchema.safeParse(body);
@@ -259,10 +269,16 @@ export async function acceptAgentRetryBatch(
     }
     try {
       const { runId, ...acceptance } = item;
-      const receipt = await acceptAgentRetry(db, runId, scope.userId, {
-        ...acceptance,
-        runnerId: request.runnerId,
-      });
+      const receipt = await acceptAgentRetry(
+        db,
+        runId,
+        scope.userId,
+        {
+          ...acceptance,
+          runnerId: request.runnerId,
+        },
+        principal,
+      );
 
       if (taskId && receipt.intentState !== "refused")
         acceptedTasks.add(taskId);

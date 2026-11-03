@@ -1,3 +1,6 @@
+import type { TaskLaunchInputV2Snapshot } from "./launch-types";
+import type { ConsensusDraftAdmissionSnapshot } from "@/lib/flows/graph/consensus/admission";
+
 export const QUALIFICATION_DIMENSIONS = [
   "goal_scope",
   "acceptance",
@@ -49,8 +52,15 @@ export type TaskExecutionChildProof = {
   childInputDigest: string;
   relationId: string | null;
 };
+export type TaskCarrierInputWitness = Readonly<{
+  inputSnapshot: TaskLaunchInputV2Snapshot;
+  inputDigest: string;
+  agentId: string;
+  metadataDigest: string;
+}>;
 export type TaskAdmissionV1Snapshot = {
   version: 1;
+  carrier?: TaskCarrierInputWitness;
   mode: "legacy" | "required" | "execution_child";
   policyVersion: 1;
   inputRevision: number;
@@ -63,13 +73,17 @@ export type TaskAdmissionV1Snapshot = {
 
 export type TaskAdmissionSnapshot =
   | TaskAdmissionV1Snapshot
-  | (Omit<TaskAdmissionV1Snapshot, "version" | "policyVersion" | "mode"> & {
+  | (Omit<
+      TaskAdmissionV1Snapshot,
+      "version" | "policyVersion" | "mode" | "carrier"
+    > & {
       version: 2;
       policyVersion: 2;
       mode: "manual" | "required" | "execution_child";
       intentId: string;
       basis: "manual" | "automatic" | "execution_child";
-    });
+    })
+  | ConsensusDraftAdmissionSnapshot;
 
 export type TaskQualificationLaunchSnapshot = {
   version: 1;

@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -15,12 +14,14 @@ import {
   vi,
 } from "vitest";
 
-import { MaisterError } from "@/lib/errors";
+import { bindQueuedDelegationResponse } from "@/test-support/queued-delegation";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   type DelegationSeedCtx,
   planRequest,
   resetDelegationFixture,
   seedAgent,
+  seedFlow,
   seedOrchestratorRun,
   seedTask,
 } from "@/test-support/delegation-seed";
@@ -46,17 +47,7 @@ let db: NodePgDatabase;
 let agentsRoot: string;
 let ctx: DelegationSeedCtx;
 
-const launchAgentRunSpy = vi.fn();
-
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
-vi.mock("@/lib/agents/launch", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/agents/launch")>();
-
-  return {
-    ...actual,
-    launchAgentRun: (input: unknown) => launchAgentRunSpy(input),
-  };
-});
 
 let issueOrchestratorRunToken: typeof import("@/lib/agents/tokens").issueOrchestratorRunToken;
 let planPost: typeof import("@/app/api/v1/ext/runs/plan/route").POST;
@@ -68,9 +59,17 @@ beforeAll(async () => {
   });
   pool = testDatabase.pool;
   db = testDatabase.db;
+  await fakeExecutionHosts(db);
 
   ({ issueOrchestratorRunToken } = await import("@/lib/agents/tokens"));
-  ({ POST: planPost } = await import("@/app/api/v1/ext/runs/plan/route"));
+  const planPostEndpoint = (await import("@/app/api/v1/ext/runs/plan/route"))
+    .POST;
+
+  planPost = async (request, context) =>
+    bindQueuedDelegationResponse(
+      db as unknown as import("@/lib/execution-host/db").Db,
+      await planPostEndpoint(request, context),
+    );
 }, 180_000);
 
 afterAll(async () => {
@@ -81,7 +80,12 @@ let worker: string;
 let secret: string;
 
 beforeEach(async () => {
-  ctx = await resetDelegationFixture({ pool, db, agentsRoot });
+  ctx = await resetDelegationFixture({
+    pool,
+    db,
+    agentsRoot,
+    withGitRepo: true,
+  });
 
   const orchestrator = await seedAgent(ctx, { id: "orchestrator" });
 
@@ -94,17 +98,7 @@ beforeEach(async () => {
     taskId: orchestratorTask.id,
     issueToken: issueOrchestratorRunToken,
   }));
-
-  launchAgentRunSpy.mockReset();
 });
-
-function refusal(code: MaisterError["code"], message: string): MaisterError {
-  return new MaisterError(code, message);
-}
-
-function launched() {
-  return { runId: randomUUID(), status: "Pending" as const };
-}
 
 async function taskStatuses(): Promise<Map<string, string>> {
   const rows = await pool.query(
@@ -131,15 +125,17 @@ type ResultItem = {
 };
 
 describe("POST /api/v1/ext/runs/plan — source-launch refusals", () => {
-  it("every source refused → the refusal's code, the whole committed DAG Abandoned, nothing runs", async () => {
-    launchAgentRunSpy.mockRejectedValue(
-      refusal("EXECUTOR_UNAVAILABLE", "supervisor unavailable"),
-    );
-
+  it("every source refused by real runner admission → the whole committed DAG Abandoned, nothing runs", async () => {
     const res = await planPost(
       planRequest(secret, {
         tasks: [
-          { key: "A", target: { agentId: worker }, prompt: "a", dependsOn: [] },
+          {
+            key: "A",
+            target: { agentId: worker },
+            runnerOverride: "unavailable-runner",
+            prompt: "a",
+            dependsOn: [],
+          },
           {
             key: "B",
             target: { agentId: worker },
@@ -151,14 +147,12 @@ describe("POST /api/v1/ext/runs/plan — source-launch refusals", () => {
       {},
     );
 
-    expect(res.status).toBe(503);
+    expect(res.status).toBe(409);
 
     const json = (await res.json()) as { code: string; message: string };
 
-    expect(json.code).toBe("EXECUTOR_UNAVAILABLE");
-    expect(json.message).toContain(
-      "A: [EXECUTOR_UNAVAILABLE] supervisor unavailable",
-    );
+    expect(json.code).toBe("PRECONDITION");
+    expect(json.message).toContain("A: [PRECONDITION]");
 
     const statuses = await taskStatuses();
 
@@ -176,16 +170,16 @@ describe("POST /api/v1/ext/runs/plan — source-launch refusals", () => {
   }, 60_000);
 
   it("a PARTIAL refusal keeps the DAG: 202, the refused source reports launchError + a system comment, the other source launched", async () => {
-    launchAgentRunSpy
-      .mockRejectedValueOnce(
-        refusal("EXECUTOR_UNAVAILABLE", "runner not Ready"),
-      )
-      .mockResolvedValueOnce(launched());
-
     const res = await planPost(
       planRequest(secret, {
         tasks: [
-          { key: "A", target: { agentId: worker }, prompt: "a", dependsOn: [] },
+          {
+            key: "A",
+            target: { agentId: worker },
+            runnerOverride: "unavailable-runner",
+            prompt: "a",
+            dependsOn: [],
+          },
           { key: "B", target: { agentId: worker }, prompt: "b", dependsOn: [] },
           {
             key: "C",
@@ -205,8 +199,9 @@ describe("POST /api/v1/ext/runs/plan — source-launch refusals", () => {
 
     expect(byKey.get("A")).toMatchObject({
       launchError: {
-        code: "EXECUTOR_UNAVAILABLE",
-        message: "runner not Ready",
+        code: "PRECONDITION",
+        reason: "launch_runner_unavailable",
+        message: expect.stringContaining("choose a ready runner"),
       },
     });
     expect(byKey.get("A")!.childRunId).toBeUndefined();
@@ -223,22 +218,34 @@ describe("POST /api/v1/ext/runs/plan — source-launch refusals", () => {
     const comments = await systemComments(byKey.get("A")!.taskId);
 
     expect(comments).toHaveLength(1);
-    expect(comments[0]).toContain("EXECUTOR_UNAVAILABLE");
-    expect(comments[0]).toContain("runner not Ready");
+    expect(comments[0]).toContain("PRECONDITION");
+    expect(comments[0]).toContain("choose a ready runner");
     expect(await systemComments(byKey.get("B")!.taskId)).toHaveLength(0);
     expect(await systemComments(byKey.get("C")!.taskId)).toHaveLength(0);
   }, 60_000);
 
   it("every source refused with MIXED codes → PRECONDITION 409, each line tagged with its own code", async () => {
-    launchAgentRunSpy
-      .mockRejectedValueOnce(refusal("EXECUTOR_UNAVAILABLE", "supervisor down"))
-      .mockRejectedValueOnce(refusal("PRECONDITION", "branch already exists"));
+    const { flowId: invalidRunnerFlow } = await seedFlow(ctx, {
+      flowRefId: "mixed-flow",
+    });
 
     const res = await planPost(
       planRequest(secret, {
         tasks: [
-          { key: "A", target: { agentId: worker }, prompt: "a", dependsOn: [] },
-          { key: "B", target: { agentId: worker }, prompt: "b", dependsOn: [] },
+          {
+            key: "A",
+            target: { agentId: worker },
+            runnerOverride: "unavailable-runner",
+            prompt: "a",
+            dependsOn: [],
+          },
+          {
+            key: "B",
+            target: { flowId: invalidRunnerFlow },
+            runnerOverride: "unavailable-flow-runner",
+            prompt: "b",
+            dependsOn: [],
+          },
         ],
       }),
       {},
@@ -249,8 +256,8 @@ describe("POST /api/v1/ext/runs/plan — source-launch refusals", () => {
     const json = (await res.json()) as { code: string; message: string };
 
     expect(json.code).toBe("PRECONDITION");
-    expect(json.message).toContain("A: [EXECUTOR_UNAVAILABLE] supervisor down");
-    expect(json.message).toContain("B: [PRECONDITION] branch already exists");
+    expect(json.message).toContain("A: [PRECONDITION]");
+    expect(json.message).toContain("B: [EXECUTOR_UNAVAILABLE]");
     expect([...(await taskStatuses()).values()]).toEqual([
       "Abandoned",
       "Abandoned",

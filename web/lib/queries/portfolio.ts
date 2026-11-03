@@ -417,7 +417,7 @@ export async function getPortfolio(
         and(
           inArray(tasks.projectId, projectIds),
           eq(tasks.status, "Backlog"),
-          acceptedBacklogPredicate(),
+          sql`(${tasks.qualificationMode} <> 'execution_child' AND (${tasks.flowId} IS NOT NULL OR ${acceptedBacklogPredicate()}))`,
         ),
       )
       .groupBy(tasks.projectId),

@@ -4,7 +4,9 @@ import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
-import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import { requireProjectAction } from "@/lib/authz";
+import { interactiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
+import { interactiveTaskLaunchRecoveryAuthority } from "@/lib/tasks/launch-continuation";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError } from "@/lib/errors";
 import { resumeCrashedRun } from "@/lib/runs/recover";
@@ -71,7 +73,7 @@ export async function POST(
   const { runId } = await params;
 
   try {
-    await requireActiveSession();
+    const principal = await interactiveTaskLaunchPrincipal();
 
     const db = getDb() as Db;
     const rows = await db
@@ -95,7 +97,9 @@ export async function POST(
 
     await requireProjectAction(run.projectId, "recoverRun");
 
-    const r = await resumeCrashedRun(runId);
+    const r = await resumeCrashedRun(runId, {
+      recoveryAuthority: interactiveTaskLaunchRecoveryAuthority(principal),
+    });
 
     log.info({ runId, state: r.state }, "recover handled");
 

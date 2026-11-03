@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { TasklessAgentFlowCarrierAdmission } from "@/lib/agents/carrier-launch-authority";
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 import type { AgentTriggerReservation } from "@/lib/agents/scheduled-request-store";
 import type { AgentActivitySnapshot } from "@/lib/agents/activity-types";
@@ -8,6 +9,7 @@ import type { ProjectAction } from "@/lib/authz";
 import type { ScheduledLaunchReservation } from "@/lib/scheduled-launches/types";
 import type { FlowDelegationSnapshotInput } from "@/lib/flows/delegatable-flow";
 import type { Db as ExecutionDb } from "@/lib/execution-host/db";
+import type { AcceptedTaskLaunchExecution } from "@/lib/tasks/launch-execution";
 import type {
   RunnerCatalogEntry,
   RunSessionResolution,
@@ -20,7 +22,13 @@ import path from "node:path";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
-import { queryErrorDiagnostics, redactQueryError } from "@/lib/db/pg-error";
+import { runnerAdmissionError } from "@/lib/flows/runner-admission-error";
+import { isAutomaticTaskLaunchDrain } from "@/lib/tasks/launch-capacity";
+import {
+  pgErrorOf,
+  queryErrorDiagnostics,
+  redactQueryError,
+} from "@/lib/db/pg-error";
 import { loadFlowScheduledRequestSource } from "@/lib/agents/scheduled-request-lineage";
 import { assertScheduledRequestMatches } from "@/lib/agents/scheduled-request-store";
 import { assertScheduledRequestConsumer } from "@/lib/agents/scheduled-request-flow";
@@ -29,7 +37,14 @@ import {
   liveAgentScheduleId,
 } from "@/lib/agents/scheduled-request-store";
 import { parseScheduledRequestSnapshot } from "@/lib/agents/scheduled-request";
+import {
+  assertPreparedTasklessAgentFlowCarrierAdmission,
+  assertTasklessAgentFlowCarrierInput,
+  assertTasklessAgentFlowCarrierAdmission,
+} from "@/lib/agents/carrier-launch-authority";
 import { prepareTaskDeliveryAdmission } from "@/lib/tasks/qualification-admission";
+import { assertAcceptedTaskLaunchExecution } from "@/lib/tasks/launch-execution";
+import { retryDigest } from "@/lib/agents/retry-guards";
 import {
   capabilityRefIdSetsFromRecords,
   firstUnknownCapabilityRef,
@@ -40,9 +55,15 @@ import {
 import { buildAgentActivitySnapshot } from "@/lib/agents/activity-snapshot";
 import { resolveEffectiveAgentDefinition } from "@/lib/agents/effective";
 import { atomicWriteJson } from "@/lib/atomic";
-import { loadFlowRunnerBindings } from "@/lib/acp-runners/catalog";
+import {
+  loadFlowRunnerBindings,
+  loadRunnerCatalog,
+} from "@/lib/acp-runners/catalog";
 import { inspectFlowRunners } from "@/lib/acp-runners/flow-preflight";
-import { materializeProjectBundlesIntoWorktree } from "@/lib/capabilities/materialize-bundle";
+import {
+  materializeProjectBundlesIntoWorktree,
+  materializeCapabilityBundlesIntoWorktree,
+} from "@/lib/capabilities/materialize-bundle";
 import {
   applyPackageVersionChoices,
   revertPackageVersionChoices,
@@ -276,33 +297,6 @@ const log = pino({
   name: "service-runs",
   level: process.env.LOG_LEVEL ?? "info",
 });
-
-function runnerAdmissionError(input: {
-  readonly taskId: string;
-  readonly projectId: string;
-  readonly slotKey: string;
-  readonly label: string;
-  readonly error: MaisterError;
-}): MaisterError {
-  log.warn(
-    {
-      taskId: input.taskId,
-      projectId: input.projectId,
-      slotKey: input.slotKey,
-      err: input.error,
-    },
-    "flow runner admission refused before workspace creation",
-  );
-
-  return new MaisterError(input.error.code, input.error.message, {
-    cause: input.error,
-    details: {
-      reason: "flow_runner_unresolved",
-      slotKey: input.slotKey,
-      label: input.label,
-    },
-  });
-}
 
 export type LaunchRunInput = {
   taskId: string;
@@ -593,11 +587,13 @@ async function resolvePinnedFlowRevision(
   });
 }
 
-export async function* launchRunStaged(
+async function* executeFlowLaunch(
   input: LaunchRunInput,
   ctx: LaunchRunContext,
-  db?: Db,
-  opts: { signal?: AbortSignal } = {},
+  db: Db | undefined,
+  opts: { signal?: AbortSignal },
+  accepted: AcceptedTaskLaunchExecution | null,
+  carrier: TasklessAgentFlowCarrierAdmission | null = null,
 ): AsyncGenerator<
   LaunchProgressEvent,
   {
@@ -643,9 +639,16 @@ export async function* launchRunStaged(
   // callers without project access. AuthzError propagates untouched.
   await ctx.authorize(project.id);
   const inheritanceSource = membershipSourceForLaunch(input);
-  const inheritedRequest =
-    inheritanceSource &&
-    (input.relaunchOfRunId || (input.triggerSource ?? "manual") === "manual")
+  const inheritedRequest = accepted
+    ? accepted.settings.relaunchSource?.scheduledRequestSnapshot
+      ? {
+          agentId: accepted.settings.relaunchSource.agentId!,
+          snapshot: accepted.settings.relaunchSource.scheduledRequestSnapshot,
+        }
+      : null
+    : inheritanceSource &&
+        (input.relaunchOfRunId ||
+          (input.triggerSource ?? "manual") === "manual")
       ? await loadFlowScheduledRequestSource(_db as unknown as ExecutionDb, {
           sourceRunId: inheritanceSource.sourceRunId,
           projectId: project.id,
@@ -665,17 +668,20 @@ export async function* launchRunStaged(
   }
   const agentId = inheritedRequest?.agentId ?? input.agentId;
 
-  const taskAdmission = await prepareTaskDeliveryAdmission(
-    _db as unknown as import("@/lib/execution-host/db").Db,
-    {
-      projectId: project.id,
-      taskId: task.id,
-      baseBranch: input.baseBranch,
-      baseCommit: input.baseCommit,
-      targetBranch:
-        input.targetBranch ?? input.deliveryPolicy?.targetBranch ?? undefined,
-    },
-  );
+  const taskAdmission =
+    accepted?.admission ??
+    carrier?.admission ??
+    (await prepareTaskDeliveryAdmission(
+      _db as unknown as import("@/lib/execution-host/db").Db,
+      {
+        projectId: project.id,
+        taskId: task.id,
+        baseBranch: input.baseBranch,
+        baseCommit: input.baseCommit,
+        targetBranch:
+          input.targetBranch ?? input.deliveryPolicy?.targetBranch ?? undefined,
+      },
+    ));
   const agentActivity = agentId
     ? (input.agentActivity ??
       buildAgentActivitySnapshot(
@@ -700,15 +706,17 @@ export async function* launchRunStaged(
   // M39 (ADR-106): a flow-driving agent OVERLAYS its {autoApply, onBudgetBreach}
   // axes onto the resolved task/project base — it does not replace it, so
   // inherited axes (budget limits) survive. Absent overlay ⇒ base is used as-is.
-  const executionPolicy = applyDefaultBudgetForUnattended(
-    input.agentPolicyOverlay
-      ? resolveAgentExecutionPolicy({
-          instanceOverride: input.agentPolicyOverlay,
-          recommended: null,
-          base: basePolicy,
-        })
-      : basePolicy,
-  );
+  const executionPolicy = accepted
+    ? accepted.settings.executionPolicy
+    : applyDefaultBudgetForUnattended(
+        input.agentPolicyOverlay
+          ? resolveAgentExecutionPolicy({
+              instanceOverride: input.agentPolicyOverlay,
+              recommended: null,
+              base: basePolicy,
+            })
+          : basePolicy,
+      );
 
   assertNoBlindShip(executionPolicy);
 
@@ -728,13 +736,14 @@ export async function* launchRunStaged(
       "Task and agent trigger reservations cannot share a launch",
     );
   }
-  const cronEvidence = input.agentTriggerReservation
-    ? await loadCronLaunchEvidence(_db as unknown as ExecutionDb, {
-        agentId: agentId!,
-        projectId: project.id,
-        reservation: input.agentTriggerReservation,
-      })
-    : null;
+  const cronEvidence =
+    !accepted && input.agentTriggerReservation
+      ? await loadCronLaunchEvidence(_db as unknown as ExecutionDb, {
+          agentId: agentId!,
+          projectId: project.id,
+          reservation: input.agentTriggerReservation,
+        })
+      : null;
 
   if (cronEvidence && input.scheduledRequestSnapshot !== undefined) {
     assertScheduledRequestMatches(
@@ -967,7 +976,7 @@ export async function* launchRunStaged(
 
   if (scheduledFlowRevisionId) {
     if (
-      pinnedRevision ||
+      input.evaluationFlowRevisionId ||
       !agentId ||
       !scheduledRequestSnapshot?.requestAtLaunch
     ) {
@@ -991,6 +1000,14 @@ export async function* launchRunStaged(
         "Scheduled Flow revision does not belong to the selected Flow",
       );
     }
+    if (pinnedRevision && pinnedRevision.id !== revision.id)
+      throw new MaisterError(
+        "CONFLICT",
+        "Scheduled Flow revision and package pin identify different revisions",
+        {
+          details: { reason: "scheduled_flow_pin_mismatch" },
+        },
+      );
     pinnedRevision = revision;
   }
 
@@ -1016,6 +1033,7 @@ export async function* launchRunStaged(
   // Hoisted above the outer try so the post-compensation tryStartRun / return
   // block can still read it (the try opens right after the adopt).
   const runId =
+    accepted?.claim.identity.runId ??
     input.agentTriggerReservation?.runId ??
     scheduledReservation?.runId ??
     randomUUID();
@@ -1096,12 +1114,14 @@ export async function* launchRunStaged(
     // ADR-132: an ephemeral packagePin overrides the resolution — the
     // already-loaded pinned revision IS the effective revision (no re-select;
     // launch-time decision, persisted via the snapshot columns below).
-    const effectiveRevisionId = pinnedRevision
-      ? pinnedRevision.id
-      : flow.enabledRevisionId
-        ? ((await resolveEffectiveFlowRevision(_db, flow)) ??
-          flow.enabledRevisionId)
-        : null;
+    const effectiveRevisionId = accepted
+      ? accepted.settings.flowRevisionId
+      : pinnedRevision
+        ? pinnedRevision.id
+        : flow.enabledRevisionId
+          ? ((await resolveEffectiveFlowRevision(_db, flow)) ??
+            flow.enabledRevisionId)
+          : null;
 
     const revisionRows = pinnedRevision
       ? [pinnedRevision]
@@ -1111,7 +1131,10 @@ export async function* launchRunStaged(
             .from(flowRevisions)
             .where(eq(flowRevisions.id, effectiveRevisionId))
         : [];
-    const revision = revisionRows[0];
+    const storedRevision = revisionRows[0];
+    const revision = accepted
+      ? { ...storedRevision, installedPath: accepted.flowAssetsPath }
+      : storedRevision;
 
     assertFlowLaunchable(flow.flowRefId, flow, revision ?? null);
 
@@ -1162,7 +1185,9 @@ export async function* launchRunStaged(
     }
 
     const runnerRows = await _db.select().from(platformAcpRunners);
-    const runnerCatalog = runnerRows.map(runnerCatalogEntry);
+    const runnerCatalog = accepted
+      ? await loadRunnerCatalog(_db)
+      : runnerRows.map(runnerCatalogEntry);
 
     const projectFlowDefaultRows = await _db
       .select({ runnerId: projectFlowRunnerDefaults.runnerId })
@@ -1182,16 +1207,75 @@ export async function* launchRunStaged(
     const bindings = await loadFlowRunnerBindings(_db, project.id, revision.id);
     const runnerInspection = inspectFlowRunners({
       manifest,
-      bindings,
+      bindings: accepted
+        ? [
+            ...bindings.filter(
+              (binding) =>
+                !accepted.settings.sessions.some(
+                  (slot) => slot.sessionName === binding.slotKey,
+                ),
+            ),
+            ...accepted.settings.sessions
+              .filter((slot) => slot.sessionName.startsWith("consensus:"))
+              .map((slot) => ({
+                slotKey: slot.sessionName,
+                mappedRunnerId: slot.runnerId,
+                status: "Mapped" as const,
+              })),
+          ]
+        : bindings,
       taskRunnerId: task.runnerId,
-      launchOverrideRunnerId: input.runnerId,
-      sessionRunnerOverrides: input.sessionRunnerOverrides,
+      launchOverrideRunnerId: accepted ? undefined : input.runnerId,
+      sessionRunnerOverrides: accepted
+        ? Object.fromEntries(
+            accepted.settings.sessions.map((slot) => [
+              slot.sessionName,
+              slot.runnerId,
+            ]),
+          )
+        : input.sessionRunnerOverrides,
       projectFlow: { defaultRunnerId: projectFlowDefaultRunnerId },
       platformFlow: { defaultRunnerId: revision.defaultRunnerId },
       project: { defaultRunnerId: project.defaultRunnerId },
       platform: { defaultRunnerId: platformRuntime.defaultRunnerId },
       runners: runnerCatalog,
     });
+
+    if (accepted) {
+      const actualSlots = [
+        ...runnerInspection.sessions.map((slot) => ({
+          name: slot.sessionName,
+          slot,
+        })),
+        ...runnerInspection.consensus.map((slot) => ({
+          name: slot.slotKey,
+          slot,
+        })),
+      ];
+
+      if (
+        actualSlots.length !== accepted.settings.sessions.length ||
+        actualSlots.some(({ name, slot }) => {
+          const expected = accepted.settings.sessions.find(
+            (item) => item.sessionName === name,
+          );
+
+          return (
+            slot.status !== "resolved" ||
+            !expected ||
+            !expected.runnerResolutionTier ||
+            expected.runnerId !== slot.resolution.runnerId ||
+            expected.runnerConfigDigest !==
+              retryDigest(slot.resolution.runnerSnapshot)
+          );
+        })
+      )
+        throw new MaisterError(
+          "CONFLICT",
+          "The accepted runner resolution can no longer be honored",
+          { details: { reason: "launch_runner_changed" } },
+        );
+    }
     const primarySessionName = runnerInspection.primarySessionName;
     const sessionResolutions = runnerInspection.sessions.map((session) => {
       if (session.status === "unresolved") {
@@ -1204,7 +1288,22 @@ export async function* launchRunStaged(
         });
       }
 
-      return session.resolution;
+      if (!accepted) return session.resolution;
+      const frozen = accepted.settings.sessions.find(
+        (slot) => slot.sessionName === session.sessionName,
+      );
+
+      if (!frozen?.runnerResolutionTier)
+        throw new MaisterError(
+          "PRECONDITION",
+          "Accepted runner provenance requires compatibility review",
+          { details: { reason: "launch_runner_snapshot_incomplete" } },
+        );
+
+      return {
+        ...session.resolution,
+        runnerResolutionTier: frozen.runnerResolutionTier,
+      };
     });
 
     runnerResolutionWarnings = sessionResolutions.flatMap((session) =>
@@ -1501,6 +1600,7 @@ export async function* launchRunStaged(
 
     const worktreeRoot = worktreesRoot();
     const worktreePath =
+      accepted?.claim.identity.worktreePath ??
       scheduledReservation?.worktreePath ??
       path.join(worktreeRoot, project.slug, runId);
 
@@ -1610,16 +1710,19 @@ export async function* launchRunStaged(
     // validation refusal NEVER burns a number — the only remaining gap is the
     // irreducible addWorktree/tx window below (a genuine git/db failure), where a
     // burned number is an acceptable monotonic-counter gap.
-    const allocatedAttempt = scheduledReservation
-      ? null
-      : await _db
-          .update(tasks)
-          .set({ attemptNumber: sql`${tasks.attemptNumber} + 1` })
-          .where(eq(tasks.id, task.id))
-          .returning({ attemptNumber: tasks.attemptNumber });
-    const newAttempt = scheduledReservation
-      ? scheduledReservation.taskAttemptNumber
-      : (allocatedAttempt?.[0]?.attemptNumber as number | undefined);
+    const allocatedAttempt =
+      accepted || scheduledReservation
+        ? null
+        : await _db
+            .update(tasks)
+            .set({ attemptNumber: sql`${tasks.attemptNumber} + 1` })
+            .where(eq(tasks.id, task.id))
+            .returning({ attemptNumber: tasks.attemptNumber });
+    const newAttempt = accepted
+      ? accepted.claim.identity.taskAttemptNumber
+      : scheduledReservation
+        ? scheduledReservation.taskAttemptNumber
+        : (allocatedAttempt?.[0]?.attemptNumber as number | undefined);
 
     if (newAttempt === undefined || newAttempt < 1) {
       throw new MaisterError("PRECONDITION", "run attempt allocation failed");
@@ -1632,11 +1735,13 @@ export async function* launchRunStaged(
     }
 
     const branch =
+      accepted?.claim.identity.branch ??
       scheduledReservation?.branch ??
       `${project.branchPrefix}task-${task.id}/attempt-${newAttempt}`;
 
     if (
       scheduledReservation &&
+      !accepted &&
       branch !== `${project.branchPrefix}task-${task.id}/attempt-${newAttempt}`
     ) {
       throw new MaisterError(
@@ -1679,23 +1784,28 @@ export async function* launchRunStaged(
     // NOT leave the task stuck in InFlight with an orphan run/workspace
     // row. The task stays in Backlog and is launchable again. The worktree
     // forks from the resolved base commit (M18 startPoint), not parent HEAD.
-    await addWorktree({
-      projectRepoPath: project.repoPath,
-      branch,
-      worktreePath,
-      startPoint: baseCommit,
-      provenance: {
-        version: 2,
-        runId,
-        parentRepoPath: project.repoPath,
-        projectId: project.id,
+    const createWorkspace = async (): Promise<void> => {
+      await addWorktree({
+        projectRepoPath: project.repoPath,
         branch,
-        workspaceKind: "flow",
-        createdAt: new Date().toISOString(),
-        task: `${project.taskKey}-${task.number}`,
-        flow: `${flow.flowRefId}@${revision.resolvedRevision}`,
-      },
-    });
+        worktreePath,
+        startPoint: baseCommit,
+        provenance: {
+          version: 2,
+          runId,
+          parentRepoPath: project.repoPath,
+          projectId: project.id,
+          branch,
+          workspaceKind: "flow",
+          createdAt: new Date().toISOString(),
+          task: `${project.taskKey}-${task.number}`,
+          flow: `${flow.flowRefId}@${revision.resolvedRevision}`,
+        },
+      });
+    };
+
+    if (accepted) await accepted.prepareWorkspace(createWorkspace);
+    else await createWorkspace();
     yield launchProgress("worktree_created");
     createdWorktreePath = worktreePath;
 
@@ -1731,12 +1841,14 @@ export async function* launchRunStaged(
         project.id,
         _db as never,
       );
-      const resolvedCapabilitySet = buildResolvedCapabilitySet({
-        records: snapshotRecords,
-        flowRevisionId: revision.id,
-        flowOrigin: revision.source?.startsWith("/") ? "authored" : "git",
-        mcpBindings: snapshotMcpBindings,
-      });
+      const resolvedCapabilitySet =
+        accepted?.settings.resolvedCapabilitySet ??
+        buildResolvedCapabilitySet({
+          records: snapshotRecords,
+          flowRevisionId: revision.id,
+          flowOrigin: revision.source?.startsWith("/") ? "authored" : "git",
+          mcpBindings: snapshotMcpBindings,
+        });
 
       log.debug(
         {
@@ -1758,39 +1870,59 @@ export async function* launchRunStaged(
       // A failure here lands in the catch below → worktree compensation + abort.
       // Extracted to a reusable helper (ADR-079 §4) — fresh-attempt rewinds and
       // the ADR-082 dirty discard re-run it after `git clean -fd`.
-      const { bundles } = await materializeProjectBundlesIntoWorktree({
-        projectId: project.id,
-        worktreePath,
-        baseBranch: base,
-        db: _db,
-      });
+      const materializeWorkspace = async (
+        materializeBundles: () => Promise<{ bundles: number }>,
+      ): Promise<void> => {
+        const { bundles } = await materializeBundles();
 
-      if (bundles > 0) {
-        log.info(
-          { runId, worktreePath, bundles, baseBranch: base },
-          "[capabilities] materialized capability bundles + AIF config override into worktree",
-        );
-      }
+        if (bundles > 0) {
+          log.info(
+            { runId, worktreePath, bundles, baseBranch: base },
+            "[capabilities] materialized capability bundles + AIF config override into worktree",
+          );
+        }
 
-      // Codex-1 (C): pre-write the recipe's frozen form inputs BEFORE the run
-      // row exists — the runner cannot start before the insert + tryStartRun,
-      // so a form node never races its pre-answer; a write failure lands in
-      // the catch below (worktree compensation, no orphaned Pending run).
-      if (input.evaluationFormInputs) {
-        await writeEvaluationFormInputs({
-          compiled,
-          flowInstallPath: revision.installedPath,
-          projectSlug: project.slug,
-          runId,
-          formValues: input.evaluationFormInputs,
-        });
-        log.info(
-          { runId, fields: Object.keys(input.evaluationFormInputs).length },
-          "[FIX:codex-1] controlled-recipe form inputs pre-written",
+        // Codex-1 (C): pre-write the recipe's frozen form inputs BEFORE the run
+        // row exists — the runner cannot start before the insert + tryStartRun,
+        // so a form node never races its pre-answer; a write failure lands in
+        // the catch below (worktree compensation, no orphaned Pending run).
+        if (input.evaluationFormInputs) {
+          await writeEvaluationFormInputs({
+            compiled,
+            flowInstallPath: revision.installedPath,
+            projectSlug: project.slug,
+            runId,
+            formValues: input.evaluationFormInputs,
+          });
+          log.info(
+            { runId, fields: Object.keys(input.evaluationFormInputs).length },
+            "[FIX:codex-1] controlled-recipe form inputs pre-written",
+          );
+        }
+      };
+
+      if (accepted)
+        await accepted.materialize((bundles) =>
+          materializeWorkspace(() =>
+            materializeCapabilityBundlesIntoWorktree({
+              bundles,
+              worktreePath,
+              baseBranch: base,
+            }),
+          ),
         );
-      }
+      else
+        await materializeWorkspace(() =>
+          materializeProjectBundlesIntoWorktree({
+            projectId: project.id,
+            worktreePath,
+            baseBranch: base,
+            db: _db,
+          }),
+        );
 
       await _db.transaction(async (tx: any) => {
+        await accepted?.beginBinding(tx);
         await ctx.assertLaunchOwnership?.(tx);
         await taskAdmission.apply(tx);
 
@@ -1802,7 +1934,10 @@ export async function* launchRunStaged(
         // and a worktree for an obviously over-cap request; it is never the
         // decision. No-op for every board / scheduled launch (no parentRunId).
         if (input.parentRunId) {
-          await admitDelegatedChild(tx, { parentRunId: input.parentRunId });
+          await admitDelegatedChild(tx, {
+            parentRunId: input.parentRunId,
+            ...(accepted ? { launchIntentId: accepted.intent.id } : {}),
+          });
         }
 
         // `runs` first: `workspaces.run_id` is a non-deferrable FK to `runs.id`,
@@ -1816,7 +1951,7 @@ export async function* launchRunStaged(
             })
           : null;
 
-        if (input.agentTriggerReservation)
+        if (!accepted && input.agentTriggerReservation)
           await loadCronLaunchEvidence(tx, {
             agentId: agentId!,
             projectId: project.id,
@@ -1829,6 +1964,7 @@ export async function* launchRunStaged(
             executionDataPlaneMode,
             taskId: task.id,
             taskAdmissionSnapshot: taskAdmission.snapshot,
+            taskLaunchIntentId: accepted?.intent.id ?? null,
             projectId: project.id,
             flowId: flow.id,
             // M42 (ADR-114): the runner identity + resume handle live on
@@ -2070,7 +2206,14 @@ export async function* launchRunStaged(
           .where(
             and(
               eq(tasks.id, task.id),
-              inArray(tasks.status, ["Backlog", "InFlight"]),
+              inArray(tasks.status, [
+                "Backlog",
+                "InFlight",
+                ...(accepted?.intent.basis.kind === "manual" &&
+                accepted.settings.acceptedTaskStatus
+                  ? [accepted.settings.acceptedTaskStatus]
+                  : []),
+              ]),
             ),
           )
           .returning({ id: tasks.id });
@@ -2097,9 +2240,11 @@ export async function* launchRunStaged(
           payload: { runId, attemptNumber: newAttempt },
         });
 
+        await accepted?.bindRun(tx);
         await ctx.recordSuccessAudit?.(tx, runId);
       });
     } catch (err) {
+      if (accepted) throw redactQueryError(err);
       // Inner: a failure after the worktree was created. Remove the orphan worktree
       // so the next launch can recreate the same branch+path without a PRECONDITION
       // "already exists". The pin is re-pinned by the outer catch on rethrow.
@@ -2117,6 +2262,12 @@ export async function* launchRunStaged(
           "compensating removeWorktree failed (manual cleanup may be required)",
         ),
       );
+      if (pgErrorOf(err)?.constraint === "task_launch_shared_reservation")
+        throw new MaisterError(
+          "CONFLICT",
+          "This task already has an active launch",
+          { details: { reason: "launch_already_reserved" } },
+        );
       throw redactQueryError(err);
     }
   } catch (err) {
@@ -2177,6 +2328,8 @@ export async function* launchRunStaged(
     );
   }
 
+  if (accepted) return { runId, status: "Pending" };
+
   const startResult = await tryStartRun(runId, { db: _db });
 
   if (startResult.started) {
@@ -2200,8 +2353,101 @@ export async function* launchRunStaged(
   };
 }
 
-// Back-compat drain: non-streaming callers (the non-SSE route path, scheduler
-// fires, tests) get a Promise with the same behavior they relied on before T6.3.
+export async function* launchRunStaged(
+  _input: LaunchRunInput,
+  _ctx: LaunchRunContext,
+  _db?: Db,
+  _opts: { signal?: AbortSignal } = {},
+): ReturnType<typeof executeFlowLaunch> {
+  throw new MaisterError(
+    "PRECONDITION",
+    "Create an authorized task launch intent before allocating a new Flow run",
+    {
+      details: { reason: "task_launch_intent_required" },
+    },
+  );
+}
+
+/** Only the fresh server-created taskless facade carrier can enter this finite legacy-shaped bridge. */
+export async function launchTasklessAgentCarrierRun(
+  input: LaunchRunInput,
+  carrier: TasklessAgentFlowCarrierAdmission,
+  db: ExecutionDb,
+): Promise<{
+  runId: string;
+  status: string;
+  queuePosition?: number;
+  queueReason?: PoolCapFence;
+}> {
+  assertPreparedTasklessAgentFlowCarrierAdmission(carrier);
+  assertTasklessAgentFlowCarrierInput(carrier, input);
+  const iterator = executeFlowLaunch(
+    input,
+    {
+      actorUserId: null,
+      authorize: async (projectId) => {
+        if (projectId !== carrier.scope.projectId)
+          throw new MaisterError(
+            "PRECONDITION",
+            "Taskless carrier project scope changed",
+          );
+      },
+      assertLaunchOwnership: (connection) =>
+        assertTasklessAgentFlowCarrierAdmission(connection, carrier, input),
+    },
+    db,
+    {},
+    null,
+    carrier,
+  );
+  let step = await iterator.next();
+
+  while (!step.done) step = await iterator.next();
+
+  return step.value;
+}
+
+/** Prepare and bind the accepted request; the worker releases Git ownership before dispatch. */
+export async function launchAcceptedTaskRun(
+  accepted: AcceptedTaskLaunchExecution,
+  db: ExecutionDb,
+): Promise<{ runId: string; status: string }> {
+  assertAcceptedTaskLaunchExecution(accepted);
+  const settings = accepted.settings;
+  const iterator = executeFlowLaunch(
+    {
+      ...(settings.serverExecution?.execution ?? {}),
+      taskId: accepted.intent.taskId,
+      relaunchOfRunId: settings.relaunchSource?.runId,
+      flowId: settings.flowId,
+      baseBranch: settings.baseBranch,
+      baseCommit: settings.baseCommit,
+      targetBranch: settings.targetBranch,
+      deliveryPolicy: settings.deliveryPolicy,
+      executionPolicy: settings.executionPolicy,
+      brainContext: settings.brainContext,
+      autoPromote: settings.autoPromote,
+      allowConcurrent: accepted.intent.reservationLane === "concurrent",
+      queueAdmitted: isAutomaticTaskLaunchDrain(accepted.intent),
+    },
+    {
+      actorUserId: accepted.intent.actorUserId,
+      authorize: async () => accepted.assertCurrent(db),
+      assertLaunchOwnership: (connection) => accepted.assertCurrent(connection),
+    },
+    db,
+    {},
+    accepted,
+  );
+  let step = await iterator.next();
+
+  while (!step.done) step = await iterator.next();
+
+  return step.value;
+}
+
+// Preserve the old service signature as an actionable refusal; allocation requires
+// a branded accepted intent or the finite taskless-carrier authority above.
 export async function launchRun(
   input: LaunchRunInput,
   ctx: LaunchRunContext,

@@ -15,6 +15,8 @@ import type { ExecutionHosts } from "@/lib/execution-host";
 
 import { eq } from "drizzle-orm";
 
+import { taskLaunchFlowAssetsPathForRun } from "@/lib/tasks/launch-flow-assets";
+import { taskLaunchInputForRun } from "@/lib/tasks/launch-execution-input";
 import { MaisterError } from "@/lib/errors";
 import { runtimeRoot as configuredRuntimeRoot } from "@/lib/runtime-root";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
@@ -194,11 +196,23 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
     .select()
     .from(tasks)
     .where(eq(tasks.id, run.taskId));
-  const task = taskRows[0];
+  const currentTask = taskRows[0];
 
-  if (!task) {
+  if (!currentTask) {
     throw new MaisterError("PRECONDITION", `task not found for run ${runId}`);
   }
+
+  const frozenInput = await taskLaunchInputForRun(db, run);
+  const task = frozenInput
+    ? {
+        ...currentTask,
+        number: frozenInput.number,
+        title: frozenInput.title,
+        prompt: frozenInput.prompt,
+        statementRevision: frozenInput.statementRevision,
+        qualificationSourceVersion: frozenInput.sourceVersion,
+      }
+    : currentTask;
 
   const flowRows: FlowRow[] = await db
     .select()
@@ -326,7 +340,8 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
       flowRefId: flow.flowRefId,
       revision: run.flowRevision,
     });
-    flowInstallPath = revision.installedPath;
+    flowInstallPath =
+      (await taskLaunchFlowAssetsPathForRun(db, run)) ?? revision.installedPath;
     execTrust = revision.execTrust;
   } else {
     manifest = parseExecutableStoredFlowManifest(flow.manifest, {

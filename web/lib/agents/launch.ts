@@ -13,6 +13,11 @@ import type { AgentTurn, Run, ExecutionAssignment } from "@/lib/db/schema";
 import type { AgentRetryClaim } from "@/lib/agents/retry-types";
 import type { TaskQualificationLaunchSnapshot } from "@/lib/tasks/qualification-types";
 import type { OperationalProbeContext } from "./operational-diagnostics";
+import type { AcceptedTaskAgentLaunchExecution } from "@/lib/tasks/launch-agent-execution";
+import type { ConsensusDraftAdmission } from "@/lib/flows/graph/consensus/admission";
+import type { TasklessAgentFlowCarrierAdmission } from "./carrier-launch-authority";
+import type { TaskLaunchReceipt } from "@/lib/tasks/launch-types";
+import type { TaskLaunchAuditContext } from "@/lib/tasks/launch-intent";
 
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, stat } from "node:fs/promises";
@@ -34,6 +39,7 @@ import {
 } from "./prompt-owner";
 import { applyPersistentAgentPark, afterPersistentAgentPark } from "./park";
 import { acceptAgentMessage } from "./turns";
+import { createTasklessAgentFlowCarrier } from "./carrier-launch-authority";
 import {
   acceptAgentSteer,
   steerAnswerTurn,
@@ -71,6 +77,10 @@ import {
   operationalAgentRuntimePath,
 } from "./workspace-paths";
 
+import {
+  taskLaunchInputForRun,
+  taskLaunchClarificationsForRun,
+} from "@/lib/tasks/launch-execution-input";
 import { resolveScheduledRequestFlowRevision } from "@/lib/agents/scheduled-request-flow";
 import { loadAgentBudgetRestartRequest } from "@/lib/agents/scheduled-request-lineage";
 import { assertScheduledRequestMatches } from "@/lib/agents/scheduled-request-store";
@@ -119,6 +129,21 @@ import {
 } from "@/lib/agents/operational-integrity";
 import { operationalFailureDiagnostic } from "@/lib/agents/operational-diagnostics";
 import { openAgentPreparation } from "@/lib/agents/preparation-workspace";
+import {
+  assertAcceptedTaskAgentLaunchExecution,
+  taskAgentPreparationWorkspace,
+} from "@/lib/tasks/launch-agent-execution";
+import {
+  frozenTaskAgentDefinition,
+  captureTaskAgentPackage,
+  releaseTaskAgentCaptureAfterFailure,
+} from "@/lib/tasks/launch-agent-definition";
+import { commitTaskAgentLaunchFirstDispatch } from "@/lib/tasks/launch-first-dispatch";
+import {
+  assertPreparedConsensusDraftAdmission,
+  assertConsensusDraftAdmission,
+} from "@/lib/flows/graph/consensus/admission";
+import { nodeAttempts } from "@/lib/db/schema";
 import { assertPreparationCommit } from "@/lib/agents/preparation-ownership";
 import {
   executeRepositoryGit,
@@ -190,7 +215,6 @@ import { type AgentMcpServer } from "@/lib/capabilities/agent-map";
 import { materializeAdapterCapabilityHome } from "@/lib/capabilities/adapter-home";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { getTaskClarificationProjection } from "@/lib/queries/task-clarifications";
 import {
   type AgentExecutionPolicyRecommendation,
   type DelegationSnapshot,
@@ -370,10 +394,11 @@ export type LaunchAgentRunInput = {
   // in the run-insert transaction (W8).
   resultContract?: RunResultContract | null;
   retryClaim?: AgentRetryClaim;
+  taskLaunchAudit?: TaskLaunchAuditContext;
   db?: Db;
 };
 
-export type LaunchAgentRunResult =
+export type AllocatedAgentRunResult =
   | {
       runId: string;
       status: "Running" | "Pending";
@@ -381,6 +406,10 @@ export type LaunchAgentRunResult =
       queueReason?: PoolCapFence;
     }
   | { deduped: true; triggerEventId: number };
+
+export type LaunchAgentRunResult =
+  | AllocatedAgentRunResult
+  | Readonly<{ queued: true; receipt: TaskLaunchReceipt }>;
 
 export type AgentLaunchErrorKind =
   | "not_registered"
@@ -915,7 +944,7 @@ async function convergeToTriggerWinner(
   _db: Db,
   agentId: string,
   triggerEventId: number,
-): Promise<LaunchAgentRunResult> {
+): Promise<AllocatedAgentRunResult> {
   for (let attempt = 0; attempt < 20; attempt++) {
     const winner = await _db
       .select({ id: runs.id, status: runs.status })
@@ -949,7 +978,7 @@ async function launchAgentDrivenFlowRun(
   _db: Db,
   ctx: LoadedAgentContext,
   input: LaunchAgentRunInput,
-): Promise<LaunchAgentRunResult> {
+): Promise<AllocatedAgentRunResult> {
   const flowRef = ctx.effective.parsed.flow as string;
 
   // flows.flow_ref_id IS the manifest flow id, and a package install enables its
@@ -976,22 +1005,17 @@ async function launchAgentDrivenFlowRun(
     ? await resolveScheduledRequestFlowRevision(_db, flow)
     : undefined;
   let taskId = input.taskId ?? null;
+  let carrierAdmission: TasklessAgentFlowCarrierAdmission | null = null;
 
   if (!taskId) {
-    const { createTask } = await import("@/lib/services/tasks");
-    const created = await createTask(
-      {
-        title: `${ctx.effective.parsed.name} (${input.trigger.source})`,
-        prompt: ctx.effective.parsed.prompt,
-        flowId: flow.id as string,
-        // ADR-106: carry the trigger claim so a concurrent redelivery converges
-        // to ONE auto-task (createTask dedups on (agent_id, trigger_event_id)).
-        agentId: input.agentId,
-        triggerEventId: input.trigger.eventId ?? null,
-      },
-      { projectId: input.projectId, actorUserId: null },
+    const created = await createTasklessAgentFlowCarrier(
       _db,
+      ctx,
+      input,
+      flow.id as string,
     );
+
+    carrierAdmission = created.admission;
 
     taskId = created.taskId;
 
@@ -1030,31 +1054,38 @@ async function launchAgentDrivenFlowRun(
   // Only the auto-task claim WINNER (or a task-bound launch) reaches here, so the
   // run insert never contends on (agent_id, trigger_event_id) on the live path —
   // the partial unique index stays the backstop, not a hot conflict.
-  const { launchRun } = await import("@/lib/services/runs");
-  const result = await launchRun(
-    {
-      taskId,
-      flowId: flow.id as string,
-      agentId: input.agentId,
-      agentActivity: buildAgentActivitySnapshot(input.agentId, ctx.effective),
-      // Trigger provenance carries the (agent_id, trigger_event_id) dedup claim
-      // onto the flow run so an at-least-once redelivery converges to one run.
-      triggerSource: input.trigger.source,
-      triggerEventId: input.trigger.eventId ?? null,
-      triggerPayload: input.trigger.payload ?? null,
-      scheduledRequestSnapshot: input.scheduledRequestSnapshot ?? null,
-      agentTriggerReservation: input.agentTriggerReservation
-        ? {
-            ...input.agentTriggerReservation,
-            flowRevisionId: scheduledFlowRevisionId,
-          }
-        : undefined,
-      scheduledFlowRevisionId,
-      agentScheduleId: input.agentScheduleId ?? null,
-      ...(declaredBranchBase ? { baseBranch: declaredBranchBase } : {}),
-      ...(agentPolicyOverlay ? { agentPolicyOverlay } : {}),
-    },
-    { authorize: async () => {}, actorUserId: null },
+  if (!carrierAdmission)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Task-bound Flow agent requires its canonical accepted launch intent",
+      { details: { reason: "launch_source_authority_required" } },
+    );
+  const { launchTasklessAgentCarrierRun } = await import("@/lib/services/runs");
+  const flowInput: import("@/lib/services/runs").LaunchRunInput = {
+    taskId,
+    flowId: flow.id as string,
+    agentId: input.agentId,
+    agentActivity: buildAgentActivitySnapshot(input.agentId, ctx.effective),
+    // Trigger provenance carries the (agent_id, trigger_event_id) dedup claim
+    // onto the flow run so an at-least-once redelivery converges to one run.
+    triggerSource: input.trigger.source,
+    triggerEventId: input.trigger.eventId ?? null,
+    triggerPayload: input.trigger.payload ?? null,
+    scheduledRequestSnapshot: input.scheduledRequestSnapshot ?? null,
+    agentTriggerReservation: input.agentTriggerReservation
+      ? {
+          ...input.agentTriggerReservation,
+          flowRevisionId: scheduledFlowRevisionId,
+        }
+      : undefined,
+    scheduledFlowRevisionId,
+    agentScheduleId: input.agentScheduleId ?? null,
+    ...(declaredBranchBase ? { baseBranch: declaredBranchBase } : {}),
+    ...(agentPolicyOverlay ? { agentPolicyOverlay } : {}),
+  };
+  const result = await launchTasklessAgentCarrierRun(
+    flowInput,
+    carrierAdmission,
     _db,
   );
 
@@ -1095,9 +1126,230 @@ async function adoptExistingTreeOwner(
   return existing?.runId ?? fallbackRunId;
 }
 
+export function launchAgentRun(
+  input: LaunchAgentRunInput & Readonly<{ taskId?: null | undefined }>,
+): Promise<AllocatedAgentRunResult>;
+export function launchAgentRun(
+  input: LaunchAgentRunInput,
+): Promise<LaunchAgentRunResult>;
 export async function launchAgentRun(
   input: LaunchAgentRunInput,
 ): Promise<LaunchAgentRunResult> {
+  const db = input.db ?? getDb();
+
+  if (input.taskId) {
+    const context = await loadAgentContext(db, input);
+
+    if (context.effective.parsed.kind === "code_delivery") {
+      if (input.retryClaim)
+        throw new MaisterError(
+          "PRECONDITION",
+          "Task-bound retry requires a fresh current task launch decision",
+          { details: { reason: "retry_launch_upgrade_required" } },
+        );
+      const {
+        createAgentFlowTaskLaunchSource,
+        createStandaloneAgentTaskLaunchSource,
+      } = await import("./flow-launch-authority");
+      const { serverTaskLaunchRequest, acceptServerTaskLaunch } =
+        await import("@/lib/tasks/launch-intent");
+      const { findServerTaskLaunch } =
+        await import("@/lib/tasks/launch-server-source");
+      const sourceInput = { ...input, taskId: input.taskId };
+      const source = context.effective.parsed.flow
+        ? await createAgentFlowTaskLaunchSource(db, sourceInput)
+        : await createStandaloneAgentTaskLaunchSource(db, sourceInput);
+      const key = `agent_trigger:${source.snapshot.id}`;
+      const existing = await findServerTaskLaunch(db, source.snapshot, key);
+      const receipt =
+        existing ??
+        (await acceptServerTaskLaunch(
+          db,
+          source,
+          await serverTaskLaunchRequest(db, source, {
+            taskId: input.taskId,
+            agentId: input.agentId,
+            ...(source.snapshot.agentWorkspace
+              ? { workspace: source.snapshot.agentWorkspace }
+              : {}),
+            ...(input.launchOverrideRunnerId
+              ? { runnerId: input.launchOverrideRunnerId }
+              : {}),
+            ...(input.brainContext !== undefined
+              ? { brainContext: input.brainContext }
+              : {}),
+          }),
+          key,
+          input.taskLaunchAudit,
+        ));
+
+      if (existing && input.taskLaunchAudit) {
+        const audit = input.taskLaunchAudit;
+
+        await db.transaction(async (tx: ExecutionDb) => {
+          const replay = await findServerTaskLaunch(tx, source.snapshot, key);
+
+          if (!replay)
+            throw new MaisterError(
+              "CONFLICT",
+              "Accepted agent launch changed before its replay audit",
+              { details: { reason: "launch_state_changed" } },
+            );
+          await audit.recordSuccessAudit(tx, replay);
+        });
+      }
+
+      return { queued: true, receipt };
+    }
+  }
+
+  return launchAgentRunWithAdmission(input);
+}
+
+/** Only the durable accepted execution constructor can enter this allocation seam. */
+export async function launchAcceptedTaskAgentRun(
+  execution: AcceptedTaskAgentLaunchExecution,
+  db: Db,
+): Promise<void> {
+  assertAcceptedTaskAgentLaunchExecution(execution);
+  await execution.assertCurrent(db);
+  const provenance = execution.settings.serverExecution?.execution;
+  const parentRunId =
+    execution.intent.basis.kind === "execution_child"
+      ? execution.intent.basis.parent.parentRunId
+      : (provenance?.parentRunId ?? null);
+
+  if (provenance?.parentRunId && provenance.parentRunId !== parentRunId)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Accepted agent parent differs from its admitted execution scope",
+      { details: { reason: "launch_source_changed" } },
+    );
+  const [parent] = parentRunId
+    ? await db
+        .select()
+        .from(runs)
+        .where(
+          and(
+            eq(runs.id, parentRunId),
+            eq(runs.projectId, execution.intent.projectId),
+          ),
+        )
+    : [];
+
+  if (parentRunId && !parent)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Accepted agent parent is unavailable",
+      { details: { reason: "qualification_parent_unavailable" } },
+    );
+  const rootRunId = parent ? (parent.rootRunId ?? parent.id) : null;
+
+  if (provenance?.rootRunId && provenance.rootRunId !== rootRunId)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Accepted agent root differs from its admitted execution scope",
+      { details: { reason: "launch_source_changed" } },
+    );
+  const source = provenance?.triggerSource ?? "manual";
+
+  if (!["manual", "cron", "domain_event", "webhook", "flow"].includes(source))
+    throw new MaisterError(
+      "PRECONDITION",
+      "Accepted agent trigger provenance is unsupported",
+      { details: { reason: "launch_source_snapshot_incomplete" } },
+    );
+  const result = await launchAgentRunWithAdmission({
+    agentId: execution.settings.agentId,
+    projectId: execution.intent.projectId,
+    taskId: execution.intent.taskId,
+    workspace: execution.settings.workspace,
+    launchOverrideRunnerId: execution.settings.sessions[0].runnerId,
+    runId: execution.claim.identity.runId,
+    brainContext: execution.settings.brainContext,
+    parentRunId,
+    rootRunId,
+    launchMode: provenance?.launchMode,
+    resultContract: provenance?.resultContract,
+    persistent: provenance?.persistent,
+    addressableKey: provenance?.addressableKey,
+    workspaceMode: provenance?.workspaceMode,
+    trigger: {
+      source: source as AgentTriggerSource,
+      eventId: provenance?.triggerEventId ?? null,
+      payload: provenance?.triggerPayload ?? null,
+    },
+    scheduledRequestSnapshot:
+      provenance?.scheduledRequestSnapshot ??
+      execution.settings.relaunchSource?.scheduledRequestSnapshot ??
+      null,
+    agentScheduleId: provenance?.agentScheduleId ?? null,
+    db,
+    acceptedExecution: execution,
+  });
+
+  if ("deduped" in result)
+    throw new MaisterError(
+      "CONFLICT",
+      "Accepted agent allocation did not bind its run",
+      { details: { reason: "launch_worker_fenced" } },
+    );
+}
+
+/** A consensus node lends one immutable participant turn, never authority for a new root task launch. */
+export async function launchConsensusDraftAgentRun(
+  input: LaunchAgentRunInput,
+  admission: ConsensusDraftAdmission,
+  childDispatchDb: Db,
+): Promise<AllocatedAgentRunResult> {
+  assertPreparedConsensusDraftAdmission(admission);
+  if (
+    input.trigger.source !== "flow" ||
+    input.workspace !== "repo_read" ||
+    input.persistent ||
+    input.workspaceMode === "shared" ||
+    input.retryClaim ||
+    input.agentTriggerReservation ||
+    input.resultContract
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "Consensus draft launch differs from its admitted participant",
+      { details: { reason: "consensus_child_scope_changed" } },
+    );
+  const db = input.db ?? getDb();
+
+  await assertConsensusDraftAdmission(db, admission.snapshot, {
+    projectId: input.projectId,
+    taskId: input.taskId ?? null,
+    parentRunId: input.parentRunId ?? null,
+    rootRunId: input.rootRunId ?? null,
+    agentId: input.agentId,
+    triggerPayload: input.trigger.payload ?? null,
+  });
+
+  return launchAgentRunWithAdmission({
+    ...input,
+    db,
+    consensusAdmission: admission,
+    consensusDispatchDb: childDispatchDb,
+  });
+}
+
+async function launchAgentRunWithAdmission(
+  input: LaunchAgentRunInput &
+    Readonly<{
+      acceptedExecution?: AcceptedTaskAgentLaunchExecution;
+      consensusAdmission?: ConsensusDraftAdmission;
+      consensusDispatchDb?: Db;
+    }>,
+): Promise<AllocatedAgentRunResult> {
+  const acceptedExecution = input.acceptedExecution;
+
+  if (acceptedExecution)
+    assertAcceptedTaskAgentLaunchExecution(acceptedExecution);
+  if (input.consensusAdmission)
+    assertPreparedConsensusDraftAdmission(input.consensusAdmission);
   // D9 step 2: refuse before the trigger claims a run row or a worktree.
   assertUpgradeMaintenanceAllows("run_admission");
 
@@ -1167,7 +1419,8 @@ export async function launchAgentRun(
     assertScheduledRequestMatches(originalRequest, scheduledRequestSnapshot);
   }
   const launchInput = { ...input, scheduledRequestSnapshot };
-  const currentContext = await loadAgentContext(_db, input);
+  const currentContext =
+    acceptedExecution?.runtime ?? (await loadAgentContext(_db, input));
   const retryIntent = input.retryClaim
     ? await _db.transaction((tx: ExecutionDb) =>
         assertAgentRetryClaim(tx, input.retryClaim!),
@@ -1227,15 +1480,24 @@ export async function launchAgentRun(
   // routing — an agent that declares a same-package flow drives that flow
   // (run_kind='flow', persona on every ai_coding node), not a standalone session.
   if (ctx.effective.parsed.flow) {
+    if (input.consensusAdmission)
+      throw new MaisterError(
+        "PRECONDITION",
+        "Consensus drafts require a standalone agent participant",
+        { details: { reason: "consensus_participant_changed" } },
+      );
+
     return launchAgentDrivenFlowRun(_db, ctx, launchInput);
   }
 
-  const currentResolution = await resolveRunnerForAgent(
-    _db,
-    ctx,
-    input.launchOverrideRunnerId,
-    input.workspace ?? ctx.effective.parsed.workspace,
-  );
+  const currentResolution =
+    acceptedExecution?.runtime.resolution ??
+    (await resolveRunnerForAgent(
+      _db,
+      ctx,
+      input.launchOverrideRunnerId,
+      input.workspace ?? ctx.effective.parsed.workspace,
+    ));
 
   const resolution: RunnerResolution = retryIntent
     ? {
@@ -1245,13 +1507,64 @@ export async function launchAgentRun(
         runnerSnapshot: retryIntent.recipe.runner,
       }
     : currentResolution;
+
+  if (
+    input.consensusAdmission &&
+    (ctx.effective.parsed.flow ||
+      resolution.runnerId !== input.consensusAdmission.snapshot.parent.runnerId)
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "Consensus participant runner or target changed",
+      { details: { reason: "consensus_participant_changed" } },
+    );
+  const consensusAdmission = input.consensusAdmission;
   const taskAdmission =
-    input.taskId && ctx.effective.parsed.kind !== "operational"
+    acceptedExecution?.admission ??
+    (consensusAdmission
+      ? {
+          snapshot: consensusAdmission.snapshot,
+          apply: async (tx: Db) => {
+            await tx
+              .select({ id: runs.id })
+              .from(runs)
+              .where(
+                eq(runs.id, consensusAdmission.snapshot.parent.parentRunId),
+              )
+              .for("update");
+            await tx
+              .select({ id: nodeAttempts.id })
+              .from(nodeAttempts)
+              .where(
+                eq(
+                  nodeAttempts.id,
+                  consensusAdmission.snapshot.parent.nodeAttemptId,
+                ),
+              )
+              .for("update");
+            await assertConsensusDraftAdmission(
+              tx,
+              consensusAdmission.snapshot,
+              {
+                projectId: input.projectId,
+                taskId: input.taskId ?? null,
+                parentRunId: input.parentRunId ?? null,
+                rootRunId: input.rootRunId ?? null,
+                agentId: input.agentId,
+                triggerPayload: input.trigger.payload ?? null,
+              },
+            );
+
+            return consensusAdmission.snapshot;
+          },
+        }
+      : null) ??
+    (input.taskId && ctx.effective.parsed.kind !== "operational"
       ? await prepareTaskDeliveryAdmission(_db, {
           projectId: input.projectId,
           taskId: input.taskId,
         })
-      : null;
+      : null);
   let taskQualificationSnapshot: TaskQualificationLaunchSnapshot | null = null;
 
   if (ctx.effective.parsed.taskQualification) {
@@ -1458,7 +1771,7 @@ export async function launchAgentRun(
 
       resolvedBranchBase = declaredBranchBase ?? ctx.project.mainBranch;
 
-      if (declaredBranchBase) {
+      if (declaredBranchBase && !acceptedExecution) {
         const knownBranches = new Set(await listBranches(ctx.project.repoPath));
 
         if (!knownBranches.has(declaredBranchBase)) {
@@ -1469,7 +1782,20 @@ export async function launchAgentRun(
         }
       }
 
-      if (isShared) {
+      if (acceptedExecution && !isShared) {
+        const identity = acceptedExecution.claim.identity;
+
+        if (!identity.branch || !acceptedExecution.settings.baseCommit)
+          throw new MaisterError(
+            "PRECONDITION",
+            "Accepted agent checkout identity is incomplete",
+            { details: { reason: "launch_agent_snapshot_incomplete" } },
+          );
+        branch = identity.branch;
+        worktreePath = identity.worktreePath;
+        baseCommit = acceptedExecution.settings.baseCommit;
+        resolvedBranchBase = acceptedExecution.settings.baseBranch;
+      } else if (isShared) {
         const rootRunId = input.rootRunId as string;
         let provenanceRunId: string = runId;
 
@@ -1489,6 +1815,26 @@ export async function launchAgentRun(
           // own no row.
           reuseSharedTree = true;
           provenanceRunId = treeRow.runId;
+          if (acceptedExecution) {
+            const [sharedWorkspace] = await _db
+              .select()
+              .from(workspaces)
+              .where(eq(workspaces.id, treeRow.id));
+
+            if (
+              !sharedWorkspace ||
+              sharedWorkspace.baseCommit !==
+                acceptedExecution.settings.agentSnapshot?.sharedRoot?.baseCommit
+            )
+              throw new MaisterError(
+                "PRECONDITION",
+                "Shared agent checkout seed differs from its accepted root",
+                { details: { reason: "launch_workspace_changed" } },
+              );
+            baseCommit = sharedWorkspace.baseCommit;
+            branch = sharedWorkspace.branch;
+            resolvedBranchBase = sharedWorkspace.targetBranch;
+          }
         } else {
           // No row ⇒ THIS child owns the tree's row. Branch on whether the dir is
           // already present.
@@ -1510,17 +1856,20 @@ export async function launchAgentRun(
             );
           } else {
             // ALLOCATOR: create the worktree.
-            baseCommit = await resolveBaseCommit({
-              projectRepoPath: ctx.project.repoPath,
-              baseRef: resolvedBranchBase,
-            });
+            baseCommit =
+              acceptedExecution?.settings.agentSnapshot?.sharedRoot
+                ?.baseCommit ??
+              (await resolveBaseCommit({
+                projectRepoPath: ctx.project.repoPath,
+                baseRef: resolvedBranchBase,
+              }));
 
             try {
               await addWorktree({
                 projectRepoPath: ctx.project.repoPath,
                 worktreePath,
                 branch,
-                startPoint: resolvedBranchBase,
+                startPoint: acceptedExecution ? baseCommit : resolvedBranchBase,
                 provenance: {
                   version: 2,
                   runId,
@@ -1645,13 +1994,16 @@ export async function launchAgentRun(
     // recommendation never declares, so a project token ceiling actually binds an
     // agent run.
     const executionPolicy =
-      retryIntent?.recipe.policy ?? resolveAgentContextExecutionPolicy(ctx);
+      acceptedExecution?.settings.executionPolicy ??
+      retryIntent?.recipe.policy ??
+      resolveAgentContextExecutionPolicy(ctx);
 
     // ADR-111 (D5): resolve the effective agent config ONCE here and snapshot it
     // onto the run row. buildAgentPrompt reads THIS snapshot at spawn — never
     // re-resolving from the (mutable) definition/link. null when the agent
     // declares no config (the column stays null).
     const resolvedConfig =
+      acceptedExecution?.configuration ??
       retryIntent?.recipe.configuration ??
       resolveAgentConfig(
         ctx.effective.parsed.config,
@@ -1714,6 +2066,22 @@ export async function launchAgentRun(
       agentWorkspace: workspace,
       taskId: input.taskId ?? null,
       taskAdmissionSnapshot: taskAdmission?.snapshot ?? null,
+      taskLaunchIntentId: acceptedExecution?.intent.id ?? null,
+      ...(acceptedExecution
+        ? { deliveryPolicySnapshot: acceptedExecution.settings.deliveryPolicy }
+        : {}),
+      ...(acceptedExecution
+        ? {
+            promotionHold: acceptedExecution.settings.autoPromote
+              ? null
+              : {
+                  source: "launch" as const,
+                  reason:
+                    "Automatic promotion was disabled for this accepted launch",
+                  createdAt: new Date().toISOString(),
+                },
+          }
+        : {}),
       taskQualificationSnapshot,
       projectId: input.projectId,
       flowId: null,
@@ -1765,6 +2133,7 @@ export async function launchAgentRun(
 
     try {
       const inserted = await _db.transaction(async (tx: Db) => {
+        if (acceptedExecution) await acceptedExecution.beginBinding(tx);
         if (input.retryClaim) await assertAgentRetryClaim(tx, input.retryClaim);
         if (taskQualificationSnapshot?.role === "qualifier" && input.taskId) {
           await tx
@@ -1795,7 +2164,12 @@ export async function launchAgentRun(
         // — because all of them arrive through this single insert. No-op for a
         // top-level run (no parentRunId).
         if (input.parentRunId) {
-          await admitDelegatedChild(tx, { parentRunId: input.parentRunId });
+          await admitDelegatedChild(tx, {
+            parentRunId: input.parentRunId,
+            ...(acceptedExecution
+              ? { launchIntentId: acceptedExecution.intent.id }
+              : {}),
+          });
         }
 
         // Claim-first: the INSERT itself is the at-least-once dedup claim. The
@@ -1861,7 +2235,11 @@ export async function launchAgentRun(
               parentRepoPath: ctx.project.repoPath,
               baseBranch: resolvedBranchBase,
               baseCommit,
-              targetBranch: resolvedBranchBase,
+              targetBranch:
+                acceptedExecution?.settings.targetBranch ?? resolvedBranchBase,
+              ...(acceptedExecution
+                ? { promotionMode: acceptedExecution.settings.promotionMode }
+                : {}),
             })
             .onConflictDoNothing({ target: workspaces.worktreePath });
         }
@@ -1874,6 +2252,7 @@ export async function launchAgentRun(
             supersedingRunId: runId,
           });
         }
+        if (acceptedExecution) await acceptedExecution.bindRun(tx);
 
         return true;
       });
@@ -1881,7 +2260,12 @@ export async function launchAgentRun(
       if (!inserted) {
         // Only tear down a worktree THIS launch created — never a shared tree a
         // sibling owns, nor an orphan dir we merely claimed (F3).
-        if (worktreePath && allocatedWorktree && !input.retryClaim) {
+        if (
+          worktreePath &&
+          allocatedWorktree &&
+          !input.retryClaim &&
+          !acceptedExecution
+        ) {
           await removeWorktree({
             projectRepoPath: ctx.project.repoPath,
             worktreePath,
@@ -1891,7 +2275,22 @@ export async function launchAgentRun(
         return false;
       }
     } catch (err) {
-      if (worktreePath && allocatedWorktree && !input.retryClaim) {
+      if (acceptedExecution)
+        log.error(
+          {
+            runId,
+            intentId: acceptedExecution.intent.id,
+            stage: "agent_run_binding",
+            ...queryErrorDiagnostics(err),
+          },
+          "accepted agent run binding failed",
+        );
+      if (
+        worktreePath &&
+        allocatedWorktree &&
+        !input.retryClaim &&
+        !acceptedExecution
+      ) {
         await removeWorktree({
           projectRepoPath: ctx.project.repoPath,
           worktreePath,
@@ -1932,6 +2331,8 @@ export async function launchAgentRun(
       triggerEventId: input.trigger.eventId ?? -1,
     };
   }
+
+  if (acceptedExecution) return { runId, status: "Pending" };
 
   let startResult: Awaited<ReturnType<typeof tryStartRun>>;
 
@@ -1976,7 +2377,9 @@ export async function launchAgentRun(
 
   if (startResult.started) {
     queueMicrotask(() => {
-      void startAgentSession(runId, { db: _db }).catch((err: unknown) => {
+      void startAgentSession(runId, {
+        db: input.consensusDispatchDb ?? _db,
+      }).catch((err: unknown) => {
         log.error(
           { runId, err: err instanceof Error ? err.message : String(err) },
           "startAgentSession dispatch threw",
@@ -2182,13 +2585,27 @@ async function taskContextBlock(
     .from(tasks)
     .innerJoin(projects, eq(projects.id, tasks.projectId))
     .where(eq(tasks.id, run.taskId));
-  const task = rows[0];
+  const currentTask = rows[0];
 
-  if (!task) return "";
-
-  const clarificationContext = await getTaskClarificationProjection(
+  if (!currentTask) return "";
+  const inputRun = {
+    id: run.id,
+    taskId: run.taskId,
+    projectId: run.projectId,
+    taskLaunchIntentId: run.taskLaunchIntentId ?? null,
+  };
+  const frozenInput = await taskLaunchInputForRun(_db, inputRun);
+  const task = frozenInput
+    ? {
+        ...currentTask,
+        number: frozenInput.number,
+        title: frozenInput.title,
+        prompt: frozenInput.prompt,
+      }
+    : currentTask;
+  const clarificationContext = await taskLaunchClarificationsForRun(
     _db,
-    run.taskId,
+    inputRun,
     task.prompt,
   );
 
@@ -2615,6 +3032,8 @@ async function startConsensusRunnerDraftSession(args: {
         prompt: consensusDraftPromptBlock(args.payload),
       }),
     );
+
+    await assertTaskAdmissionForDispatch(args.db, runId);
     const session = await execution.client.createOwnedSession(
       { variant: "agent", turnId: turn.id, promptOrdinal: turn.ordinal },
       async () => ({
@@ -3848,6 +4267,7 @@ async function driveAgentSession(
   try {
     effective =
       (run.retryOfRunId ? await frozenRetryDefinition(_db, run.id) : null) ??
+      (await frozenTaskAgentDefinition(_db, run)) ??
       frozenOperationalDefinition(run) ??
       (await resolveEffectiveAgentDefinition(
         { agentId: run.agentId as string, projectId: run.projectId as string },
@@ -3875,7 +4295,10 @@ async function driveAgentSession(
   const workspace = (run.agentWorkspace ?? effective.parsed.workspace) as
     "none" | "repo_read" | "worktree";
 
-  if (run.agentKind === "operational" && !assignmentId)
+  if (
+    (run.agentKind === "operational" || run.taskLaunchIntentId) &&
+    !assignmentId
+  )
     throw new MaisterError(
       "CONFLICT",
       "Operational preparation requires a current assignment",
@@ -3884,6 +4307,12 @@ async function driveAgentSession(
   let preparation: Awaited<ReturnType<typeof openAgentPreparation>> | null =
     null;
   let preparationCommit: string | null = null;
+  const packageCapture: {
+    current: Awaited<ReturnType<typeof captureTaskAgentPackage>> | null;
+  } = { current: null };
+  let preparationWorkspace: Awaited<
+    ReturnType<typeof taskAgentPreparationWorkspace>
+  > | null = null;
   let operationalSpawnStage = "workspace_acquisition";
   let preparationContext: OperationalProbeContext = {
     runId,
@@ -3891,7 +4320,10 @@ async function driveAgentSession(
   };
 
   try {
-    if (run.agentKind === "operational" && assignmentId) {
+    if (
+      (run.agentKind === "operational" || run.taskLaunchIntentId) &&
+      assignmentId
+    ) {
       const [assignment] = await _db
         .select({ epoch: executionAssignments.epoch })
         .from(executionAssignments)
@@ -3901,10 +4333,13 @@ async function driveAgentSession(
         ...preparationContext,
         ...(assignment ? { assignmentEpoch: assignment.epoch } : {}),
       };
+      preparationWorkspace = run.taskLaunchIntentId
+        ? await taskAgentPreparationWorkspace(_db, run)
+        : await operationalWorkspace(_db, run);
       preparation = await openAgentPreparation(_db, {
         runId,
         assignmentId,
-        ...(await operationalWorkspace(_db, run)),
+        ...preparationWorkspace,
       });
       run = { ...run, ...preparation.run };
       preparationCommit = preparation.operation.resolvedCommit;
@@ -3918,9 +4353,17 @@ async function driveAgentSession(
     await (preparation
       ? preparation.runEffect(prepareAndDispatch)
       : prepareAndDispatch());
-  } catch (error) {
+  } catch (originalError) {
+    const error = packageCapture.current
+      ? await releaseTaskAgentCaptureAfterFailure(
+          packageCapture.current,
+          originalError,
+        )
+      : originalError;
+
+    packageCapture.current = null;
     if (
-      run.agentKind !== "operational" ||
+      (run.agentKind !== "operational" && !run.taskLaunchIntentId) ||
       isFencedError(error) ||
       (isMaisterError(error) && error.details?.reason === "operation_busy")
     )
@@ -3950,10 +4393,15 @@ async function driveAgentSession(
 
     if (!settled) throw error;
   } finally {
+    await packageCapture.current?.release();
     await preparation?.release();
   }
 
   async function prepareAndDispatch(): Promise<void> {
+    if (run.taskLaunchIntentId) {
+      packageCapture.current = await captureTaskAgentPackage(_db, run);
+      effective = packageCapture.current.definition;
+    }
     let cwd: string;
 
     if (workspace === "repo_read" && effective.parsed.workspaceRef) {
@@ -3963,7 +4411,8 @@ async function driveAgentSession(
 
       try {
         if (!(
-          run.agentKind === "operational" && run.operationalIntegrityBaseline
+          (run.agentKind === "operational" || run.taskLaunchIntentId) &&
+          run.operationalIntegrityBaseline
         )) {
           const committish =
             preparation?.operation.resolvedCommit ??
@@ -4096,6 +4545,91 @@ async function driveAgentSession(
       await mkdir(cwd, { recursive: true });
     }
 
+    if (run.taskLaunchIntentId && workspace === "worktree") {
+      const sharedOwner =
+        run.workspaceMode === "shared" && run.rootRunId
+          ? await findSharedTreeWorkspace(_db, run.rootRunId)
+          : null;
+      const [ownedWorkspace] = await _db
+        .select()
+        .from(workspaces)
+        .where(
+          sharedOwner
+            ? eq(workspaces.id, sharedOwner.id)
+            : eq(workspaces.runId, runId),
+        );
+
+      if (
+        !ownedWorkspace ||
+        ownedWorkspace.removedAt ||
+        !ownedWorkspace.baseCommit ||
+        ownedWorkspace.worktreePath !== cwd
+      )
+        throw new MaisterError(
+          "PRECONDITION",
+          "Accepted agent workspace identity is incomplete",
+          { details: { reason: "launch_workspace_changed" } },
+        );
+      const existing = (
+        await listWorktrees(ownedWorkspace.parentRepoPath)
+      ).find((tree) => tree.path === cwd);
+
+      if (!existing && run.workspaceMode === "shared")
+        throw new MaisterError(
+          "PRECONDITION",
+          "Preserve the missing shared agent checkout for root-owner recovery",
+          { details: { reason: "launch_workspace_changed" } },
+        );
+      if (!existing) {
+        await preparation?.advance({
+          phase: "claimed",
+          resolvedCommit: ownedWorkspace.baseCommit,
+        });
+        await addWorktree({
+          projectRepoPath: ownedWorkspace.parentRepoPath,
+          worktreePath: cwd,
+          branch: ownedWorkspace.branch,
+          startPoint: ownedWorkspace.baseCommit,
+          provenance: {
+            version: 2,
+            runId,
+            parentRepoPath: ownedWorkspace.parentRepoPath,
+            projectId: project.id,
+            branch: ownedWorkspace.branch,
+            workspaceKind: "agent",
+            createdAt: new Date().toISOString(),
+          },
+        });
+      }
+      await ensureWorktreeProvenance({
+        worktreePath: cwd,
+        metadata: { runId: sharedOwner?.runId ?? runId },
+      });
+      if (
+        run.workspaceMode !== "shared" &&
+        !run.operationalIntegrityBaseline &&
+        ((await resolveBaseCommit({
+          projectRepoPath: cwd,
+          baseRef: "HEAD",
+        })) !== ownedWorkspace.baseCommit ||
+          (await statusPorcelain({ worktreePath: cwd })).trim())
+      )
+        throw new MaisterError(
+          "PRECONDITION",
+          "Preserve the accepted agent checkout; its pristine identity changed",
+          { details: { reason: "launch_workspace_changed" } },
+        );
+      const currentCommit = sharedOwner
+        ? await resolveBaseCommit({ projectRepoPath: cwd, baseRef: "HEAD" })
+        : ownedWorkspace.baseCommit;
+
+      await preparation?.advance({
+        phase: "checkout_ready",
+        resolvedCommit: currentCommit,
+      });
+      preparationCommit = currentCommit;
+    }
+
     const snapshot = run.runnerSnapshot;
 
     if (!snapshot) {
@@ -4160,7 +4694,10 @@ async function driveAgentSession(
         contextMounts = await prepareAttachedContextMounts();
       }
 
-      if (run.agentKind === "operational") {
+      if (
+        run.agentKind === "operational" ||
+        (run.taskLaunchIntentId && !integrityBaseline)
+      ) {
         if (integrityBaseline) {
           assertPreparationCommit(preparationCommit, integrityBaseline.head);
           const verdict =
@@ -4185,7 +4722,7 @@ async function driveAgentSession(
         } else if (!integrityBaseline) {
           integrityBaseline = await captureOperationalBaseline(
             cwd,
-            operationalResourceKind(run),
+            preparationWorkspace?.resourceKind ?? operationalResourceKind(run),
             {
               context: {
                 ...preparationContext,
@@ -4198,7 +4735,7 @@ async function driveAgentSession(
             ...integrityBaseline,
             owner: {
               cwd,
-              repoPath: project.repoPath,
+              repoPath: preparationWorkspace?.repoPath ?? project.repoPath,
               projectSlug: project.slug,
             },
             contextMounts: await captureOperationalContextMounts(contextMounts),
@@ -4290,6 +4827,7 @@ async function driveAgentSession(
       }
 
       operationalSpawnStage = "capability_materialization";
+      await packageCapture.current?.assertCurrentPath();
       const packageSkillRoots =
         await packageSkillMaterializationRoots(effective);
 
@@ -4327,6 +4865,11 @@ async function driveAgentSession(
             })
           : null;
 
+      if (packageCapture.current) {
+        await packageCapture.current.release();
+        packageCapture.current = null;
+      }
+
       // ADR-089 D9 + platform_mcp gate: the MAIster facade is the agent's
       // sanctioned domain-write channel. Inject it only when the agent declares
       // `platform_mcp` (default true). If it is required but not runnable in this
@@ -4346,7 +4889,10 @@ async function driveAgentSession(
       if (run.agentKind !== "operational") await prepareAttachedContextMounts();
 
       operationalSpawnStage = "materialization_witness";
-      if (run.agentKind === "operational" && integrityBaseline) {
+      if (
+        (run.agentKind === "operational" || run.taskLaunchIntentId) &&
+        integrityBaseline
+      ) {
         const ownedPaths = await agentMaterializationPathsForRun(cwd, runId);
         const next = await captureOperationalGeneration(
           cwd,
@@ -4366,6 +4912,20 @@ async function driveAgentSession(
           next,
           integrityBaseline.generation,
         );
+      }
+
+      if (run.taskLaunchIntentId) {
+        if (!assignmentId || !preparation)
+          throw new MaisterError(
+            "CONFLICT",
+            "Accepted agent preparation has no current assignment owner",
+            { details: { reason: "assignment_fenced" } },
+          );
+        await commitTaskAgentLaunchFirstDispatch(_db, {
+          runId,
+          assignmentId,
+          preparationId: preparation.operation.id,
+        });
       }
 
       // ADR-166: the create is handle-form — the workspace (and its context
@@ -4414,6 +4974,8 @@ async function driveAgentSession(
       }
 
       return await withoutGitOwnership(async () => {
+        if (run.taskAdmissionSnapshot?.version === 3)
+          await assertTaskAdmissionForDispatch(_db, runId);
         const createPayload = {
           stepId: "agent",
           executor: runnerExecutorInput(snapshot),
@@ -4476,7 +5038,15 @@ async function driveAgentSession(
           sessionId: session.sessionId,
         });
       });
-    } catch (err) {
+    } catch (originalError) {
+      const err = packageCapture.current
+        ? await releaseTaskAgentCaptureAfterFailure(
+            packageCapture.current,
+            originalError,
+          )
+        : originalError;
+
+      packageCapture.current = null;
       if (!isFencedError(err))
         await preparation?.fail(
           operationalFailureDiagnostic(err, {

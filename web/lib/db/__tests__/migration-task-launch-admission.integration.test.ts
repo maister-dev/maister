@@ -64,7 +64,7 @@ it("DB01 persists one immutable task reservation and rejects malformed launch sn
     constraints.rows.map((row: { conname: string }) => row.conname),
   ).toContain("task_launch_intents_snapshot_check");
   await database.pool.query(
-    "UPDATE tasks SET qualification_mode='required',triage_status='flagged' WHERE id=$1",
+    "UPDATE tasks SET qualification_mode='required',triage_status='flagged',triage_flag_origin='qualification' WHERE id=$1",
     [taskId],
   );
   const input: TaskLaunchInputSnapshot = {
@@ -152,7 +152,7 @@ it("DB01 persists one immutable task reservation and rejects malformed launch sn
       .insert(taskLaunchIntents)
       .values({ ...accepted, id: randomUUID(), requestKey: randomUUID() }),
   ).rejects.toMatchObject({
-    cause: { constraint: "task_launch_intents_active_task_uq" },
+    cause: { constraint: "task_launch_shared_reservation" },
   });
   await expect(
     database.db
@@ -179,7 +179,7 @@ it("DB01 persists one immutable task reservation and rejects malformed launch sn
       .insert(taskLaunchIntents)
       .values({ ...accepted, id: randomUUID(), requestKey: randomUUID() }),
   ).rejects.toMatchObject({
-    cause: { constraint: "task_launch_intents_active_task_uq" },
+    cause: { constraint: "task_launch_shared_reservation" },
   });
   await expect(
     database.db
@@ -266,7 +266,7 @@ it("DB01 persists one immutable task reservation and rejects malformed launch sn
       ),
     ).rejects.toMatchObject({ constraint: "task_launch_writer_capability" });
   } finally {
-    await oldWriter.query("SET maister.task_launch_writer='v2'");
+    await oldWriter.query("SET maister.task_launch_writer='v3'");
     oldWriter.release();
   }
   await expect(
@@ -381,7 +381,7 @@ it("DB01 persists one immutable task reservation and rejects malformed launch sn
       ]),
     ).rejects.toMatchObject({ constraint: "task_launch_writer_capability" });
   } finally {
-    await incompatible.query("SET maister.task_launch_writer='v2'");
+    await incompatible.query("SET maister.task_launch_writer='v3'");
     incompatible.release();
   }
 
@@ -409,34 +409,42 @@ it("DB01 persists one immutable task reservation and rejects malformed launch sn
   ).rejects.toMatchObject({
     cause: { constraint: "task_launch_intents_terminal_binding" },
   });
-  await database.db
-    .update(runs)
-    .set({ status: "Abandoned", endedAt: new Date() })
-    .where(eq(runs.id, run.id));
   await expect(
-    database.db
+    database.db.transaction(async (tx) => {
+      await tx
+        .update(runs)
+        .set({ status: "Abandoned", endedAt: new Date() })
+        .where(eq(runs.id, run.id));
+      await tx
+        .update(taskLaunchIntents)
+        .set({
+          state: "cancelled",
+          stateVersion: 4,
+          cancellationReceipt: { ...cancellation, expectedStateVersion: 3 },
+        })
+        .where(eq(taskLaunchIntents.id, ready.id));
+    }),
+  ).rejects.toMatchObject({
+    cause: { constraint: "task_launch_intents_cancel_key_uq" },
+  });
+  await database.db.transaction(async (tx) => {
+    await tx
+      .update(runs)
+      .set({ status: "Abandoned", endedAt: new Date() })
+      .where(eq(runs.id, run.id));
+    await tx
       .update(taskLaunchIntents)
       .set({
         state: "cancelled",
         stateVersion: 4,
-        cancellationReceipt: { ...cancellation, expectedStateVersion: 3 },
+        cancellationReceipt: {
+          ...cancellation,
+          requestKey: randomUUID(),
+          expectedStateVersion: 3,
+        },
       })
-      .where(eq(taskLaunchIntents.id, ready.id)),
-  ).rejects.toMatchObject({
-    cause: { constraint: "task_launch_intents_cancel_key_uq" },
+      .where(eq(taskLaunchIntents.id, ready.id));
   });
-  await database.db
-    .update(taskLaunchIntents)
-    .set({
-      state: "cancelled",
-      stateVersion: 4,
-      cancellationReceipt: {
-        ...cancellation,
-        requestKey: randomUUID(),
-        expectedStateVersion: 3,
-      },
-    })
-    .where(eq(taskLaunchIntents.id, ready.id));
   await database.db.delete(runs).where(eq(runs.id, run.id));
   const [retained] = await database.db
     .select()
@@ -525,30 +533,23 @@ it("DB02 upgrades immutable v1 intent history without inventing missing executio
         source.inputRevision,
       ],
     );
+    const historicalRunId = randomUUID();
+
+    await partial.pool.query(
+      "INSERT INTO runs(id,project_id,flow_version,status,run_kind) VALUES($1,$2,'v1','Running','flow')",
+      [historicalRunId, source.projectId],
+    );
     const intentId = randomUUID();
 
     await partial.db.transaction(async (tx) => {
       await tx.execute(sql`SET LOCAL maister.task_launch_writer='v1'`);
-      await tx.insert(taskLaunchIntents).values({
-        id: intentId,
-        projectId: source.projectId,
-        taskId: source.taskId,
-        principalKind: "session_user",
-        principalId: source.principalId,
-        actorUserId: source.actorUserId,
-        launchSource: "web",
-        operation: "launch",
-        requestKey: randomUUID(),
-        payloadDigest: "9".repeat(64),
-        taskRevision: source.taskRevision,
-        inputRevision: source.inputRevision,
-        inputDigest: retryDigest(legacyInput),
-        settingsDigest: retryDigest(legacySettings),
-        inputSnapshot: legacyInput,
-        settingsSnapshot: legacySettings,
-        basis: source.basis,
-        dueAt: new Date(),
-      });
+      await tx.execute(sql`INSERT INTO task_launch_intents (
+        id,project_id,task_id,principal_kind,principal_id,actor_user_id,launch_source,operation,
+        request_key,payload_digest,task_revision,input_revision,input_digest,settings_digest,
+        input_snapshot,settings_snapshot,basis,due_at
+      ) VALUES (${intentId},${source.projectId},${source.taskId},'session_user',${source.principalId},${source.actorUserId},'web','launch',
+        ${randomUUID()},${"9".repeat(64)},${source.taskRevision},${source.inputRevision},${retryDigest(legacyInput)},${retryDigest(legacySettings)},
+        ${JSON.stringify(legacyInput)}::jsonb,${JSON.stringify(legacySettings)}::jsonb,${JSON.stringify(source.basis)}::jsonb,clock_timestamp())`);
     });
     const before = (
       await partial.pool.query(
@@ -557,16 +558,60 @@ it("DB02 upgrades immutable v1 intent history without inventing missing executio
       )
     ).rows[0].value;
 
+    const historicalTriggerId = randomUUID();
+    const historicalScheduleId = randomUUID();
+
+    await partial.pool.query(
+      "INSERT INTO agent_trigger_attempts(id,project_id,source_agent_id,schedule_id,binding_snapshot,fence,delivery_key,trigger_source,reserved_run_id,claimed_at,due_at,settled_at,outcome) VALUES($1,$2,'historical-agent',$3,$4,1,'historical-fire','domain_event',$5,clock_timestamp(),clock_timestamp()+interval '1 minute',clock_timestamp(),'queued')",
+      [
+        historicalTriggerId,
+        source.projectId,
+        historicalScheduleId,
+        { version: 1, scheduleId: historicalScheduleId },
+        historicalRunId,
+      ],
+    );
+    const historicalTrigger = (
+      await partial.pool.query(
+        "SELECT to_jsonb(a) value FROM agent_trigger_attempts a WHERE id=$1",
+        [historicalTriggerId],
+      )
+    ).rows[0].value;
+
     await upgradeMainTestDb(partial, "0218_task_launch_commit_shape");
     await migrate(partial.db, { migrationsFolder: "./lib/db/migrations" });
     expect(
       (
         await partial.pool.query(
-          "SELECT to_jsonb(i) AS value FROM task_launch_intents i WHERE id=$1",
+          "SELECT to_jsonb(i)-ARRAY['preparation_identity','preparation_phase','cleanup_state','dispatch_receipt'] AS value FROM task_launch_intents i WHERE id=$1",
           [intentId],
         )
       ).rows[0].value,
     ).toEqual(before);
+    expect(
+      (
+        await partial.pool.query(
+          "SELECT to_jsonb(a) value FROM agent_trigger_attempts a WHERE id=$1",
+          [historicalTriggerId],
+        )
+      ).rows[0].value,
+    ).toEqual(historicalTrigger);
+    await expect(
+      partial.pool.query(
+        "UPDATE agent_trigger_attempts SET run_id=$2,original_run_id=$2 WHERE id=$1",
+        [historicalTriggerId, historicalRunId],
+      ),
+    ).rejects.toMatchObject({
+      constraint: "agent_trigger_attempt_settlement_immutable",
+    });
+    await expect(
+      partial.pool.query(
+        "UPDATE agent_trigger_attempts SET outcome='failed' WHERE id=$1",
+        [historicalTriggerId],
+      ),
+    ).rejects.toMatchObject({
+      constraint: "agent_trigger_attempt_settlement_immutable",
+    });
     const oldWriter = await partial.pool.connect();
 
     try {
@@ -577,8 +622,41 @@ it("DB02 upgrades immutable v1 intent history without inventing missing executio
           [intentId],
         ),
       ).rejects.toMatchObject({ constraint: "task_launch_writer_capability" });
-    } finally {
       await oldWriter.query("SET maister.task_launch_writer='v2'");
+      await expect(
+        oldWriter.query(
+          "UPDATE task_launch_intents SET updated_at=clock_timestamp() WHERE id=$1",
+          [intentId],
+        ),
+      ).rejects.toMatchObject({ constraint: "task_launch_writer_capability" });
+      // Existing capacity remains usable; acquiring new capacity requires the new counter-aware binary.
+      await oldWriter.query("UPDATE runs SET status='NeedsInput' WHERE id=$1", [
+        historicalRunId,
+      ]);
+      await oldWriter.query("UPDATE runs SET status='Review' WHERE id=$1", [
+        historicalRunId,
+      ]);
+      await expect(
+        oldWriter.query("UPDATE runs SET status='Running' WHERE id=$1", [
+          historicalRunId,
+        ]),
+      ).rejects.toMatchObject({ constraint: "task_launch_writer_capability" });
+      await expect(
+        oldWriter.query(
+          "INSERT INTO runs(id,project_id,flow_version,status,run_kind) VALUES($1,$2,'v1','Pending','flow')",
+          [randomUUID(), source.projectId],
+        ),
+      ).rejects.toMatchObject({ constraint: "task_launch_writer_capability" });
+      await oldWriter.query("SET maister.task_launch_writer='v3'");
+      await oldWriter.query("UPDATE runs SET status='Running' WHERE id=$1", [
+        historicalRunId,
+      ]);
+      await oldWriter.query(
+        "INSERT INTO runs(id,project_id,flow_version,status,run_kind) VALUES($1,$2,'v1','Pending','flow')",
+        [randomUUID(), source.projectId],
+      );
+    } finally {
+      await oldWriter.query("SET maister.task_launch_writer='v3'");
       oldWriter.release();
     }
     await partial.db

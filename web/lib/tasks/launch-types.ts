@@ -1,6 +1,13 @@
+import type { TaskLaunchFlowAssetsSnapshot } from "./launch-flow-assets";
+import type { TaskAgentLaunchSnapshot } from "./launch-agent-resolution";
+import type { TaskLaunchServerSourceSnapshot } from "./launch-server-source";
+import type { TaskLaunchRelaunchSource } from "./launch-continuation";
 import type { ResolvedCapabilitySet } from "@/lib/db/schema";
 import type { JsonValue } from "@/lib/hitl-response-contract";
-import type { RunnerSnapshot } from "@/lib/acp-runners/resolve";
+import type {
+  RunnerResolutionTier,
+  RunnerSnapshot,
+} from "@/lib/acp-runners/resolve";
 import type { StoredDeliveryPolicy } from "@/lib/runs/delivery-policy";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 import type { TaskExecutionChildProof } from "./qualification-types";
@@ -87,6 +94,68 @@ export type TaskLaunchInputV2Snapshot = Omit<
 export type TaskLaunchInputSnapshot =
   TaskLaunchInputV1Snapshot | TaskLaunchInputV2Snapshot;
 
+/** Allocated before Git; the same accepted request always recovers this identity. */
+export type TaskLaunchFlowPreparationIdentity = Readonly<{
+  version: 1;
+  runId: string;
+  taskAttemptNumber: number;
+  branch: string;
+  parentRepoPath: string;
+  worktreePath: string;
+  resourceId: string;
+  incarnationId: string;
+  baseCommit: string;
+  inputDigest: string;
+  settingsDigest: string;
+}>;
+
+export type TaskLaunchAgentPreparationIdentity = Readonly<{
+  version: 2;
+  kind: "agent";
+  workspace: "none" | "repo_read" | "worktree";
+  runId: string;
+  taskAttemptNumber: number;
+  parentRepoPath: string | null;
+  worktreePath: string;
+  runtimePath: string;
+  branch: string | null;
+  baseCommit: string | null;
+  resourceId: string;
+  incarnationId: string;
+  inputDigest: string;
+  settingsDigest: string;
+}>;
+export type TaskLaunchPreparationIdentity =
+  TaskLaunchFlowPreparationIdentity | TaskLaunchAgentPreparationIdentity;
+
+export type TaskLaunchDispatchReceipt = Readonly<{
+  version: 1;
+  runId: string;
+  assignmentId: string;
+  assignmentEpoch: number;
+  inputDigest: string;
+  settingsDigest: string;
+  committedAt: string;
+  preparation?: Readonly<{
+    id: string;
+    resourceId: string;
+    incarnation: string;
+    generation: number;
+    baselineDigest: string;
+    materializationDigest: string;
+  }>;
+}>;
+
+export const TASK_LAUNCH_PREPARATION_PHASES = [
+  "reserved",
+  "checkout_ready",
+  "materializing",
+  "materialized",
+  "run_bound",
+] as const;
+export type TaskLaunchPreparationPhase =
+  (typeof TASK_LAUNCH_PREPARATION_PHASES)[number];
+
 type TaskLaunchSettingsBase = Readonly<{
   version: 1;
   packageInstallId: string | null;
@@ -96,6 +165,7 @@ type TaskLaunchSettingsBase = Readonly<{
       runnerId: string;
       runnerSnapshot: Omit<RunnerSnapshot, "env" | "provider">;
       runnerConfigDigest: string;
+      runnerResolutionTier?: RunnerResolutionTier;
     }>
   >;
   baseBranch: string;
@@ -139,8 +209,23 @@ export type TaskLaunchSettingsV2Snapshot = Omit<
   TaskLaunchTargetSettings &
   Readonly<{
     version: 2;
+    acceptedTaskStatus?: "Backlog" | "InFlight" | "Done" | "Abandoned";
+    relaunchSource?: TaskLaunchRelaunchSource | null;
+    serverExecution?: TaskLaunchServerSourceSnapshot;
+    agentSnapshot?: TaskAgentLaunchSnapshot;
+    flowAssets?: TaskLaunchFlowAssetsSnapshot;
     resolvedCapabilitySet: ResolvedCapabilitySet | null;
     capabilityResolutionDigest: string;
+    brainContext?: boolean | null;
+    packageVersions?: Readonly<Record<string, "keep" | "try_once">>;
+    capabilityBundles?: ReadonlyArray<
+      Readonly<{
+        id: string;
+        revision: string;
+        manifestDigest: string;
+        contentDigest: string;
+      }>
+    >;
   }>;
 export type TaskLaunchSettingsSnapshot =
   TaskLaunchSettingsV1Snapshot | TaskLaunchSettingsV2Snapshot;
@@ -169,6 +254,16 @@ export type TaskLaunchReceipt = Readonly<{
     flowRevisionId: string | null;
     agentId: string | null;
     runnerIds: readonly string[];
+    sessions?: ReadonlyArray<
+      Readonly<{
+        sessionName: string;
+        runnerId: string;
+        capabilityAgent: string;
+        model: string;
+      }>
+    >;
+    flowRefId?: string | null;
+    deliveryPolicy?: StoredDeliveryPolicy;
     baseCommit: string | null;
     targetBranch: string;
     promotionMode: TaskLaunchSettingsSnapshot["promotionMode"];

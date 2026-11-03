@@ -12,6 +12,16 @@ export function taskQualificationAdmittedPredicate(): SQL {
       AND qualification.revision=${tasks.currentQualificationRevision}))`;
 }
 
+/** Automated roots never inherit the legacy/manual qualification exception. */
+export function automaticTaskQualificationAdmittedPredicate(): SQL {
+  return sql`(${tasks.qualificationMode}='required' AND EXISTS(
+    SELECT 1 FROM task_qualifications qualification WHERE qualification.id=${tasks.currentQualificationId}
+      AND qualification.task_id=${tasks.id} AND qualification.project_id=${tasks.projectId}
+      AND qualification.publication_state='accepted' AND qualification.value->>'decision'='ready'
+      AND qualification.input_revision=${tasks.qualificationInputRevision}
+      AND qualification.revision=${tasks.currentQualificationRevision}))`;
+}
+
 export function incomingRequestPredicate(): SQL {
   return sql`(${tasks.qualificationMode}='required' AND NOT ${taskQualificationAdmittedPredicate()})`;
 }

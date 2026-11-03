@@ -168,9 +168,9 @@ describe("LaunchPopover — launchability reason copy", () => {
     );
   });
 
-  it("keeps unknown backend reasons visible for diagnostics", () => {
+  it("uses understandable technical guidance for an unknown backend reason", () => {
     expect(launchUnavailableReasonMessage("new_reason", translate)).toBe(
-      "new_reason",
+      "copy:launchUnavailableReason.technical",
     );
   });
 
@@ -293,8 +293,7 @@ const BUDGET_FIELD_LABELS = {
 // ---------------------------------------------------------------------------
 // ADR-119 — force-relaunch gate selection + POST body flag.
 // effectiveLaunchVerdict picks the `relaunch` verdict in force mode and the
-// `launchability` verdict otherwise; buildLaunchBody stamps allowConcurrent =
-// forceRelaunch. (No jsdom in this project, so the interactive dialog flow is
+// `launchability` verdict otherwise; selection bodies carry no launch authority. (No jsdom in this project, so the interactive dialog flow is
 // covered by these pure helpers + the route integration tests.)
 // ---------------------------------------------------------------------------
 
@@ -347,7 +346,7 @@ describe("LaunchPopover — effectiveLaunchVerdict (force vs manual gate)", () =
   });
 });
 
-describe("LaunchPopover — buildLaunchBody allowConcurrent flag", () => {
+describe("LaunchPopover — settings carry no admission authority", () => {
   const base = {
     taskId: "task-1",
     flowId: "flow-1",
@@ -365,18 +364,16 @@ describe("LaunchPopover — buildLaunchBody allowConcurrent flag", () => {
     packageVersions: undefined,
   };
 
-  it("stamps allowConcurrent:true in force-relaunch mode", () => {
-    expect(buildLaunchBody({ ...base, forceRelaunch: true })).toMatchObject({
+  it("keeps selected settings without an arbitrary concurrent admission flag", () => {
+    expect(buildLaunchBody(base)).toMatchObject({
       taskId: "task-1",
       flowId: "flow-1",
-      allowConcurrent: true,
     });
+    expect(buildLaunchBody(base)).not.toHaveProperty("allowConcurrent");
   });
 
-  it("stamps allowConcurrent:false in manual mode", () => {
-    expect(buildLaunchBody({ ...base, forceRelaunch: false })).toMatchObject({
-      allowConcurrent: false,
-    });
+  it("does not create a qualification bypass flag", () => {
+    expect(buildLaunchBody(base)).not.toHaveProperty("skipQualification");
   });
 
   it("omits runnerId when the launch preview has no resolved runner", () => {
@@ -385,20 +382,16 @@ describe("LaunchPopover — buildLaunchBody allowConcurrent flag", () => {
         ...base,
         runnerId: "",
         initialRunnerId: null,
-        forceRelaunch: false,
       }),
     ).not.toHaveProperty("runnerId");
   });
 
   it("preserves runner inheritance when the preview selection is unchanged", () => {
-    expect(
-      buildLaunchBody({ ...base, forceRelaunch: false }),
-    ).not.toHaveProperty("runnerId");
+    expect(buildLaunchBody(base)).not.toHaveProperty("runnerId");
     expect(
       buildScheduledLaunchBody({
         ...base,
         disambiguation: "later",
-        forceRelaunch: false,
         scheduledLocalTime: "2026-12-01T10:00",
         timezone: "America/New_York",
       }).launchRequest,
@@ -412,7 +405,6 @@ describe("LaunchPopover — buildLaunchBody allowConcurrent flag", () => {
         ...base,
         runnerId: "runner-2",
         initialRunnerId,
-        forceRelaunch: false,
       };
 
       expect(buildLaunchBody(selection)).toHaveProperty("runnerId", "runner-2");
@@ -433,7 +425,6 @@ describe("LaunchPopover — buildLaunchBody allowConcurrent flag", () => {
         ...base,
         runnerId: "runner-2",
         disambiguation: "later",
-        forceRelaunch: true,
         scheduledLocalTime: "2026-12-01T10:00",
         timezone: "America/New_York",
       }),
@@ -454,7 +445,6 @@ describe("LaunchPopover — buildLaunchBody allowConcurrent flag", () => {
         ...base,
         runnerId: "runner-2",
         disambiguation: "later",
-        forceRelaunch: true,
         scheduledLocalTime: "2026-12-01T10:00",
         timezone: "America/New_York",
       }).launchRequest,

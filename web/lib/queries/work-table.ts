@@ -159,7 +159,7 @@ export async function getWorkTable(
     .where(
       and(
         inArray(tasks.projectId, projectIds),
-        sql`NOT ${incomingWorkPredicate()}`,
+        sql`(${tasks.flowId} IS NOT NULL OR NOT ${incomingWorkPredicate()})`,
       ),
     );
 

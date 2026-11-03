@@ -9,6 +9,7 @@ import { getLocale, getTranslations } from "next-intl/server";
 import Link from "next/link";
 
 import { ScheduledRequestEvidence } from "@/components/agents/scheduled-request-evidence";
+import { taskLaunchReasonKey } from "@/lib/tasks/launch-reason";
 import { RUN_STATUS_VALUES } from "@/lib/runs/run-status-values";
 import { AgentRetryControl } from "@/components/agents/agent-retry-control";
 import {
@@ -302,6 +303,7 @@ export async function AgentAttemptHistory({
   agentId: string;
 }): Promise<ReactElement> {
   const t = await getTranslations("agentActivity");
+  const launch = await getTranslations("launch");
   const locale = await getLocale();
   const date = new Intl.DateTimeFormat(locale, {
     dateStyle: "short",
@@ -331,6 +333,23 @@ export async function AgentAttemptHistory({
                 {item.outcome
                   ? t(`attemptOutcome.${item.outcome}`)
                   : t("attemptUnsettled")}
+                {item.launchIntent ? (
+                  <span
+                    className="block text-xs"
+                    data-testid="agent-attempt-launch-intent"
+                  >
+                    {t("attemptLaunchStatus", {
+                      status: launch(
+                        `admission.${item.launchIntent.state === "run_bound" ? "running" : item.launchIntent.state}`,
+                      ),
+                    })}
+                    {item.launchIntent.reason ? (
+                      <span className="block text-mute">
+                        {launch(taskLaunchReasonKey(item.launchIntent.reason))}
+                      </span>
+                    ) : null}
+                  </span>
+                ) : null}
                 {item.provenance === "legacy_latest" ? (
                   <span className="block text-xs text-mute">
                     {t("estimatedAttemptHistory")}
@@ -344,6 +363,14 @@ export async function AgentAttemptHistory({
               {item.runId ? (
                 <Link className={link} href={`/runs/${item.runId}`}>
                   {t("openDiagnosticRun")}
+                </Link>
+              ) : item.launchIntent ? (
+                <Link
+                  className={link}
+                  data-launch-intent-id={item.launchIntent.intentId}
+                  href={`/projects/${slug}/tasks/${item.launchIntent.taskNumber}`}
+                >
+                  {t("openLaunchTask")}
                 </Link>
               ) : (
                 <span className="text-xs text-mute">

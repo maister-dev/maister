@@ -10,6 +10,12 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
+import {
+  loadRunScheduleLaunchScope,
+  runScheduleTaskLaunchSource,
+  runScheduleTaskLaunchKey,
+} from "./launch-authority";
+
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -22,7 +28,12 @@ import {
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 import { countLiveRuns, maxConcurrentRunsCap } from "@/lib/scheduler";
 import { schedulerAttemptTimeoutSeconds } from "@/lib/scheduler/jobs";
-import { launchRun } from "@/lib/services/runs";
+import {
+  acceptServerTaskLaunch,
+  serverTaskLaunchRequest,
+} from "@/lib/tasks/launch-intent";
+import { findServerTaskLaunch } from "@/lib/tasks/launch-server-source";
+import { dispatchTaskLaunchIntent } from "@/lib/tasks/launch-dispatch";
 import { countOpenBlockingClarifications } from "@/lib/tasks/clarification-gate";
 
 const { runSchedules, tasks } = schema;
@@ -116,11 +127,9 @@ export type ScheduleLaunchFn = (
   actor: { actorUserId: string | null; authorize: () => Promise<void> },
 ) => Promise<ScheduleLaunchResult>;
 
-const defaultLaunch: ScheduleLaunchFn = (input, actor) =>
-  launchRun(input, actor);
-
 export type DispatchSummary = {
   fired: number;
+  acceptedWaiting: number;
   skippedBusy: number;
   skippedCap: number;
   skippedTerminal: number;
@@ -137,6 +146,7 @@ export type DispatchSummary = {
 export type TriggerResult = {
   outcome: RunScheduleFireOutcome;
   runId?: string;
+  intentId?: string;
   queuePosition?: number;
   errorCode?: string;
 };
@@ -152,6 +162,7 @@ type ClaimedScheduleRow = {
   nextFireAt: Date;
   lastFireOutcome: RunScheduleFireOutcome | null;
   lastFiredAt: Date | null;
+  updatedAt: Date;
 };
 
 type LaunchIntent = {
@@ -160,6 +171,7 @@ type LaunchIntent = {
   runnerId: string | null;
   // The last_fired_at value tx1 stamped — the fencing token for tx2's CAS.
   stagedAt: Date;
+  leaseAt: Date;
 };
 
 function rowsOf<T>(result: unknown): T[] {
@@ -175,6 +187,7 @@ function mapClaimedRow(raw: ClaimedScheduleRow): ClaimedScheduleRow {
     ...raw,
     nextFireAt: new Date(raw.nextFireAt),
     lastFiredAt: raw.lastFiredAt === null ? null : new Date(raw.lastFiredAt),
+    updatedAt: new Date(raw.updatedAt),
   };
 }
 
@@ -188,7 +201,8 @@ const CLAIM_COLUMNS = sql`
   rs.queue_one_pending AS "queueOnePending",
   rs.next_fire_at AS "nextFireAt",
   rs.last_fire_outcome AS "lastFireOutcome",
-  rs.last_fired_at AS "lastFiredAt"
+  rs.last_fired_at AS "lastFiredAt",
+  rs.updated_at AS "updatedAt"
 `;
 
 // A FRESH 'dispatching' row is owned by an in-flight dispatch (a trigger-now
@@ -211,11 +225,16 @@ async function claimDueScheduleRows(
     JOIN projects p ON p.id = rs.project_id
     WHERE p.archived_at IS NULL
       AND rs.enabled = true
-      AND (rs.next_fire_at <= ${now} OR rs.queue_one_pending = true)
+      AND (rs.next_fire_at <= ${now} OR rs.queue_one_pending = true OR rs.last_fire_outcome='dispatching')
       AND (
         rs.last_fire_outcome IS DISTINCT FROM 'dispatching'
         OR rs.last_fired_at IS NULL
-        OR rs.last_fired_at <= ${freshDispatchCutoff(now)}
+        OR rs.updated_at <= ${freshDispatchCutoff(now)}
+        OR rs.last_fired_at <= ${freshDispatchCutoff(now)} AND NOT EXISTS (
+          SELECT 1 FROM task_launch_intents accepted WHERE accepted.principal_kind='system'
+            AND accepted.settings_snapshot->'serverExecution'->>'kind'='run_schedule'
+            AND accepted.settings_snapshot->'serverExecution'->>'id'=rs.id||':'||(extract(epoch FROM rs.last_fired_at)*1000)::bigint::text
+        )
       )
     ORDER BY rs.next_fire_at ASC NULLS LAST
     LIMIT ${limit}
@@ -232,11 +251,16 @@ async function countClaimableSchedules(tx: Tx, now: Date): Promise<number> {
     JOIN projects p ON p.id = rs.project_id
     WHERE p.archived_at IS NULL
       AND rs.enabled = true
-      AND (rs.next_fire_at <= ${now} OR rs.queue_one_pending = true)
+      AND (rs.next_fire_at <= ${now} OR rs.queue_one_pending = true OR rs.last_fire_outcome='dispatching')
       AND (
         rs.last_fire_outcome IS DISTINCT FROM 'dispatching'
         OR rs.last_fired_at IS NULL
-        OR rs.last_fired_at <= ${freshDispatchCutoff(now)}
+        OR rs.updated_at <= ${freshDispatchCutoff(now)}
+        OR rs.last_fired_at <= ${freshDispatchCutoff(now)} AND NOT EXISTS (
+          SELECT 1 FROM task_launch_intents accepted WHERE accepted.principal_kind='system'
+            AND accepted.settings_snapshot->'serverExecution'->>'kind'='run_schedule'
+            AND accepted.settings_snapshot->'serverExecution'->>'id'=rs.id||':'||(extract(epoch FROM rs.last_fired_at)*1000)::bigint::text
+        )
       )
   `);
 
@@ -377,9 +401,14 @@ async function writeFinalOutcome(
   database: DbHandle,
   scheduleId: string,
   stagedAt: Date,
+  leaseAt: Date,
   fields: {
     lastFireOutcome:
-      "launched" | "queued_pending" | "launch_failed" | "incompatible_disabled";
+      | "launched"
+      | "queued_pending"
+      | "launch_failed"
+      | "incompatible_disabled"
+      | "dispatching";
     lastRunId: string | null;
     lastFireError: string | null;
     enabled?: boolean;
@@ -398,6 +427,7 @@ async function writeFinalOutcome(
         eq(runSchedules.id, scheduleId),
         eq(runSchedules.lastFireOutcome, "dispatching"),
         eq(runSchedules.lastFiredAt, stagedAt),
+        eq(runSchedules.updatedAt, leaseAt),
       ),
     )
     .returning({ id: runSchedules.id });
@@ -407,13 +437,94 @@ async function writeFinalOutcome(
   }
 }
 
+async function hasAcceptedScheduleFire(
+  database: DbHandle,
+  scheduleId: string,
+  fireAt: Date,
+): Promise<boolean> {
+  const key = runScheduleTaskLaunchKey(scheduleId, fireAt);
+  const found = await database.execute(
+    sql`SELECT 1 FROM task_launch_intents WHERE principal_kind='system' AND principal_id=${`run_schedule:${key}`} AND operation='launch' AND request_key=${key} LIMIT 1`,
+  );
+
+  return found.rows.length > 0;
+}
+
+async function executeAcceptedScheduleLaunch(
+  database: DbHandle,
+  intent: LaunchIntent,
+): Promise<TriggerResult> {
+  const scope = await loadRunScheduleLaunchScope(
+    database,
+    intent.scheduleId,
+    intent.stagedAt,
+  );
+  const key = runScheduleTaskLaunchKey(intent.scheduleId, intent.stagedAt);
+  let receipt = await findServerTaskLaunch(database, scope.snapshot, key);
+
+  if (!receipt) {
+    const source = await runScheduleTaskLaunchSource(database, {
+      scheduleId: intent.scheduleId,
+      fireAt: intent.stagedAt,
+      leaseAt: intent.leaseAt,
+    });
+    const request = await serverTaskLaunchRequest(database, source, {
+      taskId: scope.taskId,
+      runnerId: scope.runnerId ?? undefined,
+    });
+
+    receipt = await acceptServerTaskLaunch(database, source, request, key);
+  }
+  await dispatchTaskLaunchIntent(database, receipt.intentId);
+  receipt =
+    (await findServerTaskLaunch(database, scope.snapshot, key)) ?? receipt;
+  if (!receipt.runId) {
+    if (["held", "failed", "cancelled", "settled"].includes(receipt.state))
+      throw new MaisterError(
+        "PRECONDITION",
+        "Scheduled launch requires attention",
+        { details: { reason: receipt.reason ?? "launch_state_changed" } },
+      );
+    await writeFinalOutcome(
+      database,
+      intent.scheduleId,
+      intent.stagedAt,
+      intent.leaseAt,
+      { lastFireOutcome: "dispatching", lastRunId: null, lastFireError: null },
+    );
+
+    return { outcome: "dispatching", intentId: receipt.intentId };
+  }
+  const [run] = await database
+    .select({ status: schema.runs.status })
+    .from(schema.runs)
+    .where(eq(schema.runs.id, receipt.runId));
+
+  if (!run)
+    throw new MaisterError("CONFLICT", "Scheduled Run is unavailable", {
+      details: { reason: "launch_state_changed" },
+    });
+  const outcome = run.status === "Pending" ? "queued_pending" : "launched";
+
+  await writeFinalOutcome(
+    database,
+    intent.scheduleId,
+    intent.stagedAt,
+    intent.leaseAt,
+    { lastFireOutcome: outcome, lastRunId: receipt.runId, lastFireError: null },
+  );
+
+  return { outcome, runId: receipt.runId, intentId: receipt.intentId };
+}
+
 async function executeLaunch(
   database: DbHandle,
   intent: LaunchIntent,
-  launch: ScheduleLaunchFn,
+  launch: ScheduleLaunchFn | undefined,
   actorUserId: string | null,
 ): Promise<TriggerResult> {
   try {
+    if (!launch) return await executeAcceptedScheduleLaunch(database, intent);
     const result = await launch(
       { taskId: intent.taskId, runnerId: intent.runnerId ?? undefined },
       { actorUserId, authorize: async () => {} },
@@ -421,12 +532,18 @@ async function executeLaunch(
     const outcome: TriggerResult["outcome"] =
       result.status === "Pending" ? "queued_pending" : "launched";
 
-    await writeFinalOutcome(database, intent.scheduleId, intent.stagedAt, {
-      lastFireOutcome:
-        outcome === "queued_pending" ? "queued_pending" : "launched",
-      lastRunId: result.runId,
-      lastFireError: null,
-    });
+    await writeFinalOutcome(
+      database,
+      intent.scheduleId,
+      intent.stagedAt,
+      intent.leaseAt,
+      {
+        lastFireOutcome:
+          outcome === "queued_pending" ? "queued_pending" : "launched",
+        lastRunId: result.runId,
+        lastFireError: null,
+      },
+    );
 
     return {
       outcome,
@@ -450,18 +567,24 @@ async function executeLaunch(
       },
       "schedule launch failed",
     );
-    await writeFinalOutcome(database, intent.scheduleId, intent.stagedAt, {
-      lastFireOutcome: outcome,
-      lastRunId: null,
-      lastFireError: bounded,
-      ...(incompatibility
-        ? {
-            enabled: false,
-            queueOnePending: false,
-            queuedFireAt: null,
-          }
-        : {}),
-    });
+    await writeFinalOutcome(
+      database,
+      intent.scheduleId,
+      intent.stagedAt,
+      intent.leaseAt,
+      {
+        lastFireOutcome: outcome,
+        lastRunId: null,
+        lastFireError: bounded,
+        ...(incompatibility
+          ? {
+              enabled: false,
+              queueOnePending: false,
+              queuedFireAt: null,
+            }
+          : {}),
+      },
+    );
 
     return { outcome, errorCode: code };
   }
@@ -476,11 +599,12 @@ export async function dispatchDueSchedules(
 ): Promise<DispatchSummary> {
   const now = opts.now ?? new Date();
   const limit = opts.limit ?? DISPATCH_BATCH_LIMIT;
-  const launch = opts.launch ?? defaultLaunch;
+  const launch = opts.launch;
   const database = db();
 
   const summary: DispatchSummary = {
     fired: 0,
+    acceptedWaiting: 0,
     skippedBusy: 0,
     skippedCap: 0,
     skippedTerminal: 0,
@@ -511,6 +635,32 @@ export async function dispatchDueSchedules(
     }
 
     for (const row of claimed) {
+      if (
+        !opts.launch &&
+        row.lastFireOutcome === "dispatching" &&
+        row.lastFiredAt
+      ) {
+        const prior = await hasAcceptedScheduleFire(
+          tx,
+          row.id,
+          row.lastFiredAt,
+        );
+
+        if (prior) {
+          await tx
+            .update(runSchedules)
+            .set({ updatedAt: now })
+            .where(eq(runSchedules.id, row.id));
+          intents.push({
+            scheduleId: row.id,
+            taskId: row.taskId,
+            runnerId: row.runnerId,
+            stagedAt: row.lastFiredAt,
+            leaseAt: now,
+          });
+          continue;
+        }
+      }
       const staged = await decideAndStage(tx, row, now, {
         advance: true,
         reservedSlots: intents.length,
@@ -522,6 +672,7 @@ export async function dispatchDueSchedules(
           taskId: row.taskId,
           runnerId: row.runnerId,
           stagedAt: now,
+          leaseAt: now,
         });
       } else {
         switch (staged.outcome) {
@@ -566,6 +717,8 @@ export async function dispatchDueSchedules(
       summary.launchFailed += 1;
     } else if (result.outcome === "incompatible_disabled") {
       summary.incompatibleDisabled += 1;
+    } else if (result.outcome === "dispatching") {
+      summary.acceptedWaiting += 1;
     } else {
       summary.fired += 1;
     }
@@ -591,7 +744,7 @@ export async function dispatchScheduleNow(
   },
 ): Promise<TriggerResult> {
   const now = opts.now ?? new Date();
-  const launch = opts.launch ?? defaultLaunch;
+  const launch = opts.launch;
   const database = db();
 
   let intent: LaunchIntent | null = null;
@@ -615,11 +768,29 @@ export async function dispatchScheduleNow(
     }
 
     const timeoutMs = schedulerAttemptTimeoutSeconds() * 1_000;
-    const freshDispatching =
+    let freshDispatching =
       row.lastFireOutcome === "dispatching" &&
       row.lastFiredAt !== null &&
-      now.getTime() - row.lastFiredAt.getTime() < timeoutMs;
+      now.getTime() -
+        (opts.launch ? row.lastFiredAt : row.updatedAt).getTime() <
+        timeoutMs;
 
+    if (freshDispatching && !opts.launch && row.lastFiredAt) {
+      const prior = await hasAcceptedScheduleFire(tx, row.id, row.lastFiredAt);
+
+      if (prior) {
+        intent = {
+          scheduleId: row.id,
+          taskId: row.taskId,
+          runnerId: row.runnerId,
+          stagedAt: row.lastFiredAt,
+          leaseAt: row.updatedAt,
+        };
+
+        return;
+      }
+      freshDispatching = now.getTime() - row.lastFiredAt.getTime() < timeoutMs;
+    }
     if (freshDispatching) {
       throw new MaisterError(
         "CONFLICT",
@@ -635,6 +806,7 @@ export async function dispatchScheduleNow(
         taskId: row.taskId,
         runnerId: row.runnerId,
         stagedAt: now,
+        leaseAt: now,
       };
     } else {
       finalOutcome = { outcome: staged.outcome };

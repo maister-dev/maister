@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 import { readApiError } from "@/lib/api-error";
+import { TaskAgentLaunchControl } from "@/components/agents/task-agent-launch-control";
 
 export interface TaskAgentActionsLabels {
   runAgent: string;
@@ -21,7 +22,13 @@ export interface TaskAgentActionsProps {
   taskNumber: number;
   showSendToTriage: boolean;
   // Attached agents with the `manual` trigger — the "Run agent" candidates.
-  agents: Array<{ id: string; name: string }>;
+  agents: Array<{
+    id: string;
+    name: string;
+    flowRef: string | null;
+    kind: "code_delivery" | "operational";
+    workspace: "none" | "repo_read" | "worktree";
+  }>;
   labels: TaskAgentActionsLabels;
 }
 
@@ -65,13 +72,15 @@ export function TaskAgentActions({
     }
   }
 
+  const selectedAgent = agents.find((agent) => agent.id === agentId);
+
   const buttonClass =
     "inline-flex items-center rounded-md border border-line bg-paper px-2.5 py-1.5 font-mono text-[10.5px] font-bold uppercase tracking-[0.06em] text-ink transition-colors hover:border-amber hover:text-amber disabled:cursor-not-allowed disabled:opacity-50";
 
   return (
     <div className="flex flex-wrap items-center gap-2">
       {agents.length > 0 ? (
-        <span className="inline-flex items-center gap-1.5">
+        <div className="inline-flex items-start gap-1.5">
           <select
             aria-label={labels.agentPickerLabel}
             className="rounded-md border border-line-soft bg-paper px-2 py-1.5 font-mono text-[10.5px] text-ink outline-none focus:border-amber"
@@ -84,19 +93,36 @@ export function TaskAgentActions({
               </option>
             ))}
           </select>
-          <button
-            className={buttonClass}
-            disabled={busy || agentId === ""}
-            type="button"
-            onClick={() =>
-              void post(`/api/projects/${slug}/agents/${agentId}/launch`, {
-                taskId,
-              })
-            }
-          >
-            {busy ? labels.busy : labels.runAgent}
-          </button>
-        </span>
+          {selectedAgent?.kind === "code_delivery" ? (
+            <TaskAgentLaunchControl
+              key={selectedAgent.id}
+              agentId={selectedAgent.id}
+              label={labels.runAgent}
+              target={
+                selectedAgent.flowRef
+                  ? { kind: "flow" }
+                  : { kind: "agent", workspace: selectedAgent.workspace }
+              }
+              taskId={taskId}
+            />
+          ) : (
+            <button
+              className={buttonClass}
+              disabled={busy || agentId === ""}
+              type="button"
+              onClick={() =>
+                void post(
+                  `/api/projects/${encodeURIComponent(slug)}/agents/${encodeURIComponent(agentId)}/launch`,
+                  {
+                    taskId,
+                  },
+                )
+              }
+            >
+              {busy ? labels.busy : labels.runAgent}
+            </button>
+          )}
+        </div>
       ) : null}
       {showSendToTriage ? (
         <button

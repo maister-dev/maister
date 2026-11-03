@@ -314,6 +314,7 @@ type PendingBudgetBreachRow = {
   parentRunId: string | null;
   rootRunId: string | null;
   agentWorkspace: "none" | "repo_read" | "worktree" | null;
+  agentKind?: "code_delivery" | "operational" | null;
   startedAt: Date;
   endedAt: Date | null;
   resumeStartedAt: Date | null;
@@ -543,6 +544,7 @@ async function loadPendingBudgetBreach(
       parentRunId: runs.parentRunId,
       rootRunId: runs.rootRunId,
       agentWorkspace: runs.agentWorkspace,
+      agentKind: runs.agentKind,
       startedAt: runs.startedAt,
       endedAt: runs.endedAt,
       resumeStartedAt: runs.resumeStartedAt,
@@ -721,6 +723,7 @@ export async function getInboxCardContext(
           agentId: budgetRow.agentId,
           parentRunId: budgetRow.parentRunId,
           agentWorkspace: budgetRow.agentWorkspace,
+          agentKind: budgetRow.agentKind,
           hasOwnedWorkspace:
             budgetRow.workspaceId !== null &&
             budgetRow.workspaceRemovedAt === null,

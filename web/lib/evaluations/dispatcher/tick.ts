@@ -28,6 +28,8 @@ import {
 } from "@/lib/evaluations/aggregation/worker";
 import { captureEvidenceForExecution } from "@/lib/evaluations/evidence/capture";
 import { frozenExecutionParticipants } from "@/lib/evaluations/frozen-participants";
+import { reconcileControlledLaunchBatches } from "@/lib/evaluations/launch-batch";
+import { defaultLaunchRunSeam } from "@/lib/evaluations/launch-seam";
 import {
   defaultJudgeSpawn,
   launchJudgePanel,
@@ -719,6 +721,10 @@ export async function runEvaluationDispatchTick(
 
   summary.timedOutAttempts = await reapTimedOutAttempts(now, d, hosts);
   summary.recovered = await recoverStaleExecutions(now, d);
+  await reconcileControlledLaunchBatches(
+    defaultLaunchRunSeam({ authorize: async () => undefined }, d),
+    d,
+  );
 
   const queued: Array<{ id: string }> = await d
     .select({ id: evaluationExecutions.id })

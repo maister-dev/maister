@@ -16,6 +16,7 @@ import {
   vi,
 } from "vitest";
 
+import { bindQueuedDelegationResponse } from "@/test-support/queued-delegation";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
@@ -35,6 +36,10 @@ let agentsRoot: string;
 // dispatcher's module-level db()). tryStartRun is forced to NOT promote so the
 // agent-session spawn microtask never fires — the run row stays a stable
 // Pending with every delegation column set at INSERT.
+vi.mock("next/server", async (original) => ({
+  ...(await original<typeof import("next/server")>()),
+  after: vi.fn(),
+}));
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 vi.mock("@/lib/supervisor-client", async (importOriginal) => {
   const actual =
@@ -84,8 +89,15 @@ beforeAll(async () => {
   await fakeExecutionHosts(db);
 
   ({ issueOrchestratorRunToken } = await import("@/lib/agents/tokens"));
-  ({ POST: delegatePost } =
-    await import("@/app/api/v1/ext/runs/delegate/route"));
+  const delegatePostEndpoint = (
+    await import("@/app/api/v1/ext/runs/delegate/route")
+  ).POST;
+
+  delegatePost = async (request, context) =>
+    bindQueuedDelegationResponse(
+      db as unknown as import("@/lib/execution-host/db").Db,
+      await delegatePostEndpoint(request, context),
+    );
   ({ POST: collectPost } = await import("@/app/api/v1/ext/runs/collect/route"));
   ({ POST: cancelPost } = await import("@/app/api/v1/ext/runs/cancel/route"));
 }, 180_000);
@@ -98,17 +110,9 @@ let projectId: string;
 let executorId: string;
 
 beforeEach(async () => {
-  await pool.query(`DELETE FROM "runs"`);
-  await pool.query(`DELETE FROM "task_relations"`);
-  await pool.query(`DELETE FROM "tasks"`);
-  await pool.query(`DELETE FROM "project_tokens"`);
-  await pool.query(`DELETE FROM "agent_project_links"`);
-  await pool.query(`DELETE FROM "agents"`);
-  await pool.query(`DELETE FROM "project_package_attachments"`);
-  await pool.query(`DELETE FROM "package_installs"`);
-  await pool.query(`DELETE FROM "flows"`);
-  await pool.query(`DELETE FROM "flow_revisions"`);
-  await pool.query(`DELETE FROM "projects"`);
+  await pool.query(
+    "TRUNCATE runs,task_relations,tasks,project_tokens,agent_project_links,agents,project_package_attachments,package_installs,flows,flow_revisions,projects RESTART IDENTITY CASCADE",
+  );
 
   projectId = randomUUID();
   executorId = randomUUID();
@@ -381,7 +385,10 @@ async function seedTask(): Promise<{ id: string; number: number }> {
 function delegateRequest(secret: string | null, body: unknown): NextRequest {
   const req = new NextRequest("http://localhost/api/v1/ext/runs/delegate", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "idempotency-key": randomUUID(),
+    },
     body: JSON.stringify(body),
   });
 
@@ -829,7 +836,10 @@ describe("POST /api/v1/ext/runs/collect + /cancel", () => {
       "http://localhost/api/v1/ext/runs/collect",
       {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": randomUUID(),
+        },
         body: JSON.stringify({ all: true }),
       },
     );
@@ -906,7 +916,10 @@ describe("POST /api/v1/ext/runs/collect + /cancel", () => {
 
     const req = new NextRequest("http://localhost/api/v1/ext/runs/collect", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": randomUUID(),
+      },
       body: JSON.stringify({ childRunId }),
     });
 
@@ -962,7 +975,10 @@ describe("POST /api/v1/ext/runs/collect + /cancel", () => {
 
     const req = new NextRequest("http://localhost/api/v1/ext/runs/collect", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": randomUUID(),
+      },
       body: JSON.stringify({ childRunId: strayId }),
     });
 
@@ -1001,7 +1017,10 @@ describe("POST /api/v1/ext/runs/collect + /cancel", () => {
 
     const req = new NextRequest("http://localhost/api/v1/ext/runs/cancel", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": randomUUID(),
+      },
       body: JSON.stringify({ childRunId }),
     });
 
@@ -1045,7 +1064,10 @@ describe("POST /api/v1/ext/runs/collect + /cancel", () => {
 
     const req = new NextRequest("http://localhost/api/v1/ext/runs/cancel", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": randomUUID(),
+      },
       body: JSON.stringify({ childRunId: strayId }),
     });
 
@@ -1077,7 +1099,10 @@ describe("POST /api/v1/ext/runs/collect + /cancel", () => {
     const cancel = (childRunId: string) => {
       const req = new NextRequest("http://localhost/api/v1/ext/runs/cancel", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": randomUUID(),
+        },
         body: JSON.stringify({ childRunId }),
       });
 

@@ -12,6 +12,10 @@ import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
+import {
+  seedAcceptedAutomaticQualification,
+  automaticSelectorAdmissionSnapshot,
+} from "@/test-support/automatic-qualification";
 import * as fullSchema from "@/lib/db/schema";
 import {
   GRAPH_ONLY_CUTOVER_REASON,
@@ -132,6 +136,7 @@ async function seedBacklogTask(
     launchMode: "auto",
     flowId,
   });
+  await seedAcceptedAutomaticQualification(testDatabase, projectId, taskId);
 
   return taskId;
 }
@@ -154,6 +159,10 @@ async function seedTerminalFlowRun(
     flowRevision: "manual",
     startedAt: new Date(endedAt.getTime() - 60_000),
     endedAt,
+    taskAdmissionSnapshot: await automaticSelectorAdmissionSnapshot(
+      testDatabase,
+      taskId,
+    ),
   });
 
   return runId;
@@ -327,6 +336,10 @@ function recordingLaunch(opts: { throwErr?: MaisterError } = {}) {
       flowRevision: "manual",
       startedAt: new Date(),
       queueAdmittedAt: new Date(),
+      taskAdmissionSnapshot: await automaticSelectorAdmissionSnapshot(
+        testDatabase,
+        taskId,
+      ),
     });
 
     return { runId, status: "Running" };
@@ -1113,6 +1126,10 @@ describe("ADR-121 unified admission gate — C3 cap-safe resume ordering (T14)",
       flowRevision: "manual",
       startedAt: new Date(),
       queueAdmittedAt: new Date(),
+      taskAdmissionSnapshot: await automaticSelectorAdmissionSnapshot(
+        testDatabase,
+        taskId,
+      ),
     });
     await db
       .update(tasks)

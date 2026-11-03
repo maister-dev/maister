@@ -14,6 +14,7 @@ import {
   flows,
   flowRevisions,
   capabilityRecords,
+  runs,
 } from "@/lib/db/schema";
 import { getTaskClarificationProjection } from "@/lib/queries/task-clarifications";
 import { taskLaunchEffectivePrompt } from "@/lib/tasks/launch-input";
@@ -24,7 +25,13 @@ import {
   acceptTokenTaskLaunch,
   taskLaunchSettingsToken,
 } from "@/lib/tasks/launch-intent";
+import { resolveTaskLaunchHold } from "@/lib/tasks/launch-hold";
+import {
+  applyTriageFlag,
+  sendTaskToTriageInTransaction,
+} from "@/lib/services/triage";
 import { tokenTaskLaunchPrincipal } from "@/lib/tasks/launch-token";
+import { cancelInteractiveTaskLaunch } from "@/lib/tasks/launch-cancel";
 import { cancelTokenTaskLaunch } from "@/lib/tasks/launch-cancel";
 import { replaceTokenTaskLaunch } from "@/lib/tasks/launch-replace";
 import { issueToken } from "@/lib/tokens/issue";
@@ -37,6 +44,9 @@ import {
   requireTaskRequalification,
 } from "@/lib/tasks/qualification";
 import { qualificationFixture } from "@/test-support/task-qualification";
+import { prepareTaskDeliveryAdmission } from "@/lib/tasks/qualification-admission";
+import { operationalContractFixture } from "@/test-support/operational-agent";
+import { git } from "@/test-support/git-fixture";
 import { seedTaskLaunchFixture } from "@/test-support/task-launch-admission";
 import { mkdtempReal } from "@/test-support/worktree-test-root";
 import {
@@ -50,6 +60,7 @@ let userId: string;
 let projectId: string;
 let flowId: string;
 let runnerId: string;
+let repo: string;
 let sequence = 0;
 let sessionUserOverride: string | null = null;
 
@@ -63,7 +74,7 @@ beforeAll(async () => {
     databaseName: "task_launch_intents",
   });
   root = await mkdtempReal("task-launch-intents-");
-  ({ userId, projectId, flowId, runnerId } = await seedTaskLaunchFixture(
+  ({ userId, projectId, flowId, runnerId, repo } = await seedTaskLaunchFixture(
     database,
     root,
   ));
@@ -105,6 +116,7 @@ async function task(): Promise<string> {
     flowId,
     runnerId,
     triageStatus: "flagged",
+    triageFlagOrigin: "qualification",
     launchIntent: "none",
   });
 
@@ -401,7 +413,16 @@ it("LA02 atomically saves selected task configuration and accepts its new revisi
   const receipt = await acceptInteractiveTaskLaunch(
     database.db,
     principal,
-    { ...input, flowId, runnerId },
+    {
+      ...input,
+      flowId,
+      runnerId,
+      expectedSettingsToken: await taskLaunchSettingsToken(
+        database.db,
+        taskId,
+        { flowId, runnerId },
+      ),
+    },
     randomUUID(),
   );
   const [configured] = await database.db
@@ -416,6 +437,7 @@ it("LA02 atomically saves selected task configuration and accepts its new revisi
     launchIntent: "none",
     launchMode: null,
     triageStatus: "flagged",
+    triageFlagOrigin: "qualification",
     currentQualificationId: null,
   });
   expect(receipt.taskRevision).toBe(1);
@@ -517,6 +539,142 @@ it("LA01/03 requires current accepted qualification for automatic admission and 
     kind: "automatic",
     qualificationInputDigest: expect.stringMatching(/^[0-9a-f]{64}$/),
   });
+});
+
+it("LA03 refuses automatic admission pinned to an assessed ancestor after the target advances, while retaining manual pinning", async () => {
+  const taskId = await task();
+
+  await publishReadyQualification(taskId);
+  await database.db
+    .update(tasks)
+    .set({ launchIntent: "triage_then_launch", launchMode: "auto" })
+    .where(eq(tasks.id, taskId));
+  const assessedSha = await git(repo, "rev-parse", "HEAD");
+
+  await git(repo, "commit", "-q", "--allow-empty", "-m", "Advance target");
+  const currentSha = await git(repo, "rev-parse", "HEAD");
+  const pinnedRequest = { ...(await request(taskId)), baseCommit: assessedSha };
+
+  expect(currentSha).not.toBe(assessedSha);
+  await expect(
+    acceptAutomaticTaskLaunch(database.db, pinnedRequest, randomUUID()),
+  ).rejects.toMatchObject({
+    details: { reason: "qualification_evidence_stale" },
+  });
+  const manual = await acceptInteractiveTaskLaunch(
+    database.db,
+    await interactiveTaskLaunchPrincipal(),
+    pinnedRequest,
+    randomUUID(),
+  );
+
+  expect(manual).toMatchObject({
+    basis: "manual",
+    snapshot: { baseCommit: assessedSha },
+  });
+});
+
+it("LA04 honors saved task delivery modes and lets explicit launch policy override them", async () => {
+  const principal = await interactiveTaskLaunchPrincipal();
+
+  for (const [saved, expected] of [
+    ["pull_request", "pull_request"],
+    ["local_merge", "local_merge"],
+  ] as const) {
+    const taskId = await task();
+
+    await database.db
+      .update(tasks)
+      .set({ promotionMode: saved })
+      .where(eq(tasks.id, taskId));
+    const { deliveryPolicy: _defaultOverride, ...savedRequest } =
+      await request(taskId);
+    const accepted = await acceptInteractiveTaskLaunch(
+      database.db,
+      principal,
+      savedRequest,
+      randomUUID(),
+    );
+
+    expect(accepted.snapshot.promotionMode).toBe(expected);
+    await cancelFixture(database.db, accepted.intentId);
+    const overrideRequest = await request(taskId);
+    const overrideStrategy =
+      saved === "pull_request" ? "merge" : "pull_request";
+    const overridden = await acceptInteractiveTaskLaunch(
+      database.db,
+      principal,
+      {
+        ...overrideRequest,
+        deliveryPolicy: {
+          ...overrideRequest.deliveryPolicy,
+          strategy: overrideStrategy,
+        },
+      },
+      randomUUID(),
+    );
+
+    expect(overridden.snapshot.promotionMode).toBe(
+      overrideStrategy === "merge" ? "local_merge" : "pull_request",
+    );
+  }
+});
+
+it("LA06 separates operational activity from delivery reservations and preserves Review relaunch", async () => {
+  const operationalTaskId = await task();
+
+  await database.db.insert(runs).values({
+    id: randomUUID(),
+    projectId,
+    taskId: operationalTaskId,
+    runKind: "agent",
+    status: "Running",
+    flowVersion: "agent",
+    agentKind: "operational",
+    agentWorkspace: "repo_read",
+    resultContract: operationalContractFixture("repo_read"),
+  });
+  const principal = await interactiveTaskLaunchPrincipal();
+  const manual = await acceptInteractiveTaskLaunch(
+    database.db,
+    principal,
+    await request(operationalTaskId),
+    randomUUID(),
+  );
+
+  expect(manual).toMatchObject({ basis: "manual", state: "queued" });
+  for (const status of ["Pending", "Review"] as const) {
+    const taskId = await task();
+
+    await publishReadyQualification(taskId);
+    const admission = await prepareTaskDeliveryAdmission(database.db, {
+      projectId,
+      taskId,
+    });
+
+    await database.db.insert(runs).values({
+      id: randomUUID(),
+      projectId,
+      taskId,
+      runKind: "flow",
+      status,
+      flowId,
+      flowVersion: "v1",
+      taskAdmissionSnapshot: admission.snapshot,
+    });
+    const launch = acceptInteractiveTaskLaunch(
+      database.db,
+      principal,
+      await request(taskId),
+      randomUUID(),
+    );
+
+    if (status === "Pending")
+      await expect(launch).rejects.toMatchObject({
+        details: { reason: "launch_already_reserved" },
+      });
+    else await expect(launch).resolves.toMatchObject({ basis: "manual" });
+  }
 });
 
 it("LA04/05 freezes the answered nonblocking clarification actually used for execution without changing qualification hashing", async () => {
@@ -737,6 +895,7 @@ it("LA13 a scoped bearer cancels a manual intent without triage or borrowing its
     currentQualificationId: null,
     launchIntent: "none",
     triageStatus: "flagged",
+    triageFlagOrigin: "qualification",
   });
   await database.pool.query(
     "UPDATE project_tokens SET scopes='[]'::jsonb WHERE id=$1",
@@ -1176,4 +1335,290 @@ it("LA07 keeps project-token scope, identity, expiry and elevated-policy boundar
   await expect(
     acceptTokenTaskLaunch(database.db, principal, input, key),
   ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+});
+
+it.each(["explicit", "dispatch_failure", "unknown"] as const)(
+  "manual admission retains %s triage holds",
+  async (origin) => {
+    const taskId = await task();
+
+    await database.db
+      .update(tasks)
+      .set({ triageFlagOrigin: origin })
+      .where(eq(tasks.id, taskId));
+    await expect(
+      acceptInteractiveTaskLaunch(
+        database.db,
+        await interactiveTaskLaunchPrincipal(),
+        await request(taskId),
+        randomUUID(),
+      ),
+    ).rejects.toMatchObject({ details: { reason: "launch_task_held" } });
+  },
+);
+
+it("only a fresh authorized human can resolve a reasserted hold, without clearing assessments or pause", async () => {
+  const taskId = await task();
+  const principal = await interactiveTaskLaunchPrincipal();
+  const flag = () =>
+    database.db.transaction((tx) =>
+      applyTriageFlag(tx, {
+        taskId,
+        projectId,
+        actor: { type: "user", id: userId },
+      }),
+    );
+
+  await database.db
+    .update(tasks)
+    .set({ queuePaused: true })
+    .where(eq(tasks.id, taskId));
+  await flag();
+  const [before] = await database.db
+    .select()
+    .from(tasks)
+    .where(eq(tasks.id, taskId));
+  const stale = {
+    taskId,
+    expectedRevision: before.revision,
+    expectedOrigin: "explicit" as const,
+  };
+
+  await flag();
+  await expect(
+    resolveTaskLaunchHold(database.db, principal, stale),
+  ).rejects.toMatchObject({ details: { reason: "launch_hold_changed" } });
+  const [held] = await database.db
+    .select()
+    .from(tasks)
+    .where(eq(tasks.id, taskId));
+
+  await database.pool.query("UPDATE users SET role='viewer' WHERE id=$1", [
+    userId,
+  ]);
+  try {
+    await expect(
+      resolveTaskLaunchHold(database.db, principal, {
+        ...stale,
+        expectedRevision: held.revision,
+      }),
+    ).rejects.toMatchObject({ details: { reason: "launch_not_found" } });
+  } finally {
+    await database.pool.query("UPDATE users SET role='admin' WHERE id=$1", [
+      userId,
+    ]);
+  }
+  await database.db.transaction((tx) =>
+    sendTaskToTriageInTransaction(tx, {
+      taskId,
+      projectId,
+      taskRef: "HOLD-1",
+      title: held.title,
+      actor: { type: "system", id: null },
+    }),
+  );
+  const [retriaged] = await database.db
+    .select()
+    .from(tasks)
+    .where(eq(tasks.id, taskId));
+
+  expect(retriaged.triageStatus).toBe("flagged");
+  expect(retriaged.triageFlagOrigin).toBe("explicit");
+  const resolved = await resolveTaskLaunchHold(database.db, principal, {
+    ...stale,
+    expectedRevision: retriaged.revision,
+  });
+  const [after] = await database.db
+    .select()
+    .from(tasks)
+    .where(eq(tasks.id, taskId));
+
+  expect(resolved.revision).toBe(retriaged.revision + 1);
+  expect(after.triageStatus).toBeNull();
+  expect(after.triageFlagOrigin).toBeNull();
+  expect(after.queuePaused).toBe(true);
+  expect(after.currentQualificationId).toBe(retriaged.currentQualificationId);
+  expect(after.launchMode).toBeNull();
+  expect(
+    await database.db
+      .select()
+      .from(taskLaunchIntents)
+      .where(eq(taskLaunchIntents.taskId, taskId)),
+  ).toEqual([]);
+});
+
+it.each(["qualification", "explicit"] as const)(
+  "blocking clarification invalidation retains only independent %s holds",
+  async (origin) => {
+    const taskId = await task();
+
+    await database.db
+      .update(tasks)
+      .set({ triageFlagOrigin: origin })
+      .where(eq(tasks.id, taskId));
+    await database.db.insert(taskClarifications).values({
+      id: randomUUID(),
+      taskId,
+      seq: 1,
+      originKind: "user",
+      reTriggerMode: "none",
+      requesterUserId: userId,
+      recipientUserId: userId,
+      reason: "Missing target",
+      answerFormat: "text",
+      question: "Which target?",
+      blocking: true,
+    });
+    const [changed] = await database.db
+      .select()
+      .from(tasks)
+      .where(eq(tasks.id, taskId));
+
+    expect(changed.qualificationInputRevision).toBe(2);
+    expect(changed.triageStatus).toBe(origin === "explicit" ? "flagged" : null);
+    expect(changed.triageFlagOrigin).toBe(
+      origin === "explicit" ? "explicit" : null,
+    );
+    expect(changed.launchMode).toBeNull();
+  },
+);
+
+it("hold resolution HTTP requires same-origin strict human input and returns the committed revision", async () => {
+  const taskId = await task();
+
+  await database.db.transaction((tx) =>
+    applyTriageFlag(tx, {
+      taskId,
+      projectId,
+      actor: { type: "user", id: userId },
+    }),
+  );
+  const [held] = await database.db
+    .select()
+    .from(tasks)
+    .where(eq(tasks.id, taskId));
+  const client = await import("@/lib/db/client");
+  const spy = vi.spyOn(client, "getDb").mockReturnValue(database.db);
+
+  try {
+    const { POST } = await import("@/app/api/task-launch-holds/resolve/route");
+    const input = {
+      taskId,
+      expectedRevision: held.revision,
+      expectedOrigin: "explicit",
+    };
+    const post = (body: object, origin = "http://localhost") =>
+      POST(
+        new Request("http://localhost/api/task-launch-holds/resolve", {
+          method: "POST",
+          headers: { origin, "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      );
+
+    expect((await post(input, "https://other.example")).status).toBe(403);
+    expect((await post({ ...input, actorUserId: userId })).status).toBe(400);
+    expect(
+      (await post({ ...input, expectedRevision: held.revision - 1 })).status,
+    ).toBe(409);
+    const response = await post(input);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({
+      taskId,
+      revision: held.revision + 1,
+      triageStatus: null,
+      triageFlagOrigin: null,
+    });
+    expect((await post(input)).status).toBe(409);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+it("SQL manual admission cannot bypass independent holds in either reservation lane", async () => {
+  const taskId = await task();
+  const principal = await interactiveTaskLaunchPrincipal();
+  const accepted = await acceptInteractiveTaskLaunch(
+    database.db,
+    principal,
+    await request(taskId),
+    randomUUID(),
+  );
+  const [source] = await database.db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.id, accepted.intentId));
+
+  await cancelInteractiveTaskLaunch(
+    database.db,
+    principal,
+    accepted.intentId,
+    { expectedStateVersion: accepted.stateVersion },
+    randomUUID(),
+  );
+  await database.db
+    .update(tasks)
+    .set({ triageFlagOrigin: "explicit" })
+    .where(eq(tasks.id, taskId));
+  for (const reservationLane of ["ordinary", "concurrent"] as const) {
+    await expect(
+      database.db.insert(taskLaunchIntents).values({
+        ...source,
+        id: randomUUID(),
+        requestKey: randomUUID(),
+        reservationLane,
+      }),
+    ).rejects.toMatchObject({
+      cause: { constraint: "task_launch_manual_hold" },
+    });
+  }
+  await database.db
+    .update(tasks)
+    .set({ triageFlagOrigin: "qualification" })
+    .where(eq(tasks.id, taskId));
+  const [valid] = await database.db
+    .insert(taskLaunchIntents)
+    .values({
+      ...source,
+      id: randomUUID(),
+      requestKey: randomUUID(),
+      reservationLane: "concurrent",
+    })
+    .returning();
+
+  expect(valid.state).toBe("queued");
+  expect(valid.basis.kind).toBe("manual");
+  await database.db
+    .update(tasks)
+    .set({ triageFlagOrigin: "unknown" })
+    .where(eq(tasks.id, taskId));
+  await database.db
+    .update(taskLaunchIntents)
+    .set({
+      state: "held",
+      reason: "launch_task_held",
+      stateVersion: valid.stateVersion + 1,
+    })
+    .where(eq(taskLaunchIntents.id, valid.id));
+  await expect(
+    database.db
+      .update(taskLaunchIntents)
+      .set({
+        state: "queued",
+        reason: null,
+        stateVersion: valid.stateVersion + 2,
+      })
+      .where(eq(taskLaunchIntents.id, valid.id)),
+  ).rejects.toMatchObject({ cause: { constraint: "task_launch_manual_hold" } });
+  const cancelled = await cancelInteractiveTaskLaunch(
+    database.db,
+    principal,
+    valid.id,
+    { expectedStateVersion: valid.stateVersion + 1 },
+    randomUUID(),
+  );
+
+  expect(cancelled.state).toBe("cancelled");
 });

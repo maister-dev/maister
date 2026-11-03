@@ -28,6 +28,12 @@ export type TaskQualificationSummary = {
   blockedReason: string | null;
   nextActions: string[];
   candidate: TaskQualificationReceipt | null;
+  sourceFailure?: {
+    runId: string;
+    stage: string | null;
+    causeCode: string | null;
+    modelStarted: false;
+  };
 };
 
 /** One bounded batch supplies task_get/list and all Incoming partitions; assessment bodies remain behind a separate grant. */
@@ -48,6 +54,7 @@ export async function getTaskQualificationSummaries(
     next_actions: string[] | null;
     candidate: TaskQualificationReceipt | null;
     previously_accepted: boolean;
+    source_failure: TaskQualificationSummary["sourceFailure"] | null;
   }>(sql`
     SELECT t.id,t.qualification_mode mode,t.qualification_input_revision input_revision,
       q.id qualification_id,q.revision qualification_revision,q.value->>'decision' decision,
@@ -58,8 +65,32 @@ export async function getTaskQualificationSummaries(
         'decision',c.value->>'decision','publicationReason',c.publication_reason)
        FROM task_qualifications c WHERE c.task_id=t.id AND c.input_revision=t.qualification_input_revision
          AND c.author_kind='agent_run' AND c.publication_state IN ('candidate','rejected')
-       ORDER BY c.revision DESC LIMIT 1) candidate
+       ORDER BY c.revision DESC LIMIT 1) candidate,
+      CASE WHEN source.status IN ('Failed','Crashed')
+        AND length(source.id) BETWEEN 1 AND 256 AND source.id ~ '^[A-Za-z0-9_-]+$'
+        AND jsonb_typeof(source.operational_terminal->'infrastructureFailure')='object'
+        AND source.operational_terminal->'infrastructureFailure'->>'stage' IN
+          ('workspace_acquisition','checkout','baseline','materialize','capability_materialization','materialization_witness')
+        AND NOT EXISTS(SELECT 1 FROM execution_commands command WHERE command.run_id=source.id AND command.kind IN ('session.create','session.prompt'))
+        AND NOT EXISTS(SELECT 1 FROM run_sessions session WHERE session.run_id=source.id AND (session.acp_session_id IS NOT NULL OR session.host_session_id IS NOT NULL))
+        AND NOT EXISTS(SELECT 1 FROM run_session_incarnations incarnation WHERE incarnation.run_id=source.id)
+      THEN jsonb_build_object(
+        'runId',source.id,
+        'stage',source.operational_terminal->'infrastructureFailure'->>'stage',
+        'causeCode',(SELECT cause->>'code' FROM jsonb_array_elements(
+          CASE WHEN jsonb_typeof(source.operational_terminal->'infrastructureFailure'->'causeChain')='array'
+            THEN source.operational_terminal->'infrastructureFailure'->'causeChain' ELSE '[]'::jsonb END
+          ) WITH ORDINALITY AS causes(cause,ordinal)
+          WHERE cause->>'code' ~ '^[A-Za-z0-9_]{1,64}$' ORDER BY ordinal LIMIT 1),
+        'modelStarted',false)
+      ELSE NULL END source_failure
     FROM tasks t LEFT JOIN task_qualifications q ON q.id=t.current_qualification_id AND q.task_id=t.id
+    LEFT JOIN LATERAL (
+      SELECT r.id,r.status,r.operational_terminal FROM runs r
+      WHERE r.task_id=t.id AND r.project_id=t.project_id AND r.agent_kind='operational'
+        AND r.task_qualification_snapshot->>'role'='qualifier'
+      ORDER BY coalesce(r.launched_at,r.started_at) DESC,r.id DESC LIMIT 1
+    ) source ON true
     WHERE t.id IN ${[...taskIds]}`);
 
   return new Map(
@@ -96,6 +127,9 @@ export async function getTaskQualificationSummaries(
                   "qualification_required"),
           nextActions: current ? (row.next_actions ?? []) : [],
           candidate: row.candidate,
+          ...(!current && row.source_failure
+            ? { sourceFailure: row.source_failure }
+            : {}),
         } satisfies TaskQualificationSummary,
       ];
     }),

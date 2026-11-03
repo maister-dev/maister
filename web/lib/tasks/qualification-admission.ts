@@ -3,12 +3,18 @@ import "server-only";
 import type { Db } from "@/lib/execution-host/db";
 import type {
   TaskAdmissionSnapshot,
+  TaskAdmissionV1Snapshot,
   TaskExecutionChildProof,
 } from "@/lib/tasks/qualification-types";
 
 import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { loadTaskSemanticInput } from "./launch-input";
+import { agentTargetMetadataToken } from "./launch-agent-resolution";
+import { prepareTaskLaunchFirstDispatch } from "./launch-first-dispatch";
+
+import { assertConsensusDraftAdmission } from "@/lib/flows/graph/consensus/admission";
 import { projects, runs, tasks, taskQualifications } from "@/lib/db/schema";
 import {
   loadTaskQualificationInput,
@@ -18,6 +24,7 @@ import { resolveBaseCommit } from "@/lib/worktree";
 import { MaisterError } from "@/lib/errors";
 import { retryDigest } from "@/lib/agents/retry-guards";
 import { AGENT_EXECUTION_STATUS } from "@/lib/agents/activity-status";
+import { takeSchedulerLock } from "@/lib/scheduler";
 
 const log = pino({
   name: "task-qualification-admission",
@@ -41,17 +48,53 @@ export type PreparedTaskDeliveryAdmission = {
   apply: (tx: Db) => Promise<TaskAdmissionSnapshot>;
 };
 
+async function parentAdmissionEvidence(
+  db: Db,
+  parent: typeof runs.$inferSelect,
+): Promise<{ evidenceTarget: string | null; evidenceSha: string | null }> {
+  const snapshot = parent.taskAdmissionSnapshot;
+
+  if (snapshot?.version !== 3)
+    return {
+      evidenceTarget: snapshot?.evidenceTarget ?? null,
+      evidenceSha: snapshot?.evidenceSha ?? null,
+    };
+  if (!parent.projectId)
+    throw qualificationRefusal("qualification_parent_unavailable");
+  const [owner] = await db
+    .select()
+    .from(runs)
+    .where(
+      and(
+        eq(runs.id, snapshot.parent.parentRunId),
+        eq(runs.projectId, parent.projectId),
+      ),
+    );
+
+  if (
+    !owner ||
+    owner.id === parent.id ||
+    owner.taskAdmissionSnapshot?.version === 3
+  )
+    throw qualificationRefusal("qualification_parent_unavailable");
+
+  return {
+    evidenceTarget: owner.taskAdmissionSnapshot?.evidenceTarget ?? null,
+    evidenceSha: owner.taskAdmissionSnapshot?.evidenceSha ?? null,
+  };
+}
+
 async function readAdmission(
   db: Db,
   projectId: string,
   taskId: string,
-): Promise<TaskAdmissionSnapshot> {
+): Promise<TaskAdmissionV1Snapshot> {
   const input = await loadTaskQualificationInput(db, projectId, taskId);
   const [task] = await db
     .select()
     .from(tasks)
     .where(and(eq(tasks.id, taskId), eq(tasks.projectId, projectId)));
-  const base: TaskAdmissionSnapshot = {
+  const base: TaskAdmissionV1Snapshot = {
     version: 1,
     mode: input.mode,
     policyVersion: 1,
@@ -80,10 +123,20 @@ async function readAdmission(
     return {
       ...base,
       parent: task.qualificationChildProof,
-      evidenceTarget: parent.taskAdmissionSnapshot?.evidenceTarget ?? null,
-      evidenceSha: parent.taskAdmissionSnapshot?.evidenceSha ?? null,
+      ...(await parentAdmissionEvidence(db, parent)),
     };
   }
+
+  return readQualifiedRootAdmission(db, input, base);
+}
+
+async function readQualifiedRootAdmission(
+  db: Db,
+  input: Awaited<ReturnType<typeof loadTaskQualificationInput>>,
+  base: TaskAdmissionV1Snapshot,
+): Promise<TaskAdmissionV1Snapshot> {
+  const { taskId, projectId } = input;
+
   if (!input.currentQualificationId)
     throw qualificationRefusal("qualification_required");
   const [assessment] = await db
@@ -118,17 +171,69 @@ async function readAdmission(
   };
 }
 
+/** A child proof is an independent admission basis and never becomes root manual permission. */
+export async function taskExecutionChildAdmissionProof(
+  db: Db,
+  projectId: string,
+  taskId: string,
+): Promise<TaskExecutionChildProof> {
+  const admission = await readAdmission(db, projectId, taskId);
+
+  if (admission.mode !== "execution_child" || !admission.parent)
+    throw qualificationRefusal("qualification_child_stale");
+
+  return admission.parent;
+}
+
+/** New roots never inherit the historical legacy exemption. */
+async function readNewDeliveryAdmission(
+  db: Db,
+  projectId: string,
+  taskId: string,
+): Promise<TaskAdmissionV1Snapshot> {
+  const input = await loadTaskQualificationInput(db, projectId, taskId);
+
+  if (input.mode !== "legacy") return readAdmission(db, projectId, taskId);
+
+  return readQualifiedRootAdmission(db, input, {
+    version: 1,
+    mode: "required",
+    policyVersion: 1,
+    inputRevision: input.inputRevision,
+    qualificationId: null,
+    qualificationRevision: null,
+    evidenceTarget: null,
+    evidenceSha: null,
+    parent: null,
+  });
+}
+
+type DeliveryAdmissionRequest = Readonly<{
+  projectId: string;
+  taskId: string;
+  baseBranch?: string;
+  baseCommit?: string;
+  targetBranch?: string;
+}>;
+type AdmissionReader = (
+  db: Db,
+  projectId: string,
+  taskId: string,
+) => Promise<TaskAdmissionV1Snapshot>;
+
 export async function prepareTaskDeliveryAdmission(
   db: Db,
-  args: {
-    projectId: string;
-    taskId: string;
-    baseBranch?: string;
-    baseCommit?: string;
-    targetBranch?: string;
-  },
+  args: DeliveryAdmissionRequest,
 ): Promise<PreparedTaskDeliveryAdmission> {
-  const snapshot = await readAdmission(db, args.projectId, args.taskId);
+  return prepareDeliveryAdmissionWithReader(db, args, readNewDeliveryAdmission);
+}
+
+async function prepareDeliveryAdmissionWithReader(
+  db: Db,
+  args: DeliveryAdmissionRequest,
+  read: AdmissionReader,
+): Promise<PreparedTaskDeliveryAdmission> {
+  const snapshot = await read(db, args.projectId, args.taskId);
 
   if (snapshot.mode === "required") {
     const [project] = await db
@@ -195,7 +300,7 @@ export async function prepareTaskDeliveryAdmission(
       let current: TaskAdmissionSnapshot;
 
       try {
-        current = await readAdmission(tx, args.projectId, args.taskId);
+        current = await read(tx, args.projectId, args.taskId);
       } catch (error) {
         if (error instanceof MaisterError && error.code === "PRECONDITION")
           throw qualificationRefusal("qualification_stale", "CONFLICT");
@@ -227,12 +332,105 @@ export async function assertLegacyTriageOrCurrentQualification(
   await readAdmission(db, projectId, taskId);
 }
 
+async function assertTasklessCarrierFirstDispatch(
+  db: Db,
+  run: typeof runs.$inferSelect,
+): Promise<void> {
+  if (
+    run.taskAdmissionSnapshot?.version !== 1 ||
+    !run.taskAdmissionSnapshot.carrier ||
+    !run.projectId ||
+    !run.taskId
+  )
+    throw qualificationRefusal("agent_carrier_scope_changed");
+  if (run.taskAdmissionCheckedAt) return;
+  const witness = run.taskAdmissionSnapshot.carrier;
+  const { task, snapshot } = await loadTaskSemanticInput(
+    db,
+    run.projectId,
+    run.taskId,
+  );
+  const [project] = await db
+    .select()
+    .from(projects)
+    .where(eq(projects.id, run.projectId));
+
+  if (
+    !project ||
+    project.archivedAt ||
+    run.agentId !== witness.agentId ||
+    task.agentId !== witness.agentId ||
+    task.revision !== 0 ||
+    snapshot.version !== 2 ||
+    retryDigest(snapshot) !== witness.inputDigest ||
+    retryDigest(witness.inputSnapshot) !== witness.inputDigest ||
+    (await agentTargetMetadataToken(db, project, {
+      agentId: witness.agentId,
+    })) !== witness.metadataDigest
+  )
+    throw qualificationRefusal("agent_carrier_scope_changed");
+  await db.transaction(async (tx) => {
+    const [current] = await tx
+      .select()
+      .from(runs)
+      .where(eq(runs.id, run.id))
+      .for("update");
+    const [currentTask] = await tx
+      .select()
+      .from(tasks)
+      .where(eq(tasks.id, task.id))
+      .for("update");
+
+    if (
+      !current ||
+      !currentTask ||
+      currentTask.revision !== task.revision ||
+      currentTask.qualificationInputRevision !==
+        task.qualificationInputRevision ||
+      retryDigest(current.taskAdmissionSnapshot) !==
+        retryDigest(run.taskAdmissionSnapshot)
+    )
+      throw qualificationRefusal("agent_carrier_scope_changed");
+    await tx
+      .update(runs)
+      .set({ taskAdmissionCheckedAt: new Date() })
+      .where(eq(runs.id, run.id));
+  });
+}
+
 /** First dispatch only; a running execution retains its immutable admission after later task edits. */
 export async function assertTaskAdmissionForDispatch(
   db: Db,
   runId: string,
 ): Promise<void> {
   const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+
+  if (
+    run?.taskAdmissionSnapshot?.version === 1 &&
+    run.taskAdmissionSnapshot.carrier
+  ) {
+    await assertTasklessCarrierFirstDispatch(db, run);
+
+    return;
+  }
+
+  if (run?.taskAdmissionSnapshot?.version === 3) {
+    await assertConsensusDraftAdmission(db, run.taskAdmissionSnapshot, run);
+
+    return;
+  }
+
+  if (run?.taskAdmissionSnapshot?.version === 2) {
+    const dispatch = await prepareTaskLaunchFirstDispatch(db, runId);
+
+    if (dispatch)
+      await db.transaction(async (tx) => {
+        await takeSchedulerLock(tx);
+        await dispatch.apply(tx);
+      });
+
+    return;
+  }
 
   if (
     !run?.taskAdmissionSnapshot ||
@@ -244,10 +442,14 @@ export async function assertTaskAdmissionForDispatch(
   let prepared: PreparedTaskDeliveryAdmission;
 
   try {
-    prepared = await prepareTaskDeliveryAdmission(db, {
-      projectId: run.projectId,
-      taskId: run.taskId,
-    });
+    prepared = await prepareDeliveryAdmissionWithReader(
+      db,
+      {
+        projectId: run.projectId,
+        taskId: run.taskId,
+      },
+      readAdmission,
+    );
   } catch (error) {
     if (
       error instanceof MaisterError &&
@@ -382,7 +584,9 @@ export async function establishExecutionChildAdmission(
     input.parentRunId,
   );
 
-  if (parent.taskAdmissionSnapshot?.evidenceTarget) {
+  const inheritedEvidence = await parentAdmissionEvidence(db, parent);
+
+  if (inheritedEvidence.evidenceTarget) {
     const delivery = await db.execute<{ target_branch: string }>(
       sql`SELECT target_branch FROM workspaces WHERE run_id=${parent.id} LIMIT 1`,
     );
@@ -390,10 +594,9 @@ export async function establishExecutionChildAdmission(
     await db
       .update(tasks)
       .set({
-        baseBranch: parent.taskAdmissionSnapshot.evidenceTarget,
+        baseBranch: inheritedEvidence.evidenceTarget,
         targetBranch:
-          delivery.rows[0]?.target_branch ??
-          parent.taskAdmissionSnapshot.evidenceTarget,
+          delivery.rows[0]?.target_branch ?? inheritedEvidence.evidenceTarget,
       })
       .where(eq(tasks.id, input.childTaskId));
   }

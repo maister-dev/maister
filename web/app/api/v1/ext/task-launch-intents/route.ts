@@ -5,6 +5,7 @@ import { getDb } from "@/lib/db/client";
 import { handleExt } from "@/lib/tokens/ext-handler";
 import { acceptTokenTaskLaunch } from "@/lib/tasks/launch-intent";
 import { taskLaunchRequestKey } from "@/lib/tasks/launch-http";
+import { wakeAcceptedTaskLaunch } from "@/lib/tasks/launch-wake";
 import {
   externalTaskLaunchAudit,
   externalTaskLaunchContinuation,
@@ -32,6 +33,8 @@ export async function POST(request: Request): Promise<NextResponse> {
         key,
         externalTaskLaunchAudit(context, CONTRACT),
       );
+
+      wakeAcceptedTaskLaunch(db, receipt);
 
       return externalTaskLaunchReceiptResponse(receipt);
     } catch (error) {
@@ -64,6 +67,7 @@ export async function POST(request: Request): Promise<NextResponse> {
             request,
             CONTRACT,
             accept,
+            (receipt) => wakeAcceptedTaskLaunch(db, receipt),
           ),
         },
       },

@@ -10,6 +10,7 @@ import {
   isConsensusResolutionSchema,
   isReviewSchema,
 } from "@/lib/flows/hitl-validate";
+import { taskLaunchBodySchema } from "@/lib/tasks/launch-schema";
 
 export type HitlAnswerView = {
   answerState: HitlAnswerState;
@@ -48,6 +49,23 @@ export function projectHitlAnswer(input: {
       storedResponse:
         typeof optionId === "string" && optionId.length > 0
           ? { optionId }
+          : null,
+    };
+  }
+  if (input.kind === "budget_breach") {
+    const stored = input.response as {
+      optionId?: unknown;
+      restartLaunch?: unknown;
+    } | null;
+    const request = taskLaunchBodySchema.safeParse(stored?.restartLaunch);
+
+    return {
+      answerState: "answer_stored",
+      storedResponse:
+        stored?.optionId === "restart" &&
+        request.success &&
+        request.data.relaunchOfRunId
+          ? { optionId: "restart", restartLaunch: request.data }
           : null,
     };
   }

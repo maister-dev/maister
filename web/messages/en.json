@@ -1497,7 +1497,8 @@
     "priorityUrgent": "urgent",
     "queuePause": "Pause in queue",
     "queueResume": "Resume in queue",
-    "queuePaused": "paused"
+    "queuePaused": "paused",
+    "launchQueuePaused": "The task queue is paused. Resume it before launching."
   },
   "hitl": {
     "allowRun": "allow this run",
@@ -2106,7 +2107,9 @@
       "setupPending": "The selected Flow setup is still pending. Finish setup before launching.",
       "unsupportedSchema": "The selected Flow manifest schema is not supported by this MAIster version.",
       "incompatible": "The selected Flow is incompatible with this MAIster engine version.",
-      "runnerUnresolved": "A Flow role has no resolved runner. Choose a runner for the highlighted role."
+      "runnerUnresolved": "A Flow role has no resolved runner. Choose a runner for the highlighted role.",
+      "queuePaused": "The task queue is paused. Resume it before launching.",
+      "technical": "Execution is unavailable. Review the Flow and runner settings, then refresh this preview."
     },
     "boardIncompatibility": {
       "legacySteps": "This task's enabled Flow uses the removed steps[] format. Republish the package with a non-empty nodes[] graph before launching.",
@@ -2191,7 +2194,7 @@
     "override": "Override",
     "overrideHint": "One or more launch values deviate from the project or task default.",
     "summary": "Creates a run for {branch} from {base}.",
-    "createRun": "Create run",
+    "createRun": "Launch",
     "creating": "Creating…",
     "launchStage": {
       "precondition": "Checking…",
@@ -2233,7 +2236,109 @@
     "scheduleResolvedAt": "Resolves to {utc}.",
     "scheduleAmbiguousPreview": "DST alternatives: earlier {earlier}; later {later}.",
     "schedulePreviewInvalid": "Enter an existing local time and valid IANA timezone.",
-    "scheduleError": "Could not schedule this run. Check the time and launch settings."
+    "scheduleError": "Could not schedule this run. Check the time and launch settings.",
+    "admission": {
+      "accepted": "Launch accepted",
+      "manual": "One manual launch is authorized for this revision.",
+      "automatic": "This launch was admitted by a current accepted triage assessment.",
+      "execution_child": "This execution belongs to an authorized parent run.",
+      "waiting": "Accepted — waiting for execution capacity",
+      "held": "Launch held — review the changed request",
+      "running": "Execution started",
+      "cancelled": "Launch cancelled",
+      "failed": "Launch preparation failed",
+      "settled": "Execution finished",
+      "revision": "Task revision",
+      "runners": "Runners",
+      "target": "Delivery target",
+      "delivery": "Delivery",
+      "promotion": "Promotion",
+      "acceptedAt": "Authorized at",
+      "queuePosition": "Queue position: {position}",
+      "uncertain": "The response was lost. The launch may already be accepted. Retry the same request to retrieve its result; this will not create a second launch.",
+      "retryRequest": "Retry the same request",
+      "refresh": "Refresh status",
+      "cancel": "Cancel queued launch",
+      "replace": "Review and replace",
+      "newLaunch": "New launch",
+      "openRun": "Open run",
+      "recoveryOnRun": "Open recovery options",
+      "retryOnRun": "Open retry options",
+      "replaceHint": "Review the current task and settings, then launch a replacement. The previous authorization is retained in history.",
+      "live": "Live",
+      "disconnected": "Status disconnected",
+      "reconnecting": "Reconnecting status",
+      "reconnect": "Reconnect",
+      "conflictNotAccepted": "This launch request was not accepted because earlier work already owns the task.",
+      "openExistingRun": "Open existing run",
+      "inspectExistingLaunch": "Review existing launch status",
+      "existingBasis": {
+        "manual": "Existing work was authorized by a manual decision.",
+        "automatic": "Existing work was authorized by automatic triage.",
+        "execution_child": "Existing work is an execution child.",
+        "historical": "Existing work uses the retained historical admission."
+      },
+      "triageAccepted": "Triage accepts this revision. Automatic launch also requires automation to be enabled. Launch below records your separate manual decision.",
+      "triageMissing": "No current assessment. Automatic execution requires accepted triage; you can launch this revision manually.",
+      "triageStale": "The assessment is out of date. Automatic execution is blocked; you can launch this revision manually.",
+      "triageNegative": "Triage does not recommend automatic execution. Its complete findings remain available on the task. You can launch this revision manually.",
+      "triageFailed": "Triager failed before publishing an assessment. Automatic execution is blocked; you can launch this revision manually.",
+      "beforeModelFailure": "Triager encountered an infrastructure failure before the model started. Review the failed run and retry triage after resolving its cause.",
+      "openFailure": "Inspect failed Triager run",
+      "reason": {
+        "inputChanged": "The task changed while waiting. Review its current text and launch a replacement.",
+        "settingsChanged": "Launch settings changed while waiting. Review them and launch a replacement.",
+        "authorityRevoked": "Launch permission is no longer available. Ask a project administrator to review access.",
+        "alreadyReserved": "Another launch already owns this task. Review its status before starting another.",
+        "held": "This task has an independent hold. Resolve that hold before launching.",
+        "paused": "The task queue is paused. Resume it before launching.",
+        "qualification": "Automatic execution needs a current accepted assessment. Request triage or choose a manual launch.",
+        "statusUnavailable": "Status could not be refreshed. Reconnect or refresh status.",
+        "storageUnavailable": "The browser could not preserve the launch request. Review task history before retrying in a browser with session storage enabled.",
+        "requestInvalid": "The launch request is no longer valid. Refresh the configuration and try again.",
+        "technical": "A technical precondition prevents execution. Inspect the task or run details, resolve it, then retry.",
+        "executionStarted": "Execution already started. Open the run to stop it or review recovery options.",
+        "statusChanged": "Launch state changed. Refresh its status before making another decision.",
+        "parentCapacity": "Waiting for another child execution of this parent to finish. This request will continue automatically.",
+        "capacity": "Waiting for execution capacity. This request will continue automatically.",
+        "runner": "Assign an available runner to the selected execution slot, then refresh launch settings.",
+        "assetsChanged": "The selected Flow or capability files changed. Review the installation and launch settings before launching again."
+      },
+      "setupRequired": "Apply the selected package update before launching. This is a separate configuration change.",
+      "applyPackage": "Apply package update",
+      "setupFailed": "The package update could not be applied. Refresh package choices and retry.",
+      "setupApplied": "Package updated. Review the refreshed settings before launching.",
+      "resolveHold": "Review task hold",
+      "holdHint": "A separate task hold remains active. Review and resolve it before launching.",
+      "queued": "Launch accepted — queued for preparation",
+      "preparing": "Preparing execution",
+      "setupPartial": "The version was cut, but the project did not adopt it. The cut is retained. Refresh the package choices and explicitly adopt the available cut before launching.",
+      "holdOrigin": {
+        "explicit": "This task was explicitly held for review.",
+        "dispatch_failure": "Automatic execution was held after a dispatch failure.",
+        "unknown": "This task has a historical hold whose original source is unknown."
+      },
+      "holdDecision": "Resolve only after reviewing the reason. This clears the hold and automatic launch arm; it does not launch the task or change any assessment.",
+      "confirmResolveHold": "Resolve this hold",
+      "holdChanged": "The task or hold changed. Refresh before making a new decision.",
+      "holdResolveFailed": "The hold could not be resolved. Refresh task history to check its current state before retrying.",
+      "replacementRevision": "Previous authorization: revision {previous}. Current request: revision {current}.",
+      "packageForbidden": "You do not have permission for this package change. Ask a package administrator, or keep the current version.",
+      "packageConflict": "The package changed during setup. Review the refreshed versions before trying again.",
+      "setupUnknown": "The setup response was lost. Review the refreshed package state before retrying; no execution was started."
+    },
+    "agent": {
+      "title": "Launch this agent for the task",
+      "workspace": "Workspace",
+      "runner": "Runner",
+      "runnerDefault": "Use the resolved default",
+      "selectedModel": "Selected model: {model}",
+      "workspaceOptions": {
+        "none": "No repository workspace",
+        "repo_read": "Read-only repository checkout",
+        "worktree": "Isolated working tree"
+      }
+    }
   },
   "automations": {
     "all": "All",
@@ -2631,6 +2736,32 @@
     "budgetNewCeiling": "New ceiling",
     "budgetRaiseResume": "Raise & resume",
     "budgetRestart": "Restart fresh",
+    "budgetRestartPreviewTargetRevision": "Target version",
+    "budgetRestartPreviewPolicy": "Execution policy",
+    "budgetRestartPreviewPromotion": "Automatic promotion",
+    "budgetRestartPreviewBrain": "Project knowledge",
+    "budgetRestartPreviewBranch": "Target branch",
+    "budgetRestartPreviewOverrides": "Budget and policy details",
+    "budgetRestartYes": "Enabled",
+    "budgetRestartNo": "Disabled",
+    "budgetRestartInherit": "Use target default",
+    "budgetRestartPreset": {
+      "supervised": "Supervised",
+      "assisted": "Assisted",
+      "unattended": "Unattended"
+    },
+    "budgetRestartPreviewTitle": "Restart with this request",
+    "budgetRestartPreviewHint": "This ends the paused execution and accepts a new launch for the current request and settings shown below. It may wait for capacity.",
+    "budgetRestartPreviewUnavailable": "Restart preview is unavailable. Refresh this run, or launch the task with a new decision.",
+    "budgetRestartPreviewRevision": "Task revision",
+    "budgetRestartPreviewAgent": "Agent",
+    "budgetRestartPreviewFlow": "Flow",
+    "budgetRestartPreviewRunner": "Runner",
+    "budgetRestartPreviewDelivery": "Delivery",
+    "budgetRestartDeliveryPr": "Pull request",
+    "budgetRestartDeliveryMerge": "Merge",
+    "budgetRestartDeliveryNone": "Workspace only",
+    "budgetRestartPreviewConfirm": "End old execution and launch",
     "budgetPark": "Park result",
     "budgetAbandon": "Discard",
     "budgetDropWorkspace": "Drop workspace now",
@@ -2764,6 +2895,7 @@
       "ACCOUNT_INACTIVE": "Your account is inactive."
     },
     "errorReasons": {
+      "budget_restart_preview_required": "Preview the current request and settings before confirming a fresh restart, or launch the task with a new decision.",
       "permission_resume_in_flight": "Your answer is already being delivered as the run resumes. Wait for the run to continue.",
       "assignment_fenced": "A newer execution has taken over this run. Check the refreshed run before retrying delivery.",
       "prompt_owner_deferred": "Execution is waiting for a recorded state change. Wait, then retry delivery if the answer is still pending.",
@@ -4942,7 +5074,8 @@
       "flagged": "This task is flagged for review — resolve it before launching.",
       "clarification_pending": "Answer or cancel the blocking clarification before launch.",
       "blocked": "This task is blocked by another task.",
-      "launchable": "Ready to launch."
+      "launchable": "Ready to launch.",
+      "queue_paused": "The task queue is paused. Resume it before launching."
     },
     "launchConfigTitle": "Launch configuration",
     "lcFlow": "Flow",
@@ -6114,6 +6247,8 @@
     "noAttempts": "No recorded attempts",
     "attemptUnsettled": "Awaiting reconciliation",
     "estimatedAttemptHistory": "Only the latest legacy attempt was retained; total is unknown.",
+    "attemptLaunchStatus": "Current launch: {status}",
+    "openLaunchTask": "Open task",
     "attemptWithoutRun": "No run was created",
     "status": {
       "Pending": "Queued",
@@ -6201,7 +6336,8 @@
       "assessmentReady": "The current task inputs have already been assessed. Review that assessment instead of repeating an old failed run.",
       "qualificationPolicy": "Enable required task qualification in project settings before running this qualifier.",
       "qualificationRequired": "This legacy task must explicitly require qualification before it can be assessed.",
-      "taskBusy": "This task has active work or an accepted assessment request. Open the current execution or wait for it to finish."
+      "taskBusy": "This task has active work or an accepted assessment request. Open the current execution or wait for it to finish.",
+      "launchRequired": "Open the task, review its current input and settings, then Launch a new attempt."
     },
     "retryCleanup": {
       "armed": "Disposable allocation cleanup is scheduled.",
@@ -6247,6 +6383,13 @@
       "present": "Scheduled request recorded; repository-content access is required to view it.",
       "empty": "No additional request was captured.",
       "legacy_unrecorded": "Legacy invocation: scheduled request was not recorded."
+    },
+    "retryTaskRevision": "Task revision {revision}",
+    "retryTarget": "Agent and workspace",
+    "retryWorkspace": {
+      "none": "Without repository",
+      "repo_read": "Read-only checkout",
+      "worktree": "Isolated worktree"
     }
   },
   "taskQualification": {
@@ -6269,13 +6412,10 @@
     "decisionLabel": "Assessment decision",
     "checkLabel": "Check result",
     "rationale": "Rationale",
-    "checkEvidence": "Evidence IDs, separated by commas",
-    "evidenceInput": "Evidence: one ID | kind | reference per line. Kinds: repository, task, run, source, human_attestation.",
-    "reasonInput": "Reason codes, separated by commas (lowercase_with_underscores)",
     "nextActions": "Actionable next steps, one per line",
     "save": "Save reviewed assessment",
     "sameRequest": "Recover receipt for the same assessment",
-    "invalid": "Complete all seven checks with rationales. Link evidence IDs to the evidence list. Ready requires passing applicable checks and repository evidence for relevance; held decisions require reasons and next steps.",
+    "invalid": "Include every check exactly once with a clear rationale.",
     "conflict": "The task or accepted assessment changed. Refresh and reassess the current input.",
     "saveError": "The assessment could not be saved. Check current evidence and try again.",
     "unknownWrite": "The response was lost. Recover the receipt using the same assessment request.",
@@ -6333,7 +6473,45 @@
     "filter": "Assessment",
     "allIncoming": "All incoming",
     "applyFilter": "Apply filter",
-    "close": "Close"
+    "close": "Close",
+    "authoring": {
+      "structuredResult": "Complete structured assessment",
+      "optional": "This assessment is optional. Manual Launch is a separate action and does not require this form.",
+      "evidenceTitle": "Evidence you reviewed",
+      "evidenceHint": "Select an existing task, run or tracked file, then link it to each relevant check. Internal references are generated automatically.",
+      "search": "Find tasks or runs by title",
+      "find": "Search evidence",
+      "task": "Task evidence",
+      "run": "Run evidence",
+      "choose": "Choose an item",
+      "addTask": "Add task evidence",
+      "addRun": "Add run evidence",
+      "browseFiles": "Browse repository files",
+      "files": "Repository files",
+      "parentFolder": "Parent folder",
+      "removeEvidence": "Remove evidence: {evidence}",
+      "linkEvidence": "Link reviewed evidence",
+      "refresh": "Reload current task and clear this draft",
+      "explanation": {
+        "goal_scope": "Is the intended result clear and the scope limited?",
+        "acceptance": "Can completion be verified with concrete acceptance criteria?",
+        "consistency": "Do the requirements agree with each other?",
+        "constraints_dependencies": "Are constraints, dependencies and prerequisites understood?",
+        "duplicates": "Is there another request that already covers this work?",
+        "relevance": "Does the current repository still need this change? Cite a file you inspected.",
+        "bug_evidence": "For a bug, is there observed behavior or a reproduction? Other request types may use Not applicable."
+      },
+      "validation": {
+        "required": "Complete the highlighted field and explain your assessment.",
+        "invalid": "Include every check exactly once with a clear rationale.",
+        "duplicate": "Choose each evidence item only once.",
+        "repository": "Select a repository file and link it to Current relevance before marking the task ready.",
+        "ready": "Ready requires every applicable check to pass. Keep uncertain checks Unknown and choose a review decision.",
+        "evidence": "Select an existing evidence item and link it using its checkbox.",
+        "nextAction": "Describe a concrete next action for this held assessment.",
+        "notApplicable": "Only bug evidence for a non-bug request can be Not applicable."
+      }
+    }
   },
   "runPeek": {
     "kind_runner": "Runner",

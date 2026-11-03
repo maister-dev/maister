@@ -1,8 +1,11 @@
+import type { LaunchRunInput, LaunchRunContext } from "@/lib/services/runs";
 import type { PlatformStatus } from "@/types/platform-status";
+
+import { randomUUID } from "node:crypto";
+import { rm } from "node:fs/promises";
 
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { eq } from "drizzle-orm";
-import { NextRequest } from "next/server";
 import {
   afterAll,
   beforeAll,
@@ -13,6 +16,25 @@ import {
   vi,
 } from "vitest";
 
+import { git as fixtureGit } from "@/test-support/git-fixture";
+import {
+  seedAcceptedRepositoryQualification,
+  createEngineFixtureRepository,
+  isolateEngineFixtureRuntime,
+} from "@/test-support/repository-qualification";
+import { launchEvaluationEngineFixture } from "@/test-support/evaluation-engine-launch";
+import {
+  launchEngineResponse,
+  launchQualifiedEngineRun,
+  bindAcceptedEngineFixture,
+} from "@/test-support/launch-engine-response";
+import {
+  acceptInteractiveTaskLaunch,
+  taskLaunchSettingsToken,
+} from "@/lib/tasks/launch-intent";
+import { interactiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
+import { MaisterError } from "@/lib/errors";
+import { releaseAssignmentForRun } from "@/lib/execution-host/assignments";
 import {
   readyExecutionHostCapabilities,
   TEST_HOST_IDENTITY,
@@ -36,7 +58,9 @@ import {
 const schema = schemaModule as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
-let db: NodePgDatabase;
+const repositories: string[] = [];
+let restoreEngineRuntime: (() => Promise<void>) | undefined;
+let db: NodePgDatabase<typeof schemaModule>;
 
 const sessionRef: { value: unknown } = { value: null };
 
@@ -79,7 +103,13 @@ const listBranchesMock = vi.fn(async (_repo: string) => [
   "release",
 ]);
 const resolveBaseCommitMock = vi.fn(
-  async (_args: unknown) => "feedface00000000000000000000000000000000",
+  async (args: { projectRepoPath: string; baseRef: string }) =>
+    fixtureGit(
+      args.projectRepoPath,
+      "rev-parse",
+      "--verify",
+      `${args.baseRef}^{commit}`,
+    ),
 );
 
 vi.mock("@/lib/supervisor-client", async (importOriginal) => {
@@ -93,16 +123,36 @@ vi.mock("@/lib/supervisor-client", async (importOriginal) => {
   };
 });
 
-vi.mock("@/lib/worktree", () => ({
-  addWorktree: (input: unknown) => addWorktreeMock(input),
-  removeWorktree: (input: unknown) => removeWorktreeMock(input),
-  listBranches: (repo: string) => listBranchesMock(repo),
-  listRemoteUrls: vi.fn(async () => []),
-  resolveBaseCommit: (args: unknown) => resolveBaseCommitMock(args),
-}));
+vi.mock("@/lib/worktree", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/worktree")>();
 
-let POST: typeof import("@/app/api/runs/route").POST;
-let EXT_POST: typeof import("@/app/api/v1/ext/runs/route").POST;
+  return {
+    ...actual,
+    addWorktree: async (input: Parameters<typeof actual.addWorktree>[0]) => {
+      await addWorktreeMock(input);
+
+      return actual.addWorktree(input);
+    },
+    removeWorktree: async (
+      input: Parameters<typeof actual.removeWorktree>[0],
+    ) => {
+      await removeWorktreeMock(input);
+
+      return actual.removeWorktree(input);
+    },
+    listBranches: (repo: string) => listBranchesMock(repo),
+    listRemoteUrls: vi.fn(async () => []),
+    resolveBaseCommit: (args: Parameters<typeof resolveBaseCommitMock>[0]) =>
+      resolveBaseCommitMock(args),
+  };
+});
+
+function launchResponse(input: LaunchRunInput): Promise<Response> {
+  return launchEngineResponse(testDatabase.db, input, {
+    actorUserId: "u-member",
+    authorize: async () => undefined,
+  });
+}
 
 // All-instruct manifest → passes the M11c enforcement gate so the launch
 // reaches the worktree/workspace persistence path.
@@ -125,12 +175,17 @@ async function seedProject(
   slug: string,
   opts: { promotionMode?: string | null } = {},
 ): Promise<void> {
+  const repoPath = await createEngineFixtureRepository();
+
+  repositories.push(repoPath);
+  await fixtureGit(repoPath, "branch", "develop");
+  await fixtureGit(repoPath, "branch", "release");
   await db.insert(schema.projects).values({
     taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id,
     slug,
     name: slug,
-    repoPath: `/repos/${slug}`,
+    repoPath,
     mainBranch: "main",
     maisterYamlPath: `/repos/${slug}/maister.yaml`,
     // M18: projects.promotion_mode (migration 0021). Setting it here is part of
@@ -151,7 +206,7 @@ async function seedProject(
     manifestDigest: `digest-${id}`,
     manifest: instructManifest,
     schemaVersion: 1,
-    installedPath: `/cache/${id}`,
+    installedPath: `${repoPath}/.fixture-flow`,
     setupStatus: "not_required",
     packageStatus: "Installed",
   });
@@ -161,7 +216,7 @@ async function seedProject(
     flowRefId: "bugfix",
     source: "github.com/x/y",
     version: "v1.0.0",
-    installedPath: `/cache/${id}`,
+    installedPath: `${repoPath}/.fixture-flow`,
     manifest: instructManifest,
     schemaVersion: 1,
     enabledRevisionId: revisionId,
@@ -185,14 +240,16 @@ async function seedTask(taskId: string, projectId: string): Promise<void> {
     prompt: "do it",
     flowId: `flow-${projectId}`,
   });
+  if (taskId === "task-pr")
+    await db
+      .update(schema.tasks)
+      .set({ baseBranch: "develop", targetBranch: "release" })
+      .where(eq(schema.tasks.id, taskId));
+  await seedAcceptedRepositoryQualification(testDatabase.db, projectId, taskId);
 }
 
-function runRequest(body: Record<string, unknown>): NextRequest {
-  return new NextRequest("http://localhost/api/runs", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
+function runRequest(body: LaunchRunInput): LaunchRunInput {
+  return body;
 }
 
 async function workspaceForRun(runId: string): Promise<Record<string, any>> {
@@ -214,6 +271,7 @@ async function latestRunForTask(taskId: string): Promise<Record<string, any>> {
 }
 
 beforeAll(async () => {
+  restoreEngineRuntime = await isolateEngineFixtureRuntime();
   testDatabase = await startMainPostgresTestDb({
     databaseName: "runs_branch_test",
   });
@@ -241,16 +299,14 @@ beforeAll(async () => {
 
   await seedProject("proj-default", "proj-default");
   await seedTask("task-default", "proj-default");
-
-  await seedProject("proj-ext", "proj-ext");
-  await seedTask("task-ext", "proj-ext");
-
-  ({ POST } = await import("@/app/api/runs/route"));
-  ({ POST: EXT_POST } = await import("@/app/api/v1/ext/runs/route"));
 }, 180_000);
 
 afterAll(async () => {
+  await restoreEngineRuntime?.();
   await testDatabase?.stop();
+  await Promise.all(
+    repositories.map((repo) => rm(repo, { recursive: true, force: true })),
+  );
 });
 
 beforeEach(() => {
@@ -262,9 +318,9 @@ beforeEach(() => {
   sessionRef.value = { user: { id: "u-member", role: "member" } };
 });
 
-describe("POST /api/runs — launch-time branch persistence (M18, integration)", () => {
+describe("Delivery engine — launch-time branch persistence (M18, integration)", () => {
   it("persists base_branch/base_commit/target_branch/promotion_mode on the workspace row", async () => {
-    const res = await POST(
+    const res = await launchResponse(
       runRequest({
         taskId: "task-pr",
         baseBranch: "develop",
@@ -277,20 +333,30 @@ describe("POST /api/runs — launch-time branch persistence (M18, integration)",
     const run = await latestRunForTask("task-pr");
     const ws = await workspaceForRun(run.id);
 
+    const [project] = await db
+      .select()
+      .from(schema.projects)
+      .where(eq(schema.projects.id, "proj-pr"));
+    const checkedSha = await fixtureGit(
+      project.repoPath,
+      "rev-parse",
+      "develop",
+    );
+
     expect(ws.baseBranch).toBe("develop");
-    expect(ws.baseCommit).toBe("feedface00000000000000000000000000000000");
+    expect(ws.baseCommit).toBe(checkedSha);
     expect(ws.targetBranch).toBe("release");
     // proj-pr's projects.promotion_mode = 'pull_request' (SET path, §3.4).
     expect(ws.promotionMode).toBe("pull_request");
     expect(addWorktreeMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        startPoint: "feedface00000000000000000000000000000000",
+        startPoint: checkedSha,
       }),
     );
   });
 
   it("defaults promotion_mode to local_merge when the project has none, and target to the base", async () => {
-    const res = await POST(runRequest({ taskId: "task-default" }));
+    const res = await launchResponse(runRequest({ taskId: "task-default" }));
 
     expect(res.status).toBe(202);
 
@@ -303,7 +369,7 @@ describe("POST /api/runs — launch-time branch persistence (M18, integration)",
   });
 });
 
-describe("POST /api/runs — inherited session runners", () => {
+describe("Delivery engine — inherited session runners", () => {
   it.each(["platform", "task", "launch", "session"] as const)(
     "persists the %s choice for compatible unbound sessions",
     async (source) => {
@@ -372,7 +438,7 @@ describe("POST /api/runs — inherited session runners", () => {
       const response =
         source === "session"
           ? null
-          : await POST(
+          : await launchResponse(
               runRequest({
                 taskId,
                 ...(source === "launch" ? { runnerId: launchRunnerId } : {}),
@@ -380,9 +446,8 @@ describe("POST /api/runs — inherited session runners", () => {
             );
       const body = response
         ? await response.json()
-        : await (
-            await import("@/lib/services/runs")
-          ).launchRun(
+        : await launchEvaluationEngineFixture(
+            testDatabase.db,
             {
               taskId,
               sessionRunnerOverrides: {
@@ -390,8 +455,7 @@ describe("POST /api/runs — inherited session runners", () => {
                 implement: launchRunnerId,
               },
             },
-            { authorize: async () => undefined },
-            db,
+            { actorUserId: "u-member", authorize: async () => undefined },
           );
 
       if (response) expect(response.status, JSON.stringify(body)).toBe(202);
@@ -419,28 +483,348 @@ describe("POST /api/runs — inherited session runners", () => {
   );
 });
 
-describe("POST /api/v1/ext/runs — ext launch threads branch fields (M18, integration)", () => {
-  it("persists base_branch/target_branch supplied to the external launch endpoint", async () => {
-    const req = new NextRequest("http://localhost/api/v1/ext/runs", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        taskId: "task-ext",
-        baseBranch: "develop",
-        targetBranch: "release",
-      }),
+async function configuredEngineCase(
+  label: string,
+): Promise<{ taskId: string; projectId: string; repo: string }> {
+  const projectId = `${label}-${randomUUID()}`;
+  const taskId = randomUUID();
+
+  await seedProject(projectId, projectId);
+  await seedTask(taskId, projectId);
+  const [project] = await db
+    .select()
+    .from(schema.projects)
+    .where(eq(schema.projects.id, projectId));
+
+  return { taskId, projectId, repo: project.repoPath };
+}
+
+async function manualEngineRun(
+  taskId: string,
+): Promise<{ runId: string; status: string }> {
+  const [task] = await db
+    .select()
+    .from(schema.tasks)
+    .where(eq(schema.tasks.id, taskId));
+  const receipt = await acceptInteractiveTaskLaunch(
+    testDatabase.db,
+    await interactiveTaskLaunchPrincipal(),
+    {
+      taskId,
+      expectedTaskRevision: task.revision,
+      expectedSettingsToken: await taskLaunchSettingsToken(
+        testDatabase.db,
+        taskId,
+      ),
+    },
+    randomUUID(),
+  );
+
+  return bindAcceptedEngineFixture(testDatabase.db, receipt);
+}
+
+async function terminalEngineHistory(
+  taskId: string,
+  status: "Failed" | "Abandoned" | "Crashed" | "Done",
+): Promise<void> {
+  const bound = await launchQualifiedEngineRun(
+    { taskId },
+    engineContext,
+    testDatabase.db,
+  );
+
+  await db.transaction(async (tx) => {
+    await releaseAssignmentForRun(
+      tx,
+      bound.runId,
+      "technical fixture terminal history",
+    );
+    await tx
+      .update(schema.runs)
+      .set({ status, endedAt: new Date() })
+      .where(eq(schema.runs.id, bound.runId));
+  });
+}
+
+const engineContext = {
+  actorUserId: "u-member",
+  authorize: async () => undefined,
+};
+
+describe("canonical engine consumer contracts retained from the generic launcher", () => {
+  it("snapshots supervised/unattended and Brain choices while enforcing current unattended permission and blind-ship refusal", async () => {
+    const scopedContext: LaunchRunContext = {
+      actorUserId: "u-member",
+      authorize: async (_projectId, action) => {
+        if (action === "launchUnattended")
+          throw new MaisterError(
+            "UNAUTHORIZED",
+            "Fixture caller does not grant unattended launch",
+          );
+      },
+    };
+
+    for (const brainContext of [undefined, true] as const) {
+      const item = await configuredEngineCase("policy");
+      const launched = await launchQualifiedEngineRun(
+        {
+          taskId: item.taskId,
+          ...(brainContext === undefined ? {} : { brainContext }),
+        },
+        scopedContext,
+        testDatabase.db,
+      );
+      const [run] = await db
+        .select()
+        .from(schema.runs)
+        .where(eq(schema.runs.id, launched.runId));
+
+      expect(run.executionPolicy).toEqual({ preset: "supervised" });
+      expect(run.brainContext).toBe(brainContext ?? null);
+    }
+    const denied = await configuredEngineCase("policy-denied");
+
+    await expect(
+      launchQualifiedEngineRun(
+        { taskId: denied.taskId, executionPolicy: { preset: "unattended" } },
+        scopedContext,
+        testDatabase.db,
+      ),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect(
+      await db
+        .select()
+        .from(schema.runs)
+        .where(eq(schema.runs.taskId, denied.taskId)),
+    ).toEqual([]);
+    const owned = await configuredEngineCase("policy-owned");
+
+    await db
+      .update(schema.projectMembers)
+      .set({ role: "owner" })
+      .where(eq(schema.projectMembers.projectId, owned.projectId));
+    const launched = await launchQualifiedEngineRun(
+      { taskId: owned.taskId, executionPolicy: { preset: "unattended" } },
+      engineContext,
+      testDatabase.db,
+    );
+    const [run] = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, launched.runId));
+
+    expect(run.executionPolicy).toMatchObject({ preset: "unattended" });
+    const blind = await configuredEngineCase("blind-ship");
+
+    await expect(
+      launchQualifiedEngineRun(
+        {
+          taskId: blind.taskId,
+          executionPolicy: {
+            preset: "unattended",
+            overrides: { checks: "skip" },
+          },
+        },
+        engineContext,
+        testDatabase.db,
+      ),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+    expect(
+      await db
+        .select()
+        .from(schema.runs)
+        .where(eq(schema.runs.taskId, blind.taskId)),
+    ).toEqual([]);
+  });
+
+  it("binds a task base/default target and explicit reachable SHA, and rejects unknown targets and unreachable commits before allocation", async () => {
+    const item = await configuredEngineCase("branch-default");
+
+    await db
+      .update(schema.tasks)
+      .set({ baseBranch: "develop", targetBranch: null })
+      .where(eq(schema.tasks.id, item.taskId));
+    await seedAcceptedRepositoryQualification(
+      testDatabase.db,
+      item.projectId,
+      item.taskId,
+    );
+    const sha = await fixtureGit(item.repo, "rev-parse", "develop");
+    const launched = await launchQualifiedEngineRun(
+      { taskId: item.taskId, baseCommit: sha },
+      engineContext,
+      testDatabase.db,
+    );
+    const workspace = await workspaceForRun(launched.runId);
+
+    expect(workspace).toMatchObject({
+      baseBranch: "develop",
+      targetBranch: "develop",
+      baseCommit: sha,
     });
+    expect(await fixtureGit(workspace.worktreePath, "rev-parse", "HEAD")).toBe(
+      sha,
+    );
+    for (const selector of [
+      "baseBranch",
+      "targetBranch",
+      "baseCommit",
+    ] as const) {
+      const refused = await configuredEngineCase(`bad-${selector}`);
+      const [before] = await db
+        .select()
+        .from(schema.tasks)
+        .where(eq(schema.tasks.id, refused.taskId));
+      const tree = await fixtureGit(refused.repo, "rev-parse", "HEAD^{tree}");
+      const unreachable = await fixtureGit(
+        refused.repo,
+        "commit-tree",
+        tree,
+        "-m",
+        "Unreachable admission control",
+      );
+      const input = {
+        taskId: refused.taskId,
+        [selector]: selector === "baseCommit" ? unreachable : "unknown-branch",
+      };
 
-    // handleExt resolves the token's project; without a valid token this is the
-    // RED surface that also proves the body schema accepts the new fields once
-    // wired. Assert via the persisted workspace once the launch succeeds.
-    const res = await EXT_POST(req, {});
+      const refusal = launchQualifiedEngineRun(
+        input,
+        engineContext,
+        testDatabase.db,
+      );
 
-    // The ext route is token-authed; in this harness no token is present, so
-    // this asserts the route does not 400 on the NEW body fields (schema
-    // acceptance). The Implementor wires baseBranch/targetBranch into the ext
-    // postBodySchema + launchRun call; a 422 here on the BODY (invalid schema)
-    // would fail the contract.
-    expect(res.status).not.toBe(422);
+      await expect(refusal).rejects.toBeInstanceOf(MaisterError);
+      await expect(refusal).rejects.toMatchObject({ code: "PRECONDITION" });
+      const [after] = await db
+        .select()
+        .from(schema.tasks)
+        .where(eq(schema.tasks.id, refused.taskId));
+
+      expect(after.attemptNumber).toBe(before.attemptNumber);
+      expect(
+        await db
+          .select()
+          .from(schema.runs)
+          .where(eq(schema.runs.taskId, refused.taskId)),
+      ).toEqual([]);
+      expect(
+        await db
+          .select()
+          .from(schema.workspaces)
+          .where(eq(schema.workspaces.projectId, refused.projectId)),
+      ).toEqual([]);
+    }
+  });
+
+  it("keeps retryable historical statuses launchable, refuses busy remnants, and authorizes before classification", async () => {
+    for (const [taskStatus, sourceStatus] of [
+      ["InFlight", "Failed"],
+      ["Backlog", "Abandoned"],
+      ["InFlight", "Crashed"],
+      ["Done", "Done"],
+    ] as const) {
+      const item = await configuredEngineCase("historical");
+
+      await terminalEngineHistory(item.taskId, sourceStatus);
+      await db
+        .update(schema.tasks)
+        .set({ status: taskStatus })
+        .where(eq(schema.tasks.id, item.taskId));
+      expect((await manualEngineRun(item.taskId)).runId).toBeTruthy();
+    }
+    for (const active of [false, true]) {
+      const item = await configuredEngineCase("busy");
+
+      if (active)
+        await launchQualifiedEngineRun(
+          { taskId: item.taskId },
+          engineContext,
+          testDatabase.db,
+        );
+      else
+        await db
+          .update(schema.tasks)
+          .set({ status: "InFlight" })
+          .where(eq(schema.tasks.id, item.taskId));
+      const beforeWorkspaces = await db
+        .select()
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.projectId, item.projectId));
+
+      await expect(
+        launchQualifiedEngineRun(
+          { taskId: item.taskId },
+          engineContext,
+          testDatabase.db,
+        ),
+      ).rejects.toMatchObject({ name: "MaisterError" });
+      expect(
+        await db
+          .select()
+          .from(schema.workspaces)
+          .where(eq(schema.workspaces.projectId, item.projectId)),
+      ).toEqual(beforeWorkspaces);
+      const denied = new Error("fixture denied before classification");
+
+      await expect(
+        launchQualifiedEngineRun(
+          { taskId: item.taskId },
+          {
+            actorUserId: "u-member",
+            authorize: async () => {
+              throw denied;
+            },
+          },
+          testDatabase.db,
+        ),
+      ).rejects.toBe(denied);
+    }
+  });
+
+  it("allows an explicit human run-again of an Abandoned task while refusing automatic admission of that task", async () => {
+    const item = await configuredEngineCase("abandoned");
+
+    await terminalEngineHistory(item.taskId, "Crashed");
+    await db
+      .update(schema.tasks)
+      .set({ status: "Abandoned" })
+      .where(eq(schema.tasks.id, item.taskId));
+    await expect(
+      launchQualifiedEngineRun(
+        { taskId: item.taskId },
+        engineContext,
+        testDatabase.db,
+      ),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+    const [task] = await db
+      .select()
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, item.taskId));
+    const receipt = await acceptInteractiveTaskLaunch(
+      testDatabase.db,
+      await interactiveTaskLaunchPrincipal(),
+      {
+        taskId: item.taskId,
+        expectedTaskRevision: task.revision,
+        expectedSettingsToken: await taskLaunchSettingsToken(
+          testDatabase.db,
+          item.taskId,
+        ),
+      },
+      randomUUID(),
+    );
+    const bound = await bindAcceptedEngineFixture(testDatabase.db, receipt);
+    const [run] = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, bound.runId));
+
+    expect(run.taskAdmissionSnapshot).toMatchObject({
+      version: 2,
+      mode: "manual",
+      basis: "manual",
+      intentId: receipt.intentId,
+    });
   });
 });

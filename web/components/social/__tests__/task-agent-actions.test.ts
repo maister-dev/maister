@@ -31,7 +31,12 @@ function render(
       taskId: "22222222-2222-4222-8222-222222222222",
       taskNumber: 7,
       showSendToTriage,
-      agents,
+      agents: agents.map((agent) => ({
+        ...agent,
+        flowRef: null,
+        kind: "operational" as const,
+        workspace: "repo_read" as const,
+      })),
       labels: LABELS,
     }),
   );

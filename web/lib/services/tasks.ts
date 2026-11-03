@@ -342,6 +342,7 @@ export type TaskDTO = {
   // launch popover edits them pre-launch. ADR-112: `flagged` marks a confirmed
   // duplicate / triage-rejected intake (held — non-launchable until resolved).
   triageStatus: "triaged" | "flagged" | null;
+  triageFlagOrigin?: Task["triageFlagOrigin"];
   runnerId: string | null;
   baseBranch: string | null;
   targetBranch: string | null;
@@ -394,6 +395,7 @@ async function taskToDTO(
     stage: row.stage,
     flowId: row.flowId ?? null,
     triageStatus: row.triageStatus ?? null,
+    triageFlagOrigin: row.triageFlagOrigin ?? null,
     runnerId: row.runnerId ?? null,
     baseBranch: row.baseBranch ?? null,
     targetBranch: row.targetBranch ?? null,

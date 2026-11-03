@@ -1,7 +1,7 @@
 import "server-only";
 
 // Phase 4 (ADR-112): the auto_launch_triaged tick. A triaged + launch_mode=auto
-// + flow task with no live flow run and all relation blockers cleared is
+// + flow task with a current accepted qualification, no live flow run and all relation blockers cleared is
 // launched by the tick (reusing launchRun). Candidate selection, the
 // dependency-wait, the flagged hold, the orchestrator disjointness, the
 // live-run idempotency guard, the cap→Pending transient, and the stale-flow
@@ -25,6 +25,10 @@ import {
   vi,
 } from "vitest";
 
+import {
+  seedAcceptedAutomaticQualification,
+  automaticSelectorAdmissionSnapshot,
+} from "@/test-support/automatic-qualification";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
 import {
@@ -135,7 +139,7 @@ beforeEach(async () => {
 });
 
 // A triaged + auto-enqueued task. flowId defaults to the seeded launchable flow.
-async function seedTriagedAutoTask(
+async function seedUnassessedTriagedTask(
   args: {
     flowId?: string | null;
     triageStatus?: "triaged" | "flagged" | null;
@@ -152,8 +156,8 @@ async function seedTriagedAutoTask(
     `INSERT INTO "tasks"
        ("id", "project_id", "number", "title", "prompt", "status", "stage",
         "attempt_number", "flow_id", "triage_status", "launch_mode",
-        "launch_armed_at", "delegation_spec")
-     VALUES ($1, $2, $3, 'T', 'do it', 'Backlog', 'Backlog', 1, $4, $5, $6, $7, $8::jsonb)`,
+        "launch_armed_at", "delegation_spec", "triage_flag_origin")
+     VALUES ($1, $2, $3, 'T', 'do it', 'Backlog', 'Backlog', 1, $4, $5, $6, $7, $8::jsonb, CASE WHEN $5='flagged' THEN 'explicit' ELSE NULL END)`,
     [
       taskId,
       projectId,
@@ -165,6 +169,17 @@ async function seedTriagedAutoTask(
       args.delegationSpec ? JSON.stringify(args.delegationSpec) : null,
     ],
   );
+
+  return taskId;
+}
+
+// Positive automatic selectors require a current accepted assessment even when launch is injected.
+async function seedTriagedAutoTask(
+  args: Parameters<typeof seedUnassessedTriagedTask>[0] = {},
+): Promise<string> {
+  const taskId = await seedUnassessedTriagedTask(args);
+
+  await seedAcceptedAutomaticQualification(testDatabase, projectId, taskId);
 
   return taskId;
 }
@@ -203,9 +218,17 @@ async function seedLiveFlowRun(
   const runId = randomUUID();
 
   await pool.query(
-    `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id", "status", "flow_version", "flow_revision")
-     VALUES ($1, 'flow', $2, $3, $4, 'v1.0.0', 'rev-1')`,
-    [runId, projectId, taskId, status],
+    `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id", "status", "flow_version", "flow_revision", "task_admission_snapshot")
+     VALUES ($1, 'flow', $2, $3, $4, 'v1.0.0', 'rev-1', $5::jsonb)`,
+    [
+      runId,
+      projectId,
+      taskId,
+      status,
+      JSON.stringify(
+        await automaticSelectorAdmissionSnapshot(testDatabase, taskId),
+      ),
+    ],
   );
   await pool.query(
     `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_id")
@@ -226,8 +249,8 @@ async function seedTerminalFlowRun(
   const runId = randomUUID();
 
   await pool.query(
-    `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id", "status", "flow_version", "flow_revision", "started_at", "ended_at")
-     VALUES ($1, 'flow', $2, $3, $4, 'v1.0.0', 'rev-1', $5, $6)`,
+    `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id", "status", "flow_version", "flow_revision", "started_at", "ended_at", "task_admission_snapshot")
+     VALUES ($1, 'flow', $2, $3, $4, 'v1.0.0', 'rev-1', $5, $6, $7::jsonb)`,
     [
       runId,
       projectId,
@@ -235,6 +258,9 @@ async function seedTerminalFlowRun(
       status,
       new Date(endedAt.getTime() - 60_000),
       endedAt,
+      JSON.stringify(
+        await automaticSelectorAdmissionSnapshot(testDatabase, taskId),
+      ),
     ],
   );
   await pool.query(
@@ -664,7 +690,18 @@ describe("auto_launch_triaged tick", () => {
     expect(await commentCount(taskId)).toBe(0);
   });
 
-  it("give-up preserves a fresh re-triage arm when the selected legacy task had no arm", async () => {
+  it("legacy auto metadata without an assessment never reaches launch or invents a fresh arm", async () => {
+    const taskId = await seedUnassessedTriagedTask({ launchArmedAt: null });
+    const launch = recordingLaunch();
+    const summary = await runAutoLaunchTriagedJob({ launch: launch.fn });
+
+    expect(summary.candidates).toBe(0);
+    expect(launch.calls).toEqual([]);
+    expect(await launchArmedAtOf(taskId)).toBeNull();
+    expect(await launchModeOf(taskId)).toBe("auto");
+  });
+
+  it("give-up preserves a fresh re-triage arm when the accepted task had no previous arm", async () => {
     const taskId = await seedTriagedAutoTask({ launchArmedAt: null });
     const freshArm = new Date();
     const racing = {
