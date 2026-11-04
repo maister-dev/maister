@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { OperationalProbeContext } from "@/lib/agents/operational-diagnostics";
 import type { Db } from "@/lib/execution-host/db";
 import type { EffectiveAgentDefinition } from "@/lib/agents/effective";
 import type { Run } from "@/lib/db/schema";
@@ -9,6 +10,8 @@ import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 
 import { eq } from "drizzle-orm";
+
+import { reportPreparationCleanupFailure } from "@/lib/agents/preparation-trace";
 
 import { launchRefusal } from "./launch-resolution";
 import { captureAcceptedDirectory } from "./launch-capability-materialization";
@@ -23,28 +26,23 @@ import { runtimeRoot } from "@/lib/runtime-root";
 import { MaisterError } from "@/lib/errors";
 import { buildAgentActivitySnapshot } from "@/lib/agents/activity-snapshot";
 
-/** A capture cleanup failure supplements the original cause instead of replacing it. */
+/** Preserve exact pending/fenced authority while recording failed private cleanup. */
 export async function releaseTaskAgentCaptureAfterFailure(
   capture: Readonly<{ release: () => Promise<void> }>,
   originalError: unknown,
+  context?: OperationalProbeContext,
 ): Promise<unknown> {
   try {
     await capture.release();
-
-    return originalError;
   } catch (cleanupError) {
-    return new MaisterError(
-      "PRECONDITION",
-      "Agent preparation and private capture cleanup failed",
-      {
-        details: { reason: "launch_agent_capture_cleanup_failed" },
-        cause: new AggregateError(
-          [originalError, cleanupError],
-          "Agent preparation failure chain",
-        ),
-      },
-    );
+    reportPreparationCleanupFailure({
+      cleanupOperation: "agent_package.release",
+      primaryError: originalError,
+      cleanupError,
+      context,
+    });
   }
+  return originalError;
 }
 
 /** Load the accepted immutable install, never today's project pin or catalog prompt. */
@@ -117,7 +115,12 @@ export async function captureTaskAgentPackage(
   db: Db,
   run: Pick<
     Run,
-    "id" | "taskLaunchIntentId" | "agentId" | "projectId" | "taskId"
+    | "id"
+    | "taskLaunchIntentId"
+    | "agentId"
+    | "projectId"
+    | "taskId"
+    | "executionAssignmentId"
   >,
 ): Promise<
   Readonly<{
@@ -216,24 +219,13 @@ export async function captureTaskAgentPackage(
       release,
     };
   } catch (error) {
-    try {
-      await release();
-    } catch (cleanupError) {
-      throw new MaisterError(
-        "PRECONDITION",
-        "Accepted agent package capture and cleanup failed",
-        {
-          details: {
-            reason: "launch_agent_capture_cleanup_failed",
-            originalCode: error instanceof MaisterError ? error.code : null,
-          },
-          cause: new AggregateError(
-            [error, cleanupError],
-            "Agent capture failure chain",
-          ),
-        },
-      );
-    }
+    await releaseTaskAgentCaptureAfterFailure({ release }, error, {
+      runId: run.id,
+      ...(run.executionAssignmentId
+        ? { assignmentId: run.executionAssignmentId }
+        : {}),
+      stage: "package_capture",
+    });
     throw error;
   }
 }

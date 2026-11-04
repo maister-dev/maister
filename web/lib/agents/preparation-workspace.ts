@@ -1,7 +1,10 @@
 import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
-import type { OperationalFailureDiagnostic } from "./operational-diagnostics";
+import type {
+  OperationalProbeContext,
+  OperationalFailureDiagnostic,
+} from "./operational-diagnostics";
 import type { OperationalIntegrityBaseline } from "@/lib/run-results/operational-types";
 
 import { createHash } from "node:crypto";
@@ -18,12 +21,18 @@ import {
   advanceAgentPreparation,
   publishAgentPreparationBaseline,
   publishAgentPreparationGeneration,
+  preparationFenced,
 } from "./preparation-ownership";
 import { assertSafeAgentMaterializationPath } from "./materialization-manifest";
-import { withPreparationTrace } from "./preparation-trace";
+import {
+  withPreparationTrace,
+  reportPreparationCleanupFailure,
+} from "./preparation-trace";
+import { operationalFailureDiagnostic } from "./operational-diagnostics";
 
 import { acquireRepositoryMutationFence } from "@/lib/project-config-persistence/repository-lock";
 import { runtimeRoot } from "@/lib/runtime-root";
+import { isFencedError } from "@/lib/execution-host/deliverer";
 import { MaisterError } from "@/lib/errors";
 
 export type PreparationWorkspaceFence = {
@@ -35,6 +44,8 @@ type PreparationClaim = Awaited<ReturnType<typeof claimAgentPreparation>>;
 export type AgentPreparationOwner = PreparationClaim & {
   runEffect: PreparationWorkspaceFence["run"];
   release: () => Promise<void>;
+  assertHeld: () => void;
+  isHeld: () => boolean;
   advance: (
     next: Parameters<typeof advanceAgentPreparation>[2],
   ) => Promise<void>;
@@ -45,6 +56,45 @@ export type AgentPreparationOwner = PreparationClaim & {
     previousGeneration: number,
   ) => Promise<void>;
 };
+
+/** Failure cleanup cannot change the primary owner's pending or fencing semantics. */
+export async function releaseAgentPreparationAfterFailure(
+  owner: Readonly<{ release: () => Promise<void> }> | null,
+  primaryError: unknown,
+  context: OperationalProbeContext,
+): Promise<void> {
+  if (!owner) return;
+  try {
+    await owner.release();
+  } catch (cleanupError) {
+    reportPreparationCleanupFailure({
+      cleanupOperation: "preparation.release",
+      primaryError,
+      cleanupError,
+      context,
+    });
+  }
+}
+
+/** Retain the first failure even when its journal write is unavailable. */
+export async function recordAgentPreparationFailure(
+  owner: AgentPreparationOwner | null,
+  primaryError: unknown,
+  context: OperationalProbeContext,
+): Promise<void> {
+  if (!owner) return;
+  try {
+    await owner.fail(operationalFailureDiagnostic(primaryError, context));
+  } catch (cleanupError) {
+    reportPreparationCleanupFailure({
+      cleanupOperation: "preparation.publish_failure",
+      primaryError,
+      cleanupError,
+      context,
+    });
+    if (isFencedError(cleanupError)) throw cleanupError;
+  }
+}
 
 /** Repository fences retain registered orphan Git groups; plain trees spawn no Git. */
 export async function acquirePreparationWorkspace(input: {
@@ -129,6 +179,10 @@ export async function openAgentPreparation(
 
     return {
       ...claim,
+      isHeld: () => !released,
+      assertHeld: () => {
+        if (released) throw preparationFenced(input.runId);
+      },
       runEffect: (effect) =>
         withPreparationTrace(
           {
@@ -171,7 +225,11 @@ export async function openAgentPreparation(
       },
     };
   } catch (error) {
-    await fence.release();
+    await releaseAgentPreparationAfterFailure(fence, error, {
+      runId: input.runId,
+      assignmentId: input.assignmentId,
+      stage: "workspace_acquisition",
+    });
     throw error;
   }
 }

@@ -816,7 +816,7 @@ it("defers terminal cleanup while an accepted baseline owner is active and fence
     await import("@/lib/agents/operational-integrity");
   const { taskAgentPreparationWorkspace } =
     await import("@/lib/tasks/launch-agent-execution");
-  const { prepareUndispatchedAgentFailure } =
+  const { prepareAgentRunFinalization } =
     await import("@/lib/agents/finalization");
   const { runPlainAgentDirectoryGcSweep } =
     await import("@/lib/gc/plain-agent-directory-gc");
@@ -891,19 +891,20 @@ it("defers terminal cleanup while an accepted baseline owner is active and fence
     const baseline = await owner.runEffect(() =>
       captureOperationalBaseline(descriptor.cwd, descriptor.resourceKind),
     );
-    const terminal = await prepareUndispatchedAgentFailure(run.id, {
+    const terminal = await prepareAgentRunFinalization(run.id, "Abandoned", {
       db: database.db,
       expectedAssignmentId: run.executionAssignmentId!,
     });
     const terminalResult = await database.db.transaction(terminal.apply);
 
     expect(terminalResult.finalized).toBe(true);
+    await terminal.afterCommit(terminalResult);
     const busySweep = await runPlainAgentDirectoryGcSweep({
       candidates: [
         {
           runId: run.id,
           projectSlug: fixture.projectId,
-          status: "Failed",
+          status: "Abandoned",
           taskLaunchIntentId: accepted.intentId,
         },
       ],
@@ -938,7 +939,7 @@ it("defers terminal cleanup while an accepted baseline owner is active and fence
         {
           runId: run.id,
           projectSlug: fixture.projectId,
-          status: "Failed",
+          status: "Abandoned",
           taskLaunchIntentId: accepted.intentId,
         },
       ],
@@ -2312,3 +2313,92 @@ it.each(["held", "cancelled"] as const)(
     }
   },
 );
+
+it("holds a queued bearer standalone agent when its automatic arm is withdrawn", async () => {
+  const { prepareTaskQualification } =
+    await import("@/lib/tasks/qualification");
+  const { qualificationFixture } =
+    await import("@/test-support/task-qualification");
+  const { issueToken } = await import("@/lib/tokens/issue");
+  const { tokenTaskLaunchPrincipal } = await import("@/lib/tasks/launch-token");
+  const { acceptTokenTaskLaunch } = await import("@/lib/tasks/launch-intent");
+  const body = await request("none");
+  const assessment = await prepareTaskQualification(database.db, {
+    projectId: fixture.projectId,
+    taskId: body.taskId,
+    author: { kind: "user", identity: fixture.userId, userId: fixture.userId },
+    request: {
+      requestKey: randomUUID(),
+      expectedInputRevision: 1,
+      expectedQualificationRevision: null,
+      qualification: qualificationFixture(),
+      enqueue: false,
+    },
+  });
+
+  await database.db.transaction(assessment.apply);
+  await database.db
+    .update(tasks)
+    .set({
+      launchMode: "auto",
+      launchIntent: "triage_then_launch",
+      triageStatus: "triaged",
+      triageFlagOrigin: null,
+    })
+    .where(eq(tasks.id, body.taskId));
+  const [task] = await database.db
+    .select()
+    .from(tasks)
+    .where(eq(tasks.id, body.taskId));
+  const token = await issueToken(
+    {
+      projectId: fixture.projectId,
+      name: "agent automatic arm",
+      tokenKind: "user",
+      ownerUserId: fixture.userId,
+      scopes: ["runs:launch"],
+    },
+    database.db,
+  );
+  const principal = await tokenTaskLaunchPrincipal(database.db, token.secret);
+  const accepted = await acceptTokenTaskLaunch(
+    database.db,
+    principal,
+    {
+      ...body,
+      expectedTaskRevision: task.revision,
+      expectedSettingsToken: await taskLaunchSettingsToken(
+        database.db,
+        task.id,
+        body,
+      ),
+    },
+    randomUUID(),
+  );
+
+  expect(accepted).toMatchObject({
+    state: "queued",
+    runId: null,
+    basis: "automatic",
+  });
+  await database.db
+    .update(tasks)
+    .set({ launchMode: null })
+    .where(eq(tasks.id, task.id));
+  const blocked = await prepareTaskLaunchIntent(database.db, accepted.intentId);
+
+  expect(blocked).toMatchObject({
+    state: "held",
+    runId: null,
+    reason: "launch_automation_not_armed",
+  });
+  expect(
+    await database.db.select().from(runs).where(eq(runs.taskId, task.id)),
+  ).toHaveLength(0);
+  const commands = await database.pool.query<{ n: number }>(
+    "SELECT count(*)::int n FROM execution_commands WHERE run_id IN (SELECT id FROM runs WHERE task_id=$1)",
+    [task.id],
+  );
+
+  expect(commands.rows[0].n).toBe(0);
+});

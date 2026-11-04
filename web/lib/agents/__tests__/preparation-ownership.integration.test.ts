@@ -24,17 +24,79 @@ import {
   claimAgentPreparation,
   advanceAgentPreparation,
 } from "@/lib/agents/preparation-ownership";
-import { acquirePreparationWorkspace } from "@/lib/agents/preparation-workspace";
+import {
+  acquirePreparationWorkspace,
+  openAgentPreparation,
+} from "@/lib/agents/preparation-workspace";
 import {
   agentPreparationOperations,
   executionAssignments,
 } from "@/lib/db/schema";
 import { mintAssignment } from "@/lib/execution-host/assignments";
-import { prepareUndispatchedAgentFailure } from "@/lib/agents/finalization";
+import {
+  prepareUndispatchedAgentFailure,
+  prepareAgentRunFinalization,
+} from "@/lib/agents/finalization";
+import { settleAgentPreparationFailure } from "@/lib/agents/create-failure";
+import { isFencedError } from "@/lib/execution-host/deliverer";
 import { disposeOperationalRun } from "@/lib/gc/operational-disposition";
 import { loadOperationalOutcome } from "@/lib/run-results/operational-projection";
 import { admitAgentGenerationTurn } from "@/lib/agents/generation-turn";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+
+const releaseBarrier = vi.hoisted(() => ({
+  repository: "",
+  used: false,
+  entered: (): void => {},
+  release: Promise.resolve(),
+}));
+
+const releaseFault = vi.hoisted(() => ({
+  repository: "",
+  used: false,
+  error: null as NodeJS.ErrnoException | null,
+}));
+
+vi.mock(
+  "@/lib/project-config-persistence/repository-lock",
+  async (original) => {
+    const actual =
+      await original<
+        typeof import("@/lib/project-config-persistence/repository-lock")
+      >();
+
+    return {
+      ...actual,
+      acquireRepositoryMutationFence: async (
+        ...args: Parameters<typeof actual.acquireRepositoryMutationFence>
+      ) => {
+        const fence = await actual.acquireRepositoryMutationFence(...args);
+
+        if (
+          args[0] !== releaseFault.repository &&
+          args[0] !== releaseBarrier.repository
+        )
+          return fence;
+
+        return {
+          ...fence,
+          release: async (): Promise<void> => {
+            await fence.release();
+            if (args[0] === releaseBarrier.repository && !releaseBarrier.used) {
+              releaseBarrier.used = true;
+              releaseBarrier.entered();
+              await releaseBarrier.release;
+            }
+            if (!releaseFault.used && releaseFault.error) {
+              releaseFault.used = true;
+              throw releaseFault.error;
+            }
+          },
+        };
+      },
+    };
+  },
+);
 
 const probeBarrier = vi.hoisted(() => ({
   target: "",
@@ -289,68 +351,381 @@ async function seedReadOnlyPreparation(): Promise<{
   };
 }
 
-it("TB05 a real preparation probe failure persists its cause and issues no model commands", async () => {
+it.each([
+  "normal",
+  "failure_receipt_refused",
+  "workspace_release_refused",
+] as const)(
+  "TB05 a real preparation probe failure persists its cause and issues no model commands (%s)",
+  async (window) => {
+    const { hosts } = await fakeExecutionHosts(db);
+    const fixture = await seedReadOnlyPreparation();
+    const entered = barrier();
+    const release = barrier();
+
+    if (window === "failure_receipt_refused") {
+      await db.execute(sql`CREATE FUNCTION refuse_preparation_failure() RETURNS trigger
+      LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'private failure receipt unavailable' USING ERRCODE='40001'; END $$`);
+      await db.execute(sql`CREATE TRIGGER refuse_preparation_failure
+      BEFORE UPDATE OF phase ON agent_preparation_operations
+      FOR EACH ROW WHEN (NEW.phase='failed') EXECUTE FUNCTION refuse_preparation_failure()`);
+    }
+    if (window === "workspace_release_refused") {
+      releaseFault.repository = fixture.project.repoPath;
+      releaseFault.error = Object.assign(new Error("private release failure"), {
+        code: "EIO",
+        syscall: "unlink",
+      });
+      releaseFault.used = false;
+    }
+    probeBarrier.target = path.join(fixture.checkout, fixture.source);
+    probeBarrier.entered = entered.release;
+    probeBarrier.release = release.promise;
+    probeBarrier.used = false;
+    const driver = launch.startAgentSession(fixture.runId, {
+      db,
+      executionHosts: hosts,
+    });
+
+    try {
+      await Promise.race([
+        entered.promise,
+        driver.then(() => {
+          throw new Error("Driver ended before probe");
+        }),
+      ]);
+      await worktree.removeWorktree({
+        projectRepoPath: fixture.project.repoPath,
+        worktreePath: fixture.checkout,
+        force: true,
+      });
+    } finally {
+      release.release();
+      try {
+        await driver;
+      } finally {
+        probeBarrier.target = "";
+        if (window === "workspace_release_refused") {
+          releaseFault.repository = "";
+          releaseFault.error = null;
+        }
+        if (window === "failure_receipt_refused") {
+          await db.execute(
+            sql`DROP TRIGGER refuse_preparation_failure ON agent_preparation_operations`,
+          );
+          await db.execute(sql`DROP FUNCTION refuse_preparation_failure()`);
+        }
+      }
+    }
+
+    const [run] = await db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, fixture.runId));
+    const commands = await db
+      .select({ kind: executionCommands.kind })
+      .from(executionCommands)
+      .where(eq(executionCommands.runId, fixture.runId));
+
+    expect(run.status).toBe("Failed");
+    expect(run.operationalTerminal).toMatchObject({
+      infrastructureFailure: {
+        runId: fixture.runId,
+        stage: "baseline",
+        probeOperation: "lstat",
+        causeChain: [{ code: "ENOENT", syscall: "lstat" }],
+      },
+    });
+    expect(run.operationalTerminal?.reasonCodes).toContain(
+      "operational_integrity_probe_failed",
+    );
+    expect(
+      (await loadOperationalOutcome(db, fixture.runId))?.infrastructureFailure,
+    ).toEqual(run.operationalTerminal?.infrastructureFailure);
+    expect(
+      commands.filter((command) =>
+        ["session.create", "session.prompt"].includes(command.kind),
+      ),
+    ).toEqual([]);
+    expect(
+      JSON.stringify(run.operationalTerminal?.infrastructureFailure),
+    ).not.toContain(root);
+  },
+  60_000,
+);
+
+it("TB02 a pre-dispatch failure cannot terminalize a same-assignment preparation accepted after its physical release", async () => {
   const { hosts } = await fakeExecutionHosts(db);
   const fixture = await seedReadOnlyPreparation();
-  const entered = barrier();
-  const release = barrier();
+  const [initial] = await db
+    .select()
+    .from(runs)
+    .where(eq(runs.id, fixture.runId));
+  const captureEntered = barrier();
+  const releaseCapture = barrier();
+  const physicallyReleased = barrier();
+  const continueFailure = barrier();
 
   probeBarrier.target = path.join(fixture.checkout, fixture.source);
-  probeBarrier.entered = entered.release;
-  probeBarrier.release = release.promise;
+  probeBarrier.entered = captureEntered.release;
+  probeBarrier.release = releaseCapture.promise;
   probeBarrier.used = false;
+  releaseBarrier.repository = fixture.project.repoPath;
+  releaseBarrier.used = false;
+  releaseBarrier.entered = physicallyReleased.release;
+  releaseBarrier.release = continueFailure.promise;
   const driver = launch.startAgentSession(fixture.runId, {
     db,
     executionHosts: hosts,
   });
+  let successor: Awaited<ReturnType<typeof openAgentPreparation>> | null = null;
 
   try {
-    await Promise.race([
-      entered.promise,
-      driver.then(() => {
-        throw new Error("Driver ended before probe");
-      }),
-    ]);
-    await worktree.removeWorktree({
-      projectRepoPath: fixture.project.repoPath,
-      worktreePath: fixture.checkout,
-      force: true,
-    });
-  } finally {
-    release.release();
+    await captureEntered.promise;
+    await rm(path.join(fixture.checkout, fixture.source));
+    releaseCapture.release();
+    await physicallyReleased.promise;
+    const [atRelease] = await db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, fixture.runId));
+
+    if (atRelease.status === "Running") {
+      successor = await openAgentPreparation(db, {
+        runId: fixture.runId,
+        assignmentId: initial.executionAssignmentId!,
+        repoPath: fixture.project.repoPath,
+        cwd: fixture.checkout,
+        resourceKind: "ephemeral_checkout",
+      });
+      expect(successor.operation.assignmentId).toBe(
+        initial.executionAssignmentId,
+      );
+    } else {
+      expect(atRelease.status).toBe("Failed");
+      await expect(
+        openAgentPreparation(db, {
+          runId: fixture.runId,
+          assignmentId: initial.executionAssignmentId!,
+          repoPath: fixture.project.repoPath,
+          cwd: fixture.checkout,
+          resourceKind: "ephemeral_checkout",
+        }),
+      ).rejects.toMatchObject({
+        code: "CONFLICT",
+        details: { reason: "assignment_fenced" },
+      });
+    }
+    continueFailure.release();
     await driver;
+    const [finished] = await db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, fixture.runId));
+
+    if (successor) {
+      expect(finished.status).toBe("Running");
+      expect(finished.executionAssignmentId).toBe(
+        initial.executionAssignmentId,
+      );
+      const [operation] = await db
+        .select()
+        .from(agentPreparationOperations)
+        .where(eq(agentPreparationOperations.id, successor.operation.id));
+
+      expect(operation.phase).toBe("claimed");
+    } else {
+      expect(finished.status).toBe("Failed");
+      expect(finished.operationalTerminal?.infrastructureFailure).toMatchObject(
+        {
+          probeOperation: "lstat",
+          causeChain: [{ code: "ENOENT", syscall: "lstat" }],
+        },
+      );
+    }
+    const commands = await db
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.runId, fixture.runId));
+
+    expect(
+      commands.filter((command) =>
+        ["session.create", "session.prompt"].includes(command.kind),
+      ),
+    ).toEqual([]);
+    if (!successor) expect(finished.operationalCleanup?.state).toBe("released");
+  } finally {
+    releaseCapture.release();
+    continueFailure.release();
     probeBarrier.target = "";
+    releaseBarrier.repository = "";
+    await driver;
+    await successor?.release();
   }
+}, 60_000);
 
+it("TB02 a released preparation and proofless failure cannot close an accepted same-assignment successor", async () => {
+  await fakeExecutionHosts(db);
+  const fixture = await seedReadOnlyPreparation();
   const [run] = await db.select().from(runs).where(eq(runs.id, fixture.runId));
-  const commands = await db
-    .select({ kind: executionCommands.kind })
-    .from(executionCommands)
-    .where(eq(executionCommands.runId, fixture.runId));
-
-  expect(run.status).toBe("Failed");
-  expect(run.operationalTerminal).toMatchObject({
-    infrastructureFailure: {
-      runId: fixture.runId,
-      stage: "baseline",
-      probeOperation: "lstat",
-      causeChain: [{ code: "ENOENT", syscall: "lstat" }],
+  const input = {
+    runId: run.id,
+    assignmentId: run.executionAssignmentId!,
+    repoPath: fixture.project.repoPath,
+    cwd: fixture.checkout,
+    resourceKind: "ephemeral_checkout",
+  };
+  const first = await openAgentPreparation(db, input);
+  const primary = new MaisterError(
+    "PRECONDITION",
+    "fixture original preparation failure",
+    {
+      details: { reason: "operational_preparation_failed" },
     },
-  });
-  expect(run.operationalTerminal?.reasonCodes).toContain(
-    "operational_integrity_probe_failed",
   );
+
+  await first.release();
+  const successor = await openAgentPreparation(db, input);
+
+  try {
+    await expect(
+      settleAgentPreparationFailure(db, run.id, first, primary, {
+        runId: run.id,
+        stage: "checkout",
+      }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "assignment_fenced" },
+    });
+    const generic = await prepareUndispatchedAgentFailure(run.id, {
+      db,
+      expectedAssignmentId: run.executionAssignmentId,
+      reason: "fixture_proof_omitted",
+    });
+
+    await expect(db.transaction(generic.apply)).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "assignment_fenced" },
+    });
+    const [current] = await db.select().from(runs).where(eq(runs.id, run.id));
+    const [operation] = await db
+      .select()
+      .from(agentPreparationOperations)
+      .where(eq(agentPreparationOperations.id, successor.operation.id));
+
+    expect(current.status).toBe("Running");
+    expect(current.executionAssignmentId).toBe(run.executionAssignmentId);
+    expect(operation.phase).toBe("claimed");
+    expect(
+      await db
+        .select()
+        .from(executionCommands)
+        .where(eq(executionCommands.runId, run.id)),
+    ).toEqual([]);
+  } finally {
+    await successor.release();
+  }
+}, 60_000);
+
+it("TB02 an expired preparation cannot use failed journal publication to terminalize its assignment", async () => {
+  await fakeExecutionHosts(db);
+  const fixture = await seedReadOnlyPreparation();
+  const [run] = await db.select().from(runs).where(eq(runs.id, fixture.runId));
+  const owner = await openAgentPreparation(db, {
+    runId: run.id,
+    assignmentId: run.executionAssignmentId!,
+    repoPath: fixture.project.repoPath,
+    cwd: fixture.checkout,
+    resourceKind: "ephemeral_checkout",
+  });
+
+  await db
+    .update(agentPreparationOperations)
+    .set({
+      leaseExpiresAt: sql`clock_timestamp() + interval '100 milliseconds'`,
+    })
+    .where(eq(agentPreparationOperations.id, owner.operation.id));
+  await expect
+    .poll(async () => {
+      const rows = await db.execute(
+        sql`SELECT lease_expires_at <= clock_timestamp() AS expired FROM agent_preparation_operations WHERE id=${owner.operation.id}`,
+      );
+
+      return rows.rows[0]?.expired;
+    })
+    .toBe(true);
+  const primary = new MaisterError("PRECONDITION", "original probe failure", {
+    details: { reason: "operational_integrity_probe_failed" },
+  });
+
+  await expect(
+    settleAgentPreparationFailure(db, run.id, owner, primary, {
+      runId: run.id,
+      stage: "baseline",
+    }),
+  ).rejects.toMatchObject({
+    code: "CONFLICT",
+    details: { reason: "assignment_fenced" },
+  });
+  const [current] = await db.select().from(runs).where(eq(runs.id, run.id));
+
+  expect(current.status).toBe("Running");
+  expect(current.operationalTerminal).toBeNull();
   expect(
-    (await loadOperationalOutcome(db, fixture.runId))?.infrastructureFailure,
-  ).toEqual(run.operationalTerminal?.infrastructureFailure);
-  expect(
-    commands.filter((command) =>
-      ["session.create", "session.prompt"].includes(command.kind),
-    ),
+    await db
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.runId, run.id)),
   ).toEqual([]);
+}, 60_000);
+
+it("TB05 preserves a fenced preparation claim when its owned physical release also fails", async () => {
+  await fakeExecutionHosts(db);
+  const fixture = await seedReadOnlyPreparation();
+
+  releaseFault.repository = fixture.project.repoPath;
+  releaseFault.error = Object.assign(new Error("private release failure"), {
+    code: "EIO",
+    syscall: "unlink",
+  });
+  releaseFault.used = false;
+  try {
+    await expect(
+      openAgentPreparation(db, {
+        runId: fixture.runId,
+        assignmentId: randomUUID(),
+        repoPath: fixture.project.repoPath,
+        cwd: fixture.checkout,
+        resourceKind: "ephemeral_checkout",
+      }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "assignment_fenced" },
+    });
+    expect(releaseFault.used).toBe(true);
+  } finally {
+    releaseFault.repository = "";
+    releaseFault.error = null;
+  }
+  const fresh = await acquirePreparationWorkspace({
+    repoPath: fixture.project.repoPath,
+    cwd: fixture.checkout,
+    resourceKind: "ephemeral_checkout",
+  });
+
+  await fresh.release();
+  const [current] = await db
+    .select()
+    .from(runs)
+    .where(eq(runs.id, fixture.runId));
+
+  expect(current.status).toBe("Running");
   expect(
-    JSON.stringify(run.operationalTerminal?.infrastructureFailure),
-  ).not.toContain(root);
+    await db
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.runId, fixture.runId)),
+  ).toEqual([]);
 }, 60_000);
 
 it("TB05 workspace acquisition failure retains the native cause before model dispatch", async () => {
@@ -728,7 +1103,7 @@ it("TB02 durable ownership rejects identity forgery and terminal publication", a
     ).rejects.toMatchObject({
       cause: { constraint: "agent_preparation_identity_immutable" },
     });
-    const terminal = await prepareUndispatchedAgentFailure(run.id, {
+    const terminal = await prepareAgentRunFinalization(run.id, "Abandoned", {
       db,
       reason: "fixture_cancel",
     });
@@ -886,10 +1261,16 @@ it("TB04 terminal cleanup waits for paused baseline capture and late preparation
   probeBarrier.entered = entered.release;
   probeBarrier.release = release.promise;
   probeBarrier.used = false;
-  const driver = launch.startAgentSession(fixture.runId, {
-    db,
-    executionHosts: hosts,
-  });
+  const driver = launch
+    .startAgentSession(fixture.runId, {
+      db,
+      executionHosts: hosts,
+    })
+    .catch((error: unknown) => {
+      if (!isFencedError(error)) throw error;
+
+      return { fenced: true };
+    });
 
   try {
     await Promise.race([
@@ -898,10 +1279,14 @@ it("TB04 terminal cleanup waits for paused baseline capture and late preparation
         throw new Error("Driver ended before capture");
       }),
     ]);
-    const terminal = await prepareUndispatchedAgentFailure(fixture.runId, {
-      db,
-      reason: "fixture_terminal_race",
-    });
+    const terminal = await prepareAgentRunFinalization(
+      fixture.runId,
+      "Abandoned",
+      {
+        db,
+        reason: "fixture_terminal_race",
+      },
+    );
     const application = await db.transaction(terminal.apply);
 
     expect(application.finalized).toBe(true);

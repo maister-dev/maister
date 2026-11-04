@@ -7,7 +7,10 @@ import { randomUUID } from "node:crypto";
 
 import pino from "pino";
 
-import { operationalCauseChain } from "./operational-diagnostics";
+import {
+  operationalCauseChain,
+  operationalFailureDiagnostic,
+} from "./operational-diagnostics";
 
 const context = new AsyncLocalStorage<OperationalProbeContext>();
 const log = pino({ name: "agent-workspace-operation" });
@@ -57,4 +60,30 @@ export async function tracePreparationOperation<T>(
     );
     throw error;
   }
+}
+
+/** Cleanup supplements the original preparation failure without changing its authority type. */
+export function reportPreparationCleanupFailure(
+  input: Readonly<{
+    cleanupOperation:
+      | "probe.close"
+      | "preparation.publish_failure"
+      | "preparation.release"
+      | "agent_package.release";
+    primaryError: unknown;
+    cleanupError: unknown;
+    context?: OperationalProbeContext;
+  }>,
+): void {
+  const owner = { ...context.getStore(), ...input.context };
+
+  log.error(
+    {
+      ...owner,
+      cleanupOperation: input.cleanupOperation,
+      primaryFailure: operationalFailureDiagnostic(input.primaryError, owner),
+      cleanupCauseChain: operationalCauseChain(input.cleanupError),
+    },
+    "preparation-secondary-cleanup-failed",
+  );
 }

@@ -1,3 +1,4 @@
+import type { FileHandle } from "node:fs/promises";
 import "server-only";
 
 import type {
@@ -17,6 +18,7 @@ import pino from "pino";
 import { canonicalCommandJson } from "../../../runtime/command-json";
 
 import { MaisterError, isMaisterError } from "@/lib/errors";
+import { reportPreparationCleanupFailure } from "@/lib/agents/preparation-trace";
 import { operationalCauseChain } from "@/lib/agents/operational-diagnostics";
 import { executeRepositoryGit } from "@/lib/project-config-persistence/git-process";
 
@@ -92,6 +94,32 @@ async function probeOperation<T>(
       },
     );
   }
+}
+
+/** A failed close must not replace the operation that made this probe fail. */
+async function withProbeFile<Result>(
+  file: FileHandle,
+  context: OperationalProbeContext | undefined,
+  consume: () => Promise<Result>,
+): Promise<Result> {
+  let result: Result;
+  try {
+    result = await consume();
+  } catch (primaryError) {
+    try {
+      await probeOperation("close", () => file.close());
+    } catch (cleanupError) {
+      reportPreparationCleanupFailure({
+        cleanupOperation: "probe.close",
+        primaryError,
+        cleanupError,
+        context,
+      });
+    }
+    throw primaryError;
+  }
+  await probeOperation("close", () => file.close());
+  return result;
 }
 
 function logProbeFailure(
@@ -216,7 +244,7 @@ async function captureTree(
         open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW),
       );
 
-      try {
+      await withProbeFile(file, limits.context, async () => {
         const opened = await probeOperation("stat", () => file.stat());
 
         if (
@@ -255,9 +283,7 @@ async function captureTree(
           sha256: hash.digest("hex"),
           mode,
         });
-      } finally {
-        await probeOperation("close", () => file.close());
-      }
+      });
     } else throw probeError("operational_integrity_special_file");
     check();
   };
@@ -323,7 +349,7 @@ async function captureTree(
       ),
     );
 
-    try {
+    await withProbeFile(handle, limits.context, async () => {
       const before = await probeOperation("stat", () => handle.stat());
       const hash = createHash("sha256");
       const buffer = (sharedBuffer ??= Buffer.alloc(1024 * 1024));
@@ -352,9 +378,7 @@ async function captureTree(
       )
         throw probeError("operational_integrity_file_race");
       worktreeConfigDigest = hash.digest("hex");
-    } finally {
-      await probeOperation("close", () => handle.close());
-    }
+    });
   } catch (error) {
     const native = isMaisterError(error) ? error.cause : error;
 

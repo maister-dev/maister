@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { AgentPreparationOwner } from "@/lib/agents/preparation-workspace";
 import type { RawNodeOutputPayload } from "@/lib/flows/graph/node-output";
 import type { OperationalFailureDiagnostic } from "@/lib/agents/operational-diagnostics";
 import type { Db } from "@/lib/execution-host/db";
@@ -54,6 +55,7 @@ import { closedAnswerResponse } from "@/lib/hitl-closed-answer";
 import { getDb } from "@/lib/db/client";
 import {
   executionAssignments,
+  agentPreparationOperations,
   hitlRequests,
   projects,
   runs,
@@ -88,6 +90,10 @@ import {
   inspectOperationalRun,
   operationalResourceKind,
 } from "@/lib/agents/operational-context";
+import {
+  assertAgentPreparationFailureOwner,
+  preparationFenced,
+} from "@/lib/agents/preparation-ownership";
 import { prepareQualificationPublication } from "@/lib/tasks/qualification";
 
 const log = pino({
@@ -130,6 +136,8 @@ export type AgentFinalizeOptions = {
   infrastructureFailure?: OperationalFailureDiagnostic;
   /** A dispatch driver's diagnosis cannot settle another assignment generation. */
   expectedAssignmentId?: string | null;
+  /** Private current physical owner; retained through the pre-dispatch terminal commit. */
+  expectedPreparation?: Pick<AgentPreparationOwner, "operation" | "assertHeld">;
   /** Exact retained prompt whose validated result-resume grant may settle. */
   applicationCommandId?: string;
   reason?: string;
@@ -389,13 +397,45 @@ export async function prepareUndispatchedAgentFailure(
     afterCommit: prepared.afterCommit,
     apply: async (tx) => {
       const [run] = await tx
-        .select({ status: runs.status })
+        .select({
+          status: runs.status,
+          assignmentId: runs.executionAssignmentId,
+        })
         .from(runs)
         .where(eq(runs.id, runId))
         .for("update");
 
       if (!run || (run.status !== "Pending" && run.status !== "Running"))
         return { finalized: false };
+      if (opts.expectedPreparation) {
+        if (
+          opts.expectedPreparation.operation.runId !== runId ||
+          opts.expectedPreparation.operation.assignmentId !== run.assignmentId
+        )
+          throw preparationFenced(runId);
+        opts.expectedPreparation.assertHeld();
+      } else if (run.assignmentId) {
+        const [preparation] = await tx
+          .select({ id: agentPreparationOperations.id })
+          .from(agentPreparationOperations)
+          .where(
+            and(
+              eq(agentPreparationOperations.runId, runId),
+              eq(agentPreparationOperations.assignmentId, run.assignmentId),
+              inArray(agentPreparationOperations.phase, [
+                "claimed",
+                "checkout_ready",
+                "baseline_ready",
+                "materialized",
+                "failed",
+                "handed_off",
+              ]),
+            ),
+          )
+          .limit(1);
+
+        if (preparation) throw preparationFenced(runId);
+      }
       const evidence = await readAgentDispatchEvidence(tx, runId);
 
       if (evidence.hasOwnedCommand || evidence.hasBoundSession) {
@@ -696,6 +736,18 @@ async function prepareAgentFinalization(
             },
           );
       }
+    }
+    if (opts.expectedPreparation) {
+      if (
+        opts.expectedPreparation.operation.runId !== runId ||
+        opts.expectedPreparation.operation.assignmentId !== locked.assignmentId
+      )
+        throw preparationFenced(runId);
+      opts.expectedPreparation.assertHeld();
+      await assertAgentPreparationFailureOwner(
+        tx,
+        opts.expectedPreparation.operation,
+      );
     }
     if (
       preparedRun.agentKind === "operational" &&

@@ -1,3 +1,5 @@
+import type { FileHandle } from "node:fs/promises";
+
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -30,6 +32,75 @@ import {
   verifyOperationalIntegrity,
 } from "@/lib/agents/operational-integrity";
 
+import { releaseTaskAgentCaptureAfterFailure } from "@/lib/tasks/launch-agent-definition";
+import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
+import { isFencedError } from "@/lib/execution-host/deliverer";
+import { MaisterError } from "@/lib/errors";
+
+const probeFault = vi.hoisted(() => ({
+  current: null as Readonly<{
+    file: string;
+    readError: NodeJS.ErrnoException | null;
+    closeError: NodeJS.ErrnoException;
+    closed: () => void;
+  }> | null,
+  diagnostics: [] as Readonly<Record<string, unknown>>[],
+}));
+
+vi.mock("node:fs/promises", async (original) => {
+  const actual = await original<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    open: async (
+      ...args: Parameters<typeof actual.open>
+    ): Promise<FileHandle> => {
+      const handle = await actual.open(...args);
+      const fault = probeFault.current;
+      if (!fault || args[0] !== fault.file) return handle;
+      return new Proxy(handle, {
+        get(target, property): unknown {
+          if (property === "read" && fault.readError)
+            return async (): Promise<never> => {
+              throw fault.readError;
+            };
+          if (property === "close")
+            return async (): Promise<never> => {
+              await target.close();
+              fault.closed();
+              throw fault.closeError;
+            };
+          const value: unknown = Reflect.get(target, property, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    },
+  };
+});
+
+vi.mock("pino", async (original) => {
+  const actual = await original<typeof import("pino")>();
+  return {
+    ...actual,
+    default: (...args: Parameters<typeof actual.default>) => {
+      const options = args[0];
+      if (
+        options &&
+        typeof options === "object" &&
+        "name" in options &&
+        options.name === "agent-workspace-operation"
+      )
+        return actual.default(options, {
+          write: (line: string): void => {
+            probeFault.diagnostics.push(
+              JSON.parse(line) as Record<string, unknown>,
+            );
+          },
+        });
+      return actual.default(...args);
+    },
+  };
+});
+
 const exec = promisify(execFile);
 let root: string;
 let cwd: string;
@@ -50,6 +121,8 @@ beforeEach(async () => {
   await git("commit", "-qm", "initial");
 });
 afterEach(async () => {
+  probeFault.current = null;
+  probeFault.diagnostics = [];
   await rm(root, { recursive: true, force: true });
 });
 
@@ -121,6 +194,124 @@ describe("operational source integrity", () => {
       "Unexpected write.\n",
     );
   });
+
+  it.each(["fenced", "pending"] as const)(
+    "TB05 retains exact %s authority after private capture release fails",
+    async (kind) => {
+      const stage = await mkdtemp(join(root, "private-capture-"));
+      await writeFile(join(stage, "captured.txt"), "private captured content");
+      const primary =
+        kind === "fenced"
+          ? new MaisterError("CONFLICT", "The owner was superseded", {
+              details: { reason: "assignment_fenced" },
+            })
+          : new SessionCreatePending("frozen-create-command");
+      const cleanup: NodeJS.ErrnoException = Object.assign(
+        new Error(`private cleanup ${stage}`),
+        { code: "EIO", syscall: "unlink" },
+      );
+      let released = 0;
+      const retained = await releaseTaskAgentCaptureAfterFailure(
+        {
+          release: async () => {
+            await rm(stage, { recursive: true });
+            released += 1;
+            throw cleanup;
+          },
+        },
+        primary,
+      );
+      expect(retained).toBe(primary);
+      expect(
+        kind === "fenced"
+          ? isFencedError(retained)
+          : retained instanceof SessionCreatePending,
+      ).toBe(true);
+      expect(released).toBe(1);
+      await expect(lstat(stage)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readFile(join(cwd, "source.ts"), "utf8")).toBe(
+        "export const value = 1;\n",
+      );
+      expect(probeFault.diagnostics).toContainEqual(
+        expect.objectContaining({
+          cleanupOperation: "agent_package.release",
+          cleanupCauseChain: [
+            { name: "Error", code: "EIO", syscall: "unlink" },
+          ],
+        }),
+      );
+      expect(JSON.stringify(probeFault.diagnostics)).not.toContain(stage);
+    },
+  );
+
+  it.each(["read_and_close", "close_only"] as const)(
+    "TB05 preserves the probe failure when owned cleanup fails (%s)",
+    async (window) => {
+      const plain = join(root, "probe");
+      await mkdir(plain);
+      const file = join(await realpath(plain), "source.txt");
+      await writeFile(file, "private source content");
+      const readError: NodeJS.ErrnoException = Object.assign(
+        new Error(`private read failure ${file}`),
+        { code: "EIO", syscall: "read" },
+      );
+      const closeError: NodeJS.ErrnoException = Object.assign(
+        new Error(`private close failure ${file}`),
+        { code: "EBADF", syscall: "close" },
+      );
+      let closed = false;
+      probeFault.current = {
+        file,
+        readError: window === "read_and_close" ? readError : null,
+        closeError,
+        closed: () => {
+          closed = true;
+        },
+      };
+      let failure: unknown;
+      try {
+        await captureOperationalBaseline(plain, "plain_directory", {
+          context: {
+            runId: "probe-failure-owner",
+            assignmentId: "probe-assignment",
+            stage: "baseline",
+          },
+        });
+      } catch (error) {
+        failure = error;
+      }
+      expect(closed).toBe(true);
+      expect(await readFile(file, "utf8")).toBe("private source content");
+      expect(failure).toMatchObject({
+        details: {
+          reason: "operational_integrity_probe_failed",
+          probeOperation: window === "read_and_close" ? "read" : "close",
+        },
+        cause: window === "read_and_close" ? readError : closeError,
+      });
+      if (window === "read_and_close") {
+        expect(probeFault.diagnostics).toContainEqual(
+          expect.objectContaining({
+            runId: "probe-failure-owner",
+            assignmentId: "probe-assignment",
+            stage: "baseline",
+            cleanupOperation: "probe.close",
+            primaryFailure: expect.objectContaining({
+              probeOperation: "read",
+              causeChain: [{ name: "Error", code: "EIO", syscall: "read" }],
+            }),
+            cleanupCauseChain: expect.arrayContaining([
+              { name: "Error", code: "EBADF", syscall: "close" },
+            ]),
+          }),
+        );
+        const details = JSON.stringify(probeFault.diagnostics);
+        expect(details).not.toContain(file);
+        expect(details).not.toContain("private source content");
+        expect(details).not.toContain("private read failure");
+      }
+    },
+  );
 
   it("TB05 preserves a real missing-root cause and probe operation without exposing filesystem paths", async () => {
     await rm(cwd, { recursive: true });

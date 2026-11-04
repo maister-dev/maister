@@ -52,6 +52,7 @@ import {
   parkClaimedAgentTurnForHostPressure,
   settleAgentCreateFailure,
   settleUndispatchedAgentFailure,
+  settleAgentPreparationFailure,
 } from "./create-failure";
 import {
   assertAgentResumeTurn,
@@ -128,7 +129,11 @@ import {
   captureOperationalGeneration,
 } from "@/lib/agents/operational-integrity";
 import { operationalFailureDiagnostic } from "@/lib/agents/operational-diagnostics";
-import { openAgentPreparation } from "@/lib/agents/preparation-workspace";
+import {
+  openAgentPreparation,
+  recordAgentPreparationFailure,
+  releaseAgentPreparationAfterFailure,
+} from "@/lib/agents/preparation-workspace";
 import {
   assertAcceptedTaskAgentLaunchExecution,
   taskAgentPreparationWorkspace,
@@ -4363,6 +4368,7 @@ async function driveAgentSession(
       ? await releaseTaskAgentCaptureAfterFailure(
           packageCapture.current,
           originalError,
+          { ...preparationContext, stage: operationalSpawnStage },
         )
       : originalError;
 
@@ -4371,29 +4377,44 @@ async function driveAgentSession(
       (run.agentKind !== "operational" && !run.taskLaunchIntentId) ||
       isFencedError(error) ||
       (isMaisterError(error) && error.details?.reason === "operation_busy")
-    )
+    ) {
+      await releaseAgentPreparationAfterFailure(preparation, error, {
+        ...preparationContext,
+        stage: operationalSpawnStage,
+      });
       throw error;
+    }
+    if (preparation && !preparation.isHeld()) throw error;
     const infrastructureFailure = operationalFailureDiagnostic(error, {
       ...preparationContext,
       stage: operationalSpawnStage,
     });
 
-    await preparation?.fail(infrastructureFailure);
-    await preparation?.release();
+    await recordAgentPreparationFailure(preparation, error, {
+      ...preparationContext,
+      stage: operationalSpawnStage,
+    });
+    const ownedPreparation = preparation;
     const settled = await withoutGitOwnership(() =>
-      settleUndispatchedAgentFailure(
-        _db,
-        runId,
-        "agent_workspace_prepare_failed",
-        {
-          ...(assignmentId ? { expectedAssignmentId: assignmentId } : {}),
-          causeReason:
-            isMaisterError(error) && typeof error.details?.reason === "string"
-              ? error.details.reason
-              : "operational_preparation_failed",
-          infrastructureFailure,
-        },
-      ),
+      ownedPreparation
+        ? settleAgentPreparationFailure(_db, runId, ownedPreparation, error, {
+            ...preparationContext,
+            stage: operationalSpawnStage,
+          })
+        : settleUndispatchedAgentFailure(
+            _db,
+            runId,
+            "agent_workspace_prepare_failed",
+            {
+              ...(assignmentId ? { expectedAssignmentId: assignmentId } : {}),
+              causeReason:
+                isMaisterError(error) &&
+                typeof error.details?.reason === "string"
+                  ? error.details.reason
+                  : "operational_preparation_failed",
+              infrastructureFailure,
+            },
+          ),
     );
 
     if (!settled) throw error;
@@ -5047,18 +5068,21 @@ async function driveAgentSession(
         ? await releaseTaskAgentCaptureAfterFailure(
             packageCapture.current,
             originalError,
+            { ...preparationContext, stage: operationalSpawnStage },
           )
         : originalError;
 
       packageCapture.current = null;
       if (!isFencedError(err))
-        await preparation?.fail(
-          operationalFailureDiagnostic(err, {
-            ...preparationContext,
-            stage: operationalSpawnStage,
-          }),
-        );
-      await preparation?.release();
+        await recordAgentPreparationFailure(preparation, err, {
+          ...preparationContext,
+          stage: operationalSpawnStage,
+        });
+      else
+        await releaseAgentPreparationAfterFailure(preparation, err, {
+          ...preparationContext,
+          stage: operationalSpawnStage,
+        });
 
       return await withoutGitOwnership(async () => {
         if (isFencedError(err)) {
@@ -5157,6 +5181,16 @@ async function driveAgentSession(
               }
             : {};
 
+        if (preparation) {
+          if (
+            await settleAgentPreparationFailure(_db, runId, preparation, err, {
+              ...preparationContext,
+              stage: operationalSpawnStage,
+            })
+          )
+            return;
+          throw err;
+        }
         if (
           await settleUndispatchedAgentFailure(
             _db,

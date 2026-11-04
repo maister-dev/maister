@@ -8,7 +8,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 
-import { and, eq, exists, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, exists, inArray, isNull, sql, or, ne } from "drizzle-orm";
 import pino from "pino";
 
 import { agentPreparationOperations, runs } from "@/lib/db/schema";
@@ -53,6 +53,62 @@ export function preparationFenced(runId: string): MaisterError {
       details: { reason: "assignment_fenced", runId },
     },
   );
+}
+
+/** Called only while the physical preparation owner remains held through terminal commit. */
+export async function assertAgentPreparationFailureOwner(
+  tx: Db,
+  operation: Pick<
+    Preparation,
+    | "id"
+    | "runId"
+    | "assignmentId"
+    | "assignmentEpoch"
+    | "resourceId"
+    | "incarnation"
+  >,
+): Promise<void> {
+  const assignment = await lockCurrentSessionAssignment(tx, operation);
+
+  if (!assignment || assignment.epoch !== operation.assignmentEpoch)
+    throw preparationFenced(operation.runId);
+  const [current] = await tx
+    .select({ id: agentPreparationOperations.id })
+    .from(agentPreparationOperations)
+    .where(
+      and(
+        eq(agentPreparationOperations.id, operation.id),
+        eq(agentPreparationOperations.runId, operation.runId),
+        eq(agentPreparationOperations.assignmentId, operation.assignmentId),
+        eq(
+          agentPreparationOperations.assignmentEpoch,
+          operation.assignmentEpoch,
+        ),
+        eq(agentPreparationOperations.resourceId, operation.resourceId),
+        eq(agentPreparationOperations.incarnation, operation.incarnation),
+        or(
+          eq(agentPreparationOperations.phase, "failed"),
+          and(
+            inArray(agentPreparationOperations.phase, [...ACTIVE]),
+            sql`${agentPreparationOperations.leaseExpiresAt} > clock_timestamp()`,
+          ),
+        ),
+      ),
+    )
+    .for("update");
+  const [successor] = await tx
+    .select({ id: agentPreparationOperations.id })
+    .from(agentPreparationOperations)
+    .where(
+      and(
+        eq(agentPreparationOperations.resourceId, operation.resourceId),
+        ne(agentPreparationOperations.id, operation.id),
+        inArray(agentPreparationOperations.phase, [...ACTIVE]),
+      ),
+    )
+    .limit(1);
+
+  if (!current || successor) throw preparationFenced(operation.runId);
 }
 
 export function assertPreparationCommit(

@@ -255,10 +255,9 @@ export async function assertFrozenTaskAgentCurrent(
   if (metadataDigest !== settings.agentSnapshot.metadataDigest)
     throw launchRefusal("launch_settings_changed");
   if (intent.basis.kind === "automatic") {
-    const readBasis =
-      settings.serverExecution || intent.basis.origin
-        ? automaticTaskLaunchBasis
-        : armedAutomaticTaskLaunchBasis;
+    const readBasis = settings.serverExecution
+      ? automaticTaskLaunchBasis
+      : armedAutomaticTaskLaunchBasis;
     const current = await readBasis(
       db,
       task,
