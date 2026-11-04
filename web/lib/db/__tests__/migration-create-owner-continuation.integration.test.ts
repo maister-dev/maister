@@ -21,7 +21,7 @@ let populated: StartedPostgresTestDb;
 let fresh: StartedPostgresTestDb;
 let historicalId: string;
 let historicalUnknownId: string;
-let historical: unknown;
+let historical: Readonly<Record<string, unknown>>;
 
 async function commandFixture(
   database: StartedPostgresTestDb,
@@ -122,7 +122,7 @@ it("preserves historical private requests byte-for-byte through populated upgrad
         [historicalId],
       )
     ).rows[0].value,
-  ).toEqual(historical);
+  ).toEqual({ ...historical, coordinator_child_launch_context: null });
   await expect(
     populated.pool.query(
       "UPDATE execution_commands SET create_intent=(SELECT create_intent FROM execution_commands WHERE id=$2) WHERE id=$1",
