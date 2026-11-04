@@ -14,8 +14,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { eq } from "drizzle-orm";
-import { type NodePgDatabase } from "drizzle-orm/node-postgres";
+import { and, eq, sql } from "drizzle-orm";
+import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
   afterAll,
@@ -38,6 +38,17 @@ import {
   resumeHostPausedInterrupts,
   type HitlActor,
 } from "@/lib/services/hitl";
+import {
+  claimAssignment,
+  createHitlAssignment,
+  ensureUserActor,
+} from "@/lib/assignments/service";
+import {
+  seedActiveUser,
+  addProjectMember,
+} from "@/test-support/librarian-seed";
+import { applyCreateAck } from "@/lib/execution-host/create-ack";
+import { poll } from "@/test-support/durable-workers-ledger";
 import { markCheckpointed } from "@/lib/runs/state-transitions";
 import { runFlow } from "@/lib/flows/runner";
 import { seedGraphRun } from "@/test-support/graph-run-seed";
@@ -98,8 +109,11 @@ afterEach(async () => {
   await pool.query(`DELETE FROM "node_attempts"`);
   await pool.query(`DELETE FROM "assignments"`);
   await pool.query(`DELETE FROM "hitl_requests"`);
-  await pool.query(`DELETE FROM "runs"`);
-  await pool.query(`DELETE FROM "projects"`);
+  // Retained command evidence owns its Run until this disposable database stops.
+  await pool.query(`DELETE FROM "runs" WHERE NOT EXISTS
+    (SELECT 1 FROM execution_commands command WHERE command.run_id=runs.id)`);
+  await pool.query(`DELETE FROM "projects" WHERE NOT EXISTS
+    (SELECT 1 FROM runs owner WHERE owner.project_id=projects.id)`);
 });
 
 const INTERRUPTED = "implement";
@@ -927,3 +941,402 @@ describe("node_interrupt — execution-assignment placement (ADR-166)", () => {
     expect(await assignmentsOf(runId)).toHaveLength(0);
   });
 });
+
+it("serializes an actual owned create ACK with node-interrupt restart without Run/attempt inversion", async () => {
+  const projectId = await seedProject("ni-create-ack-lock-order");
+  const { runId, hitlRequestId, parkedAttemptId } =
+    await seedParkedRun(projectId);
+
+  await db
+    .update(schemaModule.runs)
+    .set({ status: "Running" })
+    .where(eq(schemaModule.runs.id, runId));
+  const client = await hosts.forRun(runId, { reason: "launch" });
+
+  await db
+    .update(schemaModule.nodeAttempts)
+    .set({
+      status: "Running",
+      executionAssignmentId: client.assignment.id,
+      actionPromptOrdinal: 0,
+    })
+    .where(eq(schemaModule.nodeAttempts.id, parkedAttemptId));
+  await db.insert(schemaModule.workspaces).values({
+    id: randomUUID(),
+    projectId,
+    runId,
+    branch: "maister/ack-restart",
+    worktreePath: runtimeRoot,
+    parentRepoPath: runtimeRoot,
+    baseBranch: "main",
+  });
+  const session = await client.createOwnedSession(
+    { variant: "node", nodeAttemptId: parkedAttemptId, promptOrdinal: 0 },
+    async () => ({
+      stepId: INTERRUPTED,
+      nodeAttemptId: parkedAttemptId,
+      executor: { agent: "claude", model: "mock" },
+    }),
+  );
+  const [command] = await db
+    .select()
+    .from(schemaModule.executionCommands)
+    .where(
+      and(
+        eq(schemaModule.executionCommands.runId, runId),
+        eq(schemaModule.executionCommands.kind, "session.create"),
+      ),
+    );
+
+  expect(command.kind).toBe("session.create");
+  await db
+    .update(schemaModule.runs)
+    .set({ status: "NeedsInput" })
+    .where(eq(schemaModule.runs.id, runId));
+  await db
+    .update(schemaModule.nodeAttempts)
+    .set({ status: "NeedsInput" })
+    .where(eq(schemaModule.nodeAttempts.id, parkedAttemptId));
+  const ackConnection = await pool.connect();
+  const restartConnection = await pool.connect();
+  const ackDb = drizzle(ackConnection, { schema: schemaModule });
+  const restartDb = drizzle(restartConnection, { schema: schemaModule });
+  const ackMayProceed = Promise.withResolvers<void>();
+  let ackLocked = false;
+  const [{ pid: ackPid }] = (
+    await ackConnection.query<{ pid: number }>("SELECT pg_backend_pid() pid")
+  ).rows;
+  const [{ pid: restartPid }] = (
+    await restartConnection.query<{ pid: number }>(
+      "SELECT pg_backend_pid() pid",
+    )
+  ).rows;
+
+  await ackConnection.query("SET statement_timeout='10s'");
+  await restartConnection.query("SET statement_timeout='10s'");
+  const ack = ackDb
+    .transaction(async (tx) => {
+      // Hold the exact first ACK lock before releasing it into the real ACK reducer.
+      await tx.execute(sql`SELECT id FROM runs WHERE id=${runId} FOR UPDATE`);
+      ackLocked = true;
+      await ackMayProceed.promise;
+
+      return applyCreateAck(tx, {
+        commandId: command.id,
+        runId,
+        sessionName: "default",
+        assignmentId: client.assignment.id,
+        nodeAttemptId: parkedAttemptId,
+        result: {
+          sessionId: session.hostSessionId,
+          acpSessionId: session.acpSessionId,
+          steeringSupported: session.steeringSupported ?? null,
+        },
+      });
+    })
+    .then(
+      (value) => ({ status: "fulfilled" as const, value }),
+      (reason: unknown) => ({ status: "rejected" as const, reason }),
+    );
+  let restart: Promise<
+    | Readonly<{
+        status: "fulfilled";
+        value: Awaited<ReturnType<typeof respondToHitl>>;
+      }>
+    | Readonly<{ status: "rejected"; reason: unknown }>
+  > | null = null;
+
+  try {
+    await poll(
+      async () => (ackLocked ? true : null),
+      5000,
+      "create ACK owns Run",
+      25,
+    );
+    restart = respondToHitl(
+      { runId, hitlRequestId, body: { optionId: "restart_node" } },
+      userActor,
+      { db: restartDb, executionHosts: hosts },
+    ).then(
+      (value) => ({ status: "fulfilled" as const, value }),
+      (reason: unknown) => ({ status: "rejected" as const, reason }),
+    );
+    await poll(
+      async () => {
+        const result = await pool.query<{ blocked: boolean }>(
+          "SELECT $1::int=ANY(pg_blocking_pids($2::int)) blocked",
+          [ackPid, restartPid],
+        );
+
+        return result.rows[0]?.blocked ? true : null;
+      },
+      5000,
+      "actual HITL restart waits for the ACK's Run owner",
+      25,
+    );
+    ackMayProceed.resolve();
+    const [acked, restarted] = await Promise.all([ack, restart]);
+
+    if (acked.status === "rejected") throw acked.reason;
+    if (restarted.status === "rejected") throw restarted.reason;
+    expect(acked.value).toBe("applied");
+    expect(restarted.value.status).toBe(202);
+    expect((await getAttempt(parkedAttemptId)).decision).toBe(
+      "operator_interrupt",
+    );
+    expect((await getHitl(hitlRequestId)).respondedAt).not.toBeNull();
+    const next = await getRun(runId);
+
+    expect(next.executionAssignmentId).not.toBe(client.assignment.id);
+  } finally {
+    ackMayProceed.resolve();
+    await Promise.all([ack, ...(restart ? [restart] : [])]);
+    ackConnection.release(true);
+    restartConnection.release(true);
+  }
+}, 30000);
+
+it.each(["stop", "resume"] as const)(
+  "serializes the actual %s assignment-FK claim against restart and rolls both audit failures back",
+  async (optionId) => {
+    const projectId = await seedProject(`ni-${optionId}-restart-lock-order`);
+    const { runId, hitlRequestId, parkedAttemptId } =
+      await seedParkedRun(projectId);
+    const assignment = await createHitlAssignment({
+      db,
+      projectId,
+      runId,
+      hitlRequestId,
+      nodeAttemptId: parkedAttemptId,
+      actionKind: "node_interrupt",
+      title: "Resolve interrupt",
+    });
+    const restartConnection = await pool.connect();
+    const siblingConnection = await pool.connect();
+    const restartDb = drizzle(restartConnection, { schema: schemaModule });
+    const siblingDb = drizzle(siblingConnection, { schema: schemaModule });
+    const [{ pid: restartPid }] = (
+      await restartConnection.query<{ pid: number }>(
+        "SELECT pg_backend_pid() pid",
+      )
+    ).rows;
+    const [{ pid: siblingPid }] = (
+      await siblingConnection.query<{ pid: number }>(
+        "SELECT pg_backend_pid() pid",
+      )
+    ).rows;
+
+    await restartConnection.query("SET statement_timeout='10s'");
+    await siblingConnection.query("SET statement_timeout='10s'");
+    const restartMayProceed = Promise.withResolvers<void>();
+    let restartLocked = false;
+    const auditFailure = new Error("Controlled transactional audit outage");
+    const refuseAudit = async (): Promise<void> => {
+      throw auditFailure;
+    };
+    const restart = restartDb
+      .transaction(async (tx) => {
+        await tx.execute(sql`SELECT id FROM runs WHERE id=${runId} FOR UPDATE`);
+        restartLocked = true;
+        await restartMayProceed.promise;
+
+        return respondToHitl(
+          { runId, hitlRequestId, body: { optionId: "restart_node" } },
+          userActor,
+          { db: tx, executionHosts: hosts, recordSuccessAudit: refuseAudit },
+        );
+      })
+      .then(
+        (value) => ({ status: "fulfilled" as const, value }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
+      );
+    let sibling: Promise<PromiseSettledResult<unknown>> | null = null;
+
+    try {
+      await poll(
+        async () => (restartLocked ? true : null),
+        5000,
+        "restart owns Run before sibling decision",
+        25,
+      );
+      sibling = respondToHitl(
+        { runId, hitlRequestId, body: { optionId } },
+        userActor,
+        {
+          db: siblingDb,
+          executionHosts: hosts,
+          recordSuccessAudit: refuseAudit,
+        },
+      ).then(
+        (value) => ({ status: "fulfilled" as const, value }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
+      );
+      await poll(
+        async () => {
+          const result = await pool.query<{ blocked: boolean }>(
+            "SELECT $1::int=ANY(pg_blocking_pids($2::int)) blocked",
+            [restartPid, siblingPid],
+          );
+
+          return result.rows[0]?.blocked ? true : null;
+        },
+        5000,
+        "actual sibling service waits for the restart's Run lock",
+        25,
+      );
+      restartMayProceed.resolve();
+      const outcomes = await Promise.all([restart, sibling]);
+
+      for (const outcome of outcomes) {
+        expect(outcome.status).toBe("rejected");
+        if (outcome.status === "rejected" && outcome.reason !== auditFailure)
+          throw outcome.reason;
+      }
+      expect((await getHitl(hitlRequestId)).respondedAt).toBeNull();
+      expect((await getAttempt(parkedAttemptId)).status).toBe("NeedsInput");
+      expect((await getRun(runId)).status).toBe("NeedsInput");
+      const [retained] = await db
+        .select()
+        .from(schemaModule.assignments)
+        .where(eq(schemaModule.assignments.id, assignment.id));
+
+      expect(retained.status).toBe("open");
+    } finally {
+      restartMayProceed.resolve();
+      await Promise.all([restart, ...(sibling ? [sibling] : [])]);
+      restartConnection.release(true);
+      siblingConnection.release(true);
+    }
+  },
+  30000,
+);
+
+it("lets a real public assignment claim finish before HITL restart closes it and upgrades its Run lock", async () => {
+  const projectId = await seedProject("ni-public-claim-restart");
+  const { runId, hitlRequestId, parkedAttemptId } =
+    await seedParkedRun(projectId);
+  const userId = await seedActiveUser(db);
+
+  await addProjectMember(db, { projectId, userId, role: "member" });
+  const actor = await ensureUserActor({
+    db,
+    projectId,
+    userId,
+    label: "Assignment claimant",
+  });
+  const assignment = await createHitlAssignment({
+    db,
+    projectId,
+    runId,
+    hitlRequestId,
+    nodeAttemptId: parkedAttemptId,
+    actionKind: "node_interrupt",
+    title: "Claim before restart",
+  });
+  const claimConnection = await pool.connect();
+  const restartConnection = await pool.connect();
+  const claimDb = drizzle(claimConnection, { schema: schemaModule });
+  const restartDb = drizzle(restartConnection, { schema: schemaModule });
+  const [{ pid: claimPid }] = (
+    await claimConnection.query<{ pid: number }>("SELECT pg_backend_pid() pid")
+  ).rows;
+  const [{ pid: restartPid }] = (
+    await restartConnection.query<{ pid: number }>(
+      "SELECT pg_backend_pid() pid",
+    )
+  ).rows;
+
+  await claimConnection.query("SET statement_timeout='10s'");
+  await restartConnection.query("SET statement_timeout='10s'");
+  let assignmentLocked = false;
+  const claimMayProceed = Promise.withResolvers<void>();
+  const claimed = claimDb
+    .transaction(async (tx) => {
+      // This is the public UPDATE's row lock, before its real event/FK write.
+      await tx.execute(
+        sql`SELECT id FROM assignments WHERE id=${assignment.id} FOR NO KEY UPDATE`,
+      );
+      assignmentLocked = true;
+      await claimMayProceed.promise;
+
+      return claimAssignment({
+        db: tx,
+        assignmentId: assignment.id,
+        actorId: actor.id,
+      });
+    })
+    .then(
+      (value) => ({ status: "fulfilled" as const, value }),
+      (reason: unknown) => ({ status: "rejected" as const, reason }),
+    );
+  let restarted: Promise<PromiseSettledResult<unknown>> | null = null;
+
+  try {
+    await poll(
+      async () => (assignmentLocked ? true : null),
+      5000,
+      "public claim owns its assignment row",
+      25,
+    );
+    restarted = respondToHitl(
+      { runId, hitlRequestId, body: { optionId: "restart_node" } },
+      { kind: "user", userId, label: "Assignment claimant" },
+      { db: restartDb, executionHosts: hosts },
+    ).then(
+      (value) => ({ status: "fulfilled" as const, value }),
+      (reason: unknown) => ({ status: "rejected" as const, reason }),
+    );
+    await poll(
+      async () => {
+        const result = await pool.query<{ blocked: boolean }>(
+          "SELECT $1::int=ANY(pg_blocking_pids($2::int)) blocked",
+          [claimPid, restartPid],
+        );
+
+        return result.rows[0]?.blocked ? true : null;
+      },
+      5000,
+      "actual HITL close waits for the public assignment owner",
+      25,
+    );
+    claimMayProceed.resolve();
+    const [claimResult, restartResult] = await Promise.all([
+      claimed,
+      restarted,
+    ]);
+
+    if (claimResult.status === "rejected") throw claimResult.reason;
+    if (restartResult.status === "rejected") throw restartResult.reason;
+    expect(claimResult.value).toMatchObject({
+      status: "claimed",
+      assigneeActorId: actor.id,
+    });
+    expect(restartResult.value).toMatchObject({ status: 202 });
+    const [closed] = await db
+      .select()
+      .from(schemaModule.assignments)
+      .where(eq(schemaModule.assignments.id, assignment.id));
+
+    expect(closed.status).toBe("cancelled");
+    expect((await getAttempt(parkedAttemptId)).decision).toBe(
+      "operator_interrupt",
+    );
+    const events = await db
+      .select({
+        kind: schemaModule.assignmentEvents.eventKind,
+        actorId: schemaModule.assignmentEvents.actorId,
+      })
+      .from(schemaModule.assignmentEvents)
+      .where(eq(schemaModule.assignmentEvents.assignmentId, assignment.id));
+
+    expect(events.filter((e) => e.kind === "claimed")).toEqual([
+      { kind: "claimed", actorId: actor.id },
+    ]);
+    expect(events.filter((e) => e.kind === "system_closed")).toHaveLength(1);
+  } finally {
+    claimMayProceed.resolve();
+    await Promise.all([claimed, ...(restarted ? [restarted] : [])]);
+    claimConnection.release(true);
+    restartConnection.release(true);
+  }
+}, 30000);

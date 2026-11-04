@@ -8,6 +8,8 @@ import { performance } from "node:perf_hooks";
 import { and, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { safeErrorCauseChain } from "../../../../runtime/safe-error-cause";
+
 import {
   projectionLimitsFromEnv,
   type ProjectionLimits,
@@ -657,6 +659,7 @@ async function recordProjectionFailure(input: {
         poisoned,
         reason: lastError.reason,
         fingerprint: lastError.fingerprint,
+        causeChain: safeErrorCauseChain(input.error),
       },
       "execution-event-projection-failed",
     );

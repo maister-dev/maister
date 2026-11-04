@@ -5738,6 +5738,19 @@ export async function claimNodeInterruptResume(
   return claim;
 }
 
+/** Conflict with ACK's FOR UPDATE while allowing assignment-event FK KEY SHARE.
+ * Restart closes and holds human assignments before placement upgrades this lock. */
+async function lockNodeInterruptRun(
+  tx: LaunchDb,
+  runId: string,
+): Promise<void> {
+  await tx
+    .select({ id: runs.id })
+    .from(runs)
+    .where(eq(runs.id, runId))
+    .for("no key update");
+}
+
 /** ADR-183 D-M2: the `resume` answer to a `node_interrupt`, extracted so the
  * operator's route (through `respondToHitl`, a human actor) and the sweep's
  * auto-resume of a host-paused node (`system`, server-internal — never a
@@ -5758,6 +5771,7 @@ export async function applyNodeInterruptResume(
 }> {
   const { runId, hitlRequestId, actor } = args;
   const answered = await db.transaction(async (tx: any) => {
+    await lockNodeInterruptRun(tx, runId);
     const locked = await lockHitlRow(tx, hitlRequestId);
 
     if (!locked || locked.runId !== runId || locked.kind !== "node_interrupt") {
@@ -5989,6 +6003,7 @@ async function handleNodeInterruptResponse(args: {
       await import("@/lib/workbench-lifecycle/service");
 
     const outcome = await db.transaction(async (tx: any) => {
+      await lockNodeInterruptRun(tx, runId);
       const locked = await lockHitlRow(tx, hitlRequestId);
 
       if (!locked) {
@@ -6286,6 +6301,7 @@ async function handleNodeInterruptResponse(args: {
   });
 
   const outcome = await db.transaction(async (tx: any) => {
+    await lockNodeInterruptRun(tx, runId);
     const locked = await lockHitlRow(tx, hitlRequestId);
 
     if (!locked) {
