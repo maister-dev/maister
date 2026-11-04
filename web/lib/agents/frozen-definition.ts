@@ -25,7 +25,14 @@ export const frozenAgentDefinitionSchema = z.custom<ParsedAgentDefinition>(
       );
 
       return (
-        agentDefinitionSha256(parsed) === agentDefinitionSha256(definition)
+        agentDefinitionSha256(parsed) ===
+        agentDefinitionSha256({
+          ...definition,
+          // Rendering appends one final newline; retained prompt bytes need not have one.
+          prompt: definition.prompt.endsWith("\n")
+            ? definition.prompt
+            : `${definition.prompt}\n`,
+        })
       );
     } catch {
       return false;

@@ -1,0 +1,81 @@
+{
+  "task": "T19.1",
+  "slice": "Existing retry ledger owner scope and retained version readers",
+  "baseCommit": "ee46f325c",
+  "status": "qualified storage and readers; company execution remains T20/T29",
+  "engineVersion": "3.11.1",
+  "migration": "0224_company_retry_scope",
+  "migrationSafety": "Generated SQL/snapshot from Drizzle; trigger additions only on uncommitted migration applied to owned disposable test databases. No deployed database mutated.",
+  "redCases": {
+    "reader-red": "Missing retained recipe reader fails import.",
+    "legacy-byte-validation-red": "Existing no-final-newline prompt fails render/hash equality; legacy empty manifest also fails the first strict decoder.",
+    "witness-red": "Company retry forged configuration digest inserted successfully before reference guard.",
+    "coordinator-fixture-red": "Test used bindingId where the actual receipt uses id; corrected and all owning tests rerun."
+  },
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "files": 8,
+      "tests": 83,
+      "log": "owning-green.log.gz"
+    },
+    "unit": {
+      "exitCode": 0,
+      "files": 886,
+      "tests": 9263,
+      "log": "full-unit-green.log.gz"
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "log": "typecheck-green.log.gz"
+    },
+    "lint": {
+      "exitCode": 0,
+      "warnings": 0,
+      "log": "lint-green.log.gz",
+      "finalTestLog": "final-test-lint.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "schemaDrift": {
+      "exitCode": 0,
+      "result": "No schema changes",
+      "log": "schema-drift.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "tables": 171,
+      "log": "docs.log.gz"
+    }
+  },
+  "observations": [
+    "Company source, binding, assignment and retry identities persist without a repository or carrier run. Direct retry inserts qualify storage, not admission.",
+    "Both exact specialist and coordinator snapshots and assignment input digests are checked against owned main-store history.",
+    "Existing actor/request-key and source-claim uniqueness remain effective with project_id NULL.",
+    "Company intents remain unleased and unchanged by the current project sweep; direct project claim/read refuses before source/project effects.",
+    "Populated project v1/v2 bytes and their ordinary project cleanup survive without a Brain connection."
+  ],
+  "remaining": [
+    "T20 company run admission and retry launch",
+    "T20.1 company result-only Flow runtime",
+    "T22.1 actual company trigger dispatch",
+    "T29 company interrupted-ownership recovery",
+    "Remaining T20-T43 and actual stand/package qualification"
+  ],
+  "sourceSha256": {
+    "web/lib/agents/retry-types.ts": "353d9f1e13f03216e3504e4c808c8e22e0135c628d3182ab56f403fbdc66b114",
+    "web/lib/agents/retry-snapshot.ts": "a61c8597bc694e077aa366b3115b2238577fd21cf4cdae2c82406aaa211cf877",
+    "web/lib/agents/retry-scope.ts": "9480e1e03300794e155e3277987506a0f8e0bd6806841ff689695d7cfd601631",
+    "web/lib/agents/retry-scope-schema.ts": "680fa9526e056a8b6e07af478f0b8938aa2f1e25cad5d8d83dc4cb83a4cf0efe",
+    "web/lib/agents/retry.ts": "de603dd052bf973a0b814567be2083eee9d3b92cd5526e1963c8280525217d49",
+    "web/lib/agents/retry-ownership.ts": "8961fd0f9cf10b46734eeaa21e52afa2d8056c95bed8bf5be53ae6ad3262e95d",
+    "web/lib/agents/frozen-definition.ts": "5637b8bfeeeb72af32143addf511ae6d20cf44f347115fcc4e693382052d116d",
+    "web/lib/db/schema.ts": "2d8d277d430f75f5d395b766f3b32f1ed0a78a0716bc8c7db37e31bd43348dde",
+    "web/lib/db/migrations/0224_company_retry_scope.sql": "9d2f5d6feb56ce5b2daa5f2f9676d94daf4f884e2e0cad00109ec716c30a1b91",
+    "web/lib/agents/__tests__/company-flow-bindings.integration.test.ts": "0c6e025f68959689dafb25faef28b8ab36fd9b70cd1589687427bf1b87e9cacd",
+    "web/lib/agents/__tests__/retry.integration.test.ts": "4d1a39f198661f621fd54159feffc7936c12f1eeb1f19e3bf6a2a149fb67c88a",
+    "web/lib/db/__tests__/migration-company-retry-scope.integration.test.ts": "b54036c38a16f8f672d83e338232f401f3c5e5a2746835555bc9e96ee9249d34"
+  }
+}

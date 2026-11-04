@@ -133,6 +133,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 
+import { agentRetryRecipeScopeShape } from "@/lib/agents/retry-scope-schema";
 import { triggerBindingScopeShape } from "@/lib/agents/trigger-scope-schema";
 import { scheduledRequestShape } from "@/lib/agents/scheduled-request-schema";
 import { TASK_LAUNCH_STATES } from "@/lib/tasks/launch-types";
@@ -10201,9 +10202,12 @@ export const agentRetryIntents = pgTable(
     id: text("id")
       .primaryKey()
       .default(sql`gen_random_uuid()::text`),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+    companyId: text("company_id").references(() => companies.id, {
+      onDelete: "restrict",
+    }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
     sourceAgentId: text("source_agent_id").notNull(),
     sourceRunId: text("source_run_id").notNull(),
     actorIdentity: text("actor_identity").notNull(),
@@ -10260,9 +10264,23 @@ export const agentRetryIntents = pgTable(
       t.sourceAgentId,
       t.createdAt.desc(),
     ),
+    companyIndex: index("agent_retry_company_idx")
+      .on(t.companyId, t.sourceAgentId, t.createdAt.desc())
+      .where(sql`${t.companyId} IS NOT NULL`),
+    ownerCheck: check(
+      "agent_retry_owner_check",
+      sql`((${t.projectId} IS NOT NULL AND ${t.companyId} IS NULL) OR (${t.projectId} IS NULL AND ${t.companyId} IS NOT NULL))`,
+    ),
     recipeCheck: check(
       "agent_retry_recipe_check",
-      sql`(jsonb_typeof(${t.recipe}) = 'object' AND ${t.recipe}->'version' IN ('1'::jsonb,'2'::jsonb) AND (${t.recipe}->'version' = '1'::jsonb OR ${t.recipe}->>'strategy' IN ('pre_work_retry','fresh_qualification')) AND ${t.recipe}->>'agentId' = ${t.sourceAgentId} AND ${t.recipe}->>'projectId' = ${t.projectId} AND ${t.requestDigest} ~ '^[a-f0-9]{64}$' AND ${t.previewFingerprint} ~ '^[a-f0-9]{64}$' AND pg_column_size(${t.recipe}) <= 1048576) IS TRUE`,
+      agentRetryRecipeScopeShape(
+        t.recipe,
+        t.projectId,
+        t.companyId,
+        t.sourceAgentId,
+        t.requestDigest,
+        t.previewFingerprint,
+      ),
     ),
     stateCheck: check(
       "agent_retry_state_check",

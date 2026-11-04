@@ -2,6 +2,7 @@ import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-reque
 import type { RunnerSnapshot } from "@/lib/acp-runners/resolve";
 import type { EffectiveAgentDefinition } from "@/lib/agents/effective";
 import type { AgentTriggerSource } from "@/lib/agents/launch";
+import type { CompanyConfigurationReference } from "@/lib/agents/trigger-attempt-types";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 
 export type AgentRetryStrategy = "pre_work_retry" | "fresh_qualification";
@@ -29,7 +30,7 @@ type AgentRetryRecipeFields = {
   };
 };
 
-export type AgentRetryRecipe = AgentRetryRecipeFields &
+export type ProjectAgentRetryRecipe = AgentRetryRecipeFields &
   (
     | { version: 1 }
     | {
@@ -39,10 +40,29 @@ export type AgentRetryRecipe = AgentRetryRecipeFields &
       }
   );
 
+export type CompanyAgentRetryRecipe = Omit<
+  AgentRetryRecipeFields,
+  "projectId" | "taskId" | "taskRevision" | "project"
+> & {
+  version: 3;
+  strategy: "pre_work_retry";
+  owner: { kind: "company"; companyId: string };
+  projectId: null;
+  taskId: null;
+  taskRevision: null;
+  project: null;
+  specialistBinding: CompanyConfigurationReference;
+  coordinatorFlowBinding: CompanyConfigurationReference | null;
+  assignment: { id: string; inputRevision: number; inputSha256: string };
+};
+
+export type AgentRetryRecipe =
+  ProjectAgentRetryRecipe | CompanyAgentRetryRecipe;
+
 export function retryRecipeStrategy(
   recipe: AgentRetryRecipe,
 ): AgentRetryStrategy {
-  return recipe.version === 2 ? recipe.strategy : "pre_work_retry";
+  return recipe.version !== 1 ? recipe.strategy : "pre_work_retry";
 }
 
 export type AgentRetryAllocation = {

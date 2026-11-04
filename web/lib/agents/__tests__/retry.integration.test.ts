@@ -13,6 +13,7 @@ import {
   runAgentRetryAdmissionSweep,
   getAgentRetryReceipt,
 } from "@/lib/agents/retry";
+import { parseAgentRetryRecipe } from "@/lib/agents/retry-snapshot";
 import { prepareUndispatchedAgentFailure } from "@/lib/agents/finalization";
 import { getAgentRetryBatchOptions } from "@/lib/agents/retry-batch";
 import { runs, runSessions, platformAcpRunners } from "@/lib/db/schema";
@@ -1331,4 +1332,74 @@ it("IT-UX-14 enforces the actual retry HTTP boundary, excludes protected recipes
       )
     ).rows[0].total,
   ).toBe(0);
+});
+
+it("version-dispatches retained recipes without defaults and rejects company ownership, definition and reference laundering", async () => {
+  const source = await fixture();
+  const prepared = await prepareAgentRetry(
+    database.db,
+    source.runId,
+    source.userId,
+  );
+  const project = await retryRecipeFor(database.db, prepared, source.runnerId);
+  const reference = {
+    id: randomUUID(),
+    revision: 1,
+    snapshotSha256: "a".repeat(64),
+  };
+
+  if (project.version !== 2)
+    throw new Error("Expected version-two project recipe");
+  const { qualificationSha: _qualificationSha, ...base } = project;
+  const company = {
+    ...base,
+    definition: {
+      ...base.definition,
+      manifest: {
+        spec: {
+          schemaVersion: 1,
+          name: base.definition.packageName,
+          flows: [],
+          capabilities: [],
+        },
+        inventory: { skills: [], agents: [], platformAgents: [] },
+      },
+    },
+    version: 3,
+    strategy: "pre_work_retry",
+    owner: { kind: "company", companyId: randomUUID() },
+    projectId: null,
+    project: null,
+    taskId: null,
+    taskRevision: null,
+    specialistBinding: reference,
+    coordinatorFlowBinding: null,
+    assignment: {
+      id: randomUUID(),
+      inputRevision: 1,
+      inputSha256: "b".repeat(64),
+    },
+  };
+
+  expect(parseAgentRetryRecipe(project)).toEqual(project);
+  expect(parseAgentRetryRecipe(company)).toEqual(company);
+  for (const change of [
+    { version: 4 },
+    { projectId: source.projectId },
+    { taskId: randomUUID() },
+    { strategy: "fresh_qualification" },
+    { specialistBinding: { ...reference, revision: 0 } },
+    { coordinatorFlowBinding: { ...reference, snapshotSha256: "forged" } },
+    { assignment: { ...company.assignment, inputRevision: 2147483648 } },
+    { agentId: "other:role" },
+    { owner: { kind: "project", projectId: source.projectId } },
+    { confirmation: "model-supplied" },
+  ]) {
+    expect(() => parseAgentRetryRecipe({ ...company, ...change })).toThrowError(
+      expect.objectContaining({
+        code: "CONFIG",
+        details: { reason: "retry_recipe_invalid" },
+      }),
+    );
+  }
 });

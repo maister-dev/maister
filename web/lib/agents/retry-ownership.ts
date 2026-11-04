@@ -4,10 +4,15 @@ import type { Db } from "@/lib/execution-host/db";
 import type {
   AgentRetryClaim,
   AgentRetryRecipe,
+  ProjectAgentRetryRecipe,
   AgentRetryAllocation,
 } from "@/lib/agents/retry-types";
+import type { ProjectAgentRetryIntent } from "./retry-scope";
 
 import { and, eq } from "drizzle-orm";
+
+import { parseAgentRetryRecipe } from "./retry-snapshot";
+import { assertProjectAgentRetryIntent } from "./retry-scope";
 
 import { assertScheduledRequestMatches } from "@/lib/agents/scheduled-request-store";
 import { parseScheduledRequestSnapshot } from "@/lib/agents/scheduled-request";
@@ -40,11 +45,13 @@ import { retryRecipeStrategy } from "@/lib/agents/retry-types";
 export async function assertAgentRetryClaim(
   db: Db,
   claim: AgentRetryClaim,
-): Promise<typeof agentRetryIntents.$inferSelect> {
+): Promise<ProjectAgentRetryIntent> {
   const [candidate] = await db
     .select()
     .from(agentRetryIntents)
     .where(eq(agentRetryIntents.id, claim.intentId));
+
+  if (candidate) assertProjectAgentRetryIntent(candidate);
 
   if (!candidate) throw retryRefusal("retry_intent_unavailable");
   const [source] = await db
@@ -74,6 +81,8 @@ export async function assertAgentRetryClaim(
     .from(agentRetryIntents)
     .where(eq(agentRetryIntents.id, claim.intentId))
     .for("update");
+
+  if (intent) assertProjectAgentRetryIntent(intent);
 
   if (
     intent.state !== "accepted" ||
@@ -138,7 +147,7 @@ export async function assertAgentRetryClaim(
 /** Only database state is read under lifecycle locks; package bytes were validated before this transaction. */
 export async function assertRetryRecipeCurrent(
   db: Db,
-  recipe: AgentRetryRecipe,
+  recipe: ProjectAgentRetryRecipe,
 ): Promise<void> {
   const [project] = await db
     .select()
@@ -269,6 +278,8 @@ export async function recordAgentRetrySuccessor(
     .from(agentRetryIntents)
     .where(eq(agentRetryIntents.id, claim.intentId));
 
+  if (intent) assertProjectAgentRetryIntent(intent);
+
   if (!intent || intent.successorRunId !== runId)
     throw retryRefusal("retry_successor_mismatch");
   const [successor] = await db
@@ -323,5 +334,5 @@ export async function frozenRetryDefinition(
       ),
     );
 
-  return intent?.recipe.definition ?? null;
+  return intent ? parseAgentRetryRecipe(intent.recipe).definition : null;
 }

@@ -172,7 +172,8 @@ table agent_project_links {
 
 table agent_retry_intents {
   id text [pk, not null, default: `gen_random_uuid()::text`]
-  project_id text [not null]
+  company_id text
+  project_id text
   source_agent_id text [not null]
   source_run_id text [not null]
   actor_identity text [not null]
@@ -201,6 +202,8 @@ table agent_retry_intents {
     source_run_id [name: 'agent_retry_source_claim_uq', unique]
     (due_at, id) [name: 'agent_retry_due_idx']
     (project_id, source_agent_id, created_at) [name: 'agent_retry_agent_idx']
+    (company_id, source_agent_id, created_at) [name: 'agent_retry_company_idx']
+
 
 
 
@@ -4081,6 +4084,8 @@ ref agent_project_links_agent_id_agents_id_fk: agent_project_links.agent_id > ag
 ref agent_project_links_project_id_projects_id_fk: agent_project_links.project_id > projects.id [delete: cascade, update: no action]
 
 ref agent_project_links_runner_override_id_platform_acp_runners_id_fk: agent_project_links.runner_override_id > platform_acp_runners.id [delete: set null, update: no action]
+
+ref agent_retry_intents_company_id_companies_id_fk: agent_retry_intents.company_id > companies.id [delete: restrict, update: no action]
 
 ref agent_retry_intents_project_id_projects_id_fk: agent_retry_intents.project_id > projects.id [delete: cascade, update: no action]
 

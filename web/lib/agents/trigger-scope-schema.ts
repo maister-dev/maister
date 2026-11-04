@@ -3,7 +3,7 @@ import type { AnyPgColumn } from "drizzle-orm/pg-core";
 
 import { sql } from "drizzle-orm";
 
-function configurationReferenceShape(value: SQL): SQL {
+export function configurationReferenceShape(value: SQL): SQL {
   return sql`(CASE WHEN jsonb_typeof(${value})='object' AND jsonb_typeof(${value}->'revision')='number' THEN
     ${value} ?& ARRAY['id','revision','snapshotSha256']
     AND ${value}-ARRAY['id','revision','snapshotSha256']='{}'::jsonb

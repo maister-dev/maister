@@ -1646,6 +1646,13 @@
       "when": 1794606477941,
       "tag": "0238_company_trigger_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 239,
+      "version": "7",
+      "when": 1794606477942,
+      "tag": "0239_company_retry_scope",
+      "breakpoints": true
     }
   ]
 }

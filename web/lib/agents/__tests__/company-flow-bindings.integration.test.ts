@@ -1,4 +1,5 @@
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
+import type { CompanySpecialistBindingSnapshot } from "../company-binding-types";
 import type { CompanyFlowBindingCreate } from "../company-flow-binding-types";
 
 import { randomUUID } from "node:crypto";
@@ -21,6 +22,11 @@ import {
   updateCompanyFlowBinding,
   detachCompanyFlowBinding,
 } from "../company-flow-binding-mutations";
+import { resolveInstalledAgentDefinition } from "../effective";
+import { parseAgentRetryRecipe } from "../retry-snapshot";
+import { assertAgentRetryClaim } from "../retry-ownership";
+import { runAgentRetryAdmissionSweep, getAgentRetryReceipt } from "../retry";
+import { retryDigest } from "../retry-guards";
 import { createCompanyCronSchedule } from "../company-schedules";
 import {
   claimCronAgentAttempt,
@@ -30,6 +36,12 @@ import {
 import { dispatchDueAgentSchedules } from "../triggers";
 import { parseScheduledRequestSnapshot } from "../scheduled-request";
 
+import { testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
+import { agentRetryIntents } from "@/lib/db/schema";
+import {
+  createSpecialistAssignment,
+  getSpecialistAssignmentInput,
+} from "@/lib/specialist-assignments/store";
 import { createCompanyGrants, revokeCompanyGrant } from "@/lib/company/grants";
 import {
   installPackageRevision,
@@ -79,7 +91,12 @@ beforeAll(async () => {
   const authority = await createCompanyGrants(database.db, administratorId, {
     principalKind: "user",
     principalId: requesterId,
-    actions: ["specialists:read", "specialists:manage"],
+    actions: [
+      "specialists:read",
+      "specialists:manage",
+      "assignments:read",
+      "assignments:submit",
+    ],
     idempotencyKey: randomUUID(),
   });
 
@@ -796,6 +813,230 @@ it("retains company cron sources and one existing invocation reservation per fir
       {
         expectedRevision: 1,
         reason: "Retire source qualification coordinator",
+        idempotencyKey: randomUUID(),
+      },
+    );
+  }
+});
+
+it("retains exact company retry inputs and configuration witnesses without letting project retry readers or the bounded sweep consume them", async () => {
+  const role = (
+    await database.pool.query<{
+      snapshot: CompanySpecialistBindingSnapshot;
+      snapshot_digest: string;
+    }>(
+      "SELECT snapshot,snapshot_digest FROM company_specialist_binding_revisions WHERE binding_id=$1 AND revision=1",
+      [input.specialistBindingId],
+    )
+  ).rows[0]!;
+  const definition = await resolveInstalledAgentDefinition(database.db, {
+    agentId: role.snapshot.agentId,
+    packageInstallId: role.snapshot.packageInstallId,
+  });
+  const assignment = await createSpecialistAssignment(
+    database.db,
+    requesterId,
+    {
+      owner: input.owner,
+      specialistBindingId: input.specialistBindingId,
+      responsibleAgentId: definition.parsed.id,
+      standingDefinition: {
+        schemaVersion: 1,
+        agentId: definition.parsed.id,
+        packageInstallId: definition.packageInstallId,
+        packageName: definition.packageName,
+        packageRevision: definition.resolvedRevision!,
+        definitionSha256: agentDefinitionSha256(definition.parsed),
+        definition: definition.parsed,
+        configuration: {},
+      },
+      objectiveInput: {
+        objective: "Retain retry context",
+        expectedOutcome: "An independently verified result",
+        input: "Keep completed work",
+        targetIds: [],
+        inputRefs: [],
+        constraints: ["No mutation"],
+        expectedResult: {
+          schemaRef: "retry-fixture:v1",
+          schemaVersion: 1,
+          sha256: "a".repeat(64),
+          required: true,
+        },
+        verification: [],
+      },
+      scheduledRequest: null,
+      sourceRestrictions: [],
+      executionPolicy: { preset: "supervised" },
+      origin: { kind: "manual", interactionId: randomUUID() },
+      destination: { kind: "inbox", userId: requesterId },
+    },
+  );
+  const retainedInput = await getSpecialistAssignmentInput(
+    database.db,
+    requesterId,
+    assignment.id,
+    1,
+  );
+  const coordinator = await createCompanyFlowBinding(database.db, requesterId, {
+    ...input,
+    idempotencyKey: randomUUID(),
+  });
+
+  try {
+    const coordinatorRevision = await getCompanyFlowBindingRevision(
+      database.db,
+      requesterId,
+      coordinator.binding.id,
+      1,
+    );
+    const recipe = parseAgentRetryRecipe({
+      version: 3,
+      strategy: "pre_work_retry",
+      owner: input.owner,
+      projectId: null,
+      taskId: null,
+      taskRevision: null,
+      project: null,
+      agentId: definition.parsed.id,
+      definition,
+      configuration: role.snapshot.effectiveConfiguration,
+      trigger: { source: "manual", eventId: null, payload: null },
+      runner: testRunnerSnapshot("retained-runner"),
+      policy: { preset: "supervised" },
+      contextDigest: retryDigest({ assignmentId: assignment.id }),
+      specialistBinding: {
+        id: input.specialistBindingId,
+        revision: 1,
+        snapshotSha256: role.snapshot_digest,
+      },
+      coordinatorFlowBinding: {
+        id: coordinator.binding.id,
+        revision: 1,
+        snapshotSha256: coordinatorRevision.snapshotDigest,
+      },
+      assignment: {
+        id: assignment.id,
+        inputRevision: 1,
+        inputSha256: retainedInput.digest,
+      },
+    });
+    const id = randomUUID();
+    const sourceRunId = randomUUID();
+    const values = {
+      id,
+      companyId: input.owner.companyId,
+      projectId: null,
+      sourceAgentId: definition.parsed.id,
+      sourceRunId,
+      actorIdentity: `user:${requesterId}`,
+      actorUserId: requesterId,
+      requestKey: randomUUID(),
+      requestDigest: retryDigest({ id }),
+      selectedRunnerId: "retained-runner",
+      recipe,
+      previewFingerprint: retryDigest({ preview: id }),
+      successorRunId: randomUUID(),
+      dueAt: new Date(0),
+    };
+
+    await database.db.insert(agentRetryIntents).values(values);
+    for (const duplicate of [
+      {
+        ...values,
+        id: randomUUID(),
+        sourceRunId: randomUUID(),
+        successorRunId: randomUUID(),
+      },
+      {
+        ...values,
+        id: randomUUID(),
+        requestKey: randomUUID(),
+        successorRunId: randomUUID(),
+      },
+    ]) {
+      await expect(
+        database.db.insert(agentRetryIntents).values(duplicate),
+      ).rejects.toMatchObject({ cause: { code: "23505" } });
+    }
+    const before = (
+      await database.pool.query(
+        "SELECT to_jsonb(i) AS value FROM agent_retry_intents i WHERE id=$1",
+        [id],
+      )
+    ).rows[0]!.value;
+
+    expect(await runAgentRetryAdmissionSweep(database.db)).toEqual({
+      processed: 0,
+      errors: [],
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT to_jsonb(i) AS value FROM agent_retry_intents i WHERE id=$1",
+          [id],
+        )
+      ).rows[0]!.value,
+    ).toEqual(before);
+    await expect(
+      assertAgentRetryClaim(database.db, {
+        intentId: id,
+        owner: randomUUID(),
+        fence: 1,
+      }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "company_retry_runtime_unavailable" },
+    });
+    await expect(
+      getAgentRetryReceipt(database.db, sourceRunId, id, requesterId),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "company_retry_runtime_unavailable" },
+    });
+    await expect(
+      database.pool.query(
+        "UPDATE agent_retry_intents SET company_id=NULL WHERE id=$1",
+        [id],
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
+    if (recipe.version !== 3) throw new Error("Expected company retry recipe");
+    for (const change of [
+      {
+        specialistBinding: {
+          ...recipe.specialistBinding,
+          snapshotSha256: "0".repeat(64),
+        },
+      },
+      { assignment: { ...recipe.assignment, inputSha256: "0".repeat(64) } },
+      {
+        coordinatorFlowBinding: {
+          ...recipe.specialistBinding,
+          id: randomUUID(),
+        },
+      },
+    ]) {
+      const forged = {
+        ...values,
+        id: randomUUID(),
+        sourceRunId: randomUUID(),
+        successorRunId: randomUUID(),
+        requestKey: randomUUID(),
+        recipe: { ...recipe, ...change },
+      };
+
+      await expect(
+        database.db.insert(agentRetryIntents).values(forged),
+      ).rejects.toMatchObject({ cause: { code: "23514" } });
+    }
+  } finally {
+    await detachCompanyFlowBinding(
+      database.db,
+      requesterId,
+      coordinator.binding.id,
+      {
+        expectedRevision: 1,
+        reason: "Retry storage qualification complete",
         idempotencyKey: randomUUID(),
       },
     );

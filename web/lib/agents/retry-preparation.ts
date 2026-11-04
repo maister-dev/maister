@@ -4,7 +4,7 @@ import type { TaskLaunchRequest } from "@/lib/tasks/launch-schema";
 import type { Db } from "@/lib/execution-host/db";
 import type { Run } from "@/lib/db/schema";
 import type {
-  AgentRetryRecipe,
+  ProjectAgentRetryRecipe,
   AgentRetryStrategy,
 } from "@/lib/agents/retry-types";
 import type { LoadedAgentContext } from "@/lib/agents/launch";
@@ -377,7 +377,7 @@ export async function retryRecipeFor(
   db: Db,
   preparation: RetryPreparation,
   runnerId: string,
-): Promise<AgentRetryRecipe> {
+): Promise<ProjectAgentRetryRecipe> {
   const { source, context } = preparation;
   const resolution = await resolveRunnerForAgent(
     db,

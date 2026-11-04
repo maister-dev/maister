@@ -28,6 +28,7 @@ import {
   tasks,
   taskLaunchIntents,
 } from "@/lib/db/schema";
+import { assertProjectAgentRetryIntent } from "./retry-scope";
 import {
   prepareAgentRetry,
   retryRecipeFor,
@@ -246,6 +247,8 @@ export async function getAgentRetryReceipt(
       ),
     );
 
+  if (intent) assertProjectAgentRetryIntent(intent);
+
   if (!intent) {
     const [canonical] = await db
       .select()
@@ -322,6 +325,8 @@ export async function acceptAgentRetry(
         eq(agentRetryIntents.requestKey, request.requestKey),
       ),
     );
+
+  if (replayed) assertProjectAgentRetryIntent(replayed);
 
   if (replayed) {
     await assertRetryAuthority(db, replayed.projectId, userId);
@@ -508,6 +513,7 @@ export async function acceptAgentRetry(
 
       if (!inserted[0] || !accepted)
         throw retryRefusal("retry_acceptance_lost");
+      assertProjectAgentRetryIntent(accepted);
       await emitDomainEvent({
         db: tx,
         kind: "agent.activity_changed",
@@ -556,7 +562,7 @@ async function claimDueIntent(
     const due = await tx.execute<{
       id: string;
     }>(sql`SELECT id FROM agent_retry_intents
-      WHERE ((state='accepted' AND attempts<3) OR (state='refused' AND allocation->>'disposition'='armed'))
+      WHERE project_id IS NOT NULL AND company_id IS NULL AND ((state='accepted' AND attempts<3) OR (state='refused' AND allocation->>'disposition'='armed'))
         AND due_at<=${now} AND (lease_expires_at IS NULL OR lease_expires_at<=${now})
       ORDER BY due_at,id LIMIT 1 FOR UPDATE SKIP LOCKED`);
 
@@ -588,6 +594,8 @@ async function refuseClaim(
       .from(agentRetryIntents)
       .where(eq(agentRetryIntents.id, claim.intentId));
 
+    if (row) assertProjectAgentRetryIntent(row);
+
     if (!row) return;
     await tx
       .select({ id: runs.id })
@@ -613,6 +621,8 @@ async function refuseClaim(
         ),
       )
       .returning();
+
+    if (refused) assertProjectAgentRetryIntent(refused);
 
     if (!refused) return;
     await recordAgentIncident(tx, {
@@ -649,6 +659,8 @@ async function deliverClaim(db: Db, claim: AgentRetryClaim): Promise<void> {
     .select()
     .from(agentRetryIntents)
     .where(eq(agentRetryIntents.id, claim.intentId));
+
+  if (intent) assertProjectAgentRetryIntent(intent);
 
   if (!intent) throw retryRefusal("retry_intent_unavailable");
   if (intent.state === "refused") {
@@ -792,6 +804,8 @@ async function disposeClaim(db: Db, claim: AgentRetryClaim): Promise<void> {
     .select()
     .from(agentRetryIntents)
     .where(eq(agentRetryIntents.id, claim.intentId));
+
+  if (intent) assertProjectAgentRetryIntent(intent);
 
   if (
     !intent?.allocation ||
@@ -980,6 +994,8 @@ async function failDisposal(
     .from(agentRetryIntents)
     .where(eq(agentRetryIntents.id, claim.intentId));
 
+  if (intent) assertProjectAgentRetryIntent(intent);
+
   if (
     !intent?.allocation ||
     intent.leaseOwner !== claim.owner ||
@@ -1082,6 +1098,8 @@ export async function rearmAgentRetryCleanup(
         ),
       )
       .for("update");
+
+    if (intent) assertProjectAgentRetryIntent(intent);
 
     if (!intent) throw retryRefusal("retry_intent_unavailable");
     await assertRetryAuthority(tx, intent.projectId, userId);
