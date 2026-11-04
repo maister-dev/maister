@@ -2,15 +2,40 @@ import type { AnyMessage, Stream } from "@agentclientprotocol/sdk/unstable";
 import type { BoundedAcpClient } from "../bounded-acp-stream";
 
 import { createWriteStream } from "node:fs";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { boundedAcpStream, captureAcpFrames } from "../bounded-acp-stream";
 import { SupervisorError } from "../types";
+
+const spoolGate = vi.hoisted(() => ({
+  current: null as Readonly<{
+    path: string;
+    entered: () => void;
+    release: Promise<void>;
+  }> | null,
+}));
+
+vi.mock("node:fs/promises", async (original) => {
+  const actual = await original<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const gate = spoolGate.current;
+      if (gate && args[0] === gate.path) {
+        gate.entered();
+        await gate.release;
+      }
+      return actual.open(...args);
+    },
+  };
+});
 
 function createClient(): { client: BoundedAcpClient; messages: AnyMessage[] } {
   const messages: AnyMessage[] = [];
@@ -55,6 +80,83 @@ describe("bounded ACP framed-source contract", () => {
       await stream?.readable.cancel();
       source.destroy();
       stdin.destroy();
+    }
+  });
+
+  it("retains native child stdout while the private frame spool is opening", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "bounded-acp-exit-"));
+    const spoolPath = join(directory, "frame.tmp");
+    let releaseOpen: () => void = () => {};
+    let enteredOpen: () => void = () => {};
+    const blocked = new Promise<void>((resolve) => {
+      releaseOpen = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      enteredOpen = resolve;
+    });
+    spoolGate.current = {
+      path: spoolPath,
+      entered: enteredOpen,
+      release: blocked,
+    };
+    const bytes = "one\ntwo\nthree\n";
+    const child = spawn(
+      process.execPath,
+      ["-e", `process.stdout.write(${JSON.stringify(bytes)});`],
+      {
+        stdio: ["ignore", "pipe", "inherit"],
+      },
+    );
+    const source = child.stdout;
+    if (!source) throw new Error("Native capture fixture requires stdout");
+    const readableListeners = source.listenerCount("readable");
+    const exited = once(child, "exit");
+    const closed = once(child, "close");
+    const resumed = once(source, "resume");
+    const frames: string[] = [];
+    const failures: unknown[] = [];
+    let finishDrain: () => void = () => {};
+    const drained = new Promise<void>((resolve) => {
+      finishDrain = resolve;
+    });
+    const tap = captureAcpFrames({
+      source,
+      directory,
+      spoolPath,
+      log: createWriteStream(join(directory, "stdout.log")),
+      onFailure: (error) => failures.push(error),
+      onDrained: finishDrain,
+    });
+    tap.on("data", (frame: Buffer) => frames.push(frame.toString("utf8")));
+    tap.on("error", (error: unknown) => failures.push(error));
+    try {
+      await entered;
+      await exited;
+      await resumed;
+      // Both arms observe the native exit-time auto-resume finishing its work:
+      // preserved bytes remain buffered in readable mode; lost bytes reach EOF.
+      await expect
+        .poll(
+          () =>
+            source.readableEnded ||
+            (source.readableFlowing === false &&
+              source.readableLength === Buffer.byteLength(bytes)),
+        )
+        .toBe(true);
+      releaseOpen();
+      await drained;
+      await closed;
+      expect(source.listenerCount("readable")).toBe(readableListeners);
+      expect(child.exitCode).toBe(0);
+      expect(failures).toEqual([]);
+      expect(frames).toEqual(["one\n", "two\n", "three\n"]);
+    } finally {
+      releaseOpen();
+      spoolGate.current = null;
+      if (child.exitCode === null) child.kill("SIGKILL");
+      await closed;
+      await drained;
+      await rm(directory, { recursive: true, force: true });
     }
   });
 

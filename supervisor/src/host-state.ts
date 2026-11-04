@@ -1541,6 +1541,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
   function settleLostSessionWallet(wallet: LostWallet): void {
     if (wallet.host_session_id === null) {
       state.closeProducerWallet(wallet.wallet_id);
+
       return;
     }
     state.appendRuntimeEvent({

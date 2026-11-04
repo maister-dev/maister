@@ -192,33 +192,24 @@ function waitReadable(source: NodeReadable): Promise<void> {
 }
 
 async function* boundedChunks(source: NodeReadable): AsyncGenerator<Buffer> {
-  // Node resumes child stdio on exit. Keep readable mode active while disk
-  // writes and decoding suspend this generator, or that resume discards bytes.
-  const preserveReadableMode = (): void => {};
+  for (;;) {
+    if (source.readableLength > 0) {
+      const chunk: unknown = source.read(
+        Math.min(source.readableLength, 65_536),
+      );
 
-  source.on("readable", preserveReadableMode);
-  try {
-    for (;;) {
-      if (source.readableLength > 0) {
-        const chunk: unknown = source.read(
-          Math.min(source.readableLength, 65_536),
-        );
-
-        if (!Buffer.isBuffer(chunk)) throw incomplete("producer_chunk_limit");
-        yield chunk;
-      } else if (source.errored) {
-        throw source.errored;
-      } else if (source.readableEnded || source.destroyed) {
-        return;
-      } else {
-        // With a persistent readable listener, request the next read (including
-        // the final EOF) explicitly after consuming the buffered bytes.
-        source.read(0);
-        await waitReadable(source);
-      }
+      if (!Buffer.isBuffer(chunk)) throw incomplete("producer_chunk_limit");
+      yield chunk;
+    } else if (source.errored) {
+      throw source.errored;
+    } else if (source.readableEnded || source.destroyed) {
+      return;
+    } else {
+      // With a persistent readable listener, request the next read (including
+      // the final EOF) explicitly after consuming the buffered bytes.
+      source.read(0);
+      await waitReadable(source);
     }
-  } finally {
-    source.off("readable", preserveReadableMode);
   }
 }
 
@@ -276,6 +267,14 @@ export function captureAcpFrames(input: {
   shouldDrain?: () => boolean;
   onSegment?: (segment: CapturedStdoutSegment) => void;
 }): NodeReadable {
+  // Child exit auto-resumes stdio. Protect unread bytes before the lazy framer
+  // or its first spool open can yield, and keep that ownership through drain.
+  const preserveReadableMode = (): void => {};
+  const releaseReadableMode = (): void => {
+    input.source.off("readable", preserveReadableMode);
+  };
+
+  input.source.on("readable", preserveReadableMode);
   input.log.once("error", (error) => {
     input.onStorageFailure?.(error);
     input.onFailure(incomplete("producer_output_storage"));
@@ -422,13 +421,21 @@ export function captureAcpFrames(input: {
           input.onStorageFailure?.(error);
           throw error;
         } finally {
+          releaseReadableMode();
           input.onDrained();
         }
       }
     }
   }
 
-  return Readable.from(frames(), { objectMode: true, highWaterMark: 0 });
+  const output = Readable.from(frames(), {
+    objectMode: true,
+    highWaterMark: 0,
+  });
+
+  output.once("close", releaseReadableMode);
+
+  return output;
 }
 
 /** Bounds JSON parser work before allocating the decoded object graph. */

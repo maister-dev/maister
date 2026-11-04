@@ -445,6 +445,7 @@ describe("durable session process obligations", () => {
       }
       state.close();
       const legacy = new DatabaseSync(join(stateDir, HOST_STATE_FILE));
+
       if (history === "closed-missing-receipt")
         legacy
           .prepare("DELETE FROM command_receipts WHERE command_id=?")
