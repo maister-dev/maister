@@ -45,7 +45,7 @@ const witnessSchema = z
 function assetsChanged(cause?: unknown): MaisterError {
   return new MaisterError(
     "PRECONDITION",
-    "The accepted Flow assets cannot be reproduced; inspect its installation and launch again",
+    "The selected Flow assets cannot be reproduced; inspect its installation and launch again",
     {
       details: {
         reason: "launch_flow_assets_changed",
@@ -54,6 +54,15 @@ function assetsChanged(cause?: unknown): MaisterError {
       ...(cause === undefined ? {} : { cause }),
     },
   );
+}
+
+/** Missing or unreadable asset bytes are an execution precondition, not an unclassified server crash. */
+async function flowAssetContentDigest(directory: string): Promise<string> {
+  try {
+    return await localDirectoryContentDigest(directory);
+  } catch (cause) {
+    throw assetsChanged(cause);
+  }
 }
 
 async function exists(file: string): Promise<boolean> {
@@ -89,7 +98,7 @@ export async function captureTaskLaunchFlowAssets(
     version: 1,
     flowRevisionId: revision.id,
     manifestDigest: revision.manifestDigest,
-    contentDigest: await localDirectoryContentDigest(revision.installedPath),
+    contentDigest: await flowAssetContentDigest(revision.installedPath),
   };
 }
 
@@ -186,9 +195,7 @@ async function verifyCapturedAssets(
 
   await assertManagedAssetPaths(paths);
   await assertAssetWitness(intent, identity, paths.witness);
-  if (
-    (await localDirectoryContentDigest(paths.assets)) !== expected.contentDigest
-  )
+  if ((await flowAssetContentDigest(paths.assets)) !== expected.contentDigest)
     throw assetsChanged();
 
   return paths.assets;

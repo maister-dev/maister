@@ -25,6 +25,7 @@ import {
 import { prepareTaskLaunchIntent } from "@/lib/tasks/launch-dispatch";
 import { claimTaskLaunchIntent } from "@/lib/tasks/launch-dispatch-claim";
 import { acceptedTaskLaunchExecution } from "@/lib/tasks/launch-execution";
+import { taskLaunchErrorResponse } from "@/lib/tasks/launch-http";
 import { cancelInteractiveTaskLaunch } from "@/lib/tasks/launch-cancel";
 import { cleanupTaskLaunchPreparation } from "@/lib/tasks/launch-preparation-cleanup";
 import { launchAcceptedTaskRun } from "@/lib/services/runs";
@@ -183,6 +184,55 @@ async function accept(
   );
 }
 
+it.each(["preview", "acceptance"] as const)(
+  "missing installed Flow assets refuse %s with a safe typed error and no admission",
+  async (boundary) => {
+    const item = await configured();
+    const token =
+      boundary === "acceptance"
+        ? await taskLaunchSettingsToken(database.db, item.taskId)
+        : null;
+
+    await rm(item.directory, { recursive: true });
+    let failure: unknown;
+
+    try {
+      if (token) await accept(item.taskId, token);
+      else await taskLaunchSettingsToken(database.db, item.taskId);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
+      code: "PRECONDITION",
+      details: {
+        reason: "launch_flow_assets_changed",
+        stage: "flow_asset_capture",
+      },
+      cause: { code: "ENOENT" },
+    });
+    const response = taskLaunchErrorResponse(failure);
+    const body: unknown = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body).toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "launch_flow_assets_changed" },
+    });
+    expect(JSON.stringify(body)).not.toContain(item.directory);
+    expect(JSON.stringify(body)).not.toContain("ENOENT");
+    expect(
+      await database.db
+        .select()
+        .from(taskLaunchIntents)
+        .where(eq(taskLaunchIntents.taskId, item.taskId)),
+    ).toEqual([]);
+    expect(
+      await database.db.select().from(runs).where(eq(runs.taskId, item.taskId)),
+    ).toEqual([]);
+    expect(await database.db.select().from(executionCommands)).toEqual([]);
+  },
+);
+
 it("asset changes after preview refuse acceptance without creating an intent", async () => {
   const item = await configured();
   const previewToken = await taskLaunchSettingsToken(database.db, item.taskId);
@@ -271,6 +321,22 @@ it("bound execution and reconstructed runtime readers consume captured A after t
     "accepted-assets-A",
   );
   expect(reconstructed.flowInstallPath).toBe(loaded.flowInstallPath);
+  await rm(loaded.flowInstallPath, { recursive: true });
+  await expect(loadRun(database.db, runId)).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: {
+      reason: "launch_flow_assets_changed",
+      stage: "flow_asset_capture",
+    },
+    cause: { code: "ENOENT" },
+  });
+  expect(await executeCaptured(item.directory)).toBe("accepted-assets-B");
+  expect(
+    await database.db
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.runId, runId)),
+  ).toEqual([]);
 });
 
 it("closed unbound preparation removes its verified private Flow capture while retaining the original installation", async () => {
