@@ -59,9 +59,9 @@ and independently reviewed. Their focused regressions pass; the failed earlier
 broad checkpoints are superseded only by the final complete frozen gates below.
 No required assertion is skipped, quarantined or weakened.
 
-- [ ] R14: classify unavailable immutable asset bytes through existing typed
+- [x] R14: classify unavailable immutable asset bytes through existing typed
   launch refusals, preserving internal causes and safe public responses. The
-  complete Flow owner passes 7/7; finish the finite sibling caller audit.
+  complete Flow owner passes 7/7; the finite capability/agent sibling audit passes 42/42 with exact cleanup and independent review.
 - [ ] Complete the frozen combined 29-case browser lane, complete configured Web
   integration, static checks and final review; close the remaining seven plan
   tasks only after their acceptance checks pass, then remove this fix plan.

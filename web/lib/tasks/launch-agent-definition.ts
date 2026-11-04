@@ -11,6 +11,10 @@ import path from "node:path";
 
 import { eq } from "drizzle-orm";
 
+import {
+  taskAgentPackageContentDigest,
+  taskAgentPackageChanged,
+} from "./launch-agent-resolution";
 import { launchRefusal } from "./launch-resolution";
 import { captureAcceptedDirectory } from "./launch-capability-materialization";
 import { assertManagedCapturePath } from "./launch-capture-path";
@@ -20,7 +24,7 @@ import { packageInstalls, taskLaunchIntents } from "@/lib/db/schema";
 import { splitQualifiedAgentId } from "@/lib/agents/effective";
 import { parseAgentDefinition } from "@/lib/agents/definition";
 import { retryDigest } from "@/lib/agents/retry-guards";
-import { localDirectoryContentDigest } from "@/lib/flows";
+import { MaisterError } from "@/lib/errors";
 import { runtimeRoot } from "@/lib/runtime-root";
 import { buildAgentActivitySnapshot } from "@/lib/agents/activity-snapshot";
 
@@ -42,6 +46,20 @@ export async function releaseTaskAgentCaptureAfterFailure(
   }
 
   return originalError;
+}
+
+async function readTaskAgentDefinitionSource(
+  sourcePath: string,
+): Promise<string> {
+  try {
+    return await readFile(sourcePath, "utf8");
+  } catch (cause) {
+    throw new MaisterError(
+      "PRECONDITION",
+      "The accepted agent definition cannot be read; inspect its installation and launch again",
+      { details: { reason: "launch_agent_definition_changed" }, cause },
+    );
+  }
 }
 
 /** Load the accepted immutable install, never today's project pin or catalog prompt. */
@@ -69,7 +87,7 @@ export async function pinnedTaskAgentDefinition(
   )
     throw launchRefusal("launch_agent_package_unavailable", "PRECONDITION");
   if (
-    (await localDirectoryContentDigest(install.installedPath)) !==
+    (await taskAgentPackageContentDigest(install.installedPath)) !==
     input.packageContentDigest
   )
     throw launchRefusal("launch_agent_package_changed", "PRECONDITION");
@@ -82,7 +100,7 @@ export async function pinnedTaskAgentDefinition(
   );
   const parsed = parseAgentDefinition(
     input.agentId,
-    await readFile(sourcePath, "utf8"),
+    await readTaskAgentDefinitionSource(sourcePath),
   );
 
   if (parsed.kind !== "code_delivery" || parsed.flow)
@@ -169,7 +187,10 @@ export async function captureTaskAgentPackage(
       definition.installedPath,
       capturedPath,
       settings.agentSnapshot.packageContentDigest,
-    );
+    ).catch((cause: unknown) => {
+      if (cause instanceof MaisterError) throw cause;
+      throw taskAgentPackageChanged(cause);
+    });
 
     await assertCurrentPath();
 
@@ -196,7 +217,7 @@ export async function captureTaskAgentPackage(
     const sourcePath = path.join(capturedPath, "maister-agents", `${stem}.md`);
     const parsed = parseAgentDefinition(
       settings.agentId,
-      await readFile(sourcePath, "utf8"),
+      await readTaskAgentDefinitionSource(sourcePath),
     );
 
     await assertCurrentPath();

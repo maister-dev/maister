@@ -6,6 +6,7 @@ import {
   readdir,
   readFile,
   readlink,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -28,6 +29,7 @@ import {
   taskLaunchSettingsToken,
 } from "@/lib/tasks/launch-intent";
 import { claimTaskLaunchIntent } from "@/lib/tasks/launch-dispatch-claim";
+import { taskLaunchErrorResponse } from "@/lib/tasks/launch-http";
 import { acceptedTaskLaunchExecution } from "@/lib/tasks/launch-execution";
 import { launchAcceptedTaskRun } from "@/lib/services/runs";
 import { prepareTaskLaunchFirstDispatch } from "@/lib/tasks/launch-first-dispatch";
@@ -47,6 +49,7 @@ import {
 } from "@/test-support/pg-container";
 
 const barrier = vi.hoisted(() => ({
+  missingSource: "",
   sourceDirectory: "",
   sourceRoot: "",
   sourceFile: "",
@@ -62,6 +65,12 @@ vi.mock("node:fs/promises", async (original) => {
   return {
     ...fs,
     cp: async (...args: Parameters<typeof fs.cp>): Promise<void> => {
+      if (String(args[0]) === barrier.missingSource) {
+        await fs.rename(
+          barrier.missingSource,
+          `${barrier.missingSource}-missing`,
+        );
+      }
       if (String(args[1]).endsWith("/.claude/skills/copy-proof"))
         barrier.artifactSources.push(String(args[0]));
       if (
@@ -209,6 +218,45 @@ async function assertNoDispatch(claim: TaskLaunchClaim): Promise<void> {
       .where(eq(executionCommands.runId, claim.identity.runId)),
   ).toEqual([]);
 }
+
+it.each(["acceptance", "capture"] as const)(
+  "refuses a missing capability bundle at %s with a safe typed cause and no dispatch",
+  async (stage) => {
+    const before = await database.db.select().from(taskLaunchIntents);
+    const claim = stage === "capture" ? await allocated() : null;
+    let error: unknown;
+
+    try {
+      if (stage === "capture") barrier.missingSource = bundle;
+      else await rename(bundle, `${bundle}-missing`);
+      try {
+        await (claim ? bind(claim) : allocated());
+      } catch (failure) {
+        error = failure;
+      }
+    } finally {
+      barrier.missingSource = "";
+      await rename(`${bundle}-missing`, bundle);
+    }
+    expect(error).toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "launch_capabilities_changed" },
+      cause: { code: "ENOENT" },
+    });
+    const response = taskLaunchErrorResponse(error);
+    const body = await response.text();
+
+    expect(response.status).toBe(409);
+    expect(body).toContain("launch_capabilities_changed");
+    expect(body).not.toContain(bundle);
+    expect(body).not.toContain("ENOENT");
+    if (claim) await assertNoDispatch(claim);
+    else
+      expect(await database.db.select().from(taskLaunchIntents)).toHaveLength(
+        before.length,
+      );
+  },
+);
 
 it("binds only verified private bytes, preserves repo entries and relative links after capture cleanup", async () => {
   const claim = await allocated();

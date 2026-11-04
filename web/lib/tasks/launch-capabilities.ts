@@ -12,6 +12,28 @@ import { retryDigest } from "@/lib/agents/retry-guards";
 import { localDirectoryContentDigest } from "@/lib/flows";
 import { MaisterError } from "@/lib/errors";
 
+export function taskLaunchCapabilityChanged(cause?: unknown): MaisterError {
+  return new MaisterError(
+    "PRECONDITION",
+    "The selected capability bundle cannot be reproduced; review the installed bundle and launch again",
+    {
+      details: {
+        reason: "launch_capabilities_changed",
+        stage: "capability_capture",
+      },
+      ...(cause === undefined ? {} : { cause }),
+    },
+  );
+}
+
+async function capabilityContentDigest(directory: string): Promise<string> {
+  try {
+    return await localDirectoryContentDigest(directory);
+  } catch (cause) {
+    throw taskLaunchCapabilityChanged(cause);
+  }
+}
+
 /** Filesystem hashing is performed only in preflight, outside the acceptance transaction. */
 export async function captureTaskLaunchCapabilityBundles(
   db: Db,
@@ -50,7 +72,7 @@ export async function captureTaskLaunchCapabilityBundles(
       id: bundle.id,
       revision: bundle.resolvedRevision,
       manifestDigest: bundle.manifestDigest,
-      contentDigest: await localDirectoryContentDigest(bundle.installedPath),
+      contentDigest: await capabilityContentDigest(bundle.installedPath),
     })),
   );
 }

@@ -19711,7 +19711,7 @@ components:
                 label: { type: string, minLength: 1, maxLength: 256 }
                 existing:
                   $ref: "#/components/schemas/TaskLaunchConflictReference"
-      description: A scoped reservation conflict identifies earlier delivery work and its original basis. A deterministic strict-enforcement refusal identifies the compiled node and its resolved runner capability without raw error text or source contents; no intent or Run is accepted. These selectors grant no additional access.
+      description: A scoped reservation conflict identifies earlier delivery work and its original basis. A deterministic strict-enforcement refusal identifies the compiled node and its resolved runner capability without raw error text or source contents; no intent or Run is accepted. These selectors grant no additional access. Asset-digest and capture refusals use PRECONDITION (409) with launch_flow_assets_changed, launch_capabilities_changed or launch_agent_package_changed; pinned or captured agent-definition read failures use launch_agent_definition_changed. Refusal before acceptance creates no intent or Run. These readers retain native I/O causes internally and never return filesystem paths, contents or raw error text.
     TaskLaunchBody:
       type: object
       additionalProperties: false

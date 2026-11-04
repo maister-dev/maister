@@ -40,6 +40,7 @@ import {
   legacyPromotionModeFromStrategy,
 } from "@/lib/runs/delivery-policy";
 import { assertNoBlindShip } from "@/lib/runs/execution-policy";
+import { MaisterError } from "@/lib/errors";
 import { localDirectoryContentDigest } from "@/lib/flows";
 import {
   resolveBaseCommit,
@@ -50,6 +51,27 @@ import { loadRunnerCatalog } from "@/lib/acp-runners/catalog";
 import { splitQualifiedAgentId } from "@/lib/agents/effective";
 import { buildAgentActivitySnapshot } from "@/lib/agents/activity-snapshot";
 import { findSharedTreeWorkspace } from "@/lib/runs/shared-tree";
+
+export function taskAgentPackageChanged(cause: unknown): MaisterError {
+  return new MaisterError(
+    "PRECONDITION",
+    "The selected agent package cannot be reproduced; inspect its installation and launch again",
+    {
+      details: { reason: "launch_agent_package_changed" },
+      cause,
+    },
+  );
+}
+
+export async function taskAgentPackageContentDigest(
+  directory: string,
+): Promise<string> {
+  try {
+    return await localDirectoryContentDigest(directory);
+  } catch (cause) {
+    throw taskAgentPackageChanged(cause);
+  }
+}
 
 export type TaskAgentLaunchSnapshot = Readonly<{
   version: 1;
@@ -612,7 +634,7 @@ async function resolveAgentTaskLaunchSettingsForTrigger(
       runnerId: selection.runnerId ?? null,
       workspace: selection.workspace ?? null,
     },
-    packageContentDigest: await localDirectoryContentDigest(
+    packageContentDigest: await taskAgentPackageContentDigest(
       runtime.effective.installedPath,
     ),
     manifestDigest: retryDigest(runtime.effective.manifest),

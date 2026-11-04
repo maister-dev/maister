@@ -19,6 +19,7 @@ import path from "node:path";
 import { and, asc, eq } from "drizzle-orm";
 import pino from "pino";
 
+import { taskLaunchCapabilityChanged as changedCapability } from "./launch-capabilities";
 import { assertManagedCapturePath } from "./launch-capture-path";
 
 import { capabilityImports } from "@/lib/db/schema";
@@ -35,19 +36,6 @@ const log = pino({
 type FrozenCapabilityBundles = NonNullable<
   TaskLaunchSettingsV2Snapshot["capabilityBundles"]
 >;
-
-function changedCapability(): MaisterError {
-  return new MaisterError(
-    "PRECONDITION",
-    "The accepted capability bundle cannot be reproduced; review the installed bundle and launch again",
-    {
-      details: {
-        reason: "launch_capabilities_changed",
-        stage: "capability_capture",
-      },
-    },
-  );
-}
 
 function withinDirectory(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
@@ -193,11 +181,18 @@ export async function withTaskLaunchCapabilityBundles(
     for (const [index, source] of sources.entries()) {
       const capturedPath = path.join(captureRoot, String(index));
 
-      const links = await captureAcceptedDirectory(
-        source.installedPath,
-        capturedPath,
-        source.accepted.contentDigest,
-      );
+      let links: ReadonlyArray<AcceptedDirectorySymlink>;
+
+      try {
+        links = await captureAcceptedDirectory(
+          source.installedPath,
+          capturedPath,
+          source.accepted.contentDigest,
+        );
+      } catch (cause) {
+        if (cause instanceof MaisterError) throw cause;
+        throw changedCapability(cause);
+      }
 
       assertCopiedBundleSymlinks(links);
       captures.push({

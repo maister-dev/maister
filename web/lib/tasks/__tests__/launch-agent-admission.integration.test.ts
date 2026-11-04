@@ -2,7 +2,7 @@ import type { ProjectAction } from "@/lib/authz";
 import type { FakeExecutionHost } from "@/test-support/fake-execution-host";
 
 import { randomUUID } from "node:crypto";
-import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { NextRequest } from "next/server";
@@ -32,7 +32,11 @@ import {
   taskLaunchSettingsToken,
 } from "@/lib/tasks/launch-intent";
 import { prepareTaskLaunchIntent } from "@/lib/tasks/launch-dispatch";
-import { frozenTaskAgentDefinition } from "@/lib/tasks/launch-agent-definition";
+import { taskLaunchErrorResponse } from "@/lib/tasks/launch-http";
+import {
+  frozenTaskAgentDefinition,
+  captureTaskAgentPackage,
+} from "@/lib/tasks/launch-agent-definition";
 import { seedTaskLaunchFixture } from "@/test-support/task-launch-admission";
 import { mkdtempReal } from "@/test-support/worktree-test-root";
 import {
@@ -45,6 +49,40 @@ import { serverTaskLaunchRequest } from "@/lib/tasks/launch-intent";
 import { agentWorkdirPath } from "@/lib/agents/workspace-paths";
 import { assertTaskLaunchUserAuthority } from "@/lib/tasks/launch-authority";
 import { cancelInteractiveTaskLaunch } from "@/lib/tasks/launch-cancel";
+
+const missingAgentAsset = vi.hoisted(() => ({
+  source: "",
+  package: "",
+  capturedDefinition: false,
+}));
+
+vi.mock("node:fs/promises", async (original) => {
+  const fs = await original<typeof import("node:fs/promises")>();
+
+  return {
+    ...fs,
+    readFile: async (...args: Parameters<typeof fs.readFile>) => {
+      if (
+        (String(args[0]) === missingAgentAsset.source ||
+          (missingAgentAsset.capturedDefinition &&
+            String(args[0]).includes("accepted-agent-captures/") &&
+            String(args[0]).endsWith("/source/maister-agents/delivery.md"))) &&
+        args[1] === "utf8"
+      )
+        await fs.rename(String(args[0]), `${String(args[0])}-missing`);
+
+      return fs.readFile(...args);
+    },
+    cp: async (...args: Parameters<typeof fs.cp>): Promise<void> => {
+      if (String(args[0]) === missingAgentAsset.package)
+        await fs.rename(
+          missingAgentAsset.package,
+          `${missingAgentAsset.package}-missing`,
+        );
+      await fs.cp(...args);
+    },
+  };
+});
 
 let database: StartedPostgresTestDb;
 let root: string;
@@ -538,6 +576,80 @@ it.each(["none", "repo_read", "worktree"] as const)(
     expect(
       (await prepareTaskLaunchIntent(database.db, accepted.intentId)).runId,
     ).toBe(run.id);
+  },
+);
+
+it.each(["package", "definition", "capture", "captured_definition"] as const)(
+  "refuses a missing accepted agent %s with a safe typed cause",
+  async (stage) => {
+    const body = await request("none");
+    const accepted = await acceptInteractiveTaskLaunch(
+      database.db,
+      await interactiveTaskLaunchPrincipal(),
+      body,
+      randomUUID(),
+    );
+    const bound = await prepareTaskLaunchIntent(database.db, accepted.intentId);
+    const [run] = await database.db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, bound.runId!));
+    const installedPath = path.join(root, "package");
+    let error: unknown;
+
+    const sourcePath = path.join(
+      installedPath,
+      "maister-agents",
+      "delivery.md",
+    );
+
+    if (stage === "package")
+      await rename(installedPath, `${installedPath}-missing`);
+    if (stage === "definition") missingAgentAsset.source = sourcePath;
+    if (stage === "capture") missingAgentAsset.package = installedPath;
+    if (stage === "captured_definition")
+      missingAgentAsset.capturedDefinition = true;
+    try {
+      if (stage === "capture" || stage === "captured_definition")
+        await captureTaskAgentPackage(database.db, run);
+      else await frozenTaskAgentDefinition(database.db, run);
+    } catch (failure) {
+      error = failure;
+    } finally {
+      missingAgentAsset.source = "";
+      missingAgentAsset.package = "";
+      missingAgentAsset.capturedDefinition = false;
+      const removedPath = stage === "definition" ? sourcePath : installedPath;
+
+      if (stage !== "captured_definition")
+        await rename(`${removedPath}-missing`, removedPath);
+    }
+    expect(error).toMatchObject({
+      code: "PRECONDITION",
+      details: {
+        reason:
+          stage === "definition" || stage === "captured_definition"
+            ? "launch_agent_definition_changed"
+            : "launch_agent_package_changed",
+      },
+      cause: { code: "ENOENT" },
+    });
+    const response = taskLaunchErrorResponse(error);
+    const responseBody = await response.text();
+
+    expect(response.status).toBe(409);
+    expect(responseBody).not.toContain(installedPath);
+    expect(responseBody).not.toContain("ENOENT");
+    expect(
+      (await database.db.select().from(runs).where(eq(runs.id, run.id)))[0]
+        .status,
+    ).toBe("Pending");
+    const commands = await database.pool.query<{ n: number }>(
+      "SELECT count(*)::int n FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt')",
+      [run.id],
+    );
+
+    expect(commands.rows[0].n).toBe(0);
   },
 );
 

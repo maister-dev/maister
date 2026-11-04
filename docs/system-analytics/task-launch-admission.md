@@ -169,6 +169,19 @@ incarnation and settings digest. Closed preparations that never bound a Run remo
 only a verified owned capture; a bound Run retains its assets for its existing
 lifecycle owner. Partial or changed captures remain fail-closed for diagnosis.
 
+Task-launch digest and capture readers normalize filesystem failures to typed
+preconditions: `launch_flow_assets_changed`, `launch_capabilities_changed` or
+`launch_agent_package_changed`. The pinned/captured agent-definition reader uses
+`launch_agent_definition_changed`. When these errors reach a preview or
+acceptance boundary, the shared HTTP projection returns `409 PRECONDITION` with
+the safe reason; filesystem paths, contents and native error text are excluded.
+Refusal before acceptance creates no intent or Run. After acceptance, these
+readers also refuse preparation or reconstruction without substituting mutable
+installation bytes or issuing model commands for that operation. Their original
+I/O cause remains attached internally. Capture error normalization encloses
+capture I/O only; a materialization callback's own domain or execution failure
+stays exact.
+
 Package updates that create or advance a shared cut are explicit setup operations
 before Launch. The setup action applies the existing reviewed package operation,
 then reloads the displayed immutable Flow revision and settings token. Acceptance
