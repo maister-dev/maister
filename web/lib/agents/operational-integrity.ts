@@ -1,6 +1,6 @@
-import type { FileHandle } from "node:fs/promises";
 import "server-only";
 
+import type { FileHandle } from "node:fs/promises";
 import type {
   OperationalIntegrityBaseline,
   OperationalIntegrityEntry,
@@ -103,6 +103,7 @@ async function withProbeFile<Result>(
   consume: () => Promise<Result>,
 ): Promise<Result> {
   let result: Result;
+
   try {
     result = await consume();
   } catch (primaryError) {
@@ -119,6 +120,7 @@ async function withProbeFile<Result>(
     throw primaryError;
   }
   await probeOperation("close", () => file.close());
+
   return result;
 }
 

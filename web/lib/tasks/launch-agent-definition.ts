@@ -11,19 +11,17 @@ import path from "node:path";
 
 import { eq } from "drizzle-orm";
 
-import { reportPreparationCleanupFailure } from "@/lib/agents/preparation-trace";
-
 import { launchRefusal } from "./launch-resolution";
 import { captureAcceptedDirectory } from "./launch-capability-materialization";
 import { assertManagedCapturePath } from "./launch-capture-path";
 
+import { reportPreparationCleanupFailure } from "@/lib/agents/preparation-trace";
 import { packageInstalls, taskLaunchIntents } from "@/lib/db/schema";
 import { splitQualifiedAgentId } from "@/lib/agents/effective";
 import { parseAgentDefinition } from "@/lib/agents/definition";
 import { retryDigest } from "@/lib/agents/retry-guards";
 import { localDirectoryContentDigest } from "@/lib/flows";
 import { runtimeRoot } from "@/lib/runtime-root";
-import { MaisterError } from "@/lib/errors";
 import { buildAgentActivitySnapshot } from "@/lib/agents/activity-snapshot";
 
 /** Preserve exact pending/fenced authority while recording failed private cleanup. */
@@ -42,6 +40,7 @@ export async function releaseTaskAgentCaptureAfterFailure(
       context,
     });
   }
+
   return originalError;
 }
 

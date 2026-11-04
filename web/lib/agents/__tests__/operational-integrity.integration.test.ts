@@ -31,7 +31,6 @@ import {
   captureOperationalGeneration,
   verifyOperationalIntegrity,
 } from "@/lib/agents/operational-integrity";
-
 import { releaseTaskAgentCaptureAfterFailure } from "@/lib/tasks/launch-agent-definition";
 import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
 import { isFencedError } from "@/lib/execution-host/deliverer";
@@ -49,6 +48,7 @@ const probeFault = vi.hoisted(() => ({
 
 vi.mock("node:fs/promises", async (original) => {
   const actual = await original<typeof import("node:fs/promises")>();
+
   return {
     ...actual,
     open: async (
@@ -56,7 +56,9 @@ vi.mock("node:fs/promises", async (original) => {
     ): Promise<FileHandle> => {
       const handle = await actual.open(...args);
       const fault = probeFault.current;
+
       if (!fault || args[0] !== fault.file) return handle;
+
       return new Proxy(handle, {
         get(target, property): unknown {
           if (property === "read" && fault.readError)
@@ -70,6 +72,7 @@ vi.mock("node:fs/promises", async (original) => {
               throw fault.closeError;
             };
           const value: unknown = Reflect.get(target, property, target);
+
           return typeof value === "function" ? value.bind(target) : value;
         },
       });
@@ -79,10 +82,12 @@ vi.mock("node:fs/promises", async (original) => {
 
 vi.mock("pino", async (original) => {
   const actual = await original<typeof import("pino")>();
+
   return {
     ...actual,
     default: (...args: Parameters<typeof actual.default>) => {
       const options = args[0];
+
       if (
         options &&
         typeof options === "object" &&
@@ -96,6 +101,7 @@ vi.mock("pino", async (original) => {
             );
           },
         });
+
       return actual.default(...args);
     },
   };
@@ -199,6 +205,7 @@ describe("operational source integrity", () => {
     "TB05 retains exact %s authority after private capture release fails",
     async (kind) => {
       const stage = await mkdtemp(join(root, "private-capture-"));
+
       await writeFile(join(stage, "captured.txt"), "private captured content");
       const primary =
         kind === "fenced"
@@ -221,6 +228,7 @@ describe("operational source integrity", () => {
         },
         primary,
       );
+
       expect(retained).toBe(primary);
       expect(
         kind === "fenced"
@@ -248,8 +256,10 @@ describe("operational source integrity", () => {
     "TB05 preserves the probe failure when owned cleanup fails (%s)",
     async (window) => {
       const plain = join(root, "probe");
+
       await mkdir(plain);
       const file = join(await realpath(plain), "source.txt");
+
       await writeFile(file, "private source content");
       const readError: NodeJS.ErrnoException = Object.assign(
         new Error(`private read failure ${file}`),
@@ -260,6 +270,7 @@ describe("operational source integrity", () => {
         { code: "EBADF", syscall: "close" },
       );
       let closed = false;
+
       probeFault.current = {
         file,
         readError: window === "read_and_close" ? readError : null,
@@ -269,6 +280,7 @@ describe("operational source integrity", () => {
         },
       };
       let failure: unknown;
+
       try {
         await captureOperationalBaseline(plain, "plain_directory", {
           context: {
@@ -306,6 +318,7 @@ describe("operational source integrity", () => {
           }),
         );
         const details = JSON.stringify(probeFault.diagnostics);
+
         expect(details).not.toContain(file);
         expect(details).not.toContain("private source content");
         expect(details).not.toContain("private read failure");

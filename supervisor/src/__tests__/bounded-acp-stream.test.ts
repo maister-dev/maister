@@ -24,14 +24,17 @@ const spoolGate = vi.hoisted(() => ({
 
 vi.mock("node:fs/promises", async (original) => {
   const actual = await original<typeof import("node:fs/promises")>();
+
   return {
     ...actual,
     open: async (...args: Parameters<typeof actual.open>) => {
       const gate = spoolGate.current;
+
       if (gate && args[0] === gate.path) {
         gate.entered();
         await gate.release;
       }
+
       return actual.open(...args);
     },
   };
@@ -94,6 +97,7 @@ describe("bounded ACP framed-source contract", () => {
     const entered = new Promise<void>((resolve) => {
       enteredOpen = resolve;
     });
+
     spoolGate.current = {
       path: spoolPath,
       entered: enteredOpen,
@@ -108,6 +112,7 @@ describe("bounded ACP framed-source contract", () => {
       },
     );
     const source = child.stdout;
+
     if (!source) throw new Error("Native capture fixture requires stdout");
     const readableListeners = source.listenerCount("readable");
     const exited = once(child, "exit");
@@ -127,6 +132,7 @@ describe("bounded ACP framed-source contract", () => {
       onFailure: (error) => failures.push(error),
       onDrained: finishDrain,
     });
+
     tap.on("data", (frame: Buffer) => frames.push(frame.toString("utf8")));
     tap.on("error", (error: unknown) => failures.push(error));
     try {

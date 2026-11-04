@@ -112,6 +112,7 @@ describe("checkpoint prompt causality", () => {
         stepId: "fix",
         prompt: "complete during graceful shutdown",
       });
+
       expect(
         (await postJson(`${target.url}/sessions/${sessionId}/prompts`, command))
           .status,
@@ -125,6 +126,7 @@ describe("checkpoint prompt causality", () => {
         `${target.url}/sessions/${sessionId}/checkpoint`,
         envelope("session.checkpoint", fenceFor(target, RUN_ID)),
       );
+
       expect(checkpoint.status).toBe(200);
       await waitFor(
         () =>
