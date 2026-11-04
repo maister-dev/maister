@@ -94,6 +94,15 @@ The reused Git gate registers its detached process group durably before acknowle
 
 Terminalization atomically closes run/assignment/turn/publication authority and arms cleanup; filesystem effects follow commit. Disposition quiescence includes preparation, commands, canonical bound sessions, HITL and fresh host evidence. Missing session, successful prompt or old DELETE success alone is insufficient. Cleanup failure is a separate retained incident and does not revert terminal state. Deferred contention/readiness is not a negative assessment or proof of irrecoverability from age alone.
 
+Failure settlement by the current preparer retains physical exclusion through
+the terminal DB commit. Apply requires the held owner, exact preparation and
+resource incarnation, current assignment/epoch, and an eligible phase and DB
+lease; a closed failed receipt remains valid only while that owner is held.
+Release follows commit and precedes after-commit cleanup. A proofless
+pre-dispatch failure cannot settle an assignment that already has a preparation
+journal. Continuation after real historical dispatch uses the existing
+canonical/scoped quiescence checks with the same held-preparation guard.
+
 A rejected session create without a manager incarnation needs positive physical
 retirement evidence. [Supervisor receipt ownership](../supervisor.md#command-envelope-fences-and-receipts-implemented--adr-166)
 defines the versioned host witness and same-command late-exit recovery. Finalization,
