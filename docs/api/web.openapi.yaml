@@ -38656,3 +38656,184 @@ components:
         - status
         - duplicate
       additionalProperties: false
+    CBCompanyFlowBindingInput:
+      type: object
+      properties:
+        owner:
+          type: object
+          properties:
+            kind:
+              type: string
+              enum:
+                - company
+            companyId:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+          required:
+            - kind
+            - companyId
+          additionalProperties: false
+        specialistBindingId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        specialistRevision:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        flowRevisionId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        manifestSha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        execution:
+          type: object
+          properties:
+            workspace:
+              type: string
+              enum:
+                - none
+            completion:
+              type: string
+              enum:
+                - result
+          required:
+            - workspace
+            - completion
+          additionalProperties: false
+        enabled:
+          default: false
+          type: boolean
+        roleMappings:
+          type: object
+          additionalProperties:
+            minItems: 1
+            maxItems: 32
+            type: array
+            items:
+              type: string
+              minLength: 1
+              maxLength: 192
+              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+            uniqueItems: true
+          maxProperties: 32
+        idempotencyKey:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+      required:
+        - owner
+        - specialistBindingId
+        - specialistRevision
+        - flowRevisionId
+        - manifestSha256
+        - execution
+        - roleMappings
+        - idempotencyKey
+      additionalProperties: false
+      description: Reviewed company coordinator configuration. Native services are
+        implemented; public binding operations remain designed. Identity, exact
+        package/role/Flow witnesses and human answer authority are server-validated.
+        Disabled review does not admit execution; enablement requires the supported
+        3.12.0 company result-only contract.
+      x-implementation-status: Designed
+    CBCompanyFlowBindingUpdate:
+      type: object
+      properties:
+        owner:
+          type: object
+          properties:
+            kind:
+              type: string
+              enum:
+                - company
+            companyId:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+          required:
+            - kind
+            - companyId
+          additionalProperties: false
+        specialistBindingId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        specialistRevision:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        flowRevisionId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        manifestSha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        execution:
+          type: object
+          properties:
+            workspace:
+              type: string
+              enum:
+                - none
+            completion:
+              type: string
+              enum:
+                - result
+          required:
+            - workspace
+            - completion
+          additionalProperties: false
+        enabled:
+          type: boolean
+        roleMappings:
+          type: object
+          additionalProperties:
+            minItems: 1
+            maxItems: 32
+            type: array
+            items:
+              type: string
+              minLength: 1
+              maxLength: 192
+              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+            uniqueItems: true
+          maxProperties: 32
+        idempotencyKey:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+        expectedRevision:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+      required:
+        - owner
+        - specialistBindingId
+        - specialistRevision
+        - flowRevisionId
+        - manifestSha256
+        - execution
+        - enabled
+        - roleMappings
+        - idempotencyKey
+        - expectedRevision
+      additionalProperties: false
+      description: Reviewed company coordinator configuration. Native services are
+        implemented; public binding operations remain designed. Identity, exact
+        package/role/Flow witnesses and human answer authority are server-validated.
+        Disabled review does not admit execution; enablement requires the supported
+        3.12.0 company result-only contract.
+      x-implementation-status: Designed

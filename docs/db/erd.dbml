@@ -535,6 +535,60 @@ table companies {
   }
 }
 
+table company_flow_binding_revisions {
+  binding_id text [not null]
+  revision integer [not null]
+  snapshot jsonb [not null]
+  authority_snapshot jsonb [not null]
+  request_actor_id text [not null]
+  operation text [not null]
+  request_key text [not null]
+  request_digest text [not null]
+  snapshot_digest text [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (binding_id, revision) [pk]
+
+
+
+
+    (binding_id, request_actor_id, request_key) [name: 'company_flow_binding_revisions_request_uq', unique]
+  }
+}
+
+table company_flow_bindings {
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  company_id text [not null]
+  flow_ref_id text [not null]
+  flow_revision_id text
+  package_install_id text
+  specialist_binding_id text
+  revision integer [not null, default: 1]
+  enabled boolean [not null, default: false]
+  detached_at "timestamp with time zone"
+  created_by text [not null]
+  creation_key text [not null]
+  creation_digest text [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+
+
+
+    (company_id, flow_ref_id) [name: 'company_flow_bindings_live_flow_uq', unique]
+    (company_id, created_by, creation_key) [name: 'company_flow_bindings_creation_uq', unique]
+    (company_id, flow_ref_id, id) [name: 'company_flow_bindings_company_idx']
+
+
+
+    flow_revision_id [name: 'company_flow_bindings_flow_idx']
+    package_install_id [name: 'company_flow_bindings_package_idx']
+    specialist_binding_id [name: 'company_flow_bindings_specialist_idx']
+  }
+}
+
 table company_grants {
   id text [pk, not null, default: `gen_random_uuid()::text`]
   company_id text [not null]
@@ -4083,6 +4137,16 @@ ref capability_imports_project_id_projects_id_fk: capability_imports.project_id 
 ref capability_imports_package_install_id_package_installs_id_fk: capability_imports.package_install_id > package_installs.id [delete: no action, update: no action]
 
 ref capability_records_project_id_projects_id_fk: capability_records.project_id > projects.id [delete: cascade, update: no action]
+
+ref company_flow_binding_revisions_head_fk: company_flow_binding_revisions.binding_id > company_flow_bindings.id [delete: restrict, update: no action]
+
+ref company_flow_bindings_company_id_companies_id_fk: company_flow_bindings.company_id > companies.id [delete: restrict, update: no action]
+
+ref company_flow_bindings_flow_fk: company_flow_bindings.flow_revision_id > flow_revisions.id [delete: restrict, update: no action]
+
+ref company_flow_bindings_package_fk: company_flow_bindings.package_install_id > package_installs.id [delete: restrict, update: no action]
+
+ref company_flow_bindings_specialist_fk: company_flow_bindings.specialist_binding_id > company_specialist_bindings.id [delete: restrict, update: no action]
 
 ref company_grants_company_id_companies_id_fk: company_grants.company_id > companies.id [delete: restrict, update: no action]
 

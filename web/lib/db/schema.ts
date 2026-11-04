@@ -1,4 +1,5 @@
 import type { CoordinatorChildLaunchContext } from "@/lib/orchestrator/child-launch-context";
+import type { CompanyFlowBindingSnapshot } from "@/lib/agents/company-flow-binding-types";
 import type { NativeDelegationInput } from "@/lib/orchestrator/native-input-types";
 import type { AgentSpecialist } from "@/lib/agents/specialist";
 import type {
@@ -10593,6 +10594,130 @@ export const companySpecialistBindingRevisions = pgTable(
       sql`(jsonb_typeof(${t.snapshot})='object' AND ${t.snapshot}->'schemaVersion'='1'::jsonb AND jsonb_typeof(${t.snapshot}->'definition')='object' AND jsonb_typeof(${t.snapshot}->'configuration')='object' AND jsonb_typeof(${t.snapshot}->'effectiveConfiguration')='object' AND jsonb_typeof(${t.snapshot}->'grantActions')='array' AND jsonb_typeof(${t.snapshot}->'executionPolicy')='object' AND pg_column_size(${t.snapshot})<=2097152 AND jsonb_typeof(${t.authoritySnapshot})='object' AND ${t.authoritySnapshot}->'schemaVersion'='1'::jsonb AND ${t.authoritySnapshot}->'actor'=${t.actor} AND jsonb_typeof(${t.authoritySnapshot}->'witness')='object' AND pg_column_size(${t.authoritySnapshot})<=32768) IS TRUE`,
     ),
     request: unique("company_specialist_binding_revisions_request_uq").on(
+      t.bindingId,
+      t.requestActorId,
+      t.requestKey,
+    ),
+  }),
+);
+
+export const companyFlowBindings = pgTable(
+  "company_flow_bindings",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    companyId: text("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "restrict" }),
+    flowRefId: text("flow_ref_id").notNull(),
+    flowRevisionId: text("flow_revision_id"),
+    packageInstallId: text("package_install_id"),
+    specialistBindingId: text("specialist_binding_id"),
+    revision: integer("revision").notNull().default(1),
+    enabled: boolean("enabled").notNull().default(false),
+    detachedAt: timestamp("detached_at", { withTimezone: true, mode: "date" }),
+    createdBy: text("created_by").notNull(),
+    creationKey: text("creation_key").notNull(),
+    creationDigest: text("creation_digest").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    identity: check(
+      "company_flow_bindings_identity_check",
+      sql`char_length(${t.flowRefId}) BETWEEN 1 AND 128 AND char_length(${t.createdBy}) BETWEEN 1 AND 192 AND ${t.revision}>0`,
+    ),
+    lifecycle: check(
+      "company_flow_bindings_lifecycle_check",
+      sql`(${t.detachedAt} IS NULL AND ${t.flowRevisionId} IS NOT NULL AND ${t.packageInstallId} IS NOT NULL AND ${t.specialistBindingId} IS NOT NULL) OR (${t.detachedAt} IS NOT NULL AND ${t.flowRevisionId} IS NULL AND ${t.packageInstallId} IS NULL AND ${t.specialistBindingId} IS NULL AND ${t.enabled}=false)`,
+    ),
+    creation: check(
+      "company_flow_bindings_creation_check",
+      sql`${t.creationKey} ~ '^[A-Za-z0-9._:-]{8,128}$' AND ${t.creationDigest} ~ '^[a-f0-9]{64}$'`,
+    ),
+    liveFlow: uniqueIndex("company_flow_bindings_live_flow_uq")
+      .on(t.companyId, t.flowRefId)
+      .where(sql`${t.detachedAt} IS NULL`),
+    creationReceipt: unique("company_flow_bindings_creation_uq").on(
+      t.companyId,
+      t.createdBy,
+      t.creationKey,
+    ),
+    companyPage: index("company_flow_bindings_company_idx").on(
+      t.companyId,
+      t.flowRefId,
+      t.id,
+    ),
+    currentFlow: foreignKey({
+      name: "company_flow_bindings_flow_fk",
+      columns: [t.flowRevisionId],
+      foreignColumns: [flowRevisions.id],
+    }).onDelete("restrict"),
+    currentPackage: foreignKey({
+      name: "company_flow_bindings_package_fk",
+      columns: [t.packageInstallId],
+      foreignColumns: [packageInstalls.id],
+    }).onDelete("restrict"),
+    currentSpecialist: foreignKey({
+      name: "company_flow_bindings_specialist_fk",
+      columns: [t.specialistBindingId],
+      foreignColumns: [companySpecialistBindings.id],
+    }).onDelete("restrict"),
+    flowPin: index("company_flow_bindings_flow_idx").on(t.flowRevisionId),
+    packagePin: index("company_flow_bindings_package_idx").on(
+      t.packageInstallId,
+    ),
+    rolePin: index("company_flow_bindings_specialist_idx").on(
+      t.specialistBindingId,
+    ),
+  }),
+);
+
+export const companyFlowBindingRevisions = pgTable(
+  "company_flow_binding_revisions",
+  {
+    bindingId: text("binding_id").notNull(),
+    revision: integer("revision").notNull(),
+    snapshot: jsonb("snapshot").$type<CompanyFlowBindingSnapshot>().notNull(),
+    authoritySnapshot: jsonb("authority_snapshot")
+      .$type<CompanyBindingAuthoritySnapshot>()
+      .notNull(),
+    requestActorId: text("request_actor_id").notNull(),
+    operation: text("operation")
+      .$type<"created" | "updated" | "detached">()
+      .notNull(),
+    requestKey: text("request_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    snapshotDigest: text("snapshot_digest").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    primary: primaryKey({ columns: [t.bindingId, t.revision] }),
+    binding: foreignKey({
+      name: "company_flow_binding_revisions_head_fk",
+      columns: [t.bindingId],
+      foreignColumns: [companyFlowBindings.id],
+    }).onDelete("restrict"),
+    version: check(
+      "company_flow_binding_revisions_version_check",
+      sql`${t.revision}>0 AND ${t.operation} IN ('created','updated','detached')`,
+    ),
+    receipt: check(
+      "company_flow_binding_revisions_receipt_check",
+      sql`char_length(${t.requestActorId}) BETWEEN 1 AND 192 AND ${t.requestKey} ~ '^[A-Za-z0-9._:-]{8,128}$' AND ${t.requestDigest} ~ '^[a-f0-9]{64}$' AND ${t.snapshotDigest} ~ '^[a-f0-9]{64}$'`,
+    ),
+    snapshot: check(
+      "company_flow_binding_revisions_snapshot_check",
+      sql`(jsonb_typeof(${t.snapshot})='object' AND ${t.snapshot}->'schemaVersion'='1'::jsonb AND jsonb_typeof(${t.snapshot}->'manifest')='object' AND jsonb_typeof(${t.snapshot}->'specialist')='object' AND jsonb_typeof(${t.snapshot}->'roleMappings')='object' AND ${t.snapshot}->'execution'='{"workspace":"none","completion":"result"}'::jsonb AND pg_column_size(${t.snapshot})<=4194304 AND jsonb_typeof(${t.authoritySnapshot})='object' AND ${t.authoritySnapshot}->'schemaVersion'='1'::jsonb AND ${t.authoritySnapshot}->'actor'->>'kind'='user' AND ${t.authoritySnapshot}->'actor'->>'id'=${t.requestActorId} AND ${t.authoritySnapshot}->'actor'->'runId'='null'::jsonb AND ${t.authoritySnapshot}->'actor'->'attemptId'='null'::jsonb AND pg_column_size(${t.authoritySnapshot})<=32768) IS TRUE`,
+    ),
+    request: unique("company_flow_binding_revisions_request_uq").on(
       t.bindingId,
       t.requestActorId,
       t.requestKey,

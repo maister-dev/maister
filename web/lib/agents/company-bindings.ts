@@ -81,7 +81,7 @@ export type CompanyBindingHead = Readonly<{
   createdAt: string;
 }>;
 
-function bindingHead(
+export function decodeCompanyBindingHead(
   row: Readonly<Record<string, unknown>> | undefined,
 ): CompanyBindingHead {
   if (!row)
@@ -120,7 +120,7 @@ export async function loadCompanyBindingHead(
 ): Promise<CompanyBindingHead> {
   splitQualifiedAgentId(agentId);
 
-  return bindingHead(
+  return decodeCompanyBindingHead(
     (
       await tx.execute(
         sql`SELECT * FROM company_specialist_bindings WHERE id=${bindingId} AND agent_id=${agentId}`,
@@ -370,7 +370,7 @@ export async function createCompanySpecialistBinding(
           "CONFLICT",
           "The company binding delivery key was already used for different content",
         );
-      const head = bindingHead(previous);
+      const head = decodeCompanyBindingHead(previous);
 
       return {
         specialist: companySpecialistDto(
@@ -396,7 +396,7 @@ export async function createCompanySpecialistBinding(
       );
     const snapshot = await buildCompanyBindingSnapshot(tx, agentId, input);
     const id = randomUUID();
-    const head = bindingHead(
+    const head = decodeCompanyBindingHead(
       (
         await tx.execute(
           sql`INSERT INTO company_specialist_bindings(id,company_id,agent_id,package_install_id,enabled,created_by,creation_key,creation_digest) VALUES(${id},${input.owner.companyId},${agentId},${input.packageInstallId},${input.enabled},${userId},${input.idempotencyKey},${digest}) RETURNING *`,

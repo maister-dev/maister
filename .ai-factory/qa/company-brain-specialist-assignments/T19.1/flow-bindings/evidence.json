@@ -1,0 +1,114 @@
+{
+  "phase": "T19.1 reviewed company Flow configuration storage sub-slice",
+  "baseCommit": "53dacfcba",
+  "migration": "0222_company_flow_bindings",
+  "method": "Specification-derived RED -> GREEN -> scoped refactor and affected rerun",
+  "redCases": {
+    "create-red": "Missing company Flow creation after actual Git loader/trust and responsible specialist binding succeeded. The initial test label was later corrected to avoid claiming the company-runtime CBS-03 gate.",
+    "recipient-binding-red": "Real PostgreSQL rejected an array interpolated by Drizzle as a PostgreSQL array; use parameterized IN values for the one bulk current-recipient query.",
+    "lifecycle-red": "Missing reviewed replacement/retirement implementation.",
+    "replacement-capture-red": "The strict create parser incorrectly received a validated replacement with its CAS field; keep strict public service validation and pass its typed configuration to the common capture function.",
+    "provider-pin-red": "Existing removeRevision retired a Flow referenced by a live company Flow binding after the responsible specialist was retired. Shared removal/GC references now include both current pin sources."
+  },
+  "green": {
+    "owningIntegration": {
+      "files": 7,
+      "tests": 52,
+      "exitCode": 0,
+      "command": "pnpm --filter maister-web test:integration lib/agents/__tests__/company-flow-bindings.integration.test.ts lib/agents/__tests__/company-bindings.integration.test.ts lib/agents/__tests__/effective.integration.test.ts lib/agents/__tests__/registry.integration.test.ts lib/specialist-assignments/__tests__/store.integration.test.ts lib/db/__tests__/migration-company-brain-specialists.integration.test.ts lib/gc/__tests__/revision-gc.integration.test.ts --maxWorkers=2"
+    },
+    "fullWebUnit": {
+      "files": 886,
+      "tests": 9263,
+      "exitCode": 0
+    },
+    "typecheck": 0,
+    "lintWarnings": 0,
+    "contracts": 0,
+    "docs": 0,
+    "erdTables": 171
+  },
+  "qualified": [
+    "Normal annotated Git package loader/trust with a specialist and a human-routing coordinator Flow",
+    "Populated 0221 -> 0222 upgrade retains exact specialist head/revision JSON bytes",
+    "Company Flow configuration without project, project Flow attachment or execution run",
+    "Exact package/manifest/responsible-specialist revision and current provider authority",
+    "Mapped active users require current explicit assignment-answer grants, including a 192-character principal identity",
+    "No implicit administrator content/answer authority; missing/extra mappings and password-change accounts refuse",
+    "Required full replacement CAS, one-winner real concurrent update and original inert replay receipts",
+    "Immutable history retains original human routing authority after grant revocation",
+    "Content-free retirement releases current foreign keys and leaves historical references intact",
+    "Existing removal/GC preserve direct coordinator pins after specialist retirement, then remove provider bytes after Flow retirement",
+    "Historical manifest validation preserves raw bytes without injecting current parser defaults"
+  ],
+  "refactor": "Reuse the existing company action authority, exact installed role resolver, specialist snapshot codec and row decoder. Separate validated configuration capture, immutable codec and business mutations. Share company role-routing invariants between capture and retained-history validation.",
+  "scopeLimits": [
+    "T19.1 remains open: owner-aware existing schedule/trigger persistence and new binding/retry snapshot readers are next.",
+    "The internal service contract is implemented; added public OpenAPI request vocabulary is explicitly Designed and exposes no new operation. Public configuration interfaces belong to the specialist/automation UX slice.",
+    "Reviewed workspace-none/result-only intent is configuration; company launch and its actual declaration/preflight remain T20/T20.1 at floor 3.12.0. Current engine stays 3.11.1 and enablement is refused.",
+    "No independent execution, scheduler or attempt ledger; no stand pilot readiness or remote publication/deployment."
+  ],
+  "sourceSha256": {
+    "web/lib/agents/company-flow-binding-capture.ts": "2fde0201649dad8bf316272ff5d6c61e763e935b0a1155b374e86a320e93c0a2",
+    "web/lib/agents/company-flow-binding-mutations.ts": "70162d142e9bd8a01e65f3ae4e779dc6f754d85e67cbaa19d948e9ed81531ff6",
+    "web/lib/agents/company-flow-binding-snapshot.ts": "caad246732098327bd3dea92f9201933efd3d830faedb58ba59c54156aabb371",
+    "web/lib/agents/company-flow-binding-types.ts": "54a67908550ff05ea490a0d55626108a51e9a6fad6aa10b2f49f9ea00a53aa17",
+    "web/lib/agents/company-flow-bindings.ts": "c3ac6a436783b3c9a36a07a5fc9f9056509fe3437ceec401483f6cb1db6c07ad",
+    "web/lib/db/migrations/0222_company_flow_bindings.sql": "db8d20a6f31d8b73ed2e111ec93fcfddc0e968502b6e5ede1735012c90d6444b",
+    "web/lib/db/schema.ts": "bbd371e2da49741bb4d5032dee8820d9add46658e819a1435f3966215e1eca15"
+  },
+  "logs": {
+    "create-red": {
+      "originalBytes": 17383,
+      "sha256": "3697ea91be1e128d2a5c9af4870ca513a4a3b1b6d8bafe972f73887bc6c4607c"
+    },
+    "recipient-binding-red": {
+      "originalBytes": 19460,
+      "sha256": "cdfe4d290432ba526e068628dee7125b88093ad88b3df2d8764e5e7474e594e2"
+    },
+    "lifecycle-red": {
+      "originalBytes": 19329,
+      "sha256": "b3b719623f52eab1efa22571c05e65c3631345c13d5170d4f31ec5114e9982a8"
+    },
+    "replacement-capture-red": {
+      "originalBytes": 19356,
+      "sha256": "c1eb4710757858f85483fd9ff701c1083500f25e8ef98248ec7ffb2c14668bb0"
+    },
+    "provider-pin-red": {
+      "originalBytes": 22888,
+      "sha256": "f59a4e64a455a52c0d85de7e87725aac8126f548843d71ef875f4ac2a0871b73"
+    },
+    "owning-green": {
+      "originalBytes": 103602,
+      "sha256": "47079427ff220ae1180a51c2aaa40291084f940fe56d7d4791bd16466e7d194d"
+    },
+    "full-unit-green": {
+      "originalBytes": 526034,
+      "sha256": "3e0f0539d1ea346d94142db74ee05612b2fa01edf499257809707f821cbc9c46"
+    },
+    "typecheck": {
+      "originalBytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "lint": {
+      "originalBytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "contracts": {
+      "originalBytes": 2491,
+      "sha256": "b543ef85086fab08e6203e24602afbb711e6b39e896cfe5e51d8ab7e9c3c6502"
+    },
+    "docs": {
+      "originalBytes": 685,
+      "sha256": "a3f38a1da613dde3b99fb4ed4b22976919d11f4b80cfb9cfbfa024d2471f6886"
+    },
+    "generation": {
+      "originalBytes": 7723,
+      "sha256": "3b91ae69b8ef6cb01af3d0d9f01888504d72a1cc145f59e5aeaa873e63e39d6e"
+    },
+    "docs-final": {
+      "originalBytes": 685,
+      "sha256": "a3f38a1da613dde3b99fb4ed4b22976919d11f4b80cfb9cfbfa024d2471f6886"
+    }
+  }
+}

@@ -595,3 +595,45 @@ cases:
     schema: CBBindingInput
     valid: false
     value: {"owner":{"kind":"company","companyId":"company_example"},"packageInstallId":"install_example","packageRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","definitionSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","configuration":{},"grantActions":[],"idempotencyKey":"binding_budget_example_001","executionPolicy":{"preset":"supervised","overrides":{"budget":{"run":{"maxTokens":0}}}}}
+
+  - id: company-flow-staged-review-contract
+    surfaces: [web]
+    schema: CBCompanyFlowBindingInput
+    valid: true
+    value: {"owner":{"kind":"company","companyId":"company_example"},"specialistBindingId":"specialist_binding_example","specialistRevision":1,"flowRevisionId":"flow_revision_example","manifestSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","execution":{"workspace":"none","completion":"result"},"roleMappings":{"maintainer":["reviewer_example"]},"idempotencyKey":"company_flow_review_001"}
+
+  - id: company-flow-replacement-explicit-cas
+    surfaces: [web]
+    schema: CBCompanyFlowBindingUpdate
+    valid: true
+    value: {"owner":{"kind":"company","companyId":"company_example"},"specialistBindingId":"specialist_binding_example","specialistRevision":1,"flowRevisionId":"flow_revision_example","manifestSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","execution":{"workspace":"none","completion":"result"},"roleMappings":{"maintainer":["reviewer_example"]},"idempotencyKey":"company_flow_review_001","enabled":false,"expectedRevision":1}
+
+  - id: company-flow-replacement-requires-cas
+    surfaces: [web]
+    schema: CBCompanyFlowBindingUpdate
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"specialistBindingId":"specialist_binding_example","specialistRevision":1,"flowRevisionId":"flow_revision_example","manifestSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","execution":{"workspace":"none","completion":"result"},"roleMappings":{"maintainer":["reviewer_example"]},"idempotencyKey":"company_flow_review_001","enabled":false}
+
+  - id: company-flow-recipients-are-distinct
+    surfaces: [web]
+    schema: CBCompanyFlowBindingInput
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"specialistBindingId":"specialist_binding_example","specialistRevision":1,"flowRevisionId":"flow_revision_example","manifestSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","execution":{"workspace":"none","completion":"result"},"roleMappings":{"maintainer":["reviewer_example","reviewer_example"]},"idempotencyKey":"company_flow_review_001"}
+
+  - id: company-flow-routing-authority-is-server-recorded
+    surfaces: [web]
+    schema: CBCompanyFlowBindingInput
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"specialistBindingId":"specialist_binding_example","specialistRevision":1,"flowRevisionId":"flow_revision_example","manifestSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","execution":{"workspace":"none","completion":"result"},"roleMappings":{"maintainer":["reviewer_example"]},"idempotencyKey":"company_flow_review_001","routingAuthority":[]}
+
+  - id: company-flow-execution-intent-is-result-only
+    surfaces: [web]
+    schema: CBCompanyFlowBindingInput
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"specialistBindingId":"specialist_binding_example","specialistRevision":1,"flowRevisionId":"flow_revision_example","manifestSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","execution":{"workspace":"worktree","completion":"result"},"roleMappings":{"maintainer":["reviewer_example"]},"idempotencyKey":"company_flow_review_001"}
+
+  - id: company-flow-human-identity-matches-company-principal-limit
+    surfaces: [web]
+    schema: CBCompanyFlowBindingInput
+    valid: true
+    value: {"owner":{"kind":"company","companyId":"company_example"},"specialistBindingId":"specialist_binding_example","specialistRevision":1,"flowRevisionId":"flow_revision_example","manifestSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","execution":{"workspace":"none","completion":"result"},"roleMappings":{"maintainer":["rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"]},"idempotencyKey":"company_flow_review_001"}

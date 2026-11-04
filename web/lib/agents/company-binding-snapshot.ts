@@ -36,7 +36,8 @@ const actorSchema = knowledgeActorSchema.extend({
   runId: z.null(),
   attemptId: z.null(),
 });
-const authoritySchema = z
+
+export const companyBindingAuthoritySnapshotSchema = z
   .object({
     schemaVersion: z.literal(1),
     capturedAt: z.string().datetime(),
@@ -53,7 +54,7 @@ const authoritySchema = z
   })
   .strict();
 
-const snapshotSchema = z
+export const companySpecialistBindingSnapshotSchema = z
   .object({
     schemaVersion: z.literal(1),
     agentId: companySpecialistIdSchema,
@@ -128,8 +129,12 @@ const snapshotSchema = z
 export function decodeCompanyBindingRevision(
   row: Readonly<Record<string, unknown>>,
 ): CompanyBindingRevision {
-  const snapshot = snapshotSchema.safeParse(row.snapshot);
-  const authority = authoritySchema.safeParse(row.authority_snapshot);
+  const snapshot = companySpecialistBindingSnapshotSchema.safeParse(
+    row.snapshot,
+  );
+  const authority = companyBindingAuthoritySnapshotSchema.safeParse(
+    row.authority_snapshot,
+  );
   const actor = actorSchema.safeParse(row.actor);
   const createdAt = databaseTimestamp(row.created_at);
   const operation = z
@@ -194,8 +199,12 @@ export async function retainCompanyBindingRevision(
     requestDigest: string;
   }>,
 ): Promise<void> {
-  const snapshot = snapshotSchema.safeParse(input.snapshot);
-  const authority = authoritySchema.safeParse(input.authoritySnapshot);
+  const snapshot = companySpecialistBindingSnapshotSchema.safeParse(
+    input.snapshot,
+  );
+  const authority = companyBindingAuthoritySnapshotSchema.safeParse(
+    input.authoritySnapshot,
+  );
 
   if (!snapshot.success || !authority.success)
     throw new MaisterError(

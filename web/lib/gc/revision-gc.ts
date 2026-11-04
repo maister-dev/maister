@@ -6,7 +6,7 @@ import { and, eq, lte } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
-import { hasCompanySpecialistFlowReference } from "@/lib/agents/company-binding-references";
+import { hasCompanyCoordinatorFlowReference } from "@/lib/agents/company-binding-references";
 import * as schemaModule from "@/lib/db/schema";
 import { gcAgeDays } from "@/lib/instance-config";
 
@@ -112,7 +112,7 @@ export async function runRevisionGcSweep(
 
       if (enabledBy.length > 0) return false;
 
-      if (await hasCompanySpecialistFlowReference(tx, cand.id)) return false;
+      if (await hasCompanyCoordinatorFlowReference(tx, cand.id)) return false;
 
       await tx.delete(flowRevisions).where(eq(flowRevisions.id, cand.id));
 
