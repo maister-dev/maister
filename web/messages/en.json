@@ -2310,6 +2310,8 @@
         "executionStarted": "Execution already started. Open the run to stop it or review recovery options.",
         "statusChanged": "Launch state changed. Refresh its status before making another decision.",
         "parentCapacity": "Waiting for another child execution of this parent to finish. This request will continue automatically.",
+        "parentUnavailable": "The parent execution is no longer available. Review the parent run, then cancel or replan this child request.",
+        "childChanged": "This child request no longer matches its parent's authorized scope. Review the task and parent run, then cancel or replan the request.",
         "capacity": "Waiting for execution capacity. This request will continue automatically.",
         "runner": "Assign an available runner to the selected execution slot, then refresh launch settings.",
         "assetsChanged": "The selected Flow or capability files changed. Review the installation and launch settings before launching again."

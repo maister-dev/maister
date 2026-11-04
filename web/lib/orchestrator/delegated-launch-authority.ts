@@ -21,7 +21,7 @@ import {
   refuseUnsupportedDelegationOption,
 } from "./delegation-target";
 
-import { tasks, runs } from "@/lib/db/schema";
+import { tasks, runs, taskLaunchIntents } from "@/lib/db/schema";
 import { retryDigest } from "@/lib/agents/retry-guards";
 import { resolveAgentFlowTaskLaunchSource } from "@/lib/agents/flow-launch-authority";
 import { resolveEffectiveAgentDefinition } from "@/lib/agents/effective";
@@ -29,6 +29,7 @@ import { taskExecutionChildAdmissionProof } from "@/lib/tasks/qualification-admi
 import { createTaskLaunchServerSource } from "@/lib/tasks/launch-server-source";
 import {
   assertTaskLaunchDelegationTokenAuthority,
+  assertAcceptedTaskLaunchDelegationTokenAuthority,
   assertTokenTaskLaunchPrincipal,
 } from "@/lib/tasks/launch-token";
 import {
@@ -79,6 +80,20 @@ async function delegatedSnapshot(
     projectId,
     parentRunId,
   );
+
+  return readDelegatedSnapshot(db, projectId, taskId, payload);
+}
+
+async function readDelegatedSnapshot(
+  db: Db,
+  projectId: string,
+  taskId: string,
+  payload: DelegatedPayload,
+): Promise<TaskLaunchServerSourceSnapshot> {
+  const parentRunId = payload.origin.boundRunId;
+
+  if (!parentRunId)
+    throw launchRefusal("delegation_launch_source_changed", "PRECONDITION");
   const [task] = await db
     .select()
     .from(tasks)
@@ -268,6 +283,56 @@ export async function assertStoredDelegatedTaskLaunchSource(
     db,
     source.projectId,
     source.taskId,
+    payload.data,
+  );
+
+  if (retryDigest(source) !== retryDigest(expected))
+    throw launchRefusal("delegation_launch_source_changed", "PRECONDITION");
+}
+
+/** Stored dispatch only: no opaque source is returned that could authorize a fresh key. */
+export async function assertAcceptedDelegatedTaskLaunchSource(
+  db: Db,
+  intentId: string,
+): Promise<void> {
+  const [intent] = await db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.id, intentId));
+  const source =
+    intent?.settingsSnapshot.version === 2
+      ? intent.settingsSnapshot.serverExecution
+      : undefined;
+  const payload = payloadSchema.safeParse(source?.execution.triggerPayload);
+
+  if (
+    !intent ||
+    !source ||
+    source.kind !== "delegated_child" ||
+    intent.basis.kind !== "execution_child" ||
+    source.id !== intent.taskId ||
+    source.taskId !== intent.taskId ||
+    source.projectId !== intent.projectId ||
+    !payload.success
+  )
+    throw launchRefusal("delegation_launch_source_changed", "PRECONDITION");
+  const proof = await taskExecutionChildAdmissionProof(
+    db,
+    intent.projectId,
+    intent.taskId,
+  );
+
+  if (retryDigest(proof) !== retryDigest(intent.basis.parent))
+    throw launchRefusal("qualification_child_stale", "PRECONDITION");
+  await assertAcceptedTaskLaunchDelegationTokenAuthority(
+    db,
+    intentId,
+    payload.data.origin,
+  );
+  const expected = await readDelegatedSnapshot(
+    db,
+    intent.projectId,
+    intent.taskId,
     payload.data,
   );
 

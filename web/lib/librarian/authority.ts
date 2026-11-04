@@ -111,7 +111,7 @@ export async function revokeLibrarianTurnToken(
   const d = db ?? getDb();
   const revoked = await d
     .update(projectTokens)
-    .set({ revoked_at: new Date() })
+    .set({ revoked_at: new Date(), revocation_reason: "revoked" })
     .where(
       and(
         eq(projectTokens.librarian_turn_id, turnId),

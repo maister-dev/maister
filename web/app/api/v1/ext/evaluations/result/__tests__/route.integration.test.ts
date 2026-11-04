@@ -5,6 +5,7 @@ import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { seedAgentTokenRunOwner } from "@/test-support/seed-token-run-owner";
 import * as fullSchema from "@/lib/db/schema";
 import {
   startMainPostgresTestDb,
@@ -132,7 +133,10 @@ async function seedPairwiseAttempt(): Promise<{
   const token = await issueJudgeAttemptToken({
     agentId: "core:sdd-judge",
     projectId,
-    runId: randomUUID(),
+    runId: await seedAgentTokenRunOwner(db, {
+      projectId,
+      agentId: "core:sdd-judge",
+    }),
     db,
   });
   const attemptId = randomUUID();
@@ -176,7 +180,10 @@ async function seedScalarAttempt(): Promise<{
   const token = await issueJudgeAttemptToken({
     agentId: "core:sdd-judge",
     projectId,
-    runId: randomUUID(),
+    runId: await seedAgentTokenRunOwner(db, {
+      projectId,
+      agentId: "core:sdd-judge",
+    }),
     db,
   });
   const attemptId = randomUUID();

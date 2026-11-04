@@ -280,6 +280,14 @@ No historic assessment/run receipt is rewritten. Writer floor fences v2 and inte
 
 ## Expectations
 
+Before orchestrator rework rewinds or recreates a checkout, a short transaction
+serializes on the parent, confirms no outstanding or unobserved child obligation
+and retires that turn's delegation credential. Work accepted before this fence
+parks the parent without a Git effect; later requests cannot use the retired
+credential. Git stays outside SQL transactions, and the final ledger fence
+still runs. Policy failure retains existing failure and cleanup semantics;
+recovery repeats durable ownership without restoring retired authority.
+
 - LA01/LA02: the trusted admission service and v2 insert guard admit one-shot manual work independently of assessment, without changing assessments or arming automation; qualification-admission and intent integration own the checks.
 - LA03: automatic selector and dispatch guards require current accepted readiness and exact evidence, including legacy roots; scheduler integration covers opt-in, publication and competing manual routing.
 - LA04/LA05: immutable snapshot guards and frozen reader paths preserve selected/executed input and settings across queue/edit/resume; queued-dispatch integration proves both edit orderings.
@@ -521,3 +529,33 @@ actual Run is bound. Re-entry returns the owning receipt and never allocates a
 second carrier, DAG or Run. Plan dependents use the same source identity and
 request key as the existing dependency-release consumer. Taskless agent
 continuations retain their distinct existing lifecycle.
+
+An accepted, unbound `execution_child` intent is a parent completion obligation.
+`queued`, `preparing` and `held` requests keep the coordinator parked even before
+a Run exists; a bound request is counted through its Run only. These obligations
+do not change live fanout accounting. Parent parking, wake, recovery and reconcile
+use the same predicate. Failed or cancelled unbound requests settle the obligation
+and wake the coordinator with their safe intent/task/state/reason receipt, so a
+failed admission cannot disappear as a successful child. Normal coordinator
+completion serializes against accepted delegation on the parent Run and retires
+its delegation credential in the same transaction as its final zero-obligation
+check. Explicit parent stop and stale parent/input proof still refuse dispatch.
+
+Internal orchestrator token rotation does not repudiate an exact already-accepted
+finite child. A dispatch-only validator reads that intent's immutable source and
+basis from storage, then checks its captured token's server-owned Run binding,
+current scope, expiry, parent and child proof. Only positive `rotation` metadata
+can cross this boundary; explicit revocation or historical unknown rows refuse.
+Fresh source construction, fresh-key acceptance and all presented bearer requests
+still require a live token. Cancelling an accepted child cannot turn a stale
+pre-rotation principal into permission for another key. Explicit revocation
+retires the exact stamped Run family, including internally rotated generations.
+
+The intent's nullable `parentObservedVersion` acknowledges only an exact failed
+or cancelled unbound receipt after the coordinator's action has consumed it.
+Observing a receipt changes neither its state nor `stateVersion`; a stale
+observer cannot acknowledge a later state. An unobserved terminal receipt wakes
+the coordinator even while other accepted children remain pending. The receipt
+is injected as content-free diagnostic data in the coordinator prompt, not as
+instructions or a fabricated child result. A partial parent-expression index
+covers these unbound obligations and receipts. There is no new queue or table.

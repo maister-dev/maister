@@ -16,6 +16,10 @@ import pino from "pino";
 import { nextKeepaliveAt } from "./keepalive-config";
 
 import {
+  childObligationCounts,
+  hasUnobservedChildOutcome,
+} from "@/lib/orchestrator/child-obligations";
+import {
   authorizeGatePermissionResume,
   authorizeGatePermissionResult,
   authorizeGatePermissionContinuation,
@@ -502,12 +506,20 @@ export async function markResumedFromWait(
       await takeSchedulerLock(tx);
       if (opts.expectedCoordinator) {
         const [current] = await tx
-          .select({ status: runs.status, currentStepId: runs.currentStepId })
+          .select({
+            status: runs.status,
+            currentStepId: runs.currentStepId,
+            failedChildWakeAt: runs.failedChildWakeAt,
+          })
           .from(runs)
           .where(eq(runs.id, runId))
           .for("update");
         const [attempt] = await tx
-          .select({ id: nodeAttempts.id, status: nodeAttempts.status })
+          .select({
+            id: nodeAttempts.id,
+            status: nodeAttempts.status,
+            nodeType: nodeAttempts.nodeType,
+          })
           .from(nodeAttempts)
           .where(
             and(
@@ -525,6 +537,16 @@ export async function markResumedFromWait(
           attempt.status !== "NeedsInput"
         )
           return { ok: false, reason: "status-guard-mismatch" };
+        const failureWake =
+          attempt.nodeType === "orchestrator" &&
+          (current.failedChildWakeAt !== null ||
+            (await hasUnobservedChildOutcome(tx, runId)));
+
+        if (
+          !failureWake &&
+          (await childObligationCounts(tx, runId)).pending > 0
+        )
+          return { ok: false, reason: "pending-evidence" };
       }
       if (
         (await countLiveRuns(tx, "flow")) >=

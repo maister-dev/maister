@@ -44,19 +44,17 @@ export type TokenActor = {
   agentId: string | null;
   actorLabel: string;
   scopes: string[];
-  // M37 (ADR-098): the run a per-launch ephemeral token is bound to, derived
-  // SERVER-SIDE from the deterministic token name (`orchestrator-run:<id>` or
-  // `agent-run:<id>`). A delegation route reads the PARENT runId from here,
-  // never from the request body.
+  // Server-stamped immutable Run identity for new machine credentials; only
+  // fully unstamped live legacy rows use their reserved-name decoder.
+  // Delegation reads the parent here, never from the request body.
   boundRunId: string | null;
   // ADR-186: the librarian turn a `librarian` token was minted for; absent or
   // null for every other kind.
   librarianTurnId?: string | null;
 };
 
-// M37 (ADR-098): the run id baked into a per-launch ephemeral token's
-// deterministic name. Returns null for any other token (durable project tokens,
-// user tokens) — they are not run-bound.
+// Compatibility decoder for fully unstamped legacy ephemeral credentials.
+// New machine-token authority comes from immutable server-owned columns.
 export function parseBoundRunId(name: string): string | null {
   const match = /^(?:orchestrator-run|agent-run):(.+)$/.exec(name);
 
@@ -113,6 +111,23 @@ export async function verifyToken(
   const tokenKind: TokenKind = row.token_kind ?? "project";
   const agentId: string | null = row.agent_id ?? null;
   const ownerUserId: string | null = row.owner_user_id ?? null;
+  const hasRunBinding =
+    row.bound_run_id !== null && row.bound_run_id !== undefined;
+  const hasRunOrigin =
+    row.origin_kind !== null && row.origin_kind !== undefined;
+
+  if (
+    hasRunBinding !== hasRunOrigin ||
+    (hasRunOrigin &&
+      (!row.bound_run_id ||
+        !row.project_id ||
+        !["orchestrator_run", "agent_run"].includes(row.origin_kind) ||
+        (row.origin_kind === "orchestrator_run" &&
+          (tokenKind !== "project" || agentId !== null)) ||
+        (row.origin_kind === "agent_run" &&
+          (tokenKind !== "agent" || agentId === null))))
+  )
+    throw new TokenAuthError("invalid");
 
   // ADR-186: a librarian token acts for its owner, so it inherits the user
   // token's per-request owner checks — deactivation or a pending password
@@ -180,7 +195,9 @@ export async function verifyToken(
           ? `librarian:${ownerUserId}`
           : `token:${row.name}`,
     scopes: (row.scopes as string[]) ?? ["*"],
-    boundRunId: parseBoundRunId(row.name ?? ""),
+    boundRunId: hasRunBinding
+      ? row.bound_run_id
+      : parseBoundRunId(row.name ?? ""),
     librarianTurnId:
       tokenKind === "librarian" ? (row.librarian_turn_id ?? null) : null,
   };

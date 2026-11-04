@@ -7,6 +7,7 @@ import { eq, inArray } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { seedAgentTokenRunOwner } from "@/test-support/seed-token-run-owner";
 import * as fullSchema from "@/lib/db/schema";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
@@ -263,7 +264,10 @@ afterAll(async () => {
 
 describe("defaultJudgeSpawn + issueJudgeAttemptToken glue (real launch path)", () => {
   it("issueJudgeAttemptToken mints EXACTLY the 4 attempt-bound judge scopes", async () => {
-    const runId = randomUUID();
+    const runId = await seedAgentTokenRunOwner(db, {
+      projectId,
+      agentId: AGENT_ID,
+    });
     const token = await issueJudgeAttemptToken({
       agentId: AGENT_ID,
       projectId,

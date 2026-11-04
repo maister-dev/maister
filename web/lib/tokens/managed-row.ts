@@ -6,9 +6,11 @@
 // on any project that had at least one token. Plain module, importable by both.
 //
 // A non-managed token is machine-minted and run-bound — `issueOrchestratorRunToken`
-// mints token_kind='project' named `orchestrator-run:<runId>`, and listTokens
-// filters on project_id alone, so those rows DO render in these tables today.
+// mints token_kind='project' named `orchestrator-run:<runId>`, and unstamped
+// legacy machine rows can still render in these tables.
 // This only withholds the affordance; the server refuses the PATCH regardless.
+// New positively stamped machine rows are excluded by every token DTO reader
+// before reaching this legacy-name classifier; internal stamps are never wire fields.
 const RESERVED_TOKEN_NAME_PATTERN = /^(orchestrator-run|agent-run):/iu;
 
 export function isManagedTokenRow(token: {

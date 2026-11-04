@@ -29,6 +29,12 @@ a run is created.
 
 ## Roles & capabilities
 
+An accepted execution-child request can remain queued without a Run. If its
+parent is unavailable or its scope changed, the retained launch status explains
+that parent decision in EN/RU and directs the user to review, cancel or replan
+the request. It is not presented as a negative task assessment. Choosing new
+settings does not restore the old parent authority.
+
 Any authenticated user can open the dialog. Whether a launch can proceed is
 gated downstream (project selection + supervisor availability); the trigger
 button is disabled while the supervisor is unavailable, and the Cmd/Ctrl+K

@@ -1127,6 +1127,7 @@ table execution_commands {
   request_schema text
   request_sha256 text
   request_canonical_json text
+  coordinator_child_launch_context jsonb
   receipt_evidence jsonb
   terminal_event_id text
   terminal_evidence_sha256 text
@@ -1170,6 +1171,7 @@ table execution_commands {
     (transport_state, next_attempt_at, id) [name: 'execution_commands_reconciliation_idx']
     (application_state, application_next_retry_at, application_claim_expires_at, id) [name: 'execution_commands_application_idx']
     (run_id, logical_operation_key) [name: 'execution_commands_prompt_logical_operation_uq', unique]
+
 
 
 
@@ -2274,13 +2276,20 @@ table project_tokens {
   last_used_at "timestamp with time zone"
   expires_at "timestamp with time zone"
   revoked_at "timestamp with time zone"
+  bound_run_id text
+  origin_kind text
+  revocation_reason text
 
   indexes {
     prefix [name: 'project_tokens_prefix_idx']
     project_id [name: 'project_tokens_project_idx']
     owner_user_id [name: 'project_tokens_owner_idx']
     agent_id [name: 'project_tokens_agent_idx']
+    (project_id, origin_kind, bound_run_id) [name: 'project_tokens_run_origin_idx']
     (owner_user_id, created_at) [name: 'project_tokens_owner_created_idx']
+
+
+
 
 
 
@@ -3032,6 +3041,7 @@ table task_launch_intents {
   original_run_id text
   state text [not null, default: 'queued']
   state_version integer [not null, default: 1]
+  parent_observed_version integer
   attempts integer [not null, default: 0]
   due_at "timestamp with time zone"
   lease_token text
@@ -3055,6 +3065,8 @@ table task_launch_intents {
     replaces_intent_id [name: 'task_launch_intents_replace_uq', unique]
     (state, due_at, id) [name: 'task_launch_intents_recovery_idx']
     (project_id, task_id, accepted_at) [name: 'task_launch_intents_history_idx']
+    (project_id, basis, accepted_at, id) [name: 'task_launch_intents_parent_obligations_idx']
+
 
 
 

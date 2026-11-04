@@ -2,14 +2,19 @@ import type {
   TaskLaunchInputSnapshot,
   TaskLaunchSettingsSnapshot,
 } from "@/lib/tasks/launch-types";
+import type { TaskExecutionChildProof } from "@/lib/tasks/qualification-types";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { and, eq, sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
+import { canonicalCommandJson } from "../../../../runtime/command-json";
+
 import { taskLaunchIntents, runs, flows, flowRevisions } from "@/lib/db/schema";
+import { seedLocalHost, seedRun } from "@/test-support/execution-host-seed";
+import { qualificationFixture } from "@/test-support/task-qualification";
 import { upgradeMainTestDb } from "@/test-support/migration-upgrade";
 import { retryDigest } from "@/lib/agents/retry-guards";
 import { testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
@@ -20,6 +25,112 @@ import {
 } from "@/test-support/pg-container";
 
 let database: StartedPostgresTestDb;
+
+async function coordinatorPromptFixture(
+  target: StartedPostgresTestDb,
+  projectId: string,
+  nodeType: "orchestrator" | "ai_coding",
+): Promise<
+  Readonly<{
+    commandId: string;
+    runId: string;
+    nodeAttemptId: string;
+    requestSha256: string;
+  }>
+> {
+  const runId = await seedRun(target.db, { projectId, runKind: "flow" });
+  const existingHost = await target.pool.query<{
+    id: string;
+    host_key: string;
+  }>(
+    "SELECT id,host_key FROM execution_hosts WHERE retired_at IS NULL LIMIT 1",
+  );
+  const host =
+    existingHost.rows[0] ??
+    (await seedLocalHost(target.db).then((value) => ({
+      id: value.id,
+      host_key: value.hostKey,
+    })));
+  const assignmentId = randomUUID();
+  const nodeAttemptId = randomUUID();
+  const commandId = randomUUID();
+  const sessionId = randomUUID();
+
+  await target.pool.query(
+    "INSERT INTO execution_assignments(id,run_id,execution_host_id,epoch,state,placement_reason) VALUES($1,$2,$3,1,'active','launch')",
+    [assignmentId, runId, host.id],
+  );
+  await target.pool.query(
+    "UPDATE runs SET execution_assignment_id=$2,current_step_id='coordinate' WHERE id=$1",
+    [runId, assignmentId],
+  );
+  await target.pool.query(
+    "INSERT INTO node_attempts(id,run_id,node_id,node_type,status) VALUES($1,$2,'coordinate',$3,'Running')",
+    [nodeAttemptId, runId, nodeType],
+  );
+  const request = canonicalCommandJson({
+    requestVersion: 2,
+    command: {
+      id: commandId,
+      kind: "session.prompt",
+      issuedAt: new Date().toISOString(),
+    },
+    fence: { hostKey: host.host_key, runId, assignmentId, assignmentEpoch: 1 },
+    target: { hostSessionId: sessionId },
+    payload: { prompt: "Retained private coordinator request" },
+  });
+  const requestSha256 = createHash("sha256").update(request).digest("hex");
+  const owner = {
+    version: 1,
+    variant: "node",
+    runId,
+    runSessionId: randomUUID(),
+    incarnationId: randomUUID(),
+    assignmentId,
+    assignmentEpoch: 1,
+    nodeAttemptId,
+    promptOrdinal: 0,
+  };
+
+  await target.pool.query(
+    "INSERT INTO execution_commands(id,run_id,execution_assignment_id,execution_host_id,assignment_epoch,kind,target_session_id,payload,max_attempts,owner_kind,owner_ref,logical_operation_key,request_schema,request_sha256,request_canonical_json) VALUES($1,$2,$3,$4,1,'session.prompt',$5,'{}',3,'flow_node_attempt',$6,$7,'maister.command.request.v2',$8,$9)",
+    [
+      commandId,
+      runId,
+      assignmentId,
+      host.id,
+      sessionId,
+      owner,
+      `node:${nodeAttemptId}:0`,
+      requestSha256,
+      request,
+    ],
+  );
+
+  return { commandId, runId, nodeAttemptId, requestSha256 };
+}
+
+async function insertCoordinatorContext(
+  sourceCommandId: string,
+  receipts: readonly unknown[],
+): Promise<string> {
+  const commandId = randomUUID();
+
+  await database.pool.query(
+    `
+    WITH original AS (
+      SELECT *,jsonb_set(request_canonical_json::jsonb,'{command,id}',to_jsonb($2::text))::text AS request
+      FROM execution_commands WHERE id=$1
+    )
+    INSERT INTO execution_commands(id,run_id,execution_assignment_id,execution_host_id,assignment_epoch,kind,target_session_id,payload,max_attempts,owner_kind,owner_ref,logical_operation_key,request_schema,request_sha256,request_canonical_json,coordinator_child_launch_context)
+    SELECT $2,run_id,execution_assignment_id,execution_host_id,assignment_epoch,kind,target_session_id,payload,max_attempts,owner_kind,owner_ref,logical_operation_key||':'||$2,request_schema,encode(sha256(convert_to(request,'UTF8')),'hex'),request,
+      jsonb_build_object('version',1,'nodeAttemptId',owner_ref->>'nodeAttemptId','promptOrdinal',owner_ref->'promptOrdinal','requestSha256',encode(sha256(convert_to(request,'UTF8')),'hex'),'receipts',$3::jsonb)
+    FROM original`,
+    [sourceCommandId, commandId, JSON.stringify(receipts)],
+  );
+
+  return commandId;
+}
 
 beforeAll(async () => {
   database = await startMainPostgresTestDb({
@@ -583,7 +694,7 @@ it("DB02 upgrades immutable v1 intent history without inventing missing executio
     expect(
       (
         await partial.pool.query(
-          "SELECT to_jsonb(i)-ARRAY['preparation_identity','preparation_phase','cleanup_state','dispatch_receipt'] AS value FROM task_launch_intents i WHERE id=$1",
+          "SELECT to_jsonb(i)-ARRAY['preparation_identity','preparation_phase','cleanup_state','dispatch_receipt','parent_observed_version'] AS value FROM task_launch_intents i WHERE id=$1",
           [intentId],
         )
       ).rows[0].value,
@@ -701,3 +812,427 @@ it("DB02 upgrades immutable v1 intent history without inventing missing executio
     await partial.stop();
   }
 }, 180_000);
+
+it("DB03 preserves populated 0226 history and leaves new origin, context and parent witnesses unknown through upgrade and replay", async () => {
+  const partial = await startMainPostgresTestDbUpTo(
+    { databaseName: "queued_child_upgrade" },
+    "0226_session_create_owner_continuation",
+  );
+
+  try {
+    await partial.pool.query("SET maister.task_launch_writer='v3'");
+    const [source] = await database.db
+      .select()
+      .from(taskLaunchIntents)
+      .where(eq(taskLaunchIntents.principalKind, "session_user"))
+      .limit(1);
+
+    await partial.pool.query(
+      "INSERT INTO users(id,email,role) VALUES($1,$2,'admin')",
+      [source.actorUserId, `${source.actorUserId}@test.local`],
+    );
+    await partial.pool.query(
+      "INSERT INTO projects(id,slug,name,repo_path,task_key) VALUES($1,$1,'Upgrade','/tmp/child-upgrade','CHILDUP')",
+      [source.projectId],
+    );
+    await partial.pool.query(
+      "INSERT INTO tasks(id,project_id,number,title,prompt,revision,qualification_input_revision) VALUES($1,$2,1,$3,$4,$5,$6)",
+      [
+        source.taskId,
+        source.projectId,
+        source.inputSnapshot.title,
+        source.inputSnapshot.prompt,
+        source.taskRevision,
+        source.inputRevision,
+      ],
+    );
+    const historicalIntent = (
+      await database.pool.query<{ value: Readonly<Record<string, unknown>> }>(
+        "SELECT to_jsonb(i)-'parent_observed_version' AS value FROM task_launch_intents i WHERE id=$1",
+        [source.id],
+      )
+    ).rows[0].value;
+
+    await partial.pool.query(
+      "INSERT INTO task_launch_intents SELECT (jsonb_populate_record(NULL::task_launch_intents,$1::jsonb)).*",
+      [
+        JSON.stringify({
+          ...historicalIntent,
+          state: "queued",
+          state_version: 1,
+          reason: null,
+          cancellation_receipt: null,
+        }),
+      ],
+    );
+    const command = await coordinatorPromptFixture(
+      partial,
+      source.projectId,
+      "orchestrator",
+    );
+    const tokenId = randomUUID();
+    const qualificationId = randomUUID();
+
+    await partial.pool.query(
+      "INSERT INTO project_tokens(id,project_id,name,prefix,token_hash,scopes,revoked_at) VALUES($1,$2,'Historical token','retained','retained-hash','[\"runs:delegate\"]',clock_timestamp())",
+      [tokenId, source.projectId],
+    );
+    await partial.pool.query(
+      "UPDATE tasks SET qualification_revision_counter=1 WHERE id=$1",
+      [source.taskId],
+    );
+    await partial.pool.query(
+      "INSERT INTO task_qualifications(id,project_id,task_id,revision,input_revision,input_digest,request_key,payload_digest,author_kind,author_identity,author_user_id,evidence_target,evidence_sha,value,routing,publication_state,published_at) VALUES($1,$2,$3,1,$4,$5,$6,$7,'user',$8,$8,'main',$9,$10,'{\"flowId\":null,\"runnerId\":null,\"baseBranch\":null,\"enqueue\":false}','accepted',clock_timestamp())",
+      [
+        qualificationId,
+        source.projectId,
+        source.taskId,
+        source.inputRevision,
+        source.inputDigest,
+        randomUUID(),
+        "a".repeat(64),
+        source.actorUserId,
+        "a".repeat(40),
+        qualificationFixture(),
+      ],
+    );
+    const readHistory = async () => ({
+      run: (
+        await partial.pool.query(
+          "SELECT to_jsonb(r) value FROM runs r WHERE id=$1",
+          [command.runId],
+        )
+      ).rows[0].value,
+      qualification: (
+        await partial.pool.query(
+          "SELECT to_jsonb(q) value FROM task_qualifications q WHERE id=$1",
+          [qualificationId],
+        )
+      ).rows[0].value,
+      token: (
+        await partial.pool.query(
+          "SELECT to_jsonb(t)-ARRAY['bound_run_id','origin_kind','revocation_reason'] value FROM project_tokens t WHERE id=$1",
+          [tokenId],
+        )
+      ).rows[0].value,
+      intent: (
+        await partial.pool.query(
+          "SELECT to_jsonb(i)-'parent_observed_version' value FROM task_launch_intents i WHERE id=$1",
+          [source.id],
+        )
+      ).rows[0].value,
+      command: (
+        await partial.pool.query(
+          "SELECT to_jsonb(c)-'coordinator_child_launch_context' value FROM execution_commands c WHERE id=$1",
+          [command.commandId],
+        )
+      ).rows[0].value,
+    });
+    const before = await readHistory();
+
+    await upgradeMainTestDb(partial, "0226_session_create_owner_continuation");
+    await migrate(partial.db, { migrationsFolder: "./lib/db/migrations" });
+    expect(await readHistory()).toEqual(before);
+    expect(
+      (
+        await partial.pool.query(
+          "SELECT bound_run_id,origin_kind,revocation_reason FROM project_tokens WHERE id=$1",
+          [tokenId],
+        )
+      ).rows[0],
+    ).toEqual({
+      bound_run_id: null,
+      origin_kind: null,
+      revocation_reason: null,
+    });
+    expect(
+      (
+        await partial.pool.query(
+          "SELECT parent_observed_version FROM task_launch_intents WHERE id=$1",
+          [source.id],
+        )
+      ).rows[0].parent_observed_version,
+    ).toBeNull();
+    expect(
+      (
+        await partial.pool.query(
+          "SELECT coordinator_child_launch_context FROM execution_commands WHERE id=$1",
+          [command.commandId],
+        )
+      ).rows[0].coordinator_child_launch_context,
+    ).toBeNull();
+    await expect(
+      partial.pool.query(
+        "UPDATE project_tokens SET origin_kind='orchestrator_run',bound_run_id=$2 WHERE id=$1",
+        [tokenId, command.runId],
+      ),
+    ).rejects.toMatchObject({
+      constraint: "project_tokens_run_origin_immutable",
+    });
+    await expect(
+      partial.pool.query(
+        "UPDATE project_tokens SET revocation_reason='rotation' WHERE id=$1",
+        [tokenId],
+      ),
+    ).rejects.toMatchObject({
+      constraint: "project_tokens_revocation_monotonic",
+    });
+  } finally {
+    await partial.stop();
+  }
+}, 180_000);
+
+it("DB04 fresh SQL binds machine origins immutably and refuses unstamped or backwards rotation", async () => {
+  const projectId = (
+    await database.pool.query<{ project_id: string }>(
+      "SELECT project_id FROM task_launch_intents LIMIT 1",
+    )
+  ).rows[0].project_id;
+  const owner = await coordinatorPromptFixture(
+    database,
+    projectId,
+    "orchestrator",
+  );
+  const tokenId = randomUUID();
+  const otherProjectId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO projects(id,slug,name,repo_path,task_key) VALUES($1,$1,'Other','/tmp/other-origin','OTHEROR')",
+    [otherProjectId],
+  );
+  await expect(
+    database.pool.query(
+      "INSERT INTO project_tokens(id,project_id,name,prefix,token_hash,origin_kind,bound_run_id) VALUES($1,$2,'Cross project','cross','hash','orchestrator_run',$3)",
+      [randomUUID(), otherProjectId, owner.runId],
+    ),
+  ).rejects.toMatchObject({ constraint: "project_tokens_run_origin_owner" });
+  await database.pool.query(
+    "INSERT INTO project_tokens(id,project_id,name,prefix,token_hash,scopes,origin_kind,bound_run_id) VALUES($1,$2,'Bound coordinator','bound','hash','[\"runs:delegate\"]','orchestrator_run',$3)",
+    [tokenId, projectId, owner.runId],
+  );
+  // Audit-only updates must not plan the INSERT-only Run ownership query.
+  const runLock = await database.pool.connect();
+
+  try {
+    await runLock.query("BEGIN");
+    await runLock.query("LOCK TABLE runs IN ACCESS EXCLUSIVE MODE");
+    const auditUpdate = await database.pool.connect();
+
+    try {
+      await auditUpdate.query("BEGIN");
+      await auditUpdate.query("SET LOCAL lock_timeout='500ms'");
+      const updated = await auditUpdate.query(
+        "UPDATE project_tokens SET last_used_at=clock_timestamp() WHERE id=$1 RETURNING id",
+        [tokenId],
+      );
+
+      expect(updated.rowCount).toBe(1);
+    } finally {
+      try {
+        await auditUpdate.query("ROLLBACK");
+      } finally {
+        auditUpdate.release();
+      }
+    }
+  } finally {
+    try {
+      await runLock.query("ROLLBACK");
+    } finally {
+      runLock.release();
+    }
+  }
+  await expect(
+    database.pool.query(
+      "UPDATE project_tokens SET bound_run_id=$2 WHERE id=$1",
+      [tokenId, randomUUID()],
+    ),
+  ).rejects.toMatchObject({
+    constraint: "project_tokens_run_origin_immutable",
+  });
+  await expect(
+    database.pool.query("UPDATE project_tokens SET project_id=$2 WHERE id=$1", [
+      tokenId,
+      otherProjectId,
+    ]),
+  ).rejects.toMatchObject({
+    constraint: "project_tokens_run_origin_immutable",
+  });
+  await expect(
+    database.pool.query(
+      "UPDATE project_tokens SET revocation_reason='rotation' WHERE id=$1",
+      [tokenId],
+    ),
+  ).rejects.toMatchObject({
+    constraint: "project_tokens_revocation_reason_check",
+  });
+  await database.pool.query(
+    "UPDATE project_tokens SET revoked_at=clock_timestamp(),revocation_reason='rotation' WHERE id=$1",
+    [tokenId],
+  );
+  await expect(
+    database.pool.query(
+      "UPDATE project_tokens SET revoked_at=NULL,revocation_reason=NULL WHERE id=$1",
+      [tokenId],
+    ),
+  ).rejects.toMatchObject({
+    constraint: "project_tokens_revocation_monotonic",
+  });
+  await database.pool.query(
+    "UPDATE project_tokens SET revocation_reason='revoked' WHERE id=$1",
+    [tokenId],
+  );
+  await expect(
+    database.pool.query(
+      "UPDATE project_tokens SET revocation_reason='rotation' WHERE id=$1",
+      [tokenId],
+    ),
+  ).rejects.toMatchObject({
+    constraint: "project_tokens_revocation_monotonic",
+  });
+  const ordinaryToken = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO project_tokens(id,project_id,name,prefix,token_hash) VALUES($1,$2,'Ordinary token','ordinary','hash')",
+    [ordinaryToken, projectId],
+  );
+  await expect(
+    database.pool.query(
+      "UPDATE project_tokens SET revoked_at=clock_timestamp(),revocation_reason='rotation' WHERE id=$1",
+      [ordinaryToken],
+    ),
+  ).rejects.toMatchObject({
+    constraint: "project_tokens_rotation_origin_check",
+  });
+});
+
+it("DB05 fresh SQL requires an immutable bounded coordinator-owned prompt and completed witness before parent observation", async () => {
+  const [source] = await database.db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.principalKind, "session_user"))
+    .limit(1);
+  const coordinator = await coordinatorPromptFixture(
+    database,
+    source.projectId,
+    "orchestrator",
+  );
+  const ordinary = await coordinatorPromptFixture(
+    database,
+    source.projectId,
+    "ai_coding",
+  );
+  const taskId = randomUUID();
+  const intentId = randomUUID();
+  const proof: TaskExecutionChildProof = {
+    version: 1,
+    parentRunId: coordinator.runId,
+    parentTaskId: null,
+    parentAdmissionDigest: "a".repeat(64),
+    parentLegacy: true,
+    planRevision: "migration-guard",
+    childInputDigest: source.inputDigest,
+    relationId: null,
+  };
+
+  await database.pool.query(
+    "INSERT INTO tasks(id,project_id,number,title,prompt,qualification_mode,qualification_child_proof) VALUES($1,$2,2,$3,$4,'execution_child',$5)",
+    [
+      taskId,
+      source.projectId,
+      source.inputSnapshot.title,
+      source.inputSnapshot.prompt,
+      proof,
+    ],
+  );
+  await database.db.insert(taskLaunchIntents).values({
+    id: intentId,
+    projectId: source.projectId,
+    taskId,
+    principalKind: "system",
+    principalId: "migration-coordinator",
+    launchSource: "execution_child",
+    operation: "launch",
+    requestKey: randomUUID(),
+    payloadDigest: "e".repeat(64),
+    taskRevision: 0,
+    inputRevision: 1,
+    inputDigest: source.inputDigest,
+    inputSnapshot: { ...source.inputSnapshot, taskId, number: 2 },
+    settingsDigest: source.settingsDigest,
+    settingsSnapshot: source.settingsSnapshot,
+    basis: { kind: "execution_child", parent: proof },
+    dueAt: new Date(),
+  });
+  await database.pool.query(
+    "UPDATE task_launch_intents SET state='cancelled',state_version=2 WHERE id=$1",
+    [intentId],
+  );
+  const receipt = {
+    intentId,
+    taskId,
+    state: "cancelled",
+    stateVersion: 2,
+    reason: null,
+  };
+
+  await expect(
+    insertCoordinatorContext(ordinary.commandId, [receipt]),
+  ).rejects.toMatchObject({
+    constraint: "execution_commands_coordinator_context_owner",
+  });
+  for (const malformed of [
+    { ...receipt, stateVersion: -1 },
+    { ...receipt, reason: "unsafe\nreason" },
+    { ...receipt, prompt: "Not diagnostic data" },
+  ]) {
+    await expect(
+      insertCoordinatorContext(coordinator.commandId, [malformed]),
+    ).rejects.toMatchObject({
+      constraint: "execution_commands_coordinator_context_receipt",
+    });
+  }
+  const commandId = await insertCoordinatorContext(coordinator.commandId, [
+    receipt,
+  ]);
+
+  await expect(
+    database.pool.query(
+      "UPDATE execution_commands SET coordinator_child_launch_context=NULL WHERE id=$1",
+      [commandId],
+    ),
+  ).rejects.toMatchObject({
+    constraint: "execution_commands_coordinator_context_immutable",
+  });
+  await expect(
+    database.pool.query(
+      "UPDATE execution_commands SET coordinator_child_launch_context='{}' WHERE id=$1",
+      [coordinator.commandId],
+    ),
+  ).rejects.toMatchObject({
+    constraint: "execution_commands_coordinator_context_immutable",
+  });
+  await expect(
+    database.pool.query(
+      "UPDATE task_launch_intents SET parent_observed_version=2 WHERE id=$1",
+      [intentId],
+    ),
+  ).rejects.toMatchObject({
+    constraint: "task_launch_parent_observation_owner",
+  });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT parent_observed_version FROM task_launch_intents WHERE id=$1",
+        [intentId],
+      )
+    ).rows[0].parent_observed_version,
+  ).toBeNull();
+  expect(
+    (
+      await database.pool.query(
+        "SELECT transport_state,application_state FROM execution_commands WHERE id=$1",
+        [commandId],
+      )
+    ).rows[0],
+  ).toEqual({ transport_state: "not_sent", application_state: "pending" });
+});

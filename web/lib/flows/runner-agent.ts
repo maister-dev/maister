@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { ChildLaunchReceipt } from "@/lib/orchestrator/child-launch-context";
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 import type { CapabilityAgent } from "@/lib/config.schema";
 import type { ScratchAdapterLaunch } from "@/lib/db/schema";
@@ -149,6 +150,7 @@ export type RunAgentStepCtx = {
   // S2.12: required. A node dispatch that cannot name its owner has no
   // prompt to send.
   promptOwner: GatePromptOwner | NodePromptOwner | ConsensusPromptOwner;
+  coordinatorChildLaunchReceipts?: readonly ChildLaunchReceipt[];
   flowDriverClaim?: FlowDriverClaim;
   signal?: AbortSignal;
   worktreePath: string;
@@ -1621,6 +1623,12 @@ async function runNewSession(
 
             return {
               ...admission,
+              ...(ctx.coordinatorChildLaunchReceipts?.length
+                ? {
+                    coordinatorChildLaunchReceipts:
+                      ctx.coordinatorChildLaunchReceipts,
+                  }
+                : {}),
               ...(claim
                 ? {
                     assertCommit: async () => {

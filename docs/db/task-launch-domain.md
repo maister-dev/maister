@@ -1,6 +1,6 @@
 # Task launch and preparation persistence
 
-**Implemented locally — ADR-200/201; final combined acceptance pending.** Main-lineage migrations `0215`–`0226` establish preparation ownership, immutable admission, shared reservations, frozen execution inputs, first-dispatch evidence and owned session continuation. The migration ledger below identifies each additive change. Generated schema, journal and snapshots travel with SQL. Historical assessments, run snapshots and accepted input digests are not rewritten. Fresh/populated test databases exercise upgrades; this work does not migrate production.
+**Implemented locally — ADR-200/201; final combined acceptance pending.** Main-lineage migrations `0215`–`0227` establish preparation ownership, immutable admission, shared reservations, frozen execution inputs, first-dispatch evidence and owned session continuation. The migration ledger below identifies each additive change. Generated schema, journal and snapshots travel with SQL. Historical assessments, run snapshots and accepted input digests are not rewritten. Fresh/populated test databases exercise upgrades; this work does not migrate production.
 
 | Migration                              | Persistence change                                                                                                                         |
 | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -16,6 +16,7 @@
 | `0224_task_launch_dispatch_receipt`    | Write-once first-dispatch witness bound to run, assignment/epoch and accepted digests.                                                     |
 | `0225_task_launch_agent_preparation`   | Standalone-agent preparation, exact agent/Flow binding, derived consensus/carrier admission and compatible historical continuation guards. |
 | `0226_session_create_owner_continuation` | Closed domain ownership and private prompt continuations on existing create commands; atomic admission, immutability and guarded terminal compaction. |
+| `0227_queued_child_obligations` | Indexed unbound child completion obligations, exact terminal-receipt observation, immutable coordinator prompt context and positively stamped token rotation provenance on existing rows. |
 
 Migration `0226` adds no table and no manual admission capability. The existing
 private create intent carries the original owner, request and domain continuation
@@ -34,6 +35,20 @@ settings. Reading retained legacy evidence remains supported; application
 rollback to an incompatible writer requires a reviewed maintenance operation,
 not removal of the new guards. Supervisor process ownership uses its separate
 [private SQLite migration](../supervisor.md#execution-host-state-store-implemented--adr-166).
+
+Migration `0227` adds no table and does not rewrite old grants. Parent lookups
+use the partial `(project_id, basis.parent.parentRunId, accepted_at, id)` index
+for never-bound execution-child intents. Nullable `parent_observed_version`
+acknowledges an exact terminal receipt without incrementing `state_version` or
+emitting another launch event. Its DB guard requires the current orchestrator's
+successful, applied owned command and its immutable typed receipt witness.
+`execution_commands.coordinator_child_launch_context` is private, bounded and
+bound to the original request digest, owner attempt and prompt ordinal; it is
+written only with that prompt's INSERT and cannot be added to old commands.
+Human-readable prompt text is never parsed as observation authority. Existing
+cleanup metadata does not advance the receipt version. The
+[admission contract](../system-analytics/task-launch-admission.md#external-delegated-child-requests)
+owns the wait, dispatch and security-revocation rules.
 
 ## Entities and cardinalities
 
@@ -129,6 +144,29 @@ scope, grants, expiry, owner and turn/parent availability. Dispatch repeats thos
 checks. Existing system automatic bases and all historical receipts remain
 unchanged; no absent historical bearer identity is reconstructed from mutable
 token rows.
+
+New machine credentials on `project_tokens` carry nullable server-only
+`bound_run_id` and `origin_kind=orchestrator_run|agent_run`. Only machine INSERTs
+stamp these fields; updates cannot invent or change a binding or its project,
+kind and agent identity. The opaque Run identity deliberately has no FK: token
+history retains its binding after pruning, while authority always rechecks the
+current parent Run, project and status. Historical NULL is unknown, never inferred
+from a display name. No binding or revocation-reason field enters token DTOs.
+
+`revocation_reason=rotation|revoked` is nullable for compatibility. Existing
+revoked timestamps are never cleared or replaced; explicit revocation cannot
+become rotation. Rotation requires a positively stamped orchestrator credential
+with delegation scope. Legacy private orchestrator credentials are retired only
+through their exact project/kind/name/canonical-scope tuple and receive `revoked`,
+never a reconstructed stamp or rotation grant. Explicit revocation retires the
+exact stamped family including rotated rows, preserving their first timestamps.
+
+Presented HTTP credentials always require `revoked_at IS NULL`. Only the
+dispatch-only validator for an exact already-accepted delegated intent may
+validate its original internally rotated credential, after current scope,
+expiry, parent, grant and immutable child-proof checks. That validator returns
+no reusable fresh-launch principal. Constructors and fresh-key acceptance stay
+live-token-only; a matching old or cancelled intent cannot authorize a new key.
 
 ## Intent-owned preparation journal
 

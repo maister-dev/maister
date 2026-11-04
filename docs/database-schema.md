@@ -1,6 +1,6 @@
 [← Getting Started](getting-started.md) · [Back to README](../README.md) · [Error Taxonomy →](error-taxonomy.md)
 
-**Task launch and preparation:** [the owning persistence contract](db/task-launch-domain.md) records implemented main-lineage migrations `0215`–`0226`, immutable admission, pre-run capacity/identity, preparation ownership, first-dispatch/derived-child guards and frozen owned session continuations. Historical run/assessment receipts are unchanged; final combined acceptance and deployed qualification remain separate.
+**Task launch and preparation:** [the owning persistence contract](db/task-launch-domain.md) records implemented main-lineage migrations `0215`–`0227`, immutable admission, pre-run capacity/identity, preparation ownership, first-dispatch/derived-child guards, frozen owned session continuations, run-bound machine token origins and queued-child observation witnesses. Historical run/assessment receipts are unchanged; additive origin/context/cursor fields remain NULL for unproven history. Final combined acceptance and deployed qualification remain separate.
 
 # Database Schema
 

@@ -1,3 +1,4 @@
+import type { CoordinatorChildLaunchContext } from "@/lib/orchestrator/child-launch-context";
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 import type { OperationalFailureDiagnostic } from "@/lib/agents/operational-diagnostics";
 import type {
@@ -2735,6 +2736,9 @@ export const executionCommands = pgTable(
     requestSha256: text("request_sha256"),
     // Private immutable replay source. Never select into browser DTOs or logs.
     requestCanonicalJson: text("request_canonical_json"),
+    coordinatorChildLaunchContext: jsonb(
+      "coordinator_child_launch_context",
+    ).$type<CoordinatorChildLaunchContext>(),
     receiptEvidence: jsonb("receipt_evidence").$type<CommandReceipt>(),
     terminalEventId: text("terminal_event_id").references(
       (): AnyPgColumn => executionEvents.id,
@@ -3045,6 +3049,10 @@ export const executionCommands = pgTable(
           sql` OR `,
         )}))) IS TRUE`,
     ),
+    coordinatorChildContextCheck: check(
+      "execution_commands_coordinator_child_context_check",
+      sql`${t.coordinatorChildLaunchContext} IS NULL OR (${t.kind}='session.prompt' AND ${t.ownerKind}='flow_node_attempt' AND ${t.ownerRef}->>'variant' IN ('node','permission_resume') AND jsonb_typeof(${t.coordinatorChildLaunchContext})='object' AND ${t.coordinatorChildLaunchContext}->'version'='1'::jsonb AND ${t.coordinatorChildLaunchContext}->>'nodeAttemptId'=${t.ownerRef}->>'nodeAttemptId' AND ${t.coordinatorChildLaunchContext}->'promptOrdinal'=${t.ownerRef}->'promptOrdinal' AND ${t.coordinatorChildLaunchContext}->>'requestSha256'=${t.requestSha256} AND jsonb_typeof(${t.coordinatorChildLaunchContext}->'receipts')='array' AND jsonb_array_length(${t.coordinatorChildLaunchContext}->'receipts') BETWEEN 1 AND 64 AND ${t.coordinatorChildLaunchContext}-ARRAY['version','nodeAttemptId','promptOrdinal','requestSha256','receipts']='{}'::jsonb AND octet_length(${t.coordinatorChildLaunchContext}::text)<=65536) IS TRUE`,
+    ),
     transportStateCheck: check(
       "execution_commands_transport_state_check",
       inLiteralList(t.transportState, COMMAND_TRANSPORT_STATES),
@@ -3128,6 +3136,7 @@ export const taskLaunchIntents = pgTable(
       .notNull()
       .default("queued"),
     stateVersion: integer("state_version").notNull().default(1),
+    parentObservedVersion: integer("parent_observed_version"),
     attempts: integer("attempts").notNull().default(0),
     dueAt: timestamp("due_at", { withTimezone: true, mode: "date" }),
     leaseToken: text("lease_token"),
@@ -3199,6 +3208,20 @@ export const taskLaunchIntents = pgTable(
       t.projectId,
       t.taskId,
       t.acceptedAt,
+    ),
+    parentObligations: index("task_launch_intents_parent_obligations_idx")
+      .on(
+        t.projectId,
+        sql`(${t.basis}->'parent'->>'parentRunId')`,
+        t.acceptedAt,
+        t.id,
+      )
+      .where(
+        sql`${t.basis}->>'kind'='execution_child' AND ${t.runId} IS NULL AND ${t.originalRunId} IS NULL`,
+      ),
+    parentObservationCheck: check(
+      "task_launch_intents_parent_observation_check",
+      sql`${t.parentObservedVersion} IS NULL OR (${t.parentObservedVersion}>0 AND ${t.parentObservedVersion}<=${t.stateVersion} AND ${t.basis}->>'kind'='execution_child' AND ${t.runId} IS NULL AND ${t.originalRunId} IS NULL AND ${t.state} IN ('failed','cancelled')) IS TRUE`,
     ),
     stateCheck: check(
       "task_launch_intents_state_check",
@@ -7911,12 +7934,23 @@ export const projectTokens = pgTable(
     }),
     expires_at: timestamp("expires_at", { withTimezone: true, mode: "date" }),
     revoked_at: timestamp("revoked_at", { withTimezone: true, mode: "date" }),
+    // Machine INSERT-only opaque binding; retained independently of Run pruning.
+    bound_run_id: text("bound_run_id"),
+    origin_kind: text("origin_kind", {
+      enum: ["orchestrator_run", "agent_run"],
+    }),
+    revocation_reason: text("revocation_reason", {
+      enum: ["rotation", "revoked"],
+    }),
   },
   (t) => ({
     idxPrefix: index("project_tokens_prefix_idx").on(t.prefix),
     idxProject: index("project_tokens_project_idx").on(t.project_id),
     idxOwner: index("project_tokens_owner_idx").on(t.owner_user_id),
     idxAgent: index("project_tokens_agent_idx").on(t.agent_id),
+    idxRunOrigin: index("project_tokens_run_origin_idx")
+      .on(t.project_id, t.origin_kind, t.bound_run_id)
+      .where(sql`${t.bound_run_id} IS NOT NULL`),
     idxOwnerCreated: index("project_tokens_owner_created_idx").on(
       t.owner_user_id,
       t.created_at,
@@ -7940,6 +7974,21 @@ export const projectTokens = pgTable(
     kindCheck: check(
       "project_tokens_kind_check",
       sql`${t.token_kind} IN ('project', 'user', 'agent', 'librarian')`,
+    ),
+    originBindingCheck: check(
+      "project_tokens_origin_binding_check",
+      sql`((${t.origin_kind} IS NULL AND ${t.bound_run_id} IS NULL) OR (
+        ${t.bound_run_id} IS NOT NULL AND length(${t.bound_run_id}) > 0 AND ${t.project_id} IS NOT NULL
+        AND ((${t.origin_kind} = 'orchestrator_run' AND ${t.token_kind} = 'project' AND ${t.agent_id} IS NULL)
+          OR (${t.origin_kind} = 'agent_run' AND ${t.token_kind} = 'agent' AND ${t.agent_id} IS NOT NULL)))) IS TRUE`,
+    ),
+    revocationReasonCheck: check(
+      "project_tokens_revocation_reason_check",
+      sql`${t.revocation_reason} IS NULL OR (${t.revocation_reason} IN ('rotation','revoked') AND ${t.revoked_at} IS NOT NULL)`,
+    ),
+    rotationOriginCheck: check(
+      "project_tokens_rotation_origin_check",
+      sql`(${t.revocation_reason} IS DISTINCT FROM 'rotation' OR (${t.origin_kind} = 'orchestrator_run' AND ${t.bound_run_id} IS NOT NULL AND jsonb_typeof(${t.scopes})='array' AND (${t.scopes} ? 'runs:delegate' OR ${t.scopes} ? '*'))) IS TRUE`,
     ),
     // ADR-186 (migration 0184): the token dies with its turn.
     librarianTurnFk: foreignKey({

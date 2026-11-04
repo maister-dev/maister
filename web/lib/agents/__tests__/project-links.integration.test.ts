@@ -13,6 +13,7 @@ import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { seedAgentTokenRunOwner } from "@/test-support/seed-token-run-owner";
 import { renderAgentDefinition } from "@/lib/agents/definition";
 import {
   attachAgent,
@@ -401,7 +402,10 @@ describe("project agent links (attach panel service)", () => {
     await issueAgentRunToken({
       agentId: fx.agentId,
       projectId: fx.projectId,
-      runId: randomUUID(),
+      runId: await seedAgentTokenRunOwner(db, {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+      }),
       db,
     });
 
@@ -463,7 +467,10 @@ describe("project agent links (attach panel service)", () => {
     await issueAgentRunToken({
       agentId: fx.agentId,
       projectId: fx.projectId,
-      runId: randomUUID(),
+      runId: await seedAgentTokenRunOwner(db, {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+      }),
       db,
     });
 

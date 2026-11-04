@@ -8,6 +8,7 @@ import {
   recordTokenLifecycleEvent,
   type TokenLifecycleActor,
 } from "@/lib/tokens/lifecycle";
+import { revokeStampedRunTokenFamily } from "@/lib/agents/tokens";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { projectTokens } = schemaModule as unknown as Record<string, any>;
@@ -55,6 +56,13 @@ export async function revokeToken(
 
   const row = rows[0];
 
+  if (row.bound_run_id && row.origin_kind) {
+    const changed = await d.transaction((tx: Db) =>
+      revokeStampedRunTokenFamily(row, tx),
+    );
+
+    return { outcome: changed > 0 ? "revoked" : "already-revoked" };
+  }
   if (row.revoked_at !== null && row.revoked_at !== undefined) {
     return { outcome: "already-revoked" };
   }
@@ -67,7 +75,7 @@ export async function revokeToken(
   await d.transaction(async (tx: Db) => {
     const updated = await tx
       .update(projectTokens)
-      .set({ revoked_at: revokedAt })
+      .set({ revoked_at: revokedAt, revocation_reason: "revoked" })
       .where(
         and(
           eq(projectTokens.id, input.tokenId),
@@ -135,7 +143,7 @@ export async function revokeOwnerToken(
   await d.transaction(async (tx: Db) => {
     const updated = await tx
       .update(projectTokens)
-      .set({ revoked_at: revokedAt })
+      .set({ revoked_at: revokedAt, revocation_reason: "revoked" })
       .where(
         and(
           eq(projectTokens.id, input.tokenId),

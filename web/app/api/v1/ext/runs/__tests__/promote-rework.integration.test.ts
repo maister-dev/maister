@@ -292,19 +292,19 @@ Do the thing.
   return qualifiedId;
 }
 
-// An orchestrator parent run (run_kind=agent, its own tree root) + run-bound
+// A Flow coordinator (its own tree root) + run-bound
 // orchestrator token (holds runs:promote + runs:delegate).
 async function seedOrchestratorRun(
-  orchestratorAgentId: string,
+  _orchestratorAgentId: string,
   pid: string = projectId,
 ): Promise<{ runId: string; secret: string }> {
   const runId = randomUUID();
 
   await pool.query(
-    `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id",
+    `INSERT INTO "runs" ("id", "run_kind", "project_id",
        "status", "flow_version", "flow_revision", "root_run_id")
-     VALUES ($1, 'agent', $2, $3, 'Running', 'agent', 'manual', $1)`,
-    [runId, orchestratorAgentId, pid],
+     VALUES ($1, 'flow', $2, 'Running', 'v1', 'manual', $1)`,
+    [runId, pid],
   );
 
   await pool.query(
@@ -390,12 +390,12 @@ async function seedNestedCoordinator(args: {
   const runId = randomUUID();
 
   await pool.query(
-    `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id",
+    `INSERT INTO "runs" ("id", "run_kind", "project_id",
        "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id",
        "launch_mode")
-     VALUES ($1, 'agent', $2, $3, 'Running', 'agent', 'manual', $4, $5,
+     VALUES ($1, 'flow', $2, 'Running', 'v1', 'manual', $3, $3,
              'manual')`,
-    [runId, args.agentId, projectId, args.rootRunId, args.rootRunId],
+    [runId, projectId, args.rootRunId],
   );
 
   await pool.query(

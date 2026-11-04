@@ -17,6 +17,7 @@ vi.mock("next/server", async (original) => ({
   after: vi.fn(),
 }));
 
+import { awaitTokenAuditWrites } from "@/test-support/token-audit-quiescence";
 import { historicalChildFixtureAdmission } from "@/test-support/queued-delegation";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as fullSchema from "@/lib/db/schema";
@@ -99,6 +100,7 @@ export async function resetDelegationFixture(args: {
 }): Promise<DelegationSeedCtx> {
   const { pool, db, agentsRoot } = args;
 
+  await awaitTokenAuditWrites();
   await pool.query(
     `TRUNCATE ${TABLES_IN_DELETE_ORDER.map((table) => `"${table}"`).join(",")} RESTART IDENTITY CASCADE`,
   );
@@ -443,10 +445,11 @@ export async function seedTask(
   return { id, number };
 }
 
-/** Seed an orchestrator parent run plus its run-bound delegation token. */
+/** Seed a Flow coordinator plus its run-bound token; an absent revision pin is intentional. */
 export async function seedOrchestratorRun(
   ctx: DelegationSeedCtx,
   args: {
+    /** Legacy caller label; a Flow coordinator has no catalog agent identity. */
     orchestratorAgentId: string;
     taskId?: string | null;
     rootRunId?: string | null;
@@ -458,12 +461,11 @@ export async function seedOrchestratorRun(
   const runId = randomUUID();
 
   await ctx.pool.query(
-    `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "task_id",
+    `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id",
        "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id")
-     VALUES ($1, 'agent', $2, $3, $4, $7, 'agent', 'manual', $5, $6)`,
+     VALUES ($1, 'flow', $2, $3, $6, 'v1', 'manual', $4, $5)`,
     [
       runId,
-      args.orchestratorAgentId,
       ctx.projectId,
       args.taskId ?? null,
       args.parentRunId ?? null,

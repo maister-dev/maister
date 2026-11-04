@@ -33,6 +33,16 @@ each editing surface. Out of scope: per-call verification and audit
 about the old secret's fate or an overlap window), and un-revoking (refused by
 design).
 
+Private per-Run machine issuance is separate from managed-token secret rotation.
+Machine INSERTs stamp an immutable opaque Run/project origin; internal
+orchestrator replacement retires its prior stamped generation with `rotation`.
+That credential remains revoked for every presented HTTP request. Explicit
+revocation retires the exact stored family, including rotated generations,
+without clearing retirement time or converting explicit revocation to rotation.
+Historical unstamped identity remains unknown. These internal fields are absent
+from public token DTOs; finite accepted-child dispatch follows the bounded
+[task-launch contract](task-launch-admission.md), not a reusable live credential.
+
 ## Domain entities
 
 - **`project_tokens`** — one row per issued token; the entity this domain

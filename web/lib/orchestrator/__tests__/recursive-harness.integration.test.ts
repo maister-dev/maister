@@ -277,6 +277,14 @@ async function collect(
     runId: coordinatorRunId,
     db,
   });
+
+  return collectWithToken(secret, body);
+}
+
+async function collectWithToken(
+  secret: string,
+  body: Record<string, unknown> = { all: true },
+): Promise<{ status: number; items: CollectItem[]; error?: string }> {
   const req = new NextRequest("http://localhost/api/v1/ext/runs/collect", {
     method: "POST",
     headers: {
@@ -527,11 +535,16 @@ describe("(5) rework supersession", () => {
 describe("(6) a token whose coordinator has terminalized", () => {
   it("is refused 409 — collect BEFORE the coordinator finishes", async () => {
     const root = await seedCoordinator({ declared: D1_DELEGATION });
+    const { secret } = await issueOrchestratorRunToken({
+      projectId,
+      runId: root,
+      db,
+    });
 
     await seedRun({ parentRunId: root, rootRunId: root, status: "Done" });
     await setStatus(root, "Done");
 
-    expect((await collect(root)).status).toBe(409);
+    expect((await collectWithToken(secret)).status).toBe(409);
   }, 60_000);
 });
 

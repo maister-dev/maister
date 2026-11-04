@@ -334,7 +334,12 @@ Recovery priority, in order:
    operator-restart budget), then the graph re-enters.
 4. **Never replay a prompt that already has agreeing terminal evidence.**
 
-A crashed **orchestrator** is branched before any of that: children unsettled →
+A crashed **orchestrator** is branched before any of that. Child accounting also
+includes accepted, never-bound execution-child requests: `queued`, `preparing`
+and `held` remain completion obligations; bound intents count through their Run
+once. Unobserved failed/cancelled request outcomes remain discoverable by the
+existing continuation worker. The [launch contract](task-launch-admission.md#external-delegated-child-requests)
+owns those receipt and authorization rules. Children unsettled →
 it is handed back to its existing child-wait gate (`WaitingOnChildren`,
 `resume_requested_at` cleared, slot released through the ordinary idle release)
 and the wake path drives it, so the answer is

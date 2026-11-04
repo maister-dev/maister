@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import * as schemaModule from "@/lib/db/schema";
 import { generateToken, hashToken } from "@/lib/tokens/secret";
 import { issueToken } from "@/lib/tokens/issue";
+import { updateProjectToken } from "@/lib/tokens/update";
 import {
   verifyToken,
   TokenAuthError,
@@ -16,6 +17,10 @@ import { recordTokenAudit, bumpTokenLastUsed } from "@/lib/tokens/audit";
 import { revokeToken, SYSTEM_REVOKE_ACTOR } from "@/lib/tokens/revoke";
 import { listTokens, type TokenListItem } from "@/lib/tokens/list";
 import { tokenHasScope } from "@/lib/tokens/scopes";
+import {
+  issueOrchestratorRunToken,
+  ORCHESTRATOR_TOKEN_SCOPES,
+} from "@/lib/agents/tokens";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -66,6 +71,210 @@ describe("lib/tokens — integration (testcontainers)", () => {
   });
 
   describe("issueToken + verifyToken round-trip", () => {
+    it("machine issuance records a durable Run binding independently of its display name", async () => {
+      const runId = randomUUID();
+
+      await db.insert(schema.runs).values({
+        id: runId,
+        projectId,
+        runKind: "flow",
+        flowVersion: "v1",
+        status: "Running",
+      });
+      const issued = await issueOrchestratorRunToken({ projectId, runId, db });
+      const result = await testDatabase.pool.query<{
+        boundRunId: string | null;
+        originKind: string | null;
+      }>(
+        `SELECT to_jsonb(t)->>'bound_run_id' AS "boundRunId", to_jsonb(t)->>'origin_kind' AS "originKind" FROM project_tokens t WHERE id=$1`,
+        [issued.tokenId],
+      );
+
+      expect(result.rows).toEqual([
+        { boundRunId: runId, originKind: "orchestrator_run" },
+      ]);
+    });
+
+    it("keeps rotated credentials unusable over HTTP and explicitly revokes the exact stored family without changing first retirement time", async () => {
+      const runId = randomUUID();
+
+      await db.insert(schema.runs).values({
+        id: runId,
+        projectId,
+        runKind: "flow",
+        flowVersion: "v1",
+        status: "Running",
+      });
+      const first = await issueOrchestratorRunToken({ projectId, runId, db });
+
+      await testDatabase.pool.query(
+        "UPDATE project_tokens SET name='renamed-private' WHERE id=$1",
+        [first.tokenId],
+      );
+      await expect(
+        updateProjectToken(
+          { projectId, tokenId: first.tokenId },
+          { scopes: ["runs:delegate"] },
+          SYSTEM_REVOKE_ACTOR,
+          db,
+        ),
+      ).rejects.toMatchObject({ code: "PRECONDITION" });
+      expect(
+        (await listTokens(projectId, db)).some(
+          (row) => row.id === first.tokenId,
+        ),
+      ).toBe(false);
+      expect((await verifyToken(first.secret, db)).boundRunId).toBe(runId);
+      const second = await issueOrchestratorRunToken({ projectId, runId, db });
+      const retired = await testDatabase.pool.query<{
+        revoked_at: Date;
+        revocation_reason: string;
+      }>(
+        "SELECT revoked_at,revocation_reason FROM project_tokens WHERE id=$1",
+        [first.tokenId],
+      );
+
+      expect(retired.rows[0]!.revocation_reason).toBe("rotation");
+      await expect(verifyToken(first.secret, db)).rejects.toMatchObject({
+        kind: "revoked",
+      });
+      expect((await verifyToken(second.secret, db)).boundRunId).toBe(runId);
+      expect(
+        await revokeToken(
+          { projectId, tokenId: first.tokenId },
+          SYSTEM_REVOKE_ACTOR,
+          db,
+        ),
+      ).toEqual({ outcome: "revoked" });
+      await expect(verifyToken(second.secret, db)).rejects.toMatchObject({
+        kind: "revoked",
+      });
+      const final = await testDatabase.pool.query<{
+        id: string;
+        revoked_at: Date;
+        revocation_reason: string;
+      }>(
+        "SELECT id,revoked_at,revocation_reason FROM project_tokens WHERE bound_run_id=$1",
+        [runId],
+      );
+
+      expect(final.rows).toHaveLength(2);
+      expect(
+        final.rows.every((row) => row.revocation_reason === "revoked"),
+      ).toBe(true);
+      expect(
+        final.rows.find((row) => row.id === first.tokenId)!.revoked_at,
+      ).toEqual(retired.rows[0]!.revoked_at);
+      await expect(
+        testDatabase.pool.query(
+          "UPDATE project_tokens SET revocation_reason='rotation' WHERE id=$1",
+          [first.tokenId],
+        ),
+      ).rejects.toMatchObject({ code: "23514" });
+      await expect(
+        testDatabase.pool.query(
+          "UPDATE project_tokens SET revoked_at=NULL,revocation_reason=NULL WHERE id=$1",
+          [first.tokenId],
+        ),
+      ).rejects.toMatchObject({ code: "23514" });
+      expect(
+        (await listTokens(projectId, db)).some(
+          (row) => row.id === first.tokenId,
+        ),
+      ).toBe(false);
+    });
+
+    it("retires an unstamped private legacy generation without inventing origin and preserves same-name project/kind/scope peers", async () => {
+      const runId = randomUUID();
+      const otherProjectId = randomUUID();
+
+      await db.insert(schema.runs).values({
+        id: runId,
+        projectId,
+        runKind: "flow",
+        flowVersion: "v1",
+        status: "Running",
+      });
+      await db.insert(schema.projects).values({
+        id: otherProjectId,
+        slug: otherProjectId,
+        name: "Peer",
+        taskKey: `P${otherProjectId.slice(0, 6)}`.toUpperCase(),
+        repoPath: "/tmp/peer",
+        maisterYamlPath: "/tmp/peer/maister.yaml",
+      });
+      const rows = [
+        {
+          project_id: projectId,
+          token_kind: "project",
+          scopes: [...ORCHESTRATOR_TOKEN_SCOPES],
+          owner_user_id: null,
+        },
+        {
+          project_id: otherProjectId,
+          token_kind: "project",
+          scopes: [...ORCHESTRATOR_TOKEN_SCOPES],
+          owner_user_id: null,
+        },
+        {
+          project_id: projectId,
+          token_kind: "project",
+          scopes: ["tasks:read"],
+          owner_user_id: null,
+        },
+        {
+          project_id: projectId,
+          token_kind: "user",
+          scopes: [...ORCHESTRATOR_TOKEN_SCOPES],
+          owner_user_id: userId,
+        },
+      ].map((row) => ({
+        ...row,
+        id: randomUUID(),
+        name: `orchestrator-run:${runId}`,
+        ...generateToken(),
+        expires_at: new Date(Date.now() + 60_000),
+      }));
+
+      for (const row of rows)
+        await db.insert(schema.projectTokens).values({
+          id: row.id,
+          name: row.name,
+          project_id: row.project_id,
+          token_kind: row.token_kind,
+          owner_user_id: row.owner_user_id,
+          scopes: row.scopes,
+          prefix: row.prefix,
+          token_hash: row.hash,
+          expires_at: row.expires_at,
+        });
+      await issueOrchestratorRunToken({ projectId, runId, db });
+      const retired = await testDatabase.pool.query<{
+        revoked_at: Date | null;
+        origin_kind: string | null;
+        bound_run_id: string | null;
+        revocation_reason: string | null;
+      }>(
+        "SELECT revoked_at,origin_kind,bound_run_id,revocation_reason FROM project_tokens WHERE id=$1",
+        [rows[0]!.id],
+      );
+
+      expect(retired.rows[0]).toMatchObject({
+        origin_kind: null,
+        bound_run_id: null,
+        revocation_reason: "revoked",
+      });
+      expect(retired.rows[0]!.revoked_at).toBeInstanceOf(Date);
+      for (const peer of rows.slice(1))
+        expect((await verifyToken(peer.secret, db)).tokenId).toBe(peer.id);
+      await expect(
+        testDatabase.pool.query(
+          "UPDATE project_tokens SET origin_kind='orchestrator_run',bound_run_id=$2 WHERE id=$1",
+          [rows[0]!.id, runId],
+        ),
+      ).rejects.toMatchObject({ code: "23514" });
+    });
+
     it("issues a token and verifies it successfully", async () => {
       const issued = await issueToken(
         {

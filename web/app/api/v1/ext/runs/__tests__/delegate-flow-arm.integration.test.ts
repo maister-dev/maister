@@ -19,6 +19,7 @@ import {
   vi,
 } from "vitest";
 
+import { awaitTokenAuditWrites } from "@/test-support/token-audit-quiescence";
 import {
   bindQueuedDelegationResponse,
   commitDelegatedDispatchForRunChecks,
@@ -130,7 +131,11 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await testDatabase?.stop();
+  try {
+    await awaitTokenAuditWrites();
+  } finally {
+    await testDatabase?.stop();
+  }
 });
 
 let orchestratorTaskId: string;

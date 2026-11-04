@@ -1,3 +1,4 @@
+import type { ChildLaunchReceipt } from "@/lib/orchestrator/child-launch-context";
 import type { Db } from "./db";
 import type {
   ExecutionAssignment,
@@ -30,9 +31,14 @@ import { PromptOwnerSchema } from "./prompt-owner-contract";
 import { readPromptRequest, storePromptRequest } from "./command-request";
 import { redactPayload } from "./redact";
 
+import {
+  coordinatorChildLaunchContextSchema,
+  childLaunchPromptContext,
+} from "@/lib/orchestrator/child-launch-context";
 import { MaisterError } from "@/lib/errors";
 import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence";
 import {
+  nodeAttempts,
   executionAssignments,
   executionCommands,
   executionRuntimeObjects,
@@ -316,6 +322,7 @@ export type { AssignmentId };
 export type PromptOwnerAdmission = Readonly<{
   owner: PromptOwner;
   logicalOperationKey: string;
+  coordinatorChildLaunchReceipts?: readonly ChildLaunchReceipt[];
   /** DB-only authority check after the immutable request write, under the
    * same locks. A lease may expire while a database statement is blocked. */
   assertCommit?: () => Promise<void>;
@@ -485,9 +492,42 @@ export async function issueOwnedPrompt(
         },
       };
     }
+    const receipts = admission.coordinatorChildLaunchReceipts;
+    const coordinatorContext = receipts?.length
+      ? coordinatorChildLaunchContextSchema.parse({
+          version: 1,
+          nodeAttemptId: "nodeAttemptId" in ref ? ref.nodeAttemptId : null,
+          promptOrdinal: "promptOrdinal" in ref ? ref.promptOrdinal : null,
+          requestSha256: request.requestSha256,
+          receipts,
+        })
+      : null;
+
+    if (coordinatorContext) {
+      const [attempt] = await tx
+        .select({ nodeType: nodeAttempts.nodeType })
+        .from(nodeAttempts)
+        .where(
+          and(
+            eq(nodeAttempts.id, coordinatorContext.nodeAttemptId),
+            eq(nodeAttempts.runId, ref.runId),
+          ),
+        );
+
+      if (
+        owner.kind !== "flow_node_attempt" ||
+        !["node", "permission_resume"].includes(ref.variant) ||
+        attempt?.nodeType !== "orchestrator" ||
+        !input.payload.prompt.includes(
+          childLaunchPromptContext(coordinatorContext.receipts),
+        )
+      )
+        throw ownedPromptConflict("coordinator_child_context_owner");
+    }
     const [row] = await tx
       .insert(executionCommands)
       .values({
+        coordinatorChildLaunchContext: coordinatorContext,
         id: commandId,
         runId: ref.runId,
         executionAssignmentId: ref.assignmentId,

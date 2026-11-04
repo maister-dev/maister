@@ -336,6 +336,15 @@ Transitions:
   verification/authorization time; no token row mutation is required.
   (Implemented)
 
+New machine Run-bound actors derive their parent from immutable server-stamped
+token metadata, independently of the display name. Only fully unstamped live
+legacy rows use the existing reserved-name decoder; partial or malformed stamps
+refuse rather than selecting that compatibility decoder. Binding and revocation
+reason remain internal and add no token transport fields. An internally rotated
+credential still receives HTTP 401: the finite accepted-child dispatch validator
+described in [task-launch admission](task-launch-admission.md) does not restore a
+presented secret or authorize a new operation key.
+
 ## State machine — external_check gate
 
 The gate-report endpoint drives a `gate_results` row from `pending` through its

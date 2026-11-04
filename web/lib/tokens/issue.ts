@@ -105,6 +105,8 @@ export async function issueToken(
     name: input.name,
     token_kind: tokenKind,
     owner_user_id: ownerUserId,
+    origin_kind: null,
+    bound_run_id: null,
     prefix,
     token_hash: hash,
     scopes,

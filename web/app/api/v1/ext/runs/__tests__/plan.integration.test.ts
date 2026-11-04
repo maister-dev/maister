@@ -201,10 +201,10 @@ async function seedOrchestratorRun(args: {
   const runId = randomUUID();
 
   await pool.query(
-    `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "task_id",
+    `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id",
        "status", "flow_version", "flow_revision")
-     VALUES ($1, 'agent', $2, $3, $4, 'Running', 'agent', 'manual')`,
-    [runId, args.orchestratorAgentId, projectId, args.taskId ?? null],
+     VALUES ($1, 'flow', $2, $3, 'Running', 'v1', 'manual')`,
+    [runId, projectId, args.taskId ?? null],
   );
 
   await pool.query(

@@ -4,7 +4,7 @@ import type { Db } from "@/lib/execution-host/db";
 import type { TaskLaunchClaim } from "./launch-dispatch-claim";
 import type { TaskLaunchReceipt } from "./launch-types";
 
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, or, sql } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -290,7 +290,7 @@ async function startBoundTaskLaunch(db: Db, intentId: string): Promise<void> {
     });
 }
 
-/** A rejected current queued request is visible without blocking later scheduler candidates. */
+/** Refused due work is held only when queued or its unbound preparation no longer has a valid owner. */
 export async function holdQueuedTaskLaunchIntent(
   db: Db,
   intentId: string,
@@ -302,7 +302,7 @@ export async function holdQueuedTaskLaunchIntent(
     .where(eq(taskLaunchIntents.id, intentId));
 
   if (!initial) throw error;
-  await db.transaction(async (tx) => {
+  const held = await db.transaction(async (tx) => {
     await takeSchedulerLock(tx);
     await lockTaskLaunchReservation(tx, initial.taskId);
     const reason =
@@ -315,12 +315,25 @@ export async function holdQueuedTaskLaunchIntent(
         state: "held",
         stateVersion: initial.stateVersion + 1,
         reason,
+        leaseToken: null,
+        leaseExpiresAt: null,
+        cleanupState: initial.preparationIdentity
+          ? "pending"
+          : initial.cleanupState,
         updatedAt: sql`clock_timestamp()`,
       })
       .where(
         and(
           eq(taskLaunchIntents.id, initial.id),
-          eq(taskLaunchIntents.state, "queued"),
+          or(
+            eq(taskLaunchIntents.state, "queued"),
+            and(
+              eq(taskLaunchIntents.state, "preparing"),
+              isNull(taskLaunchIntents.runId),
+              isNull(taskLaunchIntents.originalRunId),
+              sql`${taskLaunchIntents.leaseExpiresAt}<=clock_timestamp()`,
+            ),
+          ),
           eq(taskLaunchIntents.stateVersion, initial.stateVersion),
         ),
       )
@@ -328,7 +341,18 @@ export async function holdQueuedTaskLaunchIntent(
 
     if (held)
       await emitTaskLaunchChanged(tx, held, { type: "system", id: null });
+
+    return held;
   });
+
+  if (!held) {
+    log.debug(
+      { intentId },
+      "launch refusal left a current owner or changed request untouched",
+    );
+
+    return;
+  }
   log.warn(
     {
       intentId,

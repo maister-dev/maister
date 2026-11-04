@@ -16,6 +16,7 @@ import {
   vi,
 } from "vitest";
 
+import { awaitTokenAuditWrites } from "@/test-support/token-audit-quiescence";
 import { bindQueuedDelegationResponse } from "@/test-support/queued-delegation";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
@@ -103,13 +104,18 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await testDatabase?.stop();
+  try {
+    await awaitTokenAuditWrites();
+  } finally {
+    await testDatabase?.stop();
+  }
 });
 
 let projectId: string;
 let executorId: string;
 
 beforeEach(async () => {
+  await awaitTokenAuditWrites();
   await pool.query(
     "TRUNCATE runs,task_relations,tasks,project_tokens,agent_project_links,agents,project_package_attachments,package_installs,flows,flow_revisions,projects RESTART IDENTITY CASCADE",
   );
@@ -335,7 +341,7 @@ Do the thing.
   return qualifiedId;
 }
 
-// Seeds an orchestrator parent run (run_kind=agent) + its run-bound token.
+// Seeds a Flow coordinator + its run-bound token; catalog labels are not its identity.
 async function seedOrchestratorRun(args: {
   orchestratorAgentId: string;
   taskId?: string | null;
@@ -345,12 +351,11 @@ async function seedOrchestratorRun(args: {
   const runId = randomUUID();
 
   await pool.query(
-    `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "task_id",
+    `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id",
        "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id")
-     VALUES ($1, 'agent', $2, $3, $4, 'Running', 'agent', 'manual', $5, $6)`,
+     VALUES ($1, 'flow', $2, $3, 'Running', 'v1', 'manual', $4, $5)`,
     [
       runId,
-      args.orchestratorAgentId,
       projectId,
       args.taskId ?? null,
       args.parentRunId ?? null,

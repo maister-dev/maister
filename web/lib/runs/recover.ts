@@ -5,9 +5,10 @@ import type { CreateSessionInput } from "@/lib/execution-host";
 import type { ExecutionHosts } from "@/lib/execution-host";
 import type { TaskLaunchRecoveryAuthority } from "@/lib/tasks/launch-continuation";
 
-import { and, count, eq, inArray, isNull, notInArray } from "drizzle-orm";
+import { and, count, eq, inArray, isNull } from "drizzle-orm";
 import pino from "pino";
 
+import { childObligationCounts } from "@/lib/orchestrator/child-obligations";
 import {
   mergeRunnerAdapterLaunch,
   runnerExecutorInput,
@@ -34,7 +35,6 @@ import {
   CRASH_RECOVER_BUDGET_RESET,
 } from "@/lib/runs/crash-recover";
 import { crashRunningRun } from "@/lib/runs/state-transitions";
-import { SETTLED_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import {
   maxConcurrentRunsCap,
   releaseSlotOnIdle,
@@ -760,26 +760,10 @@ async function driveOrchestratorRecover(
   },
 ): Promise<{ state: "resumed"; runStatus?: string } | null> {
   const { db, hosts, runFlowFn, targetStepId } = ctx;
-  const totals: Array<{ n: number }> = await db
-    .select({ n: count() })
-    .from(runs)
-    .where(eq(runs.parentRunId, runId));
-  const childrenTotal = Number(totals[0]?.n ?? 0);
+  const { total: childrenTotal, pending: childrenUnsettled } =
+    await childObligationCounts(db, runId);
 
   if (childrenTotal === 0) return null;
-
-  // The SAME settled predicate the three existing child counters use — a
-  // fourth copy is how they drift apart.
-  const unsettledRows: Array<{ n: number }> = await db
-    .select({ n: count() })
-    .from(runs)
-    .where(
-      and(
-        eq(runs.parentRunId, runId),
-        notInArray(runs.status, [...SETTLED_RUN_STATUSES]),
-      ),
-    );
-  const childrenUnsettled = Number(unsettledRows[0]?.n ?? 0);
 
   if (childrenUnsettled > 0) {
     // Park back onto the EXISTING wait gate and let the child-terminal wake

@@ -17,8 +17,6 @@ import {
   inArray,
   lt,
   lte,
-  notExists,
-  notInArray,
   or,
   sql,
 } from "drizzle-orm";
@@ -55,13 +53,15 @@ import { markResumedFromWait } from "@/lib/runs/state-transitions";
 import { projectionTransaction } from "@/lib/execution-host/events/projection-transaction";
 import { projectionLimitsFromEnv } from "@/lib/execution-host/events/projection-limits";
 import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
-import { SETTLED_RUN_STATUSES } from "@/lib/runs/run-status-sets";
+import {
+  pendingChildObligationPredicate,
+  unobservedChildOutcomePredicate,
+} from "@/lib/orchestrator/child-obligations";
 
 const log = pino({
   name: "flow-continuation-worker",
   level: process.env.LOG_LEVEL ?? "info",
 });
-const pendingChild = alias(runs, "pending_child");
 const wakeAttempt = alias(nodeAttempts, "wake_attempt");
 const sourceAssignment = alias(executionAssignments, "source_assignment");
 
@@ -294,19 +294,8 @@ export function startFlowContinuationWorker(input: {
                     ),
                     or(
                       isNotNull(runs.failedChildWakeAt),
-                      notExists(
-                        tx
-                          .select({ id: pendingChild.id })
-                          .from(pendingChild)
-                          .where(
-                            and(
-                              eq(pendingChild.parentRunId, runs.id),
-                              notInArray(pendingChild.status, [
-                                ...SETTLED_RUN_STATUSES,
-                              ]),
-                            ),
-                          ),
-                      ),
+                      unobservedChildOutcomePredicate(runs.id),
+                      sql`NOT ${pendingChildObligationPredicate(runs.id)}`,
                     ),
                   ),
                   // ADR-176 C: the committed recover intent. It satisfies NONE

@@ -9,7 +9,7 @@ import { eq } from "drizzle-orm";
 import { assertTaskLaunchExecutionParent } from "./launch-parent-admission";
 import { assertTaskLaunchUserAuthority } from "./launch-authority";
 import { assertStoredTaskLaunchTokenAuthority } from "./launch-token";
-import { assertStoredTaskLaunchServerSource } from "./launch-server-source";
+import { assertAcceptedTaskLaunchServerSource } from "./launch-server-source";
 import { launchRefusal } from "./launch-resolution";
 
 import { projects } from "@/lib/db/schema";
@@ -40,7 +40,7 @@ export async function assertTaskLaunchDispatchAuthority(
       source.projectId !== intent.projectId
     )
       throw launchRefusal("launch_source_authority_required", "PRECONDITION");
-    await assertStoredTaskLaunchServerSource(db, source);
+    await assertAcceptedTaskLaunchServerSource(db, intent.id);
   }
   if (intent.basis.kind === "manual") {
     if (

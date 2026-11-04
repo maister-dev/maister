@@ -254,17 +254,17 @@ Do the thing.
   return qualifiedId;
 }
 
-// Orchestrator parent run (run_kind=agent, its own tree root) + run-bound token.
+// Flow coordinator (its own tree root) + run-bound token.
 async function seedOrchestratorRun(
-  orchestratorAgentId: string,
+  _orchestratorAgentId: string,
 ): Promise<{ runId: string; secret: string }> {
   const runId = randomUUID();
 
   await pool.query(
-    `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id",
+    `INSERT INTO "runs" ("id", "run_kind", "project_id",
        "status", "flow_version", "flow_revision", "root_run_id")
-     VALUES ($1, 'agent', $2, $3, 'Running', 'agent', 'manual', $1)`,
-    [runId, orchestratorAgentId, projectId],
+     VALUES ($1, 'flow', $2, 'Running', 'v1', 'manual', $1)`,
+    [runId, projectId],
   );
 
   await pool.query(

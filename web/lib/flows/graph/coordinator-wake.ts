@@ -3,12 +3,15 @@ import "server-only";
 import type { Db } from "@/lib/execution-host/db";
 import type { RunFlowOptions } from "./runner-core";
 
-import { and, count, desc, eq, notInArray } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import pino from "pino";
 
 import { executionAssignments, nodeAttempts, runs } from "@/lib/db/schema";
+import {
+  childObligationCounts,
+  hasUnobservedChildOutcome,
+} from "@/lib/orchestrator/child-obligations";
 import { isMaisterError } from "@/lib/errors";
-import { SETTLED_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import {
   markResumedFromWait,
   rollbackResumeFromWait,
@@ -38,17 +41,7 @@ export async function pendingCoordinatorChildCount(
   db: Db,
   parentRunId: string,
 ): Promise<number> {
-  const [row] = await db
-    .select({ n: count() })
-    .from(runs)
-    .where(
-      and(
-        eq(runs.parentRunId, parentRunId),
-        notInArray(runs.status, [...SETTLED_RUN_STATUSES]),
-      ),
-    );
-
-  return Number(row?.n ?? 0);
+  return (await childObligationCounts(db, parentRunId)).pending;
 }
 
 export async function currentCoordinator(
@@ -246,7 +239,8 @@ export async function wakeParkedCoordinator(input: {
   if (!(
     coordinator.nodeType === "orchestrator" &&
     (input.allowFailedOrchestratorChild ||
-      coordinator.failedChildWakeAt !== null)
+      coordinator.failedChildWakeAt !== null ||
+      (await hasUnobservedChildOutcome(input.db, input.parentRunId)))
   )) {
     const pending = await pendingCoordinatorChildCount(
       input.db,

@@ -5,6 +5,7 @@ import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { seedAgentTokenRunOwner } from "@/test-support/seed-token-run-owner";
 import { closeDb, getDb } from "@/lib/db/client";
 import {
   agents,
@@ -533,7 +534,10 @@ describe("user-origin task clarification", () => {
     const agent = await issueAgentRunToken({
       agentId,
       projectId: seeded.projectId,
-      runId: randomUUID(),
+      runId: await seedAgentTokenRunOwner(db, {
+        projectId: seeded.projectId,
+        agentId,
+      }),
       db,
     });
     const librarian = await issueLibrarianTurnToken(

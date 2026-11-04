@@ -252,15 +252,15 @@ async function seedChildWithAgentToken(
 }
 
 async function seedOrchestratorRun(
-  agentId: string,
+  _agentId: string,
 ): Promise<{ runId: string; secret: string }> {
   const runId = randomUUID();
 
   await pool.query(
-    `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id",
+    `INSERT INTO "runs" ("id", "run_kind", "project_id",
        "status", "flow_version", "flow_revision", "root_run_id")
-     VALUES ($1, 'agent', $2, $3, 'Running', 'agent', 'manual', $1)`,
-    [runId, agentId, projectId],
+     VALUES ($1, 'flow', $2, 'Running', 'v1', 'manual', $1)`,
+    [runId, projectId],
   );
 
   await pool.query(

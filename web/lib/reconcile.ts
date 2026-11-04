@@ -34,6 +34,10 @@ import {
 } from "drizzle-orm";
 import pino from "pino";
 
+import {
+  childObligationCounts,
+  hasUnobservedChildOutcome,
+} from "@/lib/orchestrator/child-obligations";
 import { cleanupRunMaterializations } from "@/lib/capabilities/cleanup";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -55,7 +59,6 @@ import { loadActiveRunSessionsByRunId } from "@/lib/runs/active-run-session";
 import { routeCrashRecover } from "@/lib/runs/crash-recover-route";
 import {
   isTerminalRunStatus,
-  SETTLED_RUN_STATUSES,
   TERMINAL_RUN_STATUSES,
 } from "@/lib/runs/run-status-sets";
 import { findSharedTreeWorkspace } from "@/lib/runs/shared-tree";
@@ -1145,18 +1148,10 @@ async function hasPendingChildren(
   db: Db,
   parentRunId: string,
 ): Promise<boolean> {
-  const rows: Array<{ id: string }> = await db
-    .select({ id: runs.id })
-    .from(runs)
-    .where(
-      and(
-        eq(runs.parentRunId, parentRunId),
-        notInArray(runs.status, [...SETTLED_RUN_STATUSES]),
-      ),
-    )
-    .limit(1);
-
-  return rows.length > 0;
+  return (
+    (await childObligationCounts(db, parentRunId)).pending > 0 ||
+    (await hasUnobservedChildOutcome(db, parentRunId))
+  );
 }
 
 // A run is the takeover-return sweep's candidate (NOT reconcile's) if it has a

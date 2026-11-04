@@ -199,3 +199,32 @@ export async function assertStoredTaskLaunchServerSource(
       ).assertStoredAgentTaskRetryLaunchSource(db, source);
   }
 }
+
+/** Revalidate this exact accepted record without constructing reusable source authority. */
+export async function assertAcceptedTaskLaunchServerSource(
+  db: Db,
+  intentId: string,
+): Promise<void> {
+  const [intent] = await db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.id, intentId));
+  const source =
+    intent?.settingsSnapshot.version === 2
+      ? intent.settingsSnapshot.serverExecution
+      : undefined;
+
+  if (
+    !intent ||
+    !source ||
+    source.taskId !== intent.taskId ||
+    source.projectId !== intent.projectId
+  )
+    throw launchRefusal("launch_source_snapshot_incomplete", "PRECONDITION");
+  if (source.kind === "delegated_child")
+    return (
+      await import("@/lib/orchestrator/delegated-launch-authority")
+    ).assertAcceptedDelegatedTaskLaunchSource(db, intentId);
+
+  return assertStoredTaskLaunchServerSource(db, source);
+}

@@ -17,6 +17,8 @@ const REASON_KEYS: Readonly<Record<string, string>> = {
   qualification_required: "qualification",
   qualification_stale: "qualification",
   qualification_evidence_stale: "qualification",
+  qualification_parent_unavailable: "parentUnavailable",
+  qualification_child_stale: "childChanged",
   launch_status_unavailable: "statusUnavailable",
   launch_storage_unavailable: "storageUnavailable",
   launch_request_invalid: "requestInvalid",

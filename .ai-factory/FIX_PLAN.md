@@ -29,6 +29,25 @@ the failed teardown remains a defect to correct, not a green cleanup result.
   receipts and exact eventual Run bindings. Preserve truthful queued/null-Run
   capacity behavior and actionable strict-enforcement refusal; do not replace
   the latter with a generic held-state assertion.
+  Frozen browser run `94381c8fc` finished 19 passed, eight failed and two serial
+  cases not run, with exact invocation cleanup reporting zero leaks. Correct
+  the four explicit-Origin test callers, the shared delegation peer's stable
+  operation key, the obsolete executor-versus-platform runner ID assertion and
+  the M11c preview failure after establishing its real filesystem cause.
+- [ ] Reproduce and correct parent waiting for accepted execution-child intents
+  that have no Run yet. Include queued/preparing/held obligations through Flow
+  and agent coordinator wake/recovery, deduplicate bound Runs, retain terminal
+  failure/cancellation outcomes and leave live fanout capacity semantics intact.
+  The actual `/delegate` 202/null-Run → real Flow driver regression ended in
+  Review instead of WaitingOnChildren. Serialize final parent completion with
+  child acceptance, retain bounded structured outcome observations across
+  restart, and acknowledge only the exact immutable owned prompt context.
+  Free-form prompt delimiters cannot establish an observation.
+  Internal token rotation must retire its bearer while retaining only an exact
+  already-accepted child grant. Add server-owned token binding/revocation
+  provenance without historical backfill; explicit revocation still holds the
+  accepted work. The migration and stored-dispatch validator must not create a
+  reusable fresh-acceptance capability or weaken live token verification.
 - [x] Persist real active assignments and project genuine canonical lifecycle
   events in scripted result fixtures; do not bypass finalization or integrity.
 - [x] Repair the scoped session-probe fixture and its false-positive network
@@ -42,7 +61,9 @@ the failed teardown remains a defect to correct, not a green cleanup result.
   integration/browser gates, static checks and contracts, and close the remaining
   seven implementation-plan tasks only after their acceptance checks pass.
 
-The branch's merge base is `cb183968d`; local master independently advanced to
-`ee8a62553` (guardrail/checkpoint semantics). No migration/ADR collision was
-found. That commit is not integrated or qualified by these branch runs; the
-user's no-merge/no-deploy boundary remains in force.
+The user requested fixing, then rebasing onto current master, then reviewing
+all changes again. GitHub's current master was verified as `ee8a62553` through
+its API after SSH fetch authentication failed; local master has that exact
+object. Preserve its guardrail/checkpoint changes during the authorized local
+rebase. Final validation and review must use the rebased branch. No push,
+deployment, production reproduction or historical repair is authorized.

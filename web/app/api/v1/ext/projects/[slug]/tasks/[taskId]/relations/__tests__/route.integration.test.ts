@@ -9,6 +9,7 @@ import { NextRequest } from "next/server";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { seedAgentTokenRunOwner } from "@/test-support/seed-token-run-owner";
 import * as schemaModule from "@/lib/db/schema";
 import { issueAgentRunToken } from "@/lib/agents/tokens";
 import { createTask } from "@/lib/services/tasks";
@@ -549,7 +550,10 @@ describe("ext relations — cross-project targets (ADR-155)", () => {
     const agentToken = await issueAgentRunToken({
       agentId,
       projectId: fx.projectId,
-      runId: randomUUID(),
+      runId: await seedAgentTokenRunOwner(db, {
+        projectId: fx.projectId,
+        agentId,
+      }),
       db,
     });
 

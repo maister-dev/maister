@@ -198,6 +198,8 @@ async function assertLiveTaskLaunchToken(
       name: projectTokens.name,
       librarianTurnId: projectTokens.librarian_turn_id,
       scopes: projectTokens.scopes,
+      boundRunId: projectTokens.bound_run_id,
+      originKind: projectTokens.origin_kind,
     })
     .from(projectTokens)
     .where(
@@ -221,7 +223,8 @@ async function assertLiveTaskLaunchToken(
     projectId: row.projectId,
     ownerUserId: row.ownerUserId,
     agentId: row.agentId,
-    boundRunId: parseBoundRunId(row.name),
+    boundRunId:
+      row.originKind !== null ? row.boundRunId : parseBoundRunId(row.name),
     librarianTurnId: row.librarianTurnId,
   };
 
@@ -355,4 +358,124 @@ export async function assertTaskLaunchDelegationTokenAuthority(
 
   if (owner)
     await assertTaskLaunchUserAuthority(db, projectId, owner, ["launchRun"]);
+}
+
+/** Validate only this persisted finite child; this cannot construct fresh bearer or launch authority. */
+export async function assertAcceptedTaskLaunchDelegationTokenAuthority(
+  db: Db,
+  intentId: string,
+  origin: TaskLaunchTokenOrigin,
+): Promise<void> {
+  const [intent] = await db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.id, intentId));
+  const source =
+    intent?.settingsSnapshot.version === 2
+      ? intent.settingsSnapshot.serverExecution
+      : undefined;
+  const payload = source?.execution.triggerPayload;
+  const storedOrigin =
+    payload && typeof payload === "object" && "origin" in payload
+      ? payload.origin
+      : null;
+
+  if (
+    !intent ||
+    !source ||
+    source.kind !== "delegated_child" ||
+    source.id !== intent.taskId ||
+    source.projectId !== intent.projectId ||
+    source.taskId !== intent.taskId ||
+    intent.principalKind !== "system" ||
+    intent.principalId !== `delegated_child:${source.id}` ||
+    intent.basis.kind !== "execution_child" ||
+    !["queued", "preparing", "held", "run_bound"].includes(intent.state) ||
+    origin.boundRunId !== intent.basis.parent.parentRunId ||
+    (origin.projectId !== null && origin.projectId !== intent.projectId) ||
+    origin.tokenKind === "librarian" ||
+    retryDigest(storedOrigin) !== retryDigest(origin)
+  )
+    throw tokenAuthorityRevoked();
+  const parentRunId = intent.basis.parent.parentRunId;
+  const [parent] = await db
+    .select({
+      projectId: runs.projectId,
+      agentId: runs.agentId,
+      status: runs.status,
+    })
+    .from(runs)
+    .where(eq(runs.id, parentRunId))
+    .for("share");
+
+  if (
+    !parent ||
+    parent.projectId !== intent.projectId ||
+    !ACTIVE_AGENT_RUN_STATUSES.includes(parent.status) ||
+    (origin.agentId !== null && parent.agentId !== origin.agentId)
+  )
+    throw tokenAuthorityRevoked();
+  const owner = taskLaunchTokenActorUserId(origin);
+
+  if (owner)
+    await assertTaskLaunchUserAuthority(db, intent.projectId, owner, [
+      "launchRun",
+    ]);
+  else {
+    const [project] = await db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(
+        and(eq(projects.id, intent.projectId), isNull(projects.archivedAt)),
+      )
+      .for("share");
+
+    if (!project) throw tokenAuthorityRevoked();
+  }
+  const [token] = await db
+    .select()
+    .from(projectTokens)
+    .where(
+      and(
+        eq(projectTokens.id, origin.tokenId),
+        or(
+          isNull(projectTokens.expires_at),
+          sql`${projectTokens.expires_at}>clock_timestamp()`,
+        ),
+      ),
+    )
+    .for("share");
+
+  if (!token || !tokenHasScope(token.scopes, "runs:delegate"))
+    throw tokenAuthorityRevoked();
+  const current: TaskLaunchTokenOrigin = {
+    version: 1,
+    kind: "token",
+    tokenId: token.id,
+    tokenKind: token.token_kind,
+    projectId: token.project_id,
+    ownerUserId: token.owner_user_id,
+    agentId: token.agent_id,
+    boundRunId:
+      token.origin_kind !== null
+        ? token.bound_run_id
+        : parseBoundRunId(token.name),
+    librarianTurnId: token.librarian_turn_id,
+  };
+
+  if (retryDigest(current) !== retryDigest(origin))
+    throw tokenAuthorityRevoked();
+  if (
+    token.revoked_at !== null &&
+    !(
+      token.revocation_reason === "rotation" &&
+      token.origin_kind === "orchestrator_run" &&
+      token.bound_run_id === parentRunId &&
+      token.token_kind === "project" &&
+      token.owner_user_id === null &&
+      token.agent_id === null &&
+      token.librarian_turn_id === null
+    )
+  )
+    throw tokenAuthorityRevoked();
 }
