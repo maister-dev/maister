@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "task": "T17",
+  "status": "failed_isolated_dependency_layout",
+  "runtimeSourceCommit": "6729ac891",
+  "checkout": "/private/tmp/cb-t17-regression-23562d82b",
+  "exitCode": 1,
+  "exitEvidence": "Final pnpm ELIFECYCLE reports command failed with exit code 1; the expired exec handle no longer returns a process status.",
+  "files": {
+    "failed": 8,
+    "passed": 632,
+    "skipped": 2,
+    "total": 642
+  },
+  "tests": {
+    "failed": 10,
+    "passed": 5706,
+    "skipped": 45,
+    "total": 5761
+  },
+  "durationSeconds": 6210.65,
+  "failedSummaries": [
+    {
+      "subject": "test-support/__tests__/durable-workers-boot.integration.test.ts > P0-2 durable workers in the production web boot",
+      "nextBuildExitedOne": true,
+      "nextPackageOutsideWorkspace": true
+    },
+    {
+      "subject": "test-support/__tests__/durable-workers-concurrency.integration.test.ts > P0-2 durable worker concurrency and shutdown",
+      "nextBuildExitedOne": true,
+      "nextPackageOutsideWorkspace": true
+    },
+    {
+      "subject": "test-support/__tests__/execution-ab-isolation.integration.test.ts > AT-16 isolated single-host lifecycle",
+      "nextBuildExitedOne": true,
+      "nextPackageOutsideWorkspace": true
+    },
+    {
+      "subject": "test-support/__tests__/execution-ab-partitions.integration.test.ts [ test-support/__tests__/execution-ab-partitions.integration.test.ts ]",
+      "nextBuildExitedOne": true,
+      "nextPackageOutsideWorkspace": true
+    },
+    {
+      "subject": "test-support/__tests__/execution-ab-process-death.integration.test.ts [ test-support/__tests__/execution-ab-process-death.integration.test.ts ]",
+      "nextBuildExitedOne": true,
+      "nextPackageOutsideWorkspace": true
+    },
+    {
+      "subject": "lib/scheduler/__tests__/clock-boot.integration.test.ts > scheduler clock in a production web",
+      "nextBuildExitedOne": true,
+      "nextPackageOutsideWorkspace": true
+    },
+    {
+      "subject": "lib/scratch-runs/__tests__/dispatch-window.integration.test.ts [ lib/scratch-runs/__tests__/dispatch-window.integration.test.ts ]",
+      "nextBuildExitedOne": true,
+      "nextPackageOutsideWorkspace": true
+    },
+    {
+      "subject": "test-support/__tests__/execution-ab-process-cleanup.integration.test.ts > S5.2 invocation process ownership > O-build-lock: a proved dead owner is reclaimed and the verified artifact is reused",
+      "nextBuildExitedOne": true,
+      "nextPackageOutsideWorkspace": true
+    },
+    {
+      "subject": "test-support/__tests__/execution-ab-process-cleanup.integration.test.ts > S5.2 invocation process ownership > O-exit: 'success' retains the exact outcome and finishes cleanup",
+      "nextBuildExitedOne": true,
+      "nextPackageOutsideWorkspace": true
+    },
+    {
+      "subject": "test-support/__tests__/execution-ab-process-cleanup.integration.test.ts > S5.2 invocation process ownership > O-exit: 'assertion failure' retains the exact outcome and finishes cleanup",
+      "nextBuildExitedOne": true,
+      "nextPackageOutsideWorkspace": true
+    },
+    {
+      "subject": "test-support/__tests__/execution-ab-process-cleanup.integration.test.ts > S5.2 invocation process ownership > O-exit: 'missing reporter' retains the exact outcome and finishes cleanup",
+      "nextBuildExitedOne": true,
+      "nextPackageOutsideWorkspace": true
+    },
+    {
+      "subject": "test-support/__tests__/execution-ab-process-cleanup.integration.test.ts > S5.2 invocation process ownership > O-exit: 'invalid reporter' retains the exact outcome and finishes cleanup",
+      "nextBuildExitedOne": true,
+      "nextPackageOutsideWorkspace": true
+    },
+    {
+      "subject": "test-support/__tests__/execution-ab-process-cleanup.integration.test.ts > S5.2 invocation process ownership > O2-runner: runner SIGKILL makes the live Vitest worker and real fixture groups terminate themselves",
+      "nextBuildExitedOne": true,
+      "nextPackageOutsideWorkspace": true
+    },
+    {
+      "subject": "test-support/__tests__/execution-ab-process-cleanup.integration.test.ts > S5.2 invocation process ownership > O-signal: runner SIGINT preserves failure and completes real-stack cleanup",
+      "nextBuildExitedOne": true,
+      "nextPackageOutsideWorkspace": true
+    },
+    {
+      "subject": "test-support/__tests__/execution-ab-process-cleanup.integration.test.ts > S5.2 invocation process ownership > O-signal: runner SIGTERM preserves failure and completes real-stack cleanup",
+      "nextBuildExitedOne": true,
+      "nextPackageOutsideWorkspace": true
+    },
+    {
+      "subject": "test-support/__tests__/execution-ab-process-cleanup.integration.test.ts > S5.2 invocation process ownership > O1: worker SIGKILL makes the real lane reap un-watched supervisor/web groups, remove roots and fail",
+      "nextBuildExitedOne": true,
+      "nextPackageOutsideWorkspace": true
+    },
+    {
+      "subject": "test-support/__tests__/execution-ab-process-cleanup.integration.test.ts > S5.2 invocation process ownership > O1-default: worker SIGKILL remains a failed lane with both cleanup guards enabled",
+      "nextBuildExitedOne": true,
+      "nextPackageOutsideWorkspace": true
+    }
+  ],
+  "interpretation": "All 17 failed case/suite summaries identify Next production-build startup failure caused by external node_modules symlinks. Skipped cases include tests whose beforeAll build failed; no broad regression pass is claimed.",
+  "repair": "Use invocation-owned dependency copies within the same frozen source root, prove production build, then rerun qualification without changing production code, assertions or skip policy.",
+  "artifactsSha256": {
+    "full-web-integration.log.gz": "51b4d2ed61f542fbede6dc0d823ac27b7dff7d941ef7e3f9079ec658a9bf4ed3",
+    "owned-dependency-build-green.log.gz": "0b47f853194a22acb4f9e1590a74b7c3e5df2fccf8bde06daf5c150c34d72921"
+  },
+  "repairVerification": {
+    "ownedDependencyProductionBuildExitCode": 0,
+    "runtimeSourceCommit": "6729ac891",
+    "sourceCodeChanges": false,
+    "fullRegression": "rerunning with maxWorkers=2 on the same source; verdict pending"
+  }
+}

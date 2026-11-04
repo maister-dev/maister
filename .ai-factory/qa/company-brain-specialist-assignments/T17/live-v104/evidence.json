@@ -33,10 +33,21 @@
       "turbopackTracingWarnings": 26
     },
     "fullWebIntegration": {
-      "state": "running_with_isolated_dependency_layout_failures",
+      "state": "rerunning_after_owned_dependency_build_pass",
       "runtimeSourceCommit": "6729ac891",
-      "knownFailure": "Turbopack refuses external node_modules symlinks in the owned regression checkout; process-cleanup production-build cases fail before their behavior runs. Actual full exit remains pending.",
-      "resolution": "After this invocation stops, use an owned dependency copy inside the same frozen workspace and rerun the required gate. No production-code or assertion weakening."
+      "exitCode": 1,
+      "files": {
+        "failed": 8,
+        "passed": 632,
+        "skipped": 2
+      },
+      "tests": {
+        "failed": 10,
+        "passed": 5706,
+        "skipped": 45
+      },
+      "failureEvidence": "../isolated-layout-failure/evidence.json",
+      "repair": "Owned dependency copies stay within the frozen workspace root; production build exits 0. Complete regression rerun with two workers is pending."
     }
   },
   "qualified": [
@@ -48,7 +59,7 @@
   ],
   "dataClassification": "generated synthetic corpus in a fresh owned database and temporary repository; no existing Brain or private repository input",
   "limits": [
-    "Full immutable-source web integration is still pending. Production build passed; T16/T17 remain open until the full regression exits.",
+    "The full regression is not green: eight files fail during isolated-checkout production-build startup. Native workflow and main-checkout production build pass. T16/T17 remain open until requalification passes.",
     "The company assignment runtime and stand-maintenance pilot are not qualified.",
     "No publication or deployment is claimed."
   ],
