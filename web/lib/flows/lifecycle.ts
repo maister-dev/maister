@@ -14,6 +14,7 @@ import {
   type ParsedAgentDefinition,
 } from "@/lib/agents/definition";
 import { getDb } from "@/lib/db/client";
+import { hasCompanySpecialistFlowReference } from "@/lib/agents/company-binding-references";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import {
@@ -521,6 +522,12 @@ export async function removeRevision(args: {
         `revision ${args.revisionId} is the enabled revision of a project`,
       );
     }
+
+    if (await hasCompanySpecialistFlowReference(tx, args.revisionId))
+      throw new MaisterError(
+        "CONFLICT",
+        "The Flow revision is pinned by a current company specialist binding; detach or replace that binding first",
+      );
 
     const updated = await tx
       .update(flowRevisions)

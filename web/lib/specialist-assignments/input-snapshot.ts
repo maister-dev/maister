@@ -1,6 +1,5 @@
 import "server-only";
 
-import type { ParsedAgentDefinition } from "@/lib/agents/definition";
 import type { AssignmentInputRevision, AssignmentInputSnapshot } from "./types";
 import type { SqlTransaction } from "@/lib/db/sql-types";
 
@@ -10,10 +9,7 @@ import { sql } from "drizzle-orm";
 import { assignmentObjectiveInputSchema } from "./types";
 
 import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
-import {
-  parseAgentDefinition,
-  renderAgentDefinition,
-} from "@/lib/agents/definition";
+import { frozenAgentDefinitionSchema } from "@/lib/agents/frozen-definition";
 import { scheduledRequestSnapshotSchema } from "@/lib/agents/scheduled-request";
 import { knowledgeActorSchema } from "@/lib/brain/knowledge-read-types";
 import {
@@ -58,26 +54,6 @@ const witnesses = z.array(
       .strict(),
   ]),
 );
-const definitionSchema = z.custom<ParsedAgentDefinition>((value) => {
-  if (
-    !value ||
-    typeof value !== "object" ||
-    !("id" in value) ||
-    typeof value.id !== "string"
-  )
-    return false;
-  try {
-    const definition = value as ParsedAgentDefinition;
-    const parsed = parseAgentDefinition(
-      value.id,
-      renderAgentDefinition(definition),
-    );
-
-    return agentDefinitionSha256(parsed) === agentDefinitionSha256(definition);
-  } catch {
-    return false;
-  }
-});
 const standingSchema = z
   .object({
     schemaVersion: z.literal(1),
@@ -86,7 +62,7 @@ const standingSchema = z
     packageName: identity,
     packageRevision: identity,
     definitionSha256: z.string().regex(/^[a-f0-9]{64}$/),
-    definition: definitionSchema,
+    definition: frozenAgentDefinitionSchema,
     configuration: z.record(z.string(), z.json()).nullable(),
   })
   .strict()

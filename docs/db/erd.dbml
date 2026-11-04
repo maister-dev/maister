@@ -565,6 +565,57 @@ table company_grants {
   }
 }
 
+table company_specialist_binding_revisions {
+  binding_id text [not null]
+  revision integer [not null]
+  snapshot jsonb [not null]
+  authority_snapshot jsonb [not null]
+  actor jsonb [not null]
+  request_actor_id text [not null]
+  operation text [not null]
+  request_key text [not null]
+  request_digest text [not null]
+  snapshot_digest text [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (binding_id, revision) [pk]
+
+
+
+
+
+    (binding_id, request_actor_id, request_key) [name: 'company_specialist_binding_revisions_request_uq', unique]
+  }
+}
+
+table company_specialist_bindings {
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  company_id text [not null]
+  agent_id text [not null]
+  package_install_id text
+  revision integer [not null, default: 1]
+  enabled boolean [not null, default: false]
+  detached_at "timestamp with time zone"
+  created_by text [not null]
+  creation_key text [not null]
+  creation_digest text [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+
+
+
+
+    (company_id, agent_id) [name: 'company_specialist_bindings_live_role_uq', unique]
+    (company_id, created_by, creation_key) [name: 'company_specialist_bindings_creation_uq', unique]
+
+    (company_id, agent_id, id) [name: 'company_specialist_bindings_company_idx']
+    (package_install_id, id) [name: 'company_specialist_bindings_package_idx']
+  }
+}
+
 table consensus_round_verdicts {
   id text [pk, not null]
   run_id text [not null]
@@ -4038,6 +4089,12 @@ ref company_grants_company_id_companies_id_fk: company_grants.company_id > compa
 ref company_grants_created_by_users_id_fk: company_grants.created_by > users.id [delete: restrict, update: no action]
 
 ref company_grants_revoked_by_users_id_fk: company_grants.revoked_by > users.id [delete: restrict, update: no action]
+
+ref company_specialist_binding_revisions_head_fk: company_specialist_binding_revisions.binding_id > company_specialist_bindings.id [delete: restrict, update: no action]
+
+ref company_specialist_bindings_company_id_companies_id_fk: company_specialist_bindings.company_id > companies.id [delete: restrict, update: no action]
+
+ref company_specialist_bindings_package_fk: company_specialist_bindings.package_install_id > package_installs.id [delete: restrict, update: no action]
 
 ref consensus_round_verdicts_run_id_runs_id_fk: consensus_round_verdicts.run_id > runs.id [delete: cascade, update: no action]
 

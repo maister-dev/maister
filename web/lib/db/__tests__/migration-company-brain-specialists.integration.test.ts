@@ -97,10 +97,14 @@ it("IT-CBX-01 company migration preserves existing project data and identity acr
     assignments: string | null;
     inputs: string | null;
     runLinks: string | null;
+    bindings: string | null;
+    bindingRevisions: string | null;
   }>(
     `SELECT to_regclass('public.specialist_assignments')::text AS assignments,
       to_regclass('public.specialist_input_revisions')::text AS inputs,
-      to_regclass('public.specialist_run_links')::text AS "runLinks"`,
+      to_regclass('public.specialist_run_links')::text AS "runLinks",
+      to_regclass('public.company_specialist_bindings')::text AS bindings,
+      to_regclass('public.company_specialist_binding_revisions')::text AS "bindingRevisions"`,
   );
 
   expect(specialistStorage.rows).toEqual([
@@ -108,6 +112,8 @@ it("IT-CBX-01 company migration preserves existing project data and identity acr
       assignments: "specialist_assignments",
       inputs: "specialist_input_revisions",
       runLinks: "specialist_run_links",
+      bindings: "company_specialist_bindings",
+      bindingRevisions: "company_specialist_binding_revisions",
     },
   ]);
   expect(

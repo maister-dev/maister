@@ -1625,6 +1625,13 @@
       "when": 1794606477938,
       "tag": "0235_specialist_metadata",
       "breakpoints": true
+    },
+    {
+      "idx": 236,
+      "version": "7",
+      "when": 1794606477939,
+      "tag": "0236_company_specialist_bindings",
+      "breakpoints": true
     }
   ]
 }

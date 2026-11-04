@@ -20363,13 +20363,13 @@ paths:
   /api/specialists:
     get:
       operationId: specialistsList
-      summary: Designed — List accessible specialist roles
-      description: Designed; no implementation is implied. Requires current specialists:read. URL identifiers are
+      summary: List accessible specialist roles
+      description: Requires current specialists:read. Retained bindings include retired configurations; signed cursors bind the current user and read authority. URL identifiers are
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       x-required-scope: specialists:read
       responses:
         "200":
@@ -20412,13 +20412,13 @@ paths:
   /api/specialists/{specialistId}/bindings:
     post:
       operationId: specialistBind
-      summary: Designed — Create explicit company pinned binding
-      description: Designed; no implementation is implied. Requires current specialists:manage. URL identifiers are
+      summary: Create explicit company pinned binding
+      description: Requires current specialists:manage. Creation and full replacement also require current specialists:read; detach returns only a content-free receipt. URL identifiers are
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       x-required-scope: specialists:manage
       requestBody:
         required: true
@@ -20463,25 +20463,27 @@ paths:
           schema:
             type: string
             minLength: 1
-            maxLength: 128
+            maxLength: 192
           description: URL selector resolved and authorized against server state; no filesystem path.
   /api/specialists/{specialistId}/bindings/{bindingId}:
     patch:
       operationId: specialistBindingUpdate
-      summary: Designed — Update pinned binding atomically
-      description: Designed; no implementation is implied. Requires current specialists:manage. URL identifiers are
-        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
-        target endpoint and execution ownership are derived from authenticated context/server state. Writes
-        compare canonical payload digest and expected revision; exact replay returns the original currently
-        accessible receipt, changed payload conflicts.
-      x-implementation-status: Designed
+      summary: Update pinned binding atomically
+      description: Designed; no implementation is implied. Requires current
+        specialists:manage. URL identifiers are untrusted selectors resolved
+        through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated
+        context/server state. Writes compare canonical payload digest and expected
+        revision; exact replay returns the original currently accessible receipt,
+        changed payload conflicts.
+      x-implementation-status: Implemented
       x-required-scope: specialists:manage
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CBBindingInput"
+              $ref: "#/components/schemas/CBBindingUpdate"
       responses:
         "200":
           description: Authorized explicit DTO or idempotent safe existing receipt.
@@ -20512,39 +20514,43 @@ paths:
           schema:
             type: string
             minLength: 1
-            maxLength: 128
-          description: URL selector resolved and authorized against server state; no filesystem path.
+            maxLength: 192
+          description: URL selector resolved and authorized against server state; no
+            filesystem path.
         - name: bindingId
           in: path
           required: true
           schema:
             type: string
             minLength: 1
-            maxLength: 128
-          description: URL selector resolved and authorized against server state; no filesystem path.
+            maxLength: 192
+          description: URL selector resolved and authorized against server state; no
+            filesystem path.
     delete:
       operationId: specialistBindingDetach
-      summary: Designed — Detach without erasing history
-      description: Designed; no implementation is implied. Requires current specialists:manage. URL identifiers are
-        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
-        target endpoint and execution ownership are derived from authenticated context/server state. Writes
-        compare canonical payload digest and expected revision; exact replay returns the original currently
-        accessible receipt, changed payload conflicts.
-      x-implementation-status: Designed
+      summary: Detach without erasing history
+      description: Designed; no implementation is implied. Requires current
+        specialists:manage. URL identifiers are untrusted selectors resolved
+        through current server ownership/access. Actors, grants, source witnesses,
+        target endpoint and execution ownership are derived from authenticated
+        context/server state. Writes compare canonical payload digest and expected
+        revision; exact replay returns the original currently accessible receipt,
+        changed payload conflicts.
+      x-implementation-status: Implemented
       x-required-scope: specialists:manage
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CBControlInput"
+              $ref: "#/components/schemas/CBBindingDetach"
       responses:
         "200":
           description: Authorized explicit DTO or idempotent safe existing receipt.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CBReceipt"
+                $ref: "#/components/schemas/CBBindingReceipt"
         "400":
           $ref: "#/components/responses/CBFailure"
         "401":
@@ -20568,16 +20574,68 @@ paths:
           schema:
             type: string
             minLength: 1
-            maxLength: 128
-          description: URL selector resolved and authorized against server state; no filesystem path.
+            maxLength: 192
+          description: URL selector resolved and authorized against server state; no
+            filesystem path.
         - name: bindingId
           in: path
           required: true
           schema:
             type: string
             minLength: 1
-            maxLength: 128
-          description: URL selector resolved and authorized against server state; no filesystem path.
+            maxLength: 192
+          description: URL selector resolved and authorized against server state; no
+            filesystem path.
+    get:
+      operationId: specialistBindingGet
+      summary: Inspect accepted company binding configuration
+      description: Requires current specialists:read. Read the retained current
+        configuration without re-resolving a mutable package catalog. Detached
+        history remains readable under current authority.
+      x-implementation-status: Implemented
+      x-required-scope: specialists:read
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBSpecialist"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: specialistId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 192
+          description: URL selector resolved and authorized against server state; no
+            filesystem path.
+        - name: bindingId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 192
+          description: URL selector resolved and authorized against server state; no
+            filesystem path.
   /api/specialist-assignments:
     get:
       operationId: specialistAssignmentsList
@@ -26040,22 +26098,110 @@ components:
           enum: [escalate, terminate, terminate_restorable]
         budget:
           $ref: "#/components/schemas/ExecutionBudgetAxis"
+          type: object
+          properties:
+            run:
+              type: object
+              properties:
+                maxTokens:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                hardMaxTokens:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                consecutiveFailures:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                wallClockMinutes:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                warnAtPct:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 100
+              additionalProperties: false
+            task:
+              type: object
+              properties:
+                maxTokens:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                hardMaxTokens:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                consecutiveFailures:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                wallClockMinutes:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                warnAtPct:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 100
+              additionalProperties: false
+            tree:
+              type: object
+              properties:
+                maxTokens:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                hardMaxTokens:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                consecutiveFailures:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                wallClockMinutes:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                warnAtPct:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 100
+              additionalProperties: false
+          additionalProperties: false
     ExecutionPolicy:
       type: object
-      required: [preset]
-      additionalProperties: false
-      description: |
-        Flow execution-control policy snapshotted on the run (migration 0055).
-        A preset sets every axis; `overrides` tune individual axes. The server
-        rejects blind-ship combos (relaxed checks + auto-passed human gate or
-        auto-promotion) with `PRECONDITION`, and a non-supervised resolved
-        policy requires the `launchUnattended` project action.
       properties:
         preset:
           type: string
-          enum: [supervised, assisted, unattended]
+          enum:
+            - supervised
+            - assisted
+            - unattended
         overrides:
           $ref: "#/components/schemas/ExecutionPolicyOverrides"
+      required:
+        - preset
+      additionalProperties: false
     ExecutionBudgetAxis:
       type: object
       additionalProperties: false
@@ -35803,87 +35949,143 @@ components:
           nullable: true
     CBSpecialist:
       type: object
-      additionalProperties: false
-      required:
-        - id
-        - bindingId
-        - owner
-        - responsibilities
-        - targetClasses
-        - packageRevision
-        - definitionSha256
-        - enabled
-        - configRevision
       properties:
         id:
           type: string
           minLength: 1
-          maxLength: 128
+          maxLength: 192
+          allOf:
+            - type: string
+              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+            - type: string
+              pattern: ^[A-Za-z0-9._-]+:[A-Za-z0-9._-]+$
         bindingId:
           type: string
           minLength: 1
           maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
         owner:
-          $ref: "#/components/schemas/CBOwner"
-        responsibilities:
-          type: array
-          items:
-            type: string
-            minLength: 1
-            maxLength: 256
-          maxItems: 32
-        targetClasses:
-          type: array
-          items:
-            type: string
-            minLength: 1
-            maxLength: 256
-          maxItems: 32
-        packageRevision:
+          type: object
+          properties:
+            kind:
+              type: string
+              enum:
+                - company
+            companyId:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+          required:
+            - kind
+            - companyId
+          additionalProperties: false
+        name:
           type: string
           minLength: 1
-          maxLength: 128
-        definitionSha256:
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        description:
           type: string
-          pattern: ^[a-f0-9]{64}$
-        enabled:
+          minLength: 1
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        responsibilities:
+          minItems: 1
+          maxItems: 32
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 256
+            allOf:
+              - type: string
+                pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+              - type: string
+                pattern: \S
+          uniqueItems: true
+        targetClasses:
+          minItems: 1
+          maxItems: 32
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 256
+            allOf:
+              - type: string
+                pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+              - type: string
+                pattern: \S
+          uniqueItems: true
+        kind:
+          type: string
+          enum:
+            - code_delivery
+            - operational
+        workspace:
+          type: string
+          enum:
+            - none
+            - repo_read
+            - worktree
+        capabilityProfile:
+          nullable: true
+          type: object
+          properties:
+            mcps:
+              maxItems: 32
+              type: array
+              items:
+                type: string
+                minLength: 1
+                maxLength: 128
+                pattern: ^[A-Za-z0-9._-]+$
+          additionalProperties: false
+        platformMcp:
           type: boolean
-        configRevision:
-          type: integer
-          minimum: 1
-          maximum: 2147483647
-    CBBindingInput:
-      type: object
-      additionalProperties: false
-      required:
-        - owner
-        - packageInstallId
-        - revisionId
-        - definitionSha256
-        - enabled
-        - configuration
-        - grantActions
-      properties:
-        owner:
-          $ref: "#/components/schemas/CBCompanyOwner"
         packageInstallId:
           type: string
           minLength: 1
           maxLength: 128
-        revisionId:
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        packageRevision:
           type: string
           minLength: 1
           maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
         definitionSha256:
           type: string
           pattern: ^[a-f0-9]{64}$
         enabled:
           type: boolean
+        detachedAt:
+          nullable: true
+          type: string
+          format: date-time
+          pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z))$
+        configRevision:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
         configuration:
           type: object
-          additionalProperties: true
-          description: Keys and values strictly validated against this exact pinned agent definition configuration schema.
+          additionalProperties:
+            oneOf:
+              - type: string
+              - type: number
+              - type: boolean
+          description: Scalar keys and values also match the exact pinned agent
+            configuration declaration; an empty object clears overrides.
+        effectiveConfiguration:
+          type: object
+          additionalProperties:
+            oneOf:
+              - type: string
+              - type: number
+              - type: boolean
+          description: Scalar keys and values also match the exact pinned agent
+            configuration declaration; an empty object clears overrides.
         grantActions:
+          maxItems: 20
           type: array
           items:
             type: string
@@ -35908,16 +36110,160 @@ components:
               - targets:restart
               - targets:recover
               - targets:manage
-          maxItems: 20
-        coordinatorFlowRevisionId:
+          uniqueItems: true
+        runnerId:
+          nullable: true
           type: string
           minLength: 1
           maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        executionPolicy:
+          $ref: "#/components/schemas/ExecutionPolicy"
+        coordinatorFlowRevisionId:
           nullable: true
-        expectedRevision:
-          type: integer
-          minimum: 1
-          maximum: 2147483647
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        createdAt:
+          type: string
+          format: date-time
+          pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z))$
+        updatedAt:
+          type: string
+          format: date-time
+          pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z))$
+      required:
+        - id
+        - bindingId
+        - owner
+        - name
+        - description
+        - responsibilities
+        - targetClasses
+        - kind
+        - workspace
+        - capabilityProfile
+        - platformMcp
+        - packageInstallId
+        - packageRevision
+        - definitionSha256
+        - enabled
+        - detachedAt
+        - configRevision
+        - configuration
+        - effectiveConfiguration
+        - grantActions
+        - runnerId
+        - executionPolicy
+        - coordinatorFlowRevisionId
+        - createdAt
+        - updatedAt
+      additionalProperties: false
+    CBBindingInput:
+      type: object
+      properties:
+        owner:
+          type: object
+          properties:
+            kind:
+              type: string
+              enum:
+                - company
+            companyId:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+          required:
+            - kind
+            - companyId
+          additionalProperties: false
+        packageInstallId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        packageRevision:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        definitionSha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        enabled:
+          default: false
+          type: boolean
+        configuration:
+          type: object
+          additionalProperties:
+            oneOf:
+              - type: string
+              - type: number
+              - type: boolean
+          description: Scalar keys and values also match the exact pinned agent
+            configuration declaration; an empty object clears overrides.
+        grantActions:
+          maxItems: 20
+          type: array
+          items:
+            type: string
+            enum:
+              - knowledge:read
+              - knowledge:propose
+              - knowledge:review
+              - knowledge:confirm
+              - knowledge:manage
+              - specialists:read
+              - specialists:manage
+              - assignments:read
+              - assignments:submit
+              - assignments:update
+              - assignments:answer
+              - assignments:accept
+              - assignments:cancel
+              - assignments:recover
+              - assignments:delegate
+              - targets:read
+              - targets:logs
+              - targets:restart
+              - targets:recover
+              - targets:manage
+          uniqueItems: true
+        runnerId:
+          default: null
+          nullable: true
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        executionPolicy:
+          allOf:
+            - $ref: "#/components/schemas/ExecutionPolicy"
+          default:
+            preset: supervised
+        coordinatorFlowRevisionId:
+          default: null
+          nullable: true
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        idempotencyKey:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+      required:
+        - owner
+        - packageInstallId
+        - packageRevision
+        - definitionSha256
+        - configuration
+        - grantActions
+        - idempotencyKey
+      additionalProperties: false
     CBCompanyOwner:
       type: object
       additionalProperties: false
@@ -38153,3 +38499,160 @@ components:
         assertionTruncated: {type: boolean}
         targetRecordId: {type: string, minLength: 1, maxLength: 128, nullable: true}
         expectedRecordRevision: {type: integer, minimum: 1, maximum: 2147483647, nullable: true}
+    CBBindingUpdate:
+      type: object
+      properties:
+        owner:
+          type: object
+          properties:
+            kind:
+              type: string
+              enum:
+                - company
+            companyId:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+          required:
+            - kind
+            - companyId
+          additionalProperties: false
+        packageInstallId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        packageRevision:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        definitionSha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        enabled:
+          type: boolean
+        configuration:
+          type: object
+          additionalProperties:
+            oneOf:
+              - type: string
+              - type: number
+              - type: boolean
+          description: Scalar keys and values also match the exact pinned agent
+            configuration declaration; an empty object clears overrides.
+        grantActions:
+          maxItems: 20
+          type: array
+          items:
+            type: string
+            enum:
+              - knowledge:read
+              - knowledge:propose
+              - knowledge:review
+              - knowledge:confirm
+              - knowledge:manage
+              - specialists:read
+              - specialists:manage
+              - assignments:read
+              - assignments:submit
+              - assignments:update
+              - assignments:answer
+              - assignments:accept
+              - assignments:cancel
+              - assignments:recover
+              - assignments:delegate
+              - targets:read
+              - targets:logs
+              - targets:restart
+              - targets:recover
+              - targets:manage
+          uniqueItems: true
+        runnerId:
+          nullable: true
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        executionPolicy:
+          $ref: "#/components/schemas/ExecutionPolicy"
+        coordinatorFlowRevisionId:
+          nullable: true
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        idempotencyKey:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+        expectedRevision:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+      required:
+        - owner
+        - packageInstallId
+        - packageRevision
+        - definitionSha256
+        - enabled
+        - configuration
+        - grantActions
+        - runnerId
+        - executionPolicy
+        - coordinatorFlowRevisionId
+        - idempotencyKey
+        - expectedRevision
+      additionalProperties: false
+    CBBindingDetach:
+      type: object
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          allOf:
+            - type: string
+              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+            - type: string
+              pattern: \S
+        idempotencyKey:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+      required:
+        - expectedRevision
+        - reason
+        - idempotencyKey
+      additionalProperties: false
+    CBBindingReceipt:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        revision:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        status:
+          type: string
+          enum:
+            - detached
+        duplicate:
+          type: boolean
+      required:
+        - id
+        - revision
+        - status
+        - duplicate
+      additionalProperties: false

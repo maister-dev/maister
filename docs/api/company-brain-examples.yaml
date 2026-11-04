@@ -517,3 +517,81 @@ cases:
     schema: CBExpectedAssignmentResult
     valid: false
     value: { schemaRef: "rah@0123456789ab:evidence-findings.v1", schemaVersion: 1, required: true }
+
+  - id: binding-create-pins-package-and-explicit-action-limits
+    surfaces: ["web"]
+    schema: CBBindingInput
+    valid: true
+    value: {"owner":{"kind":"company","companyId":"company_example"},"packageInstallId":"install_example","packageRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","definitionSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","configuration":{"stand_id":"demo-stand"},"grantActions":["targets:read"],"idempotencyKey":"binding_create_example_001"}
+
+  - id: binding-replacement-requires-current-revision-and-explicit-clear-values
+    surfaces: ["web"]
+    schema: CBBindingUpdate
+    valid: true
+    value: {"owner":{"kind":"company","companyId":"company_example"},"packageInstallId":"install_example","packageRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","definitionSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","configuration":{"stand_id":"demo-stand"},"grantActions":["targets:read"],"idempotencyKey":"binding_update_example_001","enabled":false,"runnerId":null,"executionPolicy":{"preset":"supervised"},"coordinatorFlowRevisionId":null,"expectedRevision":3}
+
+  - id: binding-replacement-without-cas-is-refused
+    surfaces: ["web"]
+    schema: CBBindingUpdate
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"packageInstallId":"install_example","packageRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","definitionSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","configuration":{"stand_id":"demo-stand"},"grantActions":["targets:read"],"idempotencyKey":"binding_update_example_001","enabled":false,"runnerId":null,"executionPolicy":{"preset":"supervised"},"coordinatorFlowRevisionId":null}
+
+  - id: binding-replacement-cannot-implicitly-clear-a-runner
+    surfaces: ["web"]
+    schema: CBBindingUpdate
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"packageInstallId":"install_example","packageRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","definitionSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","configuration":{"stand_id":"demo-stand"},"grantActions":["targets:read"],"idempotencyKey":"binding_update_example_001","enabled":false,"executionPolicy":{"preset":"supervised"},"coordinatorFlowRevisionId":null,"expectedRevision":3}
+
+  - id: binding-creation-without-delivery-key-is-refused
+    surfaces: ["web"]
+    schema: CBBindingInput
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"packageInstallId":"install_example","packageRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","definitionSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","configuration":{"stand_id":"demo-stand"},"grantActions":["targets:read"]}
+
+  - id: binding-action-limits-do-not-repeat
+    surfaces: ["web"]
+    schema: CBBindingInput
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"packageInstallId":"install_example","packageRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","definitionSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","configuration":{"stand_id":"demo-stand"},"grantActions":["targets:read","targets:read"],"idempotencyKey":"binding_create_example_001"}
+
+  - id: binding-model-cannot-declare-server-attribution
+    surfaces: ["web"]
+    schema: CBBindingInput
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"packageInstallId":"install_example","packageRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","definitionSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","configuration":{"stand_id":"demo-stand"},"grantActions":["targets:read"],"idempotencyKey":"binding_create_example_001","createdBy":"model_supplied_author"}
+
+  - id: binding-ambiguous-revision-alias-is-refused
+    surfaces: ["web"]
+    schema: CBBindingInput
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"packageInstallId":"install_example","definitionSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","configuration":{"stand_id":"demo-stand"},"grantActions":["targets:read"],"idempotencyKey":"binding_create_example_001","revisionId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+
+  - id: binding-policy-reuses-supported-runtime-grammar
+    surfaces: ["web"]
+    schema: CBBindingInput
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"packageInstallId":"install_example","packageRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","definitionSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","configuration":{"stand_id":"demo-stand"},"grantActions":["targets:read"],"idempotencyKey":"binding_create_example_001","executionPolicy":{"preset":"supervised","overrides":{"crashRetry":"blind_retry"}}}
+
+  - id: specialist-binding-inspection-includes-actual-pin-and-policy
+    surfaces: ["web", "external"]
+    schema: CBSpecialist
+    valid: true
+    value: {"id":"ops:stand-maintainer","bindingId":"binding_example","owner":{"kind":"company","companyId":"company_example"},"name":"Stand operations","description":"Diagnoses configured components under current authority","responsibilities":["Inspect authorized stand health"],"targetClasses":["stand"],"kind":"operational","workspace":"none","capabilityProfile":null,"platformMcp":true,"packageInstallId":"install_example","packageRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","definitionSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","enabled":false,"detachedAt":null,"configRevision":1,"configuration":{},"effectiveConfiguration":{},"grantActions":["targets:read"],"runnerId":null,"executionPolicy":{"preset":"supervised"},"coordinatorFlowRevisionId":null,"createdAt":"2026-11-04T00:00:00.000Z","updatedAt":"2026-11-04T00:00:00.000Z"}
+
+  - id: specialist-binding-inspection-requires-a-declared-role
+    surfaces: ["web", "external"]
+    schema: CBSpecialist
+    valid: false
+    value: {"id":"ops:stand-maintainer","bindingId":"binding_example","owner":{"kind":"company","companyId":"company_example"},"name":"Stand operations","description":"Diagnoses configured components under current authority","responsibilities":[],"targetClasses":["stand"],"kind":"operational","workspace":"none","capabilityProfile":null,"platformMcp":true,"packageInstallId":"install_example","packageRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","definitionSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","enabled":false,"detachedAt":null,"configRevision":1,"configuration":{},"effectiveConfiguration":{},"grantActions":["targets:read"],"runnerId":null,"executionPolicy":{"preset":"supervised"},"coordinatorFlowRevisionId":null,"createdAt":"2026-11-04T00:00:00.000Z","updatedAt":"2026-11-04T00:00:00.000Z"}
+
+  - id: binding-budget-uses-existing-positive-integer-policy
+    surfaces: [web]
+    schema: CBBindingInput
+    valid: true
+    value: {"owner":{"kind":"company","companyId":"company_example"},"packageInstallId":"install_example","packageRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","definitionSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","configuration":{},"grantActions":[],"idempotencyKey":"binding_budget_example_001","executionPolicy":{"preset":"supervised","overrides":{"budget":{"run":{"maxTokens":1}}}}}
+
+  - id: binding-budget-zero-is-not-a-valid-positive-ceiling
+    surfaces: [web]
+    schema: CBBindingInput
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"packageInstallId":"install_example","packageRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","definitionSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","configuration":{},"grantActions":[],"idempotencyKey":"binding_budget_example_001","executionPolicy":{"preset":"supervised","overrides":{"budget":{"run":{"maxTokens":0}}}}}

@@ -64,7 +64,7 @@ export async function authorizeCompanyAdministrator(
     );
 }
 
-async function installationCompany(tx: SqlTransaction): Promise<string> {
+export async function installationCompany(tx: SqlTransaction): Promise<string> {
   const rows = (await tx.execute(sql`SELECT id FROM companies FOR SHARE`)).rows;
 
   if (rows.length !== 1 || typeof rows[0].id !== "string")

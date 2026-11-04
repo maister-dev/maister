@@ -13637,57 +13637,386 @@ components:
           minLength: 1
           maxLength: 2048
           nullable: true
+    ExecutionPolicy:
+      type: object
+      properties:
+        preset:
+          type: string
+          enum:
+            - supervised
+            - assisted
+            - unattended
+        overrides:
+          $ref: "#/components/schemas/ExecutionPolicyOverrides"
+      required:
+        - preset
+      additionalProperties: false
+    ExecutionPolicyOverrides:
+      type: object
+      properties:
+        reworkExhaustion:
+          type: string
+          enum:
+            - escalate
+            - ship_with_warning
+            - fail
+        crashRetry:
+          type: string
+          enum:
+            - fail
+            - ralph_loop
+            - auto_retry
+        checks:
+          type: string
+          enum:
+            - strict
+            - advisory
+            - skip
+        permissions:
+          type: string
+          enum:
+            - ask
+            - auto_approve
+        humanGate:
+          type: string
+          enum:
+            - stop
+            - auto_pass
+        onStuck:
+          type: string
+          enum:
+            - escalate
+            - ship_with_warning
+            - notify_only
+        promotion:
+          type: string
+          enum:
+            - manual
+            - auto_on_ready
+        commits:
+          type: string
+          enum:
+            - keep_all
+            - squash_rework
+            - squash_on_promote
+            - defer
+        dirtyResolve:
+          type: string
+          enum:
+            - ask
+            - commit
+            - proceed
+        budget:
+          type: object
+          properties:
+            run:
+              type: object
+              properties:
+                maxTokens:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                hardMaxTokens:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                consecutiveFailures:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                wallClockMinutes:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                warnAtPct:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 100
+              additionalProperties: false
+            task:
+              type: object
+              properties:
+                maxTokens:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                hardMaxTokens:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                consecutiveFailures:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                wallClockMinutes:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                warnAtPct:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 100
+              additionalProperties: false
+            tree:
+              type: object
+              properties:
+                maxTokens:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                hardMaxTokens:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                consecutiveFailures:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                wallClockMinutes:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                warnAtPct:
+                  nullable: true
+                  type: integer
+                  minimum: 1
+                  maximum: 100
+              additionalProperties: false
+          additionalProperties: false
+        onBudgetBreach:
+          type: string
+          enum:
+            - escalate
+            - terminate
+            - terminate_restorable
+      additionalProperties: false
     CBSpecialist:
       type: object
-      additionalProperties: false
-      required:
-        - id
-        - bindingId
-        - owner
-        - responsibilities
-        - targetClasses
-        - packageRevision
-        - definitionSha256
-        - enabled
-        - configRevision
       properties:
         id:
           type: string
           minLength: 1
-          maxLength: 128
+          maxLength: 192
+          allOf:
+            - type: string
+              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+            - type: string
+              pattern: ^[A-Za-z0-9._-]+:[A-Za-z0-9._-]+$
         bindingId:
           type: string
           minLength: 1
           maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
         owner:
-          $ref: "#/components/schemas/CBOwner"
+          type: object
+          properties:
+            kind:
+              type: string
+              enum:
+                - company
+            companyId:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+          required:
+            - kind
+            - companyId
+          additionalProperties: false
+        name:
+          type: string
+          minLength: 1
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        description:
+          type: string
+          minLength: 1
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
         responsibilities:
+          minItems: 1
+          maxItems: 32
           type: array
           items:
             type: string
             minLength: 1
             maxLength: 256
-          maxItems: 32
+            allOf:
+              - type: string
+                pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+              - type: string
+                pattern: \S
+          uniqueItems: true
         targetClasses:
+          minItems: 1
+          maxItems: 32
           type: array
           items:
             type: string
             minLength: 1
             maxLength: 256
-          maxItems: 32
+            allOf:
+              - type: string
+                pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+              - type: string
+                pattern: \S
+          uniqueItems: true
+        kind:
+          type: string
+          enum:
+            - code_delivery
+            - operational
+        workspace:
+          type: string
+          enum:
+            - none
+            - repo_read
+            - worktree
+        capabilityProfile:
+          nullable: true
+          type: object
+          properties:
+            mcps:
+              maxItems: 32
+              type: array
+              items:
+                type: string
+                minLength: 1
+                maxLength: 128
+                pattern: ^[A-Za-z0-9._-]+$
+          additionalProperties: false
+        platformMcp:
+          type: boolean
+        packageInstallId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
         packageRevision:
           type: string
           minLength: 1
           maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
         definitionSha256:
           type: string
           pattern: ^[a-f0-9]{64}$
         enabled:
           type: boolean
+        detachedAt:
+          nullable: true
+          type: string
+          format: date-time
+          pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z))$
         configRevision:
           type: integer
           minimum: 1
           maximum: 2147483647
+        configuration:
+          type: object
+          additionalProperties:
+            oneOf:
+              - type: string
+              - type: number
+              - type: boolean
+          description: Scalar keys and values also match the exact pinned agent
+            configuration declaration; an empty object clears overrides.
+        effectiveConfiguration:
+          type: object
+          additionalProperties:
+            oneOf:
+              - type: string
+              - type: number
+              - type: boolean
+          description: Scalar keys and values also match the exact pinned agent
+            configuration declaration; an empty object clears overrides.
+        grantActions:
+          maxItems: 20
+          type: array
+          items:
+            type: string
+            enum:
+              - knowledge:read
+              - knowledge:propose
+              - knowledge:review
+              - knowledge:confirm
+              - knowledge:manage
+              - specialists:read
+              - specialists:manage
+              - assignments:read
+              - assignments:submit
+              - assignments:update
+              - assignments:answer
+              - assignments:accept
+              - assignments:cancel
+              - assignments:recover
+              - assignments:delegate
+              - targets:read
+              - targets:logs
+              - targets:restart
+              - targets:recover
+              - targets:manage
+          uniqueItems: true
+        runnerId:
+          nullable: true
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        executionPolicy:
+          $ref: "#/components/schemas/ExecutionPolicy"
+        coordinatorFlowRevisionId:
+          nullable: true
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        createdAt:
+          type: string
+          format: date-time
+          pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z))$
+        updatedAt:
+          type: string
+          format: date-time
+          pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z))$
+      required:
+        - id
+        - bindingId
+        - owner
+        - name
+        - description
+        - responsibilities
+        - targetClasses
+        - kind
+        - workspace
+        - capabilityProfile
+        - platformMcp
+        - packageInstallId
+        - packageRevision
+        - definitionSha256
+        - enabled
+        - detachedAt
+        - configRevision
+        - configuration
+        - effectiveConfiguration
+        - grantActions
+        - runnerId
+        - executionPolicy
+        - coordinatorFlowRevisionId
+        - createdAt
+        - updatedAt
+      additionalProperties: false
     CBAssignmentPage:
       type: object
       additionalProperties: false

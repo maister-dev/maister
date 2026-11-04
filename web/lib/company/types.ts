@@ -102,6 +102,14 @@ export const COMPANY_ACTIONS = [
 ] as const;
 
 export type CompanyAction = (typeof COMPANY_ACTIONS)[number];
+/** Historical evidence of one explicit company action; current writes always recheck the live grant. */
+export type CompanyGrantWitness = Readonly<{
+  kind: "company_grant";
+  owner: Extract<Owner, { kind: "company" }>;
+  authorityId: string;
+  revision: number;
+  action: CompanyAction;
+}>;
 export const CONFIRMATION_CLASSES = [
   "assertion",
   "observation",

@@ -1,10 +1,14 @@
 import "server-only";
 
+import type { SqlTransaction } from "@/lib/db/sql-types";
+
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
+import { z } from "zod";
 
+import { maisterPackageManifestSchema } from "@/lib/config.schema";
 import {
   assertAgentId,
   parseAgentDefinition,
@@ -72,7 +76,7 @@ export async function resolveEffectiveAgentDefinition(
   db?: Db,
 ): Promise<EffectiveAgentDefinition> {
   const _db = db ?? getDb();
-  const { packageName, stem } = splitQualifiedAgentId(input.agentId);
+  const { packageName } = splitQualifiedAgentId(input.agentId);
 
   const rows = await _db
     .select({
@@ -104,10 +108,30 @@ export async function resolveEffectiveAgentDefinition(
     );
   }
 
+  return readInstalledAgentDefinition(input.agentId, install);
+}
+
+type AgentInstallPin = Readonly<{
+  packageInstallId: string;
+  installedPath: string;
+  manifest: unknown;
+  packageStatus: string;
+  trustStatus: string;
+  versionLabel: string;
+  resolvedRevision: string;
+}>;
+
+/** The same file, trust and compatibility gates apply to project and company pins. */
+async function readInstalledAgentDefinition(
+  agentId: string,
+  install: AgentInstallPin,
+): Promise<EffectiveAgentDefinition> {
+  const { packageName, stem } = splitQualifiedAgentId(agentId);
+
   if (install.packageStatus !== "Installed") {
     throw new MaisterError(
       "PRECONDITION",
-      `agent "${input.agentId}": package "${packageName}" install is ${install.packageStatus}, not Installed`,
+      `agent "${agentId}": package "${packageName}" install is ${install.packageStatus}, not Installed`,
     );
   }
 
@@ -119,12 +143,12 @@ export async function resolveEffectiveAgentDefinition(
   ) {
     throw new MaisterError(
       "PRECONDITION",
-      `agent "${input.agentId}": package "${packageName}" is not trusted — confirm trust before launch`,
+      `agent "${agentId}": package "${packageName}" is not trusted — confirm trust before launch`,
     );
   }
 
   const sourcePath = join(
-    install.installedPath as string,
+    install.installedPath,
     "maister-agents",
     `${stem}.md`,
   );
@@ -136,11 +160,11 @@ export async function resolveEffectiveAgentDefinition(
   } catch {
     throw new MaisterError(
       "PRECONDITION",
-      `agent "${input.agentId}": version ${install.versionLabel} of package "${packageName}" does not ship maister-agents/${stem}.md`,
+      `agent "${agentId}": version ${install.versionLabel} of package "${packageName}" does not ship maister-agents/${stem}.md`,
     );
   }
 
-  const parsed = parseAgentDefinition(input.agentId, content);
+  const parsed = parseAgentDefinition(agentId, content);
 
   assertOperationalAgentCompatibility(
     parsed,
@@ -151,13 +175,64 @@ export async function resolveEffectiveAgentDefinition(
     parsed,
     sourcePath,
     packageName,
-    packageInstallId: install.packageInstallId as string,
-    installedPath: install.installedPath as string,
+    packageInstallId: install.packageInstallId,
+    installedPath: install.installedPath,
     manifest: install.manifest as PackageInstallManifest | null,
-    versionLabel: install.versionLabel as string,
-    resolvedRevision: install.resolvedRevision as string,
+    versionLabel: install.versionLabel,
+    resolvedRevision: install.resolvedRevision,
     execTrust: "trusted",
   };
+}
+
+/** Resolve an explicit installed pin without synthesizing a project attachment. */
+export async function resolveInstalledAgentDefinition(
+  tx: SqlTransaction,
+  input: Readonly<{ agentId: string; packageInstallId: string }>,
+): Promise<EffectiveAgentDefinition> {
+  const { packageName, stem } = splitQualifiedAgentId(input.agentId);
+  const row = (
+    await tx.execute(
+      sql`SELECT id AS "packageInstallId", name, installed_path AS "installedPath", manifest, package_status AS "packageStatus", trust_status AS "trustStatus", version_label AS "versionLabel", resolved_revision AS "resolvedRevision" FROM package_installs WHERE id=${input.packageInstallId} FOR SHARE`,
+    )
+  ).rows[0];
+  const pin = z
+    .object({
+      packageInstallId: z.string(),
+      name: z.literal(packageName),
+      installedPath: z.string().min(1),
+      manifest: z.object({
+        spec: maisterPackageManifestSchema,
+        inventory: z.object({
+          skills: z.array(z.string()),
+          agents: z.array(z.string()),
+          platformAgents: z.array(z.string()),
+        }),
+        sourceSubpath: z.string().optional(),
+      }),
+      packageStatus: z.string(),
+      trustStatus: z.string(),
+      versionLabel: z.string(),
+      resolvedRevision: z.string().min(1),
+    })
+    .safeParse(row);
+
+  if (!row)
+    throw new MaisterError(
+      "PRECONDITION",
+      "The selected specialist package pin is unavailable",
+      { details: { reason: "company_binding_reference_unavailable" } },
+    );
+  if (
+    !pin.success ||
+    pin.data.manifest.spec.name !== packageName ||
+    !pin.data.manifest.inventory.platformAgents.includes(stem)
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "The selected package pin does not provide the requested professional role",
+    );
+
+  return readInstalledAgentDefinition(input.agentId, pin.data);
 }
 
 // Attach-time gate (ADR-106): the providing package must be attached to the

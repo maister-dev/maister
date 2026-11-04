@@ -2,7 +2,7 @@ import type { ParsedAgentDefinition } from "@/lib/agents/definition";
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 import type { KnowledgeAttribution } from "@/lib/brain/record-types";
 import type {
-  CompanyAction,
+  CompanyGrantWitness,
   Owner,
   KnowledgeAccessRestriction,
 } from "@/lib/company/types";
@@ -134,13 +134,7 @@ export type AssignmentResultExpectation = z.infer<
 
 /** Historical permission witnesses describe captured authority, never grant current action access. */
 export type AssignmentAuthorityWitness =
-  | Readonly<{
-      kind: "company_grant";
-      owner: Extract<Owner, { kind: "company" }>;
-      authorityId: string;
-      revision: number;
-      action: CompanyAction;
-    }>
+  | CompanyGrantWitness
   | Readonly<{
       kind: "project_membership";
       projectId: string;

@@ -868,13 +868,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "lib/agents/effective.ts",
       "repository-worktree",
       "worktree, repository, package and capability materialization on the shared checkout — Stage C repository cut",
-      [
-        [
-          "resolveEffectiveAgentDefinition",
-          "node:fs/promises.readFile",
-          "read",
-        ],
-      ],
+      [["readInstalledAgentDefinition", "node:fs/promises.readFile", "read"]],
     ),
     ...classified(
       "lib/agents/facade-launch.ts",
@@ -2828,6 +2822,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ]),
   ...wrappers("lib/agents/effective.ts", "repository-worktree", [
     ["resolveEffectiveAgentDefinition", false],
+    ["resolveInstalledAgentDefinition", false],
   ]),
   ...wrappers("lib/agents/facade-launch.ts", "repository-worktree", [
     ["resolveFacadeLaunch", false],

@@ -10,6 +10,7 @@ import { sql } from "drizzle-orm";
 
 import { projectRolesForActions } from "@/lib/authz";
 import { resolveKnowledgePrincipal } from "@/lib/brain/knowledge-access";
+import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import { MaisterError } from "@/lib/errors";
 
 export type AssignmentAction = Extract<CompanyAction, `assignments:${string}`>;
@@ -22,6 +23,22 @@ export async function authorizeAssignment(
   action: AssignmentAction,
   executionPolicy: ExecutionPolicy,
 ): Promise<AssignmentAuthoritySnapshot> {
+  if (owner.kind === "company") {
+    const authority = await authorizeCompanyUserAction(
+      tx,
+      userId,
+      owner.companyId,
+      action,
+    );
+
+    return {
+      schemaVersion: 1,
+      capturedAt: new Date().toISOString(),
+      actor: authority.actor,
+      executionPolicy,
+      witnesses: [authority.witness],
+    };
+  }
   const identity = await resolveKnowledgePrincipal(
     tx,
     { kind: "user", userId },
@@ -40,37 +57,6 @@ export async function authorizeAssignment(
     executionPolicy,
   };
 
-  if (owner.kind === "company") {
-    const grant = (
-      await tx.execute(
-        sql`SELECT id,revision FROM company_grants WHERE company_id=${owner.companyId} AND principal_type='user' AND principal_id=${userId} AND action=${action} AND revoked_at IS NULL FOR SHARE`,
-      )
-    ).rows[0];
-
-    if (
-      !grant ||
-      typeof grant.id !== "string" ||
-      typeof grant.revision !== "number"
-    )
-      throw new MaisterError(
-        "UNAUTHORIZED",
-        "Current explicit company assignment authority is required",
-        { details: { action } },
-      );
-
-    return {
-      ...base,
-      witnesses: [
-        {
-          kind: "company_grant",
-          owner,
-          authorityId: grant.id,
-          revision: grant.revision,
-          action,
-        },
-      ],
-    };
-  }
   const project = (
     await tx.execute(
       sql`SELECT id FROM projects WHERE id=${owner.projectId} FOR SHARE`,

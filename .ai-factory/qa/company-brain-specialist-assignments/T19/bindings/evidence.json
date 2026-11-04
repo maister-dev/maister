@@ -1,0 +1,134 @@
+{
+  "phase": "T19 company pinned binding configuration",
+  "baseCommit": "d95118b86",
+  "migration": "0221_company_specialist_bindings",
+  "method": "Specification-derived RED -> GREEN -> scoped refactor and affected rerun",
+  "redCases": {
+    "create-red": "Temporary unavailable service skeleton after real Git package installation/trust; creation assertion fails.",
+    "lifecycle-red": "Missing full replacement implementation.",
+    "access-red": "Missing list/pagination implementation.",
+    "access-harness-correction": "The signed cursor requires AUTH_SECRET; test-only secret added without production fallback.",
+    "routes-red": "Temporary unavailable HTTP skeleton returns 501; creation expects 201.",
+    "routes-missing-reference-red": "Missing head validated its absent timestamp before not-found classification; expected 404 got 400.",
+    "bounds-red": "Oversized synthetic configuration surfaced a Drizzle error instead of CONFIG. Entire transaction rolls back after explicit PostgreSQL JSONB size validation.",
+    "flow-pin-red": "Actual removeRevision retired a current coordinator pin. The subsequent provider-removal assertion also failed because that first failure left the live reference; same intended oracle retained."
+  },
+  "green": {
+    "owningIntegration": {
+      "files": 6,
+      "tests": 48,
+      "exitCode": 0,
+      "command": "pnpm --filter maister-web test:integration lib/agents/__tests__/company-bindings.integration.test.ts lib/agents/__tests__/effective.integration.test.ts lib/agents/__tests__/registry.integration.test.ts lib/specialist-assignments/__tests__/store.integration.test.ts lib/db/__tests__/migration-company-brain-specialists.integration.test.ts lib/gc/__tests__/revision-gc.integration.test.ts --maxWorkers=2"
+    },
+    "fullWebUnit": {
+      "files": 886,
+      "tests": 9263,
+      "exitCode": 0,
+      "command": "pnpm --filter maister-web test:unit"
+    },
+    "typecheck": 0,
+    "lintWarnings": 0,
+    "contracts": 0,
+    "docs": 0,
+    "erdTables": 169
+  },
+  "limitedAttempt": {
+    "fullUnitSandbox": {
+      "failedFiles": 7,
+      "failedTests": 19,
+      "cause": "Sandbox denied real Git process inspection, local socket binding and tsx IPC; unchanged suite rerun with required access passes."
+    }
+  },
+  "qualified": [
+    "Normal annotated Git package install/trust with descriptive specialist metadata",
+    "Company-only create/current/history services and native authenticated routes without project/run creation",
+    "Exact provider/version/hash/config/runner/Flow-member checks",
+    "No implicit content authority or grants; revoked read/manage and current-authority replay",
+    "Full replacement with explicit CLEAR values, required CAS and immutable original receipts",
+    "Actual simultaneous-create deduplication and one-winner concurrent update",
+    "Immutable accepted history and deferred head coherence on real PostgreSQL",
+    "Content-free retirement without read authority; retained role and logical pin after provider removal",
+    "Existing Flow removal/GC preserve live coordinator pins and release them on retirement",
+    "Shared existing project pin and assignment authority/snapshot behavior preserved"
+  ],
+  "refactor": "Reuse one installed-definition trust/file reader, shared current company action authority and frozen-definition validator. Keep configuration receipts separate from existing run/attempt execution ledgers. Affected integration and full unit reruns pass.",
+  "scopeLimits": [
+    "Synthetic package content is qualified through the actual Git loader; this is not the actual stand pilot package gate.",
+    "Company execution, company Flow declaration/binding, scheduler dispatch and assignment capture of binding revisions remain their owning subsequent tasks.",
+    "No remote publication, push or deployment."
+  ],
+  "sourceSha256": {
+    "web/lib/agents/company-binding-list.ts": "937a044a141b485464070c5673e2880277cd9ec67384b633906971b5f9a18812",
+    "web/lib/agents/company-binding-mutations.ts": "b7f703362db26c933db9717e1d0c24d65a6ac783bf50d50fb18afff6fe1f83a1",
+    "web/lib/agents/company-binding-references.ts": "55ceb1f72ba0c817c9fde6d9e345aefaf76fcd20f70d95788cb6cc617572ca13",
+    "web/lib/agents/company-binding-snapshot.ts": "df6cd6c52c0f051d335dfdfdb972c8d133055defb426ce0cbe52c3ad1fe949b2",
+    "web/lib/agents/company-binding-types.ts": "c92005c52dcb70d084b18440429f6eb5c88a67ecdb93a55b32be9844dcfaed4d",
+    "web/lib/agents/company-bindings.ts": "7251b4d3be4585620fdbb30f5bc9f22f2a561e45a0ba6fcdab98c3f1da588f8d"
+  },
+  "logs": {
+    "create-red": {
+      "originalBytes": 16205,
+      "sha256": "4dee775de2aa389610b3cfe65503fed2819d91cd98c73ad923dafaf0d81ee7cb"
+    },
+    "lifecycle-red": {
+      "originalBytes": 16700,
+      "sha256": "5300cd1c63ad7edc4837a30c83e6eec37e1673bc3c9480b5efdb46cbfe2ac58c"
+    },
+    "access-red": {
+      "originalBytes": 16696,
+      "sha256": "e191688e6255b5e67703a93dc38c6f07eee90a445b014f10ce4ef4aeaf25142a"
+    },
+    "access-harness-correction": {
+      "originalBytes": 16872,
+      "sha256": "18f9b225ea6da2724e38ff8fc062d1a9fa39addb934d416a5f3c28560c7dd716"
+    },
+    "routes-red": {
+      "originalBytes": 18444,
+      "sha256": "5c38fd4ffa5afcb9f7d996f45c80ed7037850a6bfbde0986b76a26e8a6a6bd9f"
+    },
+    "routes-missing-reference-red": {
+      "originalBytes": 44315,
+      "sha256": "da54aa4b730f8bf045925a1e4c192559143010662119d34db73905f4fa2a7f10"
+    },
+    "bounds-red": {
+      "originalBytes": 4217788,
+      "sha256": "227b674452bd9d5836cfad2fc047208eb6f282ee631441887a45743922f5ec19"
+    },
+    "flow-pin-red": {
+      "originalBytes": 28578,
+      "sha256": "e50013b8da58a9ebcbff6aaf2d1c0a2a7760a38a785d8ce8bb70d06021ee9ca3"
+    },
+    "owning-green": {
+      "originalBytes": 81211,
+      "sha256": "963396d8b1d4e7f35443e309668bff315f7d3e29c8d680ecfe1ddcc46059856c"
+    },
+    "full-unit-sandbox-refusal": {
+      "originalBytes": 548008,
+      "sha256": "efbdffd8c6628c0b0ff5dea29d650f5f6df78287d273c54e840deb4082b5b37d"
+    },
+    "full-unit-green": {
+      "originalBytes": 525267,
+      "sha256": "246cd75bb050c2d05ef4a600c67581b95b048cb8c6acb698cbb682505ea32cbd"
+    },
+    "typecheck": {
+      "originalBytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "lint": {
+      "originalBytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "contracts": {
+      "originalBytes": 2484,
+      "sha256": "28da455b1f1329ef17c928a6a4d44d4012381a41495b579082904d427b4743ce"
+    },
+    "docs": {
+      "originalBytes": 685,
+      "sha256": "8195ba03b0a0d25049c4b94e646a3e6974681d01b15eb4d3695ce155f0a2cdd6"
+    },
+    "filesystem-inventory": {
+      "originalBytes": 1312,
+      "sha256": "72d964ca8ba1c0a2f7c3305c4f52301c0eeb846005efc79a35ff99248eaea2cd"
+    }
+  }
+}

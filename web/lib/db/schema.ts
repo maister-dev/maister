@@ -2,6 +2,10 @@ import type { CoordinatorChildLaunchContext } from "@/lib/orchestrator/child-lau
 import type { NativeDelegationInput } from "@/lib/orchestrator/native-input-types";
 import type { AgentSpecialist } from "@/lib/agents/specialist";
 import type {
+  CompanySpecialistBindingSnapshot,
+  CompanyBindingAuthoritySnapshot,
+} from "@/lib/agents/company-binding-types";
+import type {
   AssignmentOrigin,
   AssignmentDestination,
   AssignmentObjectiveInput,
@@ -10472,6 +10476,126 @@ export const specialistRunLinks = pgTable(
       t.inputRevision,
       t.linkedAt,
       t.runId,
+    ),
+  }),
+);
+
+export const companySpecialistBindings = pgTable(
+  "company_specialist_bindings",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    companyId: text("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "restrict" }),
+    agentId: text("agent_id").notNull(),
+    packageInstallId: text("package_install_id"),
+    revision: integer("revision").notNull().default(1),
+    enabled: boolean("enabled").notNull().default(false),
+    detachedAt: timestamp("detached_at", { withTimezone: true, mode: "date" }),
+    createdBy: text("created_by").notNull(),
+    creationKey: text("creation_key").notNull(),
+    creationDigest: text("creation_digest").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    identity: check(
+      "company_specialist_bindings_identity_check",
+      sql`char_length(${t.agentId}) BETWEEN 1 AND 192 AND ${t.agentId} ~ '^[A-Za-z0-9._-]+:[A-Za-z0-9._-]+$' AND char_length(${t.createdBy}) BETWEEN 1 AND 192`,
+    ),
+    revision: check(
+      "company_specialist_bindings_revision_check",
+      sql`${t.revision}>0`,
+    ),
+    lifecycle: check(
+      "company_specialist_bindings_lifecycle_check",
+      sql`(${t.detachedAt} IS NULL AND ${t.packageInstallId} IS NOT NULL) OR (${t.detachedAt} IS NOT NULL AND ${t.packageInstallId} IS NULL AND ${t.enabled}=false)`,
+    ),
+    creation: check(
+      "company_specialist_bindings_creation_check",
+      sql`${t.creationKey} ~ '^[A-Za-z0-9._:-]{8,128}$' AND ${t.creationDigest} ~ '^[a-f0-9]{64}$'`,
+    ),
+    liveRole: uniqueIndex("company_specialist_bindings_live_role_uq")
+      .on(t.companyId, t.agentId)
+      .where(sql`${t.detachedAt} IS NULL`),
+    creationReceipt: unique("company_specialist_bindings_creation_uq").on(
+      t.companyId,
+      t.createdBy,
+      t.creationKey,
+    ),
+    package: foreignKey({
+      name: "company_specialist_bindings_package_fk",
+      columns: [t.packageInstallId],
+      foreignColumns: [packageInstalls.id],
+    }).onDelete("restrict"),
+    companyPage: index("company_specialist_bindings_company_idx").on(
+      t.companyId,
+      t.agentId,
+      t.id,
+    ),
+    currentPin: index("company_specialist_bindings_package_idx").on(
+      t.packageInstallId,
+      t.id,
+    ),
+  }),
+);
+
+export const companySpecialistBindingRevisions = pgTable(
+  "company_specialist_binding_revisions",
+  {
+    bindingId: text("binding_id").notNull(),
+    revision: integer("revision").notNull(),
+    snapshot: jsonb("snapshot")
+      .$type<CompanySpecialistBindingSnapshot>()
+      .notNull(),
+    authoritySnapshot: jsonb("authority_snapshot")
+      .$type<CompanyBindingAuthoritySnapshot>()
+      .notNull(),
+    actor: jsonb("actor").$type<KnowledgeAttribution>().notNull(),
+    requestActorId: text("request_actor_id").notNull(),
+    operation: text("operation")
+      .$type<"created" | "updated" | "detached">()
+      .notNull(),
+    requestKey: text("request_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    snapshotDigest: text("snapshot_digest").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    primary: primaryKey({ columns: [t.bindingId, t.revision] }),
+    binding: foreignKey({
+      name: "company_specialist_binding_revisions_head_fk",
+      columns: [t.bindingId],
+      foreignColumns: [companySpecialistBindings.id],
+    }).onDelete("restrict"),
+    version: check(
+      "company_specialist_binding_revisions_version_check",
+      sql`${t.revision}>0 AND ${t.operation} IN ('created','updated','detached')`,
+    ),
+    actor: check(
+      "company_specialist_binding_revisions_actor_check",
+      sql`${specialistActorShape(t.actor)} AND (${t.actor}->>'kind'='user' AND ${t.actor}->>'id'=${t.requestActorId} AND ${t.actor}->'runId'='null'::jsonb AND ${t.actor}->'attemptId'='null'::jsonb AND char_length(${t.requestActorId}) BETWEEN 1 AND 192) IS TRUE`,
+    ),
+    receipt: check(
+      "company_specialist_binding_revisions_receipt_check",
+      sql`${t.requestKey} ~ '^[A-Za-z0-9._:-]{8,128}$' AND ${t.requestDigest} ~ '^[a-f0-9]{64}$' AND ${t.snapshotDigest} ~ '^[a-f0-9]{64}$'`,
+    ),
+    snapshot: check(
+      "company_specialist_binding_revisions_snapshot_check",
+      sql`(jsonb_typeof(${t.snapshot})='object' AND ${t.snapshot}->'schemaVersion'='1'::jsonb AND jsonb_typeof(${t.snapshot}->'definition')='object' AND jsonb_typeof(${t.snapshot}->'configuration')='object' AND jsonb_typeof(${t.snapshot}->'effectiveConfiguration')='object' AND jsonb_typeof(${t.snapshot}->'grantActions')='array' AND jsonb_typeof(${t.snapshot}->'executionPolicy')='object' AND pg_column_size(${t.snapshot})<=2097152 AND jsonb_typeof(${t.authoritySnapshot})='object' AND ${t.authoritySnapshot}->'schemaVersion'='1'::jsonb AND ${t.authoritySnapshot}->'actor'=${t.actor} AND jsonb_typeof(${t.authoritySnapshot}->'witness')='object' AND pg_column_size(${t.authoritySnapshot})<=32768) IS TRUE`,
+    ),
+    request: unique("company_specialist_binding_revisions_request_uq").on(
+      t.bindingId,
+      t.requestActorId,
+      t.requestKey,
     ),
   }),
 );
