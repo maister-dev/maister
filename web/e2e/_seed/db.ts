@@ -54,6 +54,30 @@ export async function singleValue<T>(
   });
 }
 
+/** Counts physical Flow children only after their immutable intent association exists. */
+export async function countBoundExecutionFlowChildren(
+  parentRunId: string,
+  flowRefId: string,
+): Promise<number> {
+  return withE2EDb(async (pool) => {
+    const result = await pool.query<{ value: number }>(
+      `SELECT count(*)::integer AS value
+         FROM runs r JOIN flow_revisions fr ON fr.id = r.flow_revision_id
+         JOIN task_launch_intents intent
+           ON intent.id = r.task_launch_intent_id AND intent.run_id = r.id
+        WHERE r.parent_run_id = $1 AND fr.flow_ref_id = $2
+          AND intent.basis->>'kind' = 'execution_child'
+          AND intent.basis->'parent'->>'parentRunId' = $1`,
+      [parentRunId, flowRefId],
+    );
+    const [count] = result.rows;
+
+    if (!count) throw new Error("The execution-child count returned no row");
+
+    return count.value;
+  });
+}
+
 // The standard single-runner `claude` snapshot shape the UI rail/list readers
 // expect (executorDisplay renders `id · agent · model`, omitting absent parts).
 export function e2eClaudeRunnerSnapshot(runnerId: string) {

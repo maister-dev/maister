@@ -23,7 +23,11 @@ import path from "node:path";
 
 import { test, expect } from "@playwright/test";
 
-import { singleValue, withE2EDb } from "./_seed/db";
+import {
+  countBoundExecutionFlowChildren,
+  singleValue,
+  withE2EDb,
+} from "./_seed/db";
 import { DELEGATED_FLOW_RELEASE } from "./_seed/delegated-release";
 import { loadFixtures } from "./_seed/fixtures";
 import {
@@ -142,6 +146,15 @@ test("flow-target delegation: launch → flow children in Review → the parked 
       { timeout: 30_000 },
     )
     .toBe("WaitingOnChildren");
+
+  // Parking also covers accepted, unbound child intents. Inspect the actual
+  // selected Flow Runs only once both immutable intent associations exist.
+  await expect
+    .poll(() => countBoundExecutionFlowChildren(runId, fx.delegatedFlowRef), {
+      timeout: 60_000,
+      intervals: [1000],
+    })
+    .toBe(2);
 
   // The coordinator parked with its children held; release them, so they reach
   // `Review` only after the park — the order the wake below exists to prove.

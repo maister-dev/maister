@@ -460,7 +460,7 @@ test.describe("operational results, history and attention", () => {
   });
 });
 
-test("TB07: actual checkout Git failure is infrastructure before model execution, with safe details and retry guidance (EN/RU)", async ({
+test("TB07: actual baseline Git probe failure is infrastructure before model execution, with safe details and retry guidance (EN/RU)", async ({
   page,
   context,
   baseURL,
@@ -471,6 +471,8 @@ test("TB07: actual checkout Git failure is infrastructure before model execution
   const privateContent = "private-fixture-source-token-not-for-ui";
 
   await mkdir(hooks);
+  // Worktree creation completes before this hook corrupts its Git metadata.
+  // The baseline's subsequent Git probes must fail before model dispatch.
   await writeFile(
     path.join(hooks, "post-checkout"),
     `#!/bin/sh
@@ -562,7 +564,8 @@ fi
           runId,
           assignmentId: expect.any(String),
           assignmentEpoch: expect.any(Number),
-          stage: "checkout",
+          stage: "baseline",
+          probeOperation: expect.stringMatching(/^git\./),
         },
       },
     });
@@ -580,13 +583,13 @@ fi
 
       await expect(result).toContainText(
         locale === "en"
-          ? "Workspace preparation failed before model execution. The model did not start; no task assessment was produced."
-          : "Подготовка рабочего пространства завершилась ошибкой до запуска модели. Модель не была запущена; оценка задачи не создана.",
+          ? "Workspace preparation failed. This is an infrastructure failure, not a task assessment."
+          : "Подготовка рабочего пространства завершилась ошибкой. Это сбой инфраструктуры, а не оценка задачи.",
       );
       await expect(result).toContainText(
         locale === "en"
-          ? "resolve the filesystem or Git problem, then use Retry"
-          : "устраните проблему файловой системы или Git",
+          ? "resolve the reported problem before starting a new attempt"
+          : "устраните указанную проблему перед новой попыткой",
       );
       await result
         .getByText(
@@ -597,7 +600,8 @@ fi
       const technical = result.locator("pre");
 
       await expect(technical).toContainText(runId);
-      await expect(technical).toContainText('"stage": "checkout"');
+      await expect(technical).toContainText('"stage": "baseline"');
+      await expect(technical).toContainText('"probeOperation": "git.');
       await expect(technical).toContainText('"code": 128');
       await expect(technical).toContainText('"assignmentEpoch":');
       await expect(technical).not.toContainText(fixture.root);

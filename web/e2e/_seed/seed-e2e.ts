@@ -7890,6 +7890,11 @@ async function seedDelegatedFlowForProject(
   );
   const delegatedRevisionId = randomUUID();
 
+  mkdirSync(delegatedFlowPath, { recursive: true });
+  writeYamlLike(
+    path.join(delegatedFlowPath, "flow.yaml"),
+    JSON.stringify(DELEGATED_FLOW_MANIFEST),
+  );
   await pool.query(`DELETE FROM flow_revisions WHERE flow_ref_id = $1`, [
     E2E_DELEGATED_FLOW_REF,
   ]);

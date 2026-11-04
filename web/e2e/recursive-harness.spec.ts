@@ -19,7 +19,11 @@
 
 import { test, expect } from "@playwright/test";
 
-import { singleValue, withE2EDb } from "./_seed/db";
+import {
+  countBoundExecutionFlowChildren,
+  singleValue,
+  withE2EDb,
+} from "./_seed/db";
 import { loadFixtures } from "./_seed/fixtures";
 import {
   readTaskLaunchReceipt,
@@ -113,14 +117,14 @@ test("recursive harness: depth-2 tree → result-only Done children → the root
     )
     .toBe("WaitingOnChildren");
 
-  expect(
-    await singleValue<string>(
-      `SELECT count(*)::text AS value
-         FROM runs r JOIN flow_revisions fr ON fr.id = r.flow_revision_id
-        WHERE r.parent_run_id = $1 AND fr.flow_ref_id = $2`,
-      [runId, fx.researchFlowRef],
-    ),
-  ).toBe("2");
+  // Parking also covers accepted, unbound child intents. Observe their real
+  // Run associations before inspecting the next level of the execution tree.
+  await expect
+    .poll(() => countBoundExecutionFlowChildren(runId, fx.researchFlowRef), {
+      timeout: 60_000,
+      intervals: [1000],
+    })
+    .toBe(2);
 
   // ---- Each research child fans out AGENT grandchildren at depth 2. -------
   // The depth bound is what allows this: the root declares max_depth 2 and the
