@@ -8,7 +8,7 @@ import type {
   HumanAssessmentWrite,
 } from "@/lib/tasks/human-assessment-schema";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 
 import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
@@ -55,12 +55,14 @@ export function HumanAssessmentForm({
   endpoint,
   slug,
   initialDraft,
+  open = true,
   onClose,
   onSaved,
 }: {
   endpoint: string;
   slug: string;
   initialDraft: HumanAssessmentDraft;
+  open?: boolean;
   onClose: () => void;
   onSaved: () => void;
 }): ReactElement {
@@ -78,7 +80,18 @@ export function HumanAssessmentForm({
   const [submitted, setSubmitted] = useState<HumanAssessmentWrite | null>(null);
   const [issues, setIssues] = useState<HumanAssessmentIssue[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const fieldsRef = useRef<HTMLFieldSetElement>(null);
+  const issuesRef = useRef<HTMLUListElement>(null);
   const frozen = busy || submitted !== null;
+
+  useEffect(() => {
+    if (!open || issues.length === 0) return;
+    const invalid = fieldsRef.current?.querySelector<HTMLElement>(
+      'input[aria-invalid="true"],select[aria-invalid="true"],textarea[aria-invalid="true"]',
+    );
+
+    (invalid ?? issuesRef.current)?.focus();
+  }, [issues, open]);
 
   function addEvidence(item: SelectedEvidence): void {
     if (
@@ -255,6 +268,8 @@ export function HumanAssessmentForm({
     }
   }
 
+  if (!open) return <></>;
+
   return (
     <ConfirmDialog
       body={t("humanHint")}
@@ -268,9 +283,11 @@ export function HumanAssessmentForm({
       {error ? <p role="alert">{error}</p> : null}
       {issues.length ? (
         <ul
+          ref={issuesRef}
           className="my-3 list-disc pl-5 text-sm text-red-700"
           id="human-assessment-errors"
           role="alert"
+          tabIndex={-1}
         >
           {issues.map((issue, index) => (
             <li key={`${issue.path}-${index}`}>
@@ -285,7 +302,7 @@ export function HumanAssessmentForm({
         </ul>
       ) : null}
       <p className="my-3 text-sm text-mute">{t("authoring.optional")}</p>
-      <fieldset className="space-y-3" disabled={frozen}>
+      <fieldset ref={fieldsRef} className="space-y-3" disabled={frozen}>
         <label className="block text-sm">
           {t("requestType")}
           <select
@@ -601,6 +618,11 @@ export function HumanAssessmentForm({
         <label className="block text-sm">
           {t("nextActions")}
           <textarea
+            aria-invalid={issues.some(
+              (issue) =>
+                issue.path === "nextActions" ||
+                issue.path.startsWith("nextActions."),
+            )}
             className={field}
             value={value.nextActions.join("\n")}
             onChange={(event) =>

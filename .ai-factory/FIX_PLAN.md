@@ -62,6 +62,11 @@ No required assertion is skipped, quarantined or weakened.
 - [x] R14: classify unavailable immutable asset bytes through existing typed
   launch refusals, preserving internal causes and safe public responses. The
   complete Flow owner passes 7/7; the finite capability/agent sibling audit passes 42/42 with exact cleanup and independent review.
+- [x] R15: preserve the optional assessment draft and exact uncertain submission
+  across closing/reopening; reset only after known success or an explicit safe
+  decision. Keep existing validation and focus behavior.
+- [ ] R16: preserve the explicitly selected batch retry subset when refreshing
+  its runner-dependent preview; a fresh eligibility result cannot reselect work. Preserve loaded later pages and send the selected runner on every pagination request.
 - [ ] Complete the frozen combined 29-case browser lane, complete configured Web
   integration, static checks and final review; close the remaining seven plan
   tasks only after their acceptance checks pass, then remove this fix plan.

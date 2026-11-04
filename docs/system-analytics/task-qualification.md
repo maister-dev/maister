@@ -435,6 +435,12 @@ unchanged. A human chooses labeled request/decision/check states, writes rationa
 and next steps, selects permitted task/run/file evidence, and links the selected
 items using checkboxes. The UI never asks for evidence IDs, enum codes or commit
 SHAs. Server-generated references preserve the complete result for inspection.
+Closing and reopening the dialog retains its unsaved fields, selected evidence,
+and any unresolved submission with its exact body and request key; reopening does
+not silently fetch a replacement context. Confirmed save clears the draft. An
+explicit context reload remains available after a known refusal. Validation
+focuses the first marked invalid control in this form, or its issue summary when
+the failure has no individual control, while retaining localized field messages.
 
 The session-only `GET/POST /api/projects/{slug}/tasks/{taskId}/human-assessment`
 adapter owns this workflow. GET returns current optimistic revisions and an

@@ -64,6 +64,11 @@ export function TaskQualificationControl({
     }
   };
   const openAssessment = async (): Promise<void> => {
+    if (draft) {
+      setAssessmentOpen(true);
+
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -228,14 +233,16 @@ export function TaskQualificationControl({
           >
             {t("humanAssessment")}
           </button>
-          {assessmentOpen && draft ? (
+          {draft ? (
             <HumanAssessmentForm
               endpoint={`${endpoint}/human-assessment`}
               initialDraft={draft}
+              open={assessmentOpen}
               slug={slug}
               onClose={() => setAssessmentOpen(false)}
               onSaved={() => {
                 setAssessmentOpen(false);
+                setDraft(null);
                 setSaved(true);
                 router.refresh();
                 void load();

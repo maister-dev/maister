@@ -69,6 +69,36 @@ function render(element: React.ReactNode): void {
   act(() => root.render(element));
 }
 
+function renderAuthoringControl(): void {
+  render(
+    createElement(TaskQualificationControl, {
+      taskId: "task-1",
+      slug: "example",
+      canAct: true,
+      summary: {
+        required: true,
+        mode: "required",
+        inputRevision: 1,
+        qualificationRevision: null,
+        qualificationId: null,
+        decision: null,
+        publicationState: null,
+        freshness: "unassessed",
+        blockedReason: "qualification_required",
+        nextActions: [],
+        candidate: null,
+      },
+    }),
+  );
+}
+
+async function closeWithEscape(): Promise<void> {
+  await act(async () => {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+  });
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+}
+
 beforeEach(() => {
   (
     globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -127,7 +157,33 @@ it.each([false, null] as const)(
   },
 );
 
-it("LA11 opens optional authoring only on request and recovers the exact held submission after a lost response", async () => {
+it("keeps an unfinished assessment and selected evidence when closed and reopened", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => response(draft)),
+  );
+  renderAuthoringControl();
+  await click("humanAssessment");
+  const selects = document.querySelectorAll("select");
+
+  await change(selects[0], "bug");
+  await change(selects[2], "task-1");
+  await click("authoring.addTask");
+  await change(document.querySelector("textarea")!, "Unfinished analysis");
+  await act(async () =>
+    document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click(),
+  );
+  await closeWithEscape();
+  await click("humanAssessment");
+  expect(document.querySelector("select")?.value).toBe("bug");
+  expect(document.querySelector("textarea")?.value).toBe("Unfinished analysis");
+  expect(
+    document.querySelector<HTMLInputElement>('input[type="checkbox"]')?.checked,
+  ).toBe(true);
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+it("LA11 opens optional authoring only on request and recovers the exact held submission after a lost response and reopening", async () => {
   const posts: string[] = [];
 
   vi.stubGlobal(
@@ -145,26 +201,7 @@ it("LA11 opens optional authoring only on request and recovers the exact held su
       return response(draft);
     }),
   );
-  render(
-    createElement(TaskQualificationControl, {
-      taskId: "task-1",
-      slug: "example",
-      canAct: true,
-      summary: {
-        required: true,
-        mode: "required",
-        inputRevision: 1,
-        qualificationRevision: null,
-        qualificationId: null,
-        decision: null,
-        publicationState: null,
-        freshness: "unassessed",
-        blockedReason: "qualification_required",
-        nextActions: [],
-        candidate: null,
-      },
-    }),
-  );
+  renderAuthoringControl();
 
   expect(document.querySelector('[role="dialog"]')).toBeNull();
   expect(fetch).not.toHaveBeenCalled();
@@ -175,10 +212,14 @@ it("LA11 opens optional authoring only on request and recovers the exact held su
   expect(document.body.textContent).toContain("authoring.optional");
   expect(document.body.textContent).not.toContain("reasonInput");
   expect(document.body.textContent).not.toContain("evidenceInput");
+  [...document.querySelectorAll("button")]
+    .find((button) => button.textContent === "save")!
+    .focus();
   await click("save");
   expect(document.querySelector("textarea")?.getAttribute("aria-invalid")).toBe(
     "true",
   );
+  expect(document.activeElement).toBe(document.querySelector("textarea"));
   expect(posts).toHaveLength(0);
   const selects = document.querySelectorAll("select");
 
@@ -205,6 +246,11 @@ it("LA11 opens optional authoring only on request and recovers the exact held su
     "unknownWrite",
   );
   expect(posts).toHaveLength(1);
+  await closeWithEscape();
+  await click("humanAssessment");
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+    "unknownWrite",
+  );
   await click("sameRequest");
   expect(posts).toHaveLength(2);
   expect(posts[1]).toBe(posts[0]);
