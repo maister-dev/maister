@@ -25,6 +25,18 @@
         "en",
         "ru"
       ]
+    },
+    "productionBuild": {
+      "exitCode": 0,
+      "runtimeSourceCommit": "6729ac891",
+      "workspaceHeadAtBuild": "21c0f4a2c",
+      "turbopackTracingWarnings": 26
+    },
+    "fullWebIntegration": {
+      "state": "running_with_isolated_dependency_layout_failures",
+      "runtimeSourceCommit": "6729ac891",
+      "knownFailure": "Turbopack refuses external node_modules symlinks in the owned regression checkout; process-cleanup production-build cases fail before their behavior runs. Actual full exit remains pending.",
+      "resolution": "After this invocation stops, use an owned dependency copy inside the same frozen workspace and rerun the required gate. No production-code or assertion weakening."
     }
   },
   "qualified": [
@@ -36,7 +48,7 @@
   ],
   "dataClassification": "generated synthetic corpus in a fresh owned database and temporary repository; no existing Brain or private repository input",
   "limits": [
-    "Full immutable-source web integration and production build are still pending. T16/T17 are not yet marked done.",
+    "Full immutable-source web integration is still pending. Production build passed; T16/T17 remain open until the full regression exits.",
     "The company assignment runtime and stand-maintenance pilot are not qualified.",
     "No publication or deployment is claimed."
   ],
@@ -48,7 +60,8 @@
     "native-package-qualification.json": "78c82e5d4957a1bd9cd60d02d6729548248178f2c14cc2a10f6a0f119510fb10",
     "rah-root-d1-ru.png": "2603f993f1ee81aed654453eaeadaead448bafb0b035dd2ee4fa75147450aa97",
     "rah-root-d1-en.png": "0458dd4893fb31dc76b7cd88784f0038ab46b2df3d396457467f786cd97c61f6",
-    "live-green.log.gz": "0ffd708c2531df23dced1b95daec1ba4069351595a78fd355dc4094dee233f6d"
+    "live-green.log.gz": "0ffd708c2531df23dced1b95daec1ba4069351595a78fd355dc4094dee233f6d",
+    "production-build.log.gz": "cfea5d6583ac3853e6539f9fbc6b9041e70a4eb0fb4ac68d3c8f9f4f7ea46332"
   },
   "visualInspection": "Full screenshots and readable depth-two evidence sections inspected in EN/RU; native labels, evidence/source links and explicit missing-information sections render in both languages. Model-authored English assertions remain quoted source content in the Russian UI."
 }
