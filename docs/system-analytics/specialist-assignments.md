@@ -2,9 +2,21 @@
 
 ## Purpose
 
-**Designed — ADR-203.** A specialist assignment preserves requested work, responsibility, input and outcome across runs. It is distinct from [human work assignments](assignments.md), execution-host placement, private memory and long-term [Company Brain](company-brain.md).
+**Implemented: persistence and input/state services; Designed: invocation, company execution and verified completion — ADR-203.** A specialist assignment preserves requested work, responsibility, input and outcome across runs. It is distinct from [human work assignments](assignments.md), execution-host placement, private memory and long-term [Company Brain](company-brain.md).
 
 ## Domain entities
+
+The base store supports company-only assignments without a repository or run,
+current user authority, pinned standing definitions, immutable input inspection
+and append, exact business CAS, existing-run links, cancellation and reopening.
+Current source access also gates historical input bytes; a content-free cancel
+receipt requires cancellation authority without redisclosing inaccessible input.
+Input append preserves standing instructions, recurring request and result
+requirements, and refuses overflow rather than truncating. Recurring snapshots
+must identify the exact scheduled origin. Linking a successful run never
+completes its assignment. New company execution admission, intake receipt
+deduplication, context/HITL cooperation, owner fencing and verified acceptance
+remain in their owning slices; their public routes are still designed.
 
 - Specialist assignment: objective, expected outcome, requester, responsible specialist/coordinator, company/project owner, targets, references, constraints, result/verification requirements and origin/destination.
 - Input/authority revision: immutable standing-definition, recurring-request, current assignment input, retrieved references and historical grants in separate fields.
@@ -22,6 +34,7 @@ Assignment transitions are business state, not additional `runs.status` values.
 stateDiagram-v2
     [*] --> queued
     queued --> active: existing run admitted
+    queued --> waiting_input: durable pre-admission question
     active --> waiting_input: durable question
     active --> waiting_children: governed child work
     active --> waiting_resource: conflicting resource claim
@@ -160,4 +173,4 @@ Crash before intake commit leaves no assignment orphan; after commit reuses sour
 
 - [ADR-203](../decisions.md#adr-203-durable-specialist-assignments-and-company-coordinator-flows), [persistence](../db/specialist-assignments-domain.md), [runtime](specialist-runtime.md), [cooperation](specialist-cooperation.md).
 - [Human assignments](assignments.md), [HITL](hitl.md), [scheduled requests](scheduled-agent-requests.md), [web API](../api/web.openapi.yaml), [error taxonomy](../error-taxonomy.md).
-- Implementation: `web/lib/specialist-assignments/` (designed), existing `web/lib/services/agent-question*`, agent/prompt-owner/result/outbox services.
+- Implementation: `web/lib/specialist-assignments/` (base store implemented), existing agent-question, prompt-owner, result and outbox services; invocation/cooperation remain designed.

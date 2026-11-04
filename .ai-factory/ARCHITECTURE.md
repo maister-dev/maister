@@ -233,6 +233,13 @@ web/lib/supervisor-client ──HTTP──► supervisor/src/http-api  ──►
   existing result, domain-event, execution-host and workspace lifecycle ledgers.
   [Operational contracts](../docs/system-analytics/operational-agents.md) own
   their validated combinations and recovery semantics.
+- `lib/specialist-assignments/` owns business assignment state and immutable
+  input/authority snapshots. It links the existing execution/result ledgers
+  and emits content-free facts on the existing domain outbox. Current action
+  and source access are checked in the transaction; historical grants never
+  authorize current operations. Company assignment storage has no repository
+  dependency. Native company execution and verified acceptance are later
+  slices of this module.
 - ✅ Server Action (`app/.../actions.ts`) imports from `lib/*`.
 - ✅ `lib/supervisor-client.ts` imports the wire error taxonomy plus a small set
   of client-safe pure modules (the execution-host lag predicate and default,

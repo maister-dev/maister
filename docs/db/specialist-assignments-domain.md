@@ -1,12 +1,12 @@
 # Specialist assignment and company runtime persistence
 
-**Designed — ADR-203.** [Runtime](../system-analytics/specialist-runtime.md), [assignments](../system-analytics/specialist-assignments.md) and [cooperation](../system-analytics/specialist-cooperation.md) own behavior. Existing human `assignments` and host `execution_assignments` are not repurposed.
+**Implemented: assignment/input/run-link base; Designed: company execution and cooperation — ADR-203.** [Runtime](../system-analytics/specialist-runtime.md), [assignments](../system-analytics/specialist-assignments.md) and [cooperation](../system-analytics/specialist-cooperation.md) own behavior. Existing human `assignments` and host `execution_assignments` are not repurposed.
 
 ## Migration reservations
 
-Main `0232_company_grant_requests` implements administrator grant receipts. T14 reserves `0233_native_knowledge_execution` for the existing attempt ledger’s role attestation before the remaining unapplied units. Main design reservations: `0234_specialist_assignments`, `0220_company_specialist_bindings`, `0221_company_trigger_scope`, `0222_stand_operations`, `0223_company_brain_constraints`, following `0230_company_ownership`. No SQL/journal entries are claimed applied. The main migration units never FK a new Brain table; knowledge pointers store typed record/revision/witness/digest values and the owning service validates them after both lineages are ready. `runs.flow_revision_id` and existing immutable installed revision schema remain runtime truth.
+Main `0232_company_grant_requests` and `0233_native_knowledge_execution` are implemented. Implemented base unit `0234_specialist_assignments` contains assignment heads, immutable inputs, existing-run links and state facts. Company bindings, trigger scope, context/questions/delivery, cooperation/acceptance/ownership and stand operations follow as generated logical units in their owning tasks. Allocate each numeric prefix from the then-current journal; later tables are not precreated as a prerequisite for the base store. Existing head/input/run-link rows survive each additive migration. The main migration units never FK a new Brain table; knowledge pointers store typed record/revision/witness/digest values and the owning service validates them after both lineages are ready. `runs.flow_revision_id` and existing immutable installed revision schema remain runtime truth.
 
-The proposed business structures link existing execution records rather than duplicating attempts.
+The base business structures link existing execution records rather than duplicating attempts. Context, work, acceptance, delivery, binding and claim entities in this diagram remain designed until their owning slices land.
 
 ```mermaid
 erDiagram
@@ -37,9 +37,7 @@ erDiagram
         jsonb requester
         jsonb responsible
         text specialist_binding_id
-        jsonb targets
-        jsonb expected_result
-        jsonb verification_requirements
+        jsonb blockers
         jsonb origin
         jsonb destination
         text acceptance_id
@@ -58,7 +56,7 @@ erDiagram
         text assignment_id PK,FK
         integer revision PK
         jsonb objective_input
-        jsonb knowledge_refs
+        jsonb source_restrictions
         jsonb authority_snapshot
         jsonb standing_definition
         jsonb scheduled_request
@@ -99,12 +97,12 @@ All new entity IDs are server-generated; timestamps UTC. Versioned closed JSON c
 | Existing schedule/trigger attempt | Nullable company/project owner pair with exactly one owner; explicit binding/scope snapshot version, existing request/receipt/fence/reserved-run identities | Preserve old project rows and request bytes; partial owner-aware unique/index keys avoid NULL loopholes; all selectors/writers updated together |
 | Existing run additions | company_id/company binding reference, immutable owner snapshot and specialist assignment link; company result-only flow has project/task/project-flow null and exact flow_revision_id/result_contract | Dedicated CHECK for company run shape, not a new run kind; owner indexes for history/pool/recovery |
 | Existing actor/human assignments | Company/project owner union and server principal binding; company role labels resolve reviewed explicit current users | Preserve existing human assignment IDs/claims/events; no fabricated project roles; same current answer authorization |
-| `specialist_assignments` | Exclusive owner, all assignment fields above, status queued default, business revision 1, input revision 1/context 0, created/updated times | CHECK positive revisions/known state; completed requires acceptance/timestamp, failed/cancelled require reason; terminal fields coherent; owner/status/activity and responsible-principal indexes |
-| `specialist_input_revisions` | PK assignment/revision; immutable objective/input/ref/authority/standing/scheduled planes, digest, actor/time | Assignment FK RESTRICT; creation or accepted input update and parent revision CAS commit together |
+| `specialist_assignments` (Implemented) | Exclusive owner, binding, requester/responsible, origin/destination, blockers and state; business revision 1, input revision 1/context 0, terminal fields and timestamps | Immutable identity; next business revision and coherent heads; deferred retained-input-head check; failed/cancelled require reason. Completion is refused until the acceptance-owning migration. Owner/status/activity indexes |
+| `specialist_input_revisions` (Implemented) | PK assignment/revision; objective/input/targets/refs/constraints/exact result/verification in objective_input; separate authority, standing, recurring request and source restrictions; digest, actor/time | Assignment FK RESTRICT; creation or input append and parent CAS commit together. UPDATE/DELETE refused; current access governs historical reads |
 | `specialist_context_revisions` | PK assignment/revision; base revision, structured context and server restrictions, actor/epoch/time | Parent row lock + exact base/epoch CAS; immutable rows, no last-writer merge |
 | `specialist_owner_claims` | Assignment PK, owner/run, positive epoch, renewed_at and expires_at, explicit claim state | Owner+epoch+fresh-expiry in every write predicate; lease 120s/renew 40s, not an in-memory mutex; no slot from lease alone |
 | `specialist_intake_receipts` | id/owner/source/delivery key, canonical digest, closed disposition, assignment/input/receipt time | UNIQUE explicit owner/source/delivery key, same digest exact replay; key+assignment/input in one transaction |
-| `specialist_run_links` | assignment/run PK, input/work revision and role; existing run pointer | Unique link, preserve run-result provenance; no independent attempt counter/ledger |
+| `specialist_run_links` (Implemented) | assignment/run PK, input/work revision and role; existing run pointer | Unique run, exact input composite FK, immutable links; owning admission validates scope. No independent attempt counter/ledger |
 | `specialist_work` | Stable work identity, assignment/input/work revision, digest, parent/child run, constraints/result requirements/state | UNIQUE assignment/input/logical-work/revision; existing parent/root lock admits one child; terminal work keeps old result |
 | `specialist_work_decisions` | id/work revision/actor/input/result revision, decision/reason/evidence, owner epoch, digest/key/time | Unique work/idempotency key; exact result references RESTRICT; append-only decision history |
 | `specialist_acceptances` | id/assignment/input/context/exact result revision, policy/actor/evidence/verification decision, key/digest/time | Unique content-guarded key, acceptance/terminal state/outbox one transaction; cross-row obligations checked transactionally |

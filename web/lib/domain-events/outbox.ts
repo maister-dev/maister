@@ -8,6 +8,8 @@ import type {
 } from "@/lib/domain-events/taxonomy";
 import type { SQL } from "drizzle-orm";
 import type { Owner } from "@/lib/company/types";
+import type { SqlTransaction } from "@/lib/db/sql-types";
+import type { SpecialistAssignmentStatus } from "@/lib/specialist-assignments/types";
 
 import { sql } from "drizzle-orm";
 import pino from "pino";
@@ -31,6 +33,55 @@ type Db = any;
 export interface DomainEventActor {
   type: "user" | "system" | "agent";
   id: string | null;
+}
+
+/** Retain assignment transitions on the existing transactional bus without publishing request content. */
+export async function emitSpecialistAssignmentChange(
+  input: Readonly<{
+    db: SqlTransaction;
+    owner: Owner;
+    assignmentId: string;
+    revision: number;
+    previousStatus: SpecialistAssignmentStatus | null;
+    status: SpecialistAssignmentStatus;
+    cause:
+      | "created"
+      | "input"
+      | "context"
+      | "work"
+      | "question"
+      | "continuation_ready"
+      | "acceptance"
+      | "cancelled"
+      | "ownership"
+      | "state"
+      | "recovered";
+    actor: DomainEventActor;
+  }>,
+): Promise<void> {
+  const payload = {
+    owner: input.owner,
+    assignmentId: input.assignmentId,
+    revision: input.revision,
+    previousStatus: input.previousStatus,
+    status: input.status,
+    cause: input.cause,
+  };
+
+  await input.db.execute(
+    sql`INSERT INTO domain_events(kind,project_id,company_id,actor_type,actor_id,payload,occurred_at) VALUES('specialist.assignment_changed',${input.owner.kind === "project" ? input.owner.projectId : null},${input.owner.kind === "company" ? input.owner.companyId : null},${input.actor.type},${input.actor.id},${JSON.stringify(payload)}::jsonb,clock_timestamp())`,
+  );
+  log.debug(
+    {
+      kind: "specialist.assignment_changed",
+      ownerKind: input.owner.kind,
+      assignmentId: input.assignmentId,
+      revision: input.revision,
+      status: input.status,
+      cause: input.cause,
+    },
+    "specialist assignment change emitted",
+  );
 }
 
 /** Native publication uses the same committed outbox and dispatcher as project work. */

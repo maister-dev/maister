@@ -132,7 +132,7 @@ pointers are logical values. The token's attempt FK uses ON DELETE CASCADE.
 Attempt/project deletion continues through the existing
 cascade without an immutable-delete guard or new Brain dependency. Main SQL does
 not reference Brain tables. Remaining unapplied specialist/stand reservations
-move to `0219`–`0223` before generation.
+start at `0234_specialist_assignments`; later owning slices allocate subsequent free journal numbers before generation.
 
 Launch-time source capture on existing `runs.knowledge_access` is separate from
 this role identity. Native children inherit the server-recorded parent source

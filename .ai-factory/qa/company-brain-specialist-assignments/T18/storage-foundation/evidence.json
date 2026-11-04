@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "task": "T18",
+  "status": "base_schema_and_store_owning_gates_green",
+  "basePlatformCommit": "6729ac891",
+  "red": {
+    "command": "pnpm test:integration lib/db/__tests__/migration-company-brain-specialists.integration.test.ts --maxWorkers=1",
+    "exitCode": 1,
+    "failed": 1,
+    "passed": 2,
+    "failure": "After real populated upgrade, assignment/input/run-link relations are all absent; expected named durable storage relations.",
+    "notHarnessFailure": true
+  },
+  "pending": [],
+  "migrationApplicationPremise": "Qualification applies generated 0219 only to fresh invocation-owned disposable test databases. No durable database, publication or deployment is part of this slice.",
+  "green": {
+    "migration": {
+      "passed": 3,
+      "files": 1,
+      "exitCode": 0
+    },
+    "taxonomy": {
+      "exitCode": 0
+    },
+    "typecheck": {
+      "exitCode": 0
+    },
+    "generation": {
+      "exitCode": 0,
+      "name": "0219_specialist_assignments"
+    }
+  },
+  "implementedBase": "Three business storage tables plus content-free existing-outbox fact, immutable input/run-link guards, coherent head revisions and deferred retained-input-head guard. Completion remains unavailable until exact acceptance is implemented.",
+  "storeQualification": "../store/evidence.json",
+  "artifactsSha256": {
+    "base-typecheck.log.gz": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237",
+    "generation.log.gz": "ae2de7ce86976b7e6a04b5ded97528b4bc53d2ffc4d85763403885f4c1a1acde",
+    "migration-green.log.gz": "48ae00c1773cb114ea0dc734f89b0a82e6bee373f5da06d776f88b6d2661f07e",
+    "migration-red.log.gz": "72a56c9ef51519f8a15e3530956f8b9a4e98597ba9d3e49008379b3d0e56984c",
+    "taxonomy-green.log.gz": "b6b901aed50e6cdef70af3c4548ca9354543d3011c77cf3de0aa8f64d5ad1f4b",
+    "taxonomy-red.log.gz": "11a2e8fe07830e28a6401247fb3523c8f8bbb1c15f99fd749fc49e4a95e61bb5"
+  }
+}

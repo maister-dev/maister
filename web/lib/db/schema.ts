@@ -1,6 +1,15 @@
 import type { CoordinatorChildLaunchContext } from "@/lib/orchestrator/child-launch-context";
 import type { NativeDelegationInput } from "@/lib/orchestrator/native-input-types";
 import type {
+  AssignmentOrigin,
+  AssignmentDestination,
+  AssignmentObjectiveInput,
+  AssignmentStandingSnapshot,
+  AssignmentAuthoritySnapshot,
+  SpecialistRunRole,
+} from "@/lib/specialist-assignments/types";
+import type { KnowledgeAttribution } from "@/lib/brain/record-types";
+import type {
   KnowledgeAccessCapture,
   NativeKnowledgeActor,
 } from "@/lib/company/types";
@@ -120,6 +129,11 @@ import {
 
 import { scheduledRequestShape } from "@/lib/agents/scheduled-request-schema";
 import { TASK_LAUNCH_STATES } from "@/lib/tasks/launch-types";
+import {
+  specialistActorShape,
+  specialistInputPlanesShape,
+} from "@/lib/specialist-assignments/schema";
+import { SPECIALIST_ASSIGNMENT_STATUSES } from "@/lib/specialist-assignments/types";
 import {
   CONFIG_PERSIST_STATES,
   CONFIG_PUSH_STATES,
@@ -8810,7 +8824,7 @@ export const domainEvents = pgTable(
   (t) => ({
     kindCheck: check(
       "domain_events_kind_check",
-      sql`${t.kind} in ('knowledge.record_changed', 'agent.activity_changed', 'agent.incident_changed', 'task.qualification_changed', 'task.launch_changed', 'task.created', 'task.comment_added', 'task.triage_requeued', 'task.clarification_requested', 'task.clarification_answered', 'task.clarification_cancelled', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'run.review_opened', 'run.needs_input', 'run.escalated', 'run.rework_claimed', 'run.rework_returned', 'gate.failed', 'run.operational_attention_acknowledged', 'run.operational_cleanup_changed')`,
+      sql`${t.kind} in ('knowledge.record_changed', 'specialist.assignment_changed', 'agent.activity_changed', 'agent.incident_changed', 'task.qualification_changed', 'task.launch_changed', 'task.created', 'task.comment_added', 'task.triage_requeued', 'task.clarification_requested', 'task.clarification_answered', 'task.clarification_cancelled', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'run.review_opened', 'run.needs_input', 'run.escalated', 'run.rework_claimed', 'run.rework_returned', 'gate.failed', 'run.operational_attention_acknowledged', 'run.operational_cleanup_changed')`,
     ),
     ownerCheck: check(
       "domain_events_owner_check",
@@ -8818,8 +8832,11 @@ export const domainEvents = pgTable(
     ),
     companyKindCheck: check(
       "domain_events_company_kind_check",
-      sql`${t.companyId} IS NULL OR (${t.kind}='knowledge.record_changed' AND ${t.taskId} IS NULL AND ${t.runId} IS NULL)`,
+      sql`${t.companyId} IS NULL OR (${t.kind} IN ('knowledge.record_changed','specialist.assignment_changed') AND ${t.taskId} IS NULL AND ${t.runId} IS NULL)`,
     ),
+    specialistAssignmentIdx: index("domain_events_specialist_assignment_idx")
+      .on(sql`(${t.payload}->>'assignmentId')`, t.id)
+      .where(sql`${t.kind}='specialist.assignment_changed'`),
     companyKindIdIdx: index("domain_events_company_kind_id_idx")
       .on(t.companyId, t.kind, t.id)
       .where(sql`${t.companyId} IS NOT NULL`),
@@ -10242,6 +10259,207 @@ export const taskQualifications = pgTable(
     shape: check(
       "task_qualification_shape_check",
       sql`(${t.policyVersion} = 1 AND ${t.inputRevision} >= 1 AND ${t.revision} >= 1 AND ${t.inputDigest} ~ '^[a-f0-9]{64}$' AND ${t.payloadDigest} ~ '^[a-f0-9]{64}$' AND ((${t.evidenceSha} IS NULL AND ${t.value}->>'decision' <> 'ready') OR ${t.evidenceSha} ~ '^[a-f0-9]{40}([a-f0-9]{24})?$') AND ${t.authorKind} IN ('user','project_token','agent_run') AND (${t.authorKind} <> 'agent_run' OR ${t.originalRunId} IS NOT NULL AND ${t.authorTokenId} IS NOT NULL) AND (${t.authorRunId} IS NULL OR ${t.authorRunId} = ${t.originalRunId}) AND pg_column_size(${t.value}) <= 131072 AND validate_task_qualification_v1(${t.value}) AND ((${t.publicationState} = 'candidate' AND ${t.publishedAt} IS NULL AND ${t.publicationReason} IS NULL AND ${t.authorKind} = 'agent_run') OR (${t.publicationState} = 'accepted' AND ${t.publishedAt} IS NOT NULL AND ${t.publicationReason} IS NULL) OR (${t.publicationState} = 'rejected' AND ${t.publishedAt} IS NOT NULL AND length(${t.publicationReason}) BETWEEN 1 AND 256))) IS TRUE`,
+    ),
+  }),
+);
+
+// Durable business work links the existing run/result plane; it never owns execution attempts.
+export const specialistAssignments = pgTable(
+  "specialist_assignments",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    companyId: text("company_id").references(() => companies.id, {
+      onDelete: "restrict",
+    }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "restrict",
+    }),
+    specialistBindingId: text("specialist_binding_id").notNull(),
+    requester: jsonb("requester").$type<KnowledgeAttribution>().notNull(),
+    responsible: jsonb("responsible").$type<KnowledgeAttribution>().notNull(),
+    status: text("status", { enum: SPECIALIST_ASSIGNMENT_STATUSES })
+      .notNull()
+      .default("queued"),
+    revision: integer("revision").notNull().default(1),
+    inputRevision: integer("input_revision").notNull().default(1),
+    contextRevision: integer("context_revision").notNull().default(0),
+    origin: jsonb("origin").$type<AssignmentOrigin>().notNull(),
+    destination: jsonb("destination").$type<AssignmentDestination>().notNull(),
+    blockers: jsonb("blockers")
+      .$type<readonly string[]>()
+      .notNull()
+      .default([]),
+    acceptanceId: text("acceptance_id"),
+    terminalReason: text("terminal_reason"),
+    completedAt: timestamp("completed_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    owner: check(
+      "specialist_assignments_owner_check",
+      sql`(${t.companyId} IS NOT NULL AND ${t.projectId} IS NULL) OR (${t.companyId} IS NULL AND ${t.projectId} IS NOT NULL)`,
+    ),
+    revisions: check(
+      "specialist_assignments_revision_check",
+      sql`${t.revision}>0 AND ${t.inputRevision}>0 AND ${t.contextRevision}>=0`,
+    ),
+    state: check(
+      "specialist_assignments_state_check",
+      sql`${t.status} IN ('queued','active','waiting_input','waiting_children','waiting_resource','reconciling','awaiting_acceptance','completed','failed','cancelled')`,
+    ),
+    requester: check(
+      "specialist_assignments_requester_check",
+      specialistActorShape(t.requester),
+    ),
+    responsible: check(
+      "specialist_assignments_responsible_check",
+      sql`${specialistActorShape(t.responsible)} AND ${t.responsible}->>'kind'='agent' AND ${t.responsible}->'runId'='null'::jsonb AND ${t.responsible}->'attemptId'='null'::jsonb`,
+    ),
+    binding: check(
+      "specialist_assignments_binding_check",
+      sql`char_length(${t.specialistBindingId}) BETWEEN 1 AND 128`,
+    ),
+    metadata: check(
+      "specialist_assignments_metadata_check",
+      sql`(jsonb_typeof(${t.origin})='object' AND jsonb_typeof(${t.destination})='object' AND jsonb_typeof(${t.blockers})='array' AND pg_column_size(${t.origin})<=8192 AND pg_column_size(${t.destination})<=8192 AND pg_column_size(${t.blockers})<=131072) IS TRUE`,
+    ),
+    terminal: check(
+      "specialist_assignments_terminal_check",
+      sql`((${t.status}='completed' AND ${t.acceptanceId} IS NOT NULL AND ${t.completedAt} IS NOT NULL AND ${t.terminalReason} IS NULL) OR (${t.status} IN ('failed','cancelled') AND ${t.acceptanceId} IS NULL AND ${t.completedAt} IS NULL AND ${t.terminalReason} ~ '[^[:space:]]' AND char_length(${t.terminalReason})<=2000) OR (${t.status} NOT IN ('completed','failed','cancelled') AND ${t.acceptanceId} IS NULL AND ${t.completedAt} IS NULL AND ${t.terminalReason} IS NULL)) IS TRUE`,
+    ),
+    // Replaced by the acceptance-owning migration when exact result/verification acceptance is implemented.
+    completionUnavailable: check(
+      "specialist_assignments_completion_unavailable_check",
+      sql`${t.status}<>'completed'`,
+    ),
+    companyStatus: index("specialist_assignments_company_status_idx").on(
+      t.companyId,
+      t.status,
+      t.updatedAt,
+      t.id,
+    ),
+    projectStatus: index("specialist_assignments_project_status_idx").on(
+      t.projectId,
+      t.status,
+      t.updatedAt,
+      t.id,
+    ),
+    responsibleActivity: index("specialist_assignments_responsible_idx").on(
+      sql`(${t.responsible}->>'id')`,
+      t.updatedAt,
+      t.id,
+    ),
+  }),
+);
+
+export const specialistInputRevisions = pgTable(
+  "specialist_input_revisions",
+  {
+    assignmentId: text("assignment_id").notNull(),
+    revision: integer("revision").notNull(),
+    schemaVersion: integer("schema_version").notNull().default(1),
+    objectiveInput: jsonb("objective_input")
+      .$type<AssignmentObjectiveInput>()
+      .notNull(),
+    standingDefinition: jsonb("standing_definition")
+      .$type<AssignmentStandingSnapshot>()
+      .notNull(),
+    scheduledRequest:
+      jsonb("scheduled_request").$type<ScheduledAgentRequestSnapshot>(),
+    authoritySnapshot: jsonb("authority_snapshot")
+      .$type<AssignmentAuthoritySnapshot>()
+      .notNull(),
+    sourceRestrictions: jsonb("source_restrictions")
+      .$type<KnowledgeAccessCapture["restrictions"]>()
+      .notNull(),
+    actor: jsonb("actor").$type<KnowledgeAttribution>().notNull(),
+    digest: text("digest").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    primary: primaryKey({ columns: [t.assignmentId, t.revision] }),
+    assignment: foreignKey({
+      name: "specialist_input_revisions_assignment_fk",
+      columns: [t.assignmentId],
+      foreignColumns: [specialistAssignments.id],
+    }).onDelete("restrict"),
+    version: check(
+      "specialist_input_revisions_version_check",
+      sql`${t.revision}>0 AND ${t.schemaVersion}=1`,
+    ),
+    planes: check(
+      "specialist_input_revisions_planes_check",
+      specialistInputPlanesShape(
+        t.objectiveInput,
+        t.standingDefinition,
+        t.authoritySnapshot,
+        t.sourceRestrictions,
+      ),
+    ),
+    actor: check(
+      "specialist_input_revisions_actor_check",
+      specialistActorShape(t.actor),
+    ),
+    digest: check(
+      "specialist_input_revisions_digest_check",
+      sql`${t.digest} ~ '^[a-f0-9]{64}$'`,
+    ),
+    scheduledRequest: check(
+      "specialist_input_revisions_scheduled_check",
+      scheduledRequestShape(t.scheduledRequest),
+    ),
+  }),
+);
+
+export const specialistRunLinks = pgTable(
+  "specialist_run_links",
+  {
+    assignmentId: text("assignment_id")
+      .notNull()
+      .references(() => specialistAssignments.id, { onDelete: "restrict" }),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "restrict" }),
+    inputRevision: integer("input_revision").notNull(),
+    role: text("role").$type<SpecialistRunRole>().notNull(),
+    workId: text("work_id"),
+    workRevision: integer("work_revision"),
+    linkedAt: timestamp("linked_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    primary: primaryKey({ columns: [t.assignmentId, t.runId] }),
+    oneAssignment: unique("specialist_run_links_run_uq").on(t.runId),
+    input: foreignKey({
+      name: "specialist_run_links_input_fk",
+      columns: [t.assignmentId, t.inputRevision],
+      foreignColumns: [
+        specialistInputRevisions.assignmentId,
+        specialistInputRevisions.revision,
+      ],
+    }).onDelete("restrict"),
+    shape: check(
+      "specialist_run_links_shape_check",
+      sql`(${t.inputRevision}>0 AND ${t.role} IN ('coordinator','specialist','child','continuation') AND ((${t.workId} IS NULL AND ${t.workRevision} IS NULL) OR (${t.workId} IS NOT NULL AND ${t.workRevision} IS NOT NULL AND char_length(${t.workId}) BETWEEN 1 AND 128 AND ${t.workRevision}>0))) IS TRUE`,
+    ),
+    assignmentInput: index("specialist_run_links_input_idx").on(
+      t.assignmentId,
+      t.inputRevision,
+      t.linkedAt,
+      t.runId,
     ),
   }),
 );

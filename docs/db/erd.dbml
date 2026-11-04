@@ -615,6 +615,7 @@ table domain_events {
 
 
 
+    (payload, id) [name: 'domain_events_specialist_assignment_idx']
     (company_id, kind, id) [name: 'domain_events_company_kind_id_idx']
 
     (run_id, occurred_at) [name: 'domain_events_m43_cutover_run_occurred_idx']
@@ -2984,6 +2985,84 @@ table sessions {
   expires "timestamp with time zone" [not null]
 }
 
+table specialist_assignments {
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  company_id text
+  project_id text
+  specialist_binding_id text [not null]
+  requester jsonb [not null]
+  responsible jsonb [not null]
+  status text [not null, default: 'queued']
+  revision integer [not null, default: 1]
+  input_revision integer [not null, default: 1]
+  context_revision integer [not null, default: 0]
+  origin jsonb [not null]
+  destination jsonb [not null]
+  blockers jsonb [not null, default: `[]`]
+  acceptance_id text
+  terminal_reason text
+  completed_at "timestamp with time zone"
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+
+
+
+
+
+
+
+
+
+    (company_id, status, updated_at, id) [name: 'specialist_assignments_company_status_idx']
+    (project_id, status, updated_at, id) [name: 'specialist_assignments_project_status_idx']
+    (responsible, updated_at, id) [name: 'specialist_assignments_responsible_idx']
+  }
+}
+
+table specialist_input_revisions {
+  assignment_id text [not null]
+  revision integer [not null]
+  schema_version integer [not null, default: 1]
+  objective_input jsonb [not null]
+  standing_definition jsonb [not null]
+  scheduled_request jsonb
+  authority_snapshot jsonb [not null]
+  source_restrictions jsonb [not null]
+  actor jsonb [not null]
+  digest text [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (assignment_id, revision) [pk]
+
+
+
+
+
+
+  }
+}
+
+table specialist_run_links {
+  assignment_id text [not null]
+  run_id text [not null]
+  input_revision integer [not null]
+  role text [not null]
+  work_id text
+  work_revision integer
+  linked_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (assignment_id, run_id) [pk]
+    run_id [name: 'specialist_run_links_run_uq', unique]
+
+
+    (assignment_id, input_revision, linked_at, run_id) [name: 'specialist_run_links_input_idx']
+  }
+}
+
 table task_activity {
   id text [pk, not null]
   task_id text [not null]
@@ -4453,6 +4532,18 @@ ref scratch_runs_linked_task_id_tasks_id_fk: scratch_runs.linked_task_id > tasks
 ref scratch_runs_created_by_user_id_users_id_fk: scratch_runs.created_by_user_id > users.id [delete: no action, update: no action]
 
 ref sessions_user_id_users_id_fk: sessions.user_id > users.id [delete: cascade, update: no action]
+
+ref specialist_assignments_company_id_companies_id_fk: specialist_assignments.company_id > companies.id [delete: restrict, update: no action]
+
+ref specialist_assignments_project_id_projects_id_fk: specialist_assignments.project_id > projects.id [delete: restrict, update: no action]
+
+ref specialist_input_revisions_assignment_fk: specialist_input_revisions.assignment_id > specialist_assignments.id [delete: restrict, update: no action]
+
+ref specialist_run_links_assignment_id_specialist_assignments_id_fk: specialist_run_links.assignment_id > specialist_assignments.id [delete: restrict, update: no action]
+
+ref specialist_run_links_run_id_runs_id_fk: specialist_run_links.run_id > runs.id [delete: restrict, update: no action]
+
+ref specialist_run_links_input_fk: specialist_run_links.(assignment_id, input_revision) > specialist_input_revisions.(assignment_id, revision) [delete: restrict, update: no action]
 
 ref task_activity_task_id_tasks_id_fk: task_activity.task_id > tasks.id [delete: cascade, update: no action]
 

@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "task": "T18",
+  "status": "owning_gates_green",
+  "red": {
+    "creation": "Company-only assignment creation was unavailable; one behavioral failure after real package installation.",
+    "references": "Creation incorrectly accepted an unresolvable record citation and returned an assignment.",
+    "history": "Versioned frozen input inspection and append were unavailable.",
+    "state": "Cancellation/recovery were unavailable; the existing real parent-lock race passed.",
+    "links": "Same-owner existing-run linking was unavailable.",
+    "lineage": "Creation incorrectly accepted a recurring request under a manual or mismatched scheduled origin.",
+    "filesystemInventory": "Full unit gate found one unclassified package-definition read and its two exported wrappers; five failures in the same inventory owner."
+  },
+  "green": {
+    "owningIntegration": {
+      "exitCode": 0,
+      "files": 6,
+      "tests": 74,
+      "covers": [
+        "assignment store",
+        "populated migration and repeated boot",
+        "native findings references",
+        "depth-two reduction",
+        "existing activity reads",
+        "existing launch configuration snapshots"
+      ]
+    },
+    "fullWebUnit": {
+      "exitCode": 0,
+      "files": 886,
+      "tests": 9263
+    },
+    "filesystemInventory": {
+      "exitCode": 0,
+      "files": 1,
+      "tests": 9
+    },
+    "postRefactorStore": {
+      "exitCode": 0,
+      "files": 1,
+      "tests": 8
+    },
+    "typecheck": {
+      "exitCode": 0
+    },
+    "lint": {
+      "exitCode": 0
+    },
+    "contracts": {
+      "exitCode": 0
+    },
+    "docs": {
+      "exitCode": 0,
+      "tables": 167
+    },
+    "postRefactorTypecheck": {
+      "exitCode": 0
+    },
+    "finalLint": {
+      "exitCode": 0,
+      "warnings": 0
+    }
+  },
+  "refactor": "Creation and append share one validated immutable snapshot writer. Native findings and assignment inputs share exact Brain record/witness resolution. Run settlement reuses the existing canonical terminal-status predicate; the eight real-PG store tests pass after that final refactor.",
+  "qualified": [
+    "Company assignment storage without a project, task or run carrier; server requester and persistent specialist identity.",
+    "Separated standing, recurring, assignment, result and current-authority planes; historical snapshots retain original bytes and digest.",
+    "Current grant/source revocation governs mutations and historical disclosure; global admin does not imply company content access.",
+    "Exact source version/digest resolution and derived source restrictions; mismatched recurring invocation is refused.",
+    "Stable-parent blocking race commits one input winner and one state fact, rejecting stale, oversized and terminal updates without partial history.",
+    "Immutable existing-run links reject ownership mismatch and changed replay; parked Pending/NeedsInputIdle/Review work prevents cancellation; Done does not complete an assignment.",
+    "Cancellation/reopening retain original state facts, input and completed work; cancellation can return a content-free receipt after source revocation."
+  ],
+  "limits": [
+    "This is the storage/service slice. Public intake, real company binding admission/execution, context/HITL cooperation, owner fencing, stand operations and verified completion remain their owning tasks.",
+    "The typed binding reference is not execution authority; the actual current binding resolver is required by subsequent admission slices.",
+    "Completion is deliberately refused until exact result and verification acceptance is implemented.",
+    "No new execution attempt ledger, scheduler, external mutation or deployment is claimed."
+  ],
+  "artifactsSha256": {
+    "creation-red.log.gz": "350ae7881a82d59804d007715c50518fbdc42a4eb415873a241f03176dbc43ff",
+    "creation-green.log.gz": "98cb76888d5d0022ed67955efda89c3db8aeecc561401e2dec2ccf2e19ce0201",
+    "references-red.log.gz": "c2d04b705d0c0186ca32b8a1aa75046f8e237400a08dd7855d25a01bb38d1b07",
+    "references-green.log.gz": "00d2aedb156f922dbfbc24eb397d65b69e4b1704b1ea02ec01781980bfe36122",
+    "history-red.log.gz": "cbed2f2d280954b19d5b525e9b630f8152dcd614a967860b6f2d9906d881407f",
+    "history-green.log.gz": "95b1ea7614e7bae8570b9fff6b34d661c5e2451f03f40b93eae37a4afc5b814b",
+    "state-red.log.gz": "14e7cadfd299b10d6e7ecfd1fb8241ef7380c764293719031ad77c439346da77",
+    "state-green.log.gz": "1e7060a52280836e41ffe6ec1b9698a216f0a2b75224e2c6b82940e9c4fa5b18",
+    "links-red.log.gz": "10530db074bb36d58763fdc203d4af6b3945c3e18045b5878c78adb5e9ca0380",
+    "links-green.log.gz": "281019e0a957a259e781968ecb73e6754dcf19c6913100356d9c41d4c70ffaae",
+    "lineage-red.log.gz": "7dfc6f38eceb7faef8829b9779b42e98bd27a8ff341653269f150d0b961f2eb6",
+    "lineage-green.log.gz": "ba58cc623c189b7d8ca03dfef3f7c0277abd09d24cab0886b9556517d9d73aa8",
+    "owning-integration-green.log.gz": "689c03f44e92151b11be4b7ab27dfcb61645ad80c2aa18cefe54da92d9a2deda",
+    "unit-inventory-red.log.gz": "3d5b70b4b1cabc0596ec08771f955c35ba4601d2af7039cd108a9a8d35c13f3f",
+    "inventory-green.log.gz": "271d12577ca27389242d9413d583a217550b909f1ef9ac49e4d4f3cd9409a298",
+    "unit-green.log.gz": "0e8253de05573362e9f678b795e25ebf7ca1a9102e514d3a19bd3806de99a895",
+    "store-refactor-green.log.gz": "f4ede56996d8fb87649911760706b55a5b49555a95f47925a6e9bb0fcbe56fcc",
+    "types-green.log.gz": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237",
+    "lint-green.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "lint-refactor-green.log.gz": "e0170d6c84d2616a03117919b1fc09c3bfe0b65303c392faf51a0bd8304f6ab4",
+    "contracts-green.log.gz": "27fda482958e2c56aa59be46e31472b8b9f226f9af9ce901245ef9c2e91020f0",
+    "docs-green.log.gz": "a90610a36765070797c655a0ebcc55f44a88577cf41c7f592350aa18e2486e14",
+    "erd-generation.log.gz": "b78ff4b79bb5e21e01c024562e72e8a05aead1b907e5f20029c504e0eb2f89dd",
+    "types-post-refactor-green.log.gz": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237",
+    "lint-zero-final.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+  },
+  "qualificationBaseHead": "21c0f4a2c"
+}

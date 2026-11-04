@@ -158,6 +158,7 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | `web/lib/tasks/qualification.ts` | Versioned request assessments and authoritative admission |
 | `web/components/agents/` | Project agent history, grouped incidents, retries and qualification controls |
 | `web/lib/agents/launch-contract.ts` | Immutable agent kind, definition and operational completion snapshots |
+| `web/lib/specialist-assignments/store.ts` | Durable company/project assignment heads, frozen input history, current authority, CAS and existing-run links |
 | `web/lib/run-results/operational-projection.ts` | Shared operational diagnostic projection for run details, collect and automation history |
 | `web/lib/gc/operational-disposition.ts` | Durable operational cleanup through existing workspace lifecycle claims |
 | `web/lib/execution-host/events/projection-runtime.ts` | Autonomous canonical projection registry and worker activation |
@@ -185,7 +186,7 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | Getting Started | `docs/getting-started.md` | Install, dev workflow, first run |
 | Russian Guide | `docs/ru/README.md` | Purpose, workflow, operator guide |
 | Supervisor | `docs/supervisor.md` | ACP daemon: HTTP+SSE API, lifecycle, durable events, runtime objects, env vars |
-| Database Schema | `docs/database-schema.md` | 164 tables, FK cascade chain, indexes, Drizzle workflow |
+| Database Schema | `docs/database-schema.md` | 167 tables, FK cascade chain, indexes, Drizzle workflow |
 | Error Taxonomy | `docs/error-taxonomy.md` | `MaisterError` codes — when each fires, what the UI does |
 | Configuration | `docs/configuration.md` | `maister.yaml` v2 + `flow.yaml` v1 + `form_schema` versioning + env vars |
 | Project configuration persistence | `docs/system-analytics/project-config-persistence.md` | Reviewed export, commits, recovery and push; Implemented |

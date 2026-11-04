@@ -15,6 +15,7 @@ import {
   NON_ATTENTION_EVENT_KINDS,
   isAutoPromotableReviewCause,
   isDomainEventKind,
+  isAgentTriggerEventKind,
   isRunSettledEventKind,
   isRunTerminalEventKind,
   RUN_REVIEW_CAUSES,
@@ -140,6 +141,7 @@ describe("domain-event taxonomy", () => {
   it("contains registered domain kinds including operational disposition", () => {
     expect([...DOMAIN_EVENT_KINDS]).toEqual([
       "knowledge.record_changed",
+      "specialist.assignment_changed",
       "agent.activity_changed",
       "agent.incident_changed",
       "task.qualification_changed",
@@ -164,6 +166,13 @@ describe("domain-event taxonomy", () => {
       "run.operational_attention_acknowledged",
       "run.operational_cleanup_changed",
     ]);
+    expect(isDomainEventKind("specialist.assignment_changed")).toBe(true);
+    expect(isAgentTriggerEventKind("specialist.assignment_changed")).toBe(
+      false,
+    );
+    expect([...NON_ATTENTION_EVENT_KINDS]).toContain(
+      "specialist.assignment_changed",
+    );
   });
 
   // ADR-160: a claim/return is a lifecycle fact, NOT a settled child. Adding

@@ -94,6 +94,12 @@ function wrappers(
 export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   [
     ...classified(
+      "lib/specialist-assignments/store.ts",
+      "repository-worktree",
+      "Assignment creation reads only the trusted immutable package pin to verify frozen standing instructions; no supervisor runtime path is accepted",
+      [["validateStandingDefinition", "node:fs/promises.readFile", "read"]],
+    ),
+    ...classified(
       "../runtime/process-group.ts",
       "repository-worktree",
       "Read-only native group observation for the Web caller's reviewed repository Git owner; accepts no filesystem path and never reads supervisor runtime data",
@@ -2608,6 +2614,10 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   ];
 
 export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
+  ...wrappers("lib/specialist-assignments/store.ts", "repository-worktree", [
+    ["createSpecialistAssignment", false],
+    ["createSpecialistAssignmentInTransaction", false],
+  ]),
   // Numeric native process observation has no caller-selected filesystem path.
   ...wrappers("../runtime/process-group.ts", "repository-worktree", [
     ["inspectProcessGroup", false],

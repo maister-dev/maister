@@ -24,12 +24,14 @@ import { authorizeKnowledge } from "@/lib/brain/knowledge-access";
 import { recordKnowledgeDisclosure } from "@/lib/brain/knowledge-disclosure";
 import { resolveRunKnowledgePrincipal } from "@/lib/brain/knowledge-execution-access";
 import {
-  authorizeKnowledgeRevisionRead,
   authorizeSourceRestrictions,
   restrictionsForKnowledgeAccess,
   unavailableKnowledgeReference,
 } from "@/lib/brain/knowledge-restrictions";
-import { inspectKnowledgeWitness } from "@/lib/brain/knowledge-witnesses";
+import {
+  inspectKnowledgeEvidenceReference,
+  matchesReferenceWitness,
+} from "@/lib/brain/knowledge-reference";
 import { knowledgeAccessCaptureSchema } from "@/lib/company/types";
 import { contentDigest } from "@/lib/evaluations/digest";
 import { isMaisterError } from "@/lib/errors";
@@ -44,19 +46,6 @@ type LocatedReference = Readonly<{
   path: string;
 }>;
 
-function matchesReferenceWitness(
-  reference: KnowledgeReference,
-  revision: number | null,
-  version: unknown,
-  sha256: unknown,
-): boolean {
-  return (
-    (reference.revision === undefined || reference.revision === revision) &&
-    (reference.version === undefined || reference.version === version) &&
-    (reference.sha256 === undefined || reference.sha256 === sha256)
-  );
-}
-
 async function resolveReference(
   tx: KnowledgeTransaction,
   principal: KnowledgePrincipal,
@@ -65,53 +54,8 @@ async function resolveReference(
   access: KnowledgeAccessWalk,
   inheritedReferences: readonly InheritedResultReference[],
 ): Promise<KnowledgeAccessWalk> {
-  if (reference.kind === "knowledge" && reference.revision !== undefined) {
-    const authorized = await authorizeKnowledgeRevisionRead(
-      tx,
-      principal,
-      reference.id,
-      reference.revision,
-      access,
-    );
-    const row = (
-      await tx.execute(
-        sql`SELECT content_sha256 FROM brain_record_revisions WHERE record_id=${reference.id} AND revision=${reference.revision}`,
-      )
-    ).rows[0];
-
-    if (
-      !row ||
-      !matchesReferenceWitness(
-        reference,
-        reference.revision,
-        String(reference.revision),
-        row.content_sha256,
-      )
-    )
-      throw unavailableKnowledgeReference();
-
-    return authorized;
-  }
-  if (reference.kind === "witness" && reference.revision === undefined) {
-    const inspection = await inspectKnowledgeWitness(
-      tx,
-      principal,
-      reference.id,
-      access,
-    );
-
-    if (
-      !matchesReferenceWitness(
-        reference,
-        null,
-        inspection.witness.sourceVersion,
-        inspection.witness.sha256,
-      )
-    )
-      throw unavailableKnowledgeReference();
-
-    return inspection.access;
-  }
+  if (reference.kind === "knowledge" || reference.kind === "witness")
+    return inspectKnowledgeEvidenceReference(tx, principal, reference, access);
   if (reference.kind === "result" && reference.revision !== undefined) {
     const origins = [
       ...new Set(

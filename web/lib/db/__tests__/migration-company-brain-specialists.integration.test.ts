@@ -93,6 +93,30 @@ it("IT-CBX-01 company migration preserves existing project data and identity acr
   );
 
   expect(company.rows).toHaveLength(1);
+  const specialistStorage = await database.pool.query<{
+    assignments: string | null;
+    inputs: string | null;
+    runLinks: string | null;
+  }>(
+    `SELECT to_regclass('public.specialist_assignments')::text AS assignments,
+      to_regclass('public.specialist_input_revisions')::text AS inputs,
+      to_regclass('public.specialist_run_links')::text AS "runLinks"`,
+  );
+
+  expect(specialistStorage.rows).toEqual([
+    {
+      assignments: "specialist_assignments",
+      inputs: "specialist_input_revisions",
+      runLinks: "specialist_run_links",
+    },
+  ]);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS count FROM specialist_assignments",
+      )
+    ).rows,
+  ).toEqual([{ count: 0 }]);
   expect(
     await database.pool.query("SELECT id FROM company_grants"),
   ).toMatchObject({ rowCount: 0 });

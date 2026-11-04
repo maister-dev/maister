@@ -6,6 +6,7 @@ import { isMaisterErrorCode, type MaisterErrorCode } from "@/lib/errors-core";
 // lands with the Stage-3 triager.
 export const DOMAIN_EVENT_KINDS = [
   "knowledge.record_changed",
+  "specialist.assignment_changed",
   "agent.activity_changed",
   "agent.incident_changed",
   "task.qualification_changed",
@@ -64,9 +65,10 @@ export function isDomainEventKind(value: string): value is DomainEventKind {
   return (DOMAIN_EVENT_KINDS as readonly string[]).includes(value);
 }
 
-/** Knowledge invalidation has its own access policy; it is not a general project notification. */
+/** Native content invalidation has its own access policy, separate from general project notifications. */
 export const NON_ATTENTION_EVENT_KINDS = [
   "knowledge.record_changed",
+  "specialist.assignment_changed",
 ] as const satisfies readonly DomainEventKind[];
 
 /** Internal projection facts invalidate read models and never trigger another agent. */
