@@ -14,6 +14,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 import { HumanAssessmentForm } from "@/components/agents/human-assessment-form";
+import { TaskQualificationSourceFailureNotice } from "@/components/agents/task-qualification-source-failure-notice";
 
 const button =
   "inline-flex min-h-8 items-center rounded-lg border border-line bg-ivory px-3 text-xs font-semibold text-ink disabled:opacity-50";
@@ -30,6 +31,7 @@ export function TaskQualificationControl({
   canAct: boolean;
 }): ReactElement {
   const t = useTranslations("taskQualification");
+  const launchT = useTranslations("launch");
   const router = useRouter();
   const [assessmentOpen, setAssessmentOpen] = useState(false);
   const [history, setHistory] =
@@ -102,6 +104,14 @@ export function TaskQualificationControl({
         <p className="text-sm">
           {t(`publication.${summary.candidate.publicationState}`)}
         </p>
+      ) : null}
+      {summary.sourceFailure ? (
+        <div className="space-y-2">
+          <p className="text-sm">{launchT("admission.triageFailed")}</p>
+          <TaskQualificationSourceFailureNotice
+            failure={summary.sourceFailure}
+          />
+        </div>
       ) : null}
       {summary.nextActions.length ? (
         <ul className="list-disc pl-5 text-sm">

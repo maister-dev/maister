@@ -14,6 +14,7 @@ import {
   TaskLaunchIntentStatus,
   taskLaunchReasonKey,
 } from "@/components/board/task-launch-intent-status";
+import { TaskQualificationSourceFailureNotice } from "@/components/agents/task-qualification-source-failure-notice";
 
 type AgentWorkspace = "none" | "repo_read" | "worktree";
 const WORKSPACES: readonly AgentWorkspace[] = ["none", "repo_read", "worktree"];
@@ -346,6 +347,11 @@ export function TaskAgentLaunchControl({
                     </div>
                   </dl>
                   <p role="note">{t(`admission.${explanation}`)}</p>
+                  {qualification?.sourceFailure ? (
+                    <TaskQualificationSourceFailureNotice
+                      failure={qualification.sourceFailure}
+                    />
+                  ) : null}
                 </>
               ) : !previewFailed ? (
                 <p role="status">{t("loading")}</p>

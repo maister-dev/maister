@@ -80,6 +80,53 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it.each([false, null] as const)(
+  "keeps the failed qualifier inspectable for a readonly task viewer without inventing model-start evidence (%s)",
+  (modelStarted) => {
+    render(
+      createElement(TaskQualificationControl, {
+        taskId: "task-1",
+        slug: "example",
+        canAct: false,
+        summary: {
+          required: true,
+          mode: "required",
+          inputRevision: 1,
+          qualificationRevision: null,
+          qualificationId: null,
+          decision: null,
+          publicationState: null,
+          freshness: "unassessed",
+          blockedReason: "qualification_required",
+          nextActions: [],
+          candidate: null,
+          sourceFailure: {
+            runId: "failed-qualifier",
+            stage: modelStarted === false ? "baseline" : null,
+            causeCode: modelStarted === false ? "ENOENT" : null,
+            modelStarted,
+          },
+        },
+      }),
+    );
+
+    expect(document.body.textContent).toContain("admission.triageFailed");
+    expect(
+      document.querySelector('a[href="/runs/failed-qualifier"]')?.textContent,
+    ).toBe("admission.openFailure");
+    expect(document.querySelector("button")).toBeNull();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    if (modelStarted === false)
+      expect(document.body.textContent).toContain(
+        "admission.beforeModelFailure",
+      );
+    else
+      expect(document.body.textContent).not.toContain(
+        "admission.beforeModelFailure",
+      );
+  },
+);
+
 it("LA11 opens optional authoring only on request and recovers the exact held submission after a lost response", async () => {
   const posts: string[] = [];
 

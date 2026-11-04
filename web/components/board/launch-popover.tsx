@@ -45,6 +45,7 @@ import {
 } from "./task-launch-intent-status";
 
 import { useModalFocusTrap } from "@/components/feedback/use-modal-focus-trap";
+import { TaskQualificationSourceFailureNotice } from "@/components/agents/task-qualification-source-failure-notice";
 import { readLaunchErrorDetails } from "@/lib/runs/launch-progress";
 import {
   blindShipLockedOptions,
@@ -1601,18 +1602,9 @@ export function LaunchPopover({
                       )}
                     </p>
                     {options.qualification?.sourceFailure ? (
-                      <p className="text-sm text-ink-2" role="note">
-                        {options.qualification.sourceFailure.modelStarted ===
-                        false
-                          ? `${t("admission.beforeModelFailure")} `
-                          : null}
-                        <a
-                          className="underline"
-                          href={`/runs/${encodeURIComponent(options.qualification.sourceFailure.runId)}`}
-                        >
-                          {t("admission.openFailure")}
-                        </a>
-                      </p>
+                      <TaskQualificationSourceFailureNotice
+                        failure={options.qualification.sourceFailure}
+                      />
                     ) : null}
                     {replacement ? (
                       <p role="note">

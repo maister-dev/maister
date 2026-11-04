@@ -62,7 +62,15 @@ it.each(["agent", "flow"] as const)(
           taskId: "task-1",
           taskRevision: 8,
           settingsToken: "agent-settings",
-          qualification: { freshness: "unassessed" },
+          qualification: {
+            freshness: "unassessed",
+            sourceFailure: {
+              runId: "failed-qualifier",
+              stage: null,
+              causeCode: null,
+              modelStarted: null,
+            },
+          },
           activeLaunch: null,
           target: {
             kind,
@@ -161,6 +169,13 @@ it.each(["agent", "flow"] as const)(
     expect(fetcher.mock.calls[0][1]?.method).not.toBe("POST");
     expect(container.textContent).toContain("gpt-6.1-sol");
     expect(container.textContent).toContain("8");
+    expect(container.textContent).toContain("launch.admission.triageFailed");
+    expect(
+      container.querySelector('a[href="/runs/failed-qualifier"]')?.textContent,
+    ).toBe("launch.admission.openFailure");
+    expect(container.textContent).not.toContain(
+      "launch.admission.beforeModelFailure",
+    );
     await click("launch.createRun");
     const request = fetcher.mock.calls.find(
       ([url]) => url === "/api/task-launch-intents",

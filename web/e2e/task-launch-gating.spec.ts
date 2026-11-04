@@ -443,6 +443,18 @@ test.describe("Manual task admission through the real browser and controlled pro
       stale,
       `${MANUAL_QUALIFICATION_MARKER}: change the accepted input; the previous assessment must remain stale.`,
     );
+    await page.goto(`/projects/${fixture.slug}/tasks/${failed.number}`);
+    const failedAssessment = page.getByTestId("task-qualification");
+
+    await expect(failedAssessment).toContainText(
+      "Triager завершился ошибкой до публикации оценки.",
+    );
+    await expect(
+      failedAssessment.getByRole("link", {
+        name: "Открыть неудачный запуск Триажера",
+        exact: true,
+      }),
+    ).toHaveAttribute("href", `/runs/${failedSource}`);
     const findings = await withE2EDb(
       async (pool) =>
         (
@@ -488,7 +500,19 @@ test.describe("Manual task admission through the real browser and controlled pro
         [stale, "Оценка устарела. Автоматическое выполнение заблокировано;"],
       ] as const) {
         await page.goto(`/projects/${fixture.slug}`);
-        const dialog = await openLaunch(page, task.title);
+        const opener = launchControl(page, task.title);
+        let dialog: Locator;
+
+        if (task === failed) {
+          await opener.focus();
+          await expect(opener).toBeFocused();
+          await page.keyboard.press("Enter");
+          dialog = page.getByTestId("task-launch-dialog");
+          await expect(dialog).toBeVisible();
+          await expect(
+            dialog.getByRole("button", { name: "Закрыть", exact: true }),
+          ).toBeFocused();
+        } else dialog = await openLaunch(page, task.title);
 
         await expect(dialog).toContainText(copy);
         await expect(page.getByTestId("task-qualification-dialog")).toHaveCount(
@@ -500,12 +524,17 @@ test.describe("Manual task admission through the real browser and controlled pro
             response.request().method() === "POST",
         );
 
-        await expect(
-          dialog.getByRole("button", { name: "Запустить", exact: true }),
-        ).toBeEnabled();
-        await dialog
-          .getByRole("button", { name: "Запустить", exact: true })
-          .click();
+        const launch = dialog.getByRole("button", {
+          name: "Запустить",
+          exact: true,
+        });
+
+        await expect(launch).toBeEnabled();
+        if (task === failed) {
+          await page.keyboard.press("Shift+Tab");
+          await expect(launch).toBeFocused();
+          await page.keyboard.press("Enter");
+        } else await launch.click();
         const response = await accepted;
 
         expect(response.status()).toBe(202);
@@ -686,6 +715,11 @@ test.describe("Manual task admission through the real browser and controlled pro
               row.run_id === null,
           ),
         ).toBe(true);
+        if (task === failed) {
+          await page.keyboard.press("Escape");
+          await expect(dialog).not.toBeVisible();
+          await expect(opener).toBeFocused();
+        }
       }
     } finally {
       holdFirstObservation = false;
@@ -710,18 +744,21 @@ test.describe("Manual task admission through the real browser and controlled pro
   });
 });
 
-async function openLaunch(page: Page, title: string): Promise<Locator> {
+function launchControl(page: Page, title: string): Locator {
   const card = page
     .locator("[data-board]")
     .getByText(title, { exact: true })
     .locator("xpath=ancestor::article");
 
-  await card
+  return card
     .getByRole("button", {
       name: /^(Launch|Run again|Запустить|Запустить снова)$/,
     })
-    .first()
-    .click();
+    .first();
+}
+
+async function openLaunch(page: Page, title: string): Promise<Locator> {
+  await launchControl(page, title).click();
   const dialog = page.getByTestId("task-launch-dialog");
 
   await expect(dialog).toBeVisible();
