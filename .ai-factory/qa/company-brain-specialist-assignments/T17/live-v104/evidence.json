@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "task": "T17",
+  "status": "actual_complete_native_package_qualification_passed_full_regression_pending",
+  "platformRuntimeCommit": "6729ac891",
+  "engineVersion": "3.11.1",
+  "package": {
+    "tag": "rah/v1.0.4",
+    "commit": "a1ddf140369bbae7fe7efc9db88ff82b0a2289e6",
+    "localAnnotatedTag": true,
+    "published": false
+  },
+  "checks": {
+    "actualLiveWorkflow": {
+      "exitCode": 0,
+      "testsPassed": 2,
+      "nativeResults": 11,
+      "trees": [
+        3,
+        7,
+        1
+      ],
+      "processLeaks": 0,
+      "locales": [
+        "en",
+        "ru"
+      ]
+    }
+  },
+  "qualified": [
+    "Actual Git loader installed/trusted/bound/enabled the exact immutable package pin; Ready real Claude adapter and configured GLM runner executed without a fixture runtime.",
+    "Depth-one and depth-two leaf/intermediate/root results retain original witnesses, conflicts, missing/stale evidence, exact source selection and current source-policy enforcement.",
+    "Both actual agent proposal receipts match their returned result drafts. Human acceptance preserves agent attribution and leaves the fact unconfirmed.",
+    "Revoked actual control-role company grant and a nonexistent record produce explicit missing evidence, limitations and questions, with no supporting or contradicting reference.",
+    "Visible evidence-linked findings, exact localized headings and original witness links pass in both languages on both root views."
+  ],
+  "dataClassification": "generated synthetic corpus in a fresh owned database and temporary repository; no existing Brain or private repository input",
+  "limits": [
+    "Full immutable-source web integration and production build are still pending. T16/T17 are not yet marked done.",
+    "The company assignment runtime and stand-maintenance pilot are not qualified.",
+    "No publication or deployment is claimed."
+  ],
+  "artifactsSha256": {
+    "rah-root-d2-en-inspection-crop.png": "49c9e4fdb3fc70ae9a552dd0488511ae54de961816db8cd272e4858d579dc03f",
+    "rah-root-d2-en.png": "dba08b93bfa58c6e0c20ac675c47b08835b1c0f4598bac66ac9a52ad68e25b99",
+    "rah-root-d2-ru.png": "c3a4b1409e6c4fc654fe413c92d05982ddb224815f4ebf1f4f1c6feab5e98c09",
+    "rah-root-d2-ru-inspection-crop.png": "d4d98926add2f26715c2407156ed96138643fdb8f09c717164ae813032136969",
+    "native-package-qualification.json": "78c82e5d4957a1bd9cd60d02d6729548248178f2c14cc2a10f6a0f119510fb10",
+    "rah-root-d1-ru.png": "2603f993f1ee81aed654453eaeadaead448bafb0b035dd2ee4fa75147450aa97",
+    "rah-root-d1-en.png": "0458dd4893fb31dc76b7cd88784f0038ab46b2df3d396457467f786cd97c61f6",
+    "live-green.log.gz": "0ffd708c2531df23dced1b95daec1ba4069351595a78fd355dc4094dee233f6d"
+  },
+  "visualInspection": "Full screenshots and readable depth-two evidence sections inspected in EN/RU; native labels, evidence/source links and explicit missing-information sections render in both languages. Model-authored English assertions remain quoted source content in the Russian UI."
+}

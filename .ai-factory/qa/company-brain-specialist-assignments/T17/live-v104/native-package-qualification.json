@@ -1,0 +1,2903 @@
+{
+  "schemaVersion": 1,
+  "sourceUrl": "https://cb-native-qualification.invalid/maister-plugins",
+  "tag": "rah/v1.0.4",
+  "expectedCommit": "a1ddf140369bbae7fe7efc9db88ff82b0a2289e6",
+  "runner": {
+    "id": "cb-live-claude",
+    "adapter": "claude",
+    "model": "glm-5.1",
+    "permissionPolicy": "default"
+  },
+  "adapter": {
+    "id": "claude",
+    "version": null,
+    "path": "/Users/kaa/.codex/worktrees/2599/mAIster/supervisor/node_modules/.bin/claude-agent-acp",
+    "available": true,
+    "smoke": {
+      "capabilityEnforcement": {
+        "status": "ok"
+      }
+    }
+  },
+  "runIds": [
+    "df9f7f0c-0198-41c1-b444-475aea15e69e",
+    "82fa9f10-c14c-4c68-b113-ca66ca4e50ef",
+    "096fb4a6-61bd-4fad-891b-77834b82b204"
+  ],
+  "proofs": [
+    [
+      {
+        "runId": "df9f7f0c-0198-41c1-b444-475aea15e69e",
+        "parentRunId": null,
+        "depth": 0,
+        "kind": "flow",
+        "status": "Done",
+        "revision": 1,
+        "schemaSha256": "b9b4268990ecd525c2f8e490109a0b171f055499857c031a38f2c65794e04021",
+        "engineVersion": "3.11.1",
+        "collectedAt": null,
+        "sessionIds": [
+          "69c6132e-81e7-49d8-a371-492a52448d0d"
+        ],
+        "value": {
+          "schemaVersion": 1,
+          "findings": [
+            {
+              "id": "f1",
+              "assertion": "Knowledge record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 (revision 2, \"Qualification runbook assertion\", kind procedure, lifecycle active) asserts: \"The current runbook requires an independent post-action health check; process exit alone is insufficient.\" Its only supporting evidence is witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f (sourceId 12b6ba08-9b30-4dd2-8f69-eb7693232ff5, sourceVersion sha256:89ebb0de114f704ddc10f04ae2564078391621cb7cd60af59d2df75d1024aa83, selector submitted:text, availability available, capturedAt 2026-11-03T23:43:18.076Z), whose excerpt states: \"The current runbook requires a separate post-restart health check. An older contradictory note claims that a restart alone is sufficient. No current service observation is available.\" The record's confirmation state is unconfirmed and freshness/applicability are unknown; retrieval does not confirm the fact.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                },
+                {
+                  "kind": "witness",
+                  "id": "74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f"
+                }
+              ],
+              "contradicting": [
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                }
+              ],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "current real service health check — no current real service health observation exists; the witness explicitly states no current service observation is available"
+                }
+              ],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "All citations of witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f are ONE source, never independent confirmation; all quotes of its excerpt trace to the same captured source version.",
+                "Capture time (2026-11-03T23:43:18.076Z) is not observation time: the witness has observedAt=null and sourceAt=null, so the actual observation time of the underlying runbook content is unknown.",
+                "Record freshness and applicability are unknown (observedAt and sourceAt null); the runbook may have changed since capture.",
+                "The record carries an unresolved conflict (edgeId 70020833-0c4d-4695-a5cf-83a65db1f962, classification declared_conflict) with record 7b8212fb-0279-4e88-bd9e-34104e4a8197 revision 1; that opposing claim remains unresolved and is reported as distinct, not merged or dropped."
+              ],
+              "openQuestions": [
+                "What is the current real service health (a current independent post-action health check observation for the real service)?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "6c0c0c36-8c36-4886-bacd-30b16c2c6691",
+                  "resultRevision": 1,
+                  "findingId": "finding-runbook-assertion-support"
+                }
+              ]
+            },
+            {
+              "id": "f2",
+              "assertion": "Knowledge record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 revision 2 (head, procedure, basis observed, confirmation unconfirmed) asserts 'The current runbook requires an independent post-action health check; process exit alone is insufficient.' and carries an unresolved declared_conflict edge 70020833-0c4d-4695-a5cf-83a65db1f962 referencing knowledge 7b8212fb-0279-4e88-bd9e-34104e4a8197 revision 1; the conflict is preserved as unresolved and no side was chosen.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                },
+                {
+                  "kind": "witness",
+                  "id": "74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f"
+                }
+              ],
+              "contradicting": [
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                }
+              ],
+              "missingEvidence": [],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "All citations of witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f are ONE source, never independent confirmation; both sides of the conflict cite it.",
+                "Retrieval of these records is not confirmation; both records have confirmation state 'unconfirmed' and freshness state 'unknown'."
+              ],
+              "openQuestions": [
+                "Which claim is correct: does the runbook require an independent post-action health check (rev 2) or does restart completion alone establish health (opposing record)?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "df86f18a-401f-4323-98c3-57ee96f66760",
+                  "resultRevision": 1,
+                  "findingId": "unresolved-declared-conflict-head-rev2"
+                }
+              ]
+            },
+            {
+              "id": "f3",
+              "assertion": "Opposing knowledge record 7b8212fb-0279-4e88-bd9e-34104e4a8197 revision 1 ('Opposing historical note', unconfirmed) preserves the older note's claim that restart completion alone establishes health, contradicting the current runbook's requirement of an independent post-action health check; its contradicting evidence witness 40e86b02-c2c9-4644-8a1a-1d86cb441c29 (availability available) merely captures revision 2 of record 77bd9268 via selector record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:2, so the contradiction is declared within the same corpus rather than established by an independent check.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                },
+                {
+                  "kind": "witness",
+                  "id": "40e86b02-c2c9-4644-8a1a-1d86cb441c29"
+                }
+              ],
+              "contradicting": [
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                }
+              ],
+              "missingEvidence": [],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "Witness 40e86b02 quotes the head record's own assertion (selector record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:2); it is a shared-source capture of the disputed claim, not an independent resolution of the conflict.",
+                "Both records have confirmation state 'unconfirmed'; the conflict edge remains unresolved."
+              ],
+              "openQuestions": [
+                "Does any independent source exist that adjudicates between 'restart alone is sufficient' and 'independent post-action health check required'?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "df86f18a-401f-4323-98c3-57ee96f66760",
+                  "resultRevision": 1,
+                  "findingId": "opposing-record-preserves-older-claim"
+                }
+              ]
+            },
+            {
+              "id": "f4",
+              "assertion": "Shared-source dependence: both opposing records (77bd9268 rev 2 and 7b8212fb rev 1) cite the SAME witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f (sourceId 12b6ba08-9b30-4dd2-8f69-eb7693232ff5, selector submitted:text, availability available, capturedAt 2026-11-03T23:43:18.076Z) as support; all citations of this witness are ONE source, so neither side of the conflict has independent confirmation.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "witness",
+                  "id": "74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f"
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "no independent second source: every citation of witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f across both records is the same single source, so no independent confirmation of either claim exists"
+                }
+              ],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "All citations of witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f are ONE source, never independent confirmation; its excerpt itself states 'No current service observation is available.'"
+              ],
+              "openQuestions": [],
+              "sourceFindings": [
+                {
+                  "childRunId": "df86f18a-401f-4323-98c3-57ee96f66760",
+                  "resultRevision": 1,
+                  "findingId": "shared-source-dependence-single-witness"
+                }
+              ]
+            },
+            {
+              "id": "f5",
+              "assertion": "Dependent knowledge record 41af8f90-f7a5-4607-8d27-239c924205d2 revision 1 ('Older interpretation', unconfirmed, basis inferred) is derived_from witness e861ae44-ec2d-4512-85d1-2cf74b66f992, which binds selector record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:1 (sourceVersion 1) — the superseded OLDER revision 1, not current head revision 2 — and that witness's availability is STALE; the dependent interpretation is stale and rests on the outdated assertion 'The current runbook requires an independent health check after restart.'",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "41af8f90-f7a5-4607-8d27-239c924205d2",
+                  "revision": 1
+                },
+                {
+                  "kind": "witness",
+                  "id": "e861ae44-ec2d-4512-85d1-2cf74b66f992"
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "stale",
+                  "reason": "dependent record 41af8f90-f7a5-4607-8d27-239c924205d2 rev 1 cites witness e861ae44-ec2d-4512-85d1-2cf74b66f992 with selector record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:1 and availability 'stale' — the superseded revision 1, not the current head revision 2"
+                }
+              ],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "The dependent record has not been re-derived from head revision 2; its applicability to the current runbook is unknown."
+              ],
+              "openQuestions": [
+                "Should dependent record 41af8f90-f7a5-4607-8d27-239c924205d2 be re-derived from 77bd9268-ec2e-41b1-834c-78a7a3e22d14 revision 2 once the conflict is resolved?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "df86f18a-401f-4323-98c3-57ee96f66760",
+                  "resultRevision": 1,
+                  "findingId": "stale-dependent-record-old-revision"
+                }
+              ]
+            },
+            {
+              "id": "f6",
+              "assertion": "Current real service health is MISSING: no observation of actual current service health exists anywhere in the inspected corpus. The evidence view of record 77bd9268 rev 2 contains only witness 74f00ff9, whose excerpt explicitly states 'No current service observation is available'; freshness on all inspected records is state 'unknown' with observedAt null.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "witness",
+                  "id": "74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f"
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "a current real service health observation: no tool result, witness, or record in the accessible corpus captures the actual present health of the service; witness 74f00ff9 states 'No current service observation is available' and this corpus is not an authorized maintenance target"
+                }
+              ],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "Absence is asserted from the inspected evidence views only; inaccessible records outside the read grants cannot be ruled out."
+              ],
+              "openQuestions": [
+                "What is the current real service health (is a current post-action health check observation available from an authorized source)?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "df86f18a-401f-4323-98c3-57ee96f66760",
+                  "resultRevision": 1,
+                  "findingId": "missing-current-service-health-observation"
+                }
+              ]
+            },
+            {
+              "id": "f7",
+              "assertion": "Both conflicting records are unconfirmed with unknown freshness: record 77bd9268 rev 2 and opposing record 7b8212fb rev 1 each have confirmation.state 'unconfirmed' (no decisionId, no confirmer) and freshness {state: 'unknown', applicability: 'unknown', observedAt: null}; neither claim has been validated by a decision, and stale/unknown applicability is preserved rather than assumed current.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "a confirmation decision (knowledge_decide/confirm outcome) for either 77bd9268 rev 2 or 7b8212fb rev 1 — both records lack any decisionId or confirmer"
+                },
+                {
+                  "state": "unknown",
+                  "reason": "applicability of both records to current operations is unknown: freshness shows applicability 'unknown' with observedAt null on both records"
+                }
+              ],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "Acceptance of this research work is separate from fact confirmation; no confirm or decide action was taken."
+              ],
+              "openQuestions": [
+                "Who should confirm or revoke each side of the conflict, and against what evidence?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "df86f18a-401f-4323-98c3-57ee96f66760",
+                  "resultRevision": 1,
+                  "findingId": "unconfirmed-freshness-unknown-both-records"
+                }
+              ]
+            }
+          ],
+          "knowledgeProposals": [
+            {
+              "title": "Evidence status of runbook record 77bd9268 rev 2: single-witness support, unresolved conflict, stale dependent, no current service health evidence",
+              "kind": "observation",
+              "assertion": "In company corpus 1ec10f4e-8565-4b8f-9824-c32040f14f8c, record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 revision 2 (\"Qualification runbook assertion\": the runbook requires an independent post-action health check; process exit alone is insufficient) is supported only by witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f; all citations of that witness are ONE source, and the opposing record 7b8212fb-0279-4e88-bd9e-34104e4a8197 revision 1 (older note claiming restart completion alone establishes health) cites the same witness, so neither side of the unresolved declared_conflict (edge 70020833-0c4d-4695-a5cf-83a65db1f962) has independent confirmation, and both records remain unconfirmed with unknown freshness/applicability. Dependent record 41af8f90-f7a5-4607-8d27-239c924205d2 revision 1 is derived from the superseded revision 1 of record 77bd9268 via witness e861ae44-ec2d-4512-85d1-2cf74b66f992 whose availability is stale, so that interpretation is stale. No current real service health observation exists in this corpus: witness 74f00ff9 states \"No current service observation is available\", so present real service health remains unknown and an unresolved question. This is a research observation only; it confirms no fact and resolves no conflict.",
+              "basis": "observed",
+              "evidence": [
+                {
+                  "relation": "references",
+                  "reference": {
+                    "kind": "knowledge",
+                    "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                    "revision": 2
+                  }
+                },
+                {
+                  "relation": "supports",
+                  "reference": {
+                    "kind": "witness",
+                    "id": "74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f"
+                  }
+                },
+                {
+                  "relation": "references",
+                  "reference": {
+                    "kind": "knowledge",
+                    "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                    "revision": 1
+                  }
+                },
+                {
+                  "relation": "references",
+                  "reference": {
+                    "kind": "knowledge",
+                    "id": "41af8f90-f7a5-4607-8d27-239c924205d2",
+                    "revision": 1
+                  }
+                },
+                {
+                  "relation": "references",
+                  "reference": {
+                    "kind": "witness",
+                    "id": "e861ae44-ec2d-4512-85d1-2cf74b66f992"
+                  }
+                }
+              ],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "a current real service health observation: no tool result, witness, or record in the accessible corpus captures the actual present health of the service; witness 74f00ff9 states 'No current service observation is available' and this corpus is not an authorized maintenance target"
+                },
+                {
+                  "state": "stale",
+                  "reason": "dependent record 41af8f90-f7a5-4607-8d27-239c924205d2 rev 1 cites witness e861ae44-ec2d-4512-85d1-2cf74b66f992 with selector record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:1 and availability 'stale' — the superseded revision 1, not the current head revision 2"
+                },
+                {
+                  "state": "absent",
+                  "reason": "a confirmation decision (knowledge_decide/confirm outcome) for either 77bd9268 rev 2 or 7b8212fb rev 1 — both records lack any decisionId or confirmer"
+                },
+                {
+                  "state": "unknown",
+                  "reason": "applicability of both records to current operations is unknown: freshness shows applicability 'unknown' with observedAt null on both records"
+                }
+              ],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "All citations of witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f are ONE source, never independent confirmation; both sides of the conflict cite it.",
+                "Acceptance of this research work is separate from fact confirmation; no confirm or decide action was taken."
+              ],
+              "change": "add",
+              "owner": {
+                "kind": "company",
+                "companyId": "1ec10f4e-8565-4b8f-9824-c32040f14f8c"
+              }
+            }
+          ],
+          "selection": [
+            {
+              "childRunId": "6c0c0c36-8c36-4886-bacd-30b16c2c6691",
+              "resultRevision": 1,
+              "findingId": "finding-runbook-assertion-support",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "f1"
+              ]
+            },
+            {
+              "childRunId": "df86f18a-401f-4323-98c3-57ee96f66760",
+              "resultRevision": 1,
+              "findingId": "unresolved-declared-conflict-head-rev2",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "f2"
+              ]
+            },
+            {
+              "childRunId": "df86f18a-401f-4323-98c3-57ee96f66760",
+              "resultRevision": 1,
+              "findingId": "opposing-record-preserves-older-claim",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "f3"
+              ]
+            },
+            {
+              "childRunId": "df86f18a-401f-4323-98c3-57ee96f66760",
+              "resultRevision": 1,
+              "findingId": "shared-source-dependence-single-witness",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "f4"
+              ]
+            },
+            {
+              "childRunId": "df86f18a-401f-4323-98c3-57ee96f66760",
+              "resultRevision": 1,
+              "findingId": "stale-dependent-record-old-revision",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "f5"
+              ]
+            },
+            {
+              "childRunId": "df86f18a-401f-4323-98c3-57ee96f66760",
+              "resultRevision": 1,
+              "findingId": "missing-current-service-health-observation",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "f6"
+              ]
+            },
+            {
+              "childRunId": "df86f18a-401f-4323-98c3-57ee96f66760",
+              "resultRevision": 1,
+              "findingId": "unconfirmed-freshness-unknown-both-records",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "f7"
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "runId": "6c0c0c36-8c36-4886-bacd-30b16c2c6691",
+        "parentRunId": "df9f7f0c-0198-41c1-b444-475aea15e69e",
+        "depth": 1,
+        "kind": "agent",
+        "status": "Done",
+        "revision": 1,
+        "schemaSha256": "b9b4268990ecd525c2f8e490109a0b171f055499857c031a38f2c65794e04021",
+        "engineVersion": "3.11.1",
+        "collectedAt": "2026-11-03 23:47:30.449+00",
+        "sessionIds": [
+          "63500903-eed7-4ab9-9097-cd6b3e3763d2"
+        ],
+        "value": {
+          "schemaVersion": 1,
+          "findings": [
+            {
+              "id": "finding-runbook-assertion-support",
+              "assertion": "Knowledge record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 (revision 2, \"Qualification runbook assertion\", kind procedure, lifecycle active) asserts: \"The current runbook requires an independent post-action health check; process exit alone is insufficient.\" Its only supporting evidence is witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f (sourceId 12b6ba08-9b30-4dd2-8f69-eb7693232ff5, sourceVersion sha256:89ebb0de114f704ddc10f04ae2564078391621cb7cd60af59d2df75d1024aa83, selector submitted:text, availability available, capturedAt 2026-11-03T23:43:18.076Z), whose excerpt states: \"The current runbook requires a separate post-restart health check. An older contradictory note claims that a restart alone is sufficient. No current service observation is available.\" The record's confirmation state is unconfirmed and freshness/applicability are unknown; retrieval does not confirm the fact.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                },
+                {
+                  "kind": "witness",
+                  "id": "74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f"
+                }
+              ],
+              "contradicting": [
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                }
+              ],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "current real service health check — no current real service health observation exists; the witness explicitly states no current service observation is available"
+                }
+              ],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "All citations of witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f are ONE source, never independent confirmation; all quotes of its excerpt trace to the same captured source version.",
+                "Capture time (2026-11-03T23:43:18.076Z) is not observation time: the witness has observedAt=null and sourceAt=null, so the actual observation time of the underlying runbook content is unknown.",
+                "Record freshness and applicability are unknown (observedAt and sourceAt null); the runbook may have changed since capture.",
+                "The record carries an unresolved conflict (edgeId 70020833-0c4d-4695-a5cf-83a65db1f962, classification declared_conflict) with record 7b8212fb-0279-4e88-bd9e-34104e4a8197 revision 1; that opposing claim remains unresolved and is reported as distinct, not merged or dropped."
+              ],
+              "openQuestions": [
+                "What is the current real service health (a current independent post-action health check observation for the real service)?"
+              ],
+              "sourceFindings": []
+            }
+          ],
+          "knowledgeProposals": [],
+          "selection": []
+        }
+      },
+      {
+        "runId": "df86f18a-401f-4323-98c3-57ee96f66760",
+        "parentRunId": "df9f7f0c-0198-41c1-b444-475aea15e69e",
+        "depth": 1,
+        "kind": "agent",
+        "status": "Done",
+        "revision": 1,
+        "schemaSha256": "b9b4268990ecd525c2f8e490109a0b171f055499857c031a38f2c65794e04021",
+        "engineVersion": "3.11.1",
+        "collectedAt": "2026-11-03 23:47:30.45+00",
+        "sessionIds": [
+          "75b208f6-c0ea-4424-a117-8815634050d5"
+        ],
+        "value": {
+          "schemaVersion": 1,
+          "findings": [
+            {
+              "id": "unresolved-declared-conflict-head-rev2",
+              "assertion": "Knowledge record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 revision 2 (head, procedure, basis observed, confirmation unconfirmed) asserts 'The current runbook requires an independent post-action health check; process exit alone is insufficient.' and carries an unresolved declared_conflict edge 70020833-0c4d-4695-a5cf-83a65db1f962 referencing knowledge 7b8212fb-0279-4e88-bd9e-34104e4a8197 revision 1; the conflict is preserved as unresolved and no side was chosen.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                },
+                {
+                  "kind": "witness",
+                  "id": "74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f"
+                }
+              ],
+              "contradicting": [
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                }
+              ],
+              "missingEvidence": [],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "All citations of witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f are ONE source, never independent confirmation; both sides of the conflict cite it.",
+                "Retrieval of these records is not confirmation; both records have confirmation state 'unconfirmed' and freshness state 'unknown'."
+              ],
+              "openQuestions": [
+                "Which claim is correct: does the runbook require an independent post-action health check (rev 2) or does restart completion alone establish health (opposing record)?"
+              ],
+              "sourceFindings": []
+            },
+            {
+              "id": "opposing-record-preserves-older-claim",
+              "assertion": "Opposing knowledge record 7b8212fb-0279-4e88-bd9e-34104e4a8197 revision 1 ('Opposing historical note', unconfirmed) preserves the older note's claim that restart completion alone establishes health, contradicting the current runbook's requirement of an independent post-action health check; its contradicting evidence witness 40e86b02-c2c9-4644-8a1a-1d86cb441c29 (availability available) merely captures revision 2 of record 77bd9268 via selector record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:2, so the contradiction is declared within the same corpus rather than established by an independent check.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                },
+                {
+                  "kind": "witness",
+                  "id": "40e86b02-c2c9-4644-8a1a-1d86cb441c29"
+                }
+              ],
+              "contradicting": [
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                }
+              ],
+              "missingEvidence": [],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "Witness 40e86b02 quotes the head record's own assertion (selector record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:2); it is a shared-source capture of the disputed claim, not an independent resolution of the conflict.",
+                "Both records have confirmation state 'unconfirmed'; the conflict edge remains unresolved."
+              ],
+              "openQuestions": [
+                "Does any independent source exist that adjudicates between 'restart alone is sufficient' and 'independent post-action health check required'?"
+              ],
+              "sourceFindings": []
+            },
+            {
+              "id": "shared-source-dependence-single-witness",
+              "assertion": "Shared-source dependence: both opposing records (77bd9268 rev 2 and 7b8212fb rev 1) cite the SAME witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f (sourceId 12b6ba08-9b30-4dd2-8f69-eb7693232ff5, selector submitted:text, availability available, capturedAt 2026-11-03T23:43:18.076Z) as support; all citations of this witness are ONE source, so neither side of the conflict has independent confirmation.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "witness",
+                  "id": "74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f"
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "no independent second source: every citation of witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f across both records is the same single source, so no independent confirmation of either claim exists"
+                }
+              ],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "All citations of witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f are ONE source, never independent confirmation; its excerpt itself states 'No current service observation is available.'"
+              ],
+              "openQuestions": [],
+              "sourceFindings": []
+            },
+            {
+              "id": "stale-dependent-record-old-revision",
+              "assertion": "Dependent knowledge record 41af8f90-f7a5-4607-8d27-239c924205d2 revision 1 ('Older interpretation', unconfirmed, basis inferred) is derived_from witness e861ae44-ec2d-4512-85d1-2cf74b66f992, which binds selector record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:1 (sourceVersion 1) — the superseded OLDER revision 1, not current head revision 2 — and that witness's availability is STALE; the dependent interpretation is stale and rests on the outdated assertion 'The current runbook requires an independent health check after restart.'",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "41af8f90-f7a5-4607-8d27-239c924205d2",
+                  "revision": 1
+                },
+                {
+                  "kind": "witness",
+                  "id": "e861ae44-ec2d-4512-85d1-2cf74b66f992"
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "stale",
+                  "reason": "dependent record 41af8f90-f7a5-4607-8d27-239c924205d2 rev 1 cites witness e861ae44-ec2d-4512-85d1-2cf74b66f992 with selector record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:1 and availability 'stale' — the superseded revision 1, not the current head revision 2"
+                }
+              ],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "The dependent record has not been re-derived from head revision 2; its applicability to the current runbook is unknown."
+              ],
+              "openQuestions": [
+                "Should dependent record 41af8f90-f7a5-4607-8d27-239c924205d2 be re-derived from 77bd9268-ec2e-41b1-834c-78a7a3e22d14 revision 2 once the conflict is resolved?"
+              ],
+              "sourceFindings": []
+            },
+            {
+              "id": "missing-current-service-health-observation",
+              "assertion": "Current real service health is MISSING: no observation of actual current service health exists anywhere in the inspected corpus. The evidence view of record 77bd9268 rev 2 contains only witness 74f00ff9, whose excerpt explicitly states 'No current service observation is available'; freshness on all inspected records is state 'unknown' with observedAt null.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "witness",
+                  "id": "74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f"
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "a current real service health observation: no tool result, witness, or record in the accessible corpus captures the actual present health of the service; witness 74f00ff9 states 'No current service observation is available' and this corpus is not an authorized maintenance target"
+                }
+              ],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "Absence is asserted from the inspected evidence views only; inaccessible records outside the read grants cannot be ruled out."
+              ],
+              "openQuestions": [
+                "What is the current real service health (is a current post-action health check observation available from an authorized source)?"
+              ],
+              "sourceFindings": []
+            },
+            {
+              "id": "unconfirmed-freshness-unknown-both-records",
+              "assertion": "Both conflicting records are unconfirmed with unknown freshness: record 77bd9268 rev 2 and opposing record 7b8212fb rev 1 each have confirmation.state 'unconfirmed' (no decisionId, no confirmer) and freshness {state: 'unknown', applicability: 'unknown', observedAt: null}; neither claim has been validated by a decision, and stale/unknown applicability is preserved rather than assumed current.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "a confirmation decision (knowledge_decide/confirm outcome) for either 77bd9268 rev 2 or 7b8212fb rev 1 — both records lack any decisionId or confirmer"
+                },
+                {
+                  "state": "unknown",
+                  "reason": "applicability of both records to current operations is unknown: freshness shows applicability 'unknown' with observedAt null on both records"
+                }
+              ],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "Acceptance of this research work is separate from fact confirmation; no confirm or decide action was taken."
+              ],
+              "openQuestions": [
+                "Who should confirm or revoke each side of the conflict, and against what evidence?"
+              ],
+              "sourceFindings": []
+            }
+          ],
+          "knowledgeProposals": [],
+          "selection": []
+        }
+      }
+    ],
+    [
+      {
+        "runId": "82fa9f10-c14c-4c68-b113-ca66ca4e50ef",
+        "parentRunId": null,
+        "depth": 0,
+        "kind": "flow",
+        "status": "Done",
+        "revision": 1,
+        "schemaSha256": "b9b4268990ecd525c2f8e490109a0b171f055499857c031a38f2c65794e04021",
+        "engineVersion": "3.11.1",
+        "collectedAt": null,
+        "sessionIds": [
+          "6e568763-03a4-4213-934a-55932a3fec4d"
+        ],
+        "value": {
+          "schemaVersion": 1,
+          "findings": [
+            {
+              "id": "f-a-ev1",
+              "assertion": "The exact conflict view between record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 (rev 2) and record 7b8212fb-0279-4e88-bd9e-34104e4a8197 (rev 1) is confirmed as a single declared_conflict edge, and it remains unresolved: both records report conflict.state 'unresolved' listing the other as the accessible counterpart, with incomplete:false.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [],
+              "limitations": [
+                "Conflict state observed as of retrieval on 2026-11-04; it could change in later revisions.",
+                "Only these two records were authorized for retrieval; no broader corpus sweep was performed."
+              ],
+              "openQuestions": [],
+              "sourceFindings": [
+                {
+                  "childRunId": "27150e6e-40a5-4202-84d7-4911cfec6399",
+                  "resultRevision": 1,
+                  "findingId": "ev1"
+                }
+              ]
+            },
+            {
+              "id": "f-a-ev2",
+              "assertion": "The opposing claim stays distinct: record 7b8212fb-0279-4e88-bd9e-34104e4a8197 (rev 1, 'Opposing historical note') asserts that restart completion alone establishes health, which directly contradicts record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 (rev 2) requiring an independent post-action health check. Neither claim is scored, resolved, or overwritten here.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                },
+                {
+                  "kind": "witness",
+                  "id": "40e86b02-c2c9-4644-8a1a-1d86cb441c29"
+                }
+              ],
+              "contradicting": [
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                }
+              ],
+              "missingEvidence": [],
+              "limitations": [
+                "The contradicting witness 40e86b02 captures the text of record 77bd9268 rev 2 itself (selector 'record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:2'), so it is a derived quote of the runbook record, not an independent observation.",
+                "Both records are unconfirmed (confirmation.state 'unconfirmed')."
+              ],
+              "openQuestions": [],
+              "sourceFindings": [
+                {
+                  "childRunId": "27150e6e-40a5-4202-84d7-4911cfec6399",
+                  "resultRevision": 1,
+                  "findingId": "ev2"
+                }
+              ]
+            },
+            {
+              "id": "f-a-ev3",
+              "assertion": "Witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f is cited by BOTH records — as 'supports' evidence in 77bd9268-ec2e-41b1-834c-78a7a3e22d14 (rev 2) and as 'supports' evidence in 7b8212fb-0279-4e88-bd9e-34104e4a8197 (rev 1) — so its repeated citations are ONE source (sourceId 12b6ba08-9b30-4dd2-8f69-eb7693232ff5, selector 'submitted:text', availability 'available') and never independent confirmation of either claim.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "witness",
+                  "id": "74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f"
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [],
+              "limitations": [
+                "The witness has independenceGroupId null and its excerpt describes the corpus ('This is a synthetic research corpus... The current runbook requires a separate post-restart health check. An older contradictory note claims that a restart alone is sufficient. No current service observation is available.'), so it narrates both sides from one submitted text rather than independently verifying either.",
+                "CapturedAt 2026-11-03T23:43:18.076Z with observedAt and sourceAt null; capture time is not observation time."
+              ],
+              "openQuestions": [],
+              "sourceFindings": [
+                {
+                  "childRunId": "27150e6e-40a5-4202-84d7-4911cfec6399",
+                  "resultRevision": 1,
+                  "findingId": "ev3"
+                }
+              ]
+            },
+            {
+              "id": "f-a-ev4",
+              "assertion": "No current real service health observation exists in the corpus: both records carry the limitation 'Synthetic research corpus; no real service health is established', the shared witness excerpt states 'No current service observation is available', and both records' freshness shows observedAt and sourceAt as null.",
+              "basis": "observed",
+              "supporting": [],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "No current real service health observation was found: both authorized records explicitly state the corpus is synthetic with no real service health established, and the shared witness excerpt states no current service observation is available."
+                }
+              ],
+              "limitations": [
+                "Research was bounded to the two listed records and one witness; no other corpus record or live service was authorized or checked."
+              ],
+              "openQuestions": [
+                "Does any authorized real service health check exist outside this synthetic corpus, and if so, at what capture/observation time and for which service/action?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "27150e6e-40a5-4202-84d7-4911cfec6399",
+                  "resultRevision": 1,
+                  "findingId": "ev4"
+                }
+              ]
+            },
+            {
+              "id": "f-a-ct1",
+              "assertion": "An unresolved declared conflict (edgeId 70020833-0c4d-4695-a5cf-83a65db1f962, classification declared_conflict) exists between knowledge record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 revision 2 ('The current runbook requires an independent post-action health check; process exit alone is insufficient.') and knowledge record 7b8212fb-0279-4e88-bd9e-34104e4a8197 revision 1 ('The older note claims restart completion alone establishes health; this conflicts with the current runbook.'); both records report conflict.state 'unresolved' with incomplete:false, and neither record is confirmed (confirmation.state 'unconfirmed', freshness unknown).",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [],
+              "limitations": [
+                "Read-only research grants only: no confirm/propose/maintenance actions were taken, so the conflict remains unresolved by design.",
+                "Both conflicting records are unconfirmed and their freshness.state and applicability are unknown, so neither claim has validated applicability.",
+                "Conflict edges were inspected only at the specified revisions (77bd9268 rev 2, 7b8212fb rev 1); both knowledge_conflicts pages returned nextCursor:null, so no additional edges exist at these revisions."
+              ],
+              "openQuestions": [
+                "Which of the two conflicting procedure claims is operationally authoritative for the current runbook?",
+                "Should the opposing historical note be superseded or corrected by a record owner with decide/confirm authority?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "27150e6e-40a5-4202-84d7-4911cfec6399",
+                  "resultRevision": 1,
+                  "findingId": "ct1"
+                }
+              ]
+            },
+            {
+              "id": "f-a-ct2",
+              "assertion": "Claim kept distinct (not resolved or scored away): record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 revision 2 asserts that the current runbook requires an independent post-action health check and that process exit alone is insufficient.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                },
+                {
+                  "kind": "witness",
+                  "id": "74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f"
+                }
+              ],
+              "contradicting": [
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                }
+              ],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "no independent confirmation of the runbook claim beyond witness 74f00ff9, which is a single captured text source and is also cited by the opposing record (shared source, not independent)"
+                }
+              ],
+              "limitations": [
+                "Record is unconfirmed (confirmation.state 'unconfirmed') with unknown freshness and applicability.",
+                "Record limitation states: 'Synthetic research corpus; no real service health is established.'",
+                "The only supporting witness (74f00ff9) is shared with the opposing record, so citation count overstates support; retrieval rank is not confirmation."
+              ],
+              "openQuestions": [
+                "Does an authoritative current runbook source exist that independently establishes the post-action health-check requirement?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "27150e6e-40a5-4202-84d7-4911cfec6399",
+                  "resultRevision": 1,
+                  "findingId": "ct2"
+                }
+              ]
+            },
+            {
+              "id": "f-a-ct3",
+              "assertion": "Opposing claim kept distinct (not resolved or scored away): record 7b8212fb-0279-4e88-bd9e-34104e4a8197 revision 1 asserts that an older note claims restart completion alone establishes health, and that this conflicts with the current runbook; its own evidence contains a witness (40e86b02-c2c9-4644-8a1a-1d86cb441c29) whose excerpt quotes the revision-2 runbook text, i.e. the opposing record's contradicting evidence is a capture of the current-runbook record itself.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                },
+                {
+                  "kind": "witness",
+                  "id": "74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f"
+                }
+              ],
+              "contradicting": [
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                }
+              ],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "the original older note itself (the source claiming restart completion alone establishes health) was not retrieved as an independent record or witness; only the assertion that such a note exists is captured"
+                }
+              ],
+              "limitations": [
+                "Record is unconfirmed (confirmation.state 'unconfirmed') with unknown freshness and applicability.",
+                "Record limitation states: 'Synthetic research corpus; no real service health is established.'",
+                "The cited contradicting witness 40e86b02-c2c9-4644-8a1a-1d86cb441c29 has selector record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:2 and is therefore derived from the conflicting record, not an independent source for the older note's content.",
+                "The record's asserted underlying sourceId (record:ddf9e223ff68a155dc7976c31714312545070d74e1603afa35f56665ea06061b, sourceVersion 2) was not independently inspected; no fetch of other records was authorized."
+              ],
+              "openQuestions": [
+                "Where is the original older note asserting restart completion alone establishes health, and is it still applicable?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "27150e6e-40a5-4202-84d7-4911cfec6399",
+                  "resultRevision": 1,
+                  "findingId": "ct3"
+                }
+              ]
+            },
+            {
+              "id": "f-a-ct4",
+              "assertion": "Witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f is cited by BOTH records — as relation 'supports' in the evidence of 77bd9268-ec2e-41b1-834c-78a7a3e22d14 revision 2 and as relation 'supports' in the evidence of 7b8212fb-0279-4e88-bd9e-34104e4a8197 revision 1 — with identical sourceId 12b6ba08-9b30-4dd2-8f69-eb7693232ff5, identical sha256, identical capturedAt 2026-11-03T23:43:18.076Z, and independenceGroupId null; it is ONE source and its repeated citations are never independent confirmation of either claim.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "witness",
+                  "id": "74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f"
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [],
+              "limitations": [
+                "The witness is a single user-attributed captured text (selector submitted:text) whose excerpt describes both claims and explicitly notes the corpus is synthetic; it does not independently adjudicate which claim is true.",
+                "independenceGroupId is null and no second, distinct source witness for either record was found within the authorized scope.",
+                "Capture time is not observation time: witness observedAt and sourceAt are both null."
+              ],
+              "openQuestions": [
+                "Is there any second source distinct from witness 74f00ff9 that could independently support either side of the conflict?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "27150e6e-40a5-4202-84d7-4911cfec6399",
+                  "resultRevision": 1,
+                  "findingId": "ct4"
+                }
+              ]
+            },
+            {
+              "id": "f-a-ct5",
+              "assertion": "No current real service health observation exists in the accessible corpus: witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f states explicitly 'No current service observation is available', its observedAt and sourceAt are null, and both records carry the limitation 'Synthetic research corpus; no real service health is established.'",
+              "basis": "observed",
+              "supporting": [],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "no current real service health observation exists anywhere in the researched corpus — the only witness has observedAt:null and sourceAt:null and its excerpt explicitly states no current service observation is available"
+                }
+              ],
+              "limitations": [
+                "Research covered only the two listed records and one witness at their specified revisions; no broader corpus sweep for health observations was authorized.",
+                "This is a synthetic research corpus, so the absence of a real observation is expected and was confirmed, not assumed."
+              ],
+              "openQuestions": [
+                "Does any current real service health observation exist outside this synthetic corpus, and if so, which authorized owner holds it?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "27150e6e-40a5-4202-84d7-4911cfec6399",
+                  "resultRevision": 1,
+                  "findingId": "ct5"
+                }
+              ]
+            },
+            {
+              "id": "f-b-1",
+              "assertion": "The conflict view of dependent record 41af8f90-f7a5-4607-8d27-239c924205d2 revision 1 is EMPTY: knowledge_conflicts returned zero items (nextCursor null), and the record's own conflict state is 'none_known' with accessibleRecordIds [] and incomplete false. No known conflicts exist; no contradicting references were fabricated.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "41af8f90-f7a5-4607-8d27-239c924205d2",
+                  "revision": 1
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "An empty conflict view reflects no KNOWN conflicts at retrieval time, not an affirmative absence of conflicts."
+              ],
+              "openQuestions": [],
+              "sourceFindings": [
+                {
+                  "childRunId": "56c1971d-329c-442b-bb6c-1e1915502431",
+                  "resultRevision": 1,
+                  "findingId": "out-conflict-view-empty"
+                }
+              ]
+            },
+            {
+              "id": "f-b-2",
+              "assertion": "Both records carry the identical limitation string 'Synthetic research corpus; no real service health is established.': dependent record 41af8f90-f7a5-4607-8d27-239c924205d2 revision 1 ('Older interpretation', basis inferred, unconfirmed) and source record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 head revision 2 ('Qualification runbook assertion', basis observed, unconfirmed).",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "41af8f90-f7a5-4607-8d27-239c924205d2",
+                  "revision": 1
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established."
+              ],
+              "openQuestions": [],
+              "sourceFindings": [
+                {
+                  "childRunId": "56c1971d-329c-442b-bb6c-1e1915502431",
+                  "resultRevision": 1,
+                  "findingId": "out-limitations-both-records"
+                }
+              ]
+            },
+            {
+              "id": "f-b-3",
+              "assertion": "The dependent record is stale w.r.t. the source head: its sole evidence witness e861ae44-ec2d-4512-85d1-2cf74b66f992 (availability 'stale', sourceVersion '1', capturedAt 2026-11-03T23:43:19.792Z) binds selector record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:1, while the current head of that source record is revision 2 with a stricter assertion ('The current runbook requires an independent post-action health check; process exit alone is insufficient.'). The witness excerpt matches the captured revision-1 content, not the head.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "witness",
+                  "id": "e861ae44-ec2d-4512-85d1-2cf74b66f992"
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "41af8f90-f7a5-4607-8d27-239c924205d2",
+                  "revision": 1
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                }
+              ],
+              "contradicting": [
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                }
+              ],
+              "missingEvidence": [
+                {
+                  "state": "stale",
+                  "reason": "Witness binds source revision 1 while the source head is revision 2; no witness binds the current head, so the dependent interpretation rests on superseded source content."
+                },
+                {
+                  "state": "inaccessible",
+                  "reason": "Source head revision 2 reports an unresolved conflict with record 7b8212fb-0279-4e88-bd9e-34104e4a8197, which was not among the delegated retrieval targets and was therefore not fetched or inspected."
+                }
+              ],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "Freshness of both records is state 'unknown' / applicability 'unknown'; no observedAt or sourceAt timestamps are set."
+              ],
+              "openQuestions": [
+                "Does the unresolved conflict on source head 77bd9268 revision 2 (record 7b8212fb-0279-4e88-bd9e-34104e4a8197, not fetched) affect the validity of the dependent record's interpretation?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "56c1971d-329c-442b-bb6c-1e1915502431",
+                  "resultRevision": 1,
+                  "findingId": "out-dependent-stale-source-head"
+                }
+              ]
+            },
+            {
+              "id": "f-b-4",
+              "assertion": "Record 41af8f90-f7a5-4607-8d27-239c924205d2 revision 1 ('Older interpretation': 'The first recorded runbook assertion was used as an interpretation.') is STALE with respect to the current head of 77bd9268-ec2e-41b1-834c-78a7a3e22d14: its sole evidence witness e861ae44-ec2d-4512-85d1-2cf74b66f992 has selector record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:1 and availability 'stale', while the current head of that record is revision 2 ('The current runbook requires an independent post-action health check; process exit alone is insufficient.').",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "41af8f90-f7a5-4607-8d27-239c924205d2",
+                  "revision": 1
+                },
+                {
+                  "kind": "witness",
+                  "id": "e861ae44-ec2d-4512-85d1-2cf74b66f992"
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "stale",
+                  "reason": "The dependent record's only evidence witness captures revision 1 of record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 (selector record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:1, availability stale), but the current head of that record is revision 2; no witness evidence supports the dependent record against the head."
+                }
+              ],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "The head record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 revision 2 is itself unconfirmed and freshness/applicability unknown; staleness of the dependent record is established relative to the head revision, not confirmed truth of the head.",
+                "The head record reports an unresolved conflict with accessible record 7b8212fb-0279-4e88-bd9e-34104e4a8197, which was not within this task's authorized retrieval list and was therefore not inspected."
+              ],
+              "openQuestions": [
+                "Does revision 2 of 77bd9268-ec2e-41b1-834c-78a7a3e22d14 supersede revision 1 in a way that invalidates the interpretation recorded in 41af8f90-f7a5-4607-8d27-239c924205d2, given the unresolved conflict on the head?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "56c1971d-329c-442b-bb6c-1e1915502431",
+                  "resultRevision": 1,
+                  "findingId": "out-dependent-stale-head"
+                }
+              ]
+            },
+            {
+              "id": "f-b-5",
+              "assertion": "The corpus establishes nothing about CURRENT real service health. Both retrieved records (41af8f90-f7a5-4607-8d27-239c924205d2 rev 1 and 77bd9268-ec2e-41b1-834c-78a7a3e22d14 rev 2) carry the limitation 'Synthetic research corpus; no real service health is established.', both have freshness state 'unknown' with applicability 'unknown' and observedAt null, and no current service observation exists in the retrieved set.",
+              "basis": "observed",
+              "supporting": [],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "No current service health observation exists in the corpus: neither retrieved record provides an observedAt value, and both carry the limitation 'Synthetic research corpus; no real service health is established.'; no health-check result record was within the authorized retrieval list."
+                }
+              ],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "Freshness and applicability of both records are unknown; capturedAt timestamps (2026-11-03T23:43:19/20Z) are capture times, not observation times."
+              ],
+              "openQuestions": [
+                "What is the current real service health of the service governed by the runbook asserted in 77bd9268-ec2e-41b1-834c-78a7a3e22d14, and has an independent post-action health check actually been performed?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "56c1971d-329c-442b-bb6c-1e1915502431",
+                  "resultRevision": 1,
+                  "findingId": "out-no-current-service-health"
+                }
+              ]
+            },
+            {
+              "id": "f-root-1",
+              "assertion": "Root retrieval confirms the underlying corpus state directly: current record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 revision 2 (unconfirmed, freshness unknown) carries evidence witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f (supports) and an unresolved conflict listing 7b8212fb-0279-4e88-bd9e-34104e4a8197; opposing record 7b8212fb-0279-4e88-bd9e-34104e4a8197 revision 1 (unconfirmed) cites witness 40e86b02-c2c9-4644-8a1a-1d86cb441c29 (contradicts, selector record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:2) AND the same witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f (supports); dependent record 41af8f90-f7a5-4607-8d27-239c924205d2 revision 1 (basis inferred) cites only witness e861ae44-ec2d-4512-85d1-2cf74b66f992 (derived_from, selector record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:1, availability stale) and has conflict state none_known. Conflict edge 70020833-0c4d-4695-a5cf-83a65db1f962 is classification declared_conflict between 77bd9268 rev 2 and 7b8212fb rev 1, unresolved.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "41af8f90-f7a5-4607-8d27-239c924205d2",
+                  "revision": 1
+                },
+                {
+                  "kind": "witness",
+                  "id": "74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f"
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "No current real service health observation exists in the corpus: the shared witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f excerpt states 'No current service observation is available', its observedAt and sourceAt are null, and all three records carry the limitation 'Synthetic research corpus; no real service health is established.'"
+                }
+              ],
+              "limitations": [
+                "Repeated citations of witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f by both the current and the opposing record are one source, never independent confirmation.",
+                "The dependent record is stale: its witness e861ae44-ec2d-4512-85d1-2cf74b66f992 binds revision 1 of 77bd9268-ec2e-41b1-834c-78a7a3e22d14 while the head is revision 2.",
+                "All three records are unconfirmed with freshness state 'unknown' and applicability 'unknown'."
+              ],
+              "openQuestions": [
+                "What is the current real service health of the service governed by this runbook, and has the independent post-action health check been performed?"
+              ],
+              "sourceFindings": []
+            }
+          ],
+          "knowledgeProposals": [
+            {
+              "title": "Corpus state: runbook conflict unresolved, witness 74f00ff9 shared by both sides, dependent record 41af8f90 stale, no current service health",
+              "kind": "observation",
+              "assertion": "Retrieval state of company corpus 1ec10f4e-8565-4b8f-9824-c32040f14f8c observed on 2026-11-04: (1) an unresolved declared conflict (edgeId 70020833-0c4d-4695-a5cf-83a65db1f962) remains between record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 revision 2 ('The current runbook requires an independent post-action health check; process exit alone is insufficient.') and opposing record 7b8212fb-0279-4e88-bd9e-34104e4a8197 revision 1 ('The older note claims restart completion alone establishes health; this conflicts with the current runbook.'); both records are unconfirmed and report conflict.state 'unresolved'. (2) Witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f is cited as 'supports' evidence by BOTH records with identical sourceId 12b6ba08-9b30-4dd2-8f69-eb7693232ff5 and identical capturedAt 2026-11-03T23:43:18.076Z; its repeated citations are ONE source and never independent confirmation of either claim. (3) Dependent record 41af8f90-f7a5-4607-8d27-239c924205d2 revision 1 is stale with respect to the source head: its sole evidence witness e861ae44-ec2d-4512-85d1-2cf74b66f992 binds selector record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:1 with availability 'stale' while the current head is revision 2. (4) No current real service health observation exists in the corpus: the shared witness excerpt states 'No current service observation is available' and both records carry the limitation 'Synthetic research corpus; no real service health is established.'",
+              "basis": "observed",
+              "evidence": [
+                {
+                  "relation": "supports",
+                  "reference": {
+                    "kind": "knowledge",
+                    "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                    "revision": 2
+                  }
+                },
+                {
+                  "relation": "supports",
+                  "reference": {
+                    "kind": "knowledge",
+                    "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                    "revision": 1
+                  }
+                },
+                {
+                  "relation": "supports",
+                  "reference": {
+                    "kind": "witness",
+                    "id": "74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f"
+                  }
+                },
+                {
+                  "relation": "references",
+                  "reference": {
+                    "kind": "knowledge",
+                    "id": "41af8f90-f7a5-4607-8d27-239c924205d2",
+                    "revision": 1
+                  }
+                },
+                {
+                  "relation": "references",
+                  "reference": {
+                    "kind": "witness",
+                    "id": "e861ae44-ec2d-4512-85d1-2cf74b66f992"
+                  }
+                }
+              ],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "No current real service health observation exists in the corpus: the only shared witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f has observedAt null and sourceAt null, its excerpt states 'No current service observation is available', and no health-check result was within the authorized retrieval list."
+                },
+                {
+                  "state": "stale",
+                  "reason": "Dependent record 41af8f90-f7a5-4607-8d27-239c924205d2 revision 1 rests solely on witness e861ae44-ec2d-4512-85d1-2cf74b66f992 binding record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:1 (availability 'stale'); no witness binds the current head revision 2."
+                }
+              ],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "Repeated citations of witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f by both records are one source, never independent confirmation.",
+                "The opposing claim is preserved unresolved; this proposal does not confirm, decide, or supersede either conflicting record."
+              ],
+              "change": "add",
+              "owner": {
+                "kind": "company",
+                "companyId": "1ec10f4e-8565-4b8f-9824-c32040f14f8c"
+              }
+            }
+          ],
+          "selection": [
+            {
+              "childRunId": "27150e6e-40a5-4202-84d7-4911cfec6399",
+              "resultRevision": 1,
+              "findingId": "ev1",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "f-a-ev1"
+              ]
+            },
+            {
+              "childRunId": "27150e6e-40a5-4202-84d7-4911cfec6399",
+              "resultRevision": 1,
+              "findingId": "ev2",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "f-a-ev2"
+              ]
+            },
+            {
+              "childRunId": "27150e6e-40a5-4202-84d7-4911cfec6399",
+              "resultRevision": 1,
+              "findingId": "ev3",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "f-a-ev3"
+              ]
+            },
+            {
+              "childRunId": "27150e6e-40a5-4202-84d7-4911cfec6399",
+              "resultRevision": 1,
+              "findingId": "ev4",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "f-a-ev4"
+              ]
+            },
+            {
+              "childRunId": "27150e6e-40a5-4202-84d7-4911cfec6399",
+              "resultRevision": 1,
+              "findingId": "ct1",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "f-a-ct1"
+              ]
+            },
+            {
+              "childRunId": "27150e6e-40a5-4202-84d7-4911cfec6399",
+              "resultRevision": 1,
+              "findingId": "ct2",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "f-a-ct2"
+              ]
+            },
+            {
+              "childRunId": "27150e6e-40a5-4202-84d7-4911cfec6399",
+              "resultRevision": 1,
+              "findingId": "ct3",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "f-a-ct3"
+              ]
+            },
+            {
+              "childRunId": "27150e6e-40a5-4202-84d7-4911cfec6399",
+              "resultRevision": 1,
+              "findingId": "ct4",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "f-a-ct4"
+              ]
+            },
+            {
+              "childRunId": "27150e6e-40a5-4202-84d7-4911cfec6399",
+              "resultRevision": 1,
+              "findingId": "ct5",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "f-a-ct5"
+              ]
+            },
+            {
+              "childRunId": "56c1971d-329c-442b-bb6c-1e1915502431",
+              "resultRevision": 1,
+              "findingId": "out-conflict-view-empty",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "f-b-1"
+              ]
+            },
+            {
+              "childRunId": "56c1971d-329c-442b-bb6c-1e1915502431",
+              "resultRevision": 1,
+              "findingId": "out-limitations-both-records",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "f-b-2"
+              ]
+            },
+            {
+              "childRunId": "56c1971d-329c-442b-bb6c-1e1915502431",
+              "resultRevision": 1,
+              "findingId": "out-dependent-stale-source-head",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "f-b-3"
+              ]
+            },
+            {
+              "childRunId": "56c1971d-329c-442b-bb6c-1e1915502431",
+              "resultRevision": 1,
+              "findingId": "out-dependent-stale-head",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "f-b-4"
+              ]
+            },
+            {
+              "childRunId": "56c1971d-329c-442b-bb6c-1e1915502431",
+              "resultRevision": 1,
+              "findingId": "out-no-current-service-health",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "f-b-5"
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "runId": "27150e6e-40a5-4202-84d7-4911cfec6399",
+        "parentRunId": "82fa9f10-c14c-4c68-b113-ca66ca4e50ef",
+        "depth": 1,
+        "kind": "flow",
+        "status": "Done",
+        "revision": 1,
+        "schemaSha256": "b9b4268990ecd525c2f8e490109a0b171f055499857c031a38f2c65794e04021",
+        "engineVersion": "3.11.1",
+        "collectedAt": "2026-11-03 23:55:59.583+00",
+        "sessionIds": [
+          "4c24dc91-dd71-49ba-b48f-a7674c614fb6"
+        ],
+        "value": {
+          "schemaVersion": 1,
+          "findings": [
+            {
+              "id": "ev1",
+              "assertion": "The exact conflict view between record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 (rev 2) and record 7b8212fb-0279-4e88-bd9e-34104e4a8197 (rev 1) is confirmed as a single declared_conflict edge, and it remains unresolved: both records report conflict.state 'unresolved' listing the other as the accessible counterpart, with incomplete:false.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [],
+              "limitations": [
+                "Conflict state observed as of retrieval on 2026-11-04; it could change in later revisions.",
+                "Only these two records were authorized for retrieval; no broader corpus sweep was performed."
+              ],
+              "openQuestions": [],
+              "sourceFindings": [
+                {
+                  "childRunId": "16408e02-af68-4c78-bd16-e6e21841f39d",
+                  "resultRevision": 1,
+                  "findingId": "conflict-view-unresolved"
+                }
+              ]
+            },
+            {
+              "id": "ev2",
+              "assertion": "The opposing claim stays distinct: record 7b8212fb-0279-4e88-bd9e-34104e4a8197 (rev 1, 'Opposing historical note') asserts that restart completion alone establishes health, which directly contradicts record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 (rev 2) requiring an independent post-action health check. Neither claim is scored, resolved, or overwritten here.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                },
+                {
+                  "kind": "witness",
+                  "id": "40e86b02-c2c9-4644-8a1a-1d86cb441c29"
+                }
+              ],
+              "contradicting": [
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                }
+              ],
+              "missingEvidence": [],
+              "limitations": [
+                "The contradicting witness 40e86b02 captures the text of record 77bd9268 rev 2 itself (selector 'record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:2'), so it is a derived quote of the runbook record, not an independent observation.",
+                "Both records are unconfirmed (confirmation.state 'unconfirmed')."
+              ],
+              "openQuestions": [],
+              "sourceFindings": [
+                {
+                  "childRunId": "16408e02-af68-4c78-bd16-e6e21841f39d",
+                  "resultRevision": 1,
+                  "findingId": "opposing-claim-distinct"
+                }
+              ]
+            },
+            {
+              "id": "ev3",
+              "assertion": "Witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f is cited by BOTH records — as 'supports' evidence in 77bd9268-ec2e-41b1-834c-78a7a3e22d14 (rev 2) and as 'supports' evidence in 7b8212fb-0279-4e88-bd9e-34104e4a8197 (rev 1) — so its repeated citations are ONE source (sourceId 12b6ba08-9b30-4dd2-8f69-eb7693232ff5, selector 'submitted:text', availability 'available') and never independent confirmation of either claim.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "witness",
+                  "id": "74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f"
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [],
+              "limitations": [
+                "The witness has independenceGroupId null and its excerpt describes the corpus ('This is a synthetic research corpus... The current runbook requires a separate post-restart health check. An older contradictory note claims that a restart alone is sufficient. No current service observation is available.'), so it narrates both sides from one submitted text rather than independently verifying either.",
+                "CapturedAt 2026-11-03T23:43:18.076Z with observedAt and sourceAt null; capture time is not observation time."
+              ],
+              "openQuestions": [],
+              "sourceFindings": [
+                {
+                  "childRunId": "16408e02-af68-4c78-bd16-e6e21841f39d",
+                  "resultRevision": 1,
+                  "findingId": "witness-shared-single-source"
+                }
+              ]
+            },
+            {
+              "id": "ev4",
+              "assertion": "No current real service health observation exists in the corpus: both records carry the limitation 'Synthetic research corpus; no real service health is established', the shared witness excerpt states 'No current service observation is available', and both records' freshness shows observedAt and sourceAt as null.",
+              "basis": "observed",
+              "supporting": [],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "No current real service health observation was found: both authorized records explicitly state the corpus is synthetic with no real service health established, and the shared witness excerpt states no current service observation is available."
+                }
+              ],
+              "limitations": [
+                "Research was bounded to the two listed records and one witness; no other corpus record or live service was authorized or checked."
+              ],
+              "openQuestions": [
+                "Does any authorized real service health check exist outside this synthetic corpus, and if so, at what capture/observation time and for which service/action?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "16408e02-af68-4c78-bd16-e6e21841f39d",
+                  "resultRevision": 1,
+                  "findingId": "no-current-service-health-observation"
+                }
+              ]
+            },
+            {
+              "id": "ct1",
+              "assertion": "An unresolved declared conflict (edgeId 70020833-0c4d-4695-a5cf-83a65db1f962, classification declared_conflict) exists between knowledge record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 revision 2 ('The current runbook requires an independent post-action health check; process exit alone is insufficient.') and knowledge record 7b8212fb-0279-4e88-bd9e-34104e4a8197 revision 1 ('The older note claims restart completion alone establishes health; this conflicts with the current runbook.'); both records report conflict.state 'unresolved' with incomplete:false, and neither record is confirmed (confirmation.state 'unconfirmed', freshness unknown).",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [],
+              "limitations": [
+                "Read-only research grants only: no confirm/propose/maintenance actions were taken, so the conflict remains unresolved by design.",
+                "Both conflicting records are unconfirmed and their freshness.state and applicability are unknown, so neither claim has validated applicability.",
+                "Conflict edges were inspected only at the specified revisions (77bd9268 rev 2, 7b8212fb rev 1); both knowledge_conflicts pages returned nextCursor:null, so no additional edges exist at these revisions."
+              ],
+              "openQuestions": [
+                "Which of the two conflicting procedure claims is operationally authoritative for the current runbook?",
+                "Should the opposing historical note be superseded or corrected by a record owner with decide/confirm authority?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "6f0ee4e1-2c02-4fc0-8d68-feec244f6f97",
+                  "resultRevision": 1,
+                  "findingId": "conflict-unresolved-between-runbook-and-old-note"
+                }
+              ]
+            },
+            {
+              "id": "ct2",
+              "assertion": "Claim kept distinct (not resolved or scored away): record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 revision 2 asserts that the current runbook requires an independent post-action health check and that process exit alone is insufficient.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                },
+                {
+                  "kind": "witness",
+                  "id": "74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f"
+                }
+              ],
+              "contradicting": [
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                }
+              ],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "no independent confirmation of the runbook claim beyond witness 74f00ff9, which is a single captured text source and is also cited by the opposing record (shared source, not independent)"
+                }
+              ],
+              "limitations": [
+                "Record is unconfirmed (confirmation.state 'unconfirmed') with unknown freshness and applicability.",
+                "Record limitation states: 'Synthetic research corpus; no real service health is established.'",
+                "The only supporting witness (74f00ff9) is shared with the opposing record, so citation count overstates support; retrieval rank is not confirmation."
+              ],
+              "openQuestions": [
+                "Does an authoritative current runbook source exist that independently establishes the post-action health-check requirement?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "6f0ee4e1-2c02-4fc0-8d68-feec244f6f97",
+                  "resultRevision": 1,
+                  "findingId": "current-runbook-claim-distinct"
+                }
+              ]
+            },
+            {
+              "id": "ct3",
+              "assertion": "Opposing claim kept distinct (not resolved or scored away): record 7b8212fb-0279-4e88-bd9e-34104e4a8197 revision 1 asserts that an older note claims restart completion alone establishes health, and that this conflicts with the current runbook; its own evidence contains a witness (40e86b02-c2c9-4644-8a1a-1d86cb441c29) whose excerpt quotes the revision-2 runbook text, i.e. the opposing record's contradicting evidence is a capture of the current-runbook record itself.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                },
+                {
+                  "kind": "witness",
+                  "id": "74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f"
+                }
+              ],
+              "contradicting": [
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                }
+              ],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "the original older note itself (the source claiming restart completion alone establishes health) was not retrieved as an independent record or witness; only the assertion that such a note exists is captured"
+                }
+              ],
+              "limitations": [
+                "Record is unconfirmed (confirmation.state 'unconfirmed') with unknown freshness and applicability.",
+                "Record limitation states: 'Synthetic research corpus; no real service health is established.'",
+                "The cited contradicting witness 40e86b02-c2c9-4644-8a1a-1d86cb441c29 has selector record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:2 and is therefore derived from the conflicting record, not an independent source for the older note's content.",
+                "The record's asserted underlying sourceId (record:ddf9e223ff68a155dc7976c31714312545070d74e1603afa35f56665ea06061b, sourceVersion 2) was not independently inspected; no fetch of other records was authorized."
+              ],
+              "openQuestions": [
+                "Where is the original older note asserting restart completion alone establishes health, and is it still applicable?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "6f0ee4e1-2c02-4fc0-8d68-feec244f6f97",
+                  "resultRevision": 1,
+                  "findingId": "opposing-old-note-claim-distinct"
+                }
+              ]
+            },
+            {
+              "id": "ct4",
+              "assertion": "Witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f is cited by BOTH records — as relation 'supports' in the evidence of 77bd9268-ec2e-41b1-834c-78a7a3e22d14 revision 2 and as relation 'supports' in the evidence of 7b8212fb-0279-4e88-bd9e-34104e4a8197 revision 1 — with identical sourceId 12b6ba08-9b30-4dd2-8f69-eb7693232ff5, identical sha256, identical capturedAt 2026-11-03T23:43:18.076Z, and independenceGroupId null; it is ONE source and its repeated citations are never independent confirmation of either claim.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "witness",
+                  "id": "74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f"
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [],
+              "limitations": [
+                "The witness is a single user-attributed captured text (selector submitted:text) whose excerpt describes both claims and explicitly notes the corpus is synthetic; it does not independently adjudicate which claim is true.",
+                "independenceGroupId is null and no second, distinct source witness for either record was found within the authorized scope.",
+                "Capture time is not observation time: witness observedAt and sourceAt are both null."
+              ],
+              "openQuestions": [
+                "Is there any second source distinct from witness 74f00ff9 that could independently support either side of the conflict?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "6f0ee4e1-2c02-4fc0-8d68-feec244f6f97",
+                  "resultRevision": 1,
+                  "findingId": "witness-74f00ff9-shared-single-source"
+                }
+              ]
+            },
+            {
+              "id": "ct5",
+              "assertion": "No current real service health observation exists in the accessible corpus: witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f states explicitly 'No current service observation is available', its observedAt and sourceAt are null, and both records carry the limitation 'Synthetic research corpus; no real service health is established.'",
+              "basis": "observed",
+              "supporting": [],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "no current real service health observation exists anywhere in the researched corpus — the only witness has observedAt:null and sourceAt:null and its excerpt explicitly states no current service observation is available"
+                }
+              ],
+              "limitations": [
+                "Research covered only the two listed records and one witness at their specified revisions; no broader corpus sweep for health observations was authorized.",
+                "This is a synthetic research corpus, so the absence of a real observation is expected and was confirmed, not assumed."
+              ],
+              "openQuestions": [
+                "Does any current real service health observation exist outside this synthetic corpus, and if so, which authorized owner holds it?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "6f0ee4e1-2c02-4fc0-8d68-feec244f6f97",
+                  "resultRevision": 1,
+                  "findingId": "no-current-service-health-observation"
+                }
+              ]
+            }
+          ],
+          "knowledgeProposals": [],
+          "selection": [
+            {
+              "childRunId": "16408e02-af68-4c78-bd16-e6e21841f39d",
+              "resultRevision": 1,
+              "findingId": "conflict-view-unresolved",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "ev1"
+              ]
+            },
+            {
+              "childRunId": "16408e02-af68-4c78-bd16-e6e21841f39d",
+              "resultRevision": 1,
+              "findingId": "opposing-claim-distinct",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "ev2"
+              ]
+            },
+            {
+              "childRunId": "16408e02-af68-4c78-bd16-e6e21841f39d",
+              "resultRevision": 1,
+              "findingId": "witness-shared-single-source",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "ev3"
+              ]
+            },
+            {
+              "childRunId": "16408e02-af68-4c78-bd16-e6e21841f39d",
+              "resultRevision": 1,
+              "findingId": "no-current-service-health-observation",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "ev4"
+              ]
+            },
+            {
+              "childRunId": "6f0ee4e1-2c02-4fc0-8d68-feec244f6f97",
+              "resultRevision": 1,
+              "findingId": "conflict-unresolved-between-runbook-and-old-note",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "ct1"
+              ]
+            },
+            {
+              "childRunId": "6f0ee4e1-2c02-4fc0-8d68-feec244f6f97",
+              "resultRevision": 1,
+              "findingId": "current-runbook-claim-distinct",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "ct2"
+              ]
+            },
+            {
+              "childRunId": "6f0ee4e1-2c02-4fc0-8d68-feec244f6f97",
+              "resultRevision": 1,
+              "findingId": "opposing-old-note-claim-distinct",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "ct3"
+              ]
+            },
+            {
+              "childRunId": "6f0ee4e1-2c02-4fc0-8d68-feec244f6f97",
+              "resultRevision": 1,
+              "findingId": "witness-74f00ff9-shared-single-source",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "ct4"
+              ]
+            },
+            {
+              "childRunId": "6f0ee4e1-2c02-4fc0-8d68-feec244f6f97",
+              "resultRevision": 1,
+              "findingId": "no-current-service-health-observation",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "ct5"
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "runId": "56c1971d-329c-442b-bb6c-1e1915502431",
+        "parentRunId": "82fa9f10-c14c-4c68-b113-ca66ca4e50ef",
+        "depth": 1,
+        "kind": "flow",
+        "status": "Done",
+        "revision": 1,
+        "schemaSha256": "b9b4268990ecd525c2f8e490109a0b171f055499857c031a38f2c65794e04021",
+        "engineVersion": "3.11.1",
+        "collectedAt": "2026-11-03 23:55:59.582+00",
+        "sessionIds": [
+          "70b8f042-03cf-41d8-8ff7-f47fb93d6979"
+        ],
+        "value": {
+          "schemaVersion": 1,
+          "findings": [
+            {
+              "id": "out-conflict-view-empty",
+              "assertion": "The conflict view of dependent record 41af8f90-f7a5-4607-8d27-239c924205d2 revision 1 is EMPTY: knowledge_conflicts returned zero items (nextCursor null), and the record's own conflict state is 'none_known' with accessibleRecordIds [] and incomplete false. No known conflicts exist; no contradicting references were fabricated.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "41af8f90-f7a5-4607-8d27-239c924205d2",
+                  "revision": 1
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "An empty conflict view reflects no KNOWN conflicts at retrieval time, not an affirmative absence of conflicts."
+              ],
+              "openQuestions": [],
+              "sourceFindings": [
+                {
+                  "childRunId": "37725e85-b5ce-423f-bc96-8496d192fb2a",
+                  "resultRevision": 1,
+                  "findingId": "conflict-view-empty-dependent-record"
+                }
+              ]
+            },
+            {
+              "id": "out-limitations-both-records",
+              "assertion": "Both records carry the identical limitation string 'Synthetic research corpus; no real service health is established.': dependent record 41af8f90-f7a5-4607-8d27-239c924205d2 revision 1 ('Older interpretation', basis inferred, unconfirmed) and source record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 head revision 2 ('Qualification runbook assertion', basis observed, unconfirmed).",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "41af8f90-f7a5-4607-8d27-239c924205d2",
+                  "revision": 1
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established."
+              ],
+              "openQuestions": [],
+              "sourceFindings": [
+                {
+                  "childRunId": "37725e85-b5ce-423f-bc96-8496d192fb2a",
+                  "resultRevision": 1,
+                  "findingId": "limitations-carried-by-both-records"
+                }
+              ]
+            },
+            {
+              "id": "out-dependent-stale-source-head",
+              "assertion": "The dependent record is stale w.r.t. the source head: its sole evidence witness e861ae44-ec2d-4512-85d1-2cf74b66f992 (availability 'stale', sourceVersion '1', capturedAt 2026-11-03T23:43:19.792Z) binds selector record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:1, while the current head of that source record is revision 2 with a stricter assertion ('The current runbook requires an independent post-action health check; process exit alone is insufficient.'). The witness excerpt matches the captured revision-1 content, not the head.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "witness",
+                  "id": "e861ae44-ec2d-4512-85d1-2cf74b66f992"
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "41af8f90-f7a5-4607-8d27-239c924205d2",
+                  "revision": 1
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                }
+              ],
+              "contradicting": [
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                }
+              ],
+              "missingEvidence": [
+                {
+                  "state": "stale",
+                  "reason": "Witness binds source revision 1 while the source head is revision 2; no witness binds the current head, so the dependent interpretation rests on superseded source content."
+                },
+                {
+                  "state": "inaccessible",
+                  "reason": "Source head revision 2 reports an unresolved conflict with record 7b8212fb-0279-4e88-bd9e-34104e4a8197, which was not among the delegated retrieval targets and was therefore not fetched or inspected."
+                }
+              ],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "Freshness of both records is state 'unknown' / applicability 'unknown'; no observedAt or sourceAt timestamps are set."
+              ],
+              "openQuestions": [
+                "Does the unresolved conflict on source head 77bd9268 revision 2 (record 7b8212fb-0279-4e88-bd9e-34104e4a8197, not fetched) affect the validity of the dependent record's interpretation?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "37725e85-b5ce-423f-bc96-8496d192fb2a",
+                  "resultRevision": 1,
+                  "findingId": "dependent-record-stale-vs-source-head"
+                }
+              ]
+            },
+            {
+              "id": "out-dependent-stale-head",
+              "assertion": "Record 41af8f90-f7a5-4607-8d27-239c924205d2 revision 1 ('Older interpretation': 'The first recorded runbook assertion was used as an interpretation.') is STALE with respect to the current head of 77bd9268-ec2e-41b1-834c-78a7a3e22d14: its sole evidence witness e861ae44-ec2d-4512-85d1-2cf74b66f992 has selector record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:1 and availability 'stale', while the current head of that record is revision 2 ('The current runbook requires an independent post-action health check; process exit alone is insufficient.').",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "41af8f90-f7a5-4607-8d27-239c924205d2",
+                  "revision": 1
+                },
+                {
+                  "kind": "witness",
+                  "id": "e861ae44-ec2d-4512-85d1-2cf74b66f992"
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "stale",
+                  "reason": "The dependent record's only evidence witness captures revision 1 of record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 (selector record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:1, availability stale), but the current head of that record is revision 2; no witness evidence supports the dependent record against the head."
+                }
+              ],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "The head record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 revision 2 is itself unconfirmed and freshness/applicability unknown; staleness of the dependent record is established relative to the head revision, not confirmed truth of the head.",
+                "The head record reports an unresolved conflict with accessible record 7b8212fb-0279-4e88-bd9e-34104e4a8197, which was not within this task's authorized retrieval list and was therefore not inspected."
+              ],
+              "openQuestions": [
+                "Does revision 2 of 77bd9268-ec2e-41b1-834c-78a7a3e22d14 supersede revision 1 in a way that invalidates the interpretation recorded in 41af8f90-f7a5-4607-8d27-239c924205d2, given the unresolved conflict on the head?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "5c346231-42cd-4c5d-bf5e-55602ff3f7f5",
+                  "resultRevision": 1,
+                  "findingId": "dependent-record-stale-vs-head"
+                }
+              ]
+            },
+            {
+              "id": "out-no-current-service-health",
+              "assertion": "The corpus establishes nothing about CURRENT real service health. Both retrieved records (41af8f90-f7a5-4607-8d27-239c924205d2 rev 1 and 77bd9268-ec2e-41b1-834c-78a7a3e22d14 rev 2) carry the limitation 'Synthetic research corpus; no real service health is established.', both have freshness state 'unknown' with applicability 'unknown' and observedAt null, and no current service observation exists in the retrieved set.",
+              "basis": "observed",
+              "supporting": [],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "No current service health observation exists in the corpus: neither retrieved record provides an observedAt value, and both carry the limitation 'Synthetic research corpus; no real service health is established.'; no health-check result record was within the authorized retrieval list."
+                }
+              ],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "Freshness and applicability of both records are unknown; capturedAt timestamps (2026-11-03T23:43:19/20Z) are capture times, not observation times."
+              ],
+              "openQuestions": [
+                "What is the current real service health of the service governed by the runbook asserted in 77bd9268-ec2e-41b1-834c-78a7a3e22d14, and has an independent post-action health check actually been performed?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "5c346231-42cd-4c5d-bf5e-55602ff3f7f5",
+                  "resultRevision": 1,
+                  "findingId": "no-current-service-health-established"
+                }
+              ]
+            }
+          ],
+          "knowledgeProposals": [],
+          "selection": [
+            {
+              "childRunId": "5c346231-42cd-4c5d-bf5e-55602ff3f7f5",
+              "resultRevision": 1,
+              "findingId": "dependent-record-stale-vs-head",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "out-dependent-stale-head"
+              ]
+            },
+            {
+              "childRunId": "5c346231-42cd-4c5d-bf5e-55602ff3f7f5",
+              "resultRevision": 1,
+              "findingId": "no-current-service-health-established",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "out-no-current-service-health"
+              ]
+            },
+            {
+              "childRunId": "37725e85-b5ce-423f-bc96-8496d192fb2a",
+              "resultRevision": 1,
+              "findingId": "conflict-view-empty-dependent-record",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "out-conflict-view-empty"
+              ]
+            },
+            {
+              "childRunId": "37725e85-b5ce-423f-bc96-8496d192fb2a",
+              "resultRevision": 1,
+              "findingId": "limitations-carried-by-both-records",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "out-limitations-both-records"
+              ]
+            },
+            {
+              "childRunId": "37725e85-b5ce-423f-bc96-8496d192fb2a",
+              "resultRevision": 1,
+              "findingId": "dependent-record-stale-vs-source-head",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "out-dependent-stale-source-head"
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "runId": "16408e02-af68-4c78-bd16-e6e21841f39d",
+        "parentRunId": "27150e6e-40a5-4202-84d7-4911cfec6399",
+        "depth": 2,
+        "kind": "agent",
+        "status": "Done",
+        "revision": 1,
+        "schemaSha256": "b9b4268990ecd525c2f8e490109a0b171f055499857c031a38f2c65794e04021",
+        "engineVersion": "3.11.1",
+        "collectedAt": "2026-11-03 23:54:31.095+00",
+        "sessionIds": [
+          "f95eae87-d962-4652-9c34-63327c0b5d17"
+        ],
+        "value": {
+          "schemaVersion": 1,
+          "findings": [
+            {
+              "id": "conflict-view-unresolved",
+              "assertion": "The exact conflict view between record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 (rev 2) and record 7b8212fb-0279-4e88-bd9e-34104e4a8197 (rev 1) is confirmed as a single declared_conflict edge, and it remains unresolved: both records report conflict.state 'unresolved' listing the other as the accessible counterpart, with incomplete:false.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [],
+              "limitations": [
+                "Conflict state observed as of retrieval on 2026-11-04; it could change in later revisions.",
+                "Only these two records were authorized for retrieval; no broader corpus sweep was performed."
+              ],
+              "openQuestions": [],
+              "sourceFindings": []
+            },
+            {
+              "id": "opposing-claim-distinct",
+              "assertion": "The opposing claim stays distinct: record 7b8212fb-0279-4e88-bd9e-34104e4a8197 (rev 1, 'Opposing historical note') asserts that restart completion alone establishes health, which directly contradicts record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 (rev 2) requiring an independent post-action health check. Neither claim is scored, resolved, or overwritten here.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                },
+                {
+                  "kind": "witness",
+                  "id": "40e86b02-c2c9-4644-8a1a-1d86cb441c29"
+                }
+              ],
+              "contradicting": [
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                }
+              ],
+              "missingEvidence": [],
+              "limitations": [
+                "The contradicting witness 40e86b02 captures the text of record 77bd9268 rev 2 itself (selector 'record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:2'), so it is a derived quote of the runbook record, not an independent observation.",
+                "Both records are unconfirmed (confirmation.state 'unconfirmed')."
+              ],
+              "openQuestions": [],
+              "sourceFindings": []
+            },
+            {
+              "id": "witness-shared-single-source",
+              "assertion": "Witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f is cited by BOTH records — as 'supports' evidence in 77bd9268-ec2e-41b1-834c-78a7a3e22d14 (rev 2) and as 'supports' evidence in 7b8212fb-0279-4e88-bd9e-34104e4a8197 (rev 1) — so its repeated citations are ONE source (sourceId 12b6ba08-9b30-4dd2-8f69-eb7693232ff5, selector 'submitted:text', availability 'available') and never independent confirmation of either claim.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "witness",
+                  "id": "74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f"
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [],
+              "limitations": [
+                "The witness has independenceGroupId null and its excerpt describes the corpus ('This is a synthetic research corpus... The current runbook requires a separate post-restart health check. An older contradictory note claims that a restart alone is sufficient. No current service observation is available.'), so it narrates both sides from one submitted text rather than independently verifying either.",
+                "CapturedAt 2026-11-03T23:43:18.076Z with observedAt and sourceAt null; capture time is not observation time."
+              ],
+              "openQuestions": [],
+              "sourceFindings": []
+            },
+            {
+              "id": "no-current-service-health-observation",
+              "assertion": "No current real service health observation exists in the corpus: both records carry the limitation 'Synthetic research corpus; no real service health is established', the shared witness excerpt states 'No current service observation is available', and both records' freshness shows observedAt and sourceAt as null.",
+              "basis": "observed",
+              "supporting": [],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "No current real service health observation was found: both authorized records explicitly state the corpus is synthetic with no real service health established, and the shared witness excerpt states no current service observation is available."
+                }
+              ],
+              "limitations": [
+                "Research was bounded to the two listed records and one witness; no other corpus record or live service was authorized or checked."
+              ],
+              "openQuestions": [
+                "Does any authorized real service health check exist outside this synthetic corpus, and if so, at what capture/observation time and for which service/action?"
+              ],
+              "sourceFindings": []
+            }
+          ],
+          "knowledgeProposals": [],
+          "selection": []
+        }
+      },
+      {
+        "runId": "37725e85-b5ce-423f-bc96-8496d192fb2a",
+        "parentRunId": "56c1971d-329c-442b-bb6c-1e1915502431",
+        "depth": 2,
+        "kind": "agent",
+        "status": "Done",
+        "revision": 1,
+        "schemaSha256": "b9b4268990ecd525c2f8e490109a0b171f055499857c031a38f2c65794e04021",
+        "engineVersion": "3.11.1",
+        "collectedAt": "2026-11-03 23:53:25.397+00",
+        "sessionIds": [
+          "11b64e61-79e7-4e65-aa30-658f22d40afc"
+        ],
+        "value": {
+          "schemaVersion": 1,
+          "findings": [
+            {
+              "id": "conflict-view-empty-dependent-record",
+              "assertion": "The conflict view of dependent record 41af8f90-f7a5-4607-8d27-239c924205d2 revision 1 is EMPTY: knowledge_conflicts returned zero items (nextCursor null), and the record's own conflict state is 'none_known' with accessibleRecordIds [] and incomplete false. No known conflicts exist; no contradicting references were fabricated.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "41af8f90-f7a5-4607-8d27-239c924205d2",
+                  "revision": 1
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "An empty conflict view reflects no KNOWN conflicts at retrieval time, not an affirmative absence of conflicts."
+              ],
+              "openQuestions": [],
+              "sourceFindings": []
+            },
+            {
+              "id": "limitations-carried-by-both-records",
+              "assertion": "Both records carry the identical limitation string 'Synthetic research corpus; no real service health is established.': dependent record 41af8f90-f7a5-4607-8d27-239c924205d2 revision 1 ('Older interpretation', basis inferred, unconfirmed) and source record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 head revision 2 ('Qualification runbook assertion', basis observed, unconfirmed).",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "41af8f90-f7a5-4607-8d27-239c924205d2",
+                  "revision": 1
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established."
+              ],
+              "openQuestions": [],
+              "sourceFindings": []
+            },
+            {
+              "id": "dependent-record-stale-vs-source-head",
+              "assertion": "The dependent record is stale w.r.t. the source head: its sole evidence witness e861ae44-ec2d-4512-85d1-2cf74b66f992 (availability 'stale', sourceVersion '1', capturedAt 2026-11-03T23:43:19.792Z) binds selector record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:1, while the current head of that source record is revision 2 with a stricter assertion ('The current runbook requires an independent post-action health check; process exit alone is insufficient.'). The witness excerpt matches the captured revision-1 content, not the head.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "witness",
+                  "id": "e861ae44-ec2d-4512-85d1-2cf74b66f992"
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "41af8f90-f7a5-4607-8d27-239c924205d2",
+                  "revision": 1
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                }
+              ],
+              "contradicting": [
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                }
+              ],
+              "missingEvidence": [
+                {
+                  "state": "stale",
+                  "reason": "Witness binds source revision 1 while the source head is revision 2; no witness binds the current head, so the dependent interpretation rests on superseded source content."
+                },
+                {
+                  "state": "inaccessible",
+                  "reason": "Source head revision 2 reports an unresolved conflict with record 7b8212fb-0279-4e88-bd9e-34104e4a8197, which was not among the delegated retrieval targets and was therefore not fetched or inspected."
+                }
+              ],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "Freshness of both records is state 'unknown' / applicability 'unknown'; no observedAt or sourceAt timestamps are set."
+              ],
+              "openQuestions": [
+                "Does the unresolved conflict on source head 77bd9268 revision 2 (record 7b8212fb-0279-4e88-bd9e-34104e4a8197, not fetched) affect the validity of the dependent record's interpretation?"
+              ],
+              "sourceFindings": []
+            }
+          ],
+          "knowledgeProposals": [],
+          "selection": []
+        }
+      },
+      {
+        "runId": "5c346231-42cd-4c5d-bf5e-55602ff3f7f5",
+        "parentRunId": "56c1971d-329c-442b-bb6c-1e1915502431",
+        "depth": 2,
+        "kind": "agent",
+        "status": "Done",
+        "revision": 1,
+        "schemaSha256": "b9b4268990ecd525c2f8e490109a0b171f055499857c031a38f2c65794e04021",
+        "engineVersion": "3.11.1",
+        "collectedAt": "2026-11-03 23:53:25.397+00",
+        "sessionIds": [
+          "dce1037f-4129-401d-bde9-182783cbcf59"
+        ],
+        "value": {
+          "schemaVersion": 1,
+          "findings": [
+            {
+              "id": "dependent-record-stale-vs-head",
+              "assertion": "Record 41af8f90-f7a5-4607-8d27-239c924205d2 revision 1 ('Older interpretation': 'The first recorded runbook assertion was used as an interpretation.') is STALE with respect to the current head of 77bd9268-ec2e-41b1-834c-78a7a3e22d14: its sole evidence witness e861ae44-ec2d-4512-85d1-2cf74b66f992 has selector record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:1 and availability 'stale', while the current head of that record is revision 2 ('The current runbook requires an independent post-action health check; process exit alone is insufficient.').",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "41af8f90-f7a5-4607-8d27-239c924205d2",
+                  "revision": 1
+                },
+                {
+                  "kind": "witness",
+                  "id": "e861ae44-ec2d-4512-85d1-2cf74b66f992"
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "stale",
+                  "reason": "The dependent record's only evidence witness captures revision 1 of record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 (selector record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:1, availability stale), but the current head of that record is revision 2; no witness evidence supports the dependent record against the head."
+                }
+              ],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "The head record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 revision 2 is itself unconfirmed and freshness/applicability unknown; staleness of the dependent record is established relative to the head revision, not confirmed truth of the head.",
+                "The head record reports an unresolved conflict with accessible record 7b8212fb-0279-4e88-bd9e-34104e4a8197, which was not within this task's authorized retrieval list and was therefore not inspected."
+              ],
+              "openQuestions": [
+                "Does revision 2 of 77bd9268-ec2e-41b1-834c-78a7a3e22d14 supersede revision 1 in a way that invalidates the interpretation recorded in 41af8f90-f7a5-4607-8d27-239c924205d2, given the unresolved conflict on the head?"
+              ],
+              "sourceFindings": []
+            },
+            {
+              "id": "no-current-service-health-established",
+              "assertion": "The corpus establishes nothing about CURRENT real service health. Both retrieved records (41af8f90-f7a5-4607-8d27-239c924205d2 rev 1 and 77bd9268-ec2e-41b1-834c-78a7a3e22d14 rev 2) carry the limitation 'Synthetic research corpus; no real service health is established.', both have freshness state 'unknown' with applicability 'unknown' and observedAt null, and no current service observation exists in the retrieved set.",
+              "basis": "observed",
+              "supporting": [],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "No current service health observation exists in the corpus: neither retrieved record provides an observedAt value, and both carry the limitation 'Synthetic research corpus; no real service health is established.'; no health-check result record was within the authorized retrieval list."
+                }
+              ],
+              "limitations": [
+                "Synthetic research corpus; no real service health is established.",
+                "Freshness and applicability of both records are unknown; capturedAt timestamps (2026-11-03T23:43:19/20Z) are capture times, not observation times."
+              ],
+              "openQuestions": [
+                "What is the current real service health of the service governed by the runbook asserted in 77bd9268-ec2e-41b1-834c-78a7a3e22d14, and has an independent post-action health check actually been performed?"
+              ],
+              "sourceFindings": []
+            }
+          ],
+          "knowledgeProposals": [],
+          "selection": []
+        }
+      },
+      {
+        "runId": "6f0ee4e1-2c02-4fc0-8d68-feec244f6f97",
+        "parentRunId": "27150e6e-40a5-4202-84d7-4911cfec6399",
+        "depth": 2,
+        "kind": "agent",
+        "status": "Done",
+        "revision": 1,
+        "schemaSha256": "b9b4268990ecd525c2f8e490109a0b171f055499857c031a38f2c65794e04021",
+        "engineVersion": "3.11.1",
+        "collectedAt": "2026-11-03 23:54:31.097+00",
+        "sessionIds": [
+          "35817916-2ac2-47f4-a427-098796f89196"
+        ],
+        "value": {
+          "schemaVersion": 1,
+          "findings": [
+            {
+              "id": "conflict-unresolved-between-runbook-and-old-note",
+              "assertion": "An unresolved declared conflict (edgeId 70020833-0c4d-4695-a5cf-83a65db1f962, classification declared_conflict) exists between knowledge record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 revision 2 ('The current runbook requires an independent post-action health check; process exit alone is insufficient.') and knowledge record 7b8212fb-0279-4e88-bd9e-34104e4a8197 revision 1 ('The older note claims restart completion alone establishes health; this conflicts with the current runbook.'); both records report conflict.state 'unresolved' with incomplete:false, and neither record is confirmed (confirmation.state 'unconfirmed', freshness unknown).",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [],
+              "limitations": [
+                "Read-only research grants only: no confirm/propose/maintenance actions were taken, so the conflict remains unresolved by design.",
+                "Both conflicting records are unconfirmed and their freshness.state and applicability are unknown, so neither claim has validated applicability.",
+                "Conflict edges were inspected only at the specified revisions (77bd9268 rev 2, 7b8212fb rev 1); both knowledge_conflicts pages returned nextCursor:null, so no additional edges exist at these revisions."
+              ],
+              "openQuestions": [
+                "Which of the two conflicting procedure claims is operationally authoritative for the current runbook?",
+                "Should the opposing historical note be superseded or corrected by a record owner with decide/confirm authority?"
+              ],
+              "sourceFindings": []
+            },
+            {
+              "id": "current-runbook-claim-distinct",
+              "assertion": "Claim kept distinct (not resolved or scored away): record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 revision 2 asserts that the current runbook requires an independent post-action health check and that process exit alone is insufficient.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                },
+                {
+                  "kind": "witness",
+                  "id": "74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f"
+                }
+              ],
+              "contradicting": [
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                }
+              ],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "no independent confirmation of the runbook claim beyond witness 74f00ff9, which is a single captured text source and is also cited by the opposing record (shared source, not independent)"
+                }
+              ],
+              "limitations": [
+                "Record is unconfirmed (confirmation.state 'unconfirmed') with unknown freshness and applicability.",
+                "Record limitation states: 'Synthetic research corpus; no real service health is established.'",
+                "The only supporting witness (74f00ff9) is shared with the opposing record, so citation count overstates support; retrieval rank is not confirmation."
+              ],
+              "openQuestions": [
+                "Does an authoritative current runbook source exist that independently establishes the post-action health-check requirement?"
+              ],
+              "sourceFindings": []
+            },
+            {
+              "id": "opposing-old-note-claim-distinct",
+              "assertion": "Opposing claim kept distinct (not resolved or scored away): record 7b8212fb-0279-4e88-bd9e-34104e4a8197 revision 1 asserts that an older note claims restart completion alone establishes health, and that this conflicts with the current runbook; its own evidence contains a witness (40e86b02-c2c9-4644-8a1a-1d86cb441c29) whose excerpt quotes the revision-2 runbook text, i.e. the opposing record's contradicting evidence is a capture of the current-runbook record itself.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                },
+                {
+                  "kind": "witness",
+                  "id": "74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f"
+                }
+              ],
+              "contradicting": [
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                }
+              ],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "the original older note itself (the source claiming restart completion alone establishes health) was not retrieved as an independent record or witness; only the assertion that such a note exists is captured"
+                }
+              ],
+              "limitations": [
+                "Record is unconfirmed (confirmation.state 'unconfirmed') with unknown freshness and applicability.",
+                "Record limitation states: 'Synthetic research corpus; no real service health is established.'",
+                "The cited contradicting witness 40e86b02-c2c9-4644-8a1a-1d86cb441c29 has selector record:77bd9268-ec2e-41b1-834c-78a7a3e22d14:2 and is therefore derived from the conflicting record, not an independent source for the older note's content.",
+                "The record's asserted underlying sourceId (record:ddf9e223ff68a155dc7976c31714312545070d74e1603afa35f56665ea06061b, sourceVersion 2) was not independently inspected; no fetch of other records was authorized."
+              ],
+              "openQuestions": [
+                "Where is the original older note asserting restart completion alone establishes health, and is it still applicable?"
+              ],
+              "sourceFindings": []
+            },
+            {
+              "id": "witness-74f00ff9-shared-single-source",
+              "assertion": "Witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f is cited by BOTH records — as relation 'supports' in the evidence of 77bd9268-ec2e-41b1-834c-78a7a3e22d14 revision 2 and as relation 'supports' in the evidence of 7b8212fb-0279-4e88-bd9e-34104e4a8197 revision 1 — with identical sourceId 12b6ba08-9b30-4dd2-8f69-eb7693232ff5, identical sha256, identical capturedAt 2026-11-03T23:43:18.076Z, and independenceGroupId null; it is ONE source and its repeated citations are never independent confirmation of either claim.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "witness",
+                  "id": "74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f"
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "77bd9268-ec2e-41b1-834c-78a7a3e22d14",
+                  "revision": 2
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "7b8212fb-0279-4e88-bd9e-34104e4a8197",
+                  "revision": 1
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [],
+              "limitations": [
+                "The witness is a single user-attributed captured text (selector submitted:text) whose excerpt describes both claims and explicitly notes the corpus is synthetic; it does not independently adjudicate which claim is true.",
+                "independenceGroupId is null and no second, distinct source witness for either record was found within the authorized scope.",
+                "Capture time is not observation time: witness observedAt and sourceAt are both null."
+              ],
+              "openQuestions": [
+                "Is there any second source distinct from witness 74f00ff9 that could independently support either side of the conflict?"
+              ],
+              "sourceFindings": []
+            },
+            {
+              "id": "no-current-service-health-observation",
+              "assertion": "No current real service health observation exists in the accessible corpus: witness 74f00ff9-a4d4-48c5-9fdc-5d4b43076f2f states explicitly 'No current service observation is available', its observedAt and sourceAt are null, and both records carry the limitation 'Synthetic research corpus; no real service health is established.'",
+              "basis": "observed",
+              "supporting": [],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "no current real service health observation exists anywhere in the researched corpus — the only witness has observedAt:null and sourceAt:null and its excerpt explicitly states no current service observation is available"
+                }
+              ],
+              "limitations": [
+                "Research covered only the two listed records and one witness at their specified revisions; no broader corpus sweep for health observations was authorized.",
+                "This is a synthetic research corpus, so the absence of a real observation is expected and was confirmed, not assumed."
+              ],
+              "openQuestions": [
+                "Does any current real service health observation exist outside this synthetic corpus, and if so, which authorized owner holds it?"
+              ],
+              "sourceFindings": []
+            }
+          ],
+          "knowledgeProposals": [],
+          "selection": []
+        }
+      }
+    ],
+    [
+      {
+        "runId": "096fb4a6-61bd-4fad-891b-77834b82b204",
+        "parentRunId": null,
+        "depth": 0,
+        "kind": "flow",
+        "status": "Done",
+        "revision": 1,
+        "schemaSha256": "b9b4268990ecd525c2f8e490109a0b171f055499857c031a38f2c65794e04021",
+        "engineVersion": "3.11.1",
+        "collectedAt": null,
+        "sessionIds": [
+          "eb0d2efc-6b9c-4c79-a760-8f55196b1963"
+        ],
+        "value": {
+          "schemaVersion": 1,
+          "findings": [
+            {
+              "id": "f-77bd9268-unavailable",
+              "assertion": "Knowledge record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 (owner: company 1ec10f4e-8565-4b8f-9824-c32040f14f8c) could not be retrieved in this session: knowledge_get (head and explicit revision 1), knowledge_evidence and knowledge_conflicts each returned PRECONDITION 'Knowledge reference is unavailable' (reason knowledge_reference_unavailable). No contents, revisions, evidence views or conflict edges were read.",
+              "basis": "observed",
+              "supporting": [],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "inaccessible",
+                  "reason": "knowledge_get, knowledge_evidence and knowledge_conflicts for record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 all returned knowledge_reference_unavailable, so the record's contents, current revision, captured evidence and conflicts could not be inspected"
+                }
+              ],
+              "limitations": [
+                "The error does not distinguish whether the record does not exist, was revoked, or is not visible to this session's principal; no interpretation is asserted.",
+                "No contents of the record are reported, per the task instruction not to guess; nothing about the company's identity or authority was inferred from ownership.",
+                "Only the four authorized knowledge tools with the supplied owner/record inputs were used; no other owner's records, legacy memory or ambient transports were queried."
+              ],
+              "openQuestions": [
+                "What are the contents, current revision, captured evidence and conflicts of knowledge record 77bd9268-ec2e-41b1-834c-78a7a3e22d14 for company 1ec10f4e-8565-4b8f-9824-c32040f14f8c, and is it inaccessible because it is missing, revoked or not visible to this principal?"
+              ],
+              "sourceFindings": []
+            },
+            {
+              "id": "f-450b49be-unavailable",
+              "assertion": "Knowledge record 450b49be-e06b-49c0-9e81-dbca3c734229 (owner: company 1ec10f4e-8565-4b8f-9824-c32040f14f8c) could not be retrieved in this session: knowledge_get (head and explicit revision 1), knowledge_evidence and knowledge_conflicts each returned PRECONDITION 'Knowledge reference is unavailable' (reason knowledge_reference_unavailable). No contents, revisions, evidence views or conflict edges were read.",
+              "basis": "observed",
+              "supporting": [],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "inaccessible",
+                  "reason": "knowledge_get, knowledge_evidence and knowledge_conflicts for record 450b49be-e06b-49c0-9e81-dbca3c734229 all returned knowledge_reference_unavailable, so the record's contents, current revision, captured evidence and conflicts could not be inspected"
+                }
+              ],
+              "limitations": [
+                "The error does not distinguish whether the record does not exist, was revoked, or is not visible to this session's principal; no interpretation is asserted.",
+                "No contents of the record are reported, per the task instruction not to guess; nothing about the company's identity or authority was inferred from ownership.",
+                "Only the four authorized knowledge tools with the supplied owner/record inputs were used; no other owner's records, legacy memory or ambient transports were queried."
+              ],
+              "openQuestions": [
+                "What are the contents, current revision, captured evidence and conflicts of knowledge record 450b49be-e06b-49c0-9e81-dbca3c734229 for company 1ec10f4e-8565-4b8f-9824-c32040f14f8c, and is it inaccessible because it is missing, revoked or not visible to this principal?"
+              ],
+              "sourceFindings": []
+            },
+            {
+              "id": "f-owner-search-empty",
+              "assertion": "knowledge_search scoped to owner company 1ec10f4e-8565-4b8f-9824-c32040f14f8c (empty query, limit 50) returned zero items and no nextCursor: no knowledge records for this owner were visible to this session, consistent with the per-record knowledge_reference_unavailable results for both target records.",
+              "basis": "observed",
+              "supporting": [],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "the owner-scoped search exposed no accessible records, so neither target record's contents could be obtained through search as an alternative to direct retrieval"
+                }
+              ],
+              "limitations": [
+                "An empty search result is not confirmation that the records do not exist; it establishes only that nothing under this owner was visible to this session at query time.",
+                "Ownership was used solely as the explicit search scope supplied by the task; no company identity or authority was inferred from it."
+              ],
+              "openQuestions": [
+                "Do records 77bd9268-ec2e-41b1-834c-78a7a3e22d14 and 450b49be-e06b-49c0-9e81-dbca3c734229 exist under company 1ec10f4e-8565-4b8f-9824-c32040f14f8c but remain withheld from this session's principal?"
+              ],
+              "sourceFindings": []
+            }
+          ],
+          "knowledgeProposals": [],
+          "selection": []
+        }
+      }
+    ]
+  ],
+  "enforcementProofs": [
+    {
+      "runId": "df9f7f0c-0198-41c1-b444-475aea15e69e",
+      "profile": {
+        "tools": {
+          "allow": [
+            "Read",
+            "Grep",
+            "Glob",
+            "ToolSearch",
+            "mcp__maister__knowledge_search",
+            "mcp__maister__knowledge_get",
+            "mcp__maister__knowledge_evidence",
+            "mcp__maister__knowledge_conflicts",
+            "mcp__maister__knowledge_witness_get",
+            "mcp__maister__knowledge_propose",
+            "mcp__maister__knowledge_proposal_get",
+            "mcp__maister__run_delegate",
+            "mcp__maister__run_collect",
+            "mcp__maister__run_cancel"
+          ]
+        },
+        "enforcedClasses": [
+          "tools"
+        ]
+      }
+    },
+    {
+      "runId": "82fa9f10-c14c-4c68-b113-ca66ca4e50ef",
+      "profile": {
+        "tools": {
+          "allow": [
+            "Read",
+            "Grep",
+            "Glob",
+            "ToolSearch",
+            "mcp__maister__knowledge_search",
+            "mcp__maister__knowledge_get",
+            "mcp__maister__knowledge_evidence",
+            "mcp__maister__knowledge_conflicts",
+            "mcp__maister__knowledge_witness_get",
+            "mcp__maister__knowledge_propose",
+            "mcp__maister__knowledge_proposal_get",
+            "mcp__maister__run_delegate",
+            "mcp__maister__run_collect",
+            "mcp__maister__run_cancel"
+          ]
+        },
+        "enforcedClasses": [
+          "tools"
+        ]
+      }
+    }
+  ],
+  "dataClassification": "generated synthetic corpus in a fresh owned database and temporary repository; no existing Brain or private repository input",
+  "nativeProposalIds": [
+    "9629a4d9-46b6-4817-aac4-ba4e55755d51",
+    "22111408-dccc-4de9-b371-129ddd144e51"
+  ],
+  "ledgerDiagnostics": [
+    {
+      "runId": "096fb4a6-61bd-4fad-891b-77834b82b204",
+      "parentRunId": null,
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "82fa9f10-c14c-4c68-b113-ca66ca4e50ef",
+      "parentRunId": null,
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "df9f7f0c-0198-41c1-b444-475aea15e69e",
+      "parentRunId": null,
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "27150e6e-40a5-4202-84d7-4911cfec6399",
+      "parentRunId": "82fa9f10-c14c-4c68-b113-ca66ca4e50ef",
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "56c1971d-329c-442b-bb6c-1e1915502431",
+      "parentRunId": "82fa9f10-c14c-4c68-b113-ca66ca4e50ef",
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "6c0c0c36-8c36-4886-bacd-30b16c2c6691",
+      "parentRunId": "df9f7f0c-0198-41c1-b444-475aea15e69e",
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "df86f18a-401f-4323-98c3-57ee96f66760",
+      "parentRunId": "df9f7f0c-0198-41c1-b444-475aea15e69e",
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "16408e02-af68-4c78-bd16-e6e21841f39d",
+      "parentRunId": "27150e6e-40a5-4202-84d7-4911cfec6399",
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "37725e85-b5ce-423f-bc96-8496d192fb2a",
+      "parentRunId": "56c1971d-329c-442b-bb6c-1e1915502431",
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "5c346231-42cd-4c5d-bf5e-55602ff3f7f5",
+      "parentRunId": "56c1971d-329c-442b-bb6c-1e1915502431",
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "6f0ee4e1-2c02-4fc0-8d68-feec244f6f97",
+      "parentRunId": "27150e6e-40a5-4202-84d7-4911cfec6399",
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    }
+  ]
+}
