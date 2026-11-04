@@ -357,6 +357,8 @@ const httpDelegateHook: DelegateHook = async (req) => {
     headers: {
       "content-type": "application/json",
       authorization: `Bearer ${req.facadeToken}`,
+      // Replaying this child decision keeps its key; sibling ordinals differ.
+      "Idempotency-Key": `e2e-delegate:v1:${req.orchestratorRunId}:${req.index}`,
     },
     body: JSON.stringify({
       target: resolved.target,

@@ -418,6 +418,7 @@ test.describe("Manual task admission through the real browser and controlled pro
     const failedSource = await startQualifier(
       page,
       failed,
+      baseURL!,
       fixture.failedRunnerId,
     );
 
@@ -435,8 +436,8 @@ test.describe("Manual task admission through the real browser and controlled pro
         { timeout: 20_000 },
       )
       .toBe("Failed");
-    await completeQualifier(page, negative);
-    await completeQualifier(page, stale);
+    await completeQualifier(page, negative, baseURL!);
+    await completeQualifier(page, stale, baseURL!);
     await editPrompt(
       page,
       stale,
@@ -782,11 +783,15 @@ async function editPrompt(
 async function startQualifier(
   page: Page,
   task: Task,
+  baseURL: string,
   runnerId?: string,
 ): Promise<string> {
   const response = await page.request.post(
     `/api/projects/${fixture.slug}/agents/${encodeURIComponent(fixture.qualifierId)}/launch`,
-    { data: { taskId: task.taskId, ...(runnerId ? { runnerId } : {}) } },
+    {
+      headers: { Origin: new URL(baseURL).origin },
+      data: { taskId: task.taskId, ...(runnerId ? { runnerId } : {}) },
+    },
   );
 
   expect(response.status()).toBe(202);
@@ -795,8 +800,12 @@ async function startQualifier(
   return runId;
 }
 
-async function completeQualifier(page: Page, task: Task): Promise<void> {
-  const runId = await startQualifier(page, task);
+async function completeQualifier(
+  page: Page,
+  task: Task,
+  baseURL: string,
+): Promise<void> {
+  const runId = await startQualifier(page, task, baseURL);
 
   await expect
     .poll(

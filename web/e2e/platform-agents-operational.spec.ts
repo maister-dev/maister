@@ -267,7 +267,7 @@ test.describe("operational results, history and attention", () => {
     const liveAgentId = await seedOperationalStopAgent(fixture);
     const launch = await page.request.post(
       `/api/projects/${fixture.slug}/agents/${encodeURIComponent(liveAgentId)}/launch`,
-      { data: {} },
+      { headers: { Origin: new URL(baseURL!).origin }, data: {} },
     );
 
     expect(launch.status(), await launch.text()).toBe(202);
@@ -502,7 +502,10 @@ fi
     const task = (await created.json()) as { taskId: string };
     const launch = await page.request.post(
       `/api/projects/${fixture.slug}/agents/${encodeURIComponent(fixture.qualifierId)}/launch`,
-      { data: { taskId: task.taskId } },
+      {
+        headers: { Origin: new URL(baseURL!).origin },
+        data: { taskId: task.taskId },
+      },
     );
 
     expect(launch.status()).toBe(202);

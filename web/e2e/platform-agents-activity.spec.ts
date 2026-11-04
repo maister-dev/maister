@@ -369,7 +369,7 @@ test.describe("Agent execution visibility and retained history", () => {
     try {
       const launch = await page.request.post(
         `/api/projects/${slug}/agents/${encodeURIComponent(operationId)}/launch`,
-        { data: {} },
+        { headers: { Origin: new URL(baseURL!).origin }, data: {} },
       );
 
       expect(launch.status()).toBe(202);
@@ -496,7 +496,7 @@ test.describe("Agent execution visibility and retained history", () => {
       for (let index = 0; index < 2; index++) {
         const failedLaunch = await page.request.post(
           `/api/projects/${slug}/agents/${encodeURIComponent(operationId)}/launch`,
-          { data: {} },
+          { headers: { Origin: new URL(baseURL!).origin }, data: {} },
         );
 
         expect(failedLaunch.status()).toBe(202);
@@ -948,7 +948,10 @@ test.describe("Agent execution visibility and retained history", () => {
     ).toEqual([]);
     const launch = await page.request.post(
       `/api/projects/${slug}/agents/${encodeURIComponent(qualifierId)}/launch`,
-      { data: { taskId: task.taskId } },
+      {
+        headers: { Origin: new URL(baseURL!).origin },
+        data: { taskId: task.taskId },
+      },
     );
 
     expect(launch.status()).toBe(202);
