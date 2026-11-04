@@ -202,13 +202,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["captureTaskAgentPackage", "node:fs/promises.mkdir", "write"],
         ["captureTaskAgentPackage", "node:fs/promises.mkdtemp", "write"],
         ["release", "node:fs/promises.rm", "remove"],
-        ["captureTaskAgentPackage", "node:fs/promises.readFile", "read"],
-        [
-          "pinnedTaskAgentDefinition",
-          "lib/flows.ts#localDirectoryContentDigest",
-          "wrapper",
-        ],
-        ["pinnedTaskAgentDefinition", "node:fs/promises.readFile", "read"],
+        ["readTaskAgentDefinitionSource", "node:fs/promises.readFile", "read"],
       ],
     ),
     ...classified(
@@ -217,7 +211,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "Read-only installed package content identity is computed during agent preflight outside SQL transactions",
       [
         [
-          "resolveAgentTaskLaunchSettingsForTrigger",
+          "taskAgentPackageContentDigest",
           "lib/flows.ts#localDirectoryContentDigest",
           "wrapper",
         ],
@@ -253,7 +247,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "Manager-owned Flow source captures and witnesses freeze the exact scripts and schemas consumed by the Run",
       [
         [
-          "verifyCapturedAssets",
+          "flowAssetContentDigest",
           "lib/flows.ts#localDirectoryContentDigest",
           "wrapper",
         ],
@@ -266,11 +260,6 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
           "wrapper",
         ],
         ["exists", "node:fs/promises.lstat", "stat"],
-        [
-          "captureTaskLaunchFlowAssets",
-          "lib/flows.ts#localDirectoryContentDigest",
-          "wrapper",
-        ],
       ],
     ),
     ...classified(
@@ -319,7 +308,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "Read-only content identities of installed capability bundles freeze the accepted request before its DB transaction",
       [
         [
-          "captureTaskLaunchCapabilityBundles",
+          "capabilityContentDigest",
           "lib/flows.ts#localDirectoryContentDigest",
           "wrapper",
         ],
