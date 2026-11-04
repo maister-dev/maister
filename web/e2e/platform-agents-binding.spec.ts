@@ -31,6 +31,16 @@ test("flow-bound agent launch records its selected Flow settings and any actual 
   // /api/runs/launch-options; the POST fires from its confirm button. The
   // seeded task has never run, so its card button reads "Launch" — "Run again"
   // appears only once `runCount > 0` (components/board/board.tsx).
+  const optionsResponse = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+
+    return (
+      url.pathname === "/api/runs/launch-options" &&
+      url.searchParams.get("taskId") === fx.boundTaskId &&
+      response.request().method() === "GET"
+    );
+  });
+
   await card.getByRole("button", { name: "Launch", exact: true }).click();
 
   const dialog = page.getByTestId("task-launch-dialog");
@@ -43,6 +53,11 @@ test("flow-bound agent launch records its selected Flow settings and any actual 
   });
 
   await expect(createRun).toBeEnabled();
+  const options = await optionsResponse;
+  const preview: { selectedRunnerId: string } = await options.json();
+
+  expect(options.status()).toBe(200);
+  expect(preview.selectedRunnerId).toBeTruthy();
 
   const launchResponse = page.waitForResponse(
     (response) =>
@@ -63,7 +78,7 @@ test("flow-bound agent launch records its selected Flow settings and any actual 
   expect(receipt.taskId).toBe(fx.boundTaskId);
   expect(receipt.snapshot.kind).toBe("flow");
   expect(receipt.snapshot.flowId).toBe(taskFlowId);
-  expect(receipt.snapshot.runnerIds).toContain(fx.runnerId);
+  expect(receipt.snapshot.runnerIds).toContain(preview.selectedRunnerId);
   const intent = await singleValue<{
     id: string;
     taskId: string;

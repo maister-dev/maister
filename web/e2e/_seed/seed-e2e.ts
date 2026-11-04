@@ -3716,6 +3716,11 @@ async function seedM11cRefuseFixture(
   // project repo's branches — the refusal path now needs a REAL git repo even
   // though the launch itself is refused before any worktree op.
   await createGitRepo(repoPath);
+  mkdirSync(installedPath, { recursive: true });
+  writeYamlLike(
+    path.join(installedPath, "flow.yaml"),
+    JSON.stringify(M11C_REFUSE_MANIFEST, null, 2),
+  );
 
   await pool.query(`DELETE FROM projects WHERE slug = $1`, [M11C_REFUSE_SLUG]);
   // flow_revisions is project-independent (keyed by flow_ref_id + resolved
