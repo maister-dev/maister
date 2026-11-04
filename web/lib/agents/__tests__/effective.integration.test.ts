@@ -10,6 +10,12 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { resolveEffectiveAgentDefinition } from "@/lib/agents/effective";
+import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
+import {
+  parseAgentDefinition,
+  renderAgentDefinition,
+} from "@/lib/agents/definition";
+import { registerPackageAgents } from "@/lib/agents/registry";
 import { isMaisterError } from "@/lib/errors";
 import { upgradePreview } from "@/lib/flows/lifecycle";
 import {
@@ -217,6 +223,182 @@ function expectPrecondition(promise: Promise<unknown>, match: RegExp) {
 }
 
 describe("resolveEffectiveAgentDefinition (RD4 / ADR-106)", () => {
+  it("IT-CBS-01 preserves specialist metadata on the actual project pin and applies catalog SET/CLEAR/re-SET without changing legacy identity", async () => {
+    const projectId = await seedProject("specialist-pin");
+    const firstSource = md("FIRST-PIN").replace(
+      "risk_tier: read_only",
+      "specialist:\n  responsibilities: [Inspect authorized stand health]\n  targetClasses: [stand]\nrisk_tier: read_only",
+    );
+    const replacementSource = md("THIRD-PIN").replace(
+      "risk_tier: read_only",
+      "specialist:\n  responsibilities: [Diagnose bounded component failures]\n  targetClasses: [stand, component]\nrisk_tier: read_only",
+    );
+    const first = await installPackage({
+      name: "specialist",
+      versionLabel: "v1",
+      agents: { engineer: firstSource },
+    });
+    const legacy = await installPackage({
+      name: "specialist",
+      versionLabel: "v2",
+      agents: { engineer: md("LEGACY-PIN") },
+    });
+    const replacement = await installPackage({
+      name: "specialist",
+      versionLabel: "v3",
+      agents: { engineer: replacementSource },
+    });
+
+    await attachPackage({
+      projectId,
+      packageInstallId: first,
+      packageName: "specialist",
+    });
+    const effective = await resolveEffectiveAgentDefinition(
+      { projectId, agentId: "specialist:engineer" },
+      db,
+    );
+
+    expect(effective.parsed).toMatchObject({
+      id: "specialist:engineer",
+      kind: "code_delivery",
+      specialist: {
+        responsibilities: ["Inspect authorized stand health"],
+        targetClasses: ["stand"],
+      },
+    });
+    expect(
+      parseAgentDefinition(
+        effective.parsed.id,
+        renderAgentDefinition(effective.parsed),
+      ),
+    ).toMatchObject({ specialist: effective.parsed.specialist });
+    const frozenHash = agentDefinitionSha256(effective.parsed);
+
+    expect((await registerPackageAgents(first, db)).invalid).toEqual([]);
+    expect(
+      (
+        await pool.query(
+          "SELECT specialist FROM agents WHERE id='specialist:engineer'",
+        )
+      ).rows,
+    ).toEqual([{ specialist: effective.parsed.specialist }]);
+    expect((await registerPackageAgents(legacy, db)).invalid).toEqual([]);
+    expect(
+      (
+        await pool.query(
+          "SELECT specialist FROM agents WHERE id='specialist:engineer'",
+        )
+      ).rows,
+    ).toEqual([{ specialist: null }]);
+    expect((await registerPackageAgents(replacement, db)).invalid).toEqual([]);
+    expect(
+      (
+        await pool.query(
+          "SELECT specialist FROM agents WHERE id='specialist:engineer'",
+        )
+      ).rows,
+    ).toEqual([
+      {
+        specialist: {
+          responsibilities: ["Diagnose bounded component failures"],
+          targetClasses: ["stand", "component"],
+        },
+      },
+    ]);
+    await pool.query(
+      "UPDATE agents SET specialist=$1::jsonb WHERE id='specialist:engineer'",
+      [
+        JSON.stringify({
+          responsibilities: ["x".repeat(256)],
+          targetClasses: ["stand"],
+        }),
+      ],
+    );
+    await expect(
+      pool.query(
+        "UPDATE agents SET specialist=$1::jsonb WHERE id='specialist:engineer'",
+        [
+          JSON.stringify({
+            responsibilities: ["x".repeat(257)],
+            targetClasses: ["stand"],
+          }),
+        ],
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "agents_specialist_check",
+    });
+    await expect(
+      pool.query(
+        "UPDATE agents SET specialist=$1::jsonb WHERE id='specialist:engineer'",
+        [
+          JSON.stringify({
+            responsibilities: ["   "],
+            targetClasses: ["stand"],
+          }),
+        ],
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "agents_specialist_check",
+    });
+    await registerPackageAgents(replacement, db);
+    const unicodeResponsibility = "🔧".repeat(256);
+    const unicodeSource = firstSource.replace(
+      "Inspect authorized stand health",
+      unicodeResponsibility,
+    );
+
+    expect(
+      parseAgentDefinition("specialist:engineer", unicodeSource).specialist
+        ?.responsibilities,
+    ).toEqual([unicodeResponsibility]);
+    await pool.query(
+      "UPDATE agents SET specialist=$1::jsonb WHERE id='specialist:engineer'",
+      [
+        JSON.stringify({
+          responsibilities: [unicodeResponsibility],
+          targetClasses: ["stand"],
+        }),
+      ],
+    );
+    await registerPackageAgents(replacement, db);
+    const stillPinned = await resolveEffectiveAgentDefinition(
+      { projectId, agentId: "specialist:engineer" },
+      db,
+    );
+
+    expect(stillPinned.packageInstallId).toBe(first);
+    expect(agentDefinitionSha256(stillPinned.parsed)).toBe(frozenHash);
+    expect(
+      parseAgentDefinition("legacy:engineer", md("LEGACY-PIN")),
+    ).not.toHaveProperty("specialist");
+    await expect(
+      installPackage({
+        name: "malformed-specialist",
+        versionLabel: "v1",
+        agents: {
+          engineer: firstSource.replace(
+            "responsibilities: [Inspect authorized stand health]",
+            "responsibilities: []",
+          ),
+        },
+      }).then(async (packageInstallId) => {
+        await attachPackage({
+          projectId,
+          packageInstallId,
+          packageName: "malformed-specialist",
+        });
+
+        return resolveEffectiveAgentDefinition(
+          { projectId, agentId: "malformed-specialist:engineer" },
+          db,
+        );
+      }),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+  });
+
   it("two projects attached to different package versions resolve different definitions", async () => {
     const p1 = await seedProject("eff-p1");
     const p2 = await seedProject("eff-p2");

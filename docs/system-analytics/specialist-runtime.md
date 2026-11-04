@@ -2,7 +2,7 @@
 
 ## Purpose
 
-**Designed — ADR-203.** Reusable specialist roles extend existing package agents and installed Flow bindings. This domain owns company execution and invocation scope; [assignments](specialist-assignments.md) owns durable work and [cooperation](specialist-cooperation.md) owns delegation/acceptance.
+**Implemented: descriptive specialist metadata; Designed: company binding and execution — ADR-203.** Reusable specialist roles extend existing package agents and installed Flow bindings. This domain owns company execution and invocation scope; [assignments](specialist-assignments.md) owns durable work and [cooperation](specialist-cooperation.md) owns delegation/acceptance.
 
 ## Domain entities
 
@@ -47,7 +47,9 @@ sequenceDiagram
 
 ### Definition and declaration
 
-Additive agent metadata is `specialist: {responsibilities: string[], targetClasses: string[]}`; each list has 1–32 entries of 1–256 characters. Existing `kind=operational|code_delivery`, workspace, capabilities and execution-policy fields retain their meanings. Metadata never grants authority. Binding config uses the existing strict definition schema and SET/CLEAR/re-SET semantics.
+Implemented additive agent metadata is `specialist: {responsibilities: string[], targetClasses: string[]}`; each list has 1–32 distinct, nonblank entries of 1–256 characters. Parser/rendering, explicit package validation and the catalog share the declaration. Generated main `0235_specialist_metadata` adds nullable `agents.specialist`; old rows stay NULL. Catalog SET/CLEAR/re-SET follows the selected package source, while effective project definitions continue to resolve their own immutable attachment pin. Absence remains absent in serialized definitions, preserving legacy hashes and frozen snapshots. Existing `kind=operational|code_delivery`, workspace, capabilities and execution-policy fields retain their meanings. Metadata never grants authority.
+
+Company binding configuration remains designed. A stable binding head and immutable configuration revisions retain the exact package/definition, configuration, runner/policy, allowed action subset and server author. Creation requires a content-guarded delivery key; full replacement additionally requires the current configuration revision. A repeat of an older accepted key resolves its retained receipt, while changed content conflicts. Optional configuration fields use explicit SET/CLEAR semantics. Current company grants and binding limits are intersected at action time; a retained revision cannot authorize a revoked capability. Detach retires current admission without deleting prior configuration or execution snapshots.
 
 Company-capable Flow declaration is `execution: {workspace: "none", completion: "result"}`. It requires designed engine capability floor `3.12.0`; engine 3.11.0 provides native evidence findings, while company result-only execution remains Designed until its runtime slice and binding preflight are implemented and qualified. The same result-only Flow can be enabled for a project; owner comes from the server binding, never a model field. Its required result export is frozen at launch.
 

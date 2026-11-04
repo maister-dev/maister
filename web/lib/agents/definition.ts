@@ -30,6 +30,10 @@ import {
   type HooksSettings,
 } from "@/lib/config.schema";
 import { AGENT_TRIGGER_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
+import {
+  agentSpecialistSchema,
+  type AgentSpecialist,
+} from "@/lib/agents/specialist";
 // errors-core, not @/lib/errors: this module is imported by the client-side
 // artifact validator (Studio editor bundle); the server re-export preserves
 // class identity so server-side catch/instanceof still works.
@@ -283,6 +287,7 @@ export const agentDefinitionFrontmatterSchema = z
     kind: z.enum(AGENT_KINDS).optional(),
     completion: operationalCompletionSchema.optional(),
     task_qualification: taskQualificationDeclarationSchema.optional(),
+    specialist: agentSpecialistSchema.optional(),
     runner: z.string().min(1).max(128).optional(),
     workspace: z.enum(AGENT_WORKSPACE_KINDS),
     // `trigger` resolves the ref from the triggering event (ADR-090 rework);
@@ -401,6 +406,7 @@ export type ParsedAgentDefinition = {
   kind: AgentKind;
   completion: OperationalCompletion | null;
   taskQualification: AgentTaskQualification | null;
+  specialist?: AgentSpecialist;
   runner: string | null;
   workspace: AgentWorkspace;
   workspaceRef: string | null;
@@ -467,6 +473,7 @@ export function parseAgentDefinition(
     kind: fm.kind ?? "code_delivery",
     completion: fm.completion ?? null,
     taskQualification: fm.task_qualification ?? null,
+    ...(fm.specialist === undefined ? {} : { specialist: fm.specialist }),
     runner: fm.runner ?? null,
     workspace: fm.workspace,
     workspaceRef: fm.workspace_ref ?? null,
@@ -491,6 +498,7 @@ export type AgentDefinitionInput = {
   kind?: AgentKind;
   completion?: OperationalCompletion | null;
   taskQualification?: AgentTaskQualification | null;
+  specialist?: AgentSpecialist;
   runner?: string | null;
   workspace: AgentWorkspace;
   workspaceRef?: string | null;
@@ -518,6 +526,7 @@ export function renderAgentDefinition(input: AgentDefinitionInput): string {
     ...(input.taskQualification
       ? { task_qualification: input.taskQualification }
       : {}),
+    ...(input.specialist ? { specialist: input.specialist } : {}),
     ...(input.runner ? { runner: input.runner } : {}),
     workspace: input.workspace,
     ...(input.workspaceRef ? { workspace_ref: input.workspaceRef } : {}),

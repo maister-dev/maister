@@ -108,7 +108,8 @@ export async function assertPackageOperationalContracts(
       !split.ok ||
       !split.frontmatter ||
       (split.frontmatter.kind === undefined &&
-        split.frontmatter.completion === undefined)
+        split.frontmatter.completion === undefined &&
+        split.frontmatter.specialist === undefined)
     )
       continue;
     const definition = parseAgentDefinition(

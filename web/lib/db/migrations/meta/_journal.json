@@ -1618,6 +1618,13 @@
       "when": 1794606477937,
       "tag": "0234_specialist_assignments",
       "breakpoints": true
+    },
+    {
+      "idx": 235,
+      "version": "7",
+      "when": 1794606477938,
+      "tag": "0235_specialist_metadata",
+      "breakpoints": true
     }
   ]
 }

@@ -312,6 +312,7 @@ table agents {
   kind text [not null, default: 'code_delivery']
   completion_contract jsonb
   task_qualification jsonb
+  specialist jsonb
   workspace text [not null]
   mode text [not null]
   triggers jsonb [not null]
@@ -331,6 +332,7 @@ table agents {
 
   indexes {
     package_name [name: 'agents_package_name_idx']
+
 
 
   }

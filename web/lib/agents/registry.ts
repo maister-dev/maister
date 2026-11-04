@@ -144,6 +144,7 @@ async function upsertAgentRow(
     kind: parsed.kind,
     completionContract: parsed.completion,
     taskQualification: parsed.taskQualification,
+    specialist: parsed.specialist ?? null,
     runnerId: parsed.runner,
     workspace: parsed.workspace,
     workspaceRef: parsed.workspaceRef,

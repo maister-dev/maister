@@ -5630,9 +5630,11 @@ erDiagram
 
 Main `0230_company_ownership` and Brain `0007_company_records` through `0011_proposal_source_access` implement exclusive ownership, immutable record revisions, original witnesses/independence groups, proposals, separate confirmation decisions and source-aware access. [Company Brain persistence](db/company-brain-domain.md) owns the keys, preserving migration and logical-reference deletion boundary. Both journals are applied before native knowledge traffic is admitted. The generated DBML describes the implemented schema.
 
-## Specialist assignment storage (Implemented); company execution (Designed)
+## Specialist assignment storage and role metadata (Implemented); company execution (Designed)
 
 [Specialist persistence](db/specialist-assignments-domain.md) defines implemented `0234_specialist_assignments`: exclusive company/project assignment heads, immutable `specialist_input_revisions` and `specialist_run_links` to existing executions. Business revision, input head and context head are separate. A deferred constraint checks the retained input head at commit; history and run links reject UPDATE/DELETE. State changes use the existing content-free domain outbox. Current authority, source restrictions, exact input CAS, cancellation and reopening are enforced by the assignment store. No legacy runs acquire invented assignments.
+
+Generated `0235_specialist_metadata` adds nullable `agents.specialist` with bounded responsibility/target-class declarations and a closed JSON shape. The registry handles SET/CLEAR/re-SET; absent metadata preserves old serialized definitions and their hashes. The declaration is descriptive and grants no authority. [Specialist runtime](system-analytics/specialist-runtime.md) owns its contract.
 
 Pinned company bindings, native company execution, context/questions, coordinator ownership and verified acceptance remain subsequent slices. Completion is refused until exact result/verification acceptance is implemented. Existing `runs`, `node_attempts` and `run_results` remain the execution ledgers. The designed company result-only Flow pins installed `flow_revisions` with null project/task/project-flow fields; no project `flows` row is fabricated.
 

@@ -1,5 +1,6 @@
 import type { CoordinatorChildLaunchContext } from "@/lib/orchestrator/child-launch-context";
 import type { NativeDelegationInput } from "@/lib/orchestrator/native-input-types";
+import type { AgentSpecialist } from "@/lib/agents/specialist";
 import type {
   AssignmentOrigin,
   AssignmentDestination,
@@ -1125,6 +1126,7 @@ export const agents = pgTable(
     ).$type<OperationalCompletion>(),
     taskQualification:
       jsonb("task_qualification").$type<AgentTaskQualification>(),
+    specialist: jsonb("specialist").$type<AgentSpecialist>(),
     workspace: text("workspace", {
       enum: ["none", "repo_read", "worktree"],
     }).notNull(),
@@ -1165,6 +1167,16 @@ export const agents = pgTable(
   },
   (t) => ({
     idxPackageName: index("agents_package_name_idx").on(t.packageName),
+    specialistCheck: check(
+      "agents_specialist_check",
+      sql`${t.specialist} IS NULL OR (CASE WHEN jsonb_typeof(${t.specialist})='object' AND jsonb_typeof(${t.specialist}->'responsibilities')='array' AND jsonb_typeof(${t.specialist}->'targetClasses')='array' THEN
+        ${t.specialist} ?& ARRAY['responsibilities','targetClasses']
+        AND ${t.specialist}-ARRAY['responsibilities','targetClasses']='{}'::jsonb
+        AND jsonb_array_length(${t.specialist}->'responsibilities') BETWEEN 1 AND 32
+        AND jsonb_array_length(${t.specialist}->'targetClasses') BETWEEN 1 AND 32
+        AND NOT jsonb_path_exists(${t.specialist}, '$.*[*] ? (@.type() != "string" || !(@ like_regex "^.{1,255}.?$" flag "s") || !(@ like_regex "[^[:space:]]"))')
+        ELSE false END) IS TRUE`,
+    ),
     taskQualificationCheck: check(
       "agents_task_qualification_check",
       sql`${t.taskQualification} IS NULL OR (jsonb_typeof(${t.taskQualification})='object' AND ${t.taskQualification}->>'contract'='v1' AND ${t.taskQualification}->>'role' IN ('intake','qualifier') AND ${t.taskQualification}-ARRAY['contract','role']='{}'::jsonb AND ${t.kind}='operational' AND ${t.mode}='session' AND (${t.taskQualification}->>'role'<>'qualifier' OR ${t.workspace}='repo_read' AND ${t.workspaceRef}='task_target')) IS TRUE`,
