@@ -63,11 +63,13 @@ admission/input and requires current recovery authority; a successor retry is a
 new linked decision. The [launch contract](../../system-analytics/task-launch-admission.md)
 owns these rules and compatibility limits for historical receipts.
 
-An agent preparation failure before model dispatch is shown separately from a
-negative task assessment. The result explains that the model did not start and
-exposes the infrastructure cause, remediation and expandable safe diagnostics (stage,
-operation, assignment/epoch and cause chain when recorded). A missing baseline is
-not presented as successful preparation; missing historical causes remain unknown.
+An agent preparation failure is shown separately from a negative task
+assessment. The result exposes the infrastructure cause, remediation and
+expandable safe diagnostics (stage, operation, assignment/epoch and cause chain
+when recorded). Its preparation wording stays neutral about past model execution:
+a continuation can fail after an earlier session. Task qualification status
+claims no model start only with explicit source proof. A missing baseline is not
+presented as successful preparation; missing historical causes remain unknown.
 Operational runs still have no promotion or Git delivery actions.
 
 ## Roles & capabilities

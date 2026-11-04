@@ -124,7 +124,13 @@ A cleanup failure without a primary failure still fails explicitly. Preserving
 a diagnosis grants no terminalization authority: publication fencing and a newer
 preparation owner remain authoritative even within the same assignment epoch.
 
-UI distinguishes pre-model infrastructure failure (“could not prepare workspace; model did not start; no assessment produced”) from a successful negative assessment. Missing-baseline, qualification-source rejection and cleanup failures remain separate subsequent data. Retry is explicit after remediation; no historical diagnosis is invented.
+UI distinguishes workspace-preparation infrastructure failure from a successful
+negative assessment. The Run result uses neutral preparation wording because a
+continuation can fail after earlier model execution. Task qualification status
+may say the model did not start only when its source projection explicitly
+proves that condition; missing evidence is not that proof. Missing-baseline,
+qualification-source rejection and cleanup failures remain separate subsequent
+data. Retry is explicit after remediation; no historical diagnosis is invented.
 
 ## Expectations
 
