@@ -24,6 +24,7 @@ import {
 
 import {
   claimCronAgentAttempt,
+  assertProjectAgentTriggerClaim,
   reconcileAgentTriggerAttempts,
 } from "@/lib/agents/trigger-attempts";
 import {
@@ -298,6 +299,8 @@ async function seedClaimReceipt(
   claim: AgentTriggerClaim,
   snapshot: ScheduledAgentRequestSnapshot | null,
 ): Promise<void> {
+  assertProjectAgentTriggerClaim(claim);
+
   const context = await loadAgentContext(testDatabase.db, {
     agentId: claim.sourceAgentId,
     projectId: claim.projectId,

@@ -210,7 +210,15 @@ table agent_retry_intents {
 table agent_schedules {
   id text [pk, not null]
   agent_id text [not null]
-  project_id text [not null]
+  project_agent_id text
+  project_id text
+  company_id text
+  company_specialist_binding_id text
+  company_flow_binding_id text
+  company_config_revision integer
+  created_by text
+  creation_key text
+  creation_digest text
   trigger_type text [not null]
   request_at_launch text
   cron_expr text
@@ -230,6 +238,15 @@ table agent_schedules {
 
   indexes {
 
+
+
+
+
+    (company_id, created_by, creation_key) [name: 'agent_schedules_company_creation_uq', unique]
+    (company_id, agent_id, id) [name: 'agent_schedules_company_agent_idx']
+    (next_fire_at, id) [name: 'agent_schedules_project_due_idx']
+    (company_id, next_fire_at, id) [name: 'agent_schedules_company_due_idx']
+
     (project_id, agent_id) [name: 'agent_schedules_project_agent_idx']
     (trigger_type, enabled, next_fire_at) [name: 'agent_schedules_due_cron_idx']
 
@@ -239,7 +256,8 @@ table agent_schedules {
 
 table agent_trigger_attempts {
   id text [pk, not null, default: `gen_random_uuid()::text`]
-  project_id text [not null]
+  project_id text
+  company_id text
   source_agent_id text [not null]
   schedule_id text [not null]
   binding_snapshot jsonb [not null]
@@ -260,6 +278,10 @@ table agent_trigger_attempts {
   scope_key text [not null, default: 'unknown']
 
   indexes {
+
+    (company_id, source_agent_id, claimed_at, id) [name: 'agent_trigger_attempt_company_history_idx']
+    (due_at, id) [name: 'agent_trigger_attempt_project_due_idx']
+    (company_id, due_at, id) [name: 'agent_trigger_attempt_company_due_idx']
 
     (schedule_id, delivery_key) [name: 'agent_trigger_attempt_delivery_uq', unique]
     (schedule_id, fence) [name: 'agent_trigger_attempt_fence_uq', unique]
@@ -4066,13 +4088,21 @@ ref agent_retry_intents_actor_user_id_users_id_fk: agent_retry_intents.actor_use
 
 ref agent_retry_intents_created_run_id_runs_id_fk: agent_retry_intents.created_run_id > runs.id [delete: set null, update: no action]
 
-ref agent_schedules_agent_id_agents_id_fk: agent_schedules.agent_id > agents.id [delete: cascade, update: no action]
-
 ref agent_schedules_project_id_projects_id_fk: agent_schedules.project_id > projects.id [delete: cascade, update: no action]
+
+ref agent_schedules_project_agent_fk: agent_schedules.project_agent_id > agents.id [delete: cascade, update: no action]
+
+ref agent_schedules_company_fk: agent_schedules.company_id > companies.id [delete: restrict, update: no action]
+
+ref agent_schedules_company_specialist_fk: agent_schedules.company_specialist_binding_id > company_specialist_bindings.id [delete: restrict, update: no action]
+
+ref agent_schedules_company_flow_fk: agent_schedules.company_flow_binding_id > company_flow_bindings.id [delete: restrict, update: no action]
 
 ref agent_trigger_attempts_project_id_projects_id_fk: agent_trigger_attempts.project_id > projects.id [delete: cascade, update: no action]
 
 ref agent_trigger_attempts_run_id_runs_id_fk: agent_trigger_attempts.run_id > runs.id [delete: set null, update: no action]
+
+ref agent_trigger_attempts_company_fk: agent_trigger_attempts.company_id > companies.id [delete: restrict, update: no action]
 
 ref agent_turns_run_id_runs_id_fk: agent_turns.run_id > runs.id [delete: cascade, update: no action]
 

@@ -1,0 +1,105 @@
+{
+  "phase": "T19.1 owner-aware existing source/trigger storage sub-slice",
+  "baseCommit": "c3b26cdc6",
+  "migration": "0223_company_trigger_scope",
+  "method": "Specification-derived RED -> GREEN -> scoped refactor and affected rerun",
+  "redCases": {
+    "source-red": "Missing company cron source creation after real Git loader/role/Flow setup. A following case also saw the unretired fixture Flow after that failure; fixture cleanup now retires it in finally.",
+    "migration-expression-red": "The generated JSON reference subtraction lacked member-expression parentheses and failed during owned PostgreSQL setup (22P02); the uncommitted migration/snapshot was regenerated with the exact intended predicate. No durable deployed migration was edited.",
+    "typecheck-nullability-red": "A project-only seed helper retained an obsolete non-null project assumption; it now uses the same explicit project-claim assertion as production."
+  },
+  "green": {
+    "owningIntegration": {
+      "files": 10,
+      "tests": 95,
+      "exitCode": 0,
+      "command": "pnpm --filter maister-web test:integration lib/agents/__tests__/company-flow-bindings.integration.test.ts lib/agents/__tests__/company-bindings.integration.test.ts lib/agents/__tests__/triggers.integration.test.ts lib/agents/__tests__/effective.integration.test.ts lib/agents/__tests__/registry.integration.test.ts lib/specialist-assignments/__tests__/store.integration.test.ts lib/db/__tests__/migration-company-trigger-scope.integration.test.ts lib/db/__tests__/migration-scheduled-agent-requests.integration.test.ts lib/db/__tests__/migration-company-brain-specialists.integration.test.ts lib/gc/__tests__/revision-gc.integration.test.ts --maxWorkers=2"
+    },
+    "fullWebUnit": {
+      "files": 886,
+      "tests": 9263,
+      "exitCode": 0
+    },
+    "typecheck": 0,
+    "lintWarnings": 0,
+    "contracts": 0,
+    "docs": 0,
+    "erdTables": 171
+  },
+  "qualified": [
+    "Exclusive company/project schedule and attempt ownership on existing tables",
+    "Exact existing scheduled-request v1 and project binding v1 bytes survive populated migration; old creator attribution remains null",
+    "New company v2 binding references exact accepted role/Flow configuration revisions and content witnesses",
+    "Creation-key replay is inert and changed content conflicts; different keys create independent sources",
+    "Existing cron claim race has one winner, one fence and one reserved run identity",
+    "Configuration revision is independent of invocation telemetry; source edits cannot rewrite a prior request snapshot",
+    "Company attempt ownership/identity is immutable; a forged configuration witness cannot be inserted",
+    "Company sources/receipts survive catalog removal; project catalog cascade and project deletion semantics remain intact without a Brain lookup",
+    "Current project dispatch, reconciliation and legacy backfill exclude company rows before bounded selection; project-only settlement refuses company attempts before effects",
+    "Current explicit company management/read grants and engine capability guard source creation/enablement"
+  ],
+  "refactor": "Use one typed versioned binding-capture seam, existing cron/request utilities and current company authority. Capture locks Flow configuration before specialist configuration, matching replacement order. Conditional generated project-agent FK preserves old cascades while company professional identities remain logical. No new scheduler, invocation or attempt ledger.",
+  "scopeLimits": [
+    "The company source is staged disabled through the native service. The storage claim test explicitly activates only its owned fixture through SQL; this does not qualify production enablement, dispatch or assignment intake.",
+    "Public cron request vocabulary is Designed; no new public operation or ordinary-agent management tool is exposed.",
+    "T22.1 owns actual company clock/event/webhook dispatch, settlement, admission and source lifecycle interfaces. T19.1 remains open for company retry recipe persistence/readers.",
+    "No company execution or stand pilot readiness, remote publication, push or deployment is claimed."
+  ],
+  "sourceSha256": {
+    "web/lib/agents/company-schedule-types.ts": "c3dddd3784b2f8eeff87712c65822c01cb5f61ef05e8c732885571965cffb512",
+    "web/lib/agents/company-schedules.ts": "47aef011d157903e0e49adcd4997782bd653bd1de6f0160f5792d4e5cc65db55",
+    "web/lib/agents/trigger-attempt-types.ts": "a77806d6c3901aefd88582d388a6acfa8a218299f8c9422984a7a65d2e4c56db",
+    "web/lib/agents/trigger-attempts.ts": "8945b8fab906f2c94d52ef2c0321380c40f35d5f6d44b82cbb0797416eb1c58f",
+    "web/lib/agents/trigger-binding-snapshot.ts": "de56bc0e1349778b20ba6add3632a09bfd309729103432fc9c2d7b80ef86b35b",
+    "web/lib/agents/trigger-scope-schema.ts": "820e1fbe8eec6e738b7f7029abb3620f8ca8ad9a7a9ff035a3a96d5ad3247845",
+    "web/lib/agents/triggers.ts": "9cd83eb57c53ce38721135eebe6244b578766c3f2249173651f1973f0c7db28f",
+    "web/lib/db/migrations/0223_company_trigger_scope.sql": "11b9a6fb76b12276fc261655efc2e7ff0b4fe6f15a277905000cafa8962efed8",
+    "web/lib/db/schema.ts": "0dfe0ff0a35e076fa3601aee7fcf3156630b2371e5f26ebca3b3b1b48b447439"
+  },
+  "logs": {
+    "source-red": {
+      "originalBytes": 23842,
+      "sha256": "4ef5f3afb5c1a167be4ba512b0bdca705f22287e161eaa9df4c2a5ea8da36650"
+    },
+    "migration-expression-red": {
+      "originalBytes": 23254,
+      "sha256": "83762296cdb1ff1ebce7b450385515c64623577499e7a0b9e28c26eda8bc3219"
+    },
+    "owning-green": {
+      "originalBytes": 111952,
+      "sha256": "8502da47d33dd88437724dce69d10931dc928964a4011ac307c00135faa2391c"
+    },
+    "full-unit-green": {
+      "originalBytes": 524955,
+      "sha256": "e60ef26b5b54b6ef9e7b1be7d1ee43fc858a24ba2f107f079d739ccb69539d4d"
+    },
+    "typecheck": {
+      "originalBytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "lint": {
+      "originalBytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "contracts": {
+      "originalBytes": 2490,
+      "sha256": "f0ac61477ff30fa4d285b662faef2c7f14db7695fae9c1a3a7921fb7cb11b2e1"
+    },
+    "docs": {
+      "originalBytes": 685,
+      "sha256": "a222b0b3273a66abdacd9abb58740c58fd89a94e03071fe0e9a8c33f3d80b5c1"
+    },
+    "generation": {
+      "originalBytes": 7723,
+      "sha256": "b75622a92db7a5517b598e3481a72186a99c76f94da533fed40608ea304d86da"
+    },
+    "docs-final": {
+      "originalBytes": 685,
+      "sha256": "a222b0b3273a66abdacd9abb58740c58fd89a94e03071fe0e9a8c33f3d80b5c1"
+    },
+    "typecheck-nullability-red": {
+      "originalBytes": 318,
+      "sha256": "07b1f69d9824ae4c65b0ab333e8174957ad9f431c8a0c40324aa8423136668c0"
+    }
+  }
+}

@@ -8,6 +8,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { and, eq, isNull, lte, or, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { captureTriggerBindingSnapshot } from "@/lib/agents/trigger-binding-snapshot";
 import { assertScheduledRequestMatches } from "@/lib/agents/scheduled-request-store";
 import { parseScheduledRequestSnapshot } from "@/lib/agents/scheduled-request";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -26,6 +27,31 @@ const log = pino({
 const RECOVERY_GRACE_MS = 300_000;
 
 export type AgentTriggerClaim = typeof agentTriggerAttempts.$inferSelect;
+export type ProjectAgentTriggerClaim = AgentTriggerClaim & {
+  projectId: string;
+  companyId: null;
+};
+
+/** Company settlement/recovery is wired with the company invocation consumer, never through project incidents. */
+export function assertProjectAgentTriggerClaim(
+  attempt: AgentTriggerClaim,
+): asserts attempt is ProjectAgentTriggerClaim {
+  if (attempt.projectId === null && typeof attempt.companyId === "string")
+    throw new MaisterError(
+      "PRECONDITION",
+      "Company invocation settlement requires the company runtime consumer",
+      { details: { reason: "company_trigger_runtime_unavailable" } },
+    );
+  if (
+    typeof attempt.projectId !== "string" ||
+    attempt.companyId !== null ||
+    attempt.bindingSnapshot.version !== 1
+  )
+    throw new MaisterError(
+      "CONFIG",
+      "The project invocation does not have coherent owner and binding snapshot metadata",
+    );
+}
 
 async function insertClaim(
   tx: Db,
@@ -49,16 +75,10 @@ async function insertClaim(
             }
           : null,
       projectId: binding.projectId,
+      companyId: binding.companyId,
       sourceAgentId: binding.agentId,
       scheduleId: binding.id,
-      bindingSnapshot: {
-        version: 1,
-        scheduleId: binding.id,
-        triggerType: binding.triggerType,
-        cronExpr: binding.cronExpr,
-        timezone: binding.timezone,
-        eventKinds: binding.eventMatch?.kinds ?? [],
-      },
+      bindingSnapshot: await captureTriggerBindingSnapshot(tx, binding),
       fence: binding.lastAttemptFence!,
       deliveryKey,
       triggerSource: binding.triggerType === "cron" ? "cron" : "domain_event",
@@ -179,6 +199,19 @@ export async function claimEventAgentAttempt(
 
       return null;
     }
+    if (current.companyId !== null) {
+      const event = (
+        await tx.execute(
+          sql`SELECT id FROM domain_events WHERE id=${eventId} AND company_id=${current.companyId} AND project_id IS NULL`,
+        )
+      ).rows[0];
+
+      if (!event)
+        throw new MaisterError(
+          "CONFLICT",
+          "The company event does not belong to this invocation source",
+        );
+    }
     const [binding] = await tx
       .update(agentSchedules)
       .set({
@@ -203,6 +236,8 @@ export async function settleAgentTriggerAttempt(
     now: Date;
   },
 ): Promise<void> {
+  assertProjectAgentTriggerClaim(attempt);
+
   await db.transaction(async (tx) => {
     // A run receipt is read before the attempt lock, matching source-run -> agent lock order.
     const [run] = await tx
@@ -364,6 +399,7 @@ export async function reconcileAgentTriggerAttempts(
     .from(agentTriggerAttempts)
     .where(
       and(
+        sql`${agentTriggerAttempts.projectId} IS NOT NULL`,
         lte(agentTriggerAttempts.dueAt, now),
         or(
           isNull(agentTriggerAttempts.outcome),
@@ -376,6 +412,7 @@ export async function reconcileAgentTriggerAttempts(
   const result = { adopted: 0, unknown: 0 };
 
   for (const attempt of due) {
+    assertProjectAgentTriggerClaim(attempt);
     const [run] = await db
       .select({ id: runs.id, status: runs.status })
       .from(runs)

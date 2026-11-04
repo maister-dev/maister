@@ -21,6 +21,14 @@ import {
   updateCompanyFlowBinding,
   detachCompanyFlowBinding,
 } from "../company-flow-binding-mutations";
+import { createCompanyCronSchedule } from "../company-schedules";
+import {
+  claimCronAgentAttempt,
+  reconcileAgentTriggerAttempts,
+  settleAgentTriggerAttempt,
+} from "../trigger-attempts";
+import { dispatchDueAgentSchedules } from "../triggers";
+import { parseScheduledRequestSnapshot } from "../scheduled-request";
 
 import { createCompanyGrants, revokeCompanyGrant } from "@/lib/company/grants";
 import {
@@ -168,7 +176,19 @@ beforeAll(async () => {
       "SELECT 'head' AS kind,to_jsonb(b) AS value FROM company_specialist_bindings b UNION ALL SELECT 'revision' AS kind,to_jsonb(r) AS value FROM company_specialist_binding_revisions r ORDER BY kind",
     )
   ).rows;
-  await applyMainMigration(database.db, "0237_company_flow_bindings");
+  const journal = JSON.parse(
+    await readFile("./lib/db/migrations/meta/_journal.json", "utf8"),
+  ) as { entries: { tag: string }[] };
+  const baseline = journal.entries.findIndex(
+    (entry) => entry.tag === "0236_company_specialist_bindings",
+  );
+
+  if (baseline < 0)
+    throw new Error(
+      "The populated company binding upgrade baseline is missing",
+    );
+  for (const entry of journal.entries.slice(baseline + 1))
+    await applyMainMigration(database.db, entry.tag);
 
   input = {
     owner: specialist.specialist.owner,
@@ -524,6 +544,262 @@ it("refuses stale pins, unmapped or unauthorized human recipients and unsupporte
     );
   }
   expect(await count()).toBe(before);
+});
+
+it("retains company cron sources and one existing invocation reservation per fire without changing the v1 scheduled request or dispatching through a project", async () => {
+  const coordinator = await createCompanyFlowBinding(database.db, requesterId, {
+    ...input,
+    idempotencyKey: randomUUID(),
+  });
+
+  try {
+    const source = {
+      owner: input.owner,
+      specialistBindingId: input.specialistBindingId,
+      coordinatorFlowBindingId: coordinator.binding.id,
+      cronExpr: "*/5 * * * *",
+      timezone: "UTC",
+      requestAtLaunch:
+        "  Inspect company stand\r\nKeep this recurring request separate.  ",
+      idempotencyKey: randomUUID(),
+    };
+
+    await expect(
+      createCompanyCronSchedule(database.db, administratorId, source),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(
+      createCompanyCronSchedule(database.db, requesterId, {
+        ...source,
+        enabled: true,
+      }),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "company_scheduler_contract_unavailable" },
+    });
+    await expect(
+      createCompanyCronSchedule(database.db, requesterId, {
+        ...source,
+        cronExpr: "not a valid cron",
+      }),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+    const created = await createCompanyCronSchedule(
+      database.db,
+      requesterId,
+      source,
+    );
+
+    expect(created).toMatchObject({
+      owner: input.owner,
+      configRevision: 1,
+      duplicate: false,
+    });
+    expect(
+      await createCompanyCronSchedule(database.db, requesterId, source),
+    ).toEqual({ ...created, duplicate: true });
+    await expect(
+      createCompanyCronSchedule(database.db, requesterId, {
+        ...source,
+        requestAtLaunch: "Changed recurring input",
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    const separate = await createCompanyCronSchedule(database.db, requesterId, {
+      ...source,
+      idempotencyKey: randomUUID(),
+    });
+
+    expect(separate.scheduleId).not.toBe(created.scheduleId);
+    // Activate only this owned storage fixture; production company dispatch/enablement is qualified in T22.1.
+    const now = new Date(Date.now() + 1000);
+
+    await database.pool.query(
+      "UPDATE agent_schedules SET enabled=true,company_config_revision=2,next_fire_at=$2 WHERE id=$1",
+      [created.scheduleId, new Date(now.getTime() - 1000)],
+    );
+    const claims = await Promise.all([
+      claimCronAgentAttempt(
+        database.db,
+        created.scheduleId,
+        now,
+        new Date(now.getTime() + 300000),
+      ),
+      claimCronAgentAttempt(
+        database.db,
+        created.scheduleId,
+        now,
+        new Date(now.getTime() + 300000),
+      ),
+    ]);
+    const claimed = claims.find((claim) => claim !== null)!;
+
+    expect(claims.filter((claim) => claim !== null)).toHaveLength(1);
+    expect(claimed).toMatchObject({
+      projectId: null,
+      companyId: input.owner.companyId,
+      sourceAgentId: "rah:evidence-researcher",
+      fence: 1,
+      deliveryKey: "cron:1",
+      bindingSnapshot: {
+        version: 2,
+        owner: input.owner,
+        sourceRevision: 2,
+        specialistBinding: {
+          id: input.specialistBindingId,
+          revision: 1,
+          snapshotSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
+        coordinatorFlowBinding: {
+          id: coordinator.binding.id,
+          revision: 1,
+          snapshotSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
+      },
+    });
+    expect(
+      parseScheduledRequestSnapshot(claimed.scheduledRequestSnapshot),
+    ).toEqual({
+      version: 1,
+      scheduleId: created.scheduleId,
+      triggerAttemptId: claimed.id,
+      requestAtLaunch:
+        "Inspect company stand\nKeep this recurring request separate.",
+    });
+    await expect(
+      database.pool.query(
+        "UPDATE agent_trigger_attempts SET company_id=NULL,project_id=$2 WHERE id=$1",
+        [claimed.id, randomUUID()],
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
+    await database.pool.query(
+      "UPDATE agent_schedules SET request_at_launch='Updated future request',company_config_revision=3 WHERE id=$1",
+      [created.scheduleId],
+    );
+    expect(
+      (
+        await database.pool.query(
+          "SELECT scheduled_request_snapshot FROM agent_trigger_attempts WHERE id=$1",
+          [claimed.id],
+        )
+      ).rows[0]!.scheduled_request_snapshot,
+    ).toEqual(claimed.scheduledRequestSnapshot);
+    await expect(
+      settleAgentTriggerAttempt(database.db, claimed, {
+        outcome: "unknown",
+        runId: null,
+        reasonCode: "not_dispatched",
+        now,
+      }),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "company_trigger_runtime_unavailable" },
+    });
+    expect(
+      await reconcileAgentTriggerAttempts(
+        database.db,
+        new Date(now.getTime() + 600000),
+      ),
+    ).toEqual({ adopted: 0, unknown: 0 });
+    const rejectedAttemptId = randomUUID();
+    const forgedBinding = {
+      ...claimed.bindingSnapshot,
+      sourceRevision: 3,
+      specialistBinding: {
+        id: input.specialistBindingId,
+        revision: 1,
+        snapshotSha256: "0".repeat(64),
+      },
+    };
+    const client = await database.pool.connect();
+
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "UPDATE agent_schedules SET last_attempt_fence=2 WHERE id=$1",
+        [created.scheduleId],
+      );
+      await expect(
+        client.query(
+          "INSERT INTO agent_trigger_attempts(id,project_id,company_id,source_agent_id,schedule_id,binding_snapshot,scheduled_request_snapshot,fence,delivery_key,trigger_source,reserved_run_id,claimed_at,due_at) VALUES($1,NULL,$2,'rah:evidence-researcher',$3,$4::jsonb,$5::jsonb,2,'cron:2','cron',$6,$7,$8)",
+          [
+            rejectedAttemptId,
+            input.owner.companyId,
+            created.scheduleId,
+            JSON.stringify(forgedBinding),
+            JSON.stringify({
+              version: 1,
+              scheduleId: created.scheduleId,
+              triggerAttemptId: rejectedAttemptId,
+              requestAtLaunch: "Updated future request",
+            }),
+            randomUUID(),
+            now,
+            new Date(now.getTime() + 300000),
+          ],
+        ),
+      ).rejects.toMatchObject({ code: "23514" });
+    } finally {
+      await client.query("ROLLBACK");
+      client.release();
+    }
+    expect(
+      await dispatchDueAgentSchedules({
+        db: database.db,
+        now: new Date(now.getTime() + 600000),
+      }),
+    ).toMatchObject({ due: 0, claimed: 0, launched: 0 });
+    expect((await database.pool.query("SELECT id FROM projects")).rows).toEqual(
+      [],
+    );
+    expect((await database.pool.query("SELECT id FROM runs")).rows).toEqual([]);
+    await expect(
+      database.pool.query(
+        "UPDATE agent_schedules SET request_at_launch='Unversioned change' WHERE id=$1",
+        [created.scheduleId],
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
+    await expect(
+      database.pool.query("DELETE FROM agent_schedules WHERE id=$1", [
+        created.scheduleId,
+      ]),
+    ).rejects.toMatchObject({ code: "23514" });
+    const catalog = (
+      await database.pool.query(
+        "SELECT to_jsonb(a) AS value FROM agents a WHERE id='rah:evidence-researcher'",
+      )
+    ).rows[0]!.value;
+
+    await database.pool.query(
+      "DELETE FROM agents WHERE id='rah:evidence-researcher'",
+    );
+    try {
+      expect(
+        (
+          await database.pool.query(
+            "SELECT id FROM agent_schedules WHERE id=ANY($1::text[])",
+            [[created.scheduleId, separate.scheduleId]],
+          )
+        ).rows,
+      ).toHaveLength(2);
+      expect(
+        await createCompanyCronSchedule(database.db, requesterId, source),
+      ).toEqual({ ...created, duplicate: true });
+    } finally {
+      await database.pool.query(
+        "INSERT INTO agents SELECT (jsonb_populate_record(NULL::agents,$1::jsonb)).*",
+        [JSON.stringify(catalog)],
+      );
+    }
+  } finally {
+    await detachCompanyFlowBinding(
+      database.db,
+      requesterId,
+      coordinator.binding.id,
+      {
+        expectedRevision: 1,
+        reason: "Retire source qualification coordinator",
+        idempotencyKey: randomUUID(),
+      },
+    );
+  }
 });
 
 it("protects its own current Flow pin after specialist retirement and releases only current references on explicit Flow retirement", async () => {

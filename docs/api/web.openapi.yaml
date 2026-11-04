@@ -38837,3 +38837,74 @@ components:
         Disabled review does not admit execution; enablement requires the supported
         3.12.0 company result-only contract.
       x-implementation-status: Designed
+    CBCompanyCronScheduleInput:
+      type: object
+      properties:
+        owner:
+          type: object
+          properties:
+            kind:
+              type: string
+              enum:
+                - company
+            companyId:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+          required:
+            - kind
+            - companyId
+          additionalProperties: false
+        specialistBindingId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        coordinatorFlowBindingId:
+          default: null
+          nullable: true
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        cronExpr:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        timezone:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        requestAtLaunch:
+          default: null
+          nullable: true
+          type: string
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+          description: Literal current request, separate from standing instructions and
+            permissions. Server normalization folds CRLF/CR to LF and trims edges,
+            then enforces at most 8000 Unicode code points; empty normalized text is
+            null.
+        enabled:
+          default: false
+          type: boolean
+        idempotencyKey:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+      required:
+        - owner
+        - specialistBindingId
+        - cronExpr
+        - timezone
+        - idempotencyKey
+      additionalProperties: false
+      description: Reviewed company cron source on the existing schedule table.
+        Internal storage creation is implemented; public creation/dispatch remains
+        Designed. The server validates exact owned binding references and current
+        management/read authority. Source configuration cannot mint execution
+        permissions. Current runtime capability is checked before enabling.
+      x-implementation-status: Designed

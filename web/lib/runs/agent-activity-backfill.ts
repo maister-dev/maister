@@ -306,6 +306,7 @@ async function schedulesPage(
     .from(agentSchedules)
     .where(
       and(
+        isNotNull(agentSchedules.projectId),
         isNotNull(agentSchedules.lastAttemptAt),
         state.afterScheduleId
           ? gt(agentSchedules.id, state.afterScheduleId)

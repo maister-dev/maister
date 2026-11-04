@@ -1,6 +1,9 @@
 import "server-only";
 
-import type { AgentTriggerClaim } from "@/lib/agents/trigger-attempts";
+import type {
+  AgentTriggerClaim,
+  ProjectAgentTriggerClaim,
+} from "@/lib/agents/trigger-attempts";
 import type { DomainEventConsumer } from "@/lib/domain-events/consumers";
 import type { DomainEventRow, ProjectDomainEventRow } from "@/lib/db/schema";
 
@@ -10,6 +13,7 @@ import pino from "pino";
 import { isProjectDomainEvent } from "@/lib/domain-events/scope";
 import {
   claimCronAgentAttempt,
+  assertProjectAgentTriggerClaim,
   claimEventAgentAttempt,
   settleAgentTriggerAttempt,
 } from "@/lib/agents/trigger-attempts";
@@ -60,13 +64,17 @@ async function claimAgentScheduleTelemetry(input: {
   scheduleId: string;
   now: Date;
   eventId: number;
-}): Promise<AgentTriggerClaim | null> {
-  return claimEventAgentAttempt(
+}): Promise<ProjectAgentTriggerClaim | null> {
+  const claim = await claimEventAgentAttempt(
     input.db,
     input.scheduleId,
     input.now,
     input.eventId,
   );
+
+  if (claim) assertProjectAgentTriggerClaim(claim);
+
+  return claim;
 }
 
 async function recordAgentScheduleOutcome(input: {
@@ -157,6 +165,7 @@ export async function dispatchDueAgentSchedules(
     .from(agentSchedules)
     .where(
       and(
+        sql`${agentSchedules.projectId} IS NOT NULL`,
         eq(agentSchedules.triggerType, "cron"),
         eq(agentSchedules.enabled, true),
         lte(agentSchedules.nextFireAt, now),
@@ -193,6 +202,7 @@ export async function dispatchDueAgentSchedules(
     const fence = await claimCronAgentAttempt(_db, row.id, now, next);
 
     if (!fence) continue;
+    assertProjectAgentTriggerClaim(fence);
     summary.claimed += 1;
 
     try {

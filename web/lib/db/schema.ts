@@ -133,6 +133,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 
+import { triggerBindingScopeShape } from "@/lib/agents/trigger-scope-schema";
 import { scheduledRequestShape } from "@/lib/agents/scheduled-request-schema";
 import { TASK_LAUNCH_STATES } from "@/lib/tasks/launch-types";
 import {
@@ -1272,12 +1273,20 @@ export const agentSchedules = pgTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    agentId: text("agent_id")
-      .notNull()
-      .references(() => agents.id, { onDelete: "cascade" }),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+    agentId: text("agent_id").notNull(),
+    projectAgentId: text("project_agent_id").generatedAlwaysAs(
+      sql`CASE WHEN project_id IS NOT NULL THEN agent_id ELSE NULL END`,
+    ),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    companyId: text("company_id"),
+    companySpecialistBindingId: text("company_specialist_binding_id"),
+    companyFlowBindingId: text("company_flow_binding_id"),
+    companyConfigRevision: integer("company_config_revision"),
+    createdBy: text("created_by"),
+    creationKey: text("creation_key"),
+    creationDigest: text("creation_digest"),
     // ADR-151: `mention` rows carry no cron and no event_match — both shape
     // CHECKs are `<>`-guarded, and the column itself has no value CHECK, so
     // the third value needed no migration.
@@ -1325,6 +1334,48 @@ export const agentSchedules = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    projectAgent: foreignKey({
+      name: "agent_schedules_project_agent_fk",
+      columns: [t.projectAgentId],
+      foreignColumns: [agents.id],
+    }).onDelete("cascade"),
+    company: foreignKey({
+      name: "agent_schedules_company_fk",
+      columns: [t.companyId],
+      foreignColumns: [companies.id],
+    }).onDelete("restrict"),
+    companySpecialist: foreignKey({
+      name: "agent_schedules_company_specialist_fk",
+      columns: [t.companySpecialistBindingId],
+      foreignColumns: [companySpecialistBindings.id],
+    }).onDelete("restrict"),
+    companyFlow: foreignKey({
+      name: "agent_schedules_company_flow_fk",
+      columns: [t.companyFlowBindingId],
+      foreignColumns: [companyFlowBindings.id],
+    }).onDelete("restrict"),
+    owner: check(
+      "agent_schedules_owner_check",
+      sql`((${t.projectId} IS NOT NULL AND ${t.companyId} IS NULL AND ${t.companySpecialistBindingId} IS NULL AND ${t.companyFlowBindingId} IS NULL AND ${t.companyConfigRevision} IS NULL AND ${t.createdBy} IS NULL AND ${t.creationKey} IS NULL AND ${t.creationDigest} IS NULL) OR (${t.projectId} IS NULL AND ${t.companyId} IS NOT NULL AND ${t.companySpecialistBindingId} IS NOT NULL AND ${t.companyConfigRevision}>0 AND char_length(${t.createdBy}) BETWEEN 1 AND 192 AND ${t.creationKey} ~ '^[A-Za-z0-9._:-]{8,128}$' AND ${t.creationDigest} ~ '^[a-f0-9]{64}$' AND ${t.triggerType} IN ('cron','event'))) IS TRUE`,
+    ),
+    companyCreation: uniqueIndex("agent_schedules_company_creation_uq")
+      .on(t.companyId, t.createdBy, t.creationKey)
+      .where(sql`${t.companyId} IS NOT NULL`),
+    companyAgent: index("agent_schedules_company_agent_idx").on(
+      t.companyId,
+      t.agentId,
+      t.id,
+    ),
+    projectDue: index("agent_schedules_project_due_idx")
+      .on(t.nextFireAt, t.id)
+      .where(
+        sql`${t.projectId} IS NOT NULL AND ${t.triggerType}='cron' AND ${t.enabled}=true`,
+      ),
+    companyDue: index("agent_schedules_company_due_idx")
+      .on(t.companyId, t.nextFireAt, t.id)
+      .where(
+        sql`${t.companyId} IS NOT NULL AND ${t.triggerType}='cron' AND ${t.enabled}=true`,
+      ),
     requestShape: check(
       "agent_schedules_request_shape",
       sql`${t.requestAtLaunch} IS NULL OR (${t.triggerType} = 'cron' AND char_length(${t.requestAtLaunch}) BETWEEN 1 AND 8000)`,
@@ -1355,9 +1406,10 @@ export const agentTriggerAttempts = pgTable(
     id: text("id")
       .primaryKey()
       .default(sql`gen_random_uuid()::text`),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    companyId: text("company_id"),
     sourceAgentId: text("source_agent_id").notNull(),
     scheduleId: text("schedule_id").notNull(),
     bindingSnapshot: jsonb("binding_snapshot")
@@ -1391,6 +1443,24 @@ export const agentTriggerAttempts = pgTable(
     scopeKey: text("scope_key").notNull().default("unknown"),
   },
   (t) => ({
+    company: foreignKey({
+      name: "agent_trigger_attempts_company_fk",
+      columns: [t.companyId],
+      foreignColumns: [companies.id],
+    }).onDelete("restrict"),
+    companyHistory: index("agent_trigger_attempt_company_history_idx")
+      .on(t.companyId, t.sourceAgentId, t.claimedAt.desc(), t.id.desc())
+      .where(sql`${t.companyId} IS NOT NULL`),
+    projectDue: index("agent_trigger_attempt_project_due_idx")
+      .on(t.dueAt, t.id)
+      .where(
+        sql`${t.projectId} IS NOT NULL AND (${t.outcome} IS NULL OR ${t.outcome}='unknown')`,
+      ),
+    companyDue: index("agent_trigger_attempt_company_due_idx")
+      .on(t.companyId, t.dueAt, t.id)
+      .where(
+        sql`${t.companyId} IS NOT NULL AND (${t.outcome} IS NULL OR ${t.outcome}='unknown')`,
+      ),
     requestShape: check(
       "agent_trigger_attempts_scheduled_request_shape",
       sql`${scheduledRequestShape(t.scheduledRequestSnapshot)} AND (${t.scheduledRequestSnapshot} IS NULL OR (${t.triggerSource} = 'cron' AND ${t.scheduledRequestSnapshot}->>'scheduleId' = ${t.scheduleId} AND ${t.scheduledRequestSnapshot}->>'triggerAttemptId' = ${t.id})) IS TRUE`,
@@ -1414,7 +1484,7 @@ export const agentTriggerAttempts = pgTable(
       .where(sql`${t.outcome} IS NULL OR ${t.outcome} = 'unknown'`),
     shape: check(
       "agent_trigger_attempt_shape_check",
-      sql`(${t.fence} > 0 AND ${t.triggerSource} IN ('cron','domain_event') AND ${t.provenance} IN ('claim','legacy_latest') AND jsonb_typeof(${t.bindingSnapshot}) = 'object' AND ${t.bindingSnapshot}->'version' = '1'::jsonb AND ${t.bindingSnapshot}->>'scheduleId' = ${t.scheduleId} AND ((${t.settledAt} IS NULL AND ${t.outcome} IS NULL) OR (${t.settledAt} IS NOT NULL AND ${t.outcome} IN ('launched','queued','refused','deduplicated','suppressed','failed','unknown'))) AND (${t.runId} IS NULL OR ${t.originalRunId} = ${t.runId})) IS TRUE`,
+      sql`(${t.fence} > 0 AND ${t.triggerSource} IN ('cron','domain_event') AND ${t.provenance} IN ('claim','legacy_latest') AND jsonb_typeof(${t.bindingSnapshot}) = 'object' AND ${triggerBindingScopeShape(t.bindingSnapshot, t.projectId, t.companyId)} AND ${t.bindingSnapshot}->>'scheduleId' = ${t.scheduleId} AND ((${t.settledAt} IS NULL AND ${t.outcome} IS NULL) OR (${t.settledAt} IS NOT NULL AND ${t.outcome} IN ('launched','queued','refused','deduplicated','suppressed','failed','unknown'))) AND (${t.runId} IS NULL OR ${t.originalRunId} = ${t.runId})) IS TRUE`,
     ),
   }),
 );

@@ -2,6 +2,9 @@
 
 **Status: Implemented.** Request-bearing writes require the compatible migration and complete runtime on every worker; follow the release and rollback procedure below.
 
+Company-source storage is implemented through main `0238_company_trigger_scope`; company dispatch and company request disclosure remain owned by T22.1/T20. Exclusive owner columns and a separate v2 binding snapshot retain company configuration references. The invocation request grammar below stays v1, including explicit empty input and unchanged legacy project bytes. Company source creation uses current company management/read authority and server authorship; that configuration author does not mint execution authority. Actual admission must resolve current professional/target/source permissions independently. Native company enablement remains capability-gated; storage tests reserve identities without qualifying a company execution loop.
+
+
 ## Purpose
 
 A cron schedule may contribute a literal current request without changing its reusable agent definition, project context, configuration, memory, permission policy or completion contract. This domain owns desired schedule input, immutable claimed input and protected historical disclosure; existing scheduler, agent and Flow lifecycles remain their owners.

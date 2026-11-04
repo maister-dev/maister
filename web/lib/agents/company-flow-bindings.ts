@@ -83,6 +83,20 @@ export async function loadCompanyFlowBindingHead(
   );
 }
 
+/** Configuration capture follows Flow-head then specialist-head order, matching Flow replacement. */
+export async function lockCompanyFlowBindingConfiguration(
+  tx: SqlTransaction,
+  bindingId: string,
+): Promise<CompanyFlowBindingHead> {
+  return decodeCompanyFlowBindingHead(
+    (
+      await tx.execute(
+        sql`SELECT * FROM company_flow_bindings WHERE id=${bindingId} FOR SHARE`,
+      )
+    ).rows[0],
+  );
+}
+
 export async function loadCompanyFlowBindingRevision(
   tx: SqlTransaction,
   head: CompanyFlowBindingHead,

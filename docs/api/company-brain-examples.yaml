@@ -637,3 +637,21 @@ cases:
     schema: CBCompanyFlowBindingInput
     valid: true
     value: {"owner":{"kind":"company","companyId":"company_example"},"specialistBindingId":"specialist_binding_example","specialistRevision":1,"flowRevisionId":"flow_revision_example","manifestSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","execution":{"workspace":"none","completion":"result"},"roleMappings":{"maintainer":["rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"]},"idempotencyKey":"company_flow_review_001"}
+
+  - id: company-cron-reviewed-source-contract
+    surfaces: [web]
+    schema: CBCompanyCronScheduleInput
+    valid: true
+    value: {"owner":{"kind":"company","companyId":"company_example"},"specialistBindingId":"specialist_binding_example","coordinatorFlowBindingId":"coordinator_binding_example","cronExpr":"*/5 * * * *","timezone":"UTC","requestAtLaunch":"  Inspect authorized stand\r\nKeep instructions separate.  ","idempotencyKey":"company_source_review_001"}
+
+  - id: company-cron-author-is-server-recorded
+    surfaces: [web]
+    schema: CBCompanyCronScheduleInput
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"specialistBindingId":"specialist_binding_example","coordinatorFlowBindingId":"coordinator_binding_example","cronExpr":"*/5 * * * *","timezone":"UTC","requestAtLaunch":"  Inspect authorized stand\r\nKeep instructions separate.  ","idempotencyKey":"company_source_review_001","createdBy":"forged_author"}
+
+  - id: company-cron-is-a-single-purpose-input
+    surfaces: [web]
+    schema: CBCompanyCronScheduleInput
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"specialistBindingId":"specialist_binding_example","coordinatorFlowBindingId":"coordinator_binding_example","cronExpr":"*/5 * * * *","timezone":"UTC","requestAtLaunch":"  Inspect authorized stand\r\nKeep instructions separate.  ","idempotencyKey":"company_source_review_001","eventKinds":["run.done"]}

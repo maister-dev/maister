@@ -1639,6 +1639,13 @@
       "when": 1794606477940,
       "tag": "0237_company_flow_bindings",
       "breakpoints": true
+    },
+    {
+      "idx": 238,
+      "version": "7",
+      "when": 1794606477941,
+      "tag": "0238_company_trigger_scope",
+      "breakpoints": true
     }
   ]
 }
