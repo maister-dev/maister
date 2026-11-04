@@ -17,15 +17,23 @@ import type { AgentTurn } from "@/lib/db/schema";
 import type { RealSupervisor } from "@/test-support/real-supervisor";
 import type { ProjectionWorker } from "@/lib/execution-host/events/projection-worker";
 
-import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { asc, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { agentTurns, executionCommands, runs, users } from "@/lib/db/schema";
+import {
+  agentTurns,
+  executionCommands,
+  flowRevisions,
+  flows,
+  runs,
+  taskLaunchIntents,
+  users,
+} from "@/lib/db/schema";
 import { closeDb } from "@/lib/db/client";
 import {
   finalizeAgentRun,
@@ -42,12 +50,15 @@ import { startProjectionWorker } from "@/lib/execution-host/events/projection-wo
 import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
 import { seedAgentRun } from "@/test-support/agent-run-seed";
 import { createTask } from "@/lib/services/tasks";
+import { sendTaskToTriage } from "@/lib/services/triage";
+import { runAutoLaunchTriagedJob } from "@/lib/scheduler/handlers/auto-launch-triaged";
 import {
   loadTaskQualificationInput,
   prepareTaskQualification,
 } from "@/lib/tasks/qualification";
 import { qualificationFixture } from "@/test-support/task-qualification";
 import { operationalSuccessFixture } from "@/test-support/operational-agent";
+import { git } from "@/test-support/git-fixture";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -170,7 +181,7 @@ async function runStatus(runId: string): Promise<string> {
 }
 
 describe("the queued-message invariant (D-A6)", () => {
-  it("TB07 real supervisor completes owned Triager preparation and publishes its assessment after clean completion", async () => {
+  it("TB07 real supervisor completes Triager preparation, publishes its assessment and automatically queues the selected delivery Flow", async () => {
     const responseFile = path.join(logDir, "triager-response.txt");
     const templateId = await seedAgentRun(db, {
       runtimeRoot: supervisor.runtimeRoot,
@@ -181,10 +192,67 @@ describe("the queued-message invariant (D-A6)", () => {
     });
     const source = (
       await database.pool.query(
-        "SELECT r.project_id,r.agent_id,s.runner_id FROM runs r JOIN run_sessions s ON s.run_id=r.id WHERE r.id=$1",
+        "SELECT r.project_id,r.agent_id,s.runner_id,p.repo_path FROM runs r JOIN run_sessions s ON s.run_id=r.id JOIN projects p ON p.id=r.project_id WHERE r.id=$1",
         [templateId],
       )
-    ).rows[0] as { project_id: string; agent_id: string; runner_id: string };
+    ).rows[0] as {
+      project_id: string;
+      agent_id: string;
+      runner_id: string;
+      repo_path: string;
+    };
+
+    const flowId = randomUUID();
+    const revisionId = randomUUID();
+    const targetSha = await git(source.repo_path, "rev-parse", "HEAD");
+    const installedPath = path.join(logDir, "qualified-delivery");
+    const manifest = {
+      schemaVersion: 1,
+      name: "Qualified delivery",
+      nodes: [
+        {
+          id: "check",
+          type: "cli",
+          action: { command: "true" },
+          transitions: { success: "done" },
+        },
+      ],
+    };
+
+    await mkdir(installedPath);
+    await writeFile(
+      path.join(installedPath, "flow.yaml"),
+      JSON.stringify(manifest),
+    );
+    await db.insert(flowRevisions).values({
+      id: revisionId,
+      flowRefId: flowId,
+      source: "local",
+      versionLabel: "v1",
+      resolvedRevision: targetSha,
+      manifestDigest: createHash("sha256")
+        .update(JSON.stringify(manifest))
+        .digest("hex"),
+      manifest,
+      schemaVersion: 1,
+      installedPath,
+      setupStatus: "not_required",
+      packageStatus: "Installed",
+      execTrust: "trusted",
+    });
+    await db.insert(flows).values({
+      id: flowId,
+      projectId: source.project_id,
+      flowRefId: flowId,
+      source: "local",
+      version: "v1",
+      installedPath,
+      manifest,
+      schemaVersion: 1,
+      enabledRevisionId: revisionId,
+      enablementState: "Enabled",
+      trustStatus: "trusted",
+    });
 
     await database.pool.query(
       "UPDATE projects SET task_qualification_override='required' WHERE id=$1",
@@ -204,6 +272,18 @@ describe("the queued-message invariant (D-A6)", () => {
         prompt: "Inspect the repository and assess this request.",
       },
       { projectId: source.project_id },
+      db,
+    );
+
+    await sendTaskToTriage(
+      {
+        taskId: task.taskId,
+        projectId: source.project_id,
+        taskRef: task.taskId,
+        title: "Qualification fixture",
+        actor: { type: "user", id: USER_ID },
+        launchIntent: "triage_then_launch",
+      },
       db,
     );
     const launched = await launchAgentRun({
@@ -269,11 +349,19 @@ describe("the queued-message invariant (D-A6)", () => {
         expectedInputRevision: input.inputRevision,
         expectedQualificationRevision: input.currentQualificationRevision,
         qualification: qualificationFixture(),
-        enqueue: false,
+        flowId,
+        runnerId: source.runner_id,
+        enqueue: true,
       },
     });
     const candidate = await db.transaction(assessment.apply);
+    const selectedIntents = () =>
+      db
+        .select()
+        .from(taskLaunchIntents)
+        .where(eq(taskLaunchIntents.taskId, task.taskId));
 
+    expect(await selectedIntents()).toEqual([]);
     expect(
       (
         await database.pool.query(
@@ -335,6 +423,42 @@ describe("the queued-message invariant (D-A6)", () => {
         { timeout: 45_000, interval: 50 },
       )
       .toBe("released");
+
+    await expect
+      .poll(async () => (await selectedIntents()).length, {
+        timeout: 30_000,
+        interval: 50,
+      })
+      .toBe(1);
+    const accepted = await selectedIntents();
+
+    expect(accepted).toHaveLength(1);
+    expect(accepted[0]).toMatchObject({
+      basis: {
+        kind: "automatic",
+        qualificationId: candidate.qualificationId,
+        evidenceSha: targetSha,
+      },
+      settingsSnapshot: {
+        kind: "flow",
+        flowId,
+        flowRevisionId: revisionId,
+        baseCommit: targetSha,
+        sessions: [expect.objectContaining({ runnerId: source.runner_id })],
+      },
+    });
+    expect((await runAutoLaunchTriagedJob({ db })).launched).toBe(0);
+    expect((await selectedIntents()).map((intent) => intent.id)).toEqual([
+      accepted[0]!.id,
+    ]);
+    if (accepted[0]!.runId) {
+      await expect
+        .poll(() => runStatus(accepted[0]!.runId!), {
+          timeout: 30_000,
+          interval: 50,
+        })
+        .not.toMatch(/^(Pending|Running)$/);
+    }
   }, 180_000);
   it("M1: a run finalized Failed supersedes its queued messages in the finalization transaction", async () => {
     const runId = await seedPersistentAgent();
