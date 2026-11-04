@@ -423,6 +423,17 @@ pending. The client renders what it is given and never re-derives availability;
 a surface that did not receive a matrix degrades to the generic JSON responder
 rather than guessing the option set.
 
+Node-interrupt restart, stop and resume claims lock the owning Run with
+`FOR NO KEY UPDATE` before their HITL, attempt or assignment rows. This serializes
+owner changes while allowing public assignment-event foreign-key `KEY SHARE`
+locks to finish. Restart closes and holds every active human assignment before
+placement upgrades the Run lock to `FOR UPDATE`. The initial lock still conflicts
+with session-create ACK projection's `FOR UPDATE`. A restart commits its selected
+response,
+`Reworked` attempt, cursor and successor assignment together; filesystem and
+host effects remain outside this transaction. An already advanced attempt still
+refuses the stale interrupt rather than creating another restart.
+
 | Option | Effect | Availability |
 | --- | --- | --- |
 | `resume` | `scheduleResume(runId)`; the runner owns `NeedsInput → Running` and the agent continues the **same** attempt via `session/resume`, keeping context. The runner flips only once the permission's `hitl_requests` row carries a `response` (stored in the respond route's Phase-1 transaction, before delivery); the update an adapter emits after a checkpoint CANCELLED the deferred never flips, so the NeedsInput-guarded checkpoint transitions cannot be raced into a stranded `Running` run | always |

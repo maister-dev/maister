@@ -260,7 +260,7 @@ path; their successor requires fresh authority.
 
 ### Compatibility and external surface
 
-New intent APIs return a versioned receipt with nullable runId and Location. Existing run APIs retain run-bound success schemas. Idempotency-Key is mandatory for new launch mutations; absent keys refuse before writes. Bounded compatibility waits may return typed `launch_pending` with `accepted:true`, intentId and Location, distinct from no-acceptance failure. UI preserves key and resumes the accepted receipt after disconnect. Existing attention ticks invalidate authorized intent state before a run exists; GET has no recovery side effects.
+New intent APIs return a versioned receipt with nullable runId and Location. Compatibility run APIs return an explicit JSON 202 union: an observed run receipt retains its required runId, while intent-only acceptance returns `accepted:true`, `code:launch_pending`, intentId and Location without inventing a Run. Web also includes location; external includes the observed intent state. A Web request accepting text/event-stream still receives this JSON union, with no synthetic progress. Pending 202 is a successful MCP result (`isError` absent/false). Idempotency-Key is mandatory for new launch mutations; absent keys refuse before writes. UI preserves the original key and request across disconnects. Transient 503 or lost acknowledgement does not establish whether acceptance committed; exact-key replay reconciles it. Existing attention ticks invalidate authorized intent state before a run exists; GET has no recovery side effects.
 
 External acceptance commits its required token audit and any Librarian operation
 receipt in the admission transaction. The new resource supports keys up to 256
@@ -370,6 +370,12 @@ during preflight prevents the prepared replacement from committing.
 
 ## Automated adapter contract
 
+Bearer-created roots retain the task's independent automatic arm through first
+dispatch, for both Flow and standalone-agent targets. Disarming a queued request
+holds it before Run allocation or model commands even when its accepted
+assessment remains current. Server-owned scheduled/trigger sources retain their
+separate stored decision and do not inherit the task-drain arm requirement.
+
 The internal constructor, admission, SQL origin guard, external HTTP/MCP adapters,
 scheduled and child sources, and shared dispatch consume the same durable intent.
 Focused local integration and built-stdio checks cover these boundaries. The
@@ -397,7 +403,7 @@ separate permissions.
 
 | Existing producer | Required authority at the common admission boundary |
 | --- | --- |
-| `app/api/runs/route.ts` and staged response | Opaque interactive session for an explicit request; preserve run-bound compatibility responses and request keys. |
+| `app/api/runs/route.ts` and staged response | Opaque interactive session for an explicit request; return the documented run-bound-or-pending JSON 202 union and preserve request keys. |
 | `app/api/v1/ext/runs/route.ts`, MCP HTTP client | Verified token; automatic root admission, existing external idempotency/audit and Librarian operation receipts. |
 | `app/api/v1/ext/runs/delegate/route.ts`, `runs/plan/route.ts` | Server-derived live bound parent, plan/relation/child digest; no body parent authority. |
 | `scheduler.ts`, `scheduler/handlers/flow-run.ts`, auto-triage handler | System automatic principal; accepted qualification and independent auto arm. |

@@ -1,5 +1,42 @@
 # Final integration corrections
 
+## Post-rebase review corrections
+
+Master remains `ee8a6255331a5a7250f29fe9676f9f09a3450c9f`, verified again
+through GitHub on 2026-11-04. The requested branch is rebased at `abb4578d0`.
+Its frozen integration gate completed with 651 passing, three failing and two
+optional-load files skipped; 5841 tests passed and twelve failed. Exact cleanup
+completed without errors. The reviewed corrections were prepared separately
+and transferred back with matching hashes for all 45 changed files. Final P4,
+browser and complete Web qualification remain pending.
+
+- [x] R1: preserve native stdout synchronously before asynchronous spool open;
+  retain the real-child exit/spool barrier regression and bounded buffering.
+- [x] R2: revalidate the automatic arm for queued bearer-origin standalone
+  agents; keep the separately authorized server-source exception.
+- [ ] R3: expose current failed Triager source details and the authorized Run
+  link on all task controls; infer pre-model failure only from explicit false.
+  Extend the existing manual-launch journey with real keyboard/focus actions.
+- [x] R4: align the plan, admission analytics and AsyncAPI comments with the
+  explicit JSON `202 launch_pending` union; distinguish storage uncertainty.
+- [x] R5: retain primary probe/preparation errors through secondary close,
+  publication, capture and release failures. Keep pending/fenced control flow,
+  safe correlated secondary diagnostics and real cleanup-only refusals.
+- [x] R6: extend the actual-Supervisor Triager case through machine assessment
+  publication and the real automatic job to the selected delivery-Flow intent.
+- [ ] R7: serialize HITL restart and create-ACK projection with consistent
+  Run-before-attempt ownership; reproduce the actual PostgreSQL lock inversion.
+  Determine P4's precise failing assertion separately; retain valid stale 409s.
+- [x] R8: preserve explicit noncancelled ACP responses during concurrent
+  checkpointing. Correct only the seven obsolete interruption fixtures to
+  strict typed CHECKPOINT diagnostics; retain real completion/error controls.
+- [x] R9: compare every historical command field across migration 0227 and
+  explicitly require its new nullable private context to remain NULL.
+
+All fixes require focused RED/GREEN evidence where behavior changes, complete
+required gates, independent review and local phase commits. No production or
+historical repair is part of these corrections.
+
 The frozen integration run at `801c8f1b1` completed with 615 passing, 39 failing
 and two optional-load suites skipped. Its 169 error records are indexed in
 `/private/tmp/maister-web-full-integration-final-failures.json`. No source changed

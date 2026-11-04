@@ -107,6 +107,14 @@ No historical receipt is backfilled.
 
 Preserve earliest safe cause plus run, assignment/epoch, driver source, preparation token/resource incarnation, stage, probe operation, safe errno/syscall, Git category/exit/signal and bounded cause chain. Retain capture/verify phase and numeric limit counters. Correlate worktree operation start/end/outcome by operation ID. Log no source bytes, credentials, environment values, raw provider stderr or default absolute host paths. Error sanitization must retain typed FENCED yield semantics.
 
+If failure publication or cleanup also fails, retain the primary diagnosis and
+its pending/fenced classification. Log the secondary `probe.close`,
+`preparation.publish_failure`, `preparation.release` or `agent_package.release`
+operation separately with the same owner context and bounded safe cause chain.
+A cleanup failure without a primary failure still fails explicitly. Preserving
+a diagnosis grants no terminalization authority: publication fencing and a newer
+preparation owner remain authoritative even within the same assignment epoch.
+
 UI distinguishes pre-model infrastructure failure (“could not prepare workspace; model did not start; no assessment produced”) from a successful negative assessment. Missing-baseline, qualification-source rejection and cleanup failures remain separate subsequent data. Retry is explicit after remediation; no historical diagnosis is invented.
 
 ## Expectations

@@ -603,6 +603,13 @@ Use the consumer's current `last_run_sequence`, `last_error.eventId` and
 cursor or a live claim. A successful rearm wakes durable work and logs those
 identifiers; it does not skip the event or advance the cursor.
 
+Projection-failure logs correlate the consumer, Run, event and fingerprint with
+a bounded cause chain containing safe error identities, codes, syscalls and
+signals. PostgreSQL SQLSTATE values such as a deadlock remain diagnosable
+without logging SQL statements, parameters, error messages, source contents or
+filesystem paths. The stored failure generation and its rearm contract are
+unchanged.
+
 1. Ingest commits canonical rows and contiguous promotion in Postgres. In the same transaction, seed/wake consumer rows for **every distinct run promoted**, including runs released by filling another run's stream gap. ACK follows this commit, regardless of projector success. Duplicate ingest may hint; hints carry no authority.
 2. Boot/restart performs bounded keyset backfill of missing registered consumer/run rows from canonical events. Persist the scan cursor. Cursor initialization commits separately from first application; no unbounded all-runs boot transaction.
 3. Candidate predicate: registered consumer, nonpoison state, due `next_retry_at`, no live claim, and canonical accepted events beyond cursor. Order by `last_served_at NULLS FIRST`, due/creation time and stable run/consumer key. Claim with `FOR UPDATE SKIP LOCKED`; unique token and DB-clock expiry. Claim **at processing time**, up to two simultaneous workers; do not preclaim eight items then spend their leases waiting in a local queue.
