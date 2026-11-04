@@ -84,6 +84,76 @@ describe("checkpoint prompt causality", () => {
     );
   });
 
+  it.each([
+    "end_turn",
+    "max_tokens",
+    "max_turn_requests",
+    "refusal",
+    "cancelled",
+  ] as const)(
+    "classifies an actual %s response from the adapter during checkpoint teardown",
+    async (stopReason) => {
+      host = await bootHost({
+        fixtureArgs: [
+          "--complete-on-checkpoint",
+          stopReason,
+          "--pre-hold-text",
+          "ready-for-checkpoint",
+          "--lines",
+          "1",
+        ],
+      });
+      const target = host;
+      const { sessionId } = await createSession(
+        target,
+        fenceFor(target, RUN_ID),
+      );
+      const command = envelope("session.prompt", fenceFor(target, RUN_ID), {
+        stepId: "fix",
+        prompt: "complete during graceful shutdown",
+      });
+      expect(
+        (await postJson(`${target.url}/sessions/${sessionId}/prompts`, command))
+          .status,
+      ).toBe(202);
+      await waitFor(() =>
+        target.registry
+          .snapshotEvents(sessionId)
+          .some((event) => event.type === "session.update"),
+      );
+      const checkpoint = await postJson(
+        `${target.url}/sessions/${sessionId}/checkpoint`,
+        envelope("session.checkpoint", fenceFor(target, RUN_ID)),
+      );
+      expect(checkpoint.status).toBe(200);
+      await waitFor(
+        () =>
+          target.hostState.getReceipt(command.command.id)?.phase !== "accepted",
+      );
+      expect(target.hostState.getReceipt(command.command.id)).toMatchObject(
+        stopReason === "cancelled"
+          ? {
+              phase: "rejected",
+              httpStatus: 500,
+              body: {
+                code: "CHECKPOINT",
+                details: {
+                  reason: "session_checkpointed",
+                  stopReason: "checkpoint",
+                },
+              },
+            }
+          : { phase: "completed", httpStatus: 200, body: { stopReason } },
+      );
+      expect(target.registry.snapshotEvents(sessionId)).toContainEqual(
+        expect.objectContaining({
+          type: "session.exited",
+          reason: "checkpoint",
+        }),
+      );
+    },
+  );
+
   it("records an intentional checkpoint as a pause rather than ACP_PROTOCOL", async () => {
     const { host, sessionId, commandId } = await runningPrompt();
     const checkpoint = await postJson(
@@ -107,7 +177,11 @@ describe("checkpoint prompt causality", () => {
   it("keeps an unexpected ACP loss as an error with a preceding crash terminal", async () => {
     const { host, sessionId, commandId } = await runningPrompt();
 
-    host.registry.get(sessionId)!.child.kill("SIGKILL");
+    const adapterPid = host.registry.get(sessionId)!.record.adapterPid;
+
+    if (!adapterPid)
+      throw new Error("ACP-loss fixture has no acknowledged adapter process");
+    process.kill(adapterPid, "SIGKILL");
     await waitFor(
       () => host.hostState.getReceipt(commandId)?.phase === "rejected",
     );

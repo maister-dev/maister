@@ -33,6 +33,7 @@ let emitUsage = false;
 let supportsResume = false;
 let invocationLog;
 let controlledPrompt = false;
+let completionOnCheckpoint;
 let controlledTerminal = false;
 let releasePrompt;
 // ADR-182 steering fixture: advertise `_meta.steering.supported`, register the
@@ -90,6 +91,22 @@ for (let i = 0; i < args.length; i += 1) {
   } else if (arg === "--invocation-log") {
     invocationLog = args[++i];
     if (!invocationLog) throw new Error("--invocation-log requires a path");
+  } else if (arg === "--complete-on-checkpoint") {
+    completionOnCheckpoint = args[++i];
+    if (
+      ![
+        "end_turn",
+        "max_tokens",
+        "max_turn_requests",
+        "refusal",
+        "cancelled",
+      ].includes(completionOnCheckpoint)
+    )
+      throw new Error(
+        "--complete-on-checkpoint requires an ACP response stop reason",
+      );
+    controlledPrompt = true;
+    hang = true;
   } else if (arg === "--controlled-prompt") {
     controlledPrompt = true;
   } else if (arg === "--controlled-terminal") {
@@ -763,7 +780,7 @@ class LifecycleAgent {
       setTimeout(() => process.exit(exitCode), 10);
     }
 
-    return { stopReason: "end_turn" };
+    return { stopReason: completionOnCheckpoint ?? "end_turn" };
   }
 
   async holdTerminal(params, terminalBarrier, held) {
@@ -802,7 +819,15 @@ serveAgent((connToAgent) => new LifecycleAgent(connToAgent), stream);
 
 // --exit-delay-ms: hold the process open after SIGTERM so a test can prove an
 // eviction is awaited (nothing spawns beside a dying lower-epoch session).
-process.on("SIGTERM", () => setTimeout(() => process.exit(143), exitDelayMs));
+process.on("SIGTERM", () => {
+  if (completionOnCheckpoint && releasePrompt) {
+    releasePrompt("complete");
+    // Flush the actual ACP response queued by the released turn before exiting.
+    setImmediate(() => process.stdout.write("", () => process.exit(0)));
+    return;
+  }
+  setTimeout(() => process.exit(143), exitDelayMs);
+});
 process.on("SIGINT", () => process.exit(130));
 // Lifecycle tests release this barrier only after prompt receipt completion.
 if (controlledExit) process.on("SIGUSR2", () => process.exit(exitCode));

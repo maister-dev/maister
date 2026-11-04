@@ -827,9 +827,29 @@ describe("Owned Flow completed-command failure handoff", () => {
                   state: "failed",
                   error: failsDuringCheckpoint
                     ? "EXECUTOR_UNAVAILABLE"
-                    : "ACP_PROTOCOL",
+                    : "CHECKPOINT",
                 },
           );
+        if (!terminalDuringCheckpoint) {
+          const [interrupted] = await db
+            .select()
+            .from(executionCommands)
+            .where(eq(executionCommands.id, source.id));
+
+          expect(interrupted.receiptEvidence).toMatchObject({
+            commandId: source.id,
+            runId: seeded.runId,
+            assignmentEpoch: source.assignmentEpoch,
+            phase: "rejected",
+            body: {
+              code: "CHECKPOINT",
+              details: {
+                reason: "session_checkpointed",
+                stopReason: "checkpoint",
+              },
+            },
+          });
+        }
         const events = await db
           .select()
           .from(executionEvents)
@@ -849,6 +869,12 @@ describe("Owned Flow completed-command failure handoff", () => {
 
         expect(accepted?.eventStreamId).toBe(terminal?.eventStreamId);
         expect(accepted?.hostSequence).toBeLessThan(terminal!.hostSequence!);
+        if (!terminalDuringCheckpoint)
+          expect(terminal).toMatchObject({
+            executionAssignmentId: source.executionAssignmentId,
+            assignmentEpoch: source.assignmentEpoch,
+            hostSessionId: source.targetSessionId,
+          });
         if (owner === "node" && window === "ordinary")
           await assertQuarantineDuringClaim(seeded.runId, source.id, hosts);
         if (window === "claim SIGKILL") {
