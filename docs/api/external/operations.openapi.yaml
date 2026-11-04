@@ -5597,6 +5597,26 @@ components:
             intentId: { type: string, minLength: 1 }
         - properties:
             runId: { type: string, minLength: 1 }
+    NodeEnforcementRefusal:
+      type: object
+      additionalProperties: false
+      required: [reason, nodeId, capabilityClass, capabilityAgent, declared, capability]
+      properties:
+        reason: { type: string, enum: [flow_settings_enforcement_refused] }
+        nodeId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._-]*$'
+          not: { enum: [__proto__, constructor, prototype] }
+        capabilityClass:
+          type: string
+          enum: [mcps, tools, skills, restrictions, permissionMode, workspaceAccess, hooks]
+        capabilityAgent:
+          type: string
+          enum: [claude, codex, gemini, opencode, mimo]
+        declared: { type: string, enum: [strict] }
+        capability: { type: string, enum: [instructed, unsupported] }
     TaskLaunchError:
       type: object
       additionalProperties: false
@@ -5605,19 +5625,24 @@ components:
         code: { type: string }
         message: { type: string }
         details:
-          type: object
-          additionalProperties: false
-          minProperties: 1
-          properties:
-            reason: { type: string, maxLength: 256 }
-            requiredScope: { type: string, minLength: 1, maxLength: 256 }
-            requiredAction: { type: string, minLength: 1, maxLength: 256 }
-            operationId: { type: string, minLength: 1, maxLength: 256 }
-            slotKey: { type: string, minLength: 1, maxLength: 256 }
-            label: { type: string, minLength: 1, maxLength: 256 }
-            existing:
-              $ref: "#/components/schemas/TaskLaunchConflictReference"
-      description: A scoped reservation conflict identifies earlier delivery work and its original basis. The competing request was not accepted; these selectors grant no additional access.
+          oneOf:
+            - $ref: "#/components/schemas/NodeEnforcementRefusal"
+            - type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                reason:
+                  type: string
+                  maxLength: 256
+                  not: { enum: [flow_settings_enforcement_refused] }
+                requiredScope: { type: string, minLength: 1, maxLength: 256 }
+                requiredAction: { type: string, minLength: 1, maxLength: 256 }
+                operationId: { type: string, minLength: 1, maxLength: 256 }
+                slotKey: { type: string, minLength: 1, maxLength: 256 }
+                label: { type: string, minLength: 1, maxLength: 256 }
+                existing:
+                  $ref: "#/components/schemas/TaskLaunchConflictReference"
+      description: A scoped reservation conflict identifies earlier delivery work and its original basis. Static strict-enforcement refusal uses bounded node/class/actual-session-agent fields and accepts no intent or Run; CONFIG retains this API's 422 mapping. These selectors grant no additional access.
     TaskLaunchBody:
       type: object
       additionalProperties: false

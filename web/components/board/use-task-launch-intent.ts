@@ -2,11 +2,13 @@
 
 import type { TaskLaunchReceipt } from "@/lib/tasks/launch-types";
 import type { TaskLaunchConflictReference } from "@/lib/tasks/launch-conflict";
+import type { NodeEnforcementRefusal } from "@/lib/flows/enforcement-refusal";
 
 import { useCallback, useMemo, useRef, useSyncExternalStore } from "react";
 
 import { TASK_LAUNCH_STATES } from "@/lib/tasks/launch-types";
 import { taskLaunchConflictReferenceSchema } from "@/lib/tasks/launch-conflict";
+import { nodeEnforcementRefusalSchema } from "@/lib/flows/enforcement-refusal";
 
 type LaunchAttempt = Readonly<{ endpoint: string; key: string; body: string }>;
 type StoredLaunch = Readonly<{
@@ -20,6 +22,7 @@ type LaunchClientState = StoredLaunch &
     busy: boolean;
     uncertain: boolean;
     errorReason: string | null;
+    enforcementRefusal?: NodeEnforcementRefusal | null;
   }>;
 type TaskLaunchIntentController = LaunchClientState &
   Readonly<{
@@ -124,6 +127,15 @@ function responseReason(value: unknown): string {
     return value.details.reason;
 
   return "launch_technical_precondition";
+}
+
+function responseEnforcementRefusal(
+  value: unknown,
+): NodeEnforcementRefusal | null {
+  if (!value || typeof value !== "object" || !("details" in value)) return null;
+  const parsed = nodeEnforcementRefusalSchema.safeParse(value.details);
+
+  return parsed.success ? parsed.data : null;
 }
 
 function storedLaunchState(
@@ -383,6 +395,7 @@ export function useTaskLaunchIntent(
             busy: false,
             uncertain: false,
             errorReason: responseReason(payload),
+            enforcementRefusal: responseEnforcementRefusal(payload),
             conflict: responseConflict(payload),
           });
 

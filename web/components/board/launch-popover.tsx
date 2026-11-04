@@ -5,6 +5,7 @@ import type { FlowRunnerSlotPreview } from "@/lib/acp-runners/flow-preflight";
 import type { ConsensusRunnerSlotPreview } from "@/lib/acp-runners/consensus-preflight";
 import type { TaskLaunchReceipt } from "@/lib/tasks/launch-types";
 import type { TaskQualificationSummary } from "@/lib/tasks/qualification-queries";
+import type { NodeEnforcementRefusal } from "@/lib/flows/enforcement-refusal";
 import type {
   BudgetAxis,
   BudgetLimits,
@@ -37,6 +38,7 @@ import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
 import { useTaskLaunchIntent } from "./use-task-launch-intent";
+import { TaskEnforcementRefusalNotice } from "./task-enforcement-refusal-notice";
 import {
   TaskLaunchIntentStatus,
   taskLaunchReasonKey,
@@ -145,6 +147,7 @@ type LaunchVerdict = {
 };
 
 type LaunchOptions = {
+  enforcementRefusal?: NodeEnforcementRefusal | null;
   launchability: {
     launchable: boolean;
     reason: string;
@@ -1622,7 +1625,17 @@ export function LaunchPopover({
                         })}
                       </p>
                     ) : null}
-                    {intent.errorReason ? (
+                    {options.enforcementRefusal ? (
+                      <TaskEnforcementRefusalNotice
+                        refusal={options.enforcementRefusal}
+                      />
+                    ) : intent.errorReason ===
+                        "flow_settings_enforcement_refused" &&
+                      intent.enforcementRefusal ? (
+                      <TaskEnforcementRefusalNotice
+                        refusal={intent.enforcementRefusal}
+                      />
+                    ) : intent.errorReason ? (
                       <p role="alert">
                         {t(taskLaunchReasonKey(intent.errorReason))}
                       </p>

@@ -15,7 +15,10 @@ import { test, expect } from "@playwright/test";
 
 import { singleValue, withE2EDb } from "./_seed/db";
 import { loadFixtures } from "./_seed/fixtures";
-import { readLaunchResult } from "./_seed/launch-stream";
+import {
+  readTaskLaunchReceipt,
+  waitForTaskLaunchRun,
+} from "./_seed/task-launch";
 import { STUB_HOST_KEY } from "./_seed/stub-supervisor";
 
 const CRON_HEADER = "X-Maister-Cron-Token";
@@ -116,7 +119,7 @@ test("execution-host contract: board launch places the run; checkpoint + resume 
 
   const launchResponse = page.waitForResponse(
     (response) =>
-      response.url().includes("/api/runs") &&
+      new URL(response.url()).pathname === "/api/task-launch-intents" &&
       response.request().method() === "POST",
   );
 
@@ -126,7 +129,7 @@ test("execution-host contract: board launch places the run; checkpoint + resume 
 
   await expect(dialog).toBeVisible();
   const createRun = dialog.getByRole("button", {
-    name: "Create run",
+    name: "Launch",
     exact: true,
   });
 
@@ -135,8 +138,9 @@ test("execution-host contract: board launch places the run; checkpoint + resume 
 
   const response = await launchResponse;
 
-  expect(response.status()).toBe(200);
-  const { runId } = await readLaunchResult(response);
+  expect(response.status()).toBe(202);
+  const receipt = await readTaskLaunchReceipt(response);
+  const runId = await waitForTaskLaunchRun(receipt);
 
   expect(runId).toBeTruthy();
 

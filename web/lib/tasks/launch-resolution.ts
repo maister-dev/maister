@@ -31,6 +31,7 @@ import {
   loadRunnerCatalog,
 } from "@/lib/acp-runners/catalog";
 import { inspectFlowRunners } from "@/lib/acp-runners/flow-preflight";
+import { assertFlowStaticEnforcement } from "@/lib/acp-runners/enforcement-preflight";
 import { runnerAdmissionError } from "@/lib/flows/runner-admission-error";
 import { parseExecutableStoredFlowManifest } from "@/lib/flows/manifest-parser";
 import { resolveFlowRef } from "@/lib/flows/resolve-flow-ref";
@@ -420,6 +421,8 @@ async function resolveFlowLaunchSettingsForSource(
       runnerResolutionTier: slot.resolution.runnerResolutionTier,
     };
   });
+
+  assertFlowStaticEnforcement(manifest, inspection);
   const baseBranch =
     selection.baseBranch ?? task.baseBranch ?? project.mainBranch;
   const targetBranch =

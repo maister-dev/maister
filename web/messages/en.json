@@ -2238,6 +2238,16 @@
     "schedulePreviewInvalid": "Enter an existing local time and valid IANA timezone.",
     "scheduleError": "Could not schedule this run. Check the time and launch settings.",
     "admission": {
+      "enforcementRefused": "Node {node} requires strict enforcement of {capability}, which the {agent} runner cannot provide. Adjust the Flow enforcement setting or choose a runner that supports this requirement before launching.",
+      "enforcementClass": {
+        "mcps": "MCP access",
+        "tools": "tool access",
+        "skills": "skills",
+        "restrictions": "file restrictions",
+        "permissionMode": "permission mode",
+        "workspaceAccess": "workspace access",
+        "hooks": "guardrail hooks"
+      },
       "accepted": "Launch accepted",
       "manual": "One manual launch is authorized for this revision.",
       "automatic": "This launch was admitted by a current accepted triage assessment.",

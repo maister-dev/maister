@@ -3,7 +3,7 @@
 Branch: `codex/manual-launch-triager-reliability`
 Created: 2026-11-02 (Europe/Moscow)
 Inspected source: `cb183968df5bac9b9ce652a6bdb6aa2bb79b45ff`
-Status: **Final combined qualification in progress.** Both implementation tracks and the reviewed ownership, recovery, materialization, Stop and failed-source projection fixes are implemented. The latest browser run passed 14 of 15 checks; the remaining current-failed-Triager projection defect now passes its real-Postgres and UI regressions and independent review. Full Web unit passes 885 files / 9233 tests; full Supervisor integration passes 38 files / 359 tests. The frozen full browser and Web integration gates remain required before the remaining checkboxes close. No production deployment, live-model run or live GitHub PR is claimed.
+Status: **Final combined qualification in progress.** Both tracks and the reviewed ownership, recovery, materialization, Stop and failed-source projection corrections are implemented. The latest complete native gate passed 168/180 checks with clean teardown; its failures led to the now-corrected public-Origin boundary and native fixture identity/cleanup fixes. Strict Flow enforcement now runs before intent acceptance with bounded, localized diagnostics. Web unit passes 885 files / 9233 tests, TypeScript and documentation/contracts pass. The expanded 29-test browser lane and the complete frozen Web integration suite (including all native fault files) remain required before seven remaining tasks close. No production deployment, live-model run or live GitHub PR is claimed.
 
 ## Settings
 

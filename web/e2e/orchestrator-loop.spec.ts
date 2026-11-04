@@ -21,7 +21,10 @@ import { test, expect } from "@playwright/test";
 
 import { singleValue, withE2EDb } from "./_seed/db";
 import { loadFixtures } from "./_seed/fixtures";
-import { readLaunchResult } from "./_seed/launch-stream";
+import {
+  readTaskLaunchReceipt,
+  waitForTaskLaunchRun,
+} from "./_seed/task-launch";
 import { STUB_SESSIONS_DIR } from "./_seed/stub-supervisor";
 
 const CRON_HEADER = "X-Maister-Cron-Token";
@@ -109,14 +112,14 @@ test("orchestrator loop: launch → park with child subtree → resume to termin
 
   const launchResponse = page.waitForResponse(
     (response) =>
-      response.url().includes("/api/runs") &&
+      new URL(response.url()).pathname === "/api/task-launch-intents" &&
       response.request().method() === "POST",
   );
 
   await launchControl.click();
 
   // ADR-087 launch popover: the card button only OPENS the dialog; the POST
-  // fires from its "Create run" confirm. Scope the confirm to the dialog — the
+  // fires from its "Launch" action. Scope it to the dialog — the
   // card's own "Launch" button stays in the DOM behind the portaled modal, so a
   // page-wide "Launch" locator would re-click the trigger instead.
   const dialog = page.getByTestId("task-launch-dialog");
@@ -124,7 +127,7 @@ test("orchestrator loop: launch → park with child subtree → resume to termin
   await expect(dialog).toBeVisible();
 
   const createRun = dialog.getByRole("button", {
-    name: "Create run",
+    name: "Launch",
     exact: true,
   });
 
@@ -133,12 +136,11 @@ test("orchestrator loop: launch → park with child subtree → resume to termin
 
   const response = await launchResponse;
 
-  // The dialog POSTs with `Accept: text/event-stream`, so the launch answers
-  // 200 + a staged progress stream whose terminal frame carries the run (the
-  // JSON 202 shape is the non-stream path only).
-  expect(response.status()).toBe(200);
+  // Acceptance records the decision; runtime checks follow its exact bound Run.
+  expect(response.status()).toBe(202);
 
-  const { runId } = await readLaunchResult(response);
+  const receipt = await readTaskLaunchReceipt(response);
+  const runId = await waitForTaskLaunchRun(receipt);
 
   expect(runId).toBeTruthy();
 

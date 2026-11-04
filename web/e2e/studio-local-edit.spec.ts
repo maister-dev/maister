@@ -7,6 +7,10 @@ import { test, expect, type Page } from "@playwright/test";
 
 import { singleValue, withE2EDb } from "./_seed/db";
 import { loadFixtures } from "./_seed/fixtures";
+import {
+  readTaskLaunchReceipt,
+  waitForTaskLaunchRun,
+} from "./_seed/task-launch";
 
 // M36 Phase 2 — the editable-local-package walk: install a package, FORK it to a
 // local package from the viewer, and land in the /studio/edit editor. The fork
@@ -445,29 +449,18 @@ test("canonical Studio wizard creates a package Flow and adds another Flow in th
   await expect(launch).toBeEnabled();
   const launchResponse = page.waitForResponse(
     (response) =>
-      response.url().includes("/api/runs") &&
+      new URL(response.url()).pathname === "/api/task-launch-intents" &&
       response.request().method() === "POST",
   );
 
   await launch.click();
   const dialog = page.getByTestId("task-launch-dialog");
 
-  await dialog.getByRole("button", { name: "Create run", exact: true }).click();
-  expect((await launchResponse).status()).toBe(200);
-  await expect
-    .poll(
-      () =>
-        singleValue<string>(
-          `SELECT id AS value FROM runs WHERE task_id = $1 ORDER BY started_at DESC NULLS LAST LIMIT 1`,
-          [taskId],
-        ),
-      { timeout: 15_000, intervals: [200] },
-    )
-    .not.toBeNull();
-  const runId = await singleValue<string>(
-    `SELECT id AS value FROM runs WHERE task_id = $1 ORDER BY started_at DESC NULLS LAST LIMIT 1`,
-    [taskId],
-  );
+  await dialog.getByRole("button", { name: "Launch", exact: true }).click();
+  const receipt = await readTaskLaunchReceipt(await launchResponse);
+
+  expect(receipt.taskId).toBe(taskId);
+  const runId = await waitForTaskLaunchRun(receipt);
 
   await expect
     .poll(

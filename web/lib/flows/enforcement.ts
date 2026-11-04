@@ -8,6 +8,7 @@ import type {
   NodeDef,
 } from "@/lib/config.schema";
 import type { EnforcementSnapshotEntry } from "@/lib/db/schema";
+import type { NodeEnforcementRefusal } from "./enforcement-refusal";
 
 import { MaisterError } from "@/lib/errors";
 
@@ -185,22 +186,33 @@ export function assertNodeLaunchable(
   const verdicts = evaluateNodeEnforcement(node.settings, agent, table);
 
   for (const entry of verdicts) {
-    if (entry.verdict !== "refused") continue;
+    if (entry.verdict !== "refused" || entry.capability === "enforced")
+      continue;
 
     const enforceableByAnyAgent = (Object.keys(table) as AgentName[]).some(
       (a) => table[a][entry.class] === "enforced",
     );
 
     const detail = `node "${node.id}" declares strict enforcement of "${entry.class}" but resolved agent "${agent}" can only ${entry.capability} it (declared=${entry.declared}, capability=${entry.capability})`;
+    const details: NodeEnforcementRefusal = {
+      reason: "flow_settings_enforcement_refused",
+      nodeId: node.id,
+      capabilityClass: entry.class,
+      capabilityAgent: agent,
+      declared: "strict",
+      capability: entry.capability,
+    };
 
     throw enforceableByAnyAgent
       ? new MaisterError(
           "EXECUTOR_UNAVAILABLE",
           `${detail} — another executor can enforce this class`,
+          { details },
         )
       : new MaisterError(
           "CONFIG",
           `${detail} — no executor can strictly enforce this class`,
+          { details },
         );
   }
 }

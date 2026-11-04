@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { TaskLaunchRequest } from "@/lib/tasks/launch-schema";
+import type { NodeEnforcementRefusal } from "@/lib/flows/enforcement-refusal";
 
 import { and, eq, inArray } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
@@ -14,6 +15,9 @@ import {
   requireProjectAction,
 } from "@/lib/authz";
 import { loadFlowRunnerBindings } from "@/lib/acp-runners/catalog";
+import { assertFlowStaticEnforcement } from "@/lib/acp-runners/enforcement-preflight";
+import { nodeEnforcementRefusalSchema } from "@/lib/flows/enforcement-refusal";
+import { taskLaunchErrorResponse } from "@/lib/tasks/launch-http";
 import { toConsensusRunnerSlotPreview } from "@/lib/acp-runners/consensus-preflight";
 import {
   inspectFlowRunners,
@@ -512,6 +516,23 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       )
         ? "runner_unresolved"
         : null;
+    let enforcementRefusal: NodeEnforcementRefusal | null = null;
+
+    if (compatibleManifest && runnerInspection && !runnerIssue) {
+      try {
+        assertFlowStaticEnforcement(compatibleManifest, runnerInspection);
+      } catch (error) {
+        const refusal = nodeEnforcementRefusalSchema.safeParse(
+          isMaisterError(error) ? error.details : null,
+        );
+
+        if (!refusal.success) throw error;
+        enforcementRefusal = refusal.data;
+      }
+    }
+    const enforcementIssue = enforcementRefusal
+      ? "flow_settings_enforcement_refused"
+      : null;
     const latestFlowRun = await getLatestFlowRun(task.id, db);
     const openBlockers =
       (await getOpenRelationBlockers([task.id], db)).get(task.id) ?? [];
@@ -542,7 +563,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // the options response and edit away from a stale/broken flow.
     const launchability =
       manualLaunchability === "launchable"
-        ? (flowIssue ?? runnerIssue ?? "launchable")
+        ? (flowIssue ?? runnerIssue ?? enforcementIssue ?? "launchable")
         : manualLaunchability;
     // ADR-119: the force verdict layers the SAME flow-setup issues as the manual
     // launchability (a flow disabled/dropped after the task's first run), so the
@@ -551,7 +572,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // precedence; run status is still never consulted.
     const relaunchReason =
       relaunchLaunchability === "launchable"
-        ? (flowIssue ?? runnerIssue ?? "launchable")
+        ? (flowIssue ?? runnerIssue ?? enforcementIssue ?? "launchable")
         : relaunchLaunchability;
     const branches = await listBranches(project.repoPath, {
       includeRemotes: true,
@@ -621,6 +642,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json({
       ...launchPreview,
+      enforcementRefusal,
       runnerSlots,
       consensusRunnerSlots,
       selectedFlowRevisionId: revision?.id ?? null,
@@ -719,6 +741,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       availablePackageVersions,
     });
   } catch (err) {
+    if (
+      isMaisterError(err) &&
+      err.details?.reason === "flow_settings_enforcement_refused"
+    )
+      return taskLaunchErrorResponse(err);
+
     return errorResponse(err);
   }
 }

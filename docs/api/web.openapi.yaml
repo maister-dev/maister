@@ -1620,6 +1620,10 @@ paths:
         sessions (including the implicit default session) and roles block both manual
         and force launch with `runner_unresolved`. Optional Flow/runner query
         selections preview the choices without changing the task or bindings.
+        Deterministic strict-enforcement refusal sets `enforcementRefusal` to a
+        bounded node/class/actual-session-agent diagnostic and blocks both
+        ordinary and concurrent launch. Otherwise it is null. Acceptance and
+        dispatch recheck enforcement; preview grants no execution authority.
       operationId: getRunLaunchOptions
       x-maister-m43-legacy-steps:
         status: 200
@@ -18807,6 +18811,11 @@ paths:
         intent, run, worktree or model session and does not require successful
         qualification. Missing and inaccessible tasks return the same 404.
         Choosing settings and reading options do not record a Launch decision.
+        Without agentId this endpoint returns revision/token metadata with target:null,
+        not a technical launchability verdict; use /api/runs/launch-options for
+        the board Flow preview. Agent/facade targets resolve actual sessions here
+        and return a typed strict-enforcement refusal instead of a successful
+        target snapshot. Acceptance rechecks enforcement for every target.
         Use taskRevision as expectedTaskRevision and settingsToken as
         expectedSettingsToken with the same Flow/package selection. Changes
         before acceptance return a conflict instead of selecting new input.
@@ -19660,6 +19669,26 @@ components:
             intentId: { type: string, minLength: 1 }
         - properties:
             runId: { type: string, minLength: 1 }
+    NodeEnforcementRefusal:
+      type: object
+      additionalProperties: false
+      required: [reason, nodeId, capabilityClass, capabilityAgent, declared, capability]
+      properties:
+        reason: { type: string, enum: [flow_settings_enforcement_refused] }
+        nodeId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._-]*$'
+          not: { enum: [__proto__, constructor, prototype] }
+        capabilityClass:
+          type: string
+          enum: [mcps, tools, skills, restrictions, permissionMode, workspaceAccess, hooks]
+        capabilityAgent:
+          type: string
+          enum: [claude, codex, gemini, opencode, mimo]
+        declared: { type: string, enum: [strict] }
+        capability: { type: string, enum: [instructed, unsupported] }
     TaskLaunchError:
       type: object
       additionalProperties: false
@@ -19668,16 +19697,21 @@ components:
         code: { type: string }
         message: { type: string }
         details:
-          type: object
-          additionalProperties: false
-          required: [reason]
-          properties:
-            reason: { type: string, maxLength: 256 }
-            slotKey: { type: string, minLength: 1, maxLength: 256 }
-            label: { type: string, minLength: 1, maxLength: 256 }
-            existing:
-              $ref: "#/components/schemas/TaskLaunchConflictReference"
-      description: A scoped reservation conflict identifies earlier delivery work and its original basis. The competing request was not accepted; these selectors grant no additional access.
+          oneOf:
+            - $ref: "#/components/schemas/NodeEnforcementRefusal"
+            - type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  maxLength: 256
+                  not: { enum: [flow_settings_enforcement_refused] }
+                slotKey: { type: string, minLength: 1, maxLength: 256 }
+                label: { type: string, minLength: 1, maxLength: 256 }
+                existing:
+                  $ref: "#/components/schemas/TaskLaunchConflictReference"
+      description: A scoped reservation conflict identifies earlier delivery work and its original basis. A deterministic strict-enforcement refusal identifies the compiled node and its resolved runner capability without raw error text or source contents; no intent or Run is accepted. These selectors grant no additional access.
     TaskLaunchBody:
       type: object
       additionalProperties: false
@@ -24750,6 +24784,10 @@ components:
           nullable: true
           allOf:
             - $ref: "#/components/schemas/TaskLaunchReceipt"
+        enforcementRefusal:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/NodeEnforcementRefusal"
         task:
           type: object
           additionalProperties: false
@@ -24786,6 +24824,7 @@ components:
                   runner_unavailable,
                   runner_unresolved,
                   project_archived,
+                  flow_settings_enforcement_refused,
                   unconfigured,
                   flow_missing,
                   no_revision,
@@ -24840,6 +24879,7 @@ components:
                   unsupported_schema,
                   incompatible,
                   runner_unresolved,
+                  flow_settings_enforcement_refused,
                 ]
         flows:
           type: array

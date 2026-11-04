@@ -11,6 +11,13 @@ the failed teardown remains a defect to correct, not a green cleanup result.
 - [x] Remove eager consensus-registry construction across the demonstrated import
   cycle; preserve registry composition and the unchanged bounded-output and
   consensus behavior checks.
+- [ ] Validate interactive launch origins against the configured public authority
+  or actual HTTP Host, preserving strict Origin/Host parsing, cross-site refusal,
+  abstract Request compatibility and all existing principal checks. The native
+  custom server supplies an internal wildcard URL and a distinct public Host.
+  Apply that boundary to retry/recovery and the complete fresh project-agent
+  launch route, including operational/taskless requests; retain before-effect
+  cross-origin refusal and authenticated positive coverage.
 - [ ] Update native fault fixtures to prove and signal the actual adapter through
   its registered gate/group; retain process birth, invocation and scope checks.
   Cover detached groups after fixture-parent death and preserve zero-survivor
@@ -18,6 +25,10 @@ the failed teardown remains a defect to correct, not a green cleanup result.
 - [ ] Update real HTTP launch and method-discriminated adapter-log fixtures to
   the current contracts; preserve stable keys, actual preview/receipt behavior,
   exact effect counts, restart windows and replay assertions.
+- [ ] Migrate the eight stale browser launch observers to canonical intent
+  receipts and exact eventual Run bindings. Preserve truthful queued/null-Run
+  capacity behavior and actionable strict-enforcement refusal; do not replace
+  the latter with a generic held-state assertion.
 - [x] Persist real active assignments and project genuine canonical lifecycle
   events in scripted result fixtures; do not bypass finalization or integrity.
 - [x] Repair the scoped session-probe fixture and its false-positive network

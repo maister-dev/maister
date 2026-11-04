@@ -21,7 +21,10 @@ import { test, expect } from "@playwright/test";
 
 import { singleValue, withE2EDb } from "./_seed/db";
 import { loadFixtures } from "./_seed/fixtures";
-import { readLaunchResult } from "./_seed/launch-stream";
+import {
+  readTaskLaunchReceipt,
+  waitForTaskLaunchRun,
+} from "./_seed/task-launch";
 
 const CRON_HEADER = "X-Maister-Cron-Token";
 const CRON_TOKEN = process.env.MAISTER_CRON_TOKEN ?? "e2e-cron-token-change-me";
@@ -72,7 +75,7 @@ test("recursive harness: depth-2 tree → result-only Done children → the root
 
   const launchResponse = page.waitForResponse(
     (response) =>
-      response.url().includes("/api/runs") &&
+      new URL(response.url()).pathname === "/api/task-launch-intents" &&
       response.request().method() === "POST",
   );
 
@@ -83,7 +86,7 @@ test("recursive harness: depth-2 tree → result-only Done children → the root
   await expect(dialog).toBeVisible();
 
   const createRun = dialog.getByRole("button", {
-    name: "Create run",
+    name: "Launch",
     exact: true,
   });
 
@@ -92,9 +95,10 @@ test("recursive harness: depth-2 tree → result-only Done children → the root
 
   const response = await launchResponse;
 
-  expect(response.status()).toBe(200);
+  expect(response.status()).toBe(202);
 
-  const { runId } = await readLaunchResult(response);
+  const receipt = await readTaskLaunchReceipt(response);
+  const runId = await waitForTaskLaunchRun(receipt);
 
   expect(runId).toBeTruthy();
 

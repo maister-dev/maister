@@ -31,7 +31,7 @@ import { launchRefusal } from "./launch-resolution";
 
 import { tasks, taskLaunchIntents, librarianOperations } from "@/lib/db/schema";
 import { retryDigest } from "@/lib/agents/retry-guards";
-import { isMaisterError, MaisterError } from "@/lib/errors";
+import { MaisterError } from "@/lib/errors";
 import { tokenAuditIdentity } from "@/lib/tokens/audit";
 import { recordRequiredTokenAudit } from "@/lib/tokens/ext-handler";
 import { TokenAuthError, httpStatusForTokenAuth } from "@/lib/tokens/verify";
@@ -354,7 +354,7 @@ export function externalTaskLaunchErrorResponse(error: unknown): NextResponse {
   }
   const response = taskLaunchErrorResponse(error);
 
-  if (isMaisterError(error) && error.code === "CONFIG")
+  if (response.status === 400)
     return new NextResponse(response.body, {
       status: 422,
       headers: response.headers,

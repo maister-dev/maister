@@ -363,6 +363,31 @@ test("task launch receipts validate their real examples and distinguish Flow and
     };
 
     assertValidExample(error, conflict);
+    const enforcement = {
+      code: "CONFIG",
+      message: "The selected runner cannot strictly enforce this Flow setting",
+      details: {
+        reason: "flow_settings_enforcement_refused",
+        nodeId: "policy",
+        capabilityClass: "skills",
+        capabilityAgent: "claude",
+        declared: "strict",
+        capability: "instructed",
+      },
+    };
+
+    assertValidExample(error, enforcement);
+    for (const details of [
+      { reason: enforcement.details.reason },
+      { ...enforcement.details, nodeId: "policy\nprivate" },
+      { ...enforcement.details, nodeId: "x".repeat(257) },
+      { ...enforcement.details, nodeId: "private/path" },
+      { ...enforcement.details, nodeId: "constructor" },
+      { ...enforcement.details, capabilityClass: "untrusted-setting" },
+      { ...enforcement.details, source: "private content" },
+    ]) {
+      assert.equal(error({ ...enforcement, details }), false);
+    }
     assertValidExample(error, {
       code: "EXECUTOR_UNAVAILABLE",
       message: "Assign an available runner to the indicated Flow slot",

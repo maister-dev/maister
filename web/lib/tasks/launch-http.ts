@@ -11,6 +11,7 @@ import { queryErrorDiagnostics } from "@/lib/db/pg-error";
 import { httpStatusForCode } from "@/lib/api/project-route-helpers";
 import { getFlowManifestIncompatibility } from "@/lib/flows/manifest-parser";
 import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
+import { nodeEnforcementRefusalSchema } from "@/lib/flows/enforcement-refusal";
 
 const log = pino({
   name: "task-launch-http",
@@ -26,6 +27,8 @@ const PUBLIC_LAUNCH_MESSAGES: Readonly<Record<string, string>> = {
     "Complete the selected setup or use the source run's supported retry action, then refresh launch options.",
   flow_runner_unresolved:
     "Assign an available runner to the indicated Flow slot, then refresh launch options.",
+  flow_settings_enforcement_refused:
+    "The selected runner cannot enforce a required Flow setting. Adjust the indicated node or choose a compatible runner, then refresh launch options.",
   flow_legacy_steps: LEGACY_STEPS_REFUSAL_MESSAGE,
   flow_invalid_manifest:
     "The selected Flow manifest is invalid. Repair or republish its package before launching.",
@@ -161,13 +164,29 @@ export function taskLaunchRequestKey(request: Request): string {
 export function taskLaunchErrorResponse(error: unknown): NextResponse {
   if (isMaisterError(error)) {
     const manifest = getFlowManifestIncompatibility(error);
-    const reason = manifest
+    const originalReason = manifest
       ? `flow_${manifest.kind}`
       : typeof error.details?.reason === "string"
         ? error.details.reason
         : "launch_technical_precondition";
+    const enforcement =
+      originalReason === "flow_settings_enforcement_refused"
+        ? nodeEnforcementRefusalSchema.safeParse({
+            reason: originalReason,
+            nodeId: error.details?.nodeId,
+            capabilityClass: error.details?.capabilityClass,
+            capabilityAgent: error.details?.capabilityAgent,
+            declared: error.details?.declared,
+            capability: error.details?.capability,
+          })
+        : null;
+    const invalidEnforcement = enforcement !== null && !enforcement.success;
+    const reason = invalidEnforcement
+      ? "launch_technical_precondition"
+      : originalReason;
+    const code = invalidEnforcement ? "CONFIG" : error.code;
     const status =
-      reason === "launch_not_found" ? 404 : httpStatusForCode(error.code);
+      reason === "launch_not_found" ? 404 : httpStatusForCode(code);
     const conflict =
       reason === "launch_already_reserved"
         ? taskLaunchConflictReferenceSchema.safeParse(error.details?.existing)
@@ -181,11 +200,19 @@ export function taskLaunchErrorResponse(error: unknown): NextResponse {
           })
         : null;
 
-    log.warn({ code: error.code, reason, status }, "task-launch-http-refused");
+    log.warn(
+      {
+        code,
+        reason,
+        status,
+        ...(enforcement?.success ? enforcement.data : {}),
+      },
+      "task-launch-http-refused",
+    );
 
     return NextResponse.json(
       {
-        code: error.code,
+        code,
         message: Object.hasOwn(PUBLIC_LAUNCH_MESSAGES, reason)
           ? PUBLIC_LAUNCH_MESSAGES[reason]
           : "Task launch request could not be accepted",
@@ -193,6 +220,7 @@ export function taskLaunchErrorResponse(error: unknown): NextResponse {
           reason,
           ...(conflict?.success ? { existing: conflict.data } : {}),
           ...(runnerSlot?.success ? runnerSlot.data : {}),
+          ...(enforcement?.success ? enforcement.data : {}),
         },
       },
       { status },

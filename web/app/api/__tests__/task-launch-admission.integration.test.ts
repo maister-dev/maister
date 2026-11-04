@@ -12,7 +12,9 @@ import { GET as PREVIEW } from "@/app/api/runs/launch-options/route";
 import { GET } from "@/app/api/task-launch-intents/[intentId]/route";
 import { POST as CANCEL } from "@/app/api/task-launch-intents/[intentId]/cancel/route";
 import { POST as REPLACE } from "@/app/api/task-launch-intents/[intentId]/replace/route";
-import { tasks } from "@/lib/db/schema";
+import { platformAcpRunners, tasks } from "@/lib/db/schema";
+import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
+import { git } from "@/test-support/git-fixture";
 import { updateTask } from "@/lib/services/tasks";
 import { prepareTaskQualification } from "@/lib/tasks/qualification";
 import { qualificationFixture } from "@/test-support/task-qualification";
@@ -24,6 +26,8 @@ import { taskLaunchSettingsToken } from "@/lib/tasks/launch-intent";
 import { prepareTaskLaunchFirstDispatch } from "@/lib/tasks/launch-first-dispatch";
 import { takeSchedulerLock } from "@/lib/scheduler";
 import { prepareTaskLaunchIntent } from "@/lib/tasks/launch-dispatch";
+import { taskLaunchErrorResponse } from "@/lib/tasks/launch-http";
+import { externalTaskLaunchErrorResponse } from "@/lib/tasks/launch-external";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import { mkdtempReal } from "@/test-support/worktree-test-root";
 import {
@@ -946,5 +950,195 @@ it("LA14 unresolved runner refusal identifies the actionable Flow slot without a
       "UPDATE platform_acp_runners SET enabled=true WHERE id=$1",
       [fixture.runnerId],
     );
+  }
+});
+
+async function strictEnforcementRequest(nodeId: string) {
+  const input = await body();
+  const strictFlowId = randomUUID();
+  const revisionId = randomUUID();
+  const policyRunnerId = randomUUID();
+  const manifest = {
+    schemaVersion: 1,
+    name: "Strict named-session refusal",
+    nodes: [
+      {
+        id: "prepare",
+        type: "ai_coding",
+        action: { prompt: "Prepare" },
+        transitions: { success: nodeId },
+      },
+      {
+        id: nodeId,
+        type: "ai_coding",
+        session: "policy",
+        action: { prompt: "Implement private input" },
+        settings: { enforcement: { skills: "strict" } },
+        transitions: { success: "done" },
+      },
+    ],
+  };
+
+  await database.db
+    .insert(platformAcpRunners)
+    .values(
+      testPlatformRunnerRow(
+        policyRunnerId,
+        "claude",
+      ) as typeof platformAcpRunners.$inferInsert,
+    );
+  await database.pool.query(
+    "INSERT INTO flow_revisions SELECT (jsonb_populate_record(NULL::flow_revisions,to_jsonb(r)||jsonb_build_object('id',$1::text,'flow_ref_id',$2::text,'manifest',$3::jsonb))).* FROM flow_revisions r WHERE id=(SELECT enabled_revision_id FROM flows WHERE id=$4)",
+    [revisionId, strictFlowId, JSON.stringify(manifest), fixture.flowId],
+  );
+  await database.pool.query(
+    "INSERT INTO flows SELECT (jsonb_populate_record(NULL::flows,to_jsonb(f)||jsonb_build_object('id',$1::text,'flow_ref_id',$1::text,'enabled_revision_id',$2::text,'manifest',$3::jsonb))).* FROM flows f WHERE id=$4",
+    [strictFlowId, revisionId, JSON.stringify(manifest), fixture.flowId],
+  );
+  await database.pool.query(
+    "INSERT INTO flow_runner_remaps(id,project_id,flow_revision_id,slot_key,mapped_runner_id,status) VALUES($1,$2,$3,'session:policy',$4,'Mapped')",
+    [randomUUID(), fixture.projectId, revisionId, policyRunnerId],
+  );
+  const selection = { flowId: strictFlowId };
+
+  return {
+    ...input,
+    ...selection,
+    expectedSettingsToken: await taskLaunchSettingsToken(
+      database.db,
+      input.taskId,
+      selection,
+    ),
+  };
+}
+
+it("static enforcement rejects the exact named session before accepting a launch or creating Git resources", async () => {
+  const input = await strictEnforcementRequest("implement");
+  const before = await git(fixture.repo, "worktree", "list", "--porcelain");
+  const response = await POST(request(input));
+  const refusal = await response.json();
+
+  expect(response.status).toBe(400);
+  expect(refusal).toMatchObject({
+    code: "CONFIG",
+    details: {
+      reason: "flow_settings_enforcement_refused",
+      nodeId: "implement",
+      capabilityClass: "skills",
+      capabilityAgent: "claude",
+      declared: "strict",
+      capability: "instructed",
+    },
+  });
+  expect(JSON.stringify(refusal)).not.toContain("Private execution input");
+  const preview = await PREVIEW(
+    new NextRequest(
+      `http://localhost/api/runs/launch-options?taskId=${input.taskId}&flowId=${input.flowId}`,
+    ),
+  );
+  const options = await preview.json();
+
+  expect(preview.status).toBe(200);
+  expect(options.launchability).toMatchObject({
+    launchable: false,
+    reason: "flow_settings_enforcement_refused",
+  });
+  expect(options.enforcementRefusal).toEqual(refusal.details);
+  for (const table of ["task_launch_intents", "runs"])
+    expect(
+      (
+        await database.pool.query(`SELECT id FROM ${table} WHERE task_id=$1`, [
+          input.taskId,
+        ])
+      ).rows,
+    ).toEqual([]);
+  expect(await git(fixture.repo, "worktree", "list", "--porcelain")).toBe(
+    before,
+  );
+});
+
+it("unsafe enforcement identities and extra error fields never cross the public refusal boundary", async () => {
+  const privateMarker = "private-enforcement-source";
+
+  for (const nodeId of [
+    `${privateMarker}\ncontrol`,
+    `${privateMarker}-${"x".repeat(256)}`,
+  ]) {
+    const input = await strictEnforcementRequest(nodeId);
+    const response = await POST(request(input));
+    const refusal = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(refusal).toMatchObject({
+      code: "CONFIG",
+      details: { reason: "flow_invalid_manifest" },
+    });
+    expect(refusal.details).not.toHaveProperty("nodeId");
+    expect(JSON.stringify(refusal)).not.toContain(privateMarker);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT id FROM task_launch_intents WHERE task_id=$1",
+          [input.taskId],
+        )
+      ).rows,
+    ).toEqual([]);
+    expect(
+      (
+        await database.pool.query("SELECT id FROM runs WHERE task_id=$1", [
+          input.taskId,
+        ])
+      ).rows,
+    ).toEqual([]);
+    const preview = await PREVIEW(
+      new NextRequest(
+        `http://localhost/api/runs/launch-options?taskId=${input.taskId}&flowId=${input.flowId}`,
+      ),
+    );
+    const options = await preview.json();
+
+    expect(preview.status).toBe(200);
+    expect(options.launchability).toMatchObject({
+      launchable: false,
+      reason: "incompatible",
+    });
+    expect(options.enforcementRefusal).toBeNull();
+    expect(JSON.stringify(options)).not.toContain(privateMarker);
+  }
+  const details = {
+    reason: "flow_settings_enforcement_refused",
+    nodeId: "implement",
+    capabilityClass: "skills",
+    capabilityAgent: "claude",
+    declared: "strict",
+    capability: "instructed",
+  };
+  const response = taskLaunchErrorResponse(
+    new MaisterError("CONFIG", privateMarker, {
+      details: { ...details, source: privateMarker },
+      cause: new Error(privateMarker),
+    }),
+  );
+  const refusal = await response.json();
+
+  expect(refusal.details).toEqual(details);
+  expect(JSON.stringify(refusal)).not.toContain(privateMarker);
+  for (const nodeId of [
+    `${privateMarker}\ncontrol`,
+    `${privateMarker}/source`,
+  ]) {
+    const external = externalTaskLaunchErrorResponse(
+      new MaisterError("EXECUTOR_UNAVAILABLE", privateMarker, {
+        details: { ...details, nodeId },
+      }),
+    );
+    const externalRefusal = await external.json();
+
+    expect(external.status).toBe(422);
+    expect(externalRefusal).toMatchObject({
+      code: "CONFIG",
+      details: { reason: "launch_technical_precondition" },
+    });
+    expect(JSON.stringify(externalRefusal)).not.toContain(privateMarker);
   }
 });

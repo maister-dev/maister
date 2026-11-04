@@ -2,11 +2,14 @@
 
 import type { ReactElement } from "react";
 import type { TaskLaunchOptionsSnapshot } from "@/lib/tasks/launch-options";
+import type { NodeEnforcementRefusal } from "@/lib/flows/enforcement-refusal";
 
 import { useEffect, useId, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 
 import { useTaskLaunchIntent } from "@/components/board/use-task-launch-intent";
+import { TaskEnforcementRefusalNotice } from "@/components/board/task-enforcement-refusal-notice";
+import { nodeEnforcementRefusalSchema } from "@/lib/flows/enforcement-refusal";
 import {
   TaskLaunchIntentStatus,
   taskLaunchReasonKey,
@@ -46,6 +49,10 @@ export function TaskAgentLaunchControl({
     snapshot: TaskLaunchOptionsSnapshot;
   } | null>(null);
   const [previewFailed, setPreviewFailed] = useState(false);
+  const [previewEnforcement, setPreviewEnforcement] = useState<Readonly<{
+    key: string;
+    refusal: NodeEnforcementRefusal;
+  }> | null>(null);
   const [replacement, setReplacement] = useState<{
     intentId: string;
     stateVersion: number;
@@ -69,6 +76,8 @@ export function TaskAgentLaunchControl({
   );
   const key = JSON.stringify(selection);
   const currentPreview = preview?.key === key ? preview.snapshot : null;
+  const enforcementRefusal =
+    previewEnforcement?.key === key ? previewEnforcement.refusal : null;
 
   useEffect(() => {
     if (!open || tracking || intent.attempt || intent.busy) return;
@@ -80,7 +89,22 @@ export function TaskAgentLaunchControl({
       signal: controller.signal,
     })
       .then(async (response) => {
-        if (!response.ok) throw new Error("Agent launch preview unavailable");
+        if (!response.ok) {
+          const payload: unknown = await response.json();
+          const refusal = nodeEnforcementRefusalSchema.safeParse(
+            payload && typeof payload === "object" && "details" in payload
+              ? payload.details
+              : null,
+          );
+
+          if (refusal.success && !controller.signal.aborted) {
+            setPreviewEnforcement({ key, refusal: refusal.data });
+            setPreviewFailed(true);
+
+            return;
+          }
+          throw new Error("Agent launch preview unavailable");
+        }
         const snapshot = (await response.json()) as TaskLaunchOptionsSnapshot;
 
         if (
@@ -110,12 +134,16 @@ export function TaskAgentLaunchControl({
         if (!controller.signal.aborted) {
           setPreview({ key, snapshot });
           setPreviewFailed(false);
+          setPreviewEnforcement(null);
           if (snapshot.activeLaunch && !intent.attempt && !intent.busy)
             intent.observe(snapshot.activeLaunch);
         }
       })
       .catch(() => {
-        if (!controller.signal.aborted) setPreviewFailed(true);
+        if (!controller.signal.aborted) {
+          setPreviewEnforcement(null);
+          setPreviewFailed(true);
+        }
       });
 
     return () => controller.abort();
@@ -327,7 +355,13 @@ export function TaskAgentLaunchControl({
               ) : null}
               {previewFailed ? (
                 <div>
-                  <p role="alert">{t("optionsError")}</p>
+                  {enforcementRefusal ? (
+                    <TaskEnforcementRefusalNotice
+                      refusal={enforcementRefusal}
+                    />
+                  ) : (
+                    <p role="alert">{t("optionsError")}</p>
+                  )}
                   <button
                     className={buttonClass}
                     type="button"
@@ -340,7 +374,12 @@ export function TaskAgentLaunchControl({
                   </button>
                 </div>
               ) : null}
-              {intent.errorReason ? (
+              {intent.errorReason === "flow_settings_enforcement_refused" &&
+              intent.enforcementRefusal ? (
+                <TaskEnforcementRefusalNotice
+                  refusal={intent.enforcementRefusal}
+                />
+              ) : intent.errorReason ? (
                 <p role="alert">{t(taskLaunchReasonKey(intent.errorReason))}</p>
               ) : null}
               <button

@@ -288,6 +288,25 @@ The error message names the offending node id + class + resolved agent + the
 code** (ADR-008 closed union) — `capability_guard` reuses `CONFIG` /
 `EXECUTOR_UNAVAILABLE`.
 
+Canonical task launch checks the deterministic static table before accepting an
+intent and when showing launch options. It compiles the selected immutable
+manifest and uses each compiled node's exact session (including synthesized solo
+sessions) to select that session's resolved runner. It never substitutes the
+primary runner for a named or solo session. Dispatch retains its current static
+and asynchronous evidence checks. Static refusal creates no intent, Run,
+workspace or model command. The public refusal uses the existing error code and
+the bounded typed details `reason: flow_settings_enforcement_refused`, `nodeId`,
+`capabilityClass`, `capabilityAgent`, `declared: strict` and
+`capability: instructed | unsupported`. Class and agent values come from the
+existing finite enums; node IDs exclude control characters. Launch options
+for the board include `enforcementRefusal` (that object or null) in their HTTP 200
+response and mark manual and concurrent launch unavailable with the same reason.
+The canonical agent/Flow-facade preview returns the typed HTTP 400/503 refusal
+instead of a successful snapshot. Unsafe public identities become a generic
+technical refusal without raw or truncated-as-exact fields. HTTP and EN/RU UI project only these
+validated fields with actionable copy; raw errors, settings, causes, paths and
+credentials remain server-side. No new database field or migration is needed.
+
 ### Run-detail UX (ADR-130)
 
 The run-detail settings panel (`FlowSettingsPanel`) and the capability-profile panel

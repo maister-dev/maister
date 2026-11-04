@@ -12,23 +12,18 @@
 //     flow revision pins an ai_coding `implement` node declaring
 //     `enforcement.skills: "strict"`. ADR-130 flipped tools/mcps/hooks to
 //     `enforced` but `skills` stays `instructed` (no tool-identity seam mechanism),
-//     so clicking Launch refuses with CONFIG (400) BEFORE any
-//     worktree/run/workspace is created — no silent escape hatch. Asserts the UI
-//     surfaces the refusal and no run is created (the task stays in Backlog).
-//
-// REFUSAL-ASSERTION PATH: the REAL UI Launch click (preferred). The board's
-// LaunchPopover (components/board/launch-popover.tsx) POSTs /api/runs and, on a
-// non-2xx, renders the typed `code` as the button label — so a CONFIG refusal
-// turns the button text into "CONFIG", which is deterministically assertable.
-// The same POST is intercepted to pin status 400 + body {code:"CONFIG"} and
-// confirm the message names the node id + class. The e2e stub supervisor
-// (e2e/_seed/stub-supervisor.ts) answers `/health` ready so the button is
-// enabled and the launch reaches the settings-enforcement gate; it never
-// implements `/sessions`, so no agent is spawned.
+//     so launch options expose a typed deterministic refusal and disable Launch
+//     before any intent/worktree/run/workspace is created. Direct canonical
+//     POST refusal remains covered by the real API integration suite. This
+//     browser case checks actionable node/class copy and the zero-effect path.
+import type { NodeEnforcementRefusal } from "@/lib/flows/enforcement-refusal";
+
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { test, expect } from "@playwright/test";
+
+import { singleValue } from "./_seed/db";
 
 type VisibleFixture = {
   runId: string;
@@ -119,6 +114,16 @@ test("scenario B — strict enforcement refuses the launch with CONFIG (no run c
 
   await expect(launch).toBeVisible();
   await expect(launch).toBeEnabled();
+  const optionsResponse = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+
+    return (
+      url.pathname === "/api/runs/launch-options" &&
+      url.searchParams.get("taskId") === fx.taskId &&
+      response.request().method() === "GET"
+    );
+  });
+
   await launch.click();
 
   const dialog = page.getByTestId("task-launch-dialog");
@@ -126,38 +131,45 @@ test("scenario B — strict enforcement refuses the launch with CONFIG (no run c
   await expect(dialog).toBeVisible();
 
   const createRun = dialog.getByRole("button", {
-    name: "Create run",
+    name: "Launch",
     exact: true,
   });
 
-  await expect(createRun).toBeEnabled();
+  const response = await optionsResponse;
+  const body: {
+    enforcementRefusal: NodeEnforcementRefusal;
+    launchability: { launchable: boolean; reason: string };
+    relaunch: { launchable: boolean; reason: string };
+  } = await response.json();
 
-  // Intercept the launch POST: it must refuse with CONFIG (400) at the
-  // settings-enforcement gate and the message must name the node id + class.
-  const launchResponse = page.waitForResponse(
-    (r) => r.url().endsWith("/api/runs") && r.request().method() === "POST",
-  );
+  expect(response.status()).toBe(200);
+  expect(body.enforcementRefusal).toMatchObject({
+    reason: "flow_settings_enforcement_refused",
+    nodeId: fx.nodeId,
+    capabilityClass: fx.refusedClass,
+    declared: "strict",
+    capability: "instructed",
+  });
+  expect(body.launchability).toMatchObject({
+    launchable: false,
+    reason: "flow_settings_enforcement_refused",
+  });
+  expect(body.relaunch).toMatchObject({
+    launchable: false,
+    reason: "flow_settings_enforcement_refused",
+  });
+  await expect(createRun).toBeDisabled();
+  const refusal = dialog.getByRole("alert").filter({ hasText: fx.nodeId });
 
-  await createRun.click();
-
-  const res = await launchResponse;
-
-  expect(res.status()).toBe(400);
-
-  const body = (await res.json()) as { code?: string; message?: string };
-
-  expect(body.code).toBe("CONFIG");
-  expect(body.message).toContain(fx.nodeId); // "implement"
-  expect(body.message).toContain(fx.refusedClass); // "skills" (ADR-130: mcps now enforced; skills stays instructed → refused)
-
-  // The UI surfaces the refusal. The dialog does NOT render the raw code: the
-  // launch popover maps `code` through the `run.error.*` catalogue, which is
-  // the documented convention (branch on the typed code, never show it). So
-  // assert the CONFIG-specific copy — it still discriminates this refusal from
-  // `generic`/`CRASH`/every other code, which carry different sentences.
-  await expect(dialog.getByRole("alert")).toContainText(
-    "The request or configuration is invalid.",
-  );
+  await expect(refusal).toContainText(fx.refusedClass);
+  await expect(refusal).toContainText("Adjust the Flow enforcement setting");
+  for (const table of ["task_launch_intents", "runs"])
+    expect(
+      await singleValue<number>(
+        `SELECT count(*)::int AS value FROM ${table} WHERE task_id=$1`,
+        [fx.taskId],
+      ),
+    ).toBe(0);
 
   // No run was created — reload the board and assert the task is still in
   // Backlog (its Launch control re-renders) and no flight card links a run for

@@ -38,14 +38,12 @@ import { test, expect, type Page } from "@playwright/test";
 
 import { singleValue, withE2EDb } from "./_seed/db";
 import { loadFixtures } from "./_seed/fixtures";
+import {
+  readTaskLaunchReceipt,
+  waitForTaskLaunchRun,
+} from "./_seed/task-launch";
 
-const LATEST_RUN_SQL = `SELECT id AS value FROM runs WHERE task_id = $1
-   ORDER BY started_at DESC NULLS LAST LIMIT 1`;
-
-// Launches the named Backlog task from the project board (board Launch →
-// confirm) and resolves the created run id from the DB by task id. The board
-// launch POSTs with `Accept: text/event-stream` (staged SSE), so the response
-// body is NOT JSON — the run id is read from the `runs` row the launch creates.
+// Launch from the board and follow the accepted intent's exact Run association.
 async function launchFromBoard(
   page: Page,
   projectSlug: string,
@@ -68,43 +66,31 @@ async function launchFromBoard(
 
   const launchResponse = page.waitForResponse(
     (response) =>
-      response.url().includes("/api/runs") &&
+      new URL(response.url()).pathname === "/api/task-launch-intents" &&
       response.request().method() === "POST",
   );
 
   await launchControl.click();
 
   // The launch popover (portaled to body) loads launch-options, then exposes
-  // its confirm button "Create run" (launch.createRun).
+  // its "Launch" action (launch.createRun).
   const dialog = page.getByTestId("task-launch-dialog");
 
   await expect(dialog).toBeVisible();
 
   const confirm = dialog.getByRole("button", {
-    name: "Create run",
+    name: "Launch",
     exact: true,
   });
 
   await expect(confirm).toBeEnabled();
   await confirm.click();
 
-  // The staged SSE stream opens with HTTP 200 (preconditions passed → a run was
-  // created). The terminal frame carries {runId,status} but the body is SSE,
-  // not JSON, so resolve the run from the DB by task id instead.
-  expect((await launchResponse).status()).toBe(200);
+  const receipt = await readTaskLaunchReceipt(await launchResponse);
 
-  await expect
-    .poll(() => singleValue<string>(LATEST_RUN_SQL, [taskId]), {
-      timeout: 15_000,
-      intervals: [200],
-    })
-    .not.toBeNull();
+  expect(receipt.taskId).toBe(taskId);
 
-  const runId = await singleValue<string>(LATEST_RUN_SQL, [taskId]);
-
-  expect(runId).toBeTruthy();
-
-  return runId as string;
+  return waitForTaskLaunchRun(receipt);
 }
 
 async function waitForRunStatus(runId: string, status: string): Promise<void> {
