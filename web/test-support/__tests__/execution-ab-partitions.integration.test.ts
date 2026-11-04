@@ -1096,20 +1096,37 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
     const successor = await successorPrompt.awaitReached();
 
     expect(successor.assignmentEpoch).toBe(2);
-    await poll(
+    if (!successor.commandId)
+      throw new Error("The successor prompt has no durable command identity");
+    const successorBinding = await poll(
       async () => {
-        const result = await stack.database.pool.query<{ state: string }>(
-          `SELECT state FROM run_session_incarnations
-           WHERE run_id=$1 AND assignment_epoch=2
-             AND host_session_id=(SELECT target_session_id FROM execution_commands WHERE id=$2)`,
+        const result = await stack.database.pool.query<{
+          state: string;
+          host_session_id: string;
+          execution_assignment_id: string;
+        }>(
+          `SELECT i.state, i.host_session_id, i.execution_assignment_id
+           FROM run_session_incarnations i
+           JOIN execution_commands c ON c.run_id=i.run_id
+             AND c.execution_assignment_id=i.execution_assignment_id
+             AND c.assignment_epoch=i.assignment_epoch
+             AND c.target_session_id=i.host_session_id
+           JOIN runs r ON r.id=i.run_id
+             AND r.execution_assignment_id=i.execution_assignment_id
+           JOIN execution_assignments a ON a.id=i.execution_assignment_id
+             AND a.run_id=i.run_id AND a.epoch=i.assignment_epoch
+             AND a.execution_host_id=i.execution_host_id AND a.state='active'
+           WHERE i.run_id=$1 AND i.assignment_epoch=2 AND c.id=$2`,
           [runId, successor.commandId],
         );
+        const binding = result.rows[0];
 
-        return result.rows[0]?.state === "active" ? true : null;
+        return binding?.state === "active" ? binding : null;
       },
       60_000,
       "successor incarnation activated after stale ACK rejection",
     );
+
     successorPrompt.release();
     const second = await poll(
       async () => {
@@ -1120,12 +1137,20 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
       60_000,
       "successor ACP prompt held",
     );
-    const invocation = invocationFromEnvironment()!;
+    const invocation = invocationFromEnvironment();
+
+    if (!invocation)
+      throw new Error("The successor adapter requires its test invocation");
     const { adapter } = await captureOwnedAdapterProcess({
       invocation,
       supervisor: stack.supervisor,
-      sessionId: successor.hostSessionId!,
-      expected: { runId, assignmentEpoch: 2, acpSessionId: second.sessionId },
+      sessionId: successorBinding.host_session_id,
+      expected: {
+        runId,
+        assignmentId: successorBinding.execution_assignment_id,
+        assignmentEpoch: 2,
+        acpSessionId: second.sessionId,
+      },
     });
 
     expect(adapter.pid).toBe(second.pid);
