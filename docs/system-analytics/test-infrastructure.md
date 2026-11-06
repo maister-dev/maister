@@ -527,7 +527,7 @@ The macOS split selects whole owning suites in their original order:
 | Part | Owning suites | Required cases |
 | --- | --- | --- |
 | 1 | process cleanup; partitions | 13 + 6 = 19 |
-| 2 | process death; isolation; durable-worker boot; durable-worker concurrency; scratch dispatch | 6 + 4 + 8 + 3 + 10 = 31 |
+| 2 | process death; isolation; durable-worker boot; durable-worker concurrency; scratch dispatch | 6 + 4 + 9 + 3 + 10 = 32 |
 
 Both matrix jobs run even if the other fails. `run-isolation-ci-stage.mjs`
 executes the selected stage through `runStageAbLane`, validates its exact case
@@ -546,7 +546,7 @@ including runtime cleanup and all uploads. It downloads both validated report ar
 and rejects missing or duplicate stages, altered hashes, wrong source/run,
 non-Intel or wrong-Node evidence, failures/skips, cleanup failure, or incomplete
 case-name sets. Its `execution-isolation-combined` artifact records both separate
-preflights and the exact disjoint seven-suite/50-case union. Failed aggregation
+preflights and the exact disjoint seven-suite/51-case union. Failed aggregation
 retains a failed receipt; a green part cannot substitute for a missing part.
 The actual hosted duration and remaining headroom still require inspection of
 both jobs and their timing diagnostics after owner push.
@@ -616,8 +616,9 @@ check or local ARM run is not hosted proof.
 S5.2 acceptance requires four complete web shard reports, both runtime and
 supervisor legs, and both green macOS isolation parts plus their combined gate on the same
 pushed commit. Each part must supply its separate preflight and outer suite
-report; together they must contain exactly all seven suites and 50 required
-cases, including the original six suites/40 cases and ten dispatch controls.
+report; together they must contain exactly all seven suites and 51 required
+cases, including the original six suites/40 cases, ten dispatch controls and
+the R18 accepted-launch worker restart control.
 Record the run URL, source SHA, runner image/architecture, artifact identities,
 measured total duration (below 60 minutes) and remaining headroom before
 marking S5.2 complete.
@@ -628,7 +629,8 @@ R9 adds `lib/scratch-runs/__tests__/dispatch-window.integration.test.ts` to
 this serial manifest with ten required case names: seven S1 restart cuts, a
 legacy unknown-delivery refusal, a live-dispatcher race and the S3 held-exit
 transport control. The six original suites and 40 cases are retained; the main
-slice now requires 50 cases. Canonical ingestion fences the late old frame as
+slice now requires 51 cases, including the later R18 worker restart control.
+Canonical ingestion fences the late old frame as
 `stale_epoch`. The already-read stale terminal is covered separately by the
 transactional consumer suite in the web lane.
 If new controls enlarge the suite, extend the explicit manifest and remeasure
@@ -766,8 +768,8 @@ fixtures and their access probes. The rationale is owned by
 The driver, immutable policy, trusted status bridge and shared production/probe
 integration are **Implemented** and Phase-1 qualified. The owning
 [C2 evidence](../../.ai-factory/plans/s53a-linux-isolation.md#c2--final-source-phase-1-qualification-2026-10-05)
-records native Ubuntu's current 52-case lane and the complete final-source
-Darwin regression. The extended 55-case lifecycle/refusal inventory, full
+records native Ubuntu's then-current 52-case lane and the complete final-source
+Darwin regression. The extended 56-case lifecycle/refusal inventory, full
 qualification at both exact Node versions and Linux hosting remain **Designed**.
 The existing macOS hosted acceptance contract remains in force.
 
@@ -868,7 +870,7 @@ sequenceDiagram
 | LNX-07 | Parent death during startup, readiness or an active probe closes the namespace, including detached/TERM-resistant descendants, before exit-sweep containment | Outer watchdog and kernel parent/PID-reaper chain; LI-parent/LI-kill |
 | LNX-08 | Restart cannot clear or widen its frozen isolation policy; probes use that policy, explicit invocation, registered child, bounded typed output and successful app exit | RealWeb restart and owned probe seam; I3; LI-refusal/LI-parent |
 | LNX-09 | Every exit/cancellation attempts all owned reclaimers; any survivor discovered before containment fails; finalization refuses live/reused/unreadable runners or replaced authority | releaseInvocation; O1; O2-runner and Linux finalizer crash-window controls |
-| LNX-10 | Discovery, mandatory files and exact titles agree: Darwin 7/50, Linux 8/55, independent preflight 1; no pending/skipped/duplicate/extra cases | Platform manifest and validateLaneReport; existing report-rejection controls |
+| LNX-10 | Discovery, mandatory files and exact titles agree: Darwin 7/51, Linux 8/56, independent preflight 1; no pending/skipped/duplicate/extra cases | Platform manifest and validateLaneReport; existing report-rejection controls |
 | LNX-11 | Removing enforcement produces a reached private read and a failed negative assertion; restored full source passes with zero leaks | I1 falsification; complete Linux/Darwin lane reports |
 | LNX-12 | Ubuntu 24.04 amd64 at both exact Nodes qualifies locally before any prospective hosting amendment; hosted evidence is exact owner-pushed SHA and independently validated artifacts within fixed budgets | Local qualification gate, owner-push checkpoint and hosted report/timing audit |
 
@@ -933,21 +935,22 @@ release; it never grants finalizer authority. Missing report remains failure.
 Logs use structured role/identity/capability fields with bounded buffers; they
 never contain secrets, environment dumps, sentinel/SQLite/object bytes.
 
-### Platform case inventory and RED ownership (Implemented; locally qualified)
+### Platform case inventory and RED ownership (Implemented; current extension qualification pending)
 
-The frozen baseline is the exact owning runner title set below: seven full
-suites/50 cases plus one separately invoked preflight. Linux adds only the
+The historical qualified baseline has seven full suites/50 cases plus one
+separately invoked preflight. The current manifest additionally requires the
+R18 accepted-launch restart control, making 51 Darwin cases. Linux adds only the
 five distinct controls below; Darwin discovery excludes that new file. The
 runner uses Vitest project `integration`; no placeholder/todo cases are active.
 All five Linux controls are implemented and pass their native owning suite,
 including nested mounts, invalid restart, acquisition cancellation and process
-lifecycle cuts. The full selector requires Linux55 plus separate preflight1;
-Darwin retains50 plus separate preflight1 and its19/31 CI parts. Linux parts
+lifecycle cuts. The full selector requires Linux56 plus separate preflight1;
+Darwin requires51 plus separate preflight1 and its19/32 CI parts. Linux parts
 and unknown platforms refuse selection. The
 [final native qualification](../../.ai-factory/plans/s53a-linux-isolation.md#final-native-qualification)
 binds the corrective code to its whole-code SHA256 and exact reports. Native
-Ubuntu 24.04 amd64 and Darwin Apple Silicon with Docker Desktop pass their
-respective 55/50 inventories and independent preflight on Node 24.15.0 and 24.19.0,
+Ubuntu 24.04 amd64 and Darwin Apple Silicon with Docker Desktop passed their
+recorded historical 55/50 inventories and independent preflight on Node 24.15.0 and 24.19.0,
 with one fresh production build per isolation invocation and zero leaks.
 Bounded-output26, publish10 and complete applicable regressions pass with
 explicit source attribution. R20 retains its original source-labelled receipts:
@@ -997,10 +1000,11 @@ A14 is not applicable, and the existing workflow is unchanged.
 | `test-support/__tests__/durable-workers-boot.integration.test.ts` | applies the flow_node_attempt owner after the production web restarts | Existing; both platforms |
 | `test-support/__tests__/durable-workers-boot.integration.test.ts` | applies the agent_turn owner after the production web restarts | Existing; both platforms |
 | `test-support/__tests__/durable-workers-boot.integration.test.ts` | applies the scratch_message owner after the production web restarts | Existing; both platforms |
+| `test-support/__tests__/durable-workers-boot.integration.test.ts` | R18: a deferred accepted launch survives web death and binds once through the restarted production worker without another request | Local native passed; combined browser and hosted qualification pending |
 | `test-support/__tests__/durable-workers-boot.integration.test.ts` | R1: a registry missing a schema kind refuses to compose with CONFIG and starts nothing | Existing; both platforms |
 | `test-support/__tests__/durable-workers-boot.integration.test.ts` | R2: composing the agent registry beside the consensus-draft one is a CONFIG failure by design | Existing; both platforms |
 | `test-support/__tests__/durable-workers-boot.integration.test.ts` | R4: stopping with nothing started resolves | Existing; both platforms |
-| `test-support/__tests__/durable-workers-boot.integration.test.ts` | R5: a double start returns the same four handles | Existing; both platforms; fourth-worker qualification pending |
+| `test-support/__tests__/durable-workers-boot.integration.test.ts` | R5: a double start returns the same four handles | Existing; both platforms; combined browser and hosted qualification pending |
 | `test-support/__tests__/durable-workers-boot.integration.test.ts` | R3: start refuses while the application is stopping | Existing; both platforms |
 | `test-support/__tests__/durable-workers-concurrency.integration.test.ts` | D1: a live waiter and the durable worker on one command apply it exactly once | Existing; both platforms |
 | `test-support/__tests__/durable-workers-concurrency.integration.test.ts` | D2: two production web instances on one database apply a dead instance's command exactly once | Existing; both platforms |
@@ -1049,10 +1053,10 @@ pre-containment leak observations.
 
 | Environment | Required runtime/provisioning | Evidence meaning |
 |---|---|---|
-| Local qualification | Ubuntu 24.04 amd64 native/VM, ordinary nonroot harness; separate Node 24.15.0 and 24.19.0, frozen pnpm, real Docker Postgres 16, host proc inspection, authenticated pinned distro bwrap/source, GNU coreutils/Git/C compiler, permitted required namespaces/AppArmor | Full Linux 55 plus independent I-CI, source/build/runtime identities, exact report validation, timings and zero leaks; prerequisite for hosting amendment |
+| Local qualification | Ubuntu 24.04 amd64 native/VM, ordinary nonroot harness; separate Node 24.15.0 and 24.19.0, frozen pnpm, real Docker Postgres 16, host proc inspection, authenticated pinned distro bwrap/source, GNU coreutils/Git/C compiler, permitted required namespaces/AppArmor | Current full Linux 56 plus independent I-CI, source/build/runtime identities, exact report validation, timings and zero leaks; prerequisite for hosting amendment |
 | ARM64 container development | Record image digest/host kernel/architecture/UID mapping/seccomp/capabilities/nested namespace policy; nonroot apps, no blanket privileged mode/host PID/host root bind | Development only; cannot close amd64 or hosted gates |
-| Proposed hosted qualification | Standard ubuntu-24.04 amd64, Node 24.19.0, authenticated packages and narrowly scoped bwrap AppArmor allowance if needed; tests/apps ordinary nonroot | Exact owner-pushed candidate, Linux 55 plus independent I-CI and all other mandatory jobs green; capability and speed measured |
-| Darwin regression | Existing sandbox-exec and separate preflight/original 50, labeled architecture/Node/source | Preserves Darwin behavior; cannot qualify Linux |
+| Proposed hosted qualification | Standard ubuntu-24.04 amd64, Node 24.19.0, authenticated packages and narrowly scoped bwrap AppArmor allowance if needed; tests/apps ordinary nonroot | Exact owner-pushed candidate, current Linux 56 plus independent I-CI and all other mandatory jobs green; capability and speed measured |
+| Darwin regression | Existing sandbox-exec and separate preflight/current 51, labeled architecture/Node/source | Preserves Darwin behavior; cannot qualify Linux |
 
 Validation child processes use umask `0022`, matching the existing atomic-file
 `0644` acceptance assertion. Record the inherited parent mask and apply this

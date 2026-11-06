@@ -9,8 +9,6 @@
 // binding substitution"), where a spawn slot is not subject to the shared
 // e2e capacity.
 
-import type { Route } from "@playwright/test";
-
 import { test, expect } from "@playwright/test";
 
 import { singleValue } from "./_seed/db";
@@ -18,6 +16,8 @@ import { loadFixtures } from "./_seed/fixtures";
 import { readTaskLaunchReceipt } from "./_seed/task-launch";
 
 test("flow-bound agent launch records its selected Flow settings and any actual Run binding", async ({
+  browser,
+  baseURL,
   page,
 }) => {
   const fx = loadFixtures().byKey.platformAgents;
@@ -30,46 +30,27 @@ test("flow-bound agent launch records its selected Flow settings and any actual 
     )
       launchRequests.push(request.url());
   });
-  let releaseLaunchScript: () => void = () => {};
-  let markLaunchScriptHeld: () => void = () => {};
-  const launchScriptRelease = new Promise<void>((resolve) => {
-    releaseLaunchScript = resolve;
+  const serverContext = await browser.newContext({
+    baseURL,
+    storageState: await page.context().storageState(),
+    javaScriptEnabled: false,
   });
-  const launchScriptHeld = new Promise<void>((resolve) => {
-    markLaunchScriptHeld = resolve;
-  });
-  const isClientChunk = (url: URL): boolean =>
-    url.pathname.startsWith("/_next/static/chunks/") &&
-    url.pathname.endsWith(".js");
-  const holdLaunchScript = async (route: Route): Promise<void> => {
-    const response = await route.fetch();
-    const source = await response.text();
 
-    // Hold the actual dialog module, leaving unrelated chunks and the server
-    // response free to arrive. The source marker survives hashed chunk names.
-    if (source.includes("task-launch-dialog")) {
-      markLaunchScriptHeld();
-      await launchScriptRelease;
-    }
-    await route.fulfill({ response });
-  };
-
-  await page.route(isClientChunk, holdLaunchScript);
   try {
-    await page.goto(`/projects/${fx.projectSlug}`, { waitUntil: "commit" });
-    await launchScriptHeld;
-    await expect(page.getByText("Bound-agent flow target")).toBeVisible();
-    const serverOpener = page
+    const serverPage = await serverContext.newPage();
+
+    await serverPage.goto(`/projects/${fx.projectSlug}`);
+    const serverOpener = serverPage
       .locator("article")
       .filter({ hasText: "Bound-agent flow target" })
       .getByRole("button", { name: "Launch", exact: true });
 
     await expect(serverOpener).toBeDisabled();
   } finally {
-    releaseLaunchScript();
-    await page.unrouteAll({ behavior: "wait" });
+    await serverContext.close();
   }
 
+  await page.goto(`/projects/${fx.projectSlug}`);
   await expect(page.getByText("Bound-agent flow target")).toBeVisible();
 
   const card = page

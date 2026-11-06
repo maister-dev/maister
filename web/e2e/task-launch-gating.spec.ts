@@ -491,6 +491,7 @@ test.describe("Manual task admission through the real browser and controlled pro
         let dialog: Locator;
 
         if (task === failed) {
+          await expect(opener).toBeEnabled();
           await opener.focus();
           await expect(opener).toBeFocused();
           await page.keyboard.press("Enter");

@@ -95,10 +95,13 @@ No required assertion is skipped, quarantined or weakened.
   and throughout hydration until its client interaction handlers are ready.
   Reuse the existing client-readiness hook; this changes no launch authority,
   assessment policy, settings or normal confirmation behavior. In the existing
-  bound-agent browser journey, hold only the delivered JavaScript chunk that
-  contains the launch dialog, require the actual SSR opener to be disabled,
-  then release in `finally` and require one enabled click to open the dialog
-  and load its real options. No launch POST may occur before the intentional
+  bound-agent browser journey, inspect the actual SSR opener in a scoped
+  authenticated JavaScript-disabled browser context, require it to be disabled,
+  and close that context in `finally`. In the normal interactive context,
+  require one enabled click to open the dialog and load its real options.
+  Keyboard journeys must await the opener's enabled state before focusing it,
+  retaining actual focus, Enter and focus-restoration checks. No launch POST
+  may occur before the intentional
   confirm action; preserve all existing immutable settings and Run-binding
   assertions. Reproduce the enabled inert SSR button before the source fix;
   no retry-click, arbitrary wait or timeout increase substitutes for readiness.
