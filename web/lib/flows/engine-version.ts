@@ -100,7 +100,9 @@ const log = pino({
 // capture and access-aware reduction/disclosure. Company result-only execution
 // still requires its own declared capability and binding preflight.
 // 3.11.1 fixes native safe-tool arbitration and read-only facade classification.
-export const MAISTER_ENGINE_VERSION = "3.11.1";
+// 3.12.0 adds declared company result-only graphs over the existing execution
+// ledger, with current authority, required results and durable native recovery.
+export const MAISTER_ENGINE_VERSION = "3.12.0";
 
 // Minimum engine version a graph (`nodes[]`) manifest must declare in
 // `compat.engine_min` (ADR-026). Enforced in `loadFlowManifest`.

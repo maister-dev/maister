@@ -434,9 +434,9 @@ beforeAll(async () => {
       idempotencyKey: randomUUID(),
     },
   );
-  // Only the pure compatibility predicate is simulated for this future-capability
-  // configuration fixture. The real engine remains 3.11.1 and is tested below.
-  const compatibility = useEngineVersion("3.12.0");
+  // Native configuration and execution use the installed engine predicate unchanged.
+  // Range-refusal tests separately simulate an older or newer host.
+  const compatibility = vi.spyOn(engine, "isEngineCompatible");
   let coordinator: Awaited<ReturnType<typeof createCompanyFlowBinding>>;
 
   try {
@@ -781,21 +781,26 @@ it("preserves populated standalone/project/private Run and credential bytes thro
   ]);
 });
 
-it("refuses the actual unsupported host capability before allocating any repository or execution", async () => {
-  expect(engine.MAISTER_ENGINE_VERSION).toBe("3.11.1");
-  await expect(
-    database.db.transaction((tx) =>
-      prepareCompanyFlowContext(tx, requesterId, request),
-    ),
-  ).rejects.toMatchObject({
-    code: "CONFIG",
-    details: { flowManifestIncompatibility: { kind: "engine_incompatible" } },
-  });
-  expect(await counts()).toEqual(baselineCounts);
+it("refuses an older host capability before allocating any repository or execution", async () => {
+  const compatibility = useEngineVersion("3.11.1");
+
+  try {
+    await expect(
+      database.db.transaction((tx) =>
+        prepareCompanyFlowContext(tx, requesterId, request),
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFIG",
+      details: { flowManifestIncompatibility: { kind: "engine_incompatible" } },
+    });
+    expect(await counts()).toEqual(baselineCounts);
+  } finally {
+    compatibility.mockRestore();
+  }
 });
 
 it("prepares exact trusted installed graph/input/result witnesses on a supported host without creating a carrier Task", async () => {
-  const compatibility = useEngineVersion("3.12.0");
+  const compatibility = vi.spyOn(engine, "isEngineCompatible");
 
   try {
     const context = await database.db.transaction((tx) =>
@@ -861,7 +866,7 @@ it("requires current initiating authority even when the caller knows the exact o
 
 it("refuses changed required schema bytes under the same retained package identity", async () => {
   const original = await readFile(schemaPath, "utf8");
-  const compatibility = useEngineVersion("3.12.0");
+  const compatibility = vi.spyOn(engine, "isEngineCompatible");
 
   try {
     await writeFile(schemaPath, original + "\n");
@@ -937,22 +942,28 @@ it("refuses disabled coordinator configuration and requires the new reviewed rev
     code: "PRECONDITION",
     details: { reason: "company_flow_binding_disabled" },
   });
-  await expect(
-    updateCompanyFlowBinding(database.db, requesterId, current.id, {
-      ...replacement,
-      enabled: true,
-      expectedRevision: disabled.binding.revision,
-      idempotencyKey: randomUUID(),
-    }),
-  ).rejects.toMatchObject({
-    code: "CONFIG",
-    details: { flowManifestIncompatibility: { kind: "engine_incompatible" } },
-  });
-  expect(
-    (await getCompanyFlowBinding(database.db, requesterId, current.id))
-      .revision,
-  ).toBe(disabled.binding.revision);
-  const compatibility = useEngineVersion("3.12.0");
+  const older = useEngineVersion("3.11.1");
+
+  try {
+    await expect(
+      updateCompanyFlowBinding(database.db, requesterId, current.id, {
+        ...replacement,
+        enabled: true,
+        expectedRevision: disabled.binding.revision,
+        idempotencyKey: randomUUID(),
+      }),
+    ).rejects.toMatchObject({
+      code: "CONFIG",
+      details: { flowManifestIncompatibility: { kind: "engine_incompatible" } },
+    });
+    expect(
+      (await getCompanyFlowBinding(database.db, requesterId, current.id))
+        .revision,
+    ).toBe(disabled.binding.revision);
+  } finally {
+    older.mockRestore();
+  }
+  const compatibility = vi.spyOn(engine, "isEngineCompatible");
 
   try {
     const enabled = await updateCompanyFlowBinding(
@@ -998,7 +1009,7 @@ it("retains a company graph reservation and exact coordinator/input link atomica
       origin: { kind: "manual", interactionId: randomUUID() },
     },
   );
-  const compatibility = useEngineVersion("3.12.0");
+  const compatibility = vi.spyOn(engine, "isEngineCompatible");
   const runId = randomUUID();
 
   try {
@@ -1191,7 +1202,7 @@ it.each([
 ])(
   "refuses invalid graph provenance at the database boundary: $name",
   async ({ capture, patch }) => {
-    const compatibility = useEngineVersion("3.12.0");
+    const compatibility = vi.spyOn(engine, "isEngineCompatible");
 
     try {
       const valid = await prepareFreshGraphReservation();
@@ -1221,7 +1232,7 @@ it.each([
 ])(
   "binds the frozen export routing to its pinned manifest: $name",
   async ({ patch }) => {
-    const compatibility = useEngineVersion("3.12.0");
+    const compatibility = vi.spyOn(engine, "isEngineCompatible");
 
     try {
       const capture = await prepareFreshGraphReservation();
@@ -1268,7 +1279,7 @@ it.each([
 it.each(["missing", "wrong_role"] as const)(
   "requires the exact coordinator/input link at commit: %s",
   async (link) => {
-    const compatibility = useEngineVersion("3.12.0");
+    const compatibility = vi.spyOn(engine, "isEngineCompatible");
 
     try {
       const capture = await prepareFreshGraphReservation();
@@ -1321,7 +1332,7 @@ it("reserves one native company graph with frozen sessions/placement, refuses a 
     fixtureArgs: ["--hang"],
   });
   const restoreUrl = useRealSupervisorUrl(supervisor.url);
-  const compatibility = useEngineVersion("3.12.0");
+  const compatibility = vi.spyOn(engine, "isEngineCompatible");
   const runnerId = randomUUID();
 
   setDefaultTransportForTests(null);
@@ -1664,15 +1675,21 @@ it("retains a v2 company graph plain-directory witness and adopts its explicit o
 it("loads frozen company graph input and sessions without repository records, refusing unsupported hosts, disabled runners and changed schema bytes", async () => {
   const before = await counts();
 
-  await expect(
-    database.db.transaction((tx) =>
-      loadCompanyFlowSessionContext(tx, nativeFlowRunId),
-    ),
-  ).rejects.toMatchObject({
-    code: "CONFIG",
-    details: { flowManifestIncompatibility: { kind: "engine_incompatible" } },
-  });
-  const compatibility = useEngineVersion("3.12.0");
+  const older = useEngineVersion("3.11.1");
+
+  try {
+    await expect(
+      database.db.transaction((tx) =>
+        loadCompanyFlowSessionContext(tx, nativeFlowRunId),
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFIG",
+      details: { flowManifestIncompatibility: { kind: "engine_incompatible" } },
+    });
+  } finally {
+    older.mockRestore();
+  }
+  const compatibility = vi.spyOn(engine, "isEngineCompatible");
 
   try {
     const context = await database.db.transaction((tx) =>
@@ -1770,7 +1787,7 @@ it("CBS-03 cancels a Pending company Flow with current authority, one attributed
     fixtureArgs: ["--hang"],
   });
   const restoreUrl = useRealSupervisorUrl(supervisor.url);
-  const compatibility = useEngineVersion("3.12.0");
+  const compatibility = vi.spyOn(engine, "isEngineCompatible");
 
   resetResolverForTests();
   resetRegistrarStateForTests();
@@ -1936,7 +1953,7 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
     },
   });
   const restoreUrl = useRealSupervisorUrl(supervisor.url);
-  const compatibility = useEngineVersion("3.12.0");
+  const compatibility = vi.spyOn(engine, "isEngineCompatible");
   const worker = startProjectionWorker({
     db: database.db,
     projectors: canonicalProjectors,
@@ -2234,7 +2251,7 @@ it("CBS-03 cancels live native graph work once without allowing its completed ou
     },
   });
   const restoreUrl = useRealSupervisorUrl(supervisor.url);
-  const compatibility = useEngineVersion("3.12.0");
+  const compatibility = vi.spyOn(engine, "isEngineCompatible");
   const worker = startProjectionWorker({
     db: database.db,
     projectors: canonicalProjectors,
@@ -2430,7 +2447,7 @@ it("CBS-03 recovers a published native result after terminal preparation interru
     },
   });
   const restoreUrl = useRealSupervisorUrl(supervisor.url);
-  const compatibility = useEngineVersion("3.12.0");
+  const compatibility = vi.spyOn(engine, "isEngineCompatible");
   const worker = startProjectionWorker({
     db: database.db,
     projectors: canonicalProjectors,
@@ -2627,7 +2644,7 @@ it("CBS-03 preserves unexpected native source as bounded host evidence before re
     },
   });
   const restoreUrl = useRealSupervisorUrl(supervisor.url);
-  const compatibility = useEngineVersion("3.12.0");
+  const compatibility = vi.spyOn(engine, "isEngineCompatible");
   const worker = startProjectionWorker({
     db: database.db,
     projectors: canonicalProjectors,
@@ -2778,7 +2795,7 @@ it("CBS-03 resumes native form and human waits through the same company assignme
     },
   });
   const restoreUrl = useRealSupervisorUrl(supervisor.url);
-  const compatibility = useEngineVersion("3.12.0");
+  const compatibility = vi.spyOn(engine, "isEngineCompatible");
   const worker = startProjectionWorker({
     db: database.db,
     projectors: canonicalProjectors,
@@ -3131,7 +3148,7 @@ it("CBS-03 retains native permission consent, refuses revoked replay and deliver
     },
   });
   const restoreUrl = useRealSupervisorUrl(supervisor.url);
-  const compatibility = useEngineVersion("3.12.0");
+  const compatibility = vi.spyOn(engine, "isEngineCompatible");
   const worker = startProjectionWorker({
     db: database.db,
     projectors: canonicalProjectors,
@@ -3448,7 +3465,7 @@ it("CBS-03 resumes a checkpointed native permission after retained-host restart 
     },
   });
   const restoreUrl = useRealSupervisorUrl(supervisor.url);
-  const compatibility = useEngineVersion("3.12.0");
+  const compatibility = vi.spyOn(engine, "isEngineCompatible");
   const worker = startProjectionWorker({ db, projectors: canonicalProjectors });
   const abort = new AbortController();
   const previousCap = process.env.MAISTER_MAX_CONCURRENT_RUNS;
@@ -3774,7 +3791,7 @@ it("respects an explicitly tool-less professional declaration even when reviewed
   });
 
   await markNodeRunning(node.id, database.db);
-  const compatibility = useEngineVersion("3.12.0");
+  const compatibility = vi.spyOn(engine, "isEngineCompatible");
 
   try {
     await resolveFlowBoundAgent({
@@ -3813,7 +3830,7 @@ it("resolves the actual company Flow driving persona from its reviewed provider 
   });
 
   await markNodeRunning(node.id, database.db);
-  const compatibility = useEngineVersion("3.12.0");
+  const compatibility = vi.spyOn(engine, "isEngineCompatible");
 
   try {
     await expect(
@@ -4305,7 +4322,7 @@ it("requires a separate reviewed company persona and fences changed coordinator 
     },
   );
 
-  const personaCompatibility = useEngineVersion("3.12.0");
+  const personaCompatibility = vi.spyOn(engine, "isEngineCompatible");
 
   try {
     await expect(
@@ -4492,7 +4509,7 @@ it("requires a separate reviewed company persona and fences changed coordinator 
   await expect(
     assertCompanyRunReadAccess(database.db, requesterId, nativeFlowRunId),
   ).resolves.toBeUndefined();
-  const compatibility = useEngineVersion("3.12.0");
+  const compatibility = vi.spyOn(engine, "isEngineCompatible");
 
   try {
     const enabled = await updateCompanyFlowBinding(
@@ -4522,7 +4539,7 @@ it("requires a separate reviewed company persona and fences changed coordinator 
 });
 
 it("uses current initiating authority after revocation rather than the frozen input witness", async () => {
-  const compatibility = useEngineVersion("3.12.0");
+  const compatibility = vi.spyOn(engine, "isEngineCompatible");
 
   try {
     const capture = await prepareFreshGraphReservation();

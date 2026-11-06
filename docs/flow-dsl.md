@@ -56,9 +56,9 @@ permission-mode overrides. Current reviewed professional policy supplies the
 exact native knowledge MCP-only surface. Role and runner policies still require
 action-time preflight; metadata cannot grant tools or cooperation rights.
 
-Grammar/authoring support is qualified separately from execution. The running
-3.11.1 engine continues to refuse enablement of a 3.12.0 company Flow until the
-native graph-runtime slice and its compatibility mirrors are qualified. See
+Engine 3.12.0 executes this explicit native subset through the existing graph
+driver, node/command/result ledgers and current reviewed company binding. Older
+engines refuse the declaration before execution. See
 [the specialist runtime contract](system-analytics/specialist-runtime.md).
 
 The company prompt context uses `assignment.id`, `assignment.inputRevision`,
@@ -67,8 +67,9 @@ The company prompt context uses `assignment.id`, `assignment.inputRevision`,
 `expectedResult`, and `verification`. It supplies the real `run.id` and company
 `run.owner`, with no `task`, task attempt number or `run.projectSlug`. Strict
 references to repository-only paths fail. Shared executor/steps/artifacts and
-filtered environment keep their existing semantics. The context builder is
-qualified independently; native graph dispatch remains pending.
+filtered environment keep their existing semantics. Native dispatch, explicit
+form/human waits, required results, cancellation and checkpoint/restart recovery
+are qualified with controlled ACP; real companion/stand qualification is separate.
 
 Explicit retry and rework workspace policies must be `keep`. Omitted retry
 workspace policy still defaults to repository checkpoint rewind and is refused
@@ -99,7 +100,7 @@ The graph-only cut-over started with engine 3.0.0: manifests require a non-empty
 top-level `nodes[]`. The parser and compiler reject any manifest containing
 `steps[]` with the locked migration message: `legacy steps[] flows are not
 supported since engine 3.0.0; republish the package with nodes[]`. The current
-host engine is `3.11.1` (operational agents retain their 3.9.0 package floor;
+host engine is `3.12.0` (operational agents retain their 3.9.0 package floor;
 native evidence findings require 3.11.0). Graph packages remain
 compatible when their declared `compat` range includes that version. They do not
 need to raise an open-ended historical `engine_min`.

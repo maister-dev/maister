@@ -28,7 +28,6 @@ import { normalizeScheduledRequest } from "./scheduled-request";
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import { MaisterError } from "@/lib/errors";
 import { contentDigest } from "@/lib/evaluations/digest";
-import { isEngineCompatible } from "@/lib/flows/engine-version";
 import { nextFireAt } from "@/lib/run-schedules/cron";
 
 const log = pino({
@@ -36,7 +35,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-/** Create a reviewed source on the existing schedule table; clock dispatch remains the existing dispatcher. */
+/** Retain a reviewed source on the existing schedule table; company dispatch must be implemented before enablement. */
 export async function createCompanyCronSchedule(
   db: SqlDatabase,
   userId: string,
@@ -173,13 +172,10 @@ export async function createCompanyCronSchedule(
           "The selected coordinator Flow no longer matches the current professional role revision",
         );
     }
-    if (
-      input.enabled &&
-      !isEngineCompatible(COMPANY_EXECUTION_ENGINE_MIN).compatible
-    )
+    if (input.enabled)
       throw new MaisterError(
         "PRECONDITION",
-        "Company cron enablement requires the supported company invocation runtime",
+        "Company cron dispatch is not supported by this build; retain the source disabled",
         {
           details: {
             reason: "company_scheduler_contract_unavailable",

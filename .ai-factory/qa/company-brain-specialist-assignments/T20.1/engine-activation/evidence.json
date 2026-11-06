@@ -1,0 +1,86 @@
+{
+  "task": "T20.1",
+  "slice": "Actual engine 3.12 activation and compatibility gates",
+  "date": "2026-11-07",
+  "baseCommit": "ace21f56ed4343ccfd6c3ae992932ce9225864fd",
+  "engineVersion": "3.12.0",
+  "migrations": [],
+  "status": "T20.1 complete; T21 is next",
+  "red": [
+    "Actual unmodified compatibility predicate refuses native configuration on engine 3.11.1 before any execution (setup failure, 45 skipped)",
+    "Engine activation exposes four literal current-version metadata/reason expectations (4/9318); these are version expectation updates, not production defects",
+    "Actual engine activation erroneously permits company cron enablement with no company dispatcher implemented (1/100)"
+  ],
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "log": "integration.log.gz",
+      "files": 6,
+      "tests": 100,
+      "durationSeconds": 73.32
+    },
+    "unit": {
+      "exitCode": 0,
+      "log": "unit.log.gz",
+      "files": 889,
+      "tests": 9318,
+      "durationSeconds": 25.54
+    },
+    "types": {
+      "exitCode": 0,
+      "log": "types.log.gz"
+    },
+    "lint": {
+      "exitCode": 0,
+      "log": "lint.log.gz"
+    },
+    "format": {
+      "exitCode": 0,
+      "log": "format.log.gz"
+    },
+    "schedule-format": {
+      "exitCode": 0,
+      "log": "schedule-format.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "log": "docs.log.gz"
+    }
+  },
+  "qualified": [
+    "Actual installed engine predicate governs native package/binding/context and real owned-supervisor execution; no positive compatibility override",
+    "Explicit old/new host simulations preserve minimum/maximum refusal before allocation",
+    "Current metadata stamps 3.12.0 while retained contracts and migration witnesses are not rewritten",
+    "Native company runtime lifecycle qualifications and required-result/coordinator/recovery receipts remain in prior T20.1 checkpoints",
+    "Company cron remains explicitly unsupported until actual T22.1 dispatcher implementation, independently of engine graph readiness",
+    "Populated current main migration tests keep Brain-independent project deletion and v1/project/private bytes"
+  ],
+  "fixtureCorrections": [
+    "The disabled-binding test implicitly assumed the host was below 3.12. It now simulates the older host explicitly; its initial failed assumption had caused dependent revision/provenance failures.",
+    "Fresh result metadata and current-engine incompatibility messages update to 3.12; CB0 package minimums and legacy persisted fixture bytes remain unchanged."
+  ],
+  "scopeClarification": "T20.1 preserves existing coordinator park/wake hooks. Company child admission/cooperation and park/wake qualification remain T27/T30, matching the explicit T21 dependency boundary.",
+  "qualificationBoundary": "Real PostgreSQL, pinned fixture Git package, actual engine 3.12 and owned supervisor with controlled ACP/cache evidence. T21 full compatibility/input/result readers and later actual companion/cooperation/stand qualification are not claimed complete.",
+  "sourceSha256": {
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "390ab6e33d00ac44e8faea08601c33137778fa6aa50c46e9aa132aca999c5e72",
+    "docs/database-schema.md": "0df482d9885ee12afc4e6d5dce1cc90a14581a3a40df252f5937d7b166d699b9",
+    "docs/db/specialist-assignments-domain.md": "50b6078af8ae0d64126565cd21787e4fa35d8d180c1d4b7a5e831d52b657fea6",
+    "docs/flow-dsl.md": "8de34b5a9134f9ba72828fbc7a4f68356a206fc59ecb1d635084f44495a36a7f",
+    "docs/system-analytics/specialist-runtime.md": "92bc0e9364d7cf6d457c8a72f0ad6fec82e8bd729a0bbce90d0cfe40818f6653",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "7988e78652fb02a176f1a086722881c43f1c8b6effac4bb5d58592cf0ea4a602",
+    "web/lib/agents/company-schedules.ts": "fcba07b04d709f0e08ae4e4f23886c450319e0ef2117008648161cf1b695f095",
+    "web/lib/flows/__tests__/manifest-shape.test.ts": "65c3bd059f307b4c7ee06397ad33f90637861d3a220309fcf94d1e6d35a75a07",
+    "web/lib/flows/engine-version.ts": "a00497f5a6be7bfbd7c0c3a8e4e13794b651e3757c7a8a6de90bc4deb5d47fac",
+    "web/lib/flows/flow-dsl-grammar.ts": "e9fbd142a47751d0244c04c9c3196a98ebf3cedc7e5cd41155620759f2b459e8",
+    "web/lib/flows/graph/__tests__/consensus-output.integration.test.ts": "698b828f35b02f0c2b31a0e4c3dce9e798d2da2aa8bbfb544e847407dbfa9a9b",
+    "web/lib/flows/graph/__tests__/node-output.integration.test.ts": "4274e8b3161fe866281258873f702d4c8d63af71c18d5abf449205b5e35e12ce",
+    "web/lib/flows/graph/__tests__/node-output.test.ts": "a6d336f9e16d1b17afbf791c72d8afbe8f7d34ba907f9477879d260672576437",
+    "web/lib/flows/graph/__tests__/run-result-flow.integration.test.ts": "2021725ecbafdd9178eba315fef476f1d24dd3d2a72e0e541347997aa2919828",
+    "web/lib/queries/__tests__/run-manifest.test.ts": "7a010a2bf39abed5a914e86ee7c04ae34878e1eaae5425fcc9f0b216b16a01be",
+    "web/lib/run-results/__tests__/ledger.integration.test.ts": "7870fe6618cec799c5fe00f4f4a20d1069980de1b83102567bf7daaecc73343f"
+  }
+}

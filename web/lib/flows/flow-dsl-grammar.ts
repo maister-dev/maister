@@ -63,9 +63,9 @@ repository \`plan_review\`. AI/coordinator \`finish.human\` is refused in favor
 of an explicit human node. Explicit retry and rework workspace policies must be
 \`keep\`; an omitted retry workspace policy retains its repository rewind default
 and is therefore refused here. Use explicit human/form nodes and required result
-validation. Authoring acceptance alone does not enable company execution: the
-host remains at 3.11.1 until the native graph runtime is qualified. Existing
-binding enablement refuses the higher capability floor before execution.
+validation. Company result-only graphs require engine 3.12.0 or newer and a
+current reviewed company binding. Enablement and launch enforce the declared
+engine range before execution; no project carrier or repository is synthesized.
 The initial native company path also refuses package/node \`mcps\`, node
 \`skills\`, \`restrictions\`, \`tools\`, \`settingsProfile\`, \`artifactAccess\`, \`enforcement\`,
 \`hooks\` and permission-mode overrides. Its current reviewed professional policy
