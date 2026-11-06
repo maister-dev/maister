@@ -3590,6 +3590,16 @@ components:
                     type: string
                     minLength: 1
                   description: Allowed MCP server namespaces.
+            allowedToolApproval:
+              type: string
+              enum: [execution_policy]
+              description: |
+                Optional server-derived approval boundary. When present, an in-profile
+                tool passes to the existing execution permission policy (ask or automatic
+                approval); capability admission alone never supplies human approval.
+                Absent preserves legacy inline approval. Out-of-profile denial and its
+                consecutive-denial breaker apply before either approval path. Native
+                company Flow profiles set this literal and include it in the profile digest.
             enforcedClasses:
               type: array
               minItems: 1

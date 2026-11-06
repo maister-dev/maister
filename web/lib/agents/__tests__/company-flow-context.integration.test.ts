@@ -1,4 +1,5 @@
 import type { IssuedAgentToken } from "../tokens";
+import type { Db } from "@/lib/execution-host/db";
 import type { NativeKnowledgeActor } from "@/lib/company/types";
 import type { JsonValue } from "@/lib/hitl-response-contract";
 import type { SqlTransaction } from "@/lib/db/sql-types";
@@ -88,6 +89,8 @@ import { insertCommand } from "@/lib/execution-host/commands";
 import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
 import { startProjectionWorker } from "@/lib/execution-host/events/projection-worker";
 import { runFlow } from "@/lib/flows/runner";
+import { prepareFlowPermissionResponse } from "@/lib/flows/graph/prompt-permission";
+import { MaisterError } from "@/lib/errors";
 import { requireActiveUserById } from "@/lib/authz";
 import { POST as stopRunPost } from "@/app/api/runs/[runId]/stop/route";
 import { POST as respondHitlPost } from "@/app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route";
@@ -202,6 +205,30 @@ const dialogueManifest = {
     },
   ],
 };
+
+async function writeCompanyCapabilityCache(hostRoot: string): Promise<void> {
+  const checkedAt = new Date().toISOString();
+
+  await writeFile(
+    join(hostRoot, "adapter-smoke-cache.json"),
+    JSON.stringify({
+      version: 2,
+      adapters: {
+        claude: {
+          status: "ok",
+          checkedAt,
+          protocolVersion: 1,
+          capabilityEnforcement: {
+            status: "ok",
+            checkedAt,
+            protocolVersion: 1,
+            probeVersion: 2,
+          },
+        },
+      },
+    }),
+  );
+}
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => database.db }));
 vi.mock("@/lib/authz", async (original) => ({
@@ -1465,6 +1492,11 @@ it("reserves one native company graph with frozen sessions/placement, refuses a 
         )
       ).rows[0],
     ).toEqual({ defaults: 0, tokens: 2, commands: 0, workspaces: 0 });
+    // Retain this admitted context fixture in the pool until its later node tests.
+    // Completing a separate controlled traversal must not dispatch it after host teardown.
+    expect(
+      await tryStartRun(nativeFlowRunId, { db: database.db }),
+    ).toMatchObject({ started: true });
   } finally {
     await stopRuntimeEventConsumers();
     await supervisor.stop();
@@ -1872,27 +1904,8 @@ it("CBS-03 cancels a Pending company Flow with current authority, one attributed
 
 it("CBS-03 executes a native company graph through the existing driver, real supervisor and controlled ACP process without repository records", async () => {
   const hostRoot = join(root, "reservation-host");
-  const checkedAt = new Date().toISOString();
 
-  await writeFile(
-    join(hostRoot, "adapter-smoke-cache.json"),
-    JSON.stringify({
-      version: 2,
-      adapters: {
-        claude: {
-          status: "ok",
-          checkedAt,
-          protocolVersion: 1,
-          capabilityEnforcement: {
-            status: "ok",
-            checkedAt,
-            protocolVersion: 1,
-            probeVersion: 2,
-          },
-        },
-      },
-    }),
-  );
+  await writeCompanyCapabilityCache(hostRoot);
   const supervisor = await startRealSupervisor({
     runtimeRoot: hostRoot,
     workspaceRoots: [join(root, "worktrees")],
@@ -2106,27 +2119,8 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
 
 it("CBS-03 resumes native form and human waits through the same company assignment and frozen result contract", async () => {
   const hostRoot = join(root, "reservation-host");
-  const checkedAt = new Date().toISOString();
 
-  await writeFile(
-    join(hostRoot, "adapter-smoke-cache.json"),
-    JSON.stringify({
-      version: 2,
-      adapters: {
-        claude: {
-          status: "ok",
-          checkedAt,
-          protocolVersion: 1,
-          capabilityEnforcement: {
-            status: "ok",
-            checkedAt,
-            protocolVersion: 1,
-            probeVersion: 2,
-          },
-        },
-      },
-    }),
-  );
+  await writeCompanyCapabilityCache(hostRoot);
   const supervisor = await startRealSupervisor({
     runtimeRoot: hostRoot,
     workspaceRoots: [join(root, "worktrees")],
@@ -2445,6 +2439,318 @@ it("CBS-03 resumes native form and human waits through the same company assignme
   }
 }, 120000);
 
+it("CBS-03 retains native permission consent, refuses revoked replay and delivers the same owned input after authority is restored", async () => {
+  const db: Db = database.db;
+  const hostRoot = join(root, "reservation-host");
+
+  await writeCompanyCapabilityCache(hostRoot);
+  const supervisor = await startRealSupervisor({
+    runtimeRoot: hostRoot,
+    workspaceRoots: [join(root, "worktrees")],
+    fixtureArgs: ["--hang", "--supports-resume"],
+    env: {
+      MAISTER_ADAPTER_SMOKE_CACHE_PATH: join(
+        hostRoot,
+        "adapter-smoke-cache.json",
+      ),
+    },
+  });
+  const restoreUrl = useRealSupervisorUrl(supervisor.url);
+  const compatibility = useEngineVersion("3.12.0");
+  const worker = startProjectionWorker({
+    db: database.db,
+    projectors: canonicalProjectors,
+  });
+  const abort = new AbortController();
+  const previousCap = process.env.MAISTER_MAX_CONCURRENT_RUNS;
+  let driver: Promise<Readonly<{ error: unknown | null }>> | undefined;
+  const direct = createLocalDirectTransport();
+  let deliveryAvailable = false;
+  let deliveredInputs = 0;
+  const transport: typeof direct = {
+    ...direct,
+    async deliverInput(...input: Parameters<typeof direct.deliverInput>) {
+      if (!deliveryAvailable)
+        throw new MaisterError(
+          "EXECUTOR_UNAVAILABLE",
+          "Controlled company permission transport is unavailable",
+          { details: { httpStatus: 503 } },
+        );
+
+      deliveredInputs += 1;
+
+      return direct.deliverInput(...input);
+    },
+  };
+
+  setDefaultTransportForTests(transport);
+  resetResolverForTests();
+  resetRegistrarStateForTests();
+  try {
+    const output = {
+      schemaVersion: 1,
+      findings: [],
+      knowledgeProposals: [],
+      selection: [],
+    };
+    const work = await createSpecialistAssignment(database.db, requesterId, {
+      ...preparedAssignment,
+      objectiveInput: {
+        ...preparedAssignment.objectiveInput,
+        input:
+          "\nfixture-output:" +
+          JSON.stringify({
+            bytes: 0,
+            permission: true,
+            permissionToolCall: {
+              toolCallId: "company-flow-proposal-proof",
+              title: "mcp__maister__knowledge_propose",
+              kind: "other",
+              status: "pending",
+            },
+            text: "```json maister:output\n" + JSON.stringify(output) + "\n```",
+          }) +
+          "\n",
+      },
+      origin: { kind: "manual", interactionId: randomUUID() },
+    });
+    const hosts = createExecutionHosts({
+      db: database.db,
+      transport,
+    });
+    const receipt = await reserveCompanyFlowRun(
+      database.db,
+      requesterId,
+      {
+        ...request,
+        assignmentId: work.id,
+        assignmentRevision: work.revision,
+        inputRevision: work.inputRevision,
+      },
+      hosts,
+    );
+
+    expect(await tryStartRun(receipt.runId, { db: database.db })).toMatchObject(
+      { started: true },
+    );
+    vi.stubEnv("MAISTER_MAX_CONCURRENT_RUNS", "1");
+    driver = runFlow(receipt.runId, {
+      db: database.db,
+      executionHosts: hosts,
+      runtimeRoot: hostRoot,
+      signal: abort.signal,
+    }).then(
+      () => ({ error: null }),
+      (error: unknown) => ({ error }),
+    );
+    await expect
+      .poll(
+        async () =>
+          (
+            await database.pool.query<{ count: number }>(
+              "SELECT count(*)::int AS count FROM hitl_requests WHERE run_id=$1 AND kind='permission' AND responded_at IS NULL",
+              [receipt.runId],
+            )
+          ).rows[0]?.count,
+        { timeout: 15000, interval: 50 },
+      )
+      .toBe(1);
+    const hitl = (
+      await database.pool.query<{ id: string }>(
+        "SELECT id FROM hitl_requests WHERE run_id=$1 AND kind='permission' AND responded_at IS NULL",
+        [receipt.runId],
+      )
+    ).rows[0]!;
+    const responderId = randomUUID();
+
+    await database.pool.query(
+      "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+      [responderId, `${responderId}@example.test`],
+    );
+    const grants = await createCompanyGrants(database.db, administratorId, {
+      principalKind: "user",
+      principalId: responderId,
+      actions: ["assignments:read", "assignments:answer"],
+      idempotencyKey: randomUUID(),
+    });
+
+    browserUserId = responderId;
+    const response = await respondHitlPost(
+      new NextRequest(
+        `http://localhost/api/runs/${receipt.runId}/hitl/${hitl.id}/respond`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ optionId: "allow" }),
+        },
+      ),
+      {
+        params: Promise.resolve({
+          runId: receipt.runId,
+          hitlRequestId: hitl.id,
+        }),
+      },
+    );
+
+    expect(response.status).toBe(503);
+    const retained = (
+      await database.pool.query<{ response: JsonValue }>(
+        "SELECT response FROM hitl_requests WHERE id=$1",
+        [hitl.id],
+      )
+    ).rows[0]!.response;
+
+    expect(retained).toMatchObject({
+      optionId: "allow",
+      _audit: {
+        companyConsent: {
+          version: 1,
+          userId: responderId,
+          actorId: expect.any(String),
+        },
+      },
+      _delivery: { commandId: expect.any(String) },
+    });
+    const client = await hosts.forRun(receipt.runId);
+
+    await expect(
+      db.transaction(async (tx) => {
+        await tx.execute(
+          sql`UPDATE hitl_requests SET response=response - '_audit' WHERE id=${hitl.id}`,
+        );
+        await prepareFlowPermissionResponse(tx, client, hitl.id);
+      }),
+    ).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+      details: { reason: "company_permission_consent_missing" },
+    });
+    await expect(
+      db.transaction(async (tx) => {
+        await tx.execute(
+          sql`UPDATE hitl_requests SET response=jsonb_set(response,'{_audit,companyConsent,userId}',to_jsonb(${requesterId}::text)) WHERE id=${hitl.id}`,
+        );
+        await prepareFlowPermissionResponse(tx, client, hitl.id);
+      }),
+    ).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+      details: { reason: "company_permission_consent_actor" },
+    });
+    const answerGrant = grants.page.items.find(
+      (grant) => grant.action === "assignments:answer",
+    )!;
+
+    await revokeCompanyGrant(database.db, administratorId, answerGrant.id, {
+      expectedRevision: answerGrant.revision,
+      reason: "Withdraw company consent before retry delivery",
+      idempotencyKey: randomUUID(),
+    });
+    await expect(
+      db.transaction((tx) =>
+        prepareFlowPermissionResponse(tx, client, hitl.id),
+      ),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect(
+      (
+        await database.pool.query<{ response: JsonValue }>(
+          "SELECT response FROM hitl_requests WHERE id=$1",
+          [hitl.id],
+        )
+      ).rows[0]!.response,
+    ).toEqual(retained);
+    await createCompanyGrants(database.db, administratorId, {
+      principalKind: "user",
+      principalId: responderId,
+      actions: ["assignments:answer"],
+      idempotencyKey: randomUUID(),
+    });
+    deliveryAvailable = true;
+    const retried = await respondHitlPost(
+      new NextRequest(
+        `http://localhost/api/runs/${receipt.runId}/hitl/${hitl.id}/respond`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ optionId: "allow" }),
+        },
+      ),
+      {
+        params: Promise.resolve({
+          runId: receipt.runId,
+          hitlRequestId: hitl.id,
+        }),
+      },
+    );
+
+    expect(retried.status).toBe(200);
+    expect(await driver).toEqual({ error: null });
+    expect(deliveredInputs).toBe(1);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status,operational_cleanup->>'state' AS cleanup,flow_driver_token FROM runs WHERE id=$1",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toEqual([
+      { status: "Done", cleanup: "released", flow_driver_token: null },
+    ]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind='session.input'",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toEqual([{ count: 2 }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT human.status,actor.user_id,human.company_id,human.project_id FROM assignments human JOIN actor_identities actor ON actor.id=human.completed_by_actor_id WHERE human.hitl_request_id=$1",
+          [hitl.id],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        status: "completed",
+        user_id: responderId,
+        company_id: request.companyId,
+        project_id: null,
+      },
+    ]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT validity,value FROM run_results WHERE run_id=$1",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toMatchObject([{ validity: "valid", value: output }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status FROM specialist_assignments WHERE id=$1",
+          [work.id],
+        )
+      ).rows,
+    ).toEqual([{ status: "active" }]);
+  } finally {
+    browserUserId = requesterId;
+    abort.abort();
+    await driver;
+    await worker.stop();
+    await stopRuntimeEventConsumers();
+    await supervisor.stop();
+    restoreUrl();
+    compatibility.mockRestore();
+    resetResolverForTests();
+    resetRegistrarStateForTests();
+    setDefaultTransportForTests(null);
+    if (previousCap === undefined)
+      delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
+    else process.env.MAISTER_MAX_CONCURRENT_RUNS = previousCap;
+  }
+}, 90000);
+
 it("respects an explicitly tool-less professional declaration even when reviewed action limits include knowledge", async () => {
   const effective = await database.db.transaction((tx) =>
     resolveInstalledAgentDefinition(tx, {
@@ -2501,6 +2807,7 @@ it("respects an explicitly tool-less professional declaration even when reviewed
       tools: { allow: [] },
       mcps: { allowServers: [] },
       enforcedClasses: ["tools", "mcps"],
+      allowedToolApproval: "execution_policy",
     });
   } finally {
     compatibility.mockRestore();
@@ -2561,6 +2868,7 @@ it("resolves the actual company Flow driving persona from its reviewed provider 
       },
       mcps: { allowServers: ["maister"] },
       enforcedClasses: ["tools", "mcps"],
+      allowedToolApproval: "execution_policy",
     });
     expect(profile.tools?.allow).not.toContain("Read");
     expect(profile.tools?.allow).not.toContain(

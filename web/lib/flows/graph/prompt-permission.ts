@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { RunDomainEventScope } from "@/lib/domain-events/outbox";
 import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionCommand } from "@/lib/db/schema";
 import type { BoundClient, SupervisorEvent } from "@/lib/execution-host";
@@ -8,6 +9,7 @@ import type { FlowActionResume } from "./action-resume";
 import type { GatePermissionResume } from "./gate-permission-resume";
 import type { NodePromptOwner } from "./node-prompt-owner";
 import type { GatePromptOwner } from "./prompt-owner";
+import type { HitlRequest, Run } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
 
@@ -31,6 +33,8 @@ import { createHitlRequest } from "@/lib/runs/hitl-create";
 import { flowPermissionSourceSchema } from "@/lib/execution-host/flow-permission-source";
 import {
   executionCommands,
+  actorIdentities,
+  assignments,
   gateResults,
   hitlRequests,
   nodeAttempts,
@@ -49,6 +53,12 @@ import {
   completeHitlAssignmentFromCurrentActor,
 } from "@/lib/assignments/service";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
+import { authorizeCompanyHumanAnswer } from "@/lib/assignments/company-ownership";
+import { MaisterError } from "@/lib/errors";
+import {
+  emitDomainEvent,
+  runDomainEventScope,
+} from "@/lib/domain-events/outbox";
 
 export type FlowPermissionOwner = NodePromptOwner | GatePromptOwner;
 
@@ -68,6 +78,62 @@ const log = pino({
   name: "flow-prompt-permission",
   level: process.env.LOG_LEVEL ?? "info",
 });
+
+const companyConsentResponseSchema = z.object({
+  _audit: z.object({
+    companyConsent: z
+      .object({
+        version: z.literal(1),
+        actorId: z.string().uuid(),
+        userId: z.string().uuid(),
+      })
+      .strict(),
+  }),
+});
+
+/** A saved answer is historical consent, never a substitute for current authority. */
+async function assertCompanyFlowPermissionConsent(
+  tx: Db,
+  run: Run,
+  hitl: Pick<HitlRequest, "id" | "response">,
+): Promise<void> {
+  if (run.projectId !== null || run.companyId === null) return;
+  const response = companyConsentResponseSchema.safeParse(hitl.response);
+
+  if (!response.success)
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "Company permission delivery requires retained human consent",
+      { details: { reason: "company_permission_consent_missing" } },
+    );
+  const consent = response.data._audit.companyConsent;
+  const [human] = await tx
+    .select({ assignment: assignments })
+    .from(assignments)
+    .innerJoin(
+      actorIdentities,
+      eq(actorIdentities.id, assignments.assigneeActorId),
+    )
+    .where(
+      and(
+        eq(assignments.hitlRequestId, hitl.id),
+        eq(assignments.runId, run.id),
+        eq(assignments.companyId, run.companyId),
+        isNull(assignments.projectId),
+        eq(assignments.assigneeActorId, consent.actorId),
+        eq(actorIdentities.userId, consent.userId),
+      ),
+    )
+    .for("share");
+
+  if (!human)
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "Company permission consent no longer matches its responding actor",
+      { details: { reason: "company_permission_consent_actor" } },
+    );
+  await authorizeCompanyHumanAnswer(tx, human.assignment, consent.actorId);
+}
 
 async function readPermissionResume(
   tx: Db,
@@ -109,7 +175,13 @@ export async function prepareFlowPermissionInput(
   const schema = parseOwnedPermission(hitl?.schema);
 
   if (!hitl || !schema) return null;
-  await assertFlowPermissionDelivery(tx, schema);
+  const run = await lockPermissionSource(
+    tx,
+    schema.flowPrompt,
+    schema.supervisorSessionId,
+  );
+
+  await assertCompanyFlowPermissionConsent(tx, run, hitl);
   const response = hitl.response as Record<string, unknown> | null;
 
   if (typeof response?.optionId !== "string")
@@ -178,7 +250,13 @@ export async function prepareFlowPermissionResponse(
   const response = hitl?.response as Record<string, unknown> | null;
 
   if (hitl && schema && response?._delivery !== undefined) {
-    await assertFlowPermissionDelivery(tx, schema);
+    const run = await lockPermissionSource(
+      tx,
+      schema.flowPrompt,
+      schema.supervisorSessionId,
+    );
+
+    await assertCompanyFlowPermissionConsent(tx, run, hitl);
     await withdrawRefusedPermissionDelivery(tx, hitl, response, {
       assignmentId: schema.flowPrompt.assignmentId,
       supervisorSessionId: schema.supervisorSessionId,
@@ -397,7 +475,7 @@ async function lockPermissionSource(
   tx: Db,
   source: PermissionSource,
   hostSessionId: string,
-): Promise<void> {
+): Promise<Run> {
   const [command] = await tx
     .select()
     .from(executionCommands)
@@ -483,6 +561,8 @@ async function lockPermissionSource(
     row.attempt.endedAt !== null
   )
     throw new PromptOwnerInvariantError("permission_attempt_generation");
+
+  return row.run;
 }
 
 export async function assertFlowPermissionDelivery(
@@ -778,19 +858,23 @@ export async function handleFlowPermission(input: {
       });
     }
     const [run] = await tx
-      .select({ projectId: runs.projectId })
+      .select({ projectId: runs.projectId, companyId: runs.companyId })
       .from(runs)
       .where(eq(runs.id, runId));
 
-    if (!run?.projectId)
-      throw new PromptOwnerInvariantError("permission_project_missing");
+    if (!run || (!run.projectId && !run.companyId))
+      throw new PromptOwnerInvariantError("permission_owner_missing");
+    const scope = runDomainEventScope({
+      projectId: run.projectId ?? null,
+      companyId: run.companyId ?? null,
+    });
     const changed = await tx
       .update(runs)
       .set({ status: "NeedsInput", keepaliveUntil: nextKeepaliveAt() })
       .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
       .returning({ id: runs.id });
 
-    if (!existing)
+    if (!existing && run.projectId)
       await emitWebhookEvent({
         db: tx,
         type: "hitl.requested",
@@ -798,13 +882,30 @@ export async function handleFlowPermission(input: {
         runId,
         data: { hitlRequestId, kind: "permission", nodeId: null },
       });
-    if (changed.length > 0)
+    if (changed.length > 0 && run.projectId)
       await emitWebhookEvent({
         db: tx,
         type: "run.needs_input",
         projectId: run.projectId,
         runId,
         data: { reason: "permission", nodeId: null },
+      });
+    if (changed.length > 0 && run.companyId)
+      await emitDomainEvent({
+        db: tx,
+        ...scope,
+        kind: "run.needs_input",
+        runId,
+        actor: { type: "system", id: null },
+        payload: {
+          runId,
+          flowId: null,
+          taskId: null,
+          runKind: "flow",
+          reason: "permission",
+          nodeId: input.stepId,
+          hitlRequestId,
+        },
       });
     const optionId = (existing?.response as { optionId?: string } | null)
       ?.optionId;
@@ -821,7 +922,7 @@ export async function handleFlowPermission(input: {
     if (!delivery)
       throw new PromptOwnerInvariantError("permission_delivery_intent_missing");
 
-    return { delivery, hitlRequestId, optionId, projectId: run.projectId };
+    return { delivery, hitlRequestId, optionId, ...scope };
   });
 
   if (!prepared) return;
@@ -832,8 +933,8 @@ type PreparedFlowPermissionDelivery = Readonly<{
   delivery: PreparedInput;
   hitlRequestId: string;
   optionId: string;
-  projectId: string;
-}>;
+}> &
+  RunDomainEventScope;
 
 async function deliverPreparedFlowPermission(
   db: Db,
@@ -858,7 +959,7 @@ async function deliverPreparedFlowPermission(
         prepared.hitlRequestId,
         prepared.delivery.commandId,
       );
-      if (stamped.length > 0)
+      if (stamped.length > 0 && prepared.projectId)
         await emitWebhookEvent({
           db: tx,
           type: "hitl.responded",
@@ -939,11 +1040,11 @@ export async function replayAdmittedFlowPermissionInputs(
           current.id,
         );
         const [run] = await tx
-          .select({ projectId: runs.projectId })
+          .select({ projectId: runs.projectId, companyId: runs.companyId })
           .from(runs)
           .where(eq(runs.id, runId));
 
-        if (!delivery || !run?.projectId)
+        if (!delivery || !run || (!run.projectId && !run.companyId))
           throw new PromptOwnerInvariantError(
             "permission_delivery_intent_missing",
           );
@@ -952,7 +1053,10 @@ export async function replayAdmittedFlowPermissionInputs(
           delivery,
           hitlRequestId: current.id,
           optionId: response.optionId,
-          projectId: run.projectId,
+          ...runDomainEventScope({
+            projectId: run.projectId ?? null,
+            companyId: run.companyId ?? null,
+          }),
         };
       },
     );

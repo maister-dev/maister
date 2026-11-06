@@ -20,6 +20,7 @@ import { MaisterError } from "@/lib/errors";
 // on `enforcementProfile` (structurally validated by the supervisor's zod schema).
 // Distinct from the opaque capability runtime-object inputs (child-env only).
 export type SessionEnforcementProfile = {
+  allowedToolApproval?: "execution_policy";
   tools?: { allow: string[] };
   mcps?: { allowServers: string[] };
   enforcedClasses: Array<"tools" | "mcps">;

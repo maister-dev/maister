@@ -23,6 +23,7 @@ export function companyFlowEnforcementProfile(
   mcps: { allowServers: string[] };
   enforcedClasses: ("tools" | "mcps")[];
   escalationThreshold: number;
+  allowedToolApproval: "execution_policy";
 } {
   const allow = COMPANY_FLOW_TOOL_CONTRACT.filter((tool) =>
     scopes.includes(tool.scope),
@@ -33,5 +34,6 @@ export function companyFlowEnforcementProfile(
     mcps: { allowServers: allow.length > 0 ? [COMPANY_FLOW_MCP_SERVER] : [] },
     enforcedClasses: ["tools", "mcps"],
     escalationThreshold: 3,
+    allowedToolApproval: "execution_policy",
   };
 }

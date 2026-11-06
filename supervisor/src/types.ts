@@ -362,6 +362,7 @@ export const EnvRefsResponseSchema = z
 // web-resolved and delivered here so the supervisor stays config-free.
 export const SessionEnforcementProfileSchema = z
   .object({
+    allowedToolApproval: z.literal("execution_policy").optional(),
     tools: z
       .object({ allow: z.array(z.string().min(1)) })
       .strict()

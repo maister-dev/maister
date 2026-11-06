@@ -307,6 +307,35 @@ Main `0251_company_flow_runtime` extends existing company lifecycle facts and bo
 
 Qualification currently uses real PostgreSQL migrations, the actual package loader with a pinned fixture Git package, an owned real supervisor and controlled ACP. Concurrent native driver invocations produce one create/prompt, a valid retained export, physical quiescence and released directory; the business assignment remains active. A changed reviewed coordinator refuses queued dispatch with zero ACP effects. Prospective engine metadata and capability-cache receipts are controlled fixture inputs, not real adapter/model smoke or companion/stand qualification. Native form and human-review waits are additionally qualified through the actual response route and both graph resumes below. Permission/idle restart/recovery, live graph cancellation, extended compatibility and engine activation remain open; the supported engine stays 3.11.1.
 
+### Native permission approval boundary
+
+Native company profiles declare `allowedToolApproval: execution_policy` in the
+existing session enforcement profile. Tool admission is a capability ceiling;
+a permitted call continues to the existing execution policy's ask/automatic
+approval path. Denied calls remain denied before either policy can approve them.
+The optional literal is included in the materialization digest and strict
+supervisor HTTP schema. Absent retains the legacy profile's inline approval,
+including existing project and librarian captures. Current native profiles do
+not retrofit older retained session payloads or fabricate human consent.
+
+Native Flow permission requests retain company ownership in the existing HITL
+and human-assignment ledgers. Their needs-input fact uses the company event
+scope; project webhooks do not receive company content. A fresh answer records
+the server-resolved user and claimed actor as versioned
+`response._audit.companyConsent`. Delivery and replay require that exact actor's
+current company answer authority and source access. Missing consent, an actor
+mismatch or revoked authority refuses before an input is prepared or a refused
+delivery intent is withdrawn. Historical captures are not backfilled. Recording
+an already observed input receipt remains a separate attribution operation.
+
+A definitive service refusal retains the answer for an explicit retry; the
+existing command protocol determines whether a new delivery identity is allowed.
+Unknown outcomes retain their original command and require reconciliation. Native
+technical finalization waits, within the existing event/projection lease bounds,
+for canonical session-exit evidence after physical teardown. It never repeats the
+external command or substitutes process exit for durable quiescence. Operator
+cancellation retains its existing actionable retry behavior.
+
 ### Native company form and review continuation
 
 Explicit `form` and `human` nodes use the existing HITL, company human assignment,

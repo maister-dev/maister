@@ -5654,6 +5654,7 @@ export async function runGraph(
         : "Done",
       errorCode: runErrorCode,
       driverToken: opts.driver?.claim.token,
+      signal: opts.driver?.signal ?? opts.signal,
       reason: runErrorReason,
       hosts: opts.executionHosts,
     });

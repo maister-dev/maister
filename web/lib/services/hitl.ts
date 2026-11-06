@@ -747,6 +747,20 @@ type ResponseAssignmentClaim = {
   actorId: string;
 } | null;
 
+function retainCompanyPermissionConsent(
+  actor: HitlActor,
+  claim: ResponseAssignmentClaim,
+): Readonly<{ version: 1; userId: string; actorId: string }> {
+  if (actor.kind !== "user" || claim === null)
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "Company permission requires its retained responding human assignment",
+      { details: { reason: "company_permission_consent_missing" } },
+    );
+
+  return { version: 1, userId: actor.userId, actorId: claim.actorId };
+}
+
 async function claimAssignmentForResponse(args: {
   db: any;
   hitlRequestId: string;
@@ -1288,9 +1302,18 @@ async function handlePermissionResponse(
       );
     }
 
+    const companyConsent = isCompanyFlowResource(lockedRun)
+      ? retainCompanyPermissionConsent(args.actor, assignmentClaim)
+      : null;
+
     await tx
       .update(hitlRequests)
-      .set({ response: { optionId } })
+      .set({
+        response: {
+          optionId,
+          ...(companyConsent ? { _audit: { companyConsent } } : {}),
+        },
+      })
       .where(
         and(
           eq(hitlRequests.id, hitlRequestId),

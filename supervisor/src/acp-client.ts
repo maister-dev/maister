@@ -829,8 +829,9 @@ export async function createAcpConnection(
         // ADR-130: capability_guard — enforce strict tools/mcps by tool identity.
         // Runs AFTER path_guard and BEFORE B1 so an out-of-profile call is denied even
         // on unattended/auto-approve sessions. Armed only when the session carries a
-        // derived enforcementProfile. In-profile → auto-allow inline (zero HITL);
-        // out-of-profile → deny-and-continue; Nth consecutive deny → halt.
+        // derived enforcementProfile. Explicit native approval policy preserves
+        // execution-policy arbitration; legacy profiles auto-allow in-profile.
+        // Out-of-profile calls deny-and-continue; Nth consecutive deny halts.
         if (record.enforcementProfile) {
           // A prior halt (capability_guard or M40) fired → cancel every further call
           // (mirrors the M40 hooksConfig hookHalted short-circuit, for a session that
@@ -925,13 +926,17 @@ export async function createAcpConnection(
           }
 
           if (decision.decision === "allow") {
-            // In-profile → the supervisor is the permission authority: auto-allow
-            // inline (zero added HITL) and reset the consecutive-deny counter.
+            // Admission resets the denial breaker. An explicit native policy
+            // leaves approval to the execution policy; legacy profiles allow inline.
             record.capabilityDenyCount = 0;
 
             const allowOption = resolveAutoApproveOption(options);
 
-            if (allowOption) {
+            if (
+              allowOption &&
+              record.enforcementProfile.allowedToolApproval !==
+                "execution_policy"
+            ) {
               logger.debug(
                 { sessionId, toolIdentity: extractToolIdentity(tc).name },
                 "[guardrail] capability_guard allow (in-profile)",
@@ -944,7 +949,7 @@ export async function createAcpConnection(
                 },
               };
             }
-            // No allow-shaped option → fall through to HITL (defensive).
+            // Native policy or no allow-shaped option continues to approval arbitration.
           }
           // pass_through (no strict class governs this call) → fall through unchanged.
         }

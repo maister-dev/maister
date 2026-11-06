@@ -1,0 +1,109 @@
+{
+  "task": "T20.1",
+  "slice": "Native supervised permission and current-consent replay",
+  "date": "2026-11-07",
+  "baseCommit": "8c509237a367a5e53a52069f574e54973c3df3fe",
+  "engineVersion": "3.11.1",
+  "migrations": [],
+  "status": "Checkpoint qualified; T20.1 remains open",
+  "red": [
+    "Native profile lacked execution-policy approval, so supervised allowed MCP calls bypassed human HITL (3/41 failures)",
+    "Physical session teardown preceded canonical exit projection and terminal quiescence refused (1/41)",
+    "Retained response omitted the server-resolved human consent identity (1/41)"
+  ],
+  "gates": {
+    "owning-integration": {
+      "exitCode": 0,
+      "log": "owning-integration.log.gz",
+      "files": 1,
+      "tests": 41,
+      "durationSeconds": 15.59
+    },
+    "integration": {
+      "exitCode": 0,
+      "log": "integration.log.gz",
+      "files": 6,
+      "tests": 113,
+      "durationSeconds": 179.71
+    },
+    "unit": {
+      "exitCode": 0,
+      "log": "unit.log.gz",
+      "files": 889,
+      "tests": 9318,
+      "durationSeconds": 26.8
+    },
+    "supervisor-unit": {
+      "exitCode": 0,
+      "log": "supervisor-unit.log.gz",
+      "files": 50,
+      "tests": 500,
+      "durationSeconds": 13.89
+    },
+    "supervisor-integration": {
+      "exitCode": 0,
+      "log": "supervisor-integration.log.gz",
+      "files": 38,
+      "tests": 350,
+      "durationSeconds": 15.16
+    },
+    "web-types": {
+      "exitCode": 0,
+      "log": "web-types.log.gz"
+    },
+    "supervisor-types": {
+      "exitCode": 0,
+      "log": "supervisor-types.log.gz"
+    },
+    "web-lint": {
+      "exitCode": 0,
+      "log": "web-lint.log.gz"
+    },
+    "supervisor-lint": {
+      "exitCode": 0,
+      "log": "supervisor-lint.log.gz"
+    },
+    "format": {
+      "exitCode": 0,
+      "log": "format.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "log": "docs.log.gz"
+    }
+  },
+  "qualified": [
+    "Native strict approval literal is digested and validated by the supervisor; absent retains legacy captures",
+    "Actual pinned fixture package, real PostgreSQL, owned supervisor and controlled ACP reach company permission HITL and attributed human delivery",
+    "Missing or mismatched consent and current revoked answer/source authority refuse before replay preparation or refused-intent withdrawal",
+    "A definitive pre-delivery service refusal retains the answer; current authority restored, explicit retry delivers exactly once and preserves human attribution",
+    "Required valid export, clean released resource and canonical exit are separate from business assignment acceptance",
+    "Populated current migration suite keeps Brain independent of project deletion"
+  ],
+  "fixtureCorrections": [
+    "Early zero-HITL attempts did not reach the recorder because the existing guard auto-approved allowed MCP tools; they are not recorder regression evidence",
+    "A bare injected unavailable error was not a definitive service refusal; the final test identifies its actual 503 refusal explicitly",
+    "The context fixture uses actual scheduler admission to prevent unintended queued dispatch after a different owned host is torn down",
+    "The test harness database is narrowed by assignment to the existing typed Db seam before transaction inference"
+  ],
+  "qualificationBoundary": "Controlled ACP and prospective capability metadata do not qualify a real adapter/model, companion package or stand. Native company permission idle/restart, live cancellation and completion recovery remain open. No historical consent is invented.",
+  "sourceSha256": {
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "55f0fc8c8c3d754866d3c9720c54c18c12c8edf2f4e81df7d28239cb74ed73d9",
+    "docs/api/supervisor.openapi.yaml": "0b6345ed5f9d1973e5b0fc8c87b7cfb3588562ee682db318cedd8dd423d11846",
+    "docs/system-analytics/specialist-runtime.md": "f789225859150c8b49b8566f0e5fbb0433ad0487c3f42e49b20ba0199d92ec27",
+    "runtime/company-flow-tools.ts": "678e0f82c4d70aae37ed09f73f8d8fa846a7df2595a96366c73cffae5360c5b9",
+    "supervisor/src/acp-client.ts": "e1b143fcc7b6369c1768c04a208e8100f38e699f54d4d2c95b19c9567959651e",
+    "supervisor/src/types.ts": "0f0004f0401593097e040a0a93935c8c0e70dfca494c5078b00008d63771a677",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "5eec8dda9e82f65cae846f59ffbf3194baceef7e771e490fa1a9227f0528aa09",
+    "web/lib/agents/execution-quiescence.ts": "d94b734dbd87d96f0dfda3d55a9fa0e8b9d21ec05452cba11a6ae9ab573a6bc7",
+    "web/lib/flows/enforcement-profile.ts": "6226bc366966504b97a9e288406e32adad319fccfeaa0cb855c9d43e0a076e67",
+    "web/lib/flows/graph/prompt-permission.ts": "8738e600910317545a3c4a5ec55350c33f49fca413f3075fbbf7fcf0247dae26",
+    "web/lib/flows/graph/runner-graph.ts": "a228a5fc3f9b9d50f3cba212401894dd20b57accb7ea0dfcbd26e94648b0ee66",
+    "web/lib/run-results/company-flow-terminal.ts": "1466c3e3829d9af2da1105d2161b4a7bd3024432984c208e991dc06af61f1da4",
+    "web/lib/services/hitl.ts": "0c379d1f134a7c0801579eff0edef80c5b897a2a540fa2a5d768f9ea951dbd07"
+  }
+}

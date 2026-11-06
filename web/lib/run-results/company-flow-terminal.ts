@@ -20,6 +20,7 @@ import { initialResourceCleanup } from "@/lib/agents/resource-cleanup";
 import {
   readAgentDispatchEvidence,
   assertAgentExecutionQuiescent,
+  waitForAgentExecutionQuiescence,
   assertAgentCancellationExecutionQuiescent,
   assertAgentSessionBindingsQuiescent,
   assertAgentCancellationBindingsQuiescent,
@@ -71,6 +72,7 @@ export async function finalizeCompanyFlowRun(
     reason?: string;
     hosts?: ExecutionHosts;
     driverToken?: string;
+    signal?: AbortSignal;
   } & (
     | { requested: "Done" | "Failed" | "Crashed" }
     | { requested: "Abandoned"; userId: string }
@@ -119,7 +121,9 @@ export async function finalizeCompanyFlowRun(
   const dispatch = await readAgentDispatchEvidence(args.rootDb, run.id);
   const dispatched = dispatch.hasOwnedCommand || dispatch.hasBoundSession;
 
-  if (dispatched) await assertAgentExecutionQuiescent(args.rootDb, run);
+  if (dispatched && args.requested !== "Abandoned")
+    await waitForAgentExecutionQuiescence(args.rootDb, run, args.signal);
+  else if (dispatched) await assertAgentExecutionQuiescent(args.rootDb, run);
   else await assertAgentCancellationExecutionQuiescent(args.rootDb, run);
   const publicResult = await resolvePublicResult(args.db, run.id);
   const resultStatus = deriveResultStatus({
