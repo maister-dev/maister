@@ -35,7 +35,8 @@ generation controls.
 
 ### Creation before prompt admission
 
-**Designed — terminalization fences every Flow traversal:** a human/form-only
+**Implemented — terminalization fences every Flow traversal; native/browser/full
+qualification remains pending:** a human/form-only
 Flow owns the same durable run/assignment traversal claim as a Flow with model
 or CLI work. This database ownership does not create an ACP session or require
 a Supervisor connection. A separate server-only unplaced-sessionless claim is
@@ -609,16 +610,17 @@ which `instrumentation-node.ts` reaches only through a dynamic
 `await import()`. The composition root never lives under
 `web/lib/execution-host/`: every domain registry imports that package, so a
 registry module placed inside it closes an import cycle at module load. It
-composes exactly five registries — `flowPromptOwners`, `consensusDraftPromptOwners`,
-`scratchPromptOwners`, `syncPromptOwners`, `gateChatPromptOwners` — covering the
-five `PromptOwnerSchema` kinds `flow_node_attempt`, `agent_turn`,
-`scratch_message`, `gate_chat` and `sync_resolution`.
+composes exactly six registries — `flowPromptOwners`,
+`createConsensusDraftPromptOwners()`, `scratchPromptOwners`, `syncPromptOwners`,
+`gateChatPromptOwners` and `librarianPromptOwners` — covering the six
+`PromptOwnerSchema` kinds `flow_node_attempt`, `agent_turn`, `scratch_message`,
+`gate_chat`, `sync_resolution` and `librarian_turn`.
 
 Three boot-time refusals keep that composition honest, and each is a
 `MaisterError("CONFIG")`:
 
 - **Uniqueness.** `createPromptOwnerRegistry` throws on a duplicate kind.
-  `agent_turn` is served by `consensusDraftPromptOwners`, which routes a
+  `agent_turn` is served by `createConsensusDraftPromptOwners()`, which routes a
   `consensus_draft` variant to draft preparation and every other variant to the
   ordinary agent owner. Adding `agentPromptOwners` beside it is therefore a boot
   failure **by design**, not an oversight — `agentPromptOwners` refuses
@@ -631,11 +633,13 @@ Three boot-time refusals keep that composition honest, and each is a
   order that starts the worker before the registry module resolves fails loudly
   rather than running a worker that owns nothing.
 
-`startDurableWorkers()` and `stopDurableWorkers()` are the root's only exports
-besides the registry. Both are guarded by `isApplicationStopping()` and by three
-`Symbol.for("maister.durable-workers.*.v1")` process slots, so a double start
-returns the same three handles and a stop clears only slots this process still
-owns. A plain module-scoped variable is not sufficient: Next bundles
+`startDurableWorkers()` and `stopDurableWorkers()` own the process lifecycle.
+Start refuses during `isApplicationStopping()`; four
+`Symbol.for("maister.durable-workers.*.v1")` process slots make a double start
+return the same four handles, and stop clears only slots this process still
+owns. The fourth worker serves [accepted launches](task-launch-admission.md#durable-launch-worker-implemented);
+its native restart, browser and full integration qualification remain pending.
+A plain module-scoped variable is not sufficient: Next bundles
 instrumentation separately from the production server entrypoint, so the health
 reader and the composition root resolve different module instances of the same
 file. `web/lib/workers/health.ts` reads those slots and imports no domain
@@ -1963,7 +1967,7 @@ here rather than as new `PRM` ids.)
 - **PRM-08 (Implemented):** HITL pause, decision, checkpoint, and resume are durable/fenced and resume uses a new command and required incarnation.
 - **PRM-09 (Implemented):** Cancellation reuses the command ledger and has one terminal prompt outcome despite retry or ACK loss.
 - **PRM-10:** Fencing happens before ACP and records a durable fenced receipt/audit event without owner mutation.
-- **PRM-11 (Implemented):** `{commandId}` remains queryable through Postgres after web or supervisor process restart; `startDurableWorkers()` starts the three workers exactly once per process behind their `Symbol.for("maister.durable-workers.*.v1")` slots, `stopDurableWorkers()` is awaited inside the boot quiesce `Promise.allSettled` before the DB drain, and a claim release the worker cannot confirm MUST fail shutdown (`AggregateError: web workers could not drain`) and leave the durable claim to expire rather than be silently dropped.
+- **PRM-11 (Implemented; fourth-worker combined qualification pending):** `{commandId}` remains queryable through Postgres after web or supervisor process restart; `startDurableWorkers()` starts the four workers exactly once per process behind their `Symbol.for("maister.durable-workers.*.v1")` slots, `stopDurableWorkers()` is awaited inside the boot quiesce `Promise.allSettled` before the DB drain, and a claim release the worker cannot confirm MUST fail shutdown (`AggregateError: web workers could not drain`) and leave the durable claim to expire rather than be silently dropped.
 
   **Direct application shutdown:** the same obligation
   covers `applyPromptOwner` invoked by an HTTP waiter outside a worker slot.

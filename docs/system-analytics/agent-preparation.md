@@ -94,6 +94,14 @@ The reused Git gate registers its detached process group durably before acknowle
 
 Terminalization atomically closes run/assignment/turn/publication authority and arms cleanup; filesystem effects follow commit. Disposition quiescence includes preparation, commands, canonical bound sessions, HITL and fresh host evidence. Missing session, successful prompt or old DELETE success alone is insufficient. Cleanup failure is a separate retained incident and does not revert terminal state. Deferred contention/readiness is not a negative assessment or proof of irrecoverability from age alone.
 
+Flow traversal also retains its [terminal-safe database scope](execution-prompt-lifecycle.md#creation-before-prompt-admission)
+when a graph only collects human/form input and needs no host preparation. The
+implemented Run lock and traversal token/lease prevent late node/HITL/event
+writes after abandonment without inventing an execution assignment. This is a
+separate traversal boundary, not permission to skip preparation or integrity for
+graphs that require host/CLI work. Native restart, browser and full integration
+qualification of that terminal race remain pending.
+
 Failure settlement by the current preparer retains physical exclusion through
 the terminal DB commit. Apply requires the held owner, exact preparation and
 resource incarnation, current assignment/epoch, and an eligible phase and DB

@@ -984,7 +984,7 @@ A14 is not applicable, and the existing workflow is unchanged.
 | `test-support/__tests__/durable-workers-boot.integration.test.ts` | R1: a registry missing a schema kind refuses to compose with CONFIG and starts nothing | Existing; both platforms |
 | `test-support/__tests__/durable-workers-boot.integration.test.ts` | R2: composing the agent registry beside the consensus-draft one is a CONFIG failure by design | Existing; both platforms |
 | `test-support/__tests__/durable-workers-boot.integration.test.ts` | R4: stopping with nothing started resolves | Existing; both platforms |
-| `test-support/__tests__/durable-workers-boot.integration.test.ts` | R5: a double start returns the same three handles | Existing; both platforms |
+| `test-support/__tests__/durable-workers-boot.integration.test.ts` | R5: a double start returns the same four handles | Existing; both platforms; fourth-worker qualification pending |
 | `test-support/__tests__/durable-workers-boot.integration.test.ts` | R3: start refuses while the application is stopping | Existing; both platforms |
 | `test-support/__tests__/durable-workers-concurrency.integration.test.ts` | D1: a live waiter and the durable worker on one command apply it exactly once | Existing; both platforms |
 | `test-support/__tests__/durable-workers-concurrency.integration.test.ts` | D2: two production web instances on one database apply a dead instance's command exactly once | Existing; both platforms |

@@ -627,23 +627,21 @@ unchanged.
 
 ### Durable worker boot, quiesce and health (Implemented)
 
-The [durable launch worker](task-launch-admission.md#durable-launch-worker-designed)
-is a Designed fourth mandatory runtime slot, `taskLaunch`, with one Flow and one
-Agent service slot. Its boot, health and joined shutdown extend the same
-composition below; it grants no execution authority and does not independently
-release shared dispatch claims. The existing worker-health map accepts the new
-name. The three-worker description below remains the current implementation
-until that extension is qualified.
-
-Three durable workers share the projection worker's lifecycle and start beside
-it: **prompt-owner recovery**, **flow continuation** and **agent continuation**.
+Four durable workers share the projection worker's lifecycle and start beside
+it: **prompt-owner recovery**, **flow continuation**, **agent continuation** and
+the [durable launch worker](task-launch-admission.md#durable-launch-worker-implemented).
+The launch worker's native restart, browser and full integration qualification
+remain pending. Its `taskLaunch` runtime slot serves one Flow and one Agent
+slot through shared dispatch; it grants no execution authority and does not
+independently release shared dispatch claims.
 `startDurableWorkers()` is the fifth step of the instrumentation isolated-step
 loop, immediately after `startCanonicalProjectionWorker`, reached through a
 dynamic `await import("@/lib/workers/runtime")` so a composition failure is
 logged into the same per-step try/catch and never aborts boot. Slot counts come
 from `projectionLimitsFromEnv().concurrency` for the prompt-owner and flow
-workers (2, env-capped at 2); the agent worker is a single loop. No environment
-variable gates any of the three — a half-activated owner is exactly the state the
+workers (2, env-capped at 2); the agent continuation worker is a single loop and
+the launch worker has two named pool slots. No environment
+variable gates any of the four — a half-activated owner is exactly the state the
 gate existed to prevent, so activation is all-or-nothing.
 The agent continuation worker also carries a scratch arm (Implemented): the
 same keyset scan selects a `Running` project scratch run whose dialog has been
@@ -661,11 +659,11 @@ so `web/lib/workers/runtime.ts` (the writer) and `web/lib/workers/health.ts`
 instances of the same file and cannot share a module-scoped variable. Start is
 `??=` on the slot and refuses outright while `isApplicationStopping()`; stop
 clears a slot only while this process still owns it, so a double start yields
-the same three handles and a stop with nothing started resolves quietly.
+the same four handles and a stop with nothing started resolves quietly.
 
 `stopDurableWorkers()` joins the existing boot quiesce `Promise.allSettled`
 **before** `drain` closes the database pool. The arithmetic matters: the server
-drains within 25 s, systemd allows 30 s, all three `stop()` calls run
+drains within 25 s, systemd allows 30 s, all four `stop()` calls run
 concurrently so the budget is the maximum and not the sum — and a prompt-owner
 slot mid-application holds a renewed 30 s lease, strictly longer than the drain.
 The overrun branch is therefore reachable by construction. It is also the
@@ -673,7 +671,7 @@ correct branch: a claim release the worker cannot confirm MUST fail shutdown
 (`AggregateError: web workers could not drain`) and leave the durable claim to
 expire, never be dropped as if released.
 
-`durableWorkersHealth()` in `web/lib/workers/health.ts` reads the three slots and
+`durableWorkersHealth()` in `web/lib/workers/health.ts` reads the four slots and
 reports each worker's `health()` or `{state:'stopped', reason:null}` for an empty
 one. It imports no domain module — the composition root imports the health
 module, never the reverse — which is what lets `lib/scheduler/system-sweeps.ts`

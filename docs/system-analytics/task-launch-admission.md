@@ -226,23 +226,29 @@ prove task failure.
 
 Commit intent/snapshot/audit/outbox together. Git/host effects occur outside SQL transactions. Bind run, intent link, task status and slot handoff atomically. Persist the first-dispatch commitment under current ownership before executable effects; an earlier edit holds, a later edit affects future requests. Unknown create/prompt effects join existing command receipts instead of redispatching. Every execution reader, including restart and terminal delivery, reads frozen input/settings.
 
-### Durable launch worker (Designed)
+### Durable launch worker (Implemented)
 
-The existing `web/lib/workers/runtime.ts` composition adds a mandatory fourth
+Native restart, browser and full integration qualification remain pending; the
+implemented service contract does not establish deployed acceptance.
+
+The existing `web/lib/workers/runtime.ts` composition includes a mandatory fourth
 worker, `taskLaunch`, with two named service slots: one `flow` and one `agent`.
 These are dispatch concurrency slots, not extra execution capacity. Startup,
 duplicate-start protection, health and quiesce use the existing durable-worker
 lifecycle; no environment flag permits partial activation. The four-worker health
-map reports startup/service failure rather than presenting an incomplete set as
-healthy. The existing `Record<string, DurableWorkerState>` observation surface
-accepts the additional worker name without a public grant or strict DTO change.
+map reports each handle's health or a stopped slot; boot composition failures
+remain visible through the existing isolated-step logger. The existing
+`Record<string, DurableWorkerState>` observation surface accepts the additional
+worker name without a public grant or strict DTO change.
 
 Each pool reconciles durable `queued` intents whose `due_at` has arrived,
 `preparing` intents whose preparation lease has expired, and due `run_bound`
 intents without `dispatch_committed_at`. Eligibility and remaining wait duration
 come from PostgreSQL `clock_timestamp()`. Held, cancelled, settled and committed
-requests are not new dispatch candidates. Existing due/lease columns and
-`task_launch_intents_recovery_idx(state,due_at,id)` suffice; no migration or
+requests are not new dispatch candidates. A bound Agent already Running is
+excluded from this deadline scan while its Agent owner completes first dispatch.
+Existing due/lease columns and `task_launch_intents_recovery_idx(state,due_at,id)`
+suffice; no migration or
 second queue is introduced.
 
 A wake requests fair service of its pool through
@@ -259,8 +265,9 @@ Committed launch changes and slot/availability wakes are advisory. Each slot
 reconciles at startup and after its next database deadline even if a wake is
 lost, emitted by another process or arrives before waiting. Waiting uses the
 continuation workers' abortable `runEventWakeBus.waitForProjection` convention,
-with a one-second maximum reconciliation wait. A full pass without durable
-progress waits before resetting its scan; already-due but ineligible work does
+with a one-second maximum reconciliation wait and at most 25 scheduler services
+per drain pass. A full pass without durable progress waits before resetting its
+scan; already-due but ineligible work does
 not create a tight loop. There is no `setInterval`, client polling or filesystem
 polling. HTTP `after` callbacks and the existing 60-second scheduler and host
 reconciliation backstops remain useful but are not required for this worker's
