@@ -807,3 +807,239 @@ it("refreshes the displayed canonical task request when the runner changes and s
     },
   });
 });
+
+it("keeps the visible paged batch and explicit choices coherent with the selected runner", async () => {
+  const bodies: string[] = [];
+  const pages: Array<{ cursor: string | null; runnerId: string }> = [];
+  let failRunnerRefresh = false;
+  const firstPage = [
+    "a",
+    "b",
+    "newly-eligible",
+    ...Array.from({ length: 47 }, (_, index) => `first-${index}`),
+  ];
+  const secondPage = [
+    "page-two",
+    ...Array.from({ length: 49 }, (_, index) => `second-${index}`),
+  ];
+  const thirdPage = [
+    "page-three",
+    ...Array.from({ length: 49 }, (_, index) => `third-${index}`),
+  ];
+  const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/retry")) {
+      bodies.push(String(init?.body));
+      const accepted = JSON.parse(String(init?.body)) as {
+        items: Array<{ runId: string }>;
+      };
+
+      return response(
+        {
+          items: accepted.items.map(({ runId }) => ({
+            runId,
+            state: "accepted",
+            reason: null,
+            receipt: {
+              retryIntentId: `intent-${runId}`,
+              sourceRunId: runId,
+              runId: null,
+              intentState: "accepted",
+              runStatus: null,
+              queueReason: "capacity",
+              refusalReason: null,
+              cleanup: null,
+            },
+          })),
+        },
+        202,
+      );
+    }
+    const search = new URL(url, "http://test").searchParams;
+    const filter =
+      init?.method === "POST"
+        ? (JSON.parse(String(init.body)) as {
+            runIds: string[];
+            runnerId?: string;
+          })
+        : null;
+    const runnerId = filter?.runnerId ?? search.get("runnerId") ?? "current";
+    const cursor = search.get("cursor");
+    const runIds =
+      filter?.runIds ??
+      (cursor === "third"
+        ? thirdPage
+        : cursor === "second"
+          ? secondPage
+          : firstPage);
+
+    pages.push({ cursor, runnerId });
+    if (failRunnerRefresh) {
+      failRunnerRefresh = false;
+
+      return response({ code: "EXECUTOR_UNAVAILABLE" }, 503);
+    }
+
+    return response({
+      items: runIds.map((runId) => ({
+        runId,
+        taskId: `task-${runId}`,
+        title: `Task ${runId}`,
+        reason: null,
+        options: {
+          ...options,
+          previewFingerprint: (runnerId === "alphabetical" ? "a" : "b").repeat(
+            64,
+          ),
+          eligible:
+            ["a", "b", "page-two", "page-three"].includes(runId) ||
+            (runId === "newly-eligible" && runnerId === "alphabetical"),
+          launchRequest: {
+            taskId: `task-${runId}`,
+            agentId: "agent",
+            workspace: "none",
+            relaunchOfRunId: runId,
+            runnerId,
+            expectedTaskRevision: 7,
+            expectedSettingsToken: `${runnerId}-${runId}`,
+          },
+        },
+      })),
+      runners: options.runners,
+      selectedRunnerId: runnerId,
+      totalFailed: 150,
+      hasMore: !filter && cursor !== "third",
+      nextCursor:
+        filter || cursor === "third"
+          ? null
+          : cursor === "second"
+            ? "third"
+            : "second",
+    });
+  });
+
+  vi.stubGlobal("fetch", fetcher);
+  const element = document.createElement("div");
+
+  document.body.append(element);
+  root = createRoot(element);
+  act(() =>
+    root.render(
+      createElement(AgentRetryBatchControl, {
+        slug: "project",
+        agentId: "agent",
+      }),
+    ),
+  );
+  await click("retryAllFailed");
+  expect(
+    document.querySelectorAll('input[type="checkbox"]:checked'),
+  ).toHaveLength(2);
+  const excluded = document
+    .querySelector('a[href="/runs/b"]')!
+    .closest("label")!
+    .querySelector<HTMLInputElement>("input")!;
+  const included = document
+    .querySelector('a[href="/runs/a"]')!
+    .closest("label")!
+    .querySelector<HTMLInputElement>("input")!;
+
+  await act(async () => {
+    excluded.click();
+    included.click();
+  });
+  const selector = document.querySelector("select")!;
+  const beforeEmptyRunner = fetcher.mock.calls.length;
+
+  await act(async () => {
+    selector.value = "";
+    selector.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(fetcher).toHaveBeenCalledTimes(beforeEmptyRunner);
+
+  await act(async () => {
+    selector.value = "alphabetical";
+    selector.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(pages.at(-1)?.runnerId).toBe("alphabetical");
+  expect(
+    document.querySelectorAll('input[type="checkbox"]:checked'),
+  ).toHaveLength(0);
+  const intended = document
+    .querySelector('a[href="/runs/a"]')!
+    .closest("label")!
+    .querySelector<HTMLInputElement>("input")!;
+
+  await act(async () => intended.click());
+  await click("previewMoreFailed");
+  expect(pages.at(-1)).toEqual({ cursor: "second", runnerId: "alphabetical" });
+  expect(document.querySelector('a[href="/runs/page-two"]')).not.toBeNull();
+  failRunnerRefresh = true;
+  await act(async () => {
+    selector.value = "current";
+    selector.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(
+    [...document.querySelectorAll("button")].find(
+      (item) => item.textContent === "confirmBatchRetry",
+    )?.disabled,
+  ).toBe(true);
+  expect(bodies).toHaveLength(0);
+  await act(async () => {
+    selector.value = "alphabetical";
+    selector.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(document.querySelector('a[href="/runs/page-two"]')).not.toBeNull();
+  const lastPreview = fetcher.mock.calls
+    .filter(
+      ([url, init]) =>
+        url.endsWith("/retry-options") && init?.method === "POST",
+    )
+    .at(-1);
+
+  expect(JSON.parse(String(lastPreview?.[1]?.body))).toEqual({
+    runIds: [...firstPage, ...secondPage],
+    runnerId: "alphabetical",
+  });
+  await click("confirmBatchRetry");
+  expect(bodies).toHaveLength(1);
+  expect(JSON.parse(bodies[0])).toEqual({
+    runnerId: "alphabetical",
+    items: [
+      {
+        runId: "a",
+        requestKey: expect.any(String),
+        previewFingerprint: "a".repeat(64),
+        strategy: "pre_work_retry",
+        launchRequest: expect.objectContaining({
+          relaunchOfRunId: "a",
+          runnerId: "alphabetical",
+          expectedSettingsToken: "alphabetical-a",
+        }),
+      },
+      {
+        runId: "page-two",
+        requestKey: expect.any(String),
+        previewFingerprint: "a".repeat(64),
+        strategy: "pre_work_retry",
+        launchRequest: expect.objectContaining({
+          relaunchOfRunId: "page-two",
+          runnerId: "alphabetical",
+          expectedSettingsToken: "alphabetical-page-two",
+        }),
+      },
+    ],
+  });
+  expect(document.body.textContent).toContain("retryState.accepted");
+  await click("nextFailedWindow");
+  expect(pages.at(-1)).toEqual({ cursor: "third", runnerId: "alphabetical" });
+  expect(document.querySelector('a[href="/runs/page-three"]')).not.toBeNull();
+  expect(document.querySelector('a[href="/runs/page-two"]')).toBeNull();
+  expect(
+    document.querySelectorAll('input[type="checkbox"]:checked'),
+  ).toHaveLength(1);
+  await click("latestFailedWork");
+  expect(pages.at(-1)).toEqual({ cursor: null, runnerId: "alphabetical" });
+  expect(
+    document.querySelectorAll('input[type="checkbox"]:checked'),
+  ).toHaveLength(3);
+});
