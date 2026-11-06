@@ -2117,6 +2117,207 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
   }
 }, 120000);
 
+it("CBS-03 cancels live native graph work once without allowing its completed output to win the stop intent", async () => {
+  const hostRoot = join(root, "reservation-host");
+
+  await writeCompanyCapabilityCache(hostRoot);
+  const supervisor = await startRealSupervisor({
+    runtimeRoot: hostRoot,
+    workspaceRoots: [join(root, "worktrees")],
+    fixtureArgs: [
+      "--hang",
+      "--controlled-terminal",
+      "--invocation-log",
+      join(root, "native-cancel.jsonl"),
+    ],
+    env: {
+      MAISTER_ADAPTER_SMOKE_CACHE_PATH: join(
+        hostRoot,
+        "adapter-smoke-cache.json",
+      ),
+    },
+  });
+  const restoreUrl = useRealSupervisorUrl(supervisor.url);
+  const compatibility = useEngineVersion("3.12.0");
+  const worker = startProjectionWorker({
+    db: database.db,
+    projectors: canonicalProjectors,
+  });
+  const abort = new AbortController();
+  const previousCap = process.env.MAISTER_MAX_CONCURRENT_RUNS;
+  let driver: Promise<Readonly<{ error: unknown | null }>> | undefined;
+
+  setDefaultTransportForTests(null);
+  resetResolverForTests();
+  resetRegistrarStateForTests();
+  try {
+    const work = await createSpecialistAssignment(database.db, requesterId, {
+      ...preparedAssignment,
+      origin: { kind: "manual", interactionId: randomUUID() },
+      objectiveInput: {
+        ...preparedAssignment.objectiveInput,
+        input:
+          "\nfixture-output:" +
+          JSON.stringify({
+            bytes: 0,
+            terminalBarrier: "native-cancel",
+            text:
+              "```json maister:output\n" +
+              JSON.stringify({
+                schemaVersion: 1,
+                findings: [],
+                knowledgeProposals: [],
+                selection: [],
+              }) +
+              "\n```",
+          }) +
+          "\n",
+      },
+    });
+    const hosts = createExecutionHosts({
+      db: database.db,
+      transport: createLocalDirectTransport(),
+    });
+    const receipt = await reserveCompanyFlowRun(
+      database.db,
+      requesterId,
+      {
+        ...request,
+        assignmentId: work.id,
+        assignmentRevision: work.revision,
+        inputRevision: work.inputRevision,
+      },
+      hosts,
+    );
+
+    expect(await tryStartRun(receipt.runId, { db: database.db })).toMatchObject(
+      { started: true },
+    );
+    vi.stubEnv("MAISTER_MAX_CONCURRENT_RUNS", "1");
+    driver = runFlow(receipt.runId, {
+      db: database.db,
+      executionHosts: hosts,
+      runtimeRoot: hostRoot,
+      signal: abort.signal,
+    }).then(
+      () => ({ error: null }),
+      (error: unknown) => ({ error }),
+    );
+    await expect
+      .poll(
+        async () => {
+          const log = await readFile(join(root, "native-cancel.jsonl"), "utf8");
+
+          return log
+            .split("\n")
+            .filter(Boolean)
+            .map((line) => JSON.parse(line) as { method: string })
+            .some((entry) => entry.method === "session/prompt/terminal-held");
+        },
+        { timeout: 15000, interval: 50 },
+      )
+      .toBe(true);
+    const operatorId = randomUUID();
+
+    await database.pool.query(
+      "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+      [operatorId, `${operatorId}@example.test`],
+    );
+    await createCompanyGrants(database.db, administratorId, {
+      principalKind: "user",
+      principalId: operatorId,
+      actions: ["assignments:read", "assignments:cancel"],
+      idempotencyKey: randomUUID(),
+    });
+    browserUserId = operatorId;
+    const stop = (): Promise<Response> =>
+      stopRunPost(
+        new Request(`http://localhost/api/runs/${receipt.runId}/stop`, {
+          method: "POST",
+        }),
+        { params: Promise.resolve({ runId: receipt.runId }) },
+      );
+
+    await expect
+      .poll(
+        async () => {
+          const response = await stop();
+          const body = await response.json();
+
+          if (response.status === 503) {
+            expect(body).toMatchObject({
+              code: "EXECUTOR_UNAVAILABLE",
+              details: { reason: "agent_execution_quiescence_unproven" },
+            });
+
+            return "awaiting-canonical-exit";
+          }
+          expect(response.status).toBe(200);
+          expect(body).toMatchObject({
+            runId: receipt.runId,
+            runStatus: "Abandoned",
+          });
+
+          return "abandoned";
+        },
+        { timeout: 15000, interval: 50 },
+      )
+      .toBe("abandoned");
+    expect(await driver).toEqual({ error: null });
+    expect((await stop()).status).toBe(200);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status,company_cancellation_intent->>'userId' AS user_id,operational_terminal,operational_cleanup->>'state' AS cleanup FROM runs WHERE id=$1",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        status: "Abandoned",
+        user_id: operatorId,
+        operational_terminal: null,
+        cleanup: "released",
+      },
+    ]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT kind,count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt','session.delete') GROUP BY kind ORDER BY kind",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toEqual([
+      { kind: "session.create", count: 1 },
+      { kind: "session.delete", count: 1 },
+      { kind: "session.prompt", count: 1 },
+    ]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status FROM specialist_assignments WHERE id=$1",
+          [work.id],
+        )
+      ).rows,
+    ).toEqual([{ status: "active" }]);
+  } finally {
+    browserUserId = requesterId;
+    abort.abort();
+    await driver;
+    await worker.stop();
+    await stopRuntimeEventConsumers();
+    await supervisor.stop();
+    restoreUrl();
+    compatibility.mockRestore();
+    resetResolverForTests();
+    resetRegistrarStateForTests();
+    setDefaultTransportForTests(null);
+    if (previousCap === undefined)
+      delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
+    else process.env.MAISTER_MAX_CONCURRENT_RUNS = previousCap;
+  }
+}, 90000);
+
 it("CBS-03 preserves unexpected native source as bounded host evidence before releasing its failed directory", async () => {
   const hostRoot = join(root, "reservation-host");
 

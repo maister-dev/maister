@@ -1,0 +1,47 @@
+{
+  "task": "T20.1",
+  "slice": "Live native Flow cancellation qualification",
+  "date": "2026-11-07",
+  "baseCommit": "98a9a9aa8e7df0d3a00451f74884ed79ca671eab",
+  "engineVersion": "3.11.1",
+  "migrations": [],
+  "status": "Qualification-only checkpoint; task remains open",
+  "productionChanges": false,
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "log": "integration.log.gz",
+      "files": 1,
+      "tests": 43,
+      "durationSeconds": 21.13
+    },
+    "types": {
+      "exitCode": 0,
+      "log": "types.log.gz"
+    },
+    "lint": {
+      "exitCode": 0,
+      "log": "lint.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "log": "docs.log.gz"
+    }
+  },
+  "qualified": [
+    "Real controlled ACP produces valid output and holds its terminal response before the current operator cancels",
+    "Existing stop intent wins over prompt output; the driver yields without failure or accepting a business result",
+    "One create, prompt and deletion; explicit same-owner retry reconciles canonical quiescence and repeated terminal stop is inert",
+    "Run is Abandoned with immutable attributed intent and released directory; business assignment remains active"
+  ],
+  "qualificationBoundary": "Pinned fixture package, actual PostgreSQL, owned supervisor and controlled ACP. No real adapter/model or installable companion/stand qualification. Idle/restart and completed traversal recovery remain open.",
+  "sourceSha256": {
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "12ea0357b398305cad492466b95a9ee1703d3086659936707e0eebaf17c74232",
+    "docs/system-analytics/specialist-runtime.md": "bab6bed54cc04f738181c87469eb3e2669bc1bfa96d89c59b52a78c25e54bd04",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "37079ffa5cc948be805d6e164258bd722c2852123545351dbada88277cec3e12"
+  }
+}

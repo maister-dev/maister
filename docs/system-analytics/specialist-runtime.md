@@ -315,7 +315,7 @@ integrity refusal without reopening execution or reclassifying the Flow as an
 operational agent. Source-integrity failure does not erase its retained technical
 result or complete the business assignment.
 
-Qualification currently uses real PostgreSQL migrations, the actual package loader with a pinned fixture Git package, an owned real supervisor and controlled ACP. Concurrent native driver invocations produce one create/prompt, a valid retained export, physical quiescence and released directory; the business assignment remains active. A changed reviewed coordinator refuses queued dispatch with zero ACP effects. Prospective engine metadata and capability-cache receipts are controlled fixture inputs, not real adapter/model smoke or companion/stand qualification. Native form and human-review waits are additionally qualified through the actual response route and both graph resumes below. Permission/idle restart/recovery, live graph cancellation, extended compatibility and engine activation remain open; the supported engine stays 3.11.1.
+Qualification currently uses real PostgreSQL migrations, the actual package loader with a pinned fixture Git package, an owned real supervisor and controlled ACP. Concurrent native driver invocations produce one create/prompt, a valid retained export, physical quiescence and released directory; the business assignment remains active. A changed reviewed coordinator refuses queued dispatch with zero ACP effects. Prospective engine metadata and capability-cache receipts are controlled fixture inputs, not real adapter/model smoke or companion/stand qualification. Native form and human-review waits are additionally qualified through the actual response route and both graph resumes below. Permission idle/restart, completion recovery, extended compatibility and engine activation remain open; the supported engine stays 3.11.1.
 
 ### Native permission approval boundary
 
@@ -537,7 +537,12 @@ current company user actor; the stopped specialist remains execution provenance.
 The graph finalizer rechecks current reader/source/cancellation authority under
 the Run lock, preserves the exact driver witness and obtains the company user
 actor from the server. Concurrent Pending cancellation creates one terminal fact
-and no create/prompt command. Stopping an execution does not cancel or complete
+and no create/prompt command. Live native graph qualification additionally holds
+a real controlled ACP terminal response after output, then cancels through the
+actual endpoint: one create, prompt and deletion, an inert repeated stop,
+attributed immutable intent, Abandoned outcome and released directory. The
+original graph driver yields without applying the completed output.
+Stopping an execution does not cancel or complete
 its business assignment, nor reconcile unknown external stand effects. The
 response retains `{ok,runId,runStatus:"Abandoned",supervisorStopped}`. Project
 and private execution routes retain their existing admission and behavior.
