@@ -20,6 +20,7 @@ import {
   decodeCompanyBindingHead,
   loadCompanyBindingRevision,
 } from "./company-bindings";
+import { assertStandaloneCompanyAgentDefinition } from "./company-agent-definition";
 import { resolveAgentConfig } from "./config";
 import { resolveInstalledAgentDefinition } from "./effective";
 import { buildOperationalContract } from "./launch-contract";
@@ -187,33 +188,8 @@ export async function prepareCompanyAgentContext(
       "The installed specialist does not match its reviewed package and definition witness",
       { details: { reason: "company_agent_pin_changed" } },
     );
-  if (
-    definition.workspace !== "none" ||
-    definition.workspaceRef !== null ||
-    definition.taskQualification !== null ||
-    definition.mode !== "session" ||
-    definition.riskTier === "destructive"
-  )
-    throw new MaisterError(
-      "CONFIG",
-      "Standalone company sessions require a finite workspace-none role without repository qualification",
-      { details: { reason: "company_agent_workspace_unsupported" } },
-    );
-  if (
-    definition.memory !== "none" ||
-    (definition.capabilityProfile?.mcps?.length ?? 0) > 0
-  )
-    throw new MaisterError(
-      "CONFIG",
-      "Company sessions require native knowledge tools; project memory and project MCP bindings require explicit project admission",
-      {
-        details: { reason: "company_agent_project_capability_unsupported" },
-      },
-    );
-  if (
-    definition.flow !== null ||
-    binding.snapshot.coordinatorFlowRevisionId !== null
-  )
+  assertStandaloneCompanyAgentDefinition(definition);
+  if (binding.snapshot.coordinatorFlowRevisionId !== null)
     throw new MaisterError(
       "CONFIG",
       "This specialist requires its exact company coordinator Flow admission",

@@ -136,7 +136,7 @@ export async function claimAgentPreparation(
     runId: string;
     assignmentId: string;
     cwd: string;
-    repoPath: string;
+    repoPath: string | null;
   },
 ): Promise<{
   operation: Preparation;

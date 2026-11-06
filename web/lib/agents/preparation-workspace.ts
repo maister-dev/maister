@@ -99,11 +99,13 @@ export async function recordAgentPreparationFailure(
 
 /** Repository fences retain registered orphan Git groups; plain trees spawn no Git. */
 export async function acquirePreparationWorkspace(input: {
-  repoPath: string;
+  repoPath: string | null;
   cwd: string;
   resourceKind: string;
 }): Promise<PreparationWorkspaceFence> {
   if (input.resourceKind !== "plain_directory") {
+    if (input.repoPath === null)
+      throw new MaisterError("PRECONDITION","Repository preparation requires an actual repository owner",{details:{reason:"operational_preparation_repository_required"}});
     const fence = await acquireRepositoryMutationFence(input.repoPath);
     let released = false;
 
@@ -151,7 +153,7 @@ export async function openAgentPreparation(
   input: {
     runId: string;
     assignmentId: string;
-    repoPath: string;
+    repoPath: string | null;
     cwd: string;
     resourceKind: string;
   },

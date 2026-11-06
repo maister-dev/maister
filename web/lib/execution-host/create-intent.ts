@@ -336,6 +336,12 @@ export async function lockCreateOwner(
       (turn.state === "claimed" || turn.state === "dispatched");
 
     if (current) await assertAgentResumeTurn(tx, turn, assignment);
+    if (current && check === "create" && run.companyId != null) {
+      const { loadCompanyAgentSessionContext } =
+        await import("@/lib/agents/company-session-context");
+
+      await loadCompanyAgentSessionContext(tx, run.id);
+    }
 
     return current;
   }

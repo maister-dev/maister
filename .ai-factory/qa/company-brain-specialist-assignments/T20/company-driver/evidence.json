@@ -1,0 +1,86 @@
+{
+  "task": "T20",
+  "slice": "Native company standalone initial session, retained input prompt and current create/prompt authority",
+  "date": "2026-11-06",
+  "baseCommit": "d049d9ff9e6bc37d290fa8b839f3692fc3103cfc",
+  "status": "Initial native driver slice qualified; T20 remains open",
+  "engineVersion": "3.11.1",
+  "migrations": [],
+  "red": {
+    "log": "driver-red.log.gz",
+    "failure": "The production agent driver failed a valid reserved company Run because it unconditionally required a project; no session was created."
+  },
+  "intermediateFailures": [
+    "The first operational fixture returned prose/end_turn but still advertised a live host session. Native finalization correctly refused quiescence until the test deadline. The fixture now explicitly reports an exited physical session; production quiescence was not weakened.",
+    "Type checking rejected a mutable access-walk inference and an unknown configuration result. The loader now uses the existing readonly walk type and validates scalar binding configuration."
+  ],
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "files": 13,
+      "tests": 158,
+      "durationSeconds": 943.09,
+      "log": "integration-green.log.gz"
+    },
+    "finalCompanyIntegration": {
+      "exitCode": 0,
+      "files": 1,
+      "tests": 27,
+      "durationSeconds": 8.68,
+      "log": "company-owning-final.log.gz",
+      "note": "Includes one additional frozen-runner revocation case beyond the broad run; distinct integration union is 159 cases over the same 13 files."
+    },
+    "unit": {
+      "exitCode": 0,
+      "files": 886,
+      "tests": 9263,
+      "log": "unit-green.log.gz"
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "log": "types.log.gz"
+    },
+    "lintChangedFiles": {
+      "exitCode": 0,
+      "warnings": 0,
+      "log": "lint.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "tables": 171,
+      "log": "docs.log.gz"
+    }
+  },
+  "qualified": [
+    "Native reserve -> shared scheduler -> production agent driver -> owned create/prompt -> operational result -> token revocation -> host workspace release works for a company owner without a project.",
+    "Prompt reads exact frozen input/configuration/result/role, with objective, references, constraints, verification, policy and unchanged scheduled ask kept separate.",
+    "Actual installed definition witness, current initiating account/assignment read/update authority, current binding/provider/catalog and frozen runner availability are checked before new work.",
+    "Shared standalone definition guard refuses repository/qualification/private memory/project MCP/coordinator declarations rather than ignoring them.",
+    "Company create and new prompt admission recheck exact current input/source/authority inside their existing owner transaction; acknowledgement of existing work remains independent.",
+    "Company baseline and runtime-directory ownership, package capabilities, facade credentials and existing canonical result/finalization/disposition paths remain shared.",
+    "Revoking assignment update authority or disabling the frozen runner after reservation prevents workspace adoption/session creation and preserves the exact business assignment.",
+    "A valid completed Run does not complete the assignment or confirm knowledge.",
+    "Existing project real-supervisor prompt ownership, human/permission waits, interrupted/replaced owners, quiescence, quarantine, host pressure, workspace and qualification regressions pass."
+  ],
+  "notYetQualified": [
+    "Actual company agent invocation through a real ACP adapter/package and host output-evidence disposal",
+    "Complete company idle/HITL continuation, interrupted/replaced ownership and recovery qualification",
+    "Company activity/read models and public assignment initiation/delivery",
+    "Company result-only Flow runtime and remaining T20.1-T43 acceptance"
+  ],
+  "sourceSha256": {
+    "AGENTS.md": "daa90c4536b00fa9a8b3d7c56585155f430af70a80145f2872884bde8f976b48",
+    "docs/system-analytics/specialist-runtime.md": "d3840387c7aef2ef868f7314a48cedb0f0d96771de310eb08b89066368ab5e6d",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "bc562b090226c0f75496990074595470c944ad0642ec4c67a70f39fc556cb18c",
+    "web/lib/agents/company-agent-context.ts": "3fdad248c050dabbddfb5ee1ab1e0ec9cfd18db0feebdbc9754d9e2e85ec31e5",
+    "web/lib/agents/company-agent-definition.ts": "715627c1884eca17d01d64237260e06c9b25bac9db1cabba79a0518bca39a60f",
+    "web/lib/agents/company-session-context.ts": "bb913e35963a5ea9b70b8742724f7348552c4c6502be0f01654a0e778c2c2106",
+    "web/lib/agents/launch.ts": "6fd60a62deb83cc66b7b24e15320013a7f0e576f147642b95d52a6919cc33930",
+    "web/lib/agents/prompt-owner.ts": "aa7a52e7584e2fa18de6991d7099dd7133ede06cfd240831e76a08247cec46f7",
+    "web/lib/execution-host/create-intent.ts": "47c595d48a211c0909112651f7d43bc8fb014b9d819e329ec5503a760fc57304"
+  }
+}

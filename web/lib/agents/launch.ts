@@ -1,3 +1,4 @@
+import type { OperationalResourceKind } from "@/lib/run-results/operational-types";
 import "server-only";
 
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
@@ -38,6 +39,10 @@ import {
   supersedeAgentMessage,
   type AdmittedAgentRef,
 } from "./prompt-owner";
+import {
+  loadCompanyAgentSessionContext,
+  buildCompanyAgentPrompt,
+} from "./company-session-context";
 import { applyPersistentAgentPark, afterPersistentAgentPark } from "./park";
 import { acceptAgentMessage } from "./turns";
 import { createTasklessAgentFlowCarrier } from "./carrier-launch-authority";
@@ -120,6 +125,7 @@ import {
 import { isHostPressuredError } from "@/lib/execution-host/host-pressure";
 import {
   assertOperationalDispatchIntegrity,
+  operationalWorkspace,
   operationalResourceKind,
   captureOperationalContextMounts,
   inspectOperationalRun,
@@ -219,7 +225,10 @@ import { resolveAgentLaunchExecutionPolicy } from "@/lib/agents/execution-policy
 import { runnerCatalogEntry } from "@/lib/agents/runner-catalog";
 import { assertReadOnlySessionEvidence } from "@/lib/agents/runner-readonly-evidence";
 export { runnerCatalogEntry } from "@/lib/agents/runner-catalog";
-import { issueAgentRunToken } from "@/lib/agents/tokens";
+import {
+  issueAgentRunToken,
+  issueCompanyAgentRunToken,
+} from "@/lib/agents/tokens";
 import { nativeFindingsCompletionPrompt } from "@/lib/run-results/findings-prompt";
 import { nativeKnowledgeCaptureAtLaunch } from "@/lib/brain/knowledge-launch-capture";
 import {
@@ -4247,14 +4256,19 @@ async function driveAgentSession(
     }
   }
 
+  const companyContext =
+    run.companyId != null
+      ? await _db.transaction((tx: ExecutionDb) =>
+          loadCompanyAgentSessionContext(tx, runId),
+        )
+      : null;
   const draftPayload = consensusDraftPayload(run);
-  const projectRows = await _db
-    .select()
-    .from(projects)
-    .where(eq(projects.id, run.projectId));
+  const projectRows = companyContext
+    ? []
+    : await _db.select().from(projects).where(eq(projects.id, run.projectId));
   const project = projectRows[0];
 
-  if (!project) {
+  if (!project && !companyContext) {
     await finalizeAgentRun(runId, "Failed", {
       db: _db,
       expectedAssignmentId: assignmentId,
@@ -4331,6 +4345,7 @@ async function driveAgentSession(
 
   try {
     effective =
+      companyContext?.effective ??
       (run.retryOfRunId ? await frozenRetryDefinition(_db, run.id) : null) ??
       (await frozenTaskAgentDefinition(_db, run)) ??
       frozenOperationalDefinition(run) ??
@@ -4369,15 +4384,20 @@ async function driveAgentSession(
       "Operational preparation requires a current assignment",
       { details: { reason: "assignment_fenced", runId } },
     );
+  const companyWorkspace = companyContext
+    ? await operationalWorkspace(_db, run)
+    : null;
   let preparation: Awaited<ReturnType<typeof openAgentPreparation>> | null =
     null;
   let preparationCommit: string | null = null;
   const packageCapture: {
     current: Awaited<ReturnType<typeof captureTaskAgentPackage>> | null;
   } = { current: null };
-  let preparationWorkspace: Awaited<
-    ReturnType<typeof taskAgentPreparationWorkspace>
-  > | null = null;
+  let preparationWorkspace: Readonly<{
+    cwd: string;
+    repoPath: string | null;
+    resourceKind: OperationalResourceKind;
+  }> | null = null;
   let operationalSpawnStage = "workspace_acquisition";
   let preparationContext: OperationalProbeContext = {
     runId,
@@ -4398,9 +4418,15 @@ async function driveAgentSession(
         ...preparationContext,
         ...(assignment ? { assignmentEpoch: assignment.epoch } : {}),
       };
-      preparationWorkspace = run.taskLaunchIntentId
+      const ownedWorkspace = run.taskLaunchIntentId
         ? await taskAgentPreparationWorkspace(_db, run)
         : await operationalWorkspace(_db, run);
+      preparationWorkspace = {
+        ...ownedWorkspace,
+        repoPath: "ownerKind" in ownedWorkspace && ownedWorkspace.ownerKind === "company"
+          ? null
+          : ownedWorkspace.repoPath,
+      };
       preparation = await openAgentPreparation(_db, {
         runId,
         assignmentId,
@@ -4486,7 +4512,10 @@ async function driveAgentSession(
     }
     let cwd: string;
 
-    if (workspace === "repo_read" && effective.parsed.workspaceRef) {
+    if (companyWorkspace) {
+      cwd = companyWorkspace.cwd;
+      await mkdir(cwd, { recursive: true });
+    } else if (workspace === "repo_read" && effective.parsed.workspaceRef) {
       // ADR-090 rework: ephemeral detached checkout at the trigger-derived ref
       // — the user's checkout is never switched; removed at the terminal choke.
       cwd =
@@ -4740,6 +4769,7 @@ async function driveAgentSession(
       const prepareAttachedContextMounts = async (): Promise<
         ContextMountSnapshot[]
       > => {
+        if (companyContext) return [];
         // ADR-157 (T30): read-only sibling-repo mounts for a platform-agent run. The
         // declaration is the PROJECT ATTACHMENT's `context_repos` — the definition's
         // `recommended` bindings are prefill for the attach dialog only and can never
@@ -4824,11 +4854,9 @@ async function driveAgentSession(
           assertPreparationCommit(preparationCommit, integrityBaseline.head);
           integrityBaseline = {
             ...integrityBaseline,
-            owner: {
-              cwd,
-              repoPath: preparationWorkspace?.repoPath ?? project.repoPath,
-              projectSlug: project.slug,
-            },
+            owner: companyWorkspace?.ownerKind === "company"
+              ? {kind:"company",companyId:companyWorkspace.companyId,runId,cwd,runtimePath:companyWorkspace.runtimePath}
+              : {cwd,repoPath:preparationWorkspace?.repoPath ?? project.repoPath,projectSlug:project.slug},
             contextMounts: await captureOperationalContextMounts(contextMounts),
           };
           await preparation?.publishBaseline(integrityBaseline);
@@ -4859,21 +4887,18 @@ async function driveAgentSession(
       // override branch below (which discards `basePrompt` and would otherwise
       // record provenance for a prompt that carried no memory).
       operationalSpawnStage = "prompt";
-      const issuedToken = await issueAgentRunToken({
-        agentId: agent.id,
-        projectId: project.id,
-        runId,
-        db: _db,
-      });
+      const issuedToken = companyContext
+        ? await issueCompanyAgentRunToken({runId,db:_db})
+        : await issueAgentRunToken({agentId:agent.id,projectId:project.id,runId,db:_db});
       if (usesStructuredKnowledgeContext(run))
         await assertNativeRunKnowledgeInputs(_db, runId);
-      const memoryText = await applyAgentMemoryForLaunch(
+      const memoryText = companyContext ? null : await applyAgentMemoryForLaunch(
         _db,
         run,
         project.slug as string,
         overridePrompt != null,
       );
-      const basePrompt = await buildAgentPrompt(
+      const basePrompt = companyContext ? buildCompanyAgentPrompt(companyContext) : await buildAgentPrompt(
         _db,
         effective.parsed,
         run,
@@ -4894,7 +4919,7 @@ async function driveAgentSession(
       // RD7: the agent's capability_profile.mcps resolve through the existing
       // platform/project catalog (precedence + exec-trust stdio gate) and ride
       // createSession alongside the facade.
-      const profileMcpServers = await resolveAgentProfileMcpServers({
+      const profileMcpServers = companyContext ? [] : await resolveAgentProfileMcpServers({
         db: _db,
         projectId: project.id as string,
         capabilityProfile: effective.parsed.capabilityProfile ?? undefined,
@@ -4946,7 +4971,7 @@ async function driveAgentSession(
         getAdapterSupportById(snapshot.adapter as AdapterId)?.materialization
           ?.mode === "home-redirect";
       const capabilityRoot = redirectsHome
-        ? operationalAgentRuntimePath(project.slug, runId)
+        ? (companyWorkspace?.runtimePath ?? operationalAgentRuntimePath(project.slug, runId))
         : cwd;
 
       if (packageSkillRoots.length > 0 && redirectsHome)

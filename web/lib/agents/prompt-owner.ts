@@ -138,6 +138,12 @@ export async function lockAgentPromptSession(
 
   if (run?.runKind !== "agent" || run.status !== "Running")
     throw new PromptOwnerInvariantError("agent_initial_admission_generation");
+  if (run.companyId != null) {
+    const { loadCompanyAgentSessionContext } =
+      await import("./company-session-context");
+
+    await loadCompanyAgentSessionContext(tx, runId);
+  }
   const [binding] = await tx
     .select({ session: runSessions, incarnation: runSessionIncarnations })
     .from(runSessions)

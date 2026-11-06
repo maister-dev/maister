@@ -83,12 +83,12 @@ export async function canonicalPreparationPath(cwd: string): Promise<string> {
 /** Physical operation identity is independent of immutable allocation hashes. */
 export async function agentPreparationResourceId(
   input: Readonly<{
-    repoPath: string;
+    repoPath: string | null;
     cwd: string;
   }>,
 ): Promise<string> {
   const [repository, cwd] = await Promise.all([
-    realpath(input.repoPath),
+    input.repoPath === null ? Promise.resolve("company") : realpath(input.repoPath),
     canonicalPreparationPath(input.cwd),
   ]);
 

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-**Implemented: specialist metadata, binding configuration, company preflight/run storage and internal credentials; Designed: company session/graph execution — ADR-203.** Reusable specialist roles extend existing package agents and installed Flow bindings. This domain owns company execution and invocation scope; [assignments](specialist-assignments.md) owns durable work and [cooperation](specialist-cooperation.md) owns delegation/acceptance.
+**Implemented: specialist metadata, binding configuration, company standalone Run/session path and internal credentials; Designed: complete company lifecycle and graph execution — ADR-203.** Reusable specialist roles extend existing package agents and installed Flow bindings. This domain owns company execution and invocation scope; [assignments](specialist-assignments.md) owns durable work and [cooperation](specialist-cooperation.md) owns delegation/acceptance.
 
 ## Domain entities
 
@@ -61,7 +61,7 @@ Existing `agent_schedules` and `agent_trigger_attempts` now support explicit exc
 
 ### Company agent admission preflight
 
-**Implemented internal preflight and transactional Run reservation (T20); session dispatch remains Designed.** The server-internal company agent preflight receives company/assignment/binding IDs, exact positive 32-bit business/input/binding revisions and a declared trigger (`manual`, `cron`, `domain_event` or `webhook`). The authenticated initiating user is a separate server argument. No request-supplied role, attribution, authority snapshot, package, runner, workspace or confirmation is accepted by this grammar.
+**Implemented internal preflight and transactional Run reservation (T20); native standalone dispatch is implemented and lifecycle qualification remains open.** The server-internal company agent preflight receives company/assignment/binding IDs, exact positive 32-bit business/input/binding revisions and a declared trigger (`manual`, `cron`, `domain_event` or `webhook`). The authenticated initiating user is a separate server argument. No request-supplied role, attribution, authority snapshot, package, runner, workspace or confirmation is accepted by this grammar.
 
 Before reading assignment content it checks current `assignments:read` and `assignments:update` for the selected company and active user. The preflight locks the assignment before the specialist binding, checks its company owner and queued state, business/input revision, responsible binding/role and retained source access. It requires a current enabled, non-retired specialist configuration and enabled, non-quarantined catalog identity. It resolves the actual immutable trusted installed package, compares the retained definition/package witness and effective configuration to the assignment's frozen standing input, and validates the selected trigger. A first standalone company operational session requires `workspace:none`, no repository qualification, no coordinator Flow and the exact required operational result descriptor captured by the assignment. Coordinator Flow admission is the distinct T20.1 path; this preflight never substitutes a standalone session for a declared Flow.
 
@@ -71,17 +71,17 @@ The result contains typed current binding, effective definition/configuration/ex
 
 The internal `reserveCompanyAgentRun` service admits one exact queued assignment through the existing `runs`, default `run_sessions`, execution-host placement and `specialist_run_links`. It rechecks current preflight under the assignment lock, freezes the reviewed configuration, policy, result and scheduled request, and classifies the exact assignment input before commit. Its assignment becomes `active` while the Run waits in the existing `Pending` queue; no process or credential is created by reservation. Competing admissions using the same business revision yield one committed Run and a conflict. Source denial rolls back the Run, session, placement, link, assignment transition and transactional outbox changes together.
 
-Company runner selection uses the shared standalone resolver: exact binding runner, declared agent default, then platform default. There is no project tier. A selected missing, disabled, unready or read-only-incompatible runner refuses admission; it never silently chooses a different configured runner. Required read-only diagnostics come from the selected execution-host boundary. Assignment and reviewed execution policies must have equal normalized axes; changing requested authority requires explicit review. Native input references are re-inspected under current initiating-user and executing-specialist authority, including exact available version witnesses. Declared private project memory or project MCP bindings are refused until their actual project admission is provided. Actual session dispatch/resume and company graph execution remain the T20/T20.1 qualification gates.
+Company runner selection uses the shared standalone resolver: exact binding runner, declared agent default, then platform default. There is no project tier. A selected missing, disabled, unready or read-only-incompatible runner refuses admission; it never silently chooses a different configured runner. Required read-only diagnostics come from the selected execution-host boundary. Assignment and reviewed execution policies must have equal normalized axes; changing requested authority requires explicit review. Native input references are re-inspected under current initiating-user and executing-specialist authority, including exact available version witnesses. Declared private project memory or project MCP bindings are refused until their actual project admission is provided. Native standalone dispatch uses the shared owned-session path below. Full continuation/recovery and company graph execution remain the T20/T20.1 qualification gates.
 
 ### Company agent credentials
 
-**Implemented internal credential storage/issuance/verification (T20); session wiring remains Designed.** Company standalone sessions use the existing ephemeral `agent` token kind and existing deterministic `agent-run:<runId>` terminal revocation. New `project_tokens.company_id/company_run_id` identify the exact company execution; `project_id` is null. A current assigned run, source role, initiating user and immutable launch capture are resolved by the server. Only an active operational company run may receive a credential. The initiating account must remain active, hold current `assignments:read/update`, and match the retained server actor; the current role/configuration/provider and exact assignment input/link must remain available. Minting locks the run, revokes any previous live token for that run and stores only the normal secret hash. One live company credential per run is enforced by a partial unique index. The credential cannot be retargeted, have its scopes widened in place or be reactivated after revocation.
+**Implemented internal credential storage/issuance/verification (T20); native standalone session wiring is implemented; complete lifecycle qualification remains open.** Company standalone sessions use the existing ephemeral `agent` token kind and existing deterministic `agent-run:<runId>` terminal revocation. New `project_tokens.company_id/company_run_id` identify the exact company execution; `project_id` is null. A current assigned run, source role, initiating user and immutable launch capture are resolved by the server. Only an active operational company run may receive a credential. The initiating account must remain active, hold current `assignments:read/update`, and match the retained server actor; the current role/configuration/provider and exact assignment input/link must remain available. Minting locks the run, revokes any previous live token for that run and stores only the normal secret hash. One live company credential per run is enforced by a partial unique index. The credential cannot be retargeted, have its scopes widened in place or be reactivated after revocation.
 
 Initial company agent token scopes are the explicitly configured intersection of `knowledge:read/propose` with the reviewed role action limits. No wildcard, repository mutation, human confirmation or management scope is inferred. The domain still checks current agent/user knowledge and source grants for each operation; possession of a scope is insufficient. Later assignment/delegation/target tools add their exact scopes in the owning slices. Verification additionally rechecks current run/company/assignment/configuration/provider/account and `assignments:read`, so a Pending or terminal run, disabled/retired/retargeted role, revoked content grant or removed account cannot use a retained credential. Action-specific mutation authority remains separate. Legacy project/user/librarian token shapes and the personal-user actor rules remain unchanged.
 
 ### Company execution knowledge identity
 
-**Implemented native identity/read/proposal services (T20); actual session launch remains Designed.** A company standalone execution resolves the server-only `company_agent` principal from its exact current assignment/input/configuration/provider, retained professional role attestation and initiating active user. Its Brain actor remains the professional agent and originating run; the initiating user is an additional authority boundary, never a replacement author. API token verification still requires an active execution; server-only read inspection may validate a Pending reservation before its first prompt. Neither path can accept a model-supplied role, grant or confirmation.
+**Implemented native identity/read/proposal services (T20); native standalone session launch is implemented; full runtime/package qualification remains open.** A company standalone execution resolves the server-only `company_agent` principal from its exact current assignment/input/configuration/provider, retained professional role attestation and initiating active user. Its Brain actor remains the professional agent and originating run; the initiating user is an additional authority boundary, never a replacement author. API token verification still requires an active execution; server-only read inspection may validate a Pending reservation before its first prompt. Neither path can accept a model-supplied role, grant or confirmation.
 
 Initial company-agent knowledge authority is confined to its bound company. Project-owned records, repository/context and private agent-memory sources remain unavailable on this path; actual project work and authorized evidence sharing use the existing project admission/cooperation slices. Existing project-agent knowledge behavior is unchanged. Native company read/propose requires all of: the reviewed role action limit, the agent's current explicit company action grant, the initiating user's current matching company action grant and current source closure. Restricted records additionally require the corresponding record grant for both recipients. Search applies both policies before LIMIT and cursors bind both current grant sets; record/evidence lookup and proposal/correction use the same intersection. No retrieval score or source repetition supplies a grant.
 
@@ -274,3 +274,39 @@ librarian wire shapes remain unchanged. Invalid command payloads retain the
 supervisor's existing 409 mapping; `workspace_rejected/owner_mismatch` identifies
 a managed-path or replay-owner conflict. See the authoritative
 [supervisor contract](../api/supervisor.openapi.yaml).
+
+### Company standalone session driver
+
+**Implemented native initial dispatch; complete lifecycle qualification remains
+T20/T21.** `driveAgentSession` distinguishes a company owner before project
+resolution. It uses the existing generation turn, default session, host command
+ledger, opaque workspace adoption, canonical prompt owner and operational
+finalization. It supplies no synthetic project, repository, attachment or private
+memory. Declared project memory/MCP dependencies and coordinator execution models
+are explicitly refused through one shared standalone-definition guard.
+
+`loadCompanyAgentSessionContext` decodes the exact retained input/digest and
+frozen operational role, verifies the current installed definition witness, trust, catalog and binding,
+initiating account and assignment read/update authority, exact source references
+and current frozen-runner availability. It verifies configuration and normalized
+policy against the immutable input. The same guard runs inside company session
+create and prompt admission, including retained-create re-entry. Acknowledging
+already performed creation remains independent of new-action authority.
+
+The company prompt keeps standing instructions, effective configuration,
+objective/input/targets, knowledge references, constraints, expected result and
+verification, historical execution policy and the unchanged scheduled request
+as separate sections. Current server permissions remain authoritative. Existing
+native disclosure records classify the exact assignment input before model work.
+The owner-aware operational baseline, adapter runtime directory, facade token,
+capability materialization and shared terminal/disposition path are reused.
+A valid Run result and completed host execution do not complete or confirm the
+assignment. Revocation before initial dispatch produces no workspace, session,
+prompt or credential and preserves the assignment/input for governed recovery.
+
+Native initial qualification uses a real pinned package, real PostgreSQL and a
+canonical fake host whose physical session state explicitly becomes exited;
+agent prose or a clean return alone cannot pass quiescence. Real supervisor
+adoption/SQLite restart are separately qualified above. Actual company ACP
+package invocation, idle/HITL continuations, interrupted/replaced owners, read
+models and the stand pilot retain their separate acceptance gates.

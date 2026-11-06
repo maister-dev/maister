@@ -356,7 +356,7 @@ export async function disposeOperationalRun(
     const context = await operationalWorkspace(db, run);
     if (workspace && context.ownerKind !== "project")
       throw cleanupError("company_workspace_unexpected_repository");
-    const preparationFence = await acquirePreparationWorkspace(context);
+    const preparationFence = await acquirePreparationWorkspace({...context,repoPath:context.ownerKind === "company" ? null : context.repoPath});
 
     try {
       await preparationFence.run(async () => {

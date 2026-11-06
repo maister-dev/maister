@@ -53,6 +53,7 @@ import {
   prepareUndispatchedAgentFailure,
 } from "../finalization";
 import { reserveCompanyAgentRun } from "../company-agent-launch";
+import { startAgentSession } from "../launch";
 
 import {
   runs,
@@ -67,7 +68,11 @@ import {
   startRealSupervisor,
   useRealSupervisorUrl,
 } from "@/test-support/real-supervisor";
-import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
+import {
+  createFakeExecutionHost,
+  fakeExecutionHosts,
+  scriptAgentTurn,
+} from "@/test-support/fake-execution-host";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import { setDefaultTransportForTests } from "@/lib/execution-host/default-transport";
 import {
@@ -727,6 +732,292 @@ it("CBS-02 uses the exact company binding runner and refuses its kill switch ins
         model: "binding-fixture",
       },
     ]);
+  } finally {
+    resetResolverForTests();
+    setDefaultTransportForTests(null);
+  }
+});
+
+it("CBS-02 dispatches a company assignment through the existing owned agent driver and verifies its operational result", async () => {
+  const db: Db = database.db;
+  const fake = createFakeExecutionHost();
+  const { prompts } = scriptAgentTurn(fake, {
+    text:
+      "```json maister:output\n" +
+      JSON.stringify(operationalSuccessFixture()) +
+      "\n```",
+    onPrompt: ({ sessionId }) => {
+      const session = fake.sessions.get(sessionId);
+
+      if (!session)
+        throw new Error("The scripted operational session was not created");
+      fake.sessions.set(sessionId, {
+        ...session,
+        status: "exited",
+        exitCode: 0,
+        exitedAt: new Date().toISOString(),
+      });
+
+      return { stopReason: "end_turn", meta: null };
+    },
+  });
+  const { hosts } = await fakeExecutionHosts(db, { fake });
+  const runnerId = randomUUID();
+  const previousCap = process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+
+  await db.insert(platformAcpRunners).values({
+    id: runnerId,
+    adapter: "claude",
+    capabilityAgent: "claude",
+    model: "company-driver-fixture",
+    provider: { kind: "anthropic" },
+    readinessStatus: "Ready",
+  });
+  await db
+    .insert(platformRuntimeSettings)
+    .values({ id: "singleton", defaultRunnerId: runnerId })
+    .onConflictDoUpdate({
+      target: platformRuntimeSettings.id,
+      set: { defaultRunnerId: runnerId },
+    });
+  const assignment = await createSpecialistAssignment(
+    db,
+    userId,
+    assignmentInput,
+  );
+  const receipt = await reserveCompanyAgentRun(
+    db,
+    userId,
+    { ...request, assignmentId: assignment.id },
+    hosts,
+  );
+
+  vi.stubEnv("MAISTER_MAX_CONCURRENT_AGENTS", "100");
+  try {
+    expect(await tryStartRun(receipt.runId, { db })).toMatchObject({
+      started: true,
+    });
+    await startAgentSession(receipt.runId, { db, executionHosts: hosts });
+    expect(fake.callsOf("createSession")).toHaveLength(1);
+    expect(fake.callsOf("createSession")[0].envelope?.payload).toMatchObject({
+      readOnlySession: true,
+      agentKind: "operational",
+      reapOnEndTurn: true,
+      autoApprovePermissions: false,
+    });
+    expect(fake.callsOf("adoptWorkspace")[0].envelope?.payload).toMatchObject({
+      projectSlug: "_company",
+      owner: { kind: "company", companyId: request.companyId },
+      kind: "directory",
+    });
+    expect(fake.callsOf("listSessions").length).toBeGreaterThan(0);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain(assignmentInput.objectiveInput.objective);
+    expect(prompts[0]).toContain(assignmentInput.objectiveInput.input);
+    expect(prompts[0]).toContain(assignment.id);
+    expect(prompts[0]).toContain("base");
+    const [run] = await db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, receipt.runId));
+
+    expect(run).toMatchObject({
+      status: "Done",
+      projectId: null,
+      operationalIntegrityBaseline: {
+        owner: {
+          kind: "company",
+          companyId: request.companyId,
+          runId: receipt.runId,
+        },
+      },
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status,revision FROM specialist_assignments WHERE id=$1",
+          [assignment.id],
+        )
+      ).rows[0],
+    ).toEqual({ status: "active", revision: 3 });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM run_results WHERE run_id=$1 AND validity='valid'",
+          [receipt.runId],
+        )
+      ).rows[0],
+    ).toEqual({ count: 1 });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM project_tokens WHERE company_run_id=$1 AND revoked_at IS NULL",
+          [receipt.runId],
+        )
+      ).rows[0],
+    ).toEqual({ count: 0 });
+  } finally {
+    if (previousCap === undefined)
+      delete process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+    else process.env.MAISTER_MAX_CONCURRENT_AGENTS = previousCap;
+    await fake.waitForCanonicalEvents();
+    resetResolverForTests();
+    setDefaultTransportForTests(null);
+  }
+}, 60000);
+
+it("CBS-02 refuses revoked current assignment authority after reservation before workspace or session effects", async () => {
+  const db: Db = database.db;
+  const { hosts, fake } = await fakeExecutionHosts(db);
+  const initiatorId = randomUUID();
+  const runnerId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+    [initiatorId, `${initiatorId}@example.test`],
+  );
+  await createCompanyGrants(db, administratorId, {
+    principalKind: "user",
+    principalId: initiatorId,
+    actions: ["assignments:read", "assignments:update"],
+    idempotencyKey: randomUUID(),
+  });
+  await db.insert(platformAcpRunners).values({
+    id: runnerId,
+    adapter: "claude",
+    capabilityAgent: "claude",
+    model: "authority-fixture",
+    provider: { kind: "anthropic" },
+    readinessStatus: "Ready",
+  });
+  await db
+    .insert(platformRuntimeSettings)
+    .values({ id: "singleton", defaultRunnerId: runnerId })
+    .onConflictDoUpdate({
+      target: platformRuntimeSettings.id,
+      set: { defaultRunnerId: runnerId },
+    });
+  const assignment = await createSpecialistAssignment(
+    db,
+    userId,
+    assignmentInput,
+  );
+  const receipt = await reserveCompanyAgentRun(
+    db,
+    initiatorId,
+    { ...request, assignmentId: assignment.id },
+    hosts,
+  );
+  const updateGrant = (
+    await database.pool.query(
+      "SELECT id FROM company_grants WHERE principal_id=$1 AND action='assignments:update' AND revoked_at IS NULL",
+      [initiatorId],
+    )
+  ).rows[0];
+
+  await revokeCompanyGrant(db, administratorId, updateGrant.id, {
+    expectedRevision: 1,
+    reason: "Withdraw execution authority before dispatch",
+    idempotencyKey: randomUUID(),
+  });
+  await database.pool.query("UPDATE runs SET status='Running' WHERE id=$1", [
+    receipt.runId,
+  ]);
+  try {
+    await startAgentSession(receipt.runId, { db, executionHosts: hosts });
+    expect(fake.callsOf("createSession")).toHaveLength(0);
+    expect(fake.callsOf("adoptWorkspace")).toHaveLength(0);
+    expect(fake.callsOf("sendPrompt")).toHaveLength(0);
+    const [run] = await db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, receipt.runId));
+    const workspace = await operationalWorkspace(db, run);
+
+    expect(run.status).toBe("Failed");
+    await expect(lstat(workspace.cwd)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT input_revision,status FROM specialist_assignments WHERE id=$1",
+          [assignment.id],
+        )
+      ).rows[0],
+    ).toEqual({ input_revision: 1, status: "active" });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM project_tokens WHERE company_run_id=$1",
+          [receipt.runId],
+        )
+      ).rows[0],
+    ).toEqual({ count: 0 });
+  } finally {
+    resetResolverForTests();
+    setDefaultTransportForTests(null);
+  }
+});
+
+it("CBS-02 refuses a frozen runner disabled after reservation and preserves the requested work", async () => {
+  const db: Db = database.db;
+  const { hosts, fake } = await fakeExecutionHosts(db);
+  const runnerId = randomUUID();
+
+  await db.insert(platformAcpRunners).values({
+    id: runnerId,
+    adapter: "claude",
+    capabilityAgent: "claude",
+    model: "disabled-after-reservation",
+    provider: { kind: "anthropic" },
+    readinessStatus: "Ready",
+  });
+  await db
+    .insert(platformRuntimeSettings)
+    .values({ id: "singleton", defaultRunnerId: runnerId })
+    .onConflictDoUpdate({
+      target: platformRuntimeSettings.id,
+      set: { defaultRunnerId: runnerId },
+    });
+  const assignment = await createSpecialistAssignment(
+    db,
+    userId,
+    assignmentInput,
+  );
+  const receipt = await reserveCompanyAgentRun(
+    db,
+    userId,
+    { ...request, assignmentId: assignment.id },
+    hosts,
+  );
+
+  await db
+    .update(platformAcpRunners)
+    .set({ enabled: false })
+    .where(eq(platformAcpRunners.id, runnerId));
+  await database.pool.query("UPDATE runs SET status='Running' WHERE id=$1", [
+    receipt.runId,
+  ]);
+  try {
+    await startAgentSession(receipt.runId, { db, executionHosts: hosts });
+    expect(fake.callsOf("createSession")).toHaveLength(0);
+    expect(fake.callsOf("adoptWorkspace")).toHaveLength(0);
+    expect(
+      (
+        await database.pool.query("SELECT status FROM runs WHERE id=$1", [
+          receipt.runId,
+        ])
+      ).rows[0],
+    ).toEqual({ status: "Failed" });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status,input_revision FROM specialist_assignments WHERE id=$1",
+          [assignment.id],
+        )
+      ).rows[0],
+    ).toEqual({ status: "active", input_revision: 1 });
   } finally {
     resetResolverForTests();
     setDefaultTransportForTests(null);
