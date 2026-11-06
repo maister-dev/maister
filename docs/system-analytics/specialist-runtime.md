@@ -324,4 +324,9 @@ a safe 409. Historical reader authority does not depend on an enabled specialist
 trusted provider files, or a currently executable assignment. SSE rechecks company
 reader/source authority before each canonical batch; protected object bytes retain
 the existing per-chunk source recheck. No project or new execution is created by a
-read. Company activity pages and full Run navigation remain subsequent slices.
+read. Company specialist metadata history is available through
+`GET /api/specialists/{specialistId}/runs`, reusing the existing Run projection
+and signed cursor. Source closure filters before pagination; the cursor also binds
+the current receiving user/read-grant identity and revision. History contains no
+scheduled input or diagnostic prose. Company activity UI and full Run navigation
+remain subsequent slices.

@@ -263,7 +263,7 @@ paths:
           description: Implemented — typed authorized response
           content:
             application/json:
-              schema:
+              schema: &agentHistoryPage
                 type: object
                 additionalProperties: false
                 required:
@@ -20426,6 +20426,60 @@ paths:
             minimum: 1
             maximum: 50
             default: 20
+  /api/specialists/{specialistId}/runs:
+    get:
+      tags: [specialists]
+      summary: Company specialist retained Run history
+      description: |
+        Active session and current explicit company assignments:read are required.
+        Company identity is derived from installation state; no client project/company owner
+        is accepted. Current source authority, complete capture and exact retained assignment
+        input linkage filter rows before LIMIT. Unknown or retired specialist identities return
+        an empty page when no authorized history remains; provider/catalog eligibility is not
+        a historical read gate. This metadata page omits diagnostic prose, scheduled input,
+        credentials and host paths. Use each Run's authorized evidence/transcript surface for content.
+        Existing signed latest-first cursor membership is frozen at asOf; status filters stay live.
+        Cursors bind company, specialist, receiving user, current read-grant identity/revision and
+        filters. Revocation denies reads; re-grant or changed filters invalidate old cursors.
+        Unknown/duplicate query keys are refused. Responses are private, no-store.
+      operationId: getCompanySpecialistRunHistory
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: specialistId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: cursor
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 2048 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [Pending, Running, NeedsInput, NeedsInputIdle, HumanWorking, WaitingOnChildren, Review, Done, Failed, Crashed, Abandoned]
+        - name: triggerSource
+          in: query
+          schema:
+            type: string
+            enum: [manual, cron, domain_event, webhook, flow, scheduled]
+        - name: outcome
+          in: query
+          schema:
+            type: string
+            enum: [success, partial, blocked, failed, cancelled, crashed]
+      responses:
+        "200":
+          description: Source-authorized company specialist history metadata.
+          content:
+            application/json:
+              schema: *agentHistoryPage
+        "400": { description: Invalid history filters or cursor }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /api/specialists/{specialistId}/bindings:
     post:
       operationId: specialistBind

@@ -19,6 +19,8 @@ import {
 import os from "node:os";
 import { join, resolve, sep } from "node:path";
 
+import { parse } from "yaml";
+import Ajv from "ajv";
 import { eq, sql } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
@@ -55,9 +57,11 @@ import {
 } from "../finalization";
 import { reserveCompanyAgentRun } from "../company-agent-launch";
 import { startAgentSession } from "../launch";
+import { getCompanyAgentRunHistory } from "../activity-queries";
 
 import { authorizePeekRun } from "@/lib/runs/peek-read-model";
 import { requireActiveUserById } from "@/lib/authz";
+import { GET as companyHistoryGet } from "@/app/api/specialists/[specialistId]/runs/route";
 import { GET as streamGet } from "@/app/api/runs/[runId]/stream/route";
 import {
   getRuntimeObjectForRun,
@@ -1872,6 +1876,230 @@ it("CBS-02 reads retained company execution content under current explicit reade
   expect(await reader.read()).toEqual({ done: true, value: undefined });
   reader.releaseLock();
   browserSession.user = null;
+});
+
+it("CBS-02 pages company history under current source authority before LIMIT and binds the existing cursor to its reader", async () => {
+  const project = await seedProjectRow(database.db);
+
+  await database.pool.query(
+    "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'member')",
+    [randomUUID(), project.id, userId],
+  );
+  const first = await reserveCompanyFixtureRun();
+  const second = await reserveCompanyFixtureRun();
+  const hidden = await reserveCompanyFixtureRun({
+    ...assignmentInput,
+    sourceRestrictions: [{ kind: "project_context", projectId: project.id }],
+  });
+
+  for (const fixture of [first, second, hidden]) {
+    await database.pool.query(
+      "UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1",
+      [
+        fixture.runId,
+        JSON.stringify({
+          schemaVersion: 1,
+          state: "complete",
+          generation: 1,
+          restrictions: [
+            {
+              kind: "assignment_input",
+              assignmentId: fixture.snapshot.assignment.id,
+              inputRevision: fixture.snapshot.assignment.inputRevision,
+              inputSha256: fixture.snapshot.assignment.inputSha256,
+            },
+          ],
+        }),
+      ],
+    );
+  }
+  await database.pool.query(
+    "DELETE FROM project_members WHERE project_id=$1 AND user_id=$2",
+    [project.id, userId],
+  );
+  const page = await getCompanyAgentRunHistory(database.db, userId, {
+    agentId,
+    limit: 2,
+  });
+
+  expect(page.items.map((item) => item.runId)).toEqual([
+    second.runId,
+    first.runId,
+  ]);
+  expect(page.nextCursor).not.toBeNull();
+  const later = await reserveCompanyFixtureRun();
+
+  await database.pool.query(
+    "UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1",
+    [
+      later.runId,
+      JSON.stringify({
+        schemaVersion: 1,
+        state: "complete",
+        generation: 1,
+        restrictions: [
+          {
+            kind: "assignment_input",
+            assignmentId: later.snapshot.assignment.id,
+            inputRevision: later.snapshot.assignment.inputRevision,
+            inputSha256: later.snapshot.assignment.inputSha256,
+          },
+        ],
+      }),
+    ],
+  );
+  const next = await getCompanyAgentRunHistory(database.db, userId, {
+    agentId,
+    limit: 2,
+    cursor: page.nextCursor!,
+  });
+
+  expect(next.asOf).toBe(page.asOf);
+  expect(
+    next.items.every(
+      (item) =>
+        ![first.runId, second.runId, hidden.runId, later.runId].includes(
+          item.runId,
+        ),
+    ),
+  ).toBe(true);
+  await expect(
+    getCompanyAgentRunHistory(database.db, administratorId, { agentId }),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await expect(
+    getCompanyAgentRunHistory(database.db, userId, {
+      agentId,
+      status: "Done",
+      cursor: page.nextCursor!,
+    }),
+  ).rejects.toMatchObject({ code: "CONFIG" });
+  await expect(
+    getCompanyAgentRunHistory(database.db, userId, { agentId: "absent:role" }),
+  ).resolves.toMatchObject({ items: [], nextCursor: null });
+  browserSession.user = await requireActiveUserById(userId);
+  const response = await companyHistoryGet(
+    new NextRequest(`http://localhost/api/specialists/${agentId}/runs?limit=2`),
+    { params: Promise.resolve({ specialistId: agentId }) },
+  );
+
+  expect(response.status).toBe(200);
+  expect(response.headers.get("cache-control")).toBe("private, no-store");
+  const body: unknown = await response.json();
+  const document: {
+    components: { schemas: Record<string, object> };
+    paths: Record<
+      string,
+      {
+        get: {
+          responses: Record<
+            string,
+            { content: Record<string, { schema: object }> }
+          >;
+        };
+      }
+    >;
+  } = parse(await readFile(resolve("../docs/api/web.openapi.yaml"), "utf8"));
+  const validate = new Ajv({ strict: false, validateFormats: false }).compile({
+    components: document.components,
+    ...document.paths["/api/specialists/{specialistId}/runs"].get.responses[
+      "200"
+    ].content["application/json"].schema,
+  });
+
+  expect(validate(body), JSON.stringify(validate.errors)).toBe(true);
+  expect(JSON.stringify(body)).not.toContain(hidden.runId);
+  for (const query of [
+    "limit=1&limit=2",
+    "limit=101",
+    "status=invalid",
+    "companyId=forged",
+    "userId=forged",
+    "projectId=forged",
+  ]) {
+    const refused = await companyHistoryGet(
+      new NextRequest(
+        `http://localhost/api/specialists/${agentId}/runs?${query}`,
+      ),
+      { params: Promise.resolve({ specialistId: agentId }) },
+    );
+
+    expect(refused.status).toBe(400);
+  }
+  browserSession.user = await requireActiveUserById(administratorId);
+  expect(
+    (
+      await companyHistoryGet(
+        new NextRequest(`http://localhost/api/specialists/${agentId}/runs`),
+        { params: Promise.resolve({ specialistId: agentId }) },
+      )
+    ).status,
+  ).toBe(403);
+  browserSession.user = null;
+  const readerId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+    [readerId, `${readerId}@example.test`],
+  );
+  const granted = await createCompanyGrants(database.db, administratorId, {
+    principalKind: "user",
+    principalId: readerId,
+    actions: ["assignments:read"],
+    idempotencyKey: randomUUID(),
+  });
+
+  await expect(
+    getCompanyAgentRunHistory(database.db, readerId, {
+      agentId,
+      cursor: page.nextCursor!,
+    }),
+  ).rejects.toMatchObject({ code: "CONFIG" });
+  const readerPage = await getCompanyAgentRunHistory(database.db, readerId, {
+    agentId,
+    limit: 1,
+  });
+
+  expect(readerPage.nextCursor).not.toBeNull();
+  await revokeCompanyGrant(
+    database.db,
+    administratorId,
+    granted.page.items[0].id,
+    {
+      expectedRevision: 1,
+      reason: "Withdraw history access",
+      idempotencyKey: randomUUID(),
+    },
+  );
+  await expect(
+    getCompanyAgentRunHistory(database.db, readerId, {
+      agentId,
+      cursor: readerPage.nextCursor!,
+    }),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await createCompanyGrants(database.db, administratorId, {
+    principalKind: "user",
+    principalId: readerId,
+    actions: ["assignments:read"],
+    idempotencyKey: randomUUID(),
+  });
+  await expect(
+    getCompanyAgentRunHistory(database.db, readerId, {
+      agentId,
+      cursor: readerPage.nextCursor!,
+    }),
+  ).rejects.toMatchObject({ code: "CONFIG" });
+  await database.pool.query("UPDATE agents SET enabled=false WHERE id=$1", [
+    agentId,
+  ]);
+  try {
+    await expect(
+      getCompanyAgentRunHistory(database.db, userId, { agentId, limit: 1 }),
+    ).resolves.toMatchObject({ items: [{ runId: later.runId }] });
+  } finally {
+    await database.pool.query("UPDATE agents SET enabled=true WHERE id=$1", [
+      agentId,
+    ]);
+  }
 });
 
 it("CBS-02 preserves nested assignment source restrictions and lets the source project be deleted without Brain blocking it", async () => {

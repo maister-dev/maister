@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { KnowledgeRecipient } from "@/lib/brain/knowledge-run-disclosure";
+import type { SQL } from "drizzle-orm";
 import type { Db } from "@/lib/execution-host/db";
 import type { TaskLaunchReceipt } from "@/lib/tasks/launch-types";
 import type { RunStatusValue } from "@/lib/runs/run-status-values";
@@ -17,6 +18,7 @@ import type { AgentTriggerAttemptOutcome } from "@/lib/agents/trigger-attempt-ty
 
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
+import pino from "pino";
 
 import {
   agentTriggerAttempts,
@@ -27,6 +29,10 @@ import {
   runs,
   workspaces,
 } from "@/lib/db/schema";
+import { authorizeCompanyUserAction } from "@/lib/company/authority";
+import { installationCompany } from "@/lib/company/grants";
+import { resolveKnowledgePrincipal } from "@/lib/brain/knowledge-access";
+import { companyRunHistoryReadPolicy } from "@/lib/agents/company-run-read-access";
 import { ACTIVE_AGENT_RUN_STATUSES } from "@/lib/agents/activity-status";
 import {
   decodeAgentActivityCursor,
@@ -38,6 +44,11 @@ import { MaisterError } from "@/lib/errors";
 import { parseScheduledRequestSnapshot } from "@/lib/agents/scheduled-request";
 import { inspectOperationalOutcomes } from "@/lib/run-results/operational-projection";
 import { authorizeRunsKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
+
+const log = pino({
+  name: "agent-activity",
+  level: process.env.LOG_LEVEL ?? "info",
+});
 
 type AgentOutcome = OperationalTerminal["effectiveOutcome"];
 type RunSummary = {
@@ -124,9 +135,8 @@ export async function getAgentActivitySummaries(
   );
 }
 
-const historySchema = z
+const agentRunHistoryFiltersSchema = z
   .object({
-    projectId: z.string().min(1).max(256),
     agentId: z.string().min(1).max(256),
     limit: z.number().int().min(1).max(100).default(25),
     cursor: z.string().min(1).max(2048).optional(),
@@ -140,6 +150,13 @@ const historySchema = z
   })
   .strict();
 
+const historySchema = agentRunHistoryFiltersSchema
+  .extend({ projectId: z.string().min(1).max(256) })
+  .strict();
+
+export type CompanyAgentHistoryFilter = z.input<
+  typeof agentRunHistoryFiltersSchema
+>;
 export type AgentHistoryFilter = z.input<typeof historySchema>;
 export type AgentHistoryItem = {
   runId: string;
@@ -186,8 +203,7 @@ export async function getAgentRunHistory(
     throw new MaisterError("CONFIG", "Invalid agent history filters", {
       details: { issues: parsed.error.issues },
     });
-  const { projectId, agentId, limit, cursor, status, triggerSource, outcome } =
-    parsed.data;
+  const { projectId, agentId, status, triggerSource, outcome } = parsed.data;
   const scope = JSON.stringify([
     "runs",
     projectId,
@@ -196,6 +212,88 @@ export async function getAgentRunHistory(
     triggerSource ?? null,
     outcome ?? null,
   ]);
+
+  return readAgentRunHistoryPage(
+    db,
+    parsed.data,
+    scope,
+    eq(runs.projectId, projectId),
+  );
+}
+
+/** Current company authority and captured source closure govern retained metadata, including retired roles. */
+export async function getCompanyAgentRunHistory(
+  db: Db,
+  userId: string,
+  input: CompanyAgentHistoryFilter,
+): Promise<ActivityPage<AgentHistoryItem>> {
+  const parsed = agentRunHistoryFiltersSchema.safeParse(input);
+
+  if (!parsed.success)
+    throw new MaisterError("CONFIG", "Invalid company agent history filters", {
+      details: { issues: parsed.error.issues },
+    });
+
+  return db.transaction(async (tx) => {
+    const companyId = await installationCompany(tx);
+    const authority = await authorizeCompanyUserAction(
+      tx,
+      userId,
+      companyId,
+      "assignments:read",
+    );
+    const identity = await resolveKnowledgePrincipal(
+      tx,
+      { kind: "user", userId },
+      "knowledge:read",
+    );
+
+    if (identity.kind !== "user")
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "A current receiving user is required for company history",
+      );
+    const { agentId, status, triggerSource, outcome, cursor } = parsed.data;
+    const scope = JSON.stringify([
+      "company-runs",
+      companyId,
+      agentId,
+      userId,
+      authority.witness.authorityId,
+      authority.witness.revision,
+      status ?? null,
+      triggerSource ?? null,
+      outcome ?? null,
+    ]);
+    const page = await readAgentRunHistoryPage(
+      tx,
+      parsed.data,
+      scope,
+      sql`${runs.companyId}=${companyId} AND (${companyRunHistoryReadPolicy(identity)})`,
+    );
+
+    log.debug(
+      {
+        companyId,
+        agentId,
+        userId,
+        itemCount: page.items.length,
+        continued: cursor !== undefined,
+      },
+      "company retained history read",
+    );
+
+    return page;
+  });
+}
+
+async function readAgentRunHistoryPage(
+  db: Db,
+  input: z.output<typeof agentRunHistoryFiltersSchema>,
+  scope: string,
+  ownerReadPolicy: SQL,
+): Promise<ActivityPage<AgentHistoryItem>> {
+  const { agentId, limit, cursor, status, triggerSource, outcome } = input;
   const bounds = await activityPageBounds(db, scope, cursor);
   const rows = await db
     .select({
@@ -222,7 +320,7 @@ export async function getAgentRunHistory(
     )
     .where(
       and(
-        eq(runs.projectId, projectId),
+        ownerReadPolicy,
         eq(runs.sourceAgentId, agentId),
         inArray(runs.runKind, ["agent", "flow"]),
         sql`${runs.activitySortAt} <= ${bounds.upper}::timestamptz`,

@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { SQL } from "drizzle-orm";
+import type { KnowledgePrincipalIdentity } from "@/lib/brain/knowledge-access";
 import type { SqlDatabase } from "@/lib/db/sql-types";
 
 import { sql } from "drizzle-orm";
@@ -7,6 +9,7 @@ import pino from "pino";
 
 import { companyAgentExecutionSnapshotSchema } from "./company-agent-execution-types";
 
+import { knowledgeSourceReadPolicy } from "@/lib/brain/knowledge-query-policy";
 import { authorizeRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import { knowledgeAccessCaptureSchema } from "@/lib/company/types";
@@ -88,4 +91,31 @@ export async function assertCompanyRunReadAccess(
       "company Run reader and retained sources authorized",
     );
   });
+}
+
+/** Filter company history before pagination without disclosing rows with unavailable source closure. */
+export function companyRunHistoryReadPolicy(
+  identity: Extract<KnowledgePrincipalIdentity, { kind: "user" }>,
+): SQL {
+  return sql`runs.company_id IS NOT NULL AND runs.project_id IS NULL
+    AND runs.knowledge_access->>'schemaVersion'='1'
+    AND runs.knowledge_access->>'state'='complete'
+    AND EXISTS (
+      SELECT 1 FROM specialist_run_links link
+      JOIN specialist_assignments assignment ON assignment.id=link.assignment_id
+        AND assignment.company_id=runs.company_id AND assignment.project_id IS NULL
+      JOIN specialist_input_revisions input ON input.assignment_id=link.assignment_id AND input.revision=link.input_revision
+      WHERE link.run_id=runs.id
+        AND runs.company_execution_snapshot->'assignment'->>'id'=link.assignment_id
+        AND runs.company_execution_snapshot->'assignment'->>'inputRevision'=link.input_revision::text
+        AND runs.company_execution_snapshot->'assignment'->>'inputSha256'=input.digest
+        AND runs.knowledge_access->'restrictions' @> jsonb_build_array(jsonb_build_object(
+          'kind','assignment_input','assignmentId',link.assignment_id,
+          'inputRevision',link.input_revision,'inputSha256',input.digest))
+      FOR SHARE OF link,assignment,input
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM native_knowledge_source_restrictions(runs.knowledge_access->'restrictions') source
+      WHERE NOT (${knowledgeSourceReadPolicy(identity, sql`source`)})
+    )`;
 }
