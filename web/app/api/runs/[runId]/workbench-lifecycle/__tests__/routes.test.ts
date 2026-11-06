@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
+import { stopRun } from "@/lib/runs/stop";
 import * as lifecycleService from "@/lib/workbench-lifecycle/service";
+
+vi.mock("@/lib/runs/stop", () => ({ stopRun: vi.fn() }));
 
 vi.mock("@/lib/workbench-lifecycle/service", () => ({
   stopFlowWorkbench: vi.fn(),
@@ -33,8 +36,8 @@ describe("workbench lifecycle route wrappers", () => {
     vi.resetAllMocks();
   });
 
-  it("POST /api/runs/[runId]/stop delegates to stopWorkbenchRun", async () => {
-    vi.mocked(lifecycleService.stopWorkbenchRun).mockResolvedValueOnce({
+  it("POST /api/runs/[runId]/stop delegates to stopRun", async () => {
+    vi.mocked(stopRun).mockResolvedValueOnce({
       ok: true,
       runId: "run-1",
       runStatus: "Review",
@@ -52,7 +55,7 @@ describe("workbench lifecycle route wrappers", () => {
       runStatus: "Review",
       supervisorStopped: true,
     });
-    expect(lifecycleService.stopWorkbenchRun).toHaveBeenCalledWith("run-1");
+    expect(stopRun).toHaveBeenCalledWith("run-1");
   });
 
   it("POST /api/runs/[runId]/stop-archive delegates to stopThenArchive", async () => {

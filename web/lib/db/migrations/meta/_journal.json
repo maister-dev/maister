@@ -1702,6 +1702,13 @@
       "when": 1794606477949,
       "tag": "0246_company_hitl_wait_events",
       "breakpoints": true
+    },
+    {
+      "idx": 247,
+      "version": "7",
+      "when": 1794606477950,
+      "tag": "0247_company_operational_attention",
+      "breakpoints": true
     }
   ]
 }

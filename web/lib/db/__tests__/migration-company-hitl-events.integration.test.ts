@@ -49,7 +49,8 @@ afterAll(async () => {
   await database?.stop();
 });
 
-it("preserves existing wait/metadata facts while requiring exact company Run ownership for new wait events", async () => {
+it("preserves existing wait/metadata facts while requiring exact company Run ownership for company wait and acknowledgement events", async () => {
+  await applyMainMigration(database.db, "0247_company_operational_attention");
   expect(
     (
       await database.pool.query(
@@ -69,6 +70,15 @@ it("preserves existing wait/metadata facts while requiring exact company Run own
   await expect(
     database.pool.query(
       "INSERT INTO domain_events(kind,company_id,run_id,payload,occurred_at) VALUES('run.needs_input',$1,$2,'{}'::jsonb,now())",
+      [companyId, runId],
+    ),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "domain_events_company_run_reference_check",
+  });
+  await expect(
+    database.pool.query(
+      "INSERT INTO domain_events(kind,company_id,run_id,payload,occurred_at) VALUES('run.operational_attention_acknowledged',$1,$2,'{}'::jsonb,now())",
       [companyId, runId],
     ),
   ).rejects.toMatchObject({

@@ -53,7 +53,7 @@ Company binding configuration uses a stable head and immutable version-1 configu
 
 Native session routes list company bindings, create a binding, inspect its current configuration, replace it and detach it. Creation and full replacement require current `specialists:manage` and `specialists:read`; inspection requires current `specialists:read`. Full replacement requires the current revision and explicit nullable/empty values to clear configuration, runner, Flow and action limits. Each mutation requires a content-guarded delivery key. Replaying an older accepted key returns its original configuration receipt under current authority; changed content conflicts. Parent locking serializes competing revisions, and concurrent creation cannot duplicate a live role. List cursors bind the authenticated user and exact current read grant.
 
-Accepted revisions are immutable and retain exact configuration and attribution after catalog changes or provider retirement. The history service validates retained structure, digest, role and owner without reading provider files. Snapshot and authority bounds are checked before commit, with no partial binding on refusal. Detach needs current management authority and returns only a content-free receipt; it records its reason, disables admission and releases the current package foreign key while retaining historical pin identity and frozen definition. A retired binding cannot be reactivated; a new reviewed binding has a new identity. A disabled live binding still protects its current installed pin. The existing Flow removal and revision GC services also preserve exact coordinator Flow revisions referenced by live bindings; retirement releases those current references. Binding capture takes the shared Flow lock used by removal/GC, so the reference check and admission cannot race. Neither binding ownership nor action limits create a company grant. Actual company launch, current action-limit intersection and execution recovery remain the following runtime slices.
+Accepted revisions are immutable and retain exact configuration and attribution after catalog changes or provider retirement. The history service validates retained structure, digest, role and owner without reading provider files. Snapshot and authority bounds are checked before commit, with no partial binding on refusal. Detach needs current management authority and returns only a content-free receipt; it records its reason, disables admission and releases the current package foreign key while retaining historical pin identity and frozen definition. A retired binding cannot be reactivated; a new reviewed binding has a new identity. A disabled live binding still protects its current installed pin. The existing Flow removal and revision GC services also preserve exact coordinator Flow revisions referenced by live bindings; retirement releases those current references. Binding capture takes the shared Flow lock used by removal/GC, so the reference check and admission cannot race. Neither binding ownership nor action limits create a company grant. The native company launch and human-action paths below enforce current authority; bounded cooperation and complete assignment recovery remain their later slices.
 
 Company Flow binding storage freezes a closed version-1 configuration: company, exact installed Flow/package and manifest digest, exact responsible specialist binding/revision with its frozen configuration, reviewed `workspace:none/completion:result` intent, enablement and explicit human role mappings. It retains immutable configuration/authority/request receipts separately from execution history. A live company/Flow reference is unique; replacing it requires CAS and explicit mappings, and retirement preserves accepted history. Each mapped user must currently hold `assignments:answer`; labels only route existing authority. Main `0237_company_flow_bindings` persists stable heads and immutable configuration/authority/routing receipts. Current Flow/package/specialist foreign keys protect providers; retirement releases those current keys while retained snapshots keep their logical identities. The existing removal/GC services check both direct Flow bindings and specialist pins under the Flow revision lock. A staged disabled binding may review a legacy installed Flow, but enablement requires the actual company execution declaration and capability floor 3.12.0. Internal create, full replacement, current/history inspection and content-free retirement services are implemented; public Flow-binding interfaces and execution remain their owning later slices. Storage alone does not activate execution; T20.1 owns the runtime preflight and declaration grammar. Existing v1 scheduled request snapshots remain unchanged.
 
@@ -61,7 +61,7 @@ Existing `agent_schedules` and `agent_trigger_attempts` now support explicit exc
 
 ### Company agent admission preflight
 
-**Implemented internal preflight and transactional Run reservation (T20); native standalone dispatch is implemented and lifecycle qualification remains open.** The server-internal company agent preflight receives company/assignment/binding IDs, exact positive 32-bit business/input/binding revisions and a declared trigger (`manual`, `cron`, `domain_event` or `webhook`). The authenticated initiating user is a separate server argument. No request-supplied role, attribution, authority snapshot, package, runner, workspace or confirmation is accepted by this grammar.
+**Implemented native standalone preflight, reservation and controlled-ACP lifecycle qualification (T20); complete phase compatibility remains T21.** The server-internal company agent preflight receives company/assignment/binding IDs, exact positive 32-bit business/input/binding revisions and a declared trigger (`manual`, `cron`, `domain_event` or `webhook`). The authenticated initiating user is a separate server argument. No request-supplied role, attribution, authority snapshot, package, runner, workspace or confirmation is accepted by this grammar.
 
 Before reading assignment content it checks current `assignments:read` and `assignments:update` for the selected company and active user. The preflight locks the assignment before the specialist binding, checks its company owner and queued state, business/input revision, responsible binding/role and retained source access. It requires a current enabled, non-retired specialist configuration and enabled, non-quarantined catalog identity. It resolves the actual immutable trusted installed package, compares the retained definition/package witness and effective configuration to the assignment's frozen standing input, and validates the selected trigger. A first standalone company operational session requires `workspace:none`, no repository qualification, no coordinator Flow and the exact required operational result descriptor captured by the assignment. Coordinator Flow admission is the distinct T20.1 path; this preflight never substitutes a standalone session for a declared Flow.
 
@@ -71,11 +71,11 @@ The result contains typed current binding, effective definition/configuration/ex
 
 The internal `reserveCompanyAgentRun` service admits one exact queued assignment through the existing `runs`, default `run_sessions`, execution-host placement and `specialist_run_links`. It rechecks current preflight under the assignment lock, freezes the reviewed configuration, policy, result and scheduled request, and classifies the exact assignment input before commit. Its assignment becomes `active` while the Run waits in the existing `Pending` queue; no process or credential is created by reservation. Competing admissions using the same business revision yield one committed Run and a conflict. Source denial rolls back the Run, session, placement, link, assignment transition and transactional outbox changes together.
 
-Company runner selection uses the shared standalone resolver: exact binding runner, declared agent default, then platform default. There is no project tier. An explicit binding/agent runner does not require a configured platform-default row; when every tier is absent, admission refuses without allocating a Run/session/link. A selected missing, disabled, unready or read-only-incompatible runner refuses admission; it never silently chooses a different configured runner. Required read-only diagnostics come from the selected execution-host boundary. Assignment and reviewed execution policies must have equal normalized axes; changing requested authority requires explicit review. Native input references are re-inspected under current initiating-user and executing-specialist authority, including exact available version witnesses. Declared private project memory or project MCP bindings are refused until their actual project admission is provided. Native standalone dispatch uses the shared owned-session path below. Full continuation/recovery and company graph execution remain the T20/T20.1 qualification gates.
+Company runner selection uses the shared standalone resolver: exact binding runner, declared agent default, then platform default. There is no project tier. An explicit binding/agent runner does not require a configured platform-default row; when every tier is absent, admission refuses without allocating a Run/session/link. A selected missing, disabled, unready or read-only-incompatible runner refuses admission; it never silently chooses a different configured runner. Required read-only diagnostics come from the selected execution-host boundary. Assignment and reviewed execution policies must have equal normalized axes; changing requested authority requires explicit review. Native input references are re-inspected under current initiating-user and executing-specialist authority, including exact available version witnesses. Declared private project memory or project MCP bindings are refused until their actual project admission is provided. Native standalone dispatch uses the shared owned-session path below. Native permission continuation and parked-host restart are qualified below; extended phase recovery remains T21 and company graph execution remains T20.1.
 
 ### Company agent credentials
 
-**Implemented internal credential storage/issuance/verification (T20); native standalone session wiring is implemented; complete lifecycle qualification remains open.** Company standalone sessions use the existing ephemeral `agent` token kind and existing deterministic `agent-run:<runId>` terminal revocation. New `project_tokens.company_id/company_run_id` identify the exact company execution; `project_id` is null. A current assigned run, source role, initiating user and immutable launch capture are resolved by the server. Only an active operational company run may receive a credential. The initiating account must remain active, hold current `assignments:read/update`, and match the retained server actor; the current role/configuration/provider and exact assignment input/link must remain available. Minting locks the run, revokes any previous live token for that run and stores only the normal secret hash. One live company credential per run is enforced by a partial unique index. The credential cannot be retargeted, have its scopes widened in place or be reactivated after revocation.
+**Implemented native credential/session lifecycle (T20); complete phase qualification remains T21.** Company standalone sessions use the existing ephemeral `agent` token kind and existing deterministic `agent-run:<runId>` terminal revocation. New `project_tokens.company_id/company_run_id` identify the exact company execution; `project_id` is null. A current assigned run, source role, initiating user and immutable launch capture are resolved by the server. Only an active operational company run may receive a credential. The initiating account must remain active, hold current `assignments:read/update`, and match the retained server actor; the current role/configuration/provider and exact assignment input/link must remain available. Minting locks the run, revokes any previous live token for that run and stores only the normal secret hash. One live company credential per run is enforced by a partial unique index. The credential cannot be retargeted, have its scopes widened in place or be reactivated after revocation.
 
 Initial company agent token scopes are the explicitly configured intersection of `knowledge:read/propose` with the reviewed role action limits. No wildcard, repository mutation, human confirmation or management scope is inferred. The domain still checks current agent/user knowledge and source grants for each operation; possession of a scope is insufficient. Later assignment/delegation/target tools add their exact scopes in the owning slices. Verification additionally rechecks current run/company/assignment/configuration/provider/account and `assignments:read`, so a Pending or terminal run, disabled/retired/retargeted role, revoked content grant or removed account cannot use a retained credential. Action-specific mutation authority remains separate. Legacy project/user/librarian token shapes and the personal-user actor rules remain unchanged.
 
@@ -89,7 +89,7 @@ Company-agent authorization uses internal policy snapshot version 2: the existin
 
 ### Retained retry scope
 
-**Implemented: T19.1 storage and version readers; Designed: T20/T29 company retry execution.** The existing `agent_retry_intents` remains the sole retry-intent ledger. Ownership is exclusive: project rows have a non-null project and null company; company rows have the reverse. Existing v1/v2 project recipes retain their exact JSON and do not gain inferred authority, assignment or author fields. Their current project admission, source claim, actor/request-key uniqueness and successor identity remain unchanged.
+**Implemented: T19.1 storage/version readers and T20 company execution ownership; Designed: T29 company retry admission and recovery.** The existing `agent_retry_intents` remains the sole retry-intent ledger. Ownership is exclusive: project rows have a non-null project and null company; company rows have the reverse. Existing v1/v2 project recipes retain their exact JSON and do not gain inferred authority, assignment or author fields. Their current project admission, source claim, actor/request-key uniqueness and successor identity remain unchanged.
 
 Company recipes use version 3 with `strategy:pre_work_retry`, explicit company `owner`, null `projectId`, `taskId`, `taskRevision` and `project`, exact `specialistBinding` and nullable `coordinatorFlowBinding` configuration references (`id`, positive 32-bit `revision`, 64-character lowercase SHA-256 `snapshotSha256`), and an `assignment` reference (`id`, positive 32-bit `inputRevision`, 64-character `inputSha256`). They retain the existing agent definition, effective configuration, trigger, runner, execution policy and context digest, plus an optional unchanged v1 scheduled-request snapshot. Configuration references identify accepted immutable bytes; they grant no authority. The assignment reference identifies the input used for this retry, not necessarily the current input. The complete recipe remains bounded to 1 MiB in PostgreSQL. Company recipes cannot request repository qualification or carry project workspace configuration. The insert guard validates exact company-owned specialist/coordinator history digests, the responsible binding and immutable assignment/input digest, the frozen role/package/configuration and unchanged scheduled input. Accepted recipe/owner identity remains immutable; current authority and execution safety are admission concerns, separately rechecked before effects.
 
@@ -168,7 +168,7 @@ probing source bytes. Company runs have no repository reference history.
 Legacy project baseline owner JSON remains unchanged. The shared disposition
 uses the resolved runtime path and refuses repository allocation for a company
 owner. Native company terminal result/token/outbox application and clean directory
-release are qualified separately below; actual session/host recovery remains T20.
+release and native session/host recovery are qualified separately below; extended phase compatibility remains T21.
 
 
 Company operational finalization uses the existing Run result ledger, terminal
@@ -203,12 +203,13 @@ candidates cannot exceed the cap, and a slot freed through terminal application
 promotes queued work through the existing dispatch callback. Direct starts,
 queue promotion and queued resume emit project `run.started` webhooks only
 when an actual project owner exists. The native company cap qualification
-covers admission/queue/terminal release with a bounded dispatch seam; actual
-company session and idle-resume host behavior remain part of T20/T21.
+covers admission/queue/terminal release with a bounded dispatch seam; real
+company ACP sessions, permission idle-resume and retained-host restart are
+qualified below. Extended lifecycle compatibility remains T21.
 
 
-Assignment prompt-source contract (T20 source resolution Implemented; actual
-launch capture Designed): the native restriction
+Assignment prompt-source contract (T20 source resolution and native launch
+capture Implemented): the native restriction
 `{kind: "assignment_input", assignmentId, inputRevision, inputSha256}` names
 an exact immutable input and content witness. It is a source restriction,
 separate from model evidence references and confirmation. An initiating user
@@ -254,7 +255,7 @@ semantics and process deadline.
 
 ### Company workspace adoption
 
-**Implemented native host boundary; actual agent session dispatch remains T20.**
+**Implemented native host boundary and company standalone dispatch; company Flow admission remains T20.1.**
 The server resolves a company Run's retained owner through the shared operational
 workspace resolver. Adoption sends its managed `.company/<owner-run-digest>`
 directory, explicit `{kind:company,companyId}` owner and reserved `_company`
@@ -277,8 +278,8 @@ a managed-path or replay-owner conflict. See the authoritative
 
 ### Company standalone session driver
 
-**Implemented native initial dispatch; complete lifecycle qualification remains
-T20/T21.** `driveAgentSession` distinguishes a company owner before project
+**Implemented and qualified native standalone dispatch, permission continuation
+and parked-host restart; complete phase compatibility remains T21.** `driveAgentSession` distinguishes a company owner before project
 resolution. It uses the existing generation turn, default session, host command
 ledger, opaque workspace adoption, canonical prompt owner and operational
 finalization. It supplies no synthetic project, repository, attachment or private
@@ -379,3 +380,48 @@ stays stable, boot identity changes, and the exact frozen Run/result contract an
 canonical ACP session handle survive. ACK completes the original and
 linked reissued human work under the same actor. Inbox UI, full interruption
 recovery and company coordinator Flow qualification retain their own gates.
+
+### Company Run stop contract
+
+The existing `POST /api/runs/{runId}/stop` owner dispatch must admit a company
+standalone operational Run without a project/worktree. Current explicit
+`assignments:read` and `assignments:cancel`, plus the exact retained input/source
+closure, authorize the human action; an administrator has no implicit grant.
+`Pending`, `Running`, `NeedsInput`, `NeedsInputIdle`, `Review` and `Crashed`
+are cancellable through the existing operational finalizer. An already
+`Abandoned` Run still requires current authority and returns the same terminal outcome without another command/event;
+`Done` and `Failed` refuse with 409. Missing/currently inaccessible ownership is
+concealed as 404; missing cancellation authority with read access is 403.
+
+The native bound command ledger records each session deletion before transport.
+Unconfirmed host teardown or pending canonical exit evidence returns 503 and
+cannot assert abandonment. Retry reconciles actual host/canonical state; the
+response flag describes deletion performed by that request, not a historical
+effect count. Current
+cancellation authority is rechecked before deletion and terminal application.
+Canonical quiescence, typed cancellation, credential revocation, human-work
+closure and cleanup use existing mechanisms. Human-work cancellation and the canonical terminal fact retain the
+current company user actor; the stopped specialist remains execution provenance. Stopping an execution does not cancel or complete
+its business assignment, nor reconcile unknown external stand effects. The
+response retains `{ok,runId,runStatus:"Abandoned",supervisorStopped}`. Project
+and private execution routes retain their existing admission and behavior.
+
+### Company operational attention and cleanup authority
+
+Existing operational acknowledgement and cleanup-retry endpoints derive the
+company from their retained Run. Acknowledgement requires current explicit
+`assignments:read`/`assignments:answer`; cleanup rearm requires
+`assignments:read`/`assignments:recover`. Both retain exact input/source access
+and repeat authorization inside the existing Run-locked service transaction,
+including idempotent replay. Inaccessible ownership remains 404, absent current
+action authority is 403, and stale reason/revision or non-exhausted cleanup is
+409. No administrator bypass applies. The project route policy is unchanged.
+
+Acknowledgement writes the existing per-user/reason/revision receipt and emits
+one content-free, company-owned `run.operational_attention_acknowledged` fact.
+Main `0247_company_operational_attention` extends the existing kind CHECK;
+current company Run-reference and immutable-routing guards still apply. Cleanup
+rearm uses the existing revision/receipt, resets its bounded retry budget and
+emits the existing cleanup-change fact; an exact repeat adds no revision or
+additional effect. These actions neither confirm Brain facts nor accept the
+business assignment. Runtime recovery remains in the existing cleanup worker.

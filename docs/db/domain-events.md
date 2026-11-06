@@ -51,7 +51,7 @@ not a table.
 | Table | Constraint | Columns | Purpose |
 | ----- | ---------- | ------- | ------- |
 | `domain_events` | `CHECK` | `kind` | Code-owned taxonomy in `web/lib/domain-events/taxonomy.ts`, mirrored by the generated schema CHECK. |
-| `domain_events` | `CHECK` | `project_id`, `company_id` | Exactly one owner. Company metadata facts have no task/run; company terminal/cleanup/wait facts require a run and no task (`0227`, `0231`). |
+| `domain_events` | `CHECK` | `project_id`, `company_id` | Exactly one owner. Company metadata facts have no task/run; company terminal/cleanup/wait/attention facts require a run and no task (`0227`, `0231`, `0232`). |
 | `domain_events` | Trigger (`0227`) | Company run/owner/kind | A run fact must reference an existing company operational execution with the same owner. Company event ownership, run/task identity and kind cannot be retargeted. |
 | `domain_events` | `CHECK` | `actor_type` | `user \| system \| agent` (NULL allowed). |
 | `domain_event_consumers` | `PK` | `consumer_id` | One cursor row per registered consumer. |

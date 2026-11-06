@@ -11035,12 +11035,23 @@ paths:
           dedicated `POST /api/scratch-runs/{runId}/stop` route delegates to the
           same primitive).
         - **agent** → finalized to `Abandoned` via `finalizeAgentRun`
-          (which also frees the agent pool slot); the route MUST `deleteSession`
-          because `finalizeAgentRun` does not.
+          (which also frees the agent pool slot); physical session teardown and
+          canonical exit evidence are required before terminal application.
 
         Requires project membership at `member` or above
         (`requireProjectAction("recoverRun")`). Body is empty; run kind, project
         id, workspace, and session handles are server-derived.
+        Company standalone operational Runs use the same endpoint with current explicit
+        assignments:read and assignments:cancel plus exact retained input/source access.
+        No administrator/project grant substitutes for company authority. Pending and
+        paused company Runs are allowed; a repeated Abandoned stop is idempotent
+        while the receiving user retains current cancellation authority. Done
+        and Failed refuse with 409. Inaccessible ownership is concealed as 404; a reader
+        without cancel authority receives 403. Current authority is checked before
+        session deletion and terminal application. The existing owned command ledger,
+        canonical quiescence, token revocation and human-work cleanup apply; an unknown
+        host outcome is 503, never proof of abandonment. The business assignment is not
+        completed or cancelled by this execution action.
       operationId: stopRunWorkbench
       parameters:
         - name: runId
@@ -11059,7 +11070,9 @@ paths:
                   ok: { type: boolean, enum: [true] }
                   runId: { type: string }
                   runStatus: { type: string, enum: [Review, Abandoned] }
-                  supervisorStopped: { type: boolean }
+                  supervisorStopped:
+                    type: boolean
+                    description: Whether this request stopped a live supervisor session; a reconciled or repeated stop can be false.
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -11069,7 +11082,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "503":
-          description: Supervisor delete/list failed transiently.
+          description: Supervisor delete/list failed transiently, or canonical terminal evidence is not yet confirmed. Retry reconciles actual host/canonical state before terminal application.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -18799,7 +18812,11 @@ paths:
       description:
         Implemented — per authenticated reader; does not change business
         outcome or another reader. Exact identical prior acknowledgement is
-        idempotent.
+        idempotent. Company Runs require current explicit assignments:read and
+        assignments:answer plus exact retained input/source access, including on
+        replay and inside the Run-locked service transaction. Company ownership
+        never supplies administrator authority; a receipt does not confirm Brain
+        knowledge or accept the business assignment.
       parameters:
         - name: runId
           in: path
@@ -18850,6 +18867,11 @@ paths:
         intent, not removal. Latest identical expectedRevision retry returns the
         existing re-arm receipt without resetting attempts again. Stale/different
         revision conflicts. No filesystem path is body-controlled.
+        Company Runs require current explicit assignments:read and assignments:recover
+        plus exact retained input/source access, rechecked inside the Run-locked
+        transaction before rearming or returning an existing receipt. Revocation
+        denies replay. This emits the existing company-owned cleanup-change fact
+        and uses the existing bounded cleanup worker; no operation is blindly retried.
       parameters:
         - name: runId
           in: path

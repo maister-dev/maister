@@ -106,6 +106,7 @@ components:
     AttentionAcknowledged:
       name: run.operational_attention_acknowledged
       summary: One reader acknowledged an exact failure reason revision
+      description: The domain-outbox envelope retains the exclusive project or company owner and exact operational Run reference; the content-free payload and reader receipt identity are unchanged.
       payload:
         type: object
         additionalProperties: false
@@ -118,6 +119,7 @@ components:
     CleanupChanged:
       name: run.operational_cleanup_changed
       summary: Cleanup reason/state changed independently of terminal business outcome
+      description: The existing domain-outbox envelope retains the exclusive project or company owner. Company rearm uses current human recovery authority and the existing cleanup receipt/worker.
       payload:
         type: object
         additionalProperties: false

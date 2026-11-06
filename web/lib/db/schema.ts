@@ -8991,7 +8991,7 @@ export const domainEvents = pgTable(
     ),
     companyKindCheck: check(
       "domain_events_company_kind_check",
-      sql`(${t.companyId} IS NULL OR (${t.taskId} IS NULL AND ((${t.kind} IN ('knowledge.record_changed','specialist.assignment_changed') AND ${t.runId} IS NULL) OR (${t.kind} IN ('run.done','run.failed','run.crashed','run.abandoned','run.needs_input','run.operational_cleanup_changed') AND ${t.runId} IS NOT NULL)))) IS TRUE`,
+      sql`(${t.companyId} IS NULL OR (${t.taskId} IS NULL AND ((${t.kind} IN ('knowledge.record_changed','specialist.assignment_changed') AND ${t.runId} IS NULL) OR (${t.kind} IN ('run.done','run.failed','run.crashed','run.abandoned','run.needs_input','run.operational_attention_acknowledged','run.operational_cleanup_changed') AND ${t.runId} IS NOT NULL)))) IS TRUE`,
     ),
     specialistAssignmentIdx: index("domain_events_specialist_assignment_idx")
       .on(sql`(${t.payload}->>'assignmentId')`, t.id)

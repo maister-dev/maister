@@ -4697,6 +4697,9 @@ Company ownership is an exclusive alternative to project ownership. Main
 company operational Run with no task. The existing `0227` reference and
 immutable routing guards apply; the HITL row and wait fact commit together.
 Private local assistants retain their separate notification path.
+Main `0247_company_operational_attention` additionally permits the existing
+`run.operational_attention_acknowledged` kind under those same exact company
+Run guards. Per-user acknowledgement receipts remain in their existing table.
 
 Dispatch reads are PK-range scans (`id > cursor ORDER BY id`), gated by the
 xid8 horizon (`tx_id < pg_snapshot_xmin(pg_current_snapshot())`) so a

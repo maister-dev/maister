@@ -62,6 +62,10 @@ import { startAgentSession } from "../launch";
 import { startAgentContinuationWorker } from "../continuation-worker";
 import { getCompanyAgentRunHistory } from "../activity-queries";
 
+import {
+  acknowledgeOperationalAttention,
+  retryOperationalCleanup,
+} from "@/lib/runs/operational-attention";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { readTranscriptPage } from "@/lib/runs/transcript-page";
 import { authorizePeekRun } from "@/lib/runs/peek-read-model";
@@ -118,6 +122,9 @@ import {
 } from "@/lib/brain/knowledge-proposals";
 import { verifyToken, actorUserIdForToken } from "@/lib/tokens/verify";
 import { handleAssignmentAction } from "@/app/api/assignments/[assignmentId]/_shared";
+import { POST as acknowledgeOperationalPost } from "@/app/api/runs/[runId]/operational/acknowledge/route";
+import { POST as retryOperationalPost } from "@/app/api/runs/[runId]/operational/cleanup/retry/route";
+import { POST as stopRunPost } from "@/app/api/runs/[runId]/stop/route";
 import { POST as respondHitlPost } from "@/app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route";
 import { POST as claimHumanAssignmentPost } from "@/app/api/assignments/[assignmentId]/claim/route";
 import { createHitlRequest } from "@/lib/runs/hitl-create";
@@ -268,7 +275,7 @@ beforeAll(async () => {
       }) +
       "\n",
   );
-  for (const delivery of ["live", "checkpointed"] as const) {
+  for (const delivery of ["live", "checkpointed", "cancelled"] as const) {
     await writeFile(
       join(source, `maister-agents/permission-${delivery}-observer.md`),
       primarySource +
@@ -653,7 +660,18 @@ it("CBS-02 completes a company assignment Run through the real supervisor and AC
     });
 
     expect(JSON.stringify(transcript.messages)).toContain("maister:output");
+    browserSession.user = await requireActiveUserById(userId);
+    const terminalStop = await stopRunPost(
+      new Request(`http://localhost/api/runs/${receipt.runId}/stop`, {
+        method: "POST",
+      }),
+      { params: Promise.resolve({ runId: receipt.runId }) },
+    );
+
+    expect(terminalStop.status).toBe(409);
+    browserSession.user = null;
   } finally {
+    browserSession.user = null;
     if (previousCap === undefined)
       delete process.env.MAISTER_MAX_CONCURRENT_AGENTS;
     else process.env.MAISTER_MAX_CONCURRENT_AGENTS = previousCap;
@@ -667,7 +685,7 @@ it("CBS-02 completes a company assignment Run through the real supervisor and AC
   }
 }, 90000);
 
-it.each(["live", "checkpointed"] as const)(
+it.each(["live", "checkpointed", "cancelled"] as const)(
   "CBS-02 routes a real company permission through current human authority and the existing owned delivery (%s)",
   async (delivery) => {
     const db: Db = database.db;
@@ -849,10 +867,91 @@ it.each(["live", "checkpointed"] as const)(
       const responseGrants = await createCompanyGrants(db, administratorId, {
         principalKind: "user",
         principalId: responderId,
-        actions: ["assignments:read", "assignments:answer"],
+        actions:
+          delivery === "cancelled"
+            ? ["assignments:read", "assignments:cancel"]
+            : ["assignments:read", "assignments:answer"],
         idempotencyKey: randomUUID(),
       });
 
+      if (delivery === "cancelled") {
+        browserSession.user = await requireActiveUserById(responderId);
+        await expect
+          .poll(
+            async () => {
+              const stopped = await stopRunPost(
+                new Request(`http://localhost/api/runs/${receipt.runId}/stop`, {
+                  method: "POST",
+                }),
+                { params: Promise.resolve({ runId: receipt.runId }) },
+              );
+              const body = await stopped.json();
+
+              if (stopped.status === 503) {
+                expect(body).toMatchObject({
+                  code: "EXECUTOR_UNAVAILABLE",
+                  details: { reason: "agent_execution_quiescence_unproven" },
+                });
+
+                return "awaiting-canonical-teardown";
+              }
+              expect(stopped.status).toBe(200);
+              expect(body).toMatchObject({
+                ok: true,
+                runId: receipt.runId,
+                runStatus: "Abandoned",
+                supervisorStopped: expect.any(Boolean),
+              });
+
+              return "abandoned";
+            },
+            { timeout: 10000, interval: 50 },
+          )
+          .toBe("abandoned");
+        expect(
+          (
+            await database.pool.query(
+              "SELECT human.status,actor.user_id FROM assignments human JOIN assignment_events event ON event.assignment_id=human.id AND event.event_kind='cancelled' JOIN actor_identities actor ON actor.id=event.actor_id WHERE human.id=$1",
+              [human.id],
+            )
+          ).rows,
+        ).toEqual([{ status: "cancelled", user_id: responderId }]);
+        expect(
+          (
+            await database.pool.query(
+              "SELECT count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind='session.input'",
+              [receipt.runId],
+            )
+          ).rows[0],
+        ).toEqual({ count: 0 });
+        expect(
+          (
+            await database.pool.query(
+              "SELECT count(*)::int AS count FROM run_results WHERE run_id=$1",
+              [receipt.runId],
+            )
+          ).rows[0],
+        ).toEqual({ count: 0 });
+        expect(
+          (
+            await database.pool.query(
+              "SELECT status,revision FROM specialist_assignments WHERE id=$1",
+              [assignment.id],
+            )
+          ).rows[0],
+        ).toEqual({ status: "active", revision: 3 });
+
+        expect(
+          (
+            await database.pool.query(
+              "SELECT state FROM execution_commands WHERE run_id=$1 AND kind='session.delete'",
+              [receipt.runId],
+            )
+          ).rows,
+        ).toEqual([{ state: "succeeded" }]);
+
+        return;
+      }
       if (delivery === "checkpointed") {
         await database.pool.query(
           "UPDATE runs SET keepalive_until=now()-interval '1 second' WHERE id=$1",
@@ -1304,6 +1403,153 @@ it("CBS-02 atomically reserves one company execution with frozen session and pla
   } finally {
     resetResolverForTests();
     setDefaultTransportForTests(null);
+  }
+});
+
+it("CBS-02 cancels a native Pending company Run only under current cancellation authority and retains one terminal outcome", async () => {
+  const db: Db = database.db;
+  const { hosts } = await fakeExecutionHosts(db);
+  const runnerId = randomUUID();
+
+  await db.insert(platformAcpRunners).values({
+    id: runnerId,
+    adapter: "claude",
+    capabilityAgent: "claude",
+    model: "company-cancel-fixture",
+    provider: { kind: "anthropic" },
+    readinessStatus: "Ready",
+  });
+  await db
+    .insert(platformRuntimeSettings)
+    .values({ id: "singleton", defaultRunnerId: runnerId })
+    .onConflictDoUpdate({
+      target: platformRuntimeSettings.id,
+      set: { defaultRunnerId: runnerId },
+    });
+  const assignment = await createSpecialistAssignment(
+    db,
+    userId,
+    assignmentInput,
+  );
+  const receipt = await reserveCompanyAgentRun(
+    db,
+    userId,
+    { ...request, assignmentId: assignment.id },
+    hosts,
+  );
+  const stop = (): Promise<Response> =>
+    stopRunPost(
+      new Request(`http://localhost/api/runs/${receipt.runId}/stop`, {
+        method: "POST",
+      }),
+      { params: Promise.resolve({ runId: receipt.runId }) },
+    );
+  const responderId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+    [responderId, `${responderId}@example.test`],
+  );
+  await createCompanyGrants(db, administratorId, {
+    principalKind: "user",
+    principalId: responderId,
+    actions: ["assignments:read"],
+    idempotencyKey: randomUUID(),
+  });
+  try {
+    browserSession.user = await requireActiveUserById(responderId);
+    expect((await stop()).status).toBe(403);
+    expect(
+      (await db.select().from(runs).where(eq(runs.id, receipt.runId)))[0]
+        .status,
+    ).toBe("Pending");
+    browserSession.user = await requireActiveUserById(administratorId);
+    expect((await stop()).status).toBe(404);
+    const cancellation = await createCompanyGrants(db, administratorId, {
+      principalKind: "user",
+      principalId: responderId,
+      actions: ["assignments:cancel"],
+      idempotencyKey: randomUUID(),
+    });
+
+    browserSession.user = await requireActiveUserById(responderId);
+    const [accepted, concurrent] = await Promise.all([stop(), stop()]);
+
+    expect(concurrent.status).toBe(200);
+    expect(await concurrent.json()).toEqual({
+      ok: true,
+      runId: receipt.runId,
+      runStatus: "Abandoned",
+      supervisorStopped: false,
+    });
+    expect(accepted.status).toBe(200);
+    const acceptedBody = await accepted.json();
+
+    await assertWebPostResponseContract(
+      "/api/runs/{runId}/stop",
+      200,
+      acceptedBody,
+    );
+    expect(acceptedBody).toEqual({
+      ok: true,
+      runId: receipt.runId,
+      runStatus: "Abandoned",
+      supervisorStopped: false,
+    });
+    const repeated = await stop();
+
+    expect(repeated.status).toBe(200);
+    expect(await repeated.json()).toEqual({
+      ok: true,
+      runId: receipt.runId,
+      runStatus: "Abandoned",
+      supervisorStopped: false,
+    });
+    await revokeCompanyGrant(
+      db,
+      administratorId,
+      cancellation.page.items[0].id,
+      {
+        expectedRevision: cancellation.page.items[0].revision,
+        reason: "Withdraw cancellation authority before replay",
+        idempotencyKey: randomUUID(),
+      },
+    );
+    expect((await stop()).status).toBe(403);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT kind,company_id,project_id,actor_type,actor_id FROM domain_events WHERE run_id=$1 AND kind='run.abandoned'",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        kind: "run.abandoned",
+        company_id: request.companyId,
+        project_id: null,
+        actor_type: "user",
+        actor_id: responderId,
+      },
+    ]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.delete')",
+          [receipt.runId],
+        )
+      ).rows[0],
+    ).toEqual({ count: 0 });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status,revision FROM specialist_assignments WHERE id=$1",
+          [assignment.id],
+        )
+      ).rows[0],
+    ).toEqual({ status: "active", revision: 3 });
+  } finally {
+    browserSession.user = null;
   }
 });
 
@@ -2102,6 +2348,35 @@ it("refuses disabled and retired configuration, and standing input that changes 
     details: { reason: "company_assignment_standing_changed" },
   });
 });
+
+async function assertWebPostResponseContract(
+  path: string,
+  status: number,
+  body: unknown,
+): Promise<void> {
+  const document: {
+    components: Record<string, object>;
+    paths: Record<
+      string,
+      {
+        post: {
+          responses: Record<
+            string,
+            { content: Record<string, { schema: object }> }
+          >;
+        };
+      }
+    >;
+  } = parse(await readFile(resolve("../docs/api/web.openapi.yaml"), "utf8"));
+  const validate = new Ajv({ strict: false, validateFormats: false }).compile({
+    components: document.components,
+    ...document.paths[path].post.responses[String(status)].content[
+      "application/json"
+    ].schema,
+  });
+
+  expect(validate(body), JSON.stringify(validate.errors)).toBe(true);
+}
 
 async function reserveCompanyFixtureRun(
   input: PreparedSpecialistAssignment = assignmentInput,
@@ -4042,6 +4317,187 @@ it("CBS-02 refuses company completion without its required result and retains fa
       )
     ).rows[0].status,
   ).toBe("queued");
+});
+
+it("CBS-02 governs company operational acknowledgement and exhausted cleanup rearm through current grants and existing receipts", async () => {
+  const db: Db = database.db;
+  const { runId, assignmentId, context } =
+    await seedCompanyOperationalTerminal();
+  const prepared = await prepareAgentRunFinalization(runId, "Done", { db });
+
+  await db.transaction((tx) => prepared.apply(tx));
+  const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+  const snapshot = run.companyExecutionSnapshot!;
+
+  await db
+    .update(runs)
+    .set({
+      knowledgeAccess: {
+        schemaVersion: 1,
+        state: "complete",
+        generation: 1,
+        restrictions: [
+          {
+            kind: "assignment_input",
+            assignmentId,
+            inputRevision: snapshot.assignment.inputRevision,
+            inputSha256: snapshot.assignment.inputSha256,
+          },
+        ],
+      },
+    })
+    .where(eq(runs.id, runId));
+  const acknowledge = (): Promise<Response> =>
+    acknowledgeOperationalPost(
+      new NextRequest(
+        `http://localhost/api/runs/${runId}/operational/acknowledge`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ reason: "operation_failure", revision: 1 }),
+        },
+      ),
+      { params: Promise.resolve({ runId }) },
+    );
+
+  const operatorId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+    [operatorId, `${operatorId}@example.test`],
+  );
+  await createCompanyGrants(db, administratorId, {
+    principalKind: "user",
+    principalId: operatorId,
+    actions: ["assignments:read"],
+    idempotencyKey: randomUUID(),
+  });
+  try {
+    browserSession.user = await requireActiveUserById(operatorId);
+    expect((await acknowledge()).status).toBe(403);
+    await expect(
+      acknowledgeOperationalAttention(db, {
+        runId,
+        userId: operatorId,
+        reason: "operation_failure",
+        revision: 1,
+      }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    const grants = await createCompanyGrants(db, administratorId, {
+      principalKind: "user",
+      principalId: operatorId,
+      actions: ["assignments:answer", "assignments:recover"],
+      idempotencyKey: randomUUID(),
+    });
+
+    browserSession.user = await requireActiveUserById(operatorId);
+    const acknowledged = await acknowledge();
+
+    expect(acknowledged.status).toBe(200);
+    const acknowledgementBody = await acknowledged.json();
+
+    await assertWebPostResponseContract(
+      "/api/runs/{runId}/operational/acknowledge",
+      200,
+      acknowledgementBody,
+    );
+    expect(acknowledgementBody).toEqual({
+      acknowledged: true,
+      revision: 1,
+    });
+    expect((await acknowledge()).status).toBe(200);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT company_id,project_id,actor_id FROM domain_events WHERE run_id=$1 AND kind='run.operational_attention_acknowledged'",
+          [runId],
+        )
+      ).rows,
+    ).toEqual([
+      { company_id: request.companyId, project_id: null, actor_id: operatorId },
+    ]);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await database.pool.query(
+        "UPDATE runs SET operational_cleanup=jsonb_set(operational_cleanup,'{dueAt}',to_jsonb((now()-interval '1 second')::text)) WHERE id=$1",
+        [runId],
+      );
+      expect(await disposeOperationalRun(runId, { db })).toBe("deferred");
+    }
+    const [exhausted] = await db.select().from(runs).where(eq(runs.id, runId));
+
+    expect(exhausted.operationalCleanup).toMatchObject({
+      state: "exhausted",
+      attempts: 5,
+      errorCode: "operational_evidence_host_missing",
+    });
+    const revision = exhausted.operationalCleanup!.revision;
+    const retry = (): Promise<Response> =>
+      retryOperationalPost(
+        new NextRequest(
+          `http://localhost/api/runs/${runId}/operational/cleanup/retry`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ expectedRevision: revision }),
+          },
+        ),
+        { params: Promise.resolve({ runId }) },
+      );
+    const rearmed = await retry();
+
+    expect(rearmed.status).toBe(202);
+    const rearmedBody = await rearmed.json();
+
+    await assertWebPostResponseContract(
+      "/api/runs/{runId}/operational/cleanup/retry",
+      202,
+      rearmedBody,
+    );
+    expect(rearmedBody).toMatchObject({
+      state: "armed",
+      revision: revision + 1,
+      attempts: 0,
+      errorCode: null,
+    });
+    const replayed = await retry();
+
+    expect(replayed.status).toBe(202);
+    expect(await replayed.json()).toMatchObject({
+      state: "armed",
+      revision: revision + 1,
+      attempts: 0,
+    });
+    const recoveryGrant = grants.page.items.find(
+      (grant) => grant.action === "assignments:recover",
+    )!;
+
+    await revokeCompanyGrant(db, administratorId, recoveryGrant.id, {
+      expectedRevision: recoveryGrant.revision,
+      reason: "Withdraw cleanup recovery authority",
+      idempotencyKey: randomUUID(),
+    });
+    expect((await retry()).status).toBe(403);
+    await expect(
+      retryOperationalCleanup(db, {
+        runId,
+        userId: operatorId,
+        expectedRevision: revision,
+      }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect(await readFile(join(context.cwd, "diagnosis.txt"), "utf8")).toBe(
+      "Retained company diagnostic input",
+    );
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status FROM specialist_assignments WHERE id=$1",
+          [assignmentId],
+        )
+      ).rows[0],
+    ).toEqual({ status: "queued" });
+  } finally {
+    browserSession.user = null;
+  }
 });
 
 it("CBS-02 quarantines a company specialist source violation and preserves failed bytes instead of accepting a valid-looking result", async () => {

@@ -155,6 +155,8 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | `web/lib/brain/knowledge-records.ts` | Structured company/project records, exact revisions and current source access |
 | `web/lib/tokens/owned-ext-handler.ts` | Shared bearer verification and audit for operations without a project requirement |
 | `web/lib/agents/activity-queries.ts` | Scoped active executions and retained run/attempt history |
+| `web/lib/agents/company-run-read-access.ts` | Current company reader/source and human lifecycle action authority, independent of execution eligibility |
+| `web/lib/runs/stop.ts` | Native Run stop owner dispatch and current company cancellation through shared operational finalization |
 | `web/lib/tasks/qualification.ts` | Versioned request assessments and authoritative admission |
 | `web/components/agents/` | Project agent history, grouped incidents, retries and qualification controls |
 | `web/lib/agents/launch-contract.ts` | Immutable agent kind, definition and operational completion snapshots |

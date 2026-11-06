@@ -3,6 +3,7 @@ import "server-only";
 import type { AgentPreparationOwner } from "@/lib/agents/preparation-workspace";
 import type { RawNodeOutputPayload } from "@/lib/flows/graph/node-output";
 import type { OperationalFailureDiagnostic } from "@/lib/agents/operational-diagnostics";
+import type { DomainEventActor } from "@/lib/domain-events/outbox";
 import type { Db } from "@/lib/execution-host/db";
 import type { Run, Workspace, Project } from "@/lib/db/schema";
 import type { RunResultContract, ResultStatus } from "@/lib/run-results/types";
@@ -56,6 +57,7 @@ import { getDb } from "@/lib/db/client";
 import {
   executionAssignments,
   agentPreparationOperations,
+  actorIdentities,
   hitlRequests,
   projects,
   runs,
@@ -88,7 +90,7 @@ import { withAcceptedAgentCleanup } from "@/lib/agents/accepted-cleanup";
 import { removeOwnedPlainAgentDirectory } from "@/lib/gc/plain-agent-directory-gc";
 import { removeWorktree } from "@/lib/worktree";
 import { promoteNextPending } from "@/lib/scheduler";
-import { MaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 import { isMaisterErrorCode } from "@/lib/errors-core";
 import { operationalTerminalDecision } from "@/lib/agents/operational-completion";
 import {
@@ -578,14 +580,46 @@ async function prepareAgentFinalization(
     preparedRun.executionAssignmentId &&
     !failureEvidence
   ) {
-    if (outcome === "Abandoned")
-      await assertAgentCancellationExecutionQuiescent(_db, preparedRun);
-    else
-      await assertAgentExecutionQuiescent(
-        _db,
-        preparedRun,
-        opts.applicationCommandId,
+    try {
+      if (outcome === "Abandoned")
+        await assertAgentCancellationExecutionQuiescent(_db, preparedRun);
+      else
+        await assertAgentExecutionQuiescent(
+          _db,
+          preparedRun,
+          opts.applicationCommandId,
+        );
+    } catch (error) {
+      if (
+        !isMaisterError(error) ||
+        error.code !== "EXECUTOR_UNAVAILABLE" ||
+        error.details?.reason !== "agent_execution_quiescence_unproven"
+      )
+        throw error;
+      const [current] = await _db
+        .select({ status: runs.status })
+        .from(runs)
+        .where(eq(runs.id, runId));
+
+      // A competing cancellation may already have released this generation.
+      // Only that exact retained outcome makes this cancellation a no-op;
+      // an interrupted or otherwise unconfirmed generation still refuses.
+      if (outcome !== "Abandoned" || current?.status !== "Abandoned")
+        throw error;
+      log.info(
+        {
+          runId,
+          preparedStatus: preparedRun.status,
+          currentStatus: current?.status ?? null,
+        },
+        "agent finalization preparation superseded by a terminal transition",
       );
+
+      return {
+        apply: async () => ({ finalized: false }),
+        afterCommit: async () => {},
+      };
+    }
   }
   const operationalIntegrity =
     preparedRun.agentKind === "operational"
@@ -1142,12 +1176,37 @@ async function prepareAgentFinalization(
         : referenceDecision.kind === "invalid"
           ? "run.failed"
           : DOMAIN_KIND_BY_OUTCOME[outcome];
+      let actor: DomainEventActor = { type: "agent", id: row.agentId };
+
+      if (row.companyId && opts.closeAssignments?.kind === "user") {
+        const [human] = await tx
+          .select()
+          .from(actorIdentities)
+          .where(eq(actorIdentities.id, opts.closeAssignments.actorId))
+          .for("share");
+
+        if (
+          human?.kind !== "user" ||
+          human.companyId !== row.companyId ||
+          human.projectId !== null ||
+          human.userId === null ||
+          human.disabledAt !== null
+        )
+          throw new MaisterError(
+            "PRECONDITION",
+            "Company cancellation requires its retained current human actor",
+            {
+              details: { reason: "company_cancellation_actor_unavailable" },
+            },
+          );
+        actor = { type: "user", id: human.userId };
+      }
       const event = {
         db: tx,
         ...runDomainEventScope(row),
         taskId: row.taskId,
         runId,
-        actor: { type: "agent" as const, id: row.agentId },
+        actor,
         parentRunId: row.parentRunId,
         payload: {
           runKind: "agent",
