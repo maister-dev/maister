@@ -47,7 +47,7 @@ export type PreparedPermissionEvidence = Readonly<{
 }>;
 
 export type LockedPermissionResultContext = Readonly<{
-  run: Run & { projectId: string };
+  run: Run;
   hitl: HitlRequest;
   response: Record<string, unknown> & { optionId: string };
   source: Readonly<{ requestId: string; supervisorSessionId: string }>;
@@ -293,11 +293,12 @@ export async function completePermissionInputHandoff(
     .update(runs)
     .set({ status: "Running", keepaliveUntil: null, resumeRequestedAt: null })
     .where(eq(runs.id, run.id));
-  await emitWebhookEvent({
-    db: tx,
-    type: "hitl.responded",
-    projectId: run.projectId,
-    runId: run.id,
-    data: { hitlRequestId: hitl.id, kind: "permission", via: "auto" },
-  });
+  if (run.projectId)
+    await emitWebhookEvent({
+      db: tx,
+      type: "hitl.responded",
+      projectId: run.projectId,
+      runId: run.id,
+      data: { hitlRequestId: hitl.id, kind: "permission", via: "auto" },
+    });
 }

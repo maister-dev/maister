@@ -9,7 +9,7 @@ import type { FlowActionResume } from "./action-resume";
 import type { GatePermissionResume } from "./gate-permission-resume";
 import type { NodePromptOwner } from "./node-prompt-owner";
 import type { GatePromptOwner } from "./prompt-owner";
-import type { HitlRequest, Run } from "@/lib/db/schema";
+import type { Run } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
 
@@ -33,8 +33,6 @@ import { createHitlRequest } from "@/lib/runs/hitl-create";
 import { flowPermissionSourceSchema } from "@/lib/execution-host/flow-permission-source";
 import {
   executionCommands,
-  actorIdentities,
-  assignments,
   gateResults,
   hitlRequests,
   nodeAttempts,
@@ -53,8 +51,7 @@ import {
   completeHitlAssignmentFromCurrentActor,
 } from "@/lib/assignments/service";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
-import { authorizeCompanyHumanAnswer } from "@/lib/assignments/company-ownership";
-import { MaisterError } from "@/lib/errors";
+import { authorizeCompanyPermissionConsent } from "@/lib/assignments/company-ownership";
 import {
   emitDomainEvent,
   runDomainEventScope,
@@ -78,62 +75,6 @@ const log = pino({
   name: "flow-prompt-permission",
   level: process.env.LOG_LEVEL ?? "info",
 });
-
-const companyConsentResponseSchema = z.object({
-  _audit: z.object({
-    companyConsent: z
-      .object({
-        version: z.literal(1),
-        actorId: z.string().uuid(),
-        userId: z.string().uuid(),
-      })
-      .strict(),
-  }),
-});
-
-/** A saved answer is historical consent, never a substitute for current authority. */
-async function assertCompanyFlowPermissionConsent(
-  tx: Db,
-  run: Run,
-  hitl: Pick<HitlRequest, "id" | "response">,
-): Promise<void> {
-  if (run.projectId !== null || run.companyId === null) return;
-  const response = companyConsentResponseSchema.safeParse(hitl.response);
-
-  if (!response.success)
-    throw new MaisterError(
-      "UNAUTHORIZED",
-      "Company permission delivery requires retained human consent",
-      { details: { reason: "company_permission_consent_missing" } },
-    );
-  const consent = response.data._audit.companyConsent;
-  const [human] = await tx
-    .select({ assignment: assignments })
-    .from(assignments)
-    .innerJoin(
-      actorIdentities,
-      eq(actorIdentities.id, assignments.assigneeActorId),
-    )
-    .where(
-      and(
-        eq(assignments.hitlRequestId, hitl.id),
-        eq(assignments.runId, run.id),
-        eq(assignments.companyId, run.companyId),
-        isNull(assignments.projectId),
-        eq(assignments.assigneeActorId, consent.actorId),
-        eq(actorIdentities.userId, consent.userId),
-      ),
-    )
-    .for("share");
-
-  if (!human)
-    throw new MaisterError(
-      "UNAUTHORIZED",
-      "Company permission consent no longer matches its responding actor",
-      { details: { reason: "company_permission_consent_actor" } },
-    );
-  await authorizeCompanyHumanAnswer(tx, human.assignment, consent.actorId);
-}
 
 async function readPermissionResume(
   tx: Db,
@@ -181,7 +122,7 @@ export async function prepareFlowPermissionInput(
     schema.supervisorSessionId,
   );
 
-  await assertCompanyFlowPermissionConsent(tx, run, hitl);
+  await authorizeCompanyPermissionConsent(tx, run, hitl);
   const response = hitl.response as Record<string, unknown> | null;
 
   if (typeof response?.optionId !== "string")
@@ -256,7 +197,7 @@ export async function prepareFlowPermissionResponse(
       schema.supervisorSessionId,
     );
 
-    await assertCompanyFlowPermissionConsent(tx, run, hitl);
+    await authorizeCompanyPermissionConsent(tx, run, hitl);
     await withdrawRefusedPermissionDelivery(tx, hitl, response, {
       assignmentId: schema.flowPrompt.assignmentId,
       supervisorSessionId: schema.supervisorSessionId,

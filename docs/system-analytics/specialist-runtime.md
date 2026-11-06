@@ -315,7 +315,7 @@ integrity refusal without reopening execution or reclassifying the Flow as an
 operational agent. Source-integrity failure does not erase its retained technical
 result or complete the business assignment.
 
-Qualification currently uses real PostgreSQL migrations, the actual package loader with a pinned fixture Git package, an owned real supervisor and controlled ACP. Concurrent native driver invocations produce one create/prompt, a valid retained export, physical quiescence and released directory; the business assignment remains active. A changed reviewed coordinator refuses queued dispatch with zero ACP effects. Prospective engine metadata and capability-cache receipts are controlled fixture inputs, not real adapter/model smoke or companion/stand qualification. Native form and human-review waits are additionally qualified through the actual response route and both graph resumes below. Permission idle/restart, completion recovery, extended compatibility and engine activation remain open; the supported engine stays 3.11.1.
+Qualification currently uses real PostgreSQL migrations, the actual package loader with a pinned fixture Git package, an owned real supervisor and controlled ACP. Concurrent native driver invocations produce one create/prompt, a valid retained export, physical quiescence and released directory; the business assignment remains active. A changed reviewed coordinator refuses queued dispatch with zero ACP effects. Prospective engine metadata and capability-cache receipts are controlled fixture inputs, not real adapter/model smoke or companion/stand qualification. Native form and human-review waits are additionally qualified through the actual response route and both graph resumes below. Completion recovery, extended compatibility and engine activation remain open; the supported engine stays 3.11.1.
 
 ### Native permission approval boundary
 
@@ -337,6 +337,27 @@ current company answer authority and source access. Missing consent, an actor
 mismatch or revoked authority refuses before an input is prepared or a refused
 delivery intent is withdrawn. Historical captures are not backfilled. Recording
 an already observed input receipt remains a separate attribution operation.
+
+Checkpointed native permission resume uses the same `resumeRun` capacity claim
+and node permission-handoff ledger. The exact native resource loads its frozen
+company session context and current initiating/source authority; project runs
+retain their repository/workspace checks. The claim validates retained human
+consent under the receiving transaction before withdrawing an input intent or
+advancing the attempt generation. Revocation rolls back the claim and leaves
+the answer, idle Run and prior work intact. Historical-result handoff retains
+its separate receipt validation and emits project webhooks only for a project
+owner.
+
+The existing continuation worker owns resumed traversal and terminal application.
+Native qualification checkpoints an actual permission, interrupts the original
+driver, SIGKILL/restarts the owned supervisor and observes the same host key with
+a new boot identity. Exact input/result captures and ACP resume identity survive;
+capacity queues the answer, revoked consent refuses a new claim, and restored
+authority completes with two prompts and one input delivery. The controlled ACP
+fixture explicitly persists its original scripted conversation for this test;
+the production continuation prompt does not replay assignment input. This is
+platform/controlled-adapter qualification, not actual specialist-package or
+stand readiness.
 
 A definitive service refusal retains the answer for an explicit retry; the
 existing command protocol determines whether a new delivery identity is allowed.

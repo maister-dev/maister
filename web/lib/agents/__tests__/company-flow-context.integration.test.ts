@@ -95,6 +95,9 @@ import { requireActiveUserById } from "@/lib/authz";
 import { POST as stopRunPost } from "@/app/api/runs/[runId]/stop/route";
 import { POST as respondHitlPost } from "@/app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route";
 import { tryStartRun } from "@/lib/scheduler";
+import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
+import { resumeRun } from "@/lib/runs/resume";
+import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-worker";
 import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
 import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
@@ -106,6 +109,7 @@ import {
 } from "@/test-support/real-supervisor";
 import {
   runs,
+  runSessions,
   platformAcpRunners,
   platformRuntimeSettings,
 } from "@/lib/db/schema";
@@ -3100,6 +3104,317 @@ it("CBS-03 retains native permission consent, refuses revoked replay and deliver
     if (previousCap === undefined)
       delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
     else process.env.MAISTER_MAX_CONCURRENT_RUNS = previousCap;
+  }
+}, 90000);
+
+it("CBS-03 resumes a checkpointed native permission after retained-host restart without losing input, consent or capacity fences", async () => {
+  const db: Db = database.db;
+  const hostRoot = join(root, "reservation-host");
+
+  await writeCompanyCapabilityCache(hostRoot);
+  let supervisor = await startRealSupervisor({
+    runtimeRoot: hostRoot,
+    workspaceRoots: [join(root, "worktrees")],
+    fixtureArgs: [
+      "--hang",
+      "--supports-resume",
+      "--session-state-dir",
+      join(root, "native-acp-state"),
+    ],
+    env: {
+      MAISTER_ADAPTER_SMOKE_CACHE_PATH: join(
+        hostRoot,
+        "adapter-smoke-cache.json",
+      ),
+    },
+  });
+  const restoreUrl = useRealSupervisorUrl(supervisor.url);
+  const compatibility = useEngineVersion("3.12.0");
+  const worker = startProjectionWorker({ db, projectors: canonicalProjectors });
+  const abort = new AbortController();
+  const previousCap = process.env.MAISTER_MAX_CONCURRENT_RUNS;
+  const previousRuntime = process.env.MAISTER_RUNTIME_ROOT;
+  let driver: Promise<Readonly<{ error: unknown | null }>> | undefined;
+  let continuation: ReturnType<typeof startFlowContinuationWorker> | undefined;
+
+  vi.stubEnv("MAISTER_RUNTIME_ROOT", hostRoot);
+  setDefaultTransportForTests(null);
+  resetResolverForTests();
+  resetRegistrarStateForTests();
+  try {
+    const output = {
+      schemaVersion: 1,
+      findings: [],
+      knowledgeProposals: [],
+      selection: [],
+    };
+    const work = await createSpecialistAssignment(db, requesterId, {
+      ...preparedAssignment,
+      origin: { kind: "manual", interactionId: randomUUID() },
+      objectiveInput: {
+        ...preparedAssignment.objectiveInput,
+        input:
+          "\nfixture-output:" +
+          JSON.stringify({
+            bytes: 0,
+            permission: true,
+            permissionToolCall: {
+              toolCallId: "native-checkpoint-proof",
+              title: "mcp__maister__knowledge_propose",
+              kind: "other",
+              status: "pending",
+            },
+            text: "```json maister:output\n" + JSON.stringify(output) + "\n```",
+          }) +
+          "\n",
+      },
+    });
+    const hosts = createExecutionHosts({
+      db,
+      transport: createLocalDirectTransport(),
+    });
+    const receipt = await reserveCompanyFlowRun(
+      db,
+      requesterId,
+      {
+        ...request,
+        assignmentId: work.id,
+        assignmentRevision: work.revision,
+        inputRevision: work.inputRevision,
+      },
+      hosts,
+    );
+
+    expect(await tryStartRun(receipt.runId, { db })).toMatchObject({
+      started: true,
+    });
+    vi.stubEnv("MAISTER_MAX_CONCURRENT_RUNS", "1");
+    driver = runFlow(receipt.runId, {
+      db,
+      executionHosts: hosts,
+      runtimeRoot: hostRoot,
+      signal: abort.signal,
+    }).then(
+      () => ({ error: null }),
+      (error: unknown) => ({ error }),
+    );
+    await expect
+      .poll(
+        async () =>
+          (
+            await database.pool.query<{ status: string }>(
+              "SELECT status FROM runs WHERE id=$1",
+              [receipt.runId],
+            )
+          ).rows[0]?.status,
+        { timeout: 15000, interval: 50 },
+      )
+      .toBe("NeedsInput");
+    const hitl = (
+      await database.pool.query<{ id: string }>(
+        "SELECT id FROM hitl_requests WHERE run_id=$1 AND kind='permission' AND responded_at IS NULL",
+        [receipt.runId],
+      )
+    ).rows[0]!;
+    const frozen = await db
+      .select({
+        snapshot: runs.companyExecutionSnapshot,
+        contract: runs.resultContract,
+        acp: runSessions.acpSessionId,
+      })
+      .from(runs)
+      .innerJoin(runSessions, eq(runSessions.runId, runs.id))
+      .where(eq(runs.id, receipt.runId));
+
+    expect(frozen[0]?.acp).toEqual(expect.any(String));
+    await database.pool.query(
+      "UPDATE runs SET keepalive_until=now()-interval '1 second' WHERE id=$1",
+      [receipt.runId],
+    );
+    expect(await runSweepTick({ db, executionHosts: hosts })).toMatchObject({
+      idledCount: 1,
+    });
+    abort.abort();
+    await driver;
+    const beforeHealth = await hosts.local().health();
+
+    await stopRuntimeEventConsumers();
+    supervisor = await supervisor.restart();
+    resetRegistrarStateForTests();
+    resetResolverForTests();
+    const afterHealth = await hosts.local().health();
+
+    if (beforeHealth.kind !== "ready" || afterHealth.kind !== "ready")
+      throw new Error("The retained company host is not ready");
+    expect(afterHealth.identity?.hostKey).toBe(beforeHealth.identity?.hostKey);
+    expect(afterHealth.identity?.bootId).not.toBe(
+      beforeHealth.identity?.bootId,
+    );
+    expect(
+      await db
+        .select({
+          snapshot: runs.companyExecutionSnapshot,
+          contract: runs.resultContract,
+          acp: runSessions.acpSessionId,
+        })
+        .from(runs)
+        .innerJoin(runSessions, eq(runSessions.runId, runs.id))
+        .where(eq(runs.id, receipt.runId)),
+    ).toEqual(frozen);
+    const responderId = randomUUID();
+
+    await database.pool.query(
+      "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+      [responderId, `${responderId}@example.test`],
+    );
+    const grants = await createCompanyGrants(db, administratorId, {
+      principalKind: "user",
+      principalId: responderId,
+      actions: ["assignments:read", "assignments:answer"],
+      idempotencyKey: randomUUID(),
+    });
+
+    browserUserId = responderId;
+    const answer = (): Promise<Response> =>
+      respondHitlPost(
+        new NextRequest(
+          `http://localhost/api/runs/${receipt.runId}/hitl/${hitl.id}/respond`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ optionId: "allow" }),
+          },
+        ),
+        {
+          params: Promise.resolve({
+            runId: receipt.runId,
+            hitlRequestId: hitl.id,
+          }),
+        },
+      );
+    const queued = await answer();
+
+    expect(queued.status).toBe(202);
+    expect(
+      (
+        await database.pool.query("SELECT status FROM runs WHERE id=$1", [
+          receipt.runId,
+        ])
+      ).rows,
+    ).toEqual([{ status: "NeedsInputIdle" }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind='session.create'",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toEqual([{ count: 1 }]);
+    const answerGrant = grants.page.items.find(
+      (grant) => grant.action === "assignments:answer",
+    )!;
+
+    await revokeCompanyGrant(db, administratorId, answerGrant.id, {
+      expectedRevision: answerGrant.revision,
+      reason: "Withdraw authority while native resume waits for capacity",
+      idempotencyKey: randomUUID(),
+    });
+    vi.stubEnv("MAISTER_MAX_CONCURRENT_RUNS", "2");
+    await expect(
+      resumeRun(receipt.runId, { db, executionHosts: hosts }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect(
+      (
+        await database.pool.query("SELECT status FROM runs WHERE id=$1", [
+          receipt.runId,
+        ])
+      ).rows,
+    ).toEqual([{ status: "NeedsInputIdle" }]);
+    await createCompanyGrants(db, administratorId, {
+      principalKind: "user",
+      principalId: responderId,
+      actions: ["assignments:answer"],
+      idempotencyKey: randomUUID(),
+    });
+    continuation = startFlowContinuationWorker({
+      db,
+      executionHosts: hosts,
+      runtimeRoot: hostRoot,
+    });
+    expect((await answer()).status).toBe(202);
+    await expect
+      .poll(
+        async () =>
+          (
+            await database.pool.query<{
+              status: string;
+              cleanup: string | null;
+              driver: string | null;
+            }>(
+              "SELECT status,operational_cleanup->>'state' AS cleanup,flow_driver_token AS driver FROM runs WHERE id=$1",
+              [receipt.runId],
+            )
+          ).rows[0],
+        { timeout: 20000, interval: 50 },
+      )
+      .toEqual({ status: "Done", cleanup: "released", driver: null });
+    expect(
+      await db
+        .select({
+          snapshot: runs.companyExecutionSnapshot,
+          contract: runs.resultContract,
+          acp: runSessions.acpSessionId,
+        })
+        .from(runs)
+        .innerJoin(runSessions, eq(runSessions.runId, runs.id))
+        .where(eq(runs.id, receipt.runId)),
+    ).toEqual(frozen);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT validity,value FROM run_results WHERE run_id=$1",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toMatchObject([{ validity: "valid", value: output }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT kind,count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt','session.input') GROUP BY kind ORDER BY kind",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toEqual([
+      { kind: "session.create", count: 2 },
+      { kind: "session.input", count: 1 },
+      { kind: "session.prompt", count: 2 },
+    ]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT human.status,actor.user_id FROM assignments human JOIN actor_identities actor ON actor.id=human.completed_by_actor_id WHERE human.hitl_request_id=$1",
+          [hitl.id],
+        )
+      ).rows,
+    ).toEqual([{ status: "completed", user_id: responderId }]);
+  } finally {
+    browserUserId = requesterId;
+    abort.abort();
+    await driver;
+    await continuation?.stop();
+    await worker.stop();
+    await stopRuntimeEventConsumers();
+    await supervisor.stop();
+    restoreUrl();
+    compatibility.mockRestore();
+    resetResolverForTests();
+    resetRegistrarStateForTests();
+    setDefaultTransportForTests(null);
+    if (previousCap === undefined)
+      delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
+    else process.env.MAISTER_MAX_CONCURRENT_RUNS = previousCap;
+    if (previousRuntime === undefined) delete process.env.MAISTER_RUNTIME_ROOT;
+    else process.env.MAISTER_RUNTIME_ROOT = previousRuntime;
   }
 }, 90000);
 

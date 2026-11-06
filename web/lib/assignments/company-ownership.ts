@@ -1,17 +1,23 @@
 import "server-only";
 
-import type { ActorIdentity, Assignment } from "@/lib/db/schema";
+import type {
+  ActorIdentity,
+  Assignment,
+  HitlRequest,
+  Run,
+} from "@/lib/db/schema";
 import type { Db } from "@/lib/execution-host/db";
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import pino from "pino";
+import { z } from "zod";
 
 import { assertCompanyRunReadAccess } from "@/lib/agents/company-run-read-access";
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import { getDb } from "@/lib/db/client";
-import { actorIdentities } from "@/lib/db/schema";
+import { actorIdentities, assignments } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
 const log = pino({
@@ -183,4 +189,70 @@ export async function authorizeCompanyHumanCancellation(
     "assignments:cancel",
   );
   await assertCompanyRunReadAccess(db, actor.userId, assignment.runId);
+}
+
+const companyConsentResponseSchema = z.object({
+  _audit: z.object({
+    companyConsent: z
+      .object({
+        version: z.literal(1),
+        actorId: z.string().uuid(),
+        userId: z.string().uuid(),
+      })
+      .strict(),
+  }),
+});
+
+/** A saved answer is historical consent, never a substitute for current authority. */
+export async function authorizeCompanyPermissionConsent(
+  tx: Db,
+  run: Run,
+  hitl: Pick<HitlRequest, "id" | "response">,
+): Promise<void> {
+  if (run.projectId !== null || run.companyId === null) return;
+  const response = companyConsentResponseSchema.safeParse(hitl.response);
+
+  if (!response.success)
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "Company permission delivery requires retained human consent",
+      { details: { reason: "company_permission_consent_missing" } },
+    );
+  const consent = response.data._audit.companyConsent;
+  const [human] = await tx
+    .select({ assignment: assignments })
+    .from(assignments)
+    .innerJoin(
+      actorIdentities,
+      eq(actorIdentities.id, assignments.assigneeActorId),
+    )
+    .where(
+      and(
+        eq(assignments.hitlRequestId, hitl.id),
+        eq(assignments.runId, run.id),
+        eq(assignments.companyId, run.companyId),
+        isNull(assignments.projectId),
+        eq(assignments.assigneeActorId, consent.actorId),
+        eq(actorIdentities.userId, consent.userId),
+      ),
+    )
+    .for("share");
+
+  if (!human)
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "Company permission consent no longer matches its responding actor",
+      { details: { reason: "company_permission_consent_actor" } },
+    );
+  await authorizeCompanyHumanAnswer(tx, human.assignment, consent.actorId);
+  log.debug(
+    {
+      runId: run.id,
+      hitlRequestId: hitl.id,
+      companyId: run.companyId,
+      actorId: consent.actorId,
+      userId: consent.userId,
+    },
+    "retained company permission consent authorized",
+  );
 }
