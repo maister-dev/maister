@@ -5,6 +5,8 @@ import { readFile } from "node:fs/promises";
 import { eq } from "drizzle-orm";
 import pino from "pino";
 
+import { resolveCompanyFlowPersona } from "./company-flow-persona";
+
 import { materializeSubagentDefinition } from "@/lib/capabilities/adapter-home";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -12,6 +14,7 @@ import { MaisterError } from "@/lib/errors";
 import { buildAgentActivitySnapshot } from "@/lib/agents/activity-snapshot";
 import { recordNativeKnowledgeActor } from "@/lib/brain/knowledge-execution-actor";
 import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
+import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { agents, runs } = schemaModule as unknown as Record<string, any>;
@@ -74,11 +77,13 @@ export async function resolveFlowBoundAgent(args: {
   }
 
   // ADR-089 rework (RD4): the binding substitutes the definition from the
-  // HOST RUN project's pinned revision of the providing package, behind the
-  // same enablement/trust gates as a standalone launch.
+  // host Run's project attachment or explicit company-reviewed provider pin,
+  // behind the same current enablement/trust gates as a standalone launch.
   const runRows = await _db
     .select({
       projectId: runs.projectId,
+      companyId: runs.companyId,
+      sourceAgentId: runs.sourceAgentId,
       resultContract: runs.resultContract,
       knowledgeAccess: runs.knowledgeAccess,
     })
@@ -86,19 +91,56 @@ export async function resolveFlowBoundAgent(args: {
     .where(eq(runs.id, args.runId));
   const projectId = runRows[0]?.projectId as string | undefined;
 
-  if (!projectId) {
+  const companyId = runRows[0]?.companyId;
+
+  if (typeof companyId === "string")
+    log.debug(
+      {
+        runId: args.runId,
+        agentId: args.agentId,
+        nodeAttemptId: args.nodeAttemptId,
+        companyId,
+      },
+      "resolving company Flow node persona",
+    );
+
+  if (!projectId && typeof companyId !== "string") {
     throw new MaisterError(
       "PRECONDITION",
       `run ${args.runId} not found for agent binding resolution`,
     );
   }
 
+  if (typeof companyId === "string" && !args.nodeAttemptId)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Company Flow persona resolution requires an exact current node attempt",
+    );
+  if (
+    typeof companyId === "string" &&
+    args.requireFlowTrigger === false &&
+    args.agentId !== runRows[0]?.sourceAgentId
+  )
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "Only the responsible company role may supply the driving persona",
+    );
+  const companyPersona =
+    typeof companyId === "string"
+      ? await resolveCompanyFlowPersona(_db, args.runId, args.agentId)
+      : null;
+
   const { resolveEffectiveAgentDefinition } =
     await import("@/lib/agents/effective");
-  const effective = await resolveEffectiveAgentDefinition(
-    { agentId: args.agentId, projectId },
-    _db,
-  );
+  const effective =
+    companyPersona?.effective ??
+    (await resolveEffectiveAgentDefinition(
+      {
+        agentId: args.agentId,
+        projectId: requireRunProjectId(projectId ?? null, args.runId),
+      },
+      _db,
+    ));
   const parsed = effective.parsed;
 
   if (parsed.kind === "operational")
@@ -163,5 +205,9 @@ export async function resolveFlowBoundAgent(args: {
     return { mode: "subagent", materializedPath: targetPath };
   }
 
-  return { mode: "session", prompt: parsed.prompt.trim() };
+  const prompt = companyPersona
+    ? `${parsed.prompt.trim()}\n\n## Specialist configuration\n${JSON.stringify(companyPersona.configuration)}`
+    : parsed.prompt.trim();
+
+  return { mode: "session", prompt };
 }

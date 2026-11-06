@@ -32,6 +32,7 @@ import {
 import { updateCompanyFlowBinding } from "../company-flow-binding-mutations";
 import { reserveCompanyFlowRun } from "../company-flow-launch";
 import { loadCompanyFlowSessionContext } from "../company-flow-session-context";
+import { resolveFlowBoundAgent } from "../flow-binding";
 import { assertCompanyRunReadAccess } from "../company-run-read-access";
 import {
   issueCompanyAgentRunToken,
@@ -1402,6 +1403,63 @@ it("loads frozen company graph input and sessions without repository records, re
   }
 });
 
+it("resolves the actual company Flow driving persona from its reviewed provider and attests its current node before returning prompt bytes", async () => {
+  await database.pool.query(
+    "UPDATE runs SET status='Running',current_step_id='diagnose' WHERE id=$1",
+    [nativeFlowRunId],
+  );
+  const node = await appendNodeAttempt({
+    runId: nativeFlowRunId,
+    nodeId: "diagnose",
+    nodeType: "ai_coding",
+    db: database.db,
+  });
+
+  await markNodeRunning(node.id, database.db);
+  const compatibility = useEngineVersion("3.12.0");
+
+  try {
+    await expect(
+      resolveFlowBoundAgent({
+        agentId: preparedAssignment.responsibleAgentId,
+        runId: nativeFlowRunId,
+        executorAgent: "claude",
+        worktreePath: join(root, "unused-company-persona"),
+        db: database.db,
+        requireFlowTrigger: false,
+      }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+    const bound = await resolveFlowBoundAgent({
+      agentId: preparedAssignment.responsibleAgentId,
+      runId: nativeFlowRunId,
+      nodeAttemptId: node.id,
+      executorAgent: "claude",
+      worktreePath: join(root, "unused-company-persona"),
+      db: database.db,
+      requireFlowTrigger: false,
+    });
+
+    expect(bound).toEqual({
+      mode: "session",
+      prompt: `${preparedAssignment.standingDefinition.definition.prompt.trim()}\n\n## Specialist configuration\n{}`,
+    });
+    await expect(
+      database.db.transaction((tx) =>
+        resolveKnowledgeRunIdentity(tx, nativeFlowRunId, node.id),
+      ),
+    ).resolves.toMatchObject({
+      identity: {
+        actor: {
+          id: preparedAssignment.responsibleAgentId,
+          attemptId: node.id,
+        },
+      },
+    });
+  } finally {
+    compatibility.mockRestore();
+  }
+});
+
 it("uses exact company graph node attribution, current role authority and source-guarded history without issuing standalone credentials", async () => {
   await expect(
     assertCompanyRunReadAccess(database.db, requesterId, nativeFlowRunId),
@@ -1711,11 +1769,36 @@ it("requires a separate reviewed company persona and fences changed coordinator 
     },
   );
 
-  await recordNativeKnowledgeActor(database.db, {
-    runId: nativeFlowRunId,
-    nodeAttemptId: node.id,
-    actor,
-  });
+  const personaCompatibility = useEngineVersion("3.12.0");
+
+  try {
+    await expect(
+      resolveFlowBoundAgent({
+        agentId: actor.agentId,
+        runId: nativeFlowRunId,
+        nodeAttemptId: node.id,
+        executorAgent: "claude",
+        worktreePath: join(root, "unused-company-persona"),
+        db: database.db,
+        requireFlowTrigger: false,
+      }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    const bound = await resolveFlowBoundAgent({
+      agentId: actor.agentId,
+      runId: nativeFlowRunId,
+      nodeAttemptId: node.id,
+      executorAgent: "claude",
+      worktreePath: join(root, "unused-company-persona"),
+      db: database.db,
+    });
+
+    expect(bound).toEqual({
+      mode: "session",
+      prompt: `${effective.parsed.prompt.trim()}\n\n## Specialist configuration\n{}`,
+    });
+  } finally {
+    personaCompatibility.mockRestore();
+  }
   await expect(
     database.db.transaction((tx) =>
       resolveKnowledgeRunIdentity(tx, nativeFlowRunId, node.id),
