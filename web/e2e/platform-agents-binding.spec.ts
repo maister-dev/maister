@@ -40,11 +40,18 @@ test("flow-bound agent launch records its selected Flow settings and any actual 
     const serverPage = await serverContext.newPage();
 
     await serverPage.goto(`/projects/${fx.projectSlug}`);
+    // Next streams the serialized card into a hidden boundary until its inline
+    // reveal script runs. Inspect native markup here; visible use follows below.
     const serverOpener = serverPage
       .locator("article")
       .filter({ hasText: "Bound-agent flow target" })
-      .getByRole("button", { name: "Launch", exact: true });
+      .getByRole("button", {
+        name: "Launch",
+        exact: true,
+        includeHidden: true,
+      });
 
+    await expect(serverOpener).toHaveCount(1);
     await expect(serverOpener).toBeDisabled();
   } finally {
     await serverContext.close();

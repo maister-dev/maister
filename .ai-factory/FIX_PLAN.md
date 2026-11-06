@@ -95,8 +95,9 @@ No required assertion is skipped, quarantined or weakened.
   and throughout hydration until its client interaction handlers are ready.
   Reuse the existing client-readiness hook; this changes no launch authority,
   assessment policy, settings or normal confirmation behavior. In the existing
-  bound-agent browser journey, inspect the actual SSR opener in a scoped
-  authenticated JavaScript-disabled browser context, require it to be disabled,
+  bound-agent browser journey, inspect the actual serialized SSR native opener
+  in a scoped authenticated JavaScript-disabled browser context, including
+  Next's hidden streamed markup, and require it to be disabled,
   and close that context in `finally`. In the normal interactive context,
   require one enabled click to open the dialog and load its real options.
   Keyboard journeys must await the opener's enabled state before focusing it,
