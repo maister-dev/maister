@@ -52,6 +52,7 @@ import {
   expandExecutionPolicy,
 } from "@/lib/runs/execution-policy";
 import { describeScheduledLaunchTime } from "@/lib/scheduled-launches/time";
+import { useIsClient } from "@/lib/use-is-client";
 
 type DeliveryPolicyStrategy =
   "merge" | "rebase_merge" | "pull_request" | "ai_rebase_merge";
@@ -641,6 +642,7 @@ export function LaunchPopover({
 }: LaunchPopoverProps): ReactElement {
   const t = useTranslations("launch");
   const tRun = useTranslations("run");
+  const isClient = useIsClient();
   const statusUnavailableMessage = t("admission.reason.statusUnavailable");
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -745,7 +747,8 @@ export function LaunchPopover({
   const dialogRef = useRef<HTMLElement | null>(null);
 
   useModalFocusTrap(dialogRef, () => setOpen(false), open);
-  const disabled = busy || pending || (Boolean(disabledReason) && !tracking);
+  const disabled =
+    !isClient || busy || pending || (Boolean(disabledReason) && !tracking);
 
   useEffect(() => {
     if (

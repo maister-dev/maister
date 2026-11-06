@@ -9,6 +9,8 @@
 // binding substitution"), where a spawn slot is not subject to the shared
 // e2e capacity.
 
+import type { Route } from "@playwright/test";
+
 import { test, expect } from "@playwright/test";
 
 import { singleValue } from "./_seed/db";
@@ -19,8 +21,55 @@ test("flow-bound agent launch records its selected Flow settings and any actual 
   page,
 }) => {
   const fx = loadFixtures().byKey.platformAgents;
+  const launchRequests: string[] = [];
 
-  await page.goto(`/projects/${fx.projectSlug}`);
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      new URL(request.url()).pathname === "/api/task-launch-intents"
+    )
+      launchRequests.push(request.url());
+  });
+  let releaseLaunchScript: () => void = () => {};
+  let markLaunchScriptHeld: () => void = () => {};
+  const launchScriptRelease = new Promise<void>((resolve) => {
+    releaseLaunchScript = resolve;
+  });
+  const launchScriptHeld = new Promise<void>((resolve) => {
+    markLaunchScriptHeld = resolve;
+  });
+  const isClientChunk = (url: URL): boolean =>
+    url.pathname.startsWith("/_next/static/chunks/") &&
+    url.pathname.endsWith(".js");
+  const holdLaunchScript = async (route: Route): Promise<void> => {
+    const response = await route.fetch();
+    const source = await response.text();
+
+    // Hold the actual dialog module, leaving unrelated chunks and the server
+    // response free to arrive. The source marker survives hashed chunk names.
+    if (source.includes("task-launch-dialog")) {
+      markLaunchScriptHeld();
+      await launchScriptRelease;
+    }
+    await route.fulfill({ response });
+  };
+
+  await page.route(isClientChunk, holdLaunchScript);
+  try {
+    await page.goto(`/projects/${fx.projectSlug}`, { waitUntil: "commit" });
+    await launchScriptHeld;
+    await expect(page.getByText("Bound-agent flow target")).toBeVisible();
+    const serverOpener = page
+      .locator("article")
+      .filter({ hasText: "Bound-agent flow target" })
+      .getByRole("button", { name: "Launch", exact: true });
+
+    await expect(serverOpener).toBeDisabled();
+  } finally {
+    releaseLaunchScript();
+    await page.unrouteAll({ behavior: "wait" });
+  }
+
   await expect(page.getByText("Bound-agent flow target")).toBeVisible();
 
   const card = page
@@ -58,6 +107,7 @@ test("flow-bound agent launch records its selected Flow settings and any actual 
 
   expect(options.status()).toBe(200);
   expect(preview.selectedRunnerId).toBeTruthy();
+  expect(launchRequests).toEqual([]);
 
   const launchResponse = page.waitForResponse(
     (response) =>
