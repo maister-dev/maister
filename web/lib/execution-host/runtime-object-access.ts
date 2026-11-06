@@ -3,6 +3,7 @@ import "server-only";
 import type { RuntimeObjectWithRun } from "@/lib/execution-host/runtime-objects";
 
 import { requireProjectAction } from "@/lib/authz";
+import { assertCompanyRunReadAccess } from "@/lib/agents/company-run-read-access";
 import { MaisterError } from "@/lib/errors";
 import { getDb } from "@/lib/db/client";
 import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
@@ -12,6 +13,23 @@ export async function authorizeRuntimeObjectActor(
   loaded: RuntimeObjectWithRun,
   userId: string,
 ): Promise<void> {
+  if (loaded.companyId) {
+    try {
+      await assertCompanyRunReadAccess(getDb(), userId, loaded.object.runId);
+    } catch (error) {
+      if (
+        error instanceof MaisterError &&
+        error.details?.reason === "run_unavailable"
+      ) {
+        throw new MaisterError("PRECONDITION", "runtime object was not found", {
+          details: { reason: "runtime_object_not_found" },
+        });
+      }
+      throw error;
+    }
+
+    return;
+  }
   if (loaded.projectId) {
     await requireProjectAction(loaded.projectId, "readBoard");
     await assertRunKnowledgeDisclosure(

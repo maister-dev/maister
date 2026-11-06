@@ -112,7 +112,7 @@ describe("Retained agent activity", () => {
       ).rejects.toMatchObject({ code: "CONFIG" });
     }
     const plan = await database.pool.query<{ "QUERY PLAN": string }>(
-      "EXPLAIN (ANALYZE, BUFFERS) SELECT id FROM runs WHERE project_id=$1 AND source_agent_id='core:scan' AND activity_sort_at<=now() ORDER BY activity_sort_at DESC,id DESC LIMIT 26",
+      "EXPLAIN (ANALYZE, BUFFERS) SELECT id FROM runs WHERE project_id=$1 AND source_agent_id='core:scan' AND activity_sort_at<=now() ORDER BY activity_sort_at DESC NULLS LAST,id DESC NULLS LAST LIMIT 26",
       [projectId],
     );
     const explain = plan.rows.map((row) => row["QUERY PLAN"]).join("\n");

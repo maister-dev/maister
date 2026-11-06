@@ -236,7 +236,10 @@ export async function getAgentRunHistory(
           : undefined,
       ),
     )
-    .orderBy(desc(runs.activitySortAt), desc(runs.id))
+    .orderBy(
+      sql`${runs.activitySortAt} DESC NULLS LAST`,
+      sql`${runs.id} DESC NULLS LAST`,
+    )
     .limit(limit + 1);
   const items: AgentHistoryItem[] = rows.slice(0, limit).map((row) => {
     if (

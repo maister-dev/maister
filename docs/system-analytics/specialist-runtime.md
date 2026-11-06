@@ -308,5 +308,20 @@ Native initial qualification uses a real pinned package, real PostgreSQL and a
 canonical fake host whose physical session state explicitly becomes exited;
 agent prose or a clean return alone cannot pass quiescence. Real supervisor
 adoption/SQLite restart are separately qualified above. Actual company ACP
-package invocation, idle/HITL continuations, interrupted/replaced owners, read
-models and the stand pilot retain their separate acceptance gates.
+package invocation, idle/HITL continuations, interrupted/replaced owners, company
+activity pages and the stand pilot retain their separate acceptance gates.
+
+### Company execution content access
+
+**Implemented — native peek authorization, canonical Run SSE and runtime-object
+metadata/content.** The shared company read guard derives owner and exact immutable
+assignment input from the retained Run/link. It requires current explicit
+`assignments:read`, a complete source capture containing that input, and current
+access to every inherited source. Neither administrator status nor Run creation
+alone grants company read authority. Incomplete company captures fail closed with
+the same concealed 404 as missing/unauthorized Runs; inherited source loss returns
+a safe 409. Historical reader authority does not depend on an enabled specialist,
+trusted provider files, or a currently executable assignment. SSE rechecks company
+reader/source authority before each canonical batch; protected object bytes retain
+the existing per-chunk source recheck. No project or new execution is created by a
+read. Company activity pages and full Run navigation remain subsequent slices.

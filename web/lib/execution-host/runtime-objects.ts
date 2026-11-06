@@ -37,6 +37,7 @@ const RUNTIME_OBJECT_UUID_NAMESPACE = Buffer.from(
 export type RuntimeObjectWithRun = {
   object: ExecutionRuntimeObject;
   projectId: string | null;
+  companyId: string | null;
   localPackageId: string | null;
   createdByUserId: string | null;
   executionHost: ExecutionHost;
@@ -235,6 +236,7 @@ export async function getRuntimeObjectForRun(input: {
     .select({
       object: executionRuntimeObjects,
       projectId: runs.projectId,
+      companyId: runs.companyId,
       localPackageId: runs.localPackageId,
       createdByUserId: runs.createdByUserId,
       executionHost: executionHosts,

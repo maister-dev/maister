@@ -1,3 +1,4 @@
+import type { SessionUser } from "@/lib/authz";
 import type { Db } from "@/lib/execution-host/db";
 import type { OperationalWorkspaceContext } from "../operational-context";
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
@@ -55,6 +56,14 @@ import {
 import { reserveCompanyAgentRun } from "../company-agent-launch";
 import { startAgentSession } from "../launch";
 
+import { authorizePeekRun } from "@/lib/runs/peek-read-model";
+import { requireActiveUserById } from "@/lib/authz";
+import { GET as streamGet } from "@/app/api/runs/[runId]/stream/route";
+import {
+  getRuntimeObjectForRun,
+  publishRuntimeObject,
+} from "@/lib/execution-host/runtime-objects";
+import { authorizeRuntimeObjectContentActor } from "@/lib/execution-host/runtime-object-access";
 import {
   runs,
   platformAcpRunners,
@@ -110,6 +119,7 @@ import { startMainAndBrainPostgresTestDb } from "@/test-support/pg-container";
 import { seedProjectRow } from "@/test-support/execution-host-seed";
 import { git, initRepo } from "@/test-support/git-fixture";
 
+const browserSession = vi.hoisted(() => ({ user: null as SessionUser | null }));
 let database: StartedPostgresTestDb;
 let root: string;
 let assignmentInput: PreparedSpecialistAssignment;
@@ -128,6 +138,15 @@ const userId = randomUUID();
 const agentId = "rah:evidence-researcher";
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => database.db }));
+vi.mock("@/lib/authz", async (original) => ({
+  ...(await original<typeof import("@/lib/authz")>()),
+  requireActiveSession: async () => {
+    if (!browserSession.user)
+      throw new Error("The company read fixture has no authenticated session");
+
+    return browserSession.user;
+  },
+}));
 
 beforeAll(async () => {
   vi.stubEnv("AUTH_SECRET", "company-agent-knowledge-cursor-fixture");
@@ -797,6 +816,15 @@ it("CBS-02 dispatches a company assignment through the existing owned agent driv
     expect(await tryStartRun(receipt.runId, { db })).toMatchObject({
       started: true,
     });
+    await publishRuntimeObject({
+      client: await hosts.forRun(receipt.runId),
+      kind: "generated_artifact",
+      logicalName: "diagnosis.txt",
+      mimeType: "text/plain",
+      retentionClass: "run",
+      bytes: new TextEncoder().encode("Bounded company diagnostic evidence"),
+    });
+    await fake.waitForCanonicalEvents();
     await startAgentSession(receipt.runId, { db, executionHosts: hosts });
     expect(fake.callsOf("createSession")).toHaveLength(1);
     expect(fake.callsOf("createSession")[0].envelope?.payload).toMatchObject({
@@ -832,6 +860,52 @@ it("CBS-02 dispatches a company assignment through the existing owned agent driv
         },
       },
     });
+    const detail = await authorizePeekRun(userId, receipt.runId);
+
+    expect(detail).toMatchObject({
+      run: { id: receipt.runId, projectId: null, companyId: request.companyId },
+      canReadTranscript: true,
+    });
+    const objects = await database.pool.query(
+      "SELECT id FROM execution_runtime_objects WHERE run_id=$1 ORDER BY id",
+      [receipt.runId],
+    );
+
+    expect(objects.rows.length).toBeGreaterThan(0);
+    const object = await getRuntimeObjectForRun({
+      db,
+      runId: receipt.runId,
+      objectId: objects.rows[0].id,
+    });
+
+    if (!object)
+      throw new Error(
+        "The completed company Run has no retained evidence object",
+      );
+    await expect(
+      authorizeRuntimeObjectContentActor(object, userId),
+    ).resolves.toBeUndefined();
+    await expect(
+      authorizeRuntimeObjectContentActor(object, administratorId),
+    ).rejects.toMatchObject({
+      details: { reason: "runtime_object_not_found" },
+    });
+    browserSession.user = await requireActiveUserById(userId);
+    const stream = await streamGet(
+      new NextRequest(`http://localhost/api/runs/${receipt.runId}/stream`),
+      { params: Promise.resolve({ runId: receipt.runId }) },
+    );
+
+    expect(stream.status).toBe(200);
+    expect(await stream.text()).toContain("session.command");
+    browserSession.user = await requireActiveUserById(administratorId);
+    const denied = await streamGet(
+      new NextRequest(`http://localhost/api/runs/${receipt.runId}/stream`),
+      { params: Promise.resolve({ runId: receipt.runId }) },
+    );
+
+    expect(denied.status).toBe(404);
+    browserSession.user = null;
     expect(
       (
         await database.pool.query(
@@ -1700,6 +1774,106 @@ it("CBS-02 authorizes only the executing specialist's exact assignment input wit
   }
 });
 
+it("CBS-02 reads retained company execution content under current explicit reader authority independently of specialist availability", async () => {
+  const { runId, snapshot } = await reserveCompanyFixtureRun();
+  const unavailable = { details: { reason: "run_unavailable" } };
+
+  // Historical rows without a complete source capture cannot release content.
+  await expect(authorizePeekRun(userId, runId)).rejects.toMatchObject(
+    unavailable,
+  );
+  await database.pool.query(
+    "UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1",
+    [
+      runId,
+      JSON.stringify({
+        schemaVersion: 1,
+        state: "complete",
+        generation: 1,
+        restrictions: [
+          {
+            kind: "assignment_input",
+            assignmentId: snapshot.assignment.id,
+            inputRevision: snapshot.assignment.inputRevision,
+            inputSha256: snapshot.assignment.inputSha256,
+          },
+        ],
+      }),
+    ],
+  );
+  await expect(authorizePeekRun(userId, runId)).resolves.toMatchObject({
+    run: { id: runId, companyId: request.companyId, projectId: null },
+    canReadTranscript: true,
+  });
+  await expect(authorizePeekRun(administratorId, runId)).rejects.toMatchObject(
+    unavailable,
+  );
+  await expect(authorizePeekRun(userId, randomUUID())).rejects.toMatchObject(
+    unavailable,
+  );
+  await database.pool.query("UPDATE agents SET enabled=false WHERE id=$1", [
+    agentId,
+  ]);
+  try {
+    await expect(authorizePeekRun(userId, runId)).resolves.toMatchObject({
+      canReadTranscript: true,
+    });
+  } finally {
+    await database.pool.query("UPDATE agents SET enabled=true WHERE id=$1", [
+      agentId,
+    ]);
+  }
+  const readerId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+    [readerId, `${readerId}@example.test`],
+  );
+  await expect(authorizePeekRun(readerId, runId)).rejects.toMatchObject(
+    unavailable,
+  );
+  const grants = await createCompanyGrants(database.db, administratorId, {
+    principalKind: "user",
+    principalId: readerId,
+    actions: ["assignments:read"],
+    idempotencyKey: randomUUID(),
+  });
+
+  await expect(authorizePeekRun(readerId, runId)).resolves.toMatchObject({
+    canReadTranscript: true,
+  });
+  browserSession.user = await requireActiveUserById(readerId);
+  const stream = await streamGet(
+    new NextRequest(`http://localhost/api/runs/${runId}/stream?replay=false`, {
+      signal: AbortSignal.timeout(10000),
+    }),
+    { params: Promise.resolve({ runId }) },
+  );
+
+  expect(stream.status).toBe(200);
+  const reader = stream.body!.getReader();
+
+  expect(new TextDecoder().decode((await reader.read()).value)).toContain(
+    "session.stream_ready",
+  );
+  await revokeCompanyGrant(
+    database.db,
+    administratorId,
+    grants.page.items[0].id,
+    {
+      expectedRevision: grants.page.items[0].revision,
+      reason: "Withdraw historical Run access",
+      idempotencyKey: randomUUID(),
+    },
+  );
+  await expect(authorizePeekRun(readerId, runId)).rejects.toMatchObject(
+    unavailable,
+  );
+  expect(await reader.read()).toEqual({ done: true, value: undefined });
+  reader.releaseLock();
+  browserSession.user = null;
+});
+
 it("CBS-02 preserves nested assignment source restrictions and lets the source project be deleted without Brain blocking it", async () => {
   const project = await seedProjectRow(database.db);
 
@@ -1758,6 +1932,9 @@ it("CBS-02 preserves nested assignment source restrictions and lets the source p
       }),
     ],
   );
+  await expect(authorizePeekRun(userId, runId)).resolves.toMatchObject({
+    canReadTranscript: true,
+  });
   await expect(
     assertNativeRunKnowledgeInputs(database.db, runId),
   ).rejects.toMatchObject({
@@ -1768,6 +1945,9 @@ it("CBS-02 preserves nested assignment source restrictions and lets the source p
     [project.id, userId],
   );
   expect(await humanCanRead()).toBe(false);
+  await expect(authorizePeekRun(userId, runId)).rejects.toMatchObject({
+    details: { reason: "knowledge_reference_unavailable" },
+  });
   await expect(
     authorizeSourceRestrictions(database.db, human, [reference]),
   ).rejects.toMatchObject({

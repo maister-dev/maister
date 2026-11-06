@@ -20,6 +20,7 @@ import {
   requireProjectRoleForUser,
 } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
+import { assertCompanyRunReadAccess } from "@/lib/agents/company-run-read-access";
 import {
   assertRunKnowledgeDisclosure,
   assertRunsKnowledgeDisclosure,
@@ -50,6 +51,7 @@ type PeekRun = Pick<
   typeof runs.$inferSelect,
   | "id"
   | "projectId"
+  | "companyId"
   | "parentRunId"
   | "rootRunId"
   | "runKind"
@@ -103,6 +105,7 @@ export async function authorizePeekRun(
     .select({
       id: runs.id,
       projectId: runs.projectId,
+      companyId: runs.companyId,
       parentRunId: runs.parentRunId,
       rootRunId: runs.rootRunId,
       runKind: runs.runKind,
@@ -118,6 +121,11 @@ export async function authorizePeekRun(
     .limit(1);
 
   if (!run) throw unavailablePeekRun();
+  if (run.companyId) {
+    await assertCompanyRunReadAccess(getDb(), userId, runId);
+
+    return { run, user, canReadTranscript: true };
+  }
   if (!run.projectId) {
     if (
       run.createdByUserId !== userId ||

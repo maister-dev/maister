@@ -7955,8 +7955,12 @@ paths:
         required in addition to the existing project/content grant. An unavailable
         source or incomplete capture returns a safe 409 PRECONDITION before content.
         `runId` and `objectId` are URL-selected only. Project authorization or
-        projectless creator ownership, plus host, assignment, and private
+        projectless assistant creator ownership, plus host, assignment, and private
         storage location, are derived server-side and never returned.
+        Company Runs require current explicit `assignments:read` and their exact retained
+        assignment-input source access. Missing/unauthorized Runs or incomplete company
+        captures return 404 without catalogue metadata; specialist retirement does not
+        invalidate historical reader authority.
       operationId: getRunRuntimeObject
       parameters:
         - name: runId
@@ -7990,7 +7994,10 @@ paths:
         Source access is checked again before each emitted chunk/batch; revocation
         terminates the stream and cancels upstream reads without retaining DB locks.
         Project runs require `readRepoFiles`; projectless assistant runs require
-        the authenticated creator. The host is selected from the catalogue, never
+        the authenticated creator. Company Runs require current explicit `assignments:read`
+        and exact retained assignment-input/source access, rechecked before emitted chunks.
+        Missing/unauthorized company Runs or incomplete captures return concealed 404;
+        unavailable inherited sources return 409. The host is selected from the catalogue, never
         a URL or request-body value. A full response is bounded to 8 MiB; larger
         objects require one valid inclusive byte range. Response headers include
         `Content-Digest`, `Repr-Digest` and a strong generation/hash `ETag`.
@@ -13243,7 +13250,13 @@ paths:
         terminates the stream and cancels upstream reads without retaining DB locks.
         Requires project membership at `viewer` or above
         (`requireProjectRole(run.projectId, "viewer")`). The `projectId`
-        is derived from the run row, never from the query string.
+        is derived from the run row, never from the query string. Company Runs instead
+        require current explicit `assignments:read`, a complete capture containing their
+        exact retained assignment input, and current inherited source access. Missing or
+        unauthorized company Runs and incomplete captures return concealed 404; unavailable
+        inherited sources return 409. Reader and source authority are checked before every
+        canonical batch; loss closes the stream before further events. Specialist/provider
+        execution eligibility is independent of historical read authority.
 
         Server-Sent Events bridge over manager-owned PostgreSQL event records.
         An in-process wake is only a latency hint. The browser never reads a
@@ -18936,7 +18949,11 @@ paths:
         Auth.js active session required before resource lookup. Derive projects from persisted
         Runs. Enforce readBoard and independent descendant ancestry; protected transcript/evidence
         requires readRepoFiles. No lifecycle or result-collection writes. Cache-Control: private,
-        no-store. See run-peek-data.md for limits and refusal semantics.
+        no-store. Company Runs use current explicit `assignments:read`, complete capture
+        and exact retained assignment-input/source authority independently at each ancestry
+        edge. Missing/unauthorized company Runs and incomplete captures return concealed 404;
+        unavailable inherited sources return 409. Specialist retirement does not remove
+        historical read authority. See run-peek-data.md for limits and refusal semantics.
         For runs enrolled in native evidence capture, current source access is
         required in addition to the existing project/content grant. An unavailable
         source or incomplete capture returns a safe 409 PRECONDITION before content.

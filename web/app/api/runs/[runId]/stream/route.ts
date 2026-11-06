@@ -12,6 +12,7 @@ import {
   requireProjectRole,
 } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
+import { assertCompanyRunReadAccess } from "@/lib/agents/company-run-read-access";
 import {
   assertRunKnowledgeDisclosure,
   isRunKnowledgeUnavailable,
@@ -49,6 +50,7 @@ type RunLite = {
   status: string;
   currentStepId: string | null;
   projectId: string | null;
+  companyId: string | null;
   createdByUserId: string | null;
   localPackageId: string | null;
 };
@@ -62,6 +64,7 @@ async function loadRunLite(runId: string): Promise<RunLite | null> {
       status: runs.status,
       currentStepId: runs.currentStepId,
       projectId: runs.projectId,
+      companyId: runs.companyId,
       createdByUserId: runs.createdByUserId,
       localPackageId: runs.localPackageId,
     })
@@ -80,6 +83,7 @@ async function loadRunLite(runId: string): Promise<RunLite | null> {
     status: row.status,
     currentStepId: row.currentStepId,
     projectId: row.projectId,
+    companyId: row.companyId,
     createdByUserId: row.createdByUserId,
     localPackageId: row.localPackageId,
   };
@@ -227,11 +231,19 @@ function canonicalRunEventStream(input: {
         while (!signal.aborted) {
           const events = await readCanonicalRunEvents(input.run.id, cursor);
 
-          await assertRunKnowledgeDisclosure(
-            getDb(),
-            { kind: "user", userId: input.userId },
-            input.run.id,
-          );
+          if (input.run.companyId) {
+            await assertCompanyRunReadAccess(
+              getDb(),
+              input.userId,
+              input.run.id,
+            );
+          } else {
+            await assertRunKnowledgeDisclosure(
+              getDb(),
+              { kind: "user", userId: input.userId },
+              input.run.id,
+            );
+          }
           if (signal.aborted) break;
 
           for (const event of events) {
@@ -361,10 +373,11 @@ export async function GET(
     );
   }
 
-  // RBAC: project runs require viewer+ on the derived project; project-less
-  // local-package assistant runs are private to their launching user.
+  // Derive ownership from the retained Run; company reads require explicit current grants.
   try {
-    if (run.projectId) {
+    if (run.companyId) {
+      await assertCompanyRunReadAccess(getDb(), sessionUser.id, runId);
+    } else if (run.projectId) {
       await requireProjectRole(run.projectId, "viewer");
     } else {
       await assertLocalPackageAssistantActor(run, sessionUser.id, {
@@ -379,6 +392,7 @@ export async function GET(
   } catch (err) {
     if (isMaisterError(err)) {
       const status =
+        (err.details?.reason === "run_unavailable" ? 404 : null) ??
         httpStatusForAuthz(err.code) ??
         (isRunKnowledgeUnavailable(err) ? 409 : 500);
 

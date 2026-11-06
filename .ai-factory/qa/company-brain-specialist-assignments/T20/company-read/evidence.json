@@ -1,0 +1,81 @@
+{
+  "task": "T20",
+  "slice": "Current company execution readers and exact retained input/source disclosure",
+  "date": "2026-11-06",
+  "baseCommit": "d78e0aa6ac304ba966fe2c1b1c0ad32730c2c918",
+  "status": "Company read slice qualified; T20 remains open",
+  "engineVersion": "3.11.1",
+  "migrations": [],
+  "red": {
+    "log": "red.log.gz",
+    "failure": "Two real PostgreSQL company peek cases rejected authorized company Runs as unsupported project-less owners."
+  },
+  "intermediateFailures": [
+    "Reader-grant fixture initially addressed an incorrect receipt field; corrected to the existing page.items contract.",
+    "The valid operational result fixture had no runtime object. The evidence-read qualification now publishes an actual object through the owned native client before completion.",
+    "Default canonical stream replay emits persisted events rather than a synthetic live-ready event; the assertion now verifies the actual canonical frame. Live-only mode is separately checked for ready and revocation closure.",
+    "The existing 10,000-row history EXPLAIN failed because ORDER BY DESC default null order did not match the migration 0204 DESC NULLS LAST index. Production query and its real plan probe now use the existing index order. One first regression command named a nonexistent findings-disclosure directory; final run uses the actual run-results suite."
+  ],
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "files": 7,
+      "tests": 126,
+      "durationSeconds": 31.08,
+      "log": "integration-green.log.gz"
+    },
+    "unit": {
+      "exitCode": 0,
+      "files": 886,
+      "tests": 9263,
+      "log": "unit-green.log.gz"
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "log": "types.log.gz"
+    },
+    "lintChangedFiles": {
+      "exitCode": 0,
+      "warnings": 0,
+      "log": "lint.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "tables": 171,
+      "log": "docs.log.gz"
+    }
+  },
+  "qualified": [
+    "Explicit current assignments:read and exact immutable company Run/input identity authorize historical content without requiring current specialist/provider execution eligibility.",
+    "Missing or unauthorized company Runs and incomplete captures release no protected content; inherited source loss is explicit.",
+    "A real owned runtime-object publication remains source-authorized after operational completion; an administrator without an explicit company read grant is denied.",
+    "Completed company Runs replay canonical events; live-only company SSE closes after current reader-grant revocation.",
+    "Native project/private peek, descendant authorization, transcript, stream, findings source disclosure and runtime-object lifecycle remain green.",
+    "Source-project deletion remains permitted while company input history is retained and dependent source reads become unavailable.",
+    "Retained project history uses the existing index for 10,000 rows, with frozen cursor membership preserved."
+  ],
+  "notYetQualified": [
+    "Company activity API/UI and full Run navigation",
+    "Complete company idle/HITL continuation and interruption/replacement recovery",
+    "Actual company ACP/package invocation and stand pilot",
+    "Remaining T20.1-T43 acceptance"
+  ],
+  "sourceSha256": {
+    "AGENTS.md": "c5286b912d1d65406d4b15debcd35110ef8a9e0edf5f16613f0ae18360ebe845",
+    "docs/api/web.openapi.yaml": "34280291b36c26fb810054a230c81f5fbe4fa838181a7910e4e16ecf237ff7fa",
+    "docs/system-analytics/run-peek-data.md": "9ad00f2bca39cd8fb708195d40cd718a2347621354a342141ff77eb42458ab4b",
+    "docs/system-analytics/specialist-runtime.md": "1db4db104cbc4184a0dd111063454453ce0f65b821cb9cdc998bfc5967adf3ed",
+    "web/app/api/runs/[runId]/stream/route.ts": "50b25eefabeb855481df3cb6f111e391e24e27f0f0cd3bd56225b4375b1e9bb9",
+    "web/lib/agents/__tests__/activity-queries.integration.test.ts": "76824b5f66aa5a2803feacc2b7d2c47846dbeacf59223f7d510c1d4da558b1d7",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "e6d227b7d0406cdddaf9d6030d603cb875b1153962408689d27ef1157f10556b",
+    "web/lib/agents/activity-queries.ts": "2b90784ec96d2e9a825eb1b5cd95d2c8dea0573b9cbb73576ef37d5d334122cf",
+    "web/lib/execution-host/runtime-object-access.ts": "5a361e93128cd5153ca734ebc0eaab62d670969644315d7b6779c799a6fdf2a1",
+    "web/lib/execution-host/runtime-objects.ts": "80c8413e109748f9b88af60529ab7ce524556f76cdfc6d956a4e6b921379a2f9",
+    "web/lib/runs/peek-read-model.ts": "39e8cdfaf3ddb751fae14887daad580a0a4401e364f780047acf7b25540d17f6",
+    "web/lib/agents/company-run-read-access.ts": "0d10312f5d7380362ccb80e722ff1f95b8ee66b283925591885f7b47bed0fb22"
+  }
+}
