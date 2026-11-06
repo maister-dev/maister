@@ -51,8 +51,16 @@ import {
   prepareAgentRunFinalization,
   prepareUndispatchedAgentFailure,
 } from "../finalization";
+import { reserveCompanyAgentRun } from "../company-agent-launch";
 
-import { runs } from "@/lib/db/schema";
+import {
+  runs,
+  platformAcpRunners,
+  platformRuntimeSettings,
+} from "@/lib/db/schema";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
+import { resetResolverForTests } from "@/lib/execution-host/resolver";
+import { setDefaultTransportForTests } from "@/lib/execution-host/default-transport";
 import {
   tryStartRun,
   promoteNextPending,
@@ -175,6 +183,17 @@ beforeAll(async () => {
   await writeFile(
     join(source, "maister-agents/disabled-observer.md"),
     primarySource,
+  );
+  await writeFile(
+    join(source, "maister-agents/runner-observer.md"),
+    primarySource,
+  );
+  await writeFile(
+    join(source, "maister-agents/memory-observer.md"),
+    primarySource.replace(
+      "workspace: none",
+      "memory: enabled\nworkspace: none",
+    ),
   );
   await initRepo(source);
   await git(
@@ -393,6 +412,250 @@ it("CBS-02 shares the existing bounded agent pool across project and company wor
   }
 });
 
+it("CBS-02 atomically reserves one company execution with frozen session and placement under concurrent admission", async () => {
+  const db: Db = database.db;
+  const { hosts, hostId } = await fakeExecutionHosts(db);
+  const runnerId = randomUUID();
+
+  await db.insert(platformAcpRunners).values({
+    id: runnerId,
+    adapter: "claude",
+    capabilityAgent: "claude",
+    model: "fixture",
+    provider: { kind: "anthropic" },
+    readinessStatus: "Ready",
+  });
+  await db
+    .insert(platformRuntimeSettings)
+    .values({ id: "singleton", defaultRunnerId: runnerId })
+    .onConflictDoUpdate({
+      target: platformRuntimeSettings.id,
+      set: { defaultRunnerId: runnerId },
+    });
+  const assignment = await createSpecialistAssignment(
+    db,
+    userId,
+    assignmentInput,
+  );
+  const admission = { ...request, assignmentId: assignment.id };
+
+  try {
+    const outcomes = await Promise.allSettled([
+      reserveCompanyAgentRun(db, userId, admission, hosts),
+      reserveCompanyAgentRun(db, userId, admission, hosts),
+    ]);
+    const accepted = outcomes.filter(
+      (outcome) => outcome.status === "fulfilled",
+    );
+    const refused = outcomes.filter((outcome) => outcome.status === "rejected");
+
+    expect(outcomes, "one native reservation must commit").toContainEqual(
+      expect.objectContaining({ status: "fulfilled" }),
+    );
+    expect(accepted).toHaveLength(1);
+    expect(refused).toHaveLength(1);
+    expect(refused[0]).toMatchObject({ reason: { code: "CONFLICT" } });
+    if (accepted[0]?.status !== "fulfilled")
+      throw new Error("Company admission did not reserve its execution");
+    const receipt = accepted[0].value;
+
+    expect(receipt).toMatchObject({
+      assignmentId: assignment.id,
+      assignmentRevision: 3,
+      status: "Pending",
+    });
+    const stored = (
+      await database.pool.query(
+        "SELECT execution.project_id,execution.company_id,execution.agent_config,execution.execution_policy,execution.status,execution.knowledge_access,session.runner_id,session.runner_resolution_tier,placement.execution_host_id,placement.epoch,assignment.status AS assignment_status,link.input_revision FROM runs execution JOIN run_sessions session ON session.run_id=execution.id JOIN execution_assignments placement ON placement.run_id=execution.id JOIN specialist_run_links link ON link.run_id=execution.id JOIN specialist_assignments assignment ON assignment.id=link.assignment_id WHERE execution.id=$1",
+        [receipt.runId],
+      )
+    ).rows;
+
+    expect(stored).toEqual([
+      expect.objectContaining({
+        project_id: null,
+        company_id: request.companyId,
+        agent_config: { label: "base" },
+        execution_policy: { preset: "supervised" },
+        status: "Pending",
+        runner_id: runnerId,
+        runner_resolution_tier: "platformDefault",
+        execution_host_id: hostId,
+        epoch: 1,
+        assignment_status: "active",
+        input_revision: 1,
+      }),
+    ]);
+    expect(stored[0].knowledge_access).toMatchObject({
+      state: "complete",
+      restrictions: [
+        {
+          kind: "assignment_input",
+          assignmentId: assignment.id,
+          inputRevision: 1,
+        },
+      ],
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM project_tokens WHERE company_run_id=$1",
+          [receipt.runId],
+        )
+      ).rows[0],
+    ).toEqual({ count: 0 });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM execution_commands WHERE run_id=$1",
+          [receipt.runId],
+        )
+      ).rows[0],
+    ).toEqual({ count: 0 });
+    const source = await seedProjectRow(database.db);
+
+    await database.pool.query(
+      "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'member')",
+      [randomUUID(), source.id, userId],
+    );
+    const restricted = await createSpecialistAssignment(db, userId, {
+      ...assignmentInput,
+      sourceRestrictions: [{ kind: "project_context", projectId: source.id }],
+    });
+    const before = (
+      await database.pool.query(
+        "SELECT (SELECT count(*) FROM runs) AS runs,(SELECT count(*) FROM run_sessions) AS sessions,(SELECT count(*) FROM execution_assignments) AS placements,(SELECT count(*) FROM specialist_run_links) AS links,(SELECT count(*) FROM domain_events) AS events",
+      )
+    ).rows[0];
+
+    await expect(
+      reserveCompanyAgentRun(
+        db,
+        userId,
+        { ...request, assignmentId: restricted.id },
+        hosts,
+      ),
+    ).rejects.toMatchObject({
+      details: { reason: "knowledge_reference_unavailable" },
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT (SELECT count(*) FROM runs) AS runs,(SELECT count(*) FROM run_sessions) AS sessions,(SELECT count(*) FROM execution_assignments) AS placements,(SELECT count(*) FROM specialist_run_links) AS links,(SELECT count(*) FROM domain_events) AS events",
+        )
+      ).rows[0],
+    ).toEqual(before);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status,revision FROM specialist_assignments WHERE id=$1",
+          [restricted.id],
+        )
+      ).rows[0],
+    ).toEqual({ status: "queued", revision: 1 });
+    await database.pool.query("DELETE FROM projects WHERE id=$1", [source.id]);
+  } finally {
+    resetResolverForTests();
+    setDefaultTransportForTests(null);
+  }
+});
+
+it("CBS-02 uses the exact company binding runner and refuses its kill switch instead of choosing a ready platform default", async () => {
+  const db: Db = database.db;
+  const { hosts } = await fakeExecutionHosts(db);
+  const runnerId = randomUUID();
+  const roleId = "rah:runner-observer";
+  const effective = await resolveInstalledAgentDefinition(db, {
+    agentId: roleId,
+    packageInstallId: assignmentInput.standingDefinition.packageInstallId,
+  });
+
+  await db.insert(platformAcpRunners).values({
+    id: runnerId,
+    adapter: "claude",
+    capabilityAgent: "claude",
+    model: "binding-fixture",
+    provider: { kind: "anthropic" },
+    readinessStatus: "Ready",
+  });
+  const binding = await createCompanySpecialistBinding(db, userId, roleId, {
+    owner: { kind: "company", companyId: request.companyId },
+    packageInstallId: effective.packageInstallId,
+    packageRevision: effective.resolvedRevision!,
+    definitionSha256: agentDefinitionSha256(effective.parsed),
+    enabled: true,
+    configuration: {},
+    grantActions: [],
+    runnerId,
+    idempotencyKey: randomUUID(),
+  });
+  const assignment = await createSpecialistAssignment(db, userId, {
+    ...assignmentInput,
+    specialistBindingId: binding.specialist.bindingId,
+    responsibleAgentId: roleId,
+    standingDefinition: {
+      ...assignmentInput.standingDefinition,
+      agentId: roleId,
+      definition: effective.parsed,
+      definitionSha256: agentDefinitionSha256(effective.parsed),
+    },
+  });
+  const admission = {
+    ...request,
+    assignmentId: assignment.id,
+    bindingId: binding.specialist.bindingId,
+  };
+
+  try {
+    await db
+      .update(platformAcpRunners)
+      .set({ enabled: false })
+      .where(eq(platformAcpRunners.id, runnerId));
+    await expect(
+      reserveCompanyAgentRun(db, userId, admission, hosts),
+    ).rejects.toMatchObject({ code: "EXECUTOR_UNAVAILABLE" });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status,revision FROM specialist_assignments WHERE id=$1",
+          [assignment.id],
+        )
+      ).rows[0],
+    ).toEqual({ status: "queued", revision: 1 });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM specialist_run_links WHERE assignment_id=$1",
+          [assignment.id],
+        )
+      ).rows[0],
+    ).toEqual({ count: 0 });
+    await db
+      .update(platformAcpRunners)
+      .set({ enabled: true })
+      .where(eq(platformAcpRunners.id, runnerId));
+    const receipt = await reserveCompanyAgentRun(db, userId, admission, hosts);
+
+    expect(
+      (
+        await database.pool.query(
+          "SELECT runner_id,runner_resolution_tier,runner_snapshot->>'model' AS model FROM run_sessions WHERE run_id=$1",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        runner_id: runnerId,
+        runner_resolution_tier: "binding",
+        model: "binding-fixture",
+      },
+    ]);
+  } finally {
+    resetResolverForTests();
+    setDefaultTransportForTests(null);
+  }
+});
+
 it("refuses stale business/input/binding revisions and forged launch fields without allocating work", async () => {
   for (const change of [
     { assignmentRevision: 2 },
@@ -504,9 +767,50 @@ it("rejects a changed installed definition witness and an assignment with a diff
   });
 });
 
+it("CBS-02 refuses assignment authority that differs from the reviewed specialist policy and accepts equivalent normalized policy", async () => {
+  for (const executionPolicy of [
+    { preset: "unattended" as const },
+    {
+      preset: "supervised" as const,
+      overrides: { permissions: "auto_approve" as const },
+    },
+  ]) {
+    const assignment = await createSpecialistAssignment(database.db, userId, {
+      ...assignmentInput,
+      executionPolicy,
+    });
+
+    await expect(
+      database.db.transaction((tx) =>
+        prepareCompanyAgentContext(tx, userId, {
+          ...request,
+          assignmentId: assignment.id,
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFIG",
+      details: { reason: "company_assignment_policy_mismatch" },
+    });
+  }
+  const assignment = await createSpecialistAssignment(database.db, userId, {
+    ...assignmentInput,
+    executionPolicy: { preset: "supervised", overrides: {} },
+  });
+
+  await expect(
+    database.db.transaction((tx) =>
+      prepareCompanyAgentContext(tx, userId, {
+        ...request,
+        assignmentId: assignment.id,
+      }),
+    ),
+  ).resolves.toMatchObject({ assignment: { id: assignment.id } });
+});
+
 it.each([
   ["rah:repo-observer", "company_agent_workspace_unsupported"],
   ["rah:flow-coordinator", "company_coordinator_required"],
+  ["rah:memory-observer", "company_agent_project_capability_unsupported"],
 ] as const)(
   "refuses %s on standalone company admission instead of changing its declared execution model",
   async (roleId, reason) => {

@@ -25,6 +25,7 @@ import { resolveInstalledAgentDefinition } from "./effective";
 import { buildOperationalContract } from "./launch-contract";
 
 import { knowledgeRevisionSchema } from "@/lib/brain/knowledge-types";
+import { inspectKnowledgeEvidenceReference } from "@/lib/brain/knowledge-reference";
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import { contentDigest } from "@/lib/evaluations/digest";
 import { MaisterError } from "@/lib/errors";
@@ -36,6 +37,7 @@ import {
   getSpecialistAssignmentInputInTransaction,
 } from "@/lib/specialist-assignments/store";
 import { postgresTextSchema } from "@/lib/text-schema";
+import { expandExecutionPolicy } from "@/lib/runs/execution-policy";
 
 const log = pino({
   name: "agents:company-context",
@@ -198,6 +200,17 @@ export async function prepareCompanyAgentContext(
       { details: { reason: "company_agent_workspace_unsupported" } },
     );
   if (
+    definition.memory !== "none" ||
+    (definition.capabilityProfile?.mcps?.length ?? 0) > 0
+  )
+    throw new MaisterError(
+      "CONFIG",
+      "Company sessions require native knowledge tools; project memory and project MCP bindings require explicit project admission",
+      {
+        details: { reason: "company_agent_project_capability_unsupported" },
+      },
+    );
+  if (
     definition.flow !== null ||
     binding.snapshot.coordinatorFlowRevisionId !== null
   )
@@ -224,6 +237,23 @@ export async function prepareCompanyAgentContext(
     request.inputRevision,
   );
   const standing = input.snapshot.standingDefinition;
+
+  if (
+    contentDigest(
+      expandExecutionPolicy(input.snapshot.authoritySnapshot.executionPolicy),
+    ) !== contentDigest(expandExecutionPolicy(binding.snapshot.executionPolicy))
+  )
+    throw new MaisterError(
+      "CONFIG",
+      "Assignment execution policy differs from the reviewed specialist policy; review and update the requested authority before admission",
+      { details: { reason: "company_assignment_policy_mismatch" } },
+    );
+  for (const reference of input.snapshot.objectiveInput.inputRefs)
+    await inspectKnowledgeEvidenceReference(
+      tx,
+      { kind: "user", userId },
+      reference,
+    );
 
   if (
     standing.agentId !== definition.id ||
