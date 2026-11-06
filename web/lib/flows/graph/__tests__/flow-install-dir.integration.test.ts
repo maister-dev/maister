@@ -1,5 +1,6 @@
 import type { NodeAttempt, Run } from "@/lib/db/schema";
 
+import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { eq } from "drizzle-orm";
@@ -10,7 +11,7 @@ import { closeDb } from "@/lib/db/client";
 import { runFlow } from "@/lib/flows/runner";
 import {
   schema,
-  seedGraphRun as seedGraphRunShared,
+  seedPlacedGraphRun as seedGraphRunShared,
   type SeededGraphRun,
 } from "@/test-support/graph-run-seed";
 import {
@@ -89,15 +90,22 @@ describe("runGraph — MAISTER_FLOW_DIR packaged-script execution (ADR-154)", ()
     };
     const seeded = await seedGraphRun(manifest);
 
-    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+    try {
+      await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
 
-    expect((await getRun(seeded.runId)).status).toBe("Review");
+      expect((await getRun(seeded.runId)).status).toBe("Review");
 
-    const verify = (await getAttempts(seeded.runId)).find(
-      (a) => a.nodeId === "verify",
-    );
+      const verify = (await getAttempts(seeded.runId)).find(
+        (a) => a.nodeId === "verify",
+      );
 
-    expect(verify?.status).toBe("Succeeded");
-    expect(verify?.stdout ?? "").toContain("flow-dir-script-ran");
+      expect(verify?.status).toBe("Succeeded");
+      expect(verify?.stdout ?? "").toContain("flow-dir-script-ran");
+    } finally {
+      await Promise.all([
+        rm(seeded.runtimeRoot, { recursive: true }),
+        rm(seeded.worktreePath, { recursive: true }),
+      ]);
+    }
   }, 60_000);
 });

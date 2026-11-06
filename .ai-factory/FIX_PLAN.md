@@ -126,3 +126,30 @@ No required assertion is skipped, quarantined or weakened.
 The branch remains based on verified current master `ee8a62553`. No remote
 mutation, production reproduction, historical repair, merge or deployment is
 part of this work.
+
+## R24 — packaged-script fixture placement
+
+The complete frozen Web integration gate at `e38ed6d14` reproduced one fixture
+failure: `flow-install-dir.integration.test.ts` seeded a live, unplaced Run,
+then its real `check` action entered the correctly fenced CLI traversal. Lazy
+placement reached the deliberate test-runner refusal for an unset
+`MAISTER_SUPERVISOR_URL`; no attempt or script execution began. Canonical
+production Flow launch already resolves a host and creates its assignment in
+the Run-insert transaction, regardless of node type.
+
+The fixture must use existing `seedPlacedGraphRun`, which creates real SQL host
+and assignment rows through the established fake transport boundary. Keep the
+actual bash process, pinned installed Flow directory, `MAISTER_FLOW_DIR` command
+guard, Review/Succeeded outcomes and literal script stdout assertions. Do not
+relax ownership, contact a live default Supervisor, replace command execution
+with fake output, or increase timeouts. No production or migration change is
+needed.
+
+- [x] Replace only this fixture's shared seed alias with `seedPlacedGraphRun`.
+- [x] Remove the exact returned runtime/worktree roots in fixture `finally`,
+  attempt both removals and propagate cleanup failures; do not leave raw helper
+  directories for a manual repair after each full run.
+- [x] Run its complete one-case real PostgreSQL owner, scoped lint, typecheck
+  and diff checks; verify exact invocation cleanup and record RED/GREEN evidence.
+- [ ] Repeat the complete frozen Web integration gate after the focused fix;
+  its previous 653 passing files do not qualify the failed complete lane.
