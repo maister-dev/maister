@@ -12,7 +12,12 @@ import {
 import { runGraph } from "./graph/runner-graph";
 import { compileManifest } from "./graph/compile";
 import { bindExecution } from "./runner-agent";
-import { claimFlowDriver, isFlowDriverClaimLost } from "./graph/driver-claim";
+import {
+  claimFlowDriver,
+  claimUnplacedSessionlessFlowDriver,
+  isFlowDriverClaimLost,
+} from "./graph/driver-claim";
+import { flowTraversalRequirements } from "./graph/traversal-requirements";
 import { flowDriverDatabase } from "./graph/driver-db";
 import { withFlowDriver } from "./graph/driver-lifetime";
 import { wakeParkedCoordinator } from "./graph/coordinator-wake";
@@ -51,24 +56,9 @@ export async function runFlow(
   }
 
   const graph = compileManifest(loaded.manifest);
-  const hasOwnedPrompts = [...graph.nodes.values()].some(
-    (node) =>
-      ["ai_coding", "judge", "orchestrator", "consensus"].includes(
-        node.nodeType,
-      ) ||
-      node.gates.some(
-        (gate) => gate.kind === "ai_judgment" || gate.kind === "skill_check",
-      ),
-  );
+  const requirements = flowTraversalRequirements(graph);
 
-  const hasCliActions = [...graph.nodes.values()].some(
-    (node) => node.nodeType === "cli",
-  );
-
-  if (
-    (!hasOwnedPrompts && !hasCliActions) ||
-    !["Running", "NeedsInput"].includes(loaded.run.status)
-  ) {
+  if (!["Running", "NeedsInput"].includes(loaded.run.status)) {
     await runGraph(loaded, { ...opts, db, runtimeRoot });
     await wakeParkedCoordinator({
       db,
@@ -82,7 +72,7 @@ export async function runFlow(
   // Keep host registration, canonical consumers and owner application on the
   // root database. Only this graph's traversal receives the fenced handle.
   const hosts = opts.executionHosts ?? createExecutionHosts({ db });
-  const execution = hasOwnedPrompts
+  const execution = requirements.ownedPrompts
     ? (opts.execution ??
       (await bindExecution(hosts, runId, {
         assignmentId: loaded.run.executionAssignmentId,
@@ -93,12 +83,16 @@ export async function runFlow(
   const assignmentId =
     execution?.client.assignment.id ??
     loaded.run.executionAssignmentId ??
-    (
-      await ensureAssignment(db, runId, "legacy_backfill", {
-        transport: hosts.transport,
-      })
-    ).id;
-  const claim = await claimFlowDriver(db, { runId, assignmentId });
+    (requirements.ownedPrompts || requirements.cliActions
+      ? (
+          await ensureAssignment(db, runId, "legacy_backfill", {
+            transport: hosts.transport,
+          })
+        ).id
+      : null);
+  const claim = assignmentId
+    ? await claimFlowDriver(db, { runId, assignmentId })
+    : await claimUnplacedSessionlessFlowDriver(db, runId);
 
   if (!claim) {
     logger.info({}, "flow-driver-already-owned");

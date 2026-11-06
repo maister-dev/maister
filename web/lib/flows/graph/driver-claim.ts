@@ -1,21 +1,133 @@
 import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
+import type { Run, ExecutionAssignment } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
 
 import { and, eq, isNull, lte, or, sql } from "drizzle-orm";
 
-import { runs } from "@/lib/db/schema";
+import { compileManifest } from "./compile";
+import { flowTraversalRequirements } from "./traversal-requirements";
+
+import {
+  runs,
+  executionAssignments,
+  flowRevisions,
+  flows,
+} from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { projectionTransaction } from "@/lib/execution-host/events/projection-transaction";
-import { lockCurrentSessionAssignment } from "@/lib/execution-host/session-binding";
+import { parseExecutableStoredFlowManifest } from "@/lib/flows/manifest-parser";
+import { manifestDigest } from "@/lib/flows/digest";
 
-export type FlowDriverClaim = Readonly<{
+type PlacedFlowDriverScope = Readonly<{
+  scope: "assignment";
   runId: string;
   assignmentId: string;
-  token: string;
+  assignmentEpoch: number;
 }>;
+type UnplacedSessionlessFlowDriverScope = Readonly<{
+  scope: "unplaced_sessionless";
+  runId: string;
+  assignmentId: null;
+  manifestDigest: string;
+}>;
+export type FlowDriverClaim = (
+  PlacedFlowDriverScope | UnplacedSessionlessFlowDriverScope
+) &
+  Readonly<{
+    token: string;
+  }>;
+
+/** NO KEY UPDATE serializes run transitions without blocking human-assignment event foreign keys. */
+async function lockFlowDriverRun(
+  tx: Db,
+  runId: string,
+): Promise<Pick<
+  Run,
+  | "id"
+  | "runKind"
+  | "status"
+  | "executionAssignmentId"
+  | "flowId"
+  | "flowRevisionId"
+> | null> {
+  const [run] = await tx
+    .select({
+      id: runs.id,
+      runKind: runs.runKind,
+      status: runs.status,
+      executionAssignmentId: runs.executionAssignmentId,
+      flowId: runs.flowId,
+      flowRevisionId: runs.flowRevisionId,
+    })
+    .from(runs)
+    .where(eq(runs.id, runId))
+    .for("no key update");
+
+  return run?.runKind === "flow" &&
+    ["Running", "NeedsInput"].includes(run.status)
+    ? run
+    : null;
+}
+
+async function currentPlacedAssignment(
+  tx: Db,
+  runId: string,
+  assignmentId: string,
+): Promise<ExecutionAssignment | null> {
+  const [assignment] = await tx
+    .select()
+    .from(executionAssignments)
+    .where(
+      and(
+        eq(executionAssignments.id, assignmentId),
+        eq(executionAssignments.runId, runId),
+      ),
+    )
+    .for("update");
+
+  return assignment?.state === "active" ? assignment : null;
+}
+
+async function hasAssignmentHistory(tx: Db, runId: string): Promise<boolean> {
+  const [assignment] = await tx
+    .select({ id: executionAssignments.id })
+    .from(executionAssignments)
+    .where(eq(executionAssignments.runId, runId))
+    .limit(1);
+
+  return assignment !== undefined;
+}
+
+/** Read the stored graph, never a client-supplied no-host flag or an invented assignment. */
+async function storedSessionlessManifestDigest(
+  tx: Db,
+  run: Pick<Run, "flowId" | "flowRevisionId">,
+): Promise<string | null> {
+  const [source] = run.flowRevisionId
+    ? await tx
+        .select({ manifest: flowRevisions.manifest })
+        .from(flowRevisions)
+        .where(eq(flowRevisions.id, run.flowRevisionId))
+    : await tx
+        .select({ manifest: flows.manifest })
+        .from(flows)
+        .where(eq(flows.id, run.flowId ?? ""));
+
+  if (!source) return null;
+  const manifest = parseExecutableStoredFlowManifest(source.manifest, {
+    code: "CONFIG",
+    surface: "unplaced-flow-driver",
+    manifestLabel: "stored Flow traversal",
+  });
+  const requirements = flowTraversalRequirements(compileManifest(manifest));
+
+  return requirements.ownedPrompts || requirements.cliActions
+    ? null
+    : manifestDigest(manifest);
+}
 
 export class FlowDriverClaimLost extends MaisterError {
   constructor(claim: FlowDriverClaim) {
@@ -51,8 +163,25 @@ export async function assertFlowDriverClaim(
   tx: Db,
   claim: FlowDriverClaim,
 ): Promise<void> {
-  if (!(await lockCurrentSessionAssignment(tx, claim)))
+  const run = await lockFlowDriverRun(tx, claim.runId);
+
+  if (!run || run.executionAssignmentId !== claim.assignmentId)
     throw new FlowDriverClaimLost(claim);
+  if (claim.scope === "assignment") {
+    const assignment = await currentPlacedAssignment(
+      tx,
+      claim.runId,
+      claim.assignmentId,
+    );
+
+    if (assignment?.epoch !== claim.assignmentEpoch)
+      throw new FlowDriverClaimLost(claim);
+  } else if (
+    (await hasAssignmentHistory(tx, claim.runId)) ||
+    (await storedSessionlessManifestDigest(tx, run)) !== claim.manifestDigest
+  ) {
+    throw new FlowDriverClaimLost(claim);
+  }
   await assertFlowDriverCommit(tx, claim);
 }
 
@@ -70,7 +199,9 @@ export async function assertFlowDriverCommit(
     .where(
       and(
         eq(runs.id, claim.runId),
-        eq(runs.executionAssignmentId, claim.assignmentId),
+        claim.scope === "assignment"
+          ? eq(runs.executionAssignmentId, claim.assignmentId)
+          : isNull(runs.executionAssignmentId),
         eq(runs.runKind, "flow"),
         eq(runs.flowDriverToken, claim.token),
         sql`${runs.flowDriverLeaseExpiresAt} > clock_timestamp()`,
@@ -78,6 +209,44 @@ export async function assertFlowDriverCommit(
     );
 
   if (!current) throw new FlowDriverClaimLost(claim);
+  if (claim.scope === "unplaced_sessionless") {
+    const [run] = await tx.select().from(runs).where(eq(runs.id, claim.runId));
+
+    if (
+      !run ||
+      (await hasAssignmentHistory(tx, claim.runId)) ||
+      (await storedSessionlessManifestDigest(tx, run)) !== claim.manifestDigest
+    )
+      throw new FlowDriverClaimLost(claim);
+  }
+}
+
+/** One lease policy; each public claim constructor supplies its separate, locked authority proof. */
+async function acquireFlowDriverLease(
+  tx: Db,
+  runId: string,
+): Promise<string | null> {
+  const token = randomUUID();
+  const [claimed] = await tx
+    .update(runs)
+    .set({
+      flowDriverToken: token,
+      flowDriverLeaseExpiresAt: sql`clock_timestamp() + interval '30 seconds'`,
+    })
+    .where(
+      and(
+        eq(runs.id, runId),
+        eq(runs.runKind, "flow"),
+        or(eq(runs.status, "Running"), eq(runs.status, "NeedsInput")),
+        or(
+          isNull(runs.flowDriverToken),
+          lte(runs.flowDriverLeaseExpiresAt, sql`clock_timestamp()`),
+        ),
+      ),
+    )
+    .returning({ id: runs.id });
+
+  return claimed ? token : null;
 }
 
 export async function claimFlowDriver(
@@ -85,28 +254,63 @@ export async function claimFlowDriver(
   input: { runId: string; assignmentId: string },
 ): Promise<FlowDriverClaim | null> {
   return projectionTransaction(db, async (tx) => {
-    if (!(await lockCurrentSessionAssignment(tx, input))) return null;
-    const token = randomUUID();
-    const [claimed] = await tx
-      .update(runs)
-      .set({
-        flowDriverToken: token,
-        flowDriverLeaseExpiresAt: sql`clock_timestamp() + interval '30 seconds'`,
-      })
-      .where(
-        and(
-          eq(runs.id, input.runId),
-          eq(runs.runKind, "flow"),
-          or(eq(runs.status, "Running"), eq(runs.status, "NeedsInput")),
-          or(
-            isNull(runs.flowDriverToken),
-            lte(runs.flowDriverLeaseExpiresAt, sql`clock_timestamp()`),
-          ),
-        ),
-      )
-      .returning({ id: runs.id });
+    const run = await lockFlowDriverRun(tx, input.runId);
 
-    return claimed ? { ...input, token } : null;
+    if (!run || run.executionAssignmentId !== input.assignmentId) return null;
+    const assignment = await currentPlacedAssignment(
+      tx,
+      input.runId,
+      input.assignmentId,
+    );
+
+    if (!assignment) return null;
+    const token = await acquireFlowDriverLease(tx, input.runId);
+
+    return token
+      ? {
+          ...input,
+          scope: "assignment",
+          assignmentEpoch: assignment.epoch,
+          token,
+        }
+      : null;
+  });
+}
+
+/** Compatibility only for stored no-host graphs that have never had a placement. */
+export async function claimUnplacedSessionlessFlowDriver(
+  db: Db,
+  runId: string,
+): Promise<FlowDriverClaim | null> {
+  return projectionTransaction(db, async (tx) => {
+    const run = await lockFlowDriverRun(tx, runId);
+
+    if (!run || run.executionAssignmentId !== null) return null;
+    if (await hasAssignmentHistory(tx, runId))
+      throw new MaisterError(
+        "PRECONDITION",
+        "The Flow has placement history; recover its assignment before continuing",
+        { details: { reason: "assignment_missing", runId } },
+      );
+    const digest = await storedSessionlessManifestDigest(tx, run);
+
+    if (digest === null)
+      throw new MaisterError(
+        "PRECONDITION",
+        "An unplaced Flow with host or CLI work requires its normal placement",
+        { details: { reason: "assignment_missing", runId } },
+      );
+    const token = await acquireFlowDriverLease(tx, runId);
+
+    return token
+      ? {
+          scope: "unplaced_sessionless",
+          runId,
+          assignmentId: null,
+          manifestDigest: digest,
+          token,
+        }
+      : null;
   });
 }
 

@@ -66,7 +66,13 @@ describe("runCliStep", () => {
           context: ctxBase(),
           driver: {
             signal: controller.signal,
-            claim: { runId: "r1", assignmentId: "a1", token: "driver-token" },
+            claim: {
+              scope: "assignment",
+              runId: "r1",
+              assignmentId: "a1",
+              assignmentEpoch: 1,
+              token: "driver-token",
+            },
           },
         },
       ),

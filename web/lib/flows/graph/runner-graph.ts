@@ -58,7 +58,7 @@ import {
 import { runNodeGates } from "./gates-exec";
 import { FlowPromptContinuationPending } from "./prompt-owner";
 import { ConsensusGenerationPending } from "./consensus/prompt-owner";
-import { isFlowDriverClaimLost } from "./driver-claim";
+import { FlowDriverClaimLost, isFlowDriverClaimLost } from "./driver-claim";
 import { persistLocalActionCompletion } from "./action-completion";
 import { persistFinishContinuation } from "./finish-continuation";
 import { closeAppliedFlowPromptSession } from "./prompt-session-cleanup";
@@ -2355,7 +2355,7 @@ export async function runGraph(
     (attempt) => attempt.nodeId === loaded.run.currentStepId,
   );
   const gatePermissionContinuation =
-    opts.driver && gateParentAttempt
+    opts.driver?.claim.scope === "assignment" && gateParentAttempt
       ? await loadGatePermissionContinuation(db, {
           runId,
           assignmentId: opts.driver.claim.assignmentId,
@@ -2941,11 +2941,14 @@ export async function runGraph(
         resumingThisNode &&
         opts.driver &&
         lastForNode?.executionAssignmentId !== opts.driver.claim.assignmentId
-      )
+      ) {
+        if (opts.driver.claim.scope === "unplaced_sessionless")
+          throw new FlowDriverClaimLost(opts.driver.claim);
         throw staleSessionBinding(
           runId,
           lastForNode?.executionAssignmentId ?? opts.driver.claim.assignmentId,
         );
+      }
 
       const completedAction =
         resumingThisNode && !isInFlightNodePermissionContinuation
@@ -3212,13 +3215,15 @@ export async function runGraph(
           resumingThisNode &&
           (isConsensusResume || isOrchestratorResume) &&
           opts.driver
-        )
+        ) {
+          if (opts.driver.claim.scope !== "assignment")
+            throw new FlowDriverClaimLost(opts.driver.claim);
           await markCoordinatorResumedRunning(
             nodeAttemptId,
             opts.driver.claim.assignmentId,
             db,
           );
-        else await markNodeRunning(nodeAttemptId, db);
+        } else await markNodeRunning(nodeAttemptId, db);
         if (resumingThisNode && isOrchestratorResume)
           await clearFailedCoordinatorWake(db, runId);
       }
@@ -5448,7 +5453,8 @@ export async function runGraph(
   // create/prompt failure must still close that exact leased generation.
   const failureStatus = or(
     eq(runs.status, "Running"),
-    isInFlightPermissionContinuation && opts.driver
+    isInFlightPermissionContinuation &&
+      opts.driver?.claim.scope === "assignment"
       ? and(
           eq(runs.status, "NeedsInput"),
           eq(runs.executionAssignmentId, opts.driver.claim.assignmentId),
@@ -5461,7 +5467,7 @@ export async function runGraph(
   // the exact NeedsInput generation above. Concurrent abandon, takeover,
   // checkpoint or reconciliation retains its state.
   if (failed && runErrorCode === "CRASH") {
-    await db.transaction(async (tx: Db) => {
+    const crashed = await db.transaction(async (tx: Db): Promise<boolean> => {
       const rows = await tx
         .update(runs)
         .set({
@@ -5513,7 +5519,23 @@ export async function runGraph(
           },
         });
       }
+
+      return rows.length > 0;
     });
+
+    if (!crashed) {
+      const [current] = await rootDb
+        .select({ status: runs.status })
+        .from(runs)
+        .where(eq(runs.id, runId));
+
+      log2.info(
+        { requestedStatus: "Crashed", retainedStatus: current?.status ?? null },
+        "runGraph terminal outcome already decided — preserving current state",
+      );
+
+      return;
+    }
     await systemCloseActiveAssignmentsForRun({
       db: rootDb,
       runId,
@@ -5521,7 +5543,7 @@ export async function runGraph(
     });
     log2.error({ runErrorCode }, "runGraph ended Crashed");
   } else if (failed) {
-    await db.transaction(async (tx: Db) => {
+    const didFail = await db.transaction(async (tx: Db): Promise<boolean> => {
       const rows = await tx
         .update(runs)
         .set({ status: "Failed", endedAt, currentStepId: null })
@@ -5565,7 +5587,23 @@ export async function runGraph(
           },
         });
       }
+
+      return rows.length > 0;
     });
+
+    if (!didFail) {
+      const [current] = await rootDb
+        .select({ status: runs.status })
+        .from(runs)
+        .where(eq(runs.id, runId));
+
+      log2.info(
+        { requestedStatus: "Failed", retainedStatus: current?.status ?? null },
+        "runGraph terminal outcome already decided — preserving current state",
+      );
+
+      return;
+    }
     await systemCloseActiveAssignmentsForRun({
       db: rootDb,
       runId,
