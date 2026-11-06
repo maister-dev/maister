@@ -199,7 +199,7 @@ export function resolveAgentRunner(
 export function resolveCompanyAgentRunner(input: {
   readonly bindingRunnerId: string | null;
   readonly agent: AgentRunnerResolutionInput["agent"];
-  readonly platform: AgentRunnerResolutionInput["platform"];
+  readonly platform: { readonly defaultRunnerId: string | null };
   readonly runners: readonly RunnerCatalogEntry[];
 }): RunnerResolution {
   return resolveStandaloneRunner(input.agent, input.runners, [

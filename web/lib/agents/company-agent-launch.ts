@@ -78,11 +78,6 @@ export async function reserveCompanyAgentRun(
         .where(eq(platformRuntimeSettings.id, "singleton"))
         .for("share");
 
-      if (!runtime)
-        throw new MaisterError(
-          "EXECUTOR_UNAVAILABLE",
-          "Configure the platform default ACP runner before admitting company work",
-        );
       const runners = await tx.select().from(platformAcpRunners).for("share");
       const resolution = resolveCompanyAgentRunner({
         bindingRunnerId: context.binding.snapshot.runnerId,
@@ -91,7 +86,7 @@ export async function reserveCompanyAgentRun(
           mode: definition.mode,
           workspace: definition.workspace,
         },
-        platform: { defaultRunnerId: runtime.defaultRunnerId },
+        platform: { defaultRunnerId: runtime?.defaultRunnerId ?? null },
         runners: runners.map(runnerCatalogEntry),
       });
 

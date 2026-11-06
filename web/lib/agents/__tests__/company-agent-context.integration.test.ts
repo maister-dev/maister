@@ -59,6 +59,7 @@ import { reserveCompanyAgentRun } from "../company-agent-launch";
 import { startAgentSession } from "../launch";
 import { getCompanyAgentRunHistory } from "../activity-queries";
 
+import { readTranscriptPage } from "@/lib/runs/transcript-page";
 import { authorizePeekRun } from "@/lib/runs/peek-read-model";
 import { requireActiveUserById } from "@/lib/authz";
 import { GET as companyHistoryGet } from "@/app/api/specialists/[specialistId]/runs/route";
@@ -75,6 +76,8 @@ import {
 } from "@/lib/db/schema";
 import { createExecutionHosts } from "@/lib/execution-host";
 import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
+import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
+import { startProjectionWorker } from "@/lib/execution-host/events/projection-worker";
 import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import {
@@ -233,6 +236,19 @@ beforeAll(async () => {
       "workspace: none",
       "memory: enabled\nworkspace: none",
     ),
+  );
+  await writeFile(
+    join(source, "maister-agents/wire-observer.md"),
+    primarySource +
+      "fixture-output:" +
+      JSON.stringify({
+        bytes: 0,
+        text:
+          "```json maister:output\n" +
+          JSON.stringify(operationalSuccessFixture()) +
+          "\n```",
+      }) +
+      "\n",
   );
   await initRepo(source);
   await git(
@@ -428,6 +444,188 @@ it("CBS-02 adopts the server-resolved company directory through the real supervi
     setDefaultTransportForTests(null);
   }
 }, 120000);
+
+it("CBS-02 completes a company assignment Run through the real supervisor and ACP process with physical quiescence", async () => {
+  const db: Db = database.db;
+  const supervisor = await startRealSupervisor({
+    runtimeRoot: join(root, "company-driver-host"),
+    workspaceRoots: [join(root, "worktrees")],
+    fixtureArgs: ["--hang"],
+  });
+  const restoreUrl = useRealSupervisorUrl(supervisor.url);
+  const worker = startProjectionWorker({ db, projectors: canonicalProjectors });
+  const previousCap = process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+
+  setDefaultTransportForTests(null);
+  resetResolverForTests();
+  resetRegistrarStateForTests();
+  vi.stubEnv("MAISTER_MAX_CONCURRENT_AGENTS", "100");
+  try {
+    const roleId = "rah:wire-observer";
+    const effective = await resolveInstalledAgentDefinition(db, {
+      agentId: roleId,
+      packageInstallId: assignmentInput.standingDefinition.packageInstallId,
+    });
+    const runnerId = randomUUID();
+
+    await db.insert(platformAcpRunners).values({
+      id: runnerId,
+      adapter: "claude",
+      capabilityAgent: "claude",
+      model: "company-wire-fixture",
+      provider: { kind: "anthropic" },
+      readinessStatus: "Ready",
+    });
+    const binding = await createCompanySpecialistBinding(db, userId, roleId, {
+      owner: { kind: "company", companyId: request.companyId },
+      packageInstallId: effective.packageInstallId,
+      packageRevision: effective.resolvedRevision!,
+      definitionSha256: agentDefinitionSha256(effective.parsed),
+      enabled: true,
+      configuration: {},
+      grantActions: ["knowledge:read", "knowledge:propose"],
+      runnerId,
+      idempotencyKey: randomUUID(),
+    });
+    const contract = buildOperationalContract(effective);
+    const assignment = await createSpecialistAssignment(db, userId, {
+      ...assignmentInput,
+      specialistBindingId: binding.specialist.bindingId,
+      responsibleAgentId: roleId,
+      standingDefinition: {
+        ...assignmentInput.standingDefinition,
+        agentId: roleId,
+        definition: effective.parsed,
+        definitionSha256: agentDefinitionSha256(effective.parsed),
+      },
+      objectiveInput: {
+        ...assignmentInput.objectiveInput,
+        expectedResult: {
+          schemaRef: contract.schemaRef,
+          schemaVersion: contract.schemaVersion,
+          sha256: contract.sha256,
+          required: true,
+        },
+      },
+    });
+    const hosts = createExecutionHosts({
+      db,
+      transport: createLocalDirectTransport(),
+    });
+    const beforeUnconfigured = (
+      await database.pool.query(
+        "SELECT (SELECT count(*) FROM runs) AS runs,(SELECT count(*) FROM run_sessions) AS sessions,(SELECT count(*) FROM specialist_run_links) AS links",
+      )
+    ).rows[0];
+
+    await expect(
+      reserveCompanyAgentRun(db, userId, request, hosts),
+    ).rejects.toMatchObject({ code: "EXECUTOR_UNAVAILABLE" });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT (SELECT count(*) FROM runs) AS runs,(SELECT count(*) FROM run_sessions) AS sessions,(SELECT count(*) FROM specialist_run_links) AS links",
+        )
+      ).rows[0],
+    ).toEqual(beforeUnconfigured);
+    const receipt = await reserveCompanyAgentRun(
+      db,
+      userId,
+      {
+        ...request,
+        assignmentId: assignment.id,
+        bindingId: binding.specialist.bindingId,
+      },
+      hosts,
+    );
+
+    expect(await tryStartRun(receipt.runId, { db })).toMatchObject({
+      started: true,
+    });
+    await startAgentSession(receipt.runId, { db, executionHosts: hosts });
+    await startAgentSession(receipt.runId, { db, executionHosts: hosts });
+    const [run] = await db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, receipt.runId));
+
+    expect(run).toMatchObject({
+      status: "Done",
+      projectId: null,
+      companyId: request.companyId,
+      operationalTerminal: { effectiveOutcome: "success" },
+    });
+    const commands = await database.pool.query(
+      "SELECT kind,state FROM execution_commands WHERE run_id=$1 ORDER BY created_at,id",
+      [receipt.runId],
+    );
+
+    expect(
+      commands.rows.filter((command) => command.kind === "session.create"),
+    ).toHaveLength(1);
+    expect(
+      commands.rows.filter((command) => command.kind === "session.prompt"),
+    ).toHaveLength(1);
+    expect(
+      commands.rows.some((command) => command.kind === "workspace.adopt"),
+    ).toBe(true);
+    const sessions = await hosts.local().listSessions();
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({ status: "exited" });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM run_results WHERE run_id=$1 AND validity='valid'",
+          [receipt.runId],
+        )
+      ).rows[0],
+    ).toEqual({ count: 1 });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM project_tokens WHERE company_run_id=$1 AND revoked_at IS NULL",
+          [receipt.runId],
+        )
+      ).rows[0],
+    ).toEqual({ count: 0 });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status,revision FROM specialist_assignments WHERE id=$1",
+          [assignment.id],
+        )
+      ).rows[0],
+    ).toEqual({ status: "active", revision: 3 });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM execution_assignments WHERE run_id=$1 AND state='active'",
+          [receipt.runId],
+        )
+      ).rows[0],
+    ).toEqual({ count: 0 });
+    await expect(
+      authorizePeekRun(userId, receipt.runId),
+    ).resolves.toMatchObject({ canReadTranscript: true });
+    const transcript = await readTranscriptPage(userId, receipt.runId, {
+      limit: "20",
+    });
+
+    expect(JSON.stringify(transcript.messages)).toContain("maister:output");
+  } finally {
+    if (previousCap === undefined)
+      delete process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+    else process.env.MAISTER_MAX_CONCURRENT_AGENTS = previousCap;
+    await worker.stop();
+    await stopRuntimeEventConsumers();
+    await supervisor.stop();
+    restoreUrl();
+    resetRegistrarStateForTests();
+    resetResolverForTests();
+    setDefaultTransportForTests(null);
+  }
+}, 90000);
 
 it("CBS-02 shares the existing bounded agent pool across project and company work and promotes a queued company run once", async () => {
   const db: Db = database.db;

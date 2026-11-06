@@ -71,7 +71,7 @@ The result contains typed current binding, effective definition/configuration/ex
 
 The internal `reserveCompanyAgentRun` service admits one exact queued assignment through the existing `runs`, default `run_sessions`, execution-host placement and `specialist_run_links`. It rechecks current preflight under the assignment lock, freezes the reviewed configuration, policy, result and scheduled request, and classifies the exact assignment input before commit. Its assignment becomes `active` while the Run waits in the existing `Pending` queue; no process or credential is created by reservation. Competing admissions using the same business revision yield one committed Run and a conflict. Source denial rolls back the Run, session, placement, link, assignment transition and transactional outbox changes together.
 
-Company runner selection uses the shared standalone resolver: exact binding runner, declared agent default, then platform default. There is no project tier. A selected missing, disabled, unready or read-only-incompatible runner refuses admission; it never silently chooses a different configured runner. Required read-only diagnostics come from the selected execution-host boundary. Assignment and reviewed execution policies must have equal normalized axes; changing requested authority requires explicit review. Native input references are re-inspected under current initiating-user and executing-specialist authority, including exact available version witnesses. Declared private project memory or project MCP bindings are refused until their actual project admission is provided. Native standalone dispatch uses the shared owned-session path below. Full continuation/recovery and company graph execution remain the T20/T20.1 qualification gates.
+Company runner selection uses the shared standalone resolver: exact binding runner, declared agent default, then platform default. There is no project tier. An explicit binding/agent runner does not require a configured platform-default row; when every tier is absent, admission refuses without allocating a Run/session/link. A selected missing, disabled, unready or read-only-incompatible runner refuses admission; it never silently chooses a different configured runner. Required read-only diagnostics come from the selected execution-host boundary. Assignment and reviewed execution policies must have equal normalized axes; changing requested authority requires explicit review. Native input references are re-inspected under current initiating-user and executing-specialist authority, including exact available version witnesses. Declared private project memory or project MCP bindings are refused until their actual project admission is provided. Native standalone dispatch uses the shared owned-session path below. Full continuation/recovery and company graph execution remain the T20/T20.1 qualification gates.
 
 ### Company agent credentials
 
@@ -307,8 +307,9 @@ prompt or credential and preserves the assignment/input for governed recovery.
 Native initial qualification uses a real pinned package, real PostgreSQL and a
 canonical fake host whose physical session state explicitly becomes exited;
 agent prose or a clean return alone cannot pass quiescence. Real supervisor
-adoption/SQLite restart are separately qualified above. Actual company ACP
-package invocation, idle/HITL continuations, interrupted/replaced owners, company
+adoption/SQLite restart are separately qualified above; the supervisor/ACP fixture
+loop is qualified below. Actual company model/companion-package invocation,
+idle/HITL continuations, interrupted/replaced owners, company
 activity pages and the stand pilot retain their separate acceptance gates.
 
 ### Company execution content access
@@ -330,3 +331,18 @@ and signed cursor. Source closure filters before pagination; the cursor also bin
 the current receiving user/read-grant identity and revision. History contains no
 scheduled input or diagnostic prose. Company activity UI and full Run navigation
 remain subsequent slices.
+
+
+### Native company supervisor/ACP qualification
+
+A company standalone qualification runs the native reservation, shared scheduler,
+owned create/prompt driver and operational finalization through a real supervisor
+child, actual ACP fixture process and the application's autonomous canonical
+projection registry/worker. No manual projection substitutes for background
+terminal confirmation. It checks one physical session, typed result,
+quiescence, credential revocation, placement release and retained source-authorized
+transcript after completion. A repeated driver invocation creates no second session,
+prompt or result. Business assignment acceptance remains separate. The fixture
+also verifies explicit binding-runner admission without a platform-default row and
+atomic refusal when every runner tier is absent. This qualifies native mechanics;
+it does not establish real model/companion-package or stand-pilot readiness.
