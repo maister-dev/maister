@@ -44,6 +44,13 @@ const CRON_TOKEN = process.env.MAISTER_CRON_TOKEN ?? "e2e-cron-token-change-me";
 // assertion already green.
 test.setTimeout(180_000);
 
+function releaseDelegatedFlowChildren(): void {
+  mkdirSync(path.dirname(DELEGATED_FLOW_RELEASE), { recursive: true });
+  writeFileSync(DELEGATED_FLOW_RELEASE, "");
+}
+
+test.afterEach(releaseDelegatedFlowChildren);
+
 test("flow-target delegation: launch → flow children in Review → the parked coordinator wakes", async ({
   page,
   request,
@@ -158,8 +165,7 @@ test("flow-target delegation: launch → flow children in Review → the parked 
 
   // The coordinator parked with its children held; release them, so they reach
   // `Review` only after the park — the order the wake below exists to prove.
-  mkdirSync(path.dirname(DELEGATED_FLOW_RELEASE), { recursive: true });
-  writeFileSync(DELEGATED_FLOW_RELEASE, "");
+  releaseDelegatedFlowChildren();
 
   // Every child is a run_kind='flow' run with a carrier task — the thing that
   // did not exist before ADR-163.
