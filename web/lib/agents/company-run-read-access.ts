@@ -37,7 +37,7 @@ export async function assertCompanyRunReadAccess(
   );
 }
 
-async function assertCompanyRunReadAccessInTransaction(
+export async function assertCompanyRunReadAccessInTransaction(
   tx: SqlTransaction,
   userId: string,
   runId: string,

@@ -31,6 +31,7 @@ import {
 } from "../company-flow-context";
 import { updateCompanyFlowBinding } from "../company-flow-binding-mutations";
 import { reserveCompanyFlowRun } from "../company-flow-launch";
+import { loadCompanyFlowSessionContext } from "../company-flow-session-context";
 import { assertCompanyRunReadAccess } from "../company-run-read-access";
 import {
   issueCompanyAgentRunToken,
@@ -1318,6 +1319,88 @@ it("reserves one native company graph with frozen sessions/placement, refuses a 
     setDefaultTransportForTests(null);
   }
 }, 120000);
+
+it("loads frozen company graph input and sessions without repository records, refusing unsupported hosts, disabled runners and changed schema bytes", async () => {
+  const before = await counts();
+
+  await expect(
+    database.db.transaction((tx) =>
+      loadCompanyFlowSessionContext(tx, nativeFlowRunId),
+    ),
+  ).rejects.toMatchObject({
+    code: "CONFIG",
+    details: { flowManifestIncompatibility: { kind: "engine_incompatible" } },
+  });
+  const compatibility = useEngineVersion("3.12.0");
+
+  try {
+    const context = await database.db.transaction((tx) =>
+      loadCompanyFlowSessionContext(tx, nativeFlowRunId),
+    );
+
+    expect(context).toMatchObject({
+      run: { id: nativeFlowRunId, projectId: null, taskId: null, flowId: null },
+      owner: { snapshot: { schemaVersion: 2, executionKind: "flow" } },
+      input: {
+        snapshot: { objectiveInput: preparedAssignment.objectiveInput },
+      },
+      primarySessionName: "default",
+      sessions: [{ sessionName: "default" }],
+      flowRefId: "rah-control",
+      resultContract: { kind: "flow_export", required: true },
+    });
+    expect(context).not.toHaveProperty("task");
+    expect(context).not.toHaveProperty("project");
+    const session = context.sessions[0]!;
+
+    await database.pool.query(
+      "UPDATE platform_acp_runners SET enabled=false WHERE id=$1",
+      [session.runnerId],
+    );
+    try {
+      await expect(
+        database.db.transaction((tx) =>
+          loadCompanyFlowSessionContext(tx, nativeFlowRunId),
+        ),
+      ).rejects.toMatchObject({ code: "EXECUTOR_UNAVAILABLE" });
+    } finally {
+      await database.pool.query(
+        "UPDATE platform_acp_runners SET enabled=true WHERE id=$1",
+        [session.runnerId],
+      );
+    }
+    await database.db.transaction(async (tx) => {
+      await tx.execute(sql`SAVEPOINT missing_company_flow_session`);
+      await tx.execute(
+        sql`DELETE FROM run_sessions WHERE run_id=${nativeFlowRunId}`,
+      );
+      try {
+        await expect(
+          loadCompanyFlowSessionContext(tx, nativeFlowRunId),
+        ).rejects.toMatchObject({ code: "CONFIG" });
+      } finally {
+        await tx.execute(
+          sql`ROLLBACK TO SAVEPOINT missing_company_flow_session`,
+        );
+      }
+    });
+    const original = await readFile(schemaPath, "utf8");
+
+    try {
+      await writeFile(schemaPath, original + "\n ");
+      await expect(
+        database.db.transaction((tx) =>
+          loadCompanyFlowSessionContext(tx, nativeFlowRunId),
+        ),
+      ).rejects.toMatchObject({ code: "CONFIG" });
+    } finally {
+      await writeFile(schemaPath, original);
+    }
+    expect(await counts()).toEqual(before);
+  } finally {
+    compatibility.mockRestore();
+  }
+});
 
 it("uses exact company graph node attribution, current role authority and source-guarded history without issuing standalone credentials", async () => {
   await expect(

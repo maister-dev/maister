@@ -131,6 +131,8 @@ Generated main `0248_company_flow_execution` extends the existing Run owner CHEC
 
 Company runs retain `runs.flow_revision_id`, binding snapshot and required result contract; `project_id`, `task_id`, and project `flow_id` are null. Existing project `flows.project_id NOT NULL` remains unchanged. Runner/session/prompt/result/finalization readers use the frozen revision, not newest catalog or mutable `flows.manifest`.
 
+Company graph execution loading restores the exact retained assignment input and standing role independently of the queued-admission constructor. Current read/update, coordinator/provider and installed definition witnesses must still match. The executable parser enforces the actual engine range; the real pinned export schema, input expected-result identity and retained Run contract must agree. Frozen session names/runners come from the existing `run_sessions` rows and must match the compiled graph, with current readiness/read-only compatibility checked for each exact runner. No new default is selected on resume. Loading allocates no Project, Task, workspace, token or host command and does not disclose input to an agent; current node professional/source checks remain mandatory before prompt admission. Company graph traversal must consume this explicit owner/input context rather than manufacture repository records.
+
 ### Scope and launch refusals
 
 | Surface | Required company extension | Refusal/compatibility |
