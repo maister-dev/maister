@@ -65,6 +65,18 @@ validation. Authoring acceptance alone does not enable company execution: the
 host remains at 3.11.1 until the native graph runtime is qualified. Existing
 binding enablement refuses the higher capability floor before execution.
 
+The company graph prompt contract uses \`assignment.id\`, \`assignment.inputRevision\`,
+\`assignment.inputSha256\`, and the frozen objective fields \`assignment.objective\`,
+\`assignment.expectedOutcome\`, \`assignment.input\`, \`assignment.targetIds\`,
+\`assignment.inputRefs\`, \`assignment.constraints\`, \`assignment.expectedResult\`,
+and \`assignment.verification\`. Its real \`run.id\` and company \`run.owner\` do
+not imply a Task: \`task.*\`, \`run.attemptNumber\` and \`run.projectSlug\` are
+absent for company execution. Undefined repository-only references fail strict
+rendering. Shared \`executor\`, \`steps\`, \`artifacts\` and filtered \`env\`
+semantics are unchanged. Input text is inserted once, never reparsed as templates.
+Native company dispatch and project-assignment wiring still require runtime
+qualification; this context contract alone does not enable company execution.
+
 ## Node types (discriminated by \`type\`)
 
 Fields common to every node: \`id\`, \`type\`, \`transitions\`, \`input\`, \`output\`,

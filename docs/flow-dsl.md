@@ -56,6 +56,15 @@ Grammar/authoring support is qualified separately from execution. The running
 native graph-runtime slice and its compatibility mirrors are qualified. See
 [the specialist runtime contract](system-analytics/specialist-runtime.md).
 
+The company prompt context uses `assignment.id`, `assignment.inputRevision`,
+`assignment.inputSha256` and the exact frozen objective fields: `objective`,
+`expectedOutcome`, `input`, `targetIds`, `inputRefs`, `constraints`,
+`expectedResult`, and `verification`. It supplies the real `run.id` and company
+`run.owner`, with no `task`, task attempt number or `run.projectSlug`. Strict
+references to repository-only paths fail. Shared executor/steps/artifacts and
+filtered environment keep their existing semantics. The context builder is
+qualified independently; native graph dispatch remains pending.
+
 Explicit retry and rework workspace policies must be `keep`. Omitted retry
 workspace policy still defaults to repository checkpoint rewind and is refused
 for this declaration. Human `allowTakeover` and `allowFurtherTracks` are refused

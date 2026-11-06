@@ -11,16 +11,13 @@ import type { Db } from "@/lib/execution-host/db";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
 import type { SessionEnforcementProfile } from "./enforcement-profile";
 import type { HooksConfig } from "./hooks-config";
-import type { FlowContext, StepResult } from "./types";
+import type { ExecutionFlowContext, StepResult } from "./types";
 import type { CreateSessionPayload } from "@/lib/execution-host/contracts";
 
 import { randomUUID } from "node:crypto";
 
 import { eq, and, isNull, isNotNull, sql } from "drizzle-orm";
 import pino from "pino";
-
-import { isResultProducerNode } from "@/lib/run-results/contract";
-import { nativeFindingsCompletionPrompt } from "@/lib/run-results/findings-prompt";
 
 import { PERMISSION_RESUME_PROMPT } from "./graph/permission-resume";
 import { recordDispatchedPrompt } from "./graph/prompt-record";
@@ -63,7 +60,11 @@ import {
   type FlowPermissionOwner,
 } from "./graph/prompt-permission";
 
-import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
+import {
+  isResultProducerNode,
+  usesStructuredKnowledgeContext,
+} from "@/lib/run-results/contract";
+import { nativeFindingsCompletionPrompt } from "@/lib/run-results/findings-prompt";
 import { assertNativeRunKnowledgeInputs } from "@/lib/brain/knowledge-execution-access";
 import { queryErrorDiagnostics, redactQueryError } from "@/lib/db/pg-error";
 import {
@@ -192,7 +193,7 @@ export type RunAgentStepCtx = {
   // runs alongside a node's session names ITSELF (see gates-exec /
   // consensus/runtime, and `sync-${attempt}` in runs/sync-target).
   sessionName: string;
-  context: FlowContext;
+  context: ExecutionFlowContext;
   capabilityProfilePath?: string;
   capabilityInstructionsPath?: string;
   outputObjects?: RuntimeObjectOutputBinding[];
