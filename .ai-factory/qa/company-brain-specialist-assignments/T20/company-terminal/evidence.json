@@ -1,0 +1,89 @@
+{
+  "task": "T20",
+  "slice": "Existing company operational terminal/result/token/outbox/disposition lifecycle",
+  "date": "2026-11-06",
+  "baseCommit": "7074ecd0b5ecb269f2f00e258d26b6b250b60d7b",
+  "status": "Native terminal/disposition slice qualified; T20 remains open",
+  "engineVersion": "3.11.1",
+  "migrations": [
+    "0227_company_run_terminal_events"
+  ],
+  "migrationSafety": "Generated schema/snapshot plus native exact-owner guard. The uncommitted migration ran only on owned disposable databases; its update-routing guard was strengthened before final qualification. No durable deployment or database changed.",
+  "testMethod": "Real PostgreSQL migration lineage, actual managed filesystem, native finalization/result/token/event/cleanup services and installed synthetic Git role. No company ACP session or stand readiness is claimed.",
+  "red": {
+    "log": "red.log.gz",
+    "failure": "Project-only finalization rejects a native company run before terminal preparation."
+  },
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "files": 7,
+      "tests": 67,
+      "log": "integration-green.log.gz"
+    },
+    "unit": {
+      "exitCode": 0,
+      "files": 886,
+      "tests": 9263,
+      "log": "unit-green.log.gz"
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "log": "typecheck.log.gz"
+    },
+    "lint": {
+      "exitCode": 0,
+      "log": "lint.log.gz",
+      "finalTestLog": "lint-final.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "tables": 171,
+      "log": "docs.log.gz",
+      "finalLog": "docs-final.log.gz"
+    },
+    "schemaDrift": {
+      "exitCode": 0,
+      "result": "No schema changes",
+      "log": "no-drift.log.gz"
+    }
+  },
+  "qualified": [
+    "Terminal result publication, state, token revocation and scoped outbox fact share one transaction; rollback preserves all original state and an active credential; replay publishes one result.",
+    "Company success releases the plain directory and separate adapter runtime through existing leased disposition, without accepting or completing the assignment.",
+    "A missing required result fails with the existing typed CONFIG/result_missing cause and retains source bytes when evidence transport is unavailable.",
+    "A valid-looking result cannot override changed source integrity; the company professional is quarantined, its credential revoked and failed bytes retained for evidence recovery.",
+    "Company terminal/cleanup events require exact company run ownership; foreign project run references, unsupported kinds and event identity retargeting refuse.",
+    "Populated project and company metadata facts survive the migration byte-for-byte; project cascade remains independent of Brain.",
+    "Project task qualification and outgoing project webhook scope remain explicit; no parallel scheduler or execution ledger added."
+  ],
+  "fixtureCorrections": [
+    "Existing token issuance uses an object argument and token verification reports TokenAuthError.kind; the fixture follows those contracts.",
+    "Linked fixture assignments remain queued until the later actual admission transition; Run finalization preserves that state.",
+    "A concurrent lint --fix rewrote the test fixture during extraction; formatting was completed before reapplying and verifying the shared helper. No platform behavior was relaxed."
+  ],
+  "notYetQualified": [
+    "Actual company admission/session/prompt dispatch and source capture",
+    "Host-bound company interruption/resume/recovery and evidence-preserving transport cleanup",
+    "Company activity/cap integration and result-only Flow T20.1",
+    "Actual installable specialist package, configured stand restart/independent verification",
+    "Remaining T20-T43 acceptance"
+  ],
+  "sourceSha256": {
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "a92de4656f3bb361af797512831fb3451be941ef10d4f3d8520cfc3776803a81",
+    "web/lib/agents/dirty-watchdog.ts": "9c46005be6b10ec2804a01cfaf7e0cbc1161a21e34ba66bc7d66c3b5b107cc67",
+    "web/lib/agents/finalization.ts": "3282904da2ec5931066381482b315661836c336d7a6ea6ced7bc5cf813e0fa97",
+    "web/lib/db/__tests__/migration-company-run-terminal-events.integration.test.ts": "036d5e966afdaa2e41877ec6174eb1d8ebcd04fc37bf11462655278779c96c7e",
+    "web/lib/db/migrations/0227_company_run_terminal_events.sql": "0da433719e2a3ae6f445a0eeac7efc0d6b5023071d066ee91cfe1fa2a8c7b8c3",
+    "web/lib/db/migrations/meta/0227_snapshot.json": "99cd243eb185d94aa750aabc736e89c6a708aef85794174bfc401343dcf2ac82",
+    "web/lib/db/migrations/meta/_journal.json": "f4974d02f8ddebe78dab231a4784e1544bf32e30953f289a16f599cf998a780e",
+    "web/lib/db/schema.ts": "7375891cb4a8d7ceb86666a12755a5e411e0d76c20a194c1bb3e9cf9d373759d",
+    "web/lib/domain-events/outbox.ts": "d9da31d7c4cceab4448885b47e1e607a5c42fe2bb1fc081354b0621803ef4848",
+    "web/lib/gc/operational-disposition.ts": "76818c91c122cae9d1ceaf3374e469b3decf0b88d261c43ecbd3805f52b057d0",
+    "web/lib/tasks/qualification.ts": "6027f72a41b675ecc4e3d391c96685890f2d799ff2f050879ed93e4e3b618e53"
+  }
+}

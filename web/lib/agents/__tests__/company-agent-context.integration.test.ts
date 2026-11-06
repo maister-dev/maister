@@ -1,9 +1,19 @@
+import type { Db } from "@/lib/execution-host/db";
+import type { OperationalWorkspaceContext } from "../operational-context";
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 import type { CompanyAgentExecutionSnapshot } from "../company-agent-execution-types";
 import type { PreparedSpecialistAssignment } from "@/lib/specialist-assignments/types";
 
 import { randomUUID } from "node:crypto";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  cp,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import { join, resolve, sep } from "node:path";
 
@@ -36,8 +46,11 @@ import {
   captureOperationalBaseline,
   captureOperationalGeneration,
 } from "../operational-integrity";
+import { prepareAgentRunFinalization } from "../finalization";
 
 import { runs } from "@/lib/db/schema";
+import { disposeOperationalRun } from "@/lib/gc/operational-disposition";
+import { operationalSuccessFixture } from "@/test-support/operational-agent";
 import { getKnowledgeRecord } from "@/lib/brain/knowledge-records";
 import { searchKnowledge } from "@/lib/brain/knowledge-search";
 import {
@@ -1351,6 +1364,327 @@ it("CBS-02 resolves and inspects an owned company plain directory without a proj
       companyExecutionSnapshot: null,
     }),
   ).rejects.toMatchObject({ code: "PRECONDITION" });
+});
+
+async function seedCompanyOperationalTerminal(): Promise<
+  Readonly<{
+    runId: string;
+    assignmentId: string;
+    context: Extract<OperationalWorkspaceContext, { ownerKind: "company" }>;
+  }>
+> {
+  const { runId, assignmentId } = await reserveCompanyFixtureRun();
+  const [run] = await database.db.select().from(runs).where(eq(runs.id, runId));
+  const context = await operationalWorkspace(database.db, run);
+
+  if (context.ownerKind !== "company")
+    throw new Error("Expected a company workspace fixture");
+  await mkdir(context.cwd, { recursive: true });
+  await mkdir(context.runtimePath, { recursive: true });
+  await writeFile(join(context.runtimePath, "cache"), "Adapter state");
+  await writeFile(
+    join(context.cwd, "diagnosis.txt"),
+    "Retained company diagnostic input",
+  );
+  const baseline = await captureOperationalGeneration(
+    context.cwd,
+    await captureOperationalBaseline(context.cwd, "plain_directory"),
+    [],
+  );
+
+  await database.db
+    .update(runs)
+    .set({
+      status: "Running",
+      operationalIntegrityBaseline: {
+        ...baseline,
+        contextMounts: [],
+        owner: {
+          kind: "company",
+          companyId: request.companyId,
+          runId,
+          cwd: context.cwd,
+          runtimePath: context.runtimePath,
+        },
+      },
+    })
+    .where(eq(runs.id, runId));
+
+  return { runId, assignmentId, context };
+}
+
+it("CBS-02 atomically finalizes company result evidence, revokes credentials and releases plain materialization without completing the assignment", async () => {
+  const db: Db = database.db;
+  const { runId, assignmentId, context } =
+    await seedCompanyOperationalTerminal();
+  const credential = await issueCompanyAgentRunToken({
+    db: database.db,
+    runId,
+  });
+  const prepared = await prepareAgentRunFinalization(runId, "Done", {
+    db: database.db,
+    finalText:
+      "```json maister:output\n" +
+      JSON.stringify(operationalSuccessFixture()) +
+      "\n```",
+  });
+  const project = await seedProjectRow(database.db);
+  const projectRunId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO runs(id,run_kind,project_id,agent_id,agent_workspace,flow_version,flow_revision,status) VALUES($1,'agent',$2,$3,'none','agent','manual','Pending')",
+    [projectRunId, project.id, agentId],
+  );
+  await expect(
+    database.pool.query(
+      "INSERT INTO domain_events(kind,company_id,run_id,payload,occurred_at) VALUES('run.done',$1,$2,'{}'::jsonb,now())",
+      [request.companyId, projectRunId],
+    ),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "domain_events_company_run_reference_check",
+  });
+  await expect(
+    database.pool.query(
+      "INSERT INTO domain_events(kind,company_id,run_id,payload,occurred_at) VALUES('task.created',$1,$2,'{}'::jsonb,now())",
+      [request.companyId, runId],
+    ),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "domain_events_company_kind_check",
+  });
+  const originalEvents = (
+    await database.pool.query(
+      "SELECT count(*)::int AS count FROM domain_events WHERE run_id=$1",
+      [runId],
+    )
+  ).rows[0].count;
+
+  await expect(
+    db.transaction(async (tx) => {
+      await prepared.apply(tx);
+      throw new Error("Roll back terminal fixture application");
+    }),
+  ).rejects.toThrow("Roll back terminal fixture application");
+  expect(
+    (await database.pool.query("SELECT status FROM runs WHERE id=$1", [runId]))
+      .rows[0].status,
+  ).toBe("Running");
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS count FROM run_results WHERE run_id=$1",
+        [runId],
+      )
+    ).rows[0].count,
+  ).toBe(0);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS count FROM domain_events WHERE run_id=$1",
+        [runId],
+      )
+    ).rows[0].count,
+  ).toBe(originalEvents);
+  await expect(
+    verifyToken(credential.secret, database.db),
+  ).resolves.toMatchObject({ companyId: request.companyId });
+
+  await expect(
+    db.transaction((tx) => prepared.apply(tx)),
+  ).resolves.toMatchObject({ finalized: true, status: "Done" });
+  await expect(
+    verifyToken(credential.secret, database.db),
+  ).rejects.toMatchObject({ kind: "revoked" });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT status,operational_terminal,operational_cleanup FROM runs WHERE id=$1",
+        [runId],
+      )
+    ).rows[0],
+  ).toMatchObject({
+    status: "Done",
+    operational_terminal: {
+      successful: true,
+      integrity: "clean",
+      resultRevision: 1,
+    },
+    operational_cleanup: { state: "armed" },
+  });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT company_id,project_id,task_id,kind,payload FROM domain_events WHERE run_id=$1 AND kind='run.done'",
+        [runId],
+      )
+    ).rows,
+  ).toMatchObject([
+    {
+      company_id: request.companyId,
+      project_id: null,
+      task_id: null,
+      kind: "run.done",
+      payload: { parentRunId: null, resultStatus: "valid" },
+    },
+  ]);
+  await expect(
+    db.transaction((tx) => prepared.apply(tx)),
+  ).resolves.toMatchObject({ finalized: false });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS count FROM run_results WHERE run_id=$1",
+        [runId],
+      )
+    ).rows[0].count,
+  ).toBe(1);
+  await expect(
+    database.pool.query(
+      "UPDATE domain_events SET company_id=NULL,project_id=$2 WHERE run_id=$1 AND kind='run.done'",
+      [runId, project.id],
+    ),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "domain_events_company_identity_check",
+  });
+  expect(await disposeOperationalRun(runId, { db: database.db })).toBe(
+    "released",
+  );
+  await expect(lstat(context.cwd)).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(lstat(context.runtimePath)).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT operational_cleanup FROM runs WHERE id=$1",
+        [runId],
+      )
+    ).rows[0].operational_cleanup,
+  ).toMatchObject({ state: "released", attempts: 1 });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT status FROM specialist_assignments WHERE id=$1",
+        [assignmentId],
+      )
+    ).rows[0].status,
+  ).toBe("queued");
+  expect(await disposeOperationalRun(runId, { db: database.db })).toBe(
+    "skipped",
+  );
+});
+
+it("CBS-02 refuses company completion without its required result and retains failed source bytes for evidence recovery", async () => {
+  const db: Db = database.db;
+  const { runId, assignmentId, context } =
+    await seedCompanyOperationalTerminal();
+  const prepared = await prepareAgentRunFinalization(runId, "Done", {
+    db: database.db,
+  });
+
+  await expect(
+    db.transaction((tx) => prepared.apply(tx)),
+  ).resolves.toMatchObject({ finalized: true, status: "Failed" });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT operational_terminal FROM runs WHERE id=$1",
+        [runId],
+      )
+    ).rows[0].operational_terminal,
+  ).toMatchObject({ successful: false, validation: "invalid" });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT kind,payload FROM domain_events WHERE run_id=$1 AND kind='run.failed'",
+        [runId],
+      )
+    ).rows,
+  ).toMatchObject([
+    {
+      kind: "run.failed",
+      payload: {
+        resultStatus: "unavailable",
+        cause: { code: "CONFIG", reason: "result_missing" },
+      },
+    },
+  ]);
+  expect(await disposeOperationalRun(runId, { db: database.db })).toBe(
+    "deferred",
+  );
+  expect(await readFile(join(context.cwd, "diagnosis.txt"), "utf8")).toBe(
+    "Retained company diagnostic input",
+  );
+  expect(
+    (
+      await database.pool.query(
+        "SELECT operational_cleanup FROM runs WHERE id=$1",
+        [runId],
+      )
+    ).rows[0].operational_cleanup,
+  ).toMatchObject({
+    state: "retry",
+    attempts: 1,
+    errorCode: "operational_evidence_host_missing",
+  });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT status FROM specialist_assignments WHERE id=$1",
+        [assignmentId],
+      )
+    ).rows[0].status,
+  ).toBe("queued");
+});
+
+it("CBS-02 quarantines a company specialist source violation and preserves failed bytes instead of accepting a valid-looking result", async () => {
+  const db: Db = database.db;
+  const { runId, context } = await seedCompanyOperationalTerminal();
+  const credential = await issueCompanyAgentRunToken({ db, runId });
+
+  await writeFile(
+    join(context.cwd, "diagnosis.txt"),
+    "Unapproved source mutation",
+  );
+  const prepared = await prepareAgentRunFinalization(runId, "Done", {
+    db,
+    finalText:
+      "```json maister:output\n" +
+      JSON.stringify(operationalSuccessFixture()) +
+      "\n```",
+  });
+
+  await expect(
+    db.transaction((tx) => prepared.apply(tx)),
+  ).resolves.toMatchObject({ finalized: true, status: "Failed" });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT operational_terminal FROM runs WHERE id=$1",
+        [runId],
+      )
+    ).rows[0].operational_terminal,
+  ).toMatchObject({ integrity: "changed", successful: false });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT quarantined_at,quarantine_reason FROM agents WHERE id=$1",
+        [agentId],
+      )
+    ).rows[0],
+  ).toMatchObject({
+    quarantined_at: expect.any(Date),
+    quarantine_reason: "operational_source_contract_violation",
+  });
+  await expect(verifyToken(credential.secret, db)).rejects.toMatchObject({
+    kind: "revoked",
+  });
+  expect(await disposeOperationalRun(runId, { db })).toBe("deferred");
+  expect(await readFile(join(context.cwd, "diagnosis.txt"), "utf8")).toBe(
+    "Unapproved source mutation",
+  );
 });
 
 it("requires current explicit company admission authority even for an administrator and after an earlier successful preflight", async () => {

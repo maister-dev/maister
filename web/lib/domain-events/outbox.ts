@@ -15,6 +15,7 @@ import { sql } from "drizzle-orm";
 import pino from "pino";
 
 import { domainEvents } from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
 import { terminalCauseReason } from "@/lib/domain-events/taxonomy";
 import { armFailedCoordinatorWake } from "@/lib/domain-events/coordinator-wake-intent";
 
@@ -119,15 +120,33 @@ export async function emitKnowledgeRecordChange(
   );
 }
 
-interface BaseDomainEventInput {
+export type RunDomainEventScope =
+  | { projectId: string; companyId?: never }
+  | { companyId: string; projectId?: never };
+
+/** Resolve only an explicit retained owner; project-less runs are not implicitly company work. */
+export function runDomainEventScope(
+  run: Readonly<{ projectId: string | null; companyId: string | null }>,
+): RunDomainEventScope {
+  if (run.projectId !== null && run.companyId === null)
+    return { projectId: run.projectId };
+  if (run.companyId !== null && run.projectId === null)
+    return { companyId: run.companyId };
+
+  throw new MaisterError(
+    "PRECONDITION",
+    "Run domain events require exactly one retained project or company owner",
+  );
+}
+
+type BaseDomainEventInput = RunDomainEventScope & {
   db: Db;
-  projectId: string;
   taskId?: string | null;
   runId?: string | null;
   actor?: DomainEventActor | null;
   payload: Record<string, unknown>;
   occurredAt?: Date;
-}
+};
 
 // M37 (ADR-098/097): a discriminated union on `kind`. Run-SETTLED events
 // (terminal kinds + `run.review`) MUST carry `parentRunId` (null for a top-level
@@ -216,7 +235,8 @@ export async function emitDomainEvent(
 
   await input.db.insert(domainEvents).values({
     kind: input.kind,
-    projectId: input.projectId,
+    projectId: input.projectId ?? null,
+    ...(input.companyId === undefined ? {} : { companyId: input.companyId }),
     taskId: input.taskId ?? null,
     runId: input.runId ?? null,
     actorType: input.actor?.type ?? null,
@@ -229,6 +249,7 @@ export async function emitDomainEvent(
     {
       kind: input.kind,
       projectId: input.projectId,
+      companyId: input.companyId,
       taskId: input.taskId ?? undefined,
       runId: input.runId ?? undefined,
     },

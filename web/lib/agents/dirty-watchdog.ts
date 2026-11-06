@@ -427,10 +427,15 @@ export async function quarantineAgentInTx(args: {
   tx: Db;
   agentId: string;
   runId: string;
-  projectId: string;
+  projectId: string | null;
   taskId: string | null;
   reason: string;
 }): Promise<void> {
+  if (args.taskId && args.projectId === null)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Task quarantine requires its project owner",
+    );
   await args.tx
     .update(agents)
     .set({
@@ -440,7 +445,7 @@ export async function quarantineAgentInTx(args: {
     })
     .where(eq(agents.id, args.agentId));
 
-  if (args.taskId) {
+  if (args.taskId && args.projectId !== null) {
     await addTaskComment(
       {
         taskId: args.taskId,

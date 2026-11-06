@@ -1667,6 +1667,13 @@
       "when": 1794606477944,
       "tag": "0241_company_agent_credentials",
       "breakpoints": true
+    },
+    {
+      "idx": 242,
+      "version": "7",
+      "when": 1794606477945,
+      "tag": "0242_company_run_terminal_events",
+      "breakpoints": true
     }
   ]
 }

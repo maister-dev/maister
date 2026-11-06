@@ -67,7 +67,10 @@ import {
   systemCloseActiveAssignmentsForRun,
 } from "@/lib/assignments/service";
 import { releaseAssignmentForRun } from "@/lib/execution-host/assignments";
-import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import {
+  emitDomainEvent,
+  runDomainEventScope,
+} from "@/lib/domain-events/outbox";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import {
   decideAgentResult,
@@ -90,6 +93,7 @@ import { isMaisterErrorCode } from "@/lib/errors-core";
 import { operationalTerminalDecision } from "@/lib/agents/operational-completion";
 import {
   inspectOperationalRun,
+  operationalWorkspace,
   operationalResourceKind,
 } from "@/lib/agents/operational-context";
 import {
@@ -265,6 +269,9 @@ type FinalizationContext = Readonly<{
   run: Pick<
     Run,
     | "id"
+    | "companyId"
+    | "companyExecutionSnapshot"
+    | "projectId"
     | "status"
     | "runKind"
     | "executionAssignmentId"
@@ -286,7 +293,7 @@ type FinalizationContext = Readonly<{
     | "taskQualificationSnapshot"
     | "taskLaunchIntentId"
     | "deliveryPolicySnapshot"
-  > & { projectId: string };
+  >;
   workspaceRows: readonly Pick<Workspace, "id" | "worktreePath">[];
   workspaceContext: Awaited<ReturnType<typeof loadAgentWorkspaceContext>>;
   project: Pick<Project, "slug" | "repoPath"> | null;
@@ -329,6 +336,8 @@ async function loadFinalizationContext(
       agentActivitySnapshot: runs.agentActivitySnapshot,
       launchedAt: runs.launchedAt,
       projectId: runs.projectId,
+      companyId: runs.companyId,
+      companyExecutionSnapshot: runs.companyExecutionSnapshot,
       taskId: runs.taskId,
       parentRunId: runs.parentRunId,
       contextMounts: runs.contextMounts,
@@ -343,6 +352,11 @@ async function loadFinalizationContext(
     .where(eq(runs.id, runId));
 
   if (!run) return null;
+  if (run.companyId !== null) {
+    await operationalWorkspace(db, run);
+
+    return { run, workspaceRows: [], workspaceContext: null, project: null };
+  }
   if (!run.projectId)
     throw new MaisterError(
       "PRECONDITION",
@@ -1074,20 +1088,21 @@ async function prepareAgentFinalization(
           : null,
     });
 
-    await emitWebhookEvent({
-      db: tx,
-      type: WEBHOOK_TYPE_BY_STATUS[terminalStatus],
-      projectId: row.projectId,
-      runId,
-      data: {
-        kind: "agent",
-        agentId: row.agentId,
-        ...(terminalStatus === "Review" ? { source: "agent" } : {}),
-        ...(opts.reason && terminalStatus !== "Review"
-          ? { reason: opts.reason }
-          : {}),
-      },
-    });
+    if (row.projectId !== null)
+      await emitWebhookEvent({
+        db: tx,
+        type: WEBHOOK_TYPE_BY_STATUS[terminalStatus],
+        projectId: row.projectId,
+        runId,
+        data: {
+          kind: "agent",
+          agentId: row.agentId,
+          ...(terminalStatus === "Review" ? { source: "agent" } : {}),
+          ...(opts.reason && terminalStatus !== "Review"
+            ? { reason: opts.reason }
+            : {}),
+        },
+      });
 
     // M37 (ADR-098/097): a DELEGATED child reaching Review emits `run.review` so
     // the parked coordinator wakes to promote/rework the diff (and as-plan
@@ -1098,7 +1113,7 @@ async function prepareAgentFinalization(
         await emitDomainEvent({
           db: tx,
           kind: "run.review",
-          projectId: row.projectId,
+          ...runDomainEventScope(row),
           taskId: row.taskId,
           runId,
           actor: { type: "agent", id: row.agentId },
@@ -1129,7 +1144,7 @@ async function prepareAgentFinalization(
           : DOMAIN_KIND_BY_OUTCOME[outcome];
       const event = {
         db: tx,
-        projectId: row.projectId,
+        ...runDomainEventScope(row),
         taskId: row.taskId,
         runId,
         actor: { type: "agent" as const, id: row.agentId },

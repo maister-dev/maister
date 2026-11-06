@@ -161,5 +161,31 @@ baseline, missing company execution capture or repository workspace before
 probing source bytes. Company runs have no repository reference history.
 Legacy project baseline owner JSON remains unchanged. The shared disposition
 uses the resolved runtime path and refuses repository allocation for a company
-owner; company terminal-event/finalization wiring and complete cleanup
-qualification remain part of T20.
+owner. Native company terminal result/token/outbox application and clean directory
+release are qualified separately below; actual session/host recovery remains T20.
+
+
+Company operational finalization uses the existing Run result ledger, terminal
+transaction, token revoker and cleanup disposition. A terminal preparation
+validates the retained company execution/workspace owner; historical capture
+never supplies action authority. A result, terminal state, credential revocation
+and company outbox fact commit together. Rollback leaves all four unchanged;
+replay cannot publish a second result. A missing required result produces a
+failed Run with the existing typed `CONFIG/result_missing` cause. Task
+qualification remains project-only and cannot be attached to company work.
+
+Main `0242_company_run_terminal_events` admits the existing `run.done`,
+`run.failed`, `run.crashed`, `run.abandoned` and
+`run.operational_cleanup_changed` kinds for an exact company-owned operational
+Run with no task. Company event identities cannot be retargeted. Existing
+project consumers continue to skip company facts, and outgoing project webhook
+subscriptions receive only project-owned terminal events. Company result
+delivery and cooperating-agent consumers remain their later owning slices.
+
+A clean terminal directory releases through the same leased disposition and
+managed-path remover, including its separate adapter runtime directory. Failed
+source bytes require the existing host evidence transport before removal;
+missing transport retains the bytes and a durable actionable retry reason.
+Finishing a Run never accepts or completes the durable specialist assignment.
+These native service/PostgreSQL/filesystem qualifications do not establish
+actual company ACP launch, interrupted-host recovery or stand-pilot readiness.

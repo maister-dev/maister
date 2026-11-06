@@ -43,7 +43,10 @@ import {
   workspaces,
 } from "@/lib/db/schema";
 import { applyAgentCleanupIncident } from "@/lib/runs/agent-incidents";
-import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import {
+  emitDomainEvent,
+  runDomainEventScope,
+} from "@/lib/domain-events/outbox";
 import { MaisterError, isMaisterError } from "@/lib/errors";
 import { createExecutionHosts } from "@/lib/execution-host/client";
 import { getLatestAssignment } from "@/lib/execution-host/assignments";
@@ -156,7 +159,7 @@ export async function disposeOperationalRun(
         await emitDomainEvent({
           db: tx,
           kind: "run.operational_cleanup_changed",
-          projectId: run.projectId!,
+          ...runDomainEventScope(run),
           taskId: run.taskId,
           runId,
           payload: {
@@ -223,7 +226,7 @@ export async function disposeOperationalRun(
         await emitDomainEvent({
           db: tx,
           kind: "run.operational_cleanup_changed",
-          projectId: run.projectId!,
+          ...runDomainEventScope(run),
           taskId: run.taskId,
           runId,
           payload: { runId, revision: next.revision, state: next.state },
