@@ -1289,6 +1289,12 @@ const graphOnlyManifestInputSchema = z.unknown().superRefine((value, ctx) => {
 // (flows/artifact-validate.ts) share one literal.
 export const RAH_ENGINE_MIN = "3.7.0";
 
+/** Declared plain-workspace result execution is distinct from native findings. */
+export const COMPANY_EXECUTION_ENGINE_MIN = "3.12.0";
+export const companyFlowExecutionSchema = z
+  .object({ workspace: z.literal("none"), completion: z.literal("result") })
+  .strict();
+
 // A `result_profiles` entry name. It is a body-controlled identifier at
 // delegation time (`resultProfile`), resolved through an allow-list — so it is
 // validated at the SINK's invariant here, not merely as a non-empty string.
@@ -1339,6 +1345,7 @@ export const flowYamlV1Schema = graphOnlyManifestInputSchema.pipe(
       // `compat` and `schemaVersion` are enforced today. Semantic validation of
       // capabilities/gates/artifacts/external_ops lands with M11+ (see ADR-021).
       compat: flowCompatSchema.optional(),
+      execution: companyFlowExecutionSchema.optional(),
       capabilities: z.array(z.string().min(1)).optional(),
       gates: z.array(z.string().min(1)).optional(),
       artifacts: z.array(z.string().min(1)).optional(),
@@ -1390,7 +1397,105 @@ export const flowYamlV1Schema = graphOnlyManifestInputSchema.pipe(
       // launch-checked (never read at compile) → no engine floor.
       requirements: z.array(flowRequirementSchema).optional(),
     })
-    .passthrough(),
+    .passthrough()
+    .superRefine((manifest, ctx) => {
+      if (manifest.execution === undefined) return;
+      if (
+        !semverGte(
+          manifest.compat?.engine_min ?? "",
+          COMPANY_EXECUTION_ENGINE_MIN,
+        )
+      )
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["compat", "engine_min"],
+          message: `Plain-workspace result execution requires compat.engine_min >= ${COMPANY_EXECUTION_ENGINE_MIN}`,
+        });
+      if (manifest.result?.export.required !== true)
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["result", "export"],
+          message:
+            "Plain-workspace result execution requires a mandatory result export",
+        });
+      if (
+        manifest.setup !== undefined ||
+        (manifest.requirements?.length ?? 0) > 0
+      )
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [manifest.setup !== undefined ? "setup" : "requirements"],
+          message:
+            "Plain-workspace result execution does not support setup or shell probes",
+        });
+      for (const [index, node] of manifest.nodes.entries()) {
+        if (
+          node.type !== "ai_coding" &&
+          node.type !== "orchestrator" &&
+          node.type !== "human" &&
+          node.type !== "form"
+        ) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["nodes", index, "type"],
+            message:
+              "Plain-workspace result execution supports ai_coding, orchestrator, human and form nodes",
+          });
+          continue;
+        }
+        if ((node.pre_finish?.gates?.length ?? 0) > 0)
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["nodes", index, "pre_finish", "gates"],
+            message:
+              "Plain-workspace result execution uses explicit human/form nodes and required result validation instead of pre-finish gates",
+          });
+        if (
+          node.type === "ai_coding" &&
+          node.retry_policy !== undefined &&
+          node.retry_policy.workspace !== "keep"
+        )
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["nodes", index, "retry_policy", "workspace"],
+            message:
+              "Plain-workspace result execution requires an explicit keep workspace policy for retry",
+          });
+        if (node.rework?.workspacePolicies.some((policy) => policy !== "keep"))
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["nodes", index, "rework", "workspacePolicies"],
+            message:
+              "Plain-workspace result execution requires keep workspace policies for rework",
+          });
+        if (
+          node.type === "human" &&
+          (node.settings?.allowTakeover === true ||
+            node.settings?.allowFurtherTracks === true)
+        )
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["nodes", index, "settings"],
+            message:
+              "Plain-workspace result execution does not support repository takeover or further tracks",
+          });
+        if (node.type !== "ai_coding" && node.type !== "orchestrator") continue;
+        if ((node.settings?.context_repos?.length ?? 0) > 0)
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["nodes", index, "settings", "context_repos"],
+            message:
+              "Plain-workspace result execution cannot mount repository context",
+          });
+        if (node.settings?.workspaceAccess === "write")
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["nodes", index, "settings", "workspaceAccess"],
+            message:
+              "Plain-workspace result execution cannot grant writable workspace access",
+          });
+      }
+    }),
 );
 
 // M26 (ADR-063): the grammar gains a nested `object` type with recursive

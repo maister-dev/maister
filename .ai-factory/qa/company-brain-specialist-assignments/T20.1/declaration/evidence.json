@@ -1,0 +1,78 @@
+{
+  "task": "T20.1",
+  "slice": "Shared result-only Flow declaration and preflight grammar",
+  "date": "2026-11-06",
+  "baseCommit": "4863eea580486c8ab2b559cc51fd264c7592891d",
+  "status": "Declaration qualified; native graph runtime remains open",
+  "engineVersion": "3.11.1",
+  "red": {
+    "initial": {
+      "tests": 16,
+      "failed": 15,
+      "log": "red.log.gz"
+    },
+    "workspacePolicies": {
+      "tests": 25,
+      "failed": 5,
+      "log": "policy-red.log.gz"
+    }
+  },
+  "gates": {
+    "focused": {
+      "exitCode": 0,
+      "tests": 25,
+      "log": "focused-green.log.gz"
+    },
+    "unit": {
+      "exitCode": 0,
+      "files": 887,
+      "tests": 9288,
+      "durationSeconds": 28.54,
+      "log": "unit-green.log.gz"
+    },
+    "integration": {
+      "exitCode": 0,
+      "files": 1,
+      "tests": 6,
+      "durationSeconds": 9.25,
+      "log": "binding-green.log.gz"
+    },
+    "types": {
+      "exitCode": 0,
+      "log": "types.log.gz"
+    },
+    "lint": {
+      "exitCode": 0,
+      "log": "lint.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "log": "docs.log.gz"
+    }
+  },
+  "qualified": [
+    "One strict optional declaration shared by filesystem loading, stored-manifest parsing, Studio diagnostics and runtime-generated authoring skill.",
+    "Required result and explicit capability floor, closed initial node/capability subset, no model-supplied owner or grants.",
+    "Retry and rework keep policies allowed; repository checkpoint defaults and takeover/further-track settings refused.",
+    "Supported orchestrator/human/form nodes load; legacy absence is not defaulted or rewritten.",
+    "Existing real installed company binding/current-authority behavior remains green; 3.12.0 enablement remains refused by host compatibility."
+  ],
+  "notYetQualified": [
+    "Native company graph reservation/loading/input/prompt/materialization/continuation/result/terminal path",
+    "Engine 3.12.0 activation and phase-wide T21 qualification",
+    "Actual company coordinator package and stand diagnosis/restart/verification"
+  ],
+  "sourceSha256": {
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "33df5a36444b7eca7fa73320f84115cb5ddfcf26bfa04933f6505a680512e279",
+    "docs/flow-dsl.md": "241f0a7bfc5a404517d5867c27d2b4b64fbce7875947407a216bfdcb78443cca",
+    "docs/system-analytics/specialist-runtime.md": "f9170de38b19cbd45db456396879d52f9dfc04b4e9b45e78a3c2993b56093468",
+    "web/lib/config.schema.ts": "78d5f87fa77ad1a5f405030e5f659ef3d62e4f79d84eec9fbfa44ecab286c9a5",
+    "web/lib/agents/company-flow-binding-types.ts": "78e56ce2297ac278e060a373186f81cac75f16ca6c607e5f29264d28e412a105",
+    "web/lib/flows/flow-dsl-grammar.ts": "786f4736c290573cb09a64250848c95db1d9fa28c803f5fca02c9cf684179d82",
+    "web/lib/flows/__tests__/company-execution-declaration.test.ts": "ead4a0292d7b9766200face91296f6f856456ff8e3dc05d771138bdef2e52e69"
+  }
+}

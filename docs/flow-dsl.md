@@ -23,6 +23,44 @@ ingest boundary. An id is a 1–128-character safe path segment: it starts with
 an ASCII letter or digit and may then use letters, digits, `.`, `_`, or `-`.
 The reserved ids `__proto__`, `constructor`, and `prototype` are invalid.
 
+## Plain-workspace result-only declaration (Designed runtime, T20.1)
+
+A coordinator package declares this closed manifest contract:
+
+```yaml
+compat: { engine_min: 3.12.0 }
+execution: { workspace: none, completion: result }
+result:
+  export:
+    schema: ./schemas/diagnosis.json
+    from: [diagnose]
+    required: true
+```
+
+The declaration is optional. Absence preserves the existing repository lifecycle
+and does not add defaults or rewrite retained manifests. A present declaration
+requires both literal values, no additional keys and a declared engine minimum
+of at least 3.12.0. It never supplies an owner, user, grant or repository: ownership
+comes from the server's project or company binding. A required result export is
+mandatory; process exit or agent prose does not replace it.
+
+The initial contract admits `ai_coding`, `orchestrator`, `human` and `form` nodes.
+It refuses other node types, repository context mounts, writable workspace access,
+launch setup/probes and pre-finish gates before admission. Human review uses
+explicit `human`/`form` nodes, and output validation uses the existing required
+result contract. Referenced package capabilities and role/runner policies still
+require action-time preflight; metadata cannot grant tools or cooperation rights.
+
+Grammar/authoring support is qualified separately from execution. The running
+3.11.1 engine continues to refuse enablement of a 3.12.0 company Flow until the
+native graph-runtime slice and its compatibility mirrors are qualified. See
+[the specialist runtime contract](system-analytics/specialist-runtime.md).
+
+Explicit retry and rework workspace policies must be `keep`. Omitted retry
+workspace policy still defaults to repository checkpoint rewind and is refused
+for this declaration. Human `allowTakeover` and `allowFurtherTracks` are refused
+because their repository delivery paths are outside this subset.
+
 ## Flow graph node lifecycle (Implemented)
 
 > **Status.** Flow graph v1 — the `nodes[]` manifest, node-lifecycle
@@ -47,8 +85,8 @@ The graph-only cut-over started with engine 3.0.0: manifests require a non-empty
 top-level `nodes[]`. The parser and compiler reject any manifest containing
 `steps[]` with the locked migration message: `legacy steps[] flows are not
 supported since engine 3.0.0; republish the package with nodes[]`. The current
-host engine is `3.9.0` (Implemented — operational agents require a package
-`compat.engine_min >= 3.9.0`; consensus prompt rendering retains its 3.8.0 floor). Graph packages remain
+host engine is `3.11.1` (operational agents retain their 3.9.0 package floor;
+native evidence findings require 3.11.0). Graph packages remain
 compatible when their declared `compat` range includes that version. They do not
 need to raise an open-ended historical `engine_min`.
 

@@ -8,6 +8,10 @@ import type {
 import { z } from "zod";
 
 import {
+  COMPANY_EXECUTION_ENGINE_MIN,
+  companyFlowExecutionSchema,
+} from "@/lib/config.schema";
+import {
   knowledgeDeliveryKeySchema,
   knowledgeRevisionSchema,
 } from "@/lib/brain/knowledge-types";
@@ -18,10 +22,7 @@ const identity = postgresTextSchema.min(1).max(128);
 
 export const companyFlowUserIdSchema = postgresTextSchema.min(1).max(192);
 
-export const COMPANY_EXECUTION_ENGINE_MIN = "3.12.0";
-export const companyFlowExecutionSchema = z
-  .object({ workspace: z.literal("none"), completion: z.literal("result") })
-  .strict();
+export { COMPANY_EXECUTION_ENGINE_MIN, companyFlowExecutionSchema };
 export const companyFlowRoleMappingsSchema = z
   .record(
     postgresTextSchema

@@ -41,6 +41,30 @@ nodes: [ ... ]                   # required and non-empty
   flow with no \`human\` node claimable at all. Compile-time only: it is never
   persisted to a DB column, and an operator can never override it.
 
+## Plain-workspace result declaration (runtime qualification pending)
+
+The optional manifest-level \`execution\` is a strict object:
+
+\`\`\`yaml
+compat: { engine_min: 3.12.0 }
+execution: { workspace: none, completion: result }
+result:
+  export: { schema: ./schemas/diagnosis.json, from: [diagnose], required: true }
+\`\`\`
+
+This declaration requires \`engine_min >= 3.12.0\` and a mandatory result export.
+It does not carry ownership or grants; the server binding supplies those.
+Absent \`execution\` preserves existing repository behavior without new defaults.
+The declared subset allows only \`ai_coding\`, \`orchestrator\`, \`human\`, and
+\`form\` nodes. It refuses \`setup\`, shell \`requirements\`, pre-finish gates,
+repository \`context_repos\`, writable workspace access, human \`allowTakeover\`
+and \`allowFurtherTracks\`. Explicit retry and rework workspace policies must be
+\`keep\`; an omitted retry workspace policy retains its repository rewind default
+and is therefore refused here. Use explicit human/form nodes and required result
+validation. Authoring acceptance alone does not enable company execution: the
+host remains at 3.11.1 until the native graph runtime is qualified. Existing
+binding enablement refuses the higher capability floor before execution.
+
 ## Node types (discriminated by \`type\`)
 
 Fields common to every node: \`id\`, \`type\`, \`transitions\`, \`input\`, \`output\`,
