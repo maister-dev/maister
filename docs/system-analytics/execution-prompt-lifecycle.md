@@ -35,6 +35,25 @@ generation controls.
 
 ### Creation before prompt admission
 
+**Designed — terminalization fences every Flow traversal:** a human/form-only
+Flow owns the same durable run/assignment traversal claim as a Flow with model
+or CLI work. This database ownership does not create an ACP session or require
+a Supervisor connection. A separate server-only unplaced-sessionless claim is
+allowed only when the stored graph has no owned prompt or CLI work, the current
+assignment pointer is null, and no execution-assignment history exists. It never
+mints a placement; a later pointer or history change fences it. Placed claims
+retain the exact active assignment and epoch. Each traversal transaction
+revalidates its claim and lease while holding the Run `NO KEY UPDATE` lock,
+which serializes status/pointer changes while allowing human-assignment event
+foreign-key `KEY SHARE` locks; legal abandonment
+releases that assignment under the same lock. Once abandonment commits, a
+previously started traversal must yield without appending a node attempt,
+opening a HITL, or publishing a new input notification. This applies to current
+accepted launches and retained live legacy runs. Successful form collection
+continues through the existing no-model path. A losing terminal outcome CAS
+preserves the winning terminal state and must not log an outcome it did not
+commit. No historical Run, decision, or qualification row is rewritten.
+
 Flow node and AI/skill gate creation stores `execution_commands.create_intent`
 before transport. The private normalized envelope freezes workspace and runtime
 object handles, runner configuration, permission policy and launch inputs. Its

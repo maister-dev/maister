@@ -241,6 +241,13 @@ new execution engine or independent interval scheduler. Existing broad recovery
 backstops remain. Stop prevents new claims and awaits active shared dispatch;
 this worker never releases a claim or finalizes a Run on another owner's behalf.
 
+A bound Running agent belongs to the existing preparation/continuation owner,
+not the Pending-launch queue. Shared redispatch yields without probing a live
+materialization or changing its admission. The physical owner retains the frozen
+HEAD/cleanliness check before initial baseline capture and the final generation
+integrity check before first model dispatch; moving an observer check must not
+remove either protection.
+
 No migration is needed: existing intent states, due/lease fields and recovery
 index support this selection. Update production boot/health registration as one
 all-or-nothing lifecycle. Extend the existing real-Postgres/Git launch-selection
@@ -249,6 +256,19 @@ without HTTP callbacks/cron/manual promotion; expired preparation and bound
 undispatched work recover after stop/start; a blocked Flow pool cannot starve
 agent work, and stop cannot start later work. Keep existing admission and native
 process guards as independent owners, with no duplicate matrix.
+
+### Terminal Flow traversal fence (R20 design checkpoint)
+
+The owning [prompt lifecycle](../../docs/system-analytics/execution-prompt-lifecycle.md)
+requires durable traversal fencing for form/human-only graphs as well as model
+and CLI graphs. Legal abandonment must prevent later attempt/HITL/notification
+writes, including legacy live Runs. Preserve a separate strictly server-derived,
+never-placed sessionless claim without creating a host placement or ACP session;
+missing pointers with placement history are not that variant. Keep exact placed
+assignment/epoch checks, compatible Run lock ordering and truthful terminal-CAS
+diagnostics. Existing storage permits this claim; no schema migration is planned.
+The real API/PG barrier tests must prove both terminal-first orderings and normal
+placed/unplaced no-model execution before this correction closes.
 
 ## Decisions: preparation ownership (Designed)
 

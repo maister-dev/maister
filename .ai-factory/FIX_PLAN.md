@@ -79,6 +79,11 @@ No required assertion is skipped, quarantined or weakened.
 - [ ] R19: establish the recursive intermediate-child failure cause and fix its
   real producer/consumer boundary; retain exact child results and completion
   semantics, without accepting failed children as successful test outcomes.
+- [ ] R20: reproduce and fence late human/form-only Flow traversal after legal
+  abandonment. This source gap also exists on master; the new worker exposed the
+  teardown overlap. Distinguish persisted late effects from the misleading
+  Crashed log, preserve no-ACP execution and legacy compatibility, and do not hide
+  a real race by delaying fixture cleanup.
 - [ ] Complete the frozen combined 29-case browser lane, complete configured Web
   integration, static checks and final review; close the remaining seven plan
   tasks only after their acceptance checks pass, then remove this fix plan.
