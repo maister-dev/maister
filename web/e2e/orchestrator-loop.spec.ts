@@ -14,7 +14,7 @@
 // CI-ONLY: requires a free :3100 (the playwright webServer). It cannot run while
 // a `next dev` holds the Next 16 single-dev lock on the same project dir.
 
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { test, expect } from "@playwright/test";
@@ -26,6 +26,7 @@ import {
   waitForTaskLaunchRun,
 } from "./_seed/task-launch";
 import { STUB_SESSIONS_DIR } from "./_seed/stub-supervisor";
+import { readStubSessionRecords } from "./_seed/session-records";
 
 const CRON_HEADER = "X-Maister-Cron-Token";
 const CRON_TOKEN = process.env.MAISTER_CRON_TOKEN ?? "e2e-cron-token-change-me";
@@ -34,17 +35,10 @@ const CRON_TOKEN = process.env.MAISTER_CRON_TOKEN ?? "e2e-cron-token-change-me";
 // session and holds its stream until a `<sessionId>.release` marker — release
 // every pending child so the workspace=none children finalize Done.
 function releaseAllChildSessions(seenRunIds: Set<string>): string[] {
-  if (!existsSync(STUB_SESSIONS_DIR)) return [];
   const released: string[] = [];
 
-  for (const name of readdirSync(STUB_SESSIONS_DIR)) {
-    if (!name.endsWith(".json")) continue;
-    const rec = JSON.parse(
-      readFileSync(path.join(STUB_SESSIONS_DIR, name), "utf8"),
-    ) as { sessionId: string; request?: { runId?: string } };
-    const runId = rec.request?.runId;
-
-    if (!runId || !seenRunIds.has(runId)) continue;
+  for (const rec of readStubSessionRecords(STUB_SESSIONS_DIR)) {
+    if (!seenRunIds.has(rec.request.runId)) continue;
     const marker = path.join(STUB_SESSIONS_DIR, `${rec.sessionId}.release`);
 
     if (!existsSync(marker)) {

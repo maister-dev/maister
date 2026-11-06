@@ -1,9 +1,10 @@
-import { rm, readdir, readFile, mkdir, writeFile, cp } from "node:fs/promises";
+import { rm, mkdir, writeFile, cp } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 
 import { expect, test, type Page } from "@playwright/test";
 
 import { STUB_SESSIONS_DIR } from "./_seed/stub-supervisor";
+import { readStubSessionRecords } from "./_seed/session-records";
 import { withE2EDb } from "./_seed/db";
 
 import { git, initRepo } from "@/test-support/git-fixture";
@@ -978,23 +979,7 @@ test.describe("Agent execution visibility and retained history", () => {
         { timeout: 15000 },
       )
       .toMatchObject({ status: "Running", candidates: 1 });
-    const sessionRecords = await Promise.all(
-      (await readdir(STUB_SESSIONS_DIR))
-        .filter((name) => name.endsWith(".json"))
-        .map(
-          async (name) =>
-            JSON.parse(
-              await readFile(`${STUB_SESSIONS_DIR}/${name}`, "utf8"),
-            ) as {
-              request: {
-                runId: string;
-                agentKind?: string;
-                readOnlySession?: boolean;
-                autoApprovePermissions?: boolean;
-              };
-            },
-        ),
-    );
+    const sessionRecords = readStubSessionRecords(STUB_SESSIONS_DIR);
     const qualifierSession = sessionRecords.find(
       (record) => record.request.runId === qualifier.runId,
     );

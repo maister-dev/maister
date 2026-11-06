@@ -84,6 +84,24 @@ No required assertion is skipped, quarantined or weakened.
   teardown overlap. Distinguish persisted late effects from the misleading
   Crashed log, preserve no-ACP execution and legacy compatibility, and do not hide
   a real race by delaying fixture cleanup.
+- [ ] R21: distinguish canonical UUID.json controlled-supervisor session records
+  from typed diagnostic sidecars in every browser reader. Refuse malformed
+  canonical records and identity mismatches; preserve original runner and
+  qualification assertions. Preserve a safe manifest before removing only the
+  five verified sidecars left by the earlier diagnostic invocation. The focused
+  filesystem contract must show RED/GREEN, followed by the coordinated browser
+  qualification without weakening session data checks.
+- [ ] R22: keep the manual Launch opener unavailable in server-rendered markup
+  and throughout hydration until its client interaction handlers are ready.
+  Reuse the existing client-readiness hook; this changes no launch authority,
+  assessment policy, settings or normal confirmation behavior. In the existing
+  bound-agent browser journey, hold only the delivered JavaScript chunk that
+  contains the launch dialog, require the actual SSR opener to be disabled,
+  then release in `finally` and require one enabled click to open the dialog
+  and load its real options. No launch POST may occur before the intentional
+  confirm action; preserve all existing immutable settings and Run-binding
+  assertions. Reproduce the enabled inert SSR button before the source fix;
+  no retry-click, arbitrary wait or timeout increase substitutes for readiness.
 - [ ] Complete the frozen combined 29-case browser lane, complete configured Web
   integration, static checks and final review; close the remaining seven plan
   tasks only after their acceptance checks pass, then remove this fix plan.

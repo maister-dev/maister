@@ -5,7 +5,7 @@
 // grid with the agent + trigger chip, and after the spec releases the held
 // stub stream the run finalizes Done at the terminal choke point.
 
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { test, expect } from "@playwright/test";
@@ -13,34 +13,19 @@ import { test, expect } from "@playwright/test";
 import { withE2EDb, singleValue } from "./_seed/db";
 import { loadFixtures } from "./_seed/fixtures";
 import { STUB_SESSIONS_DIR } from "./_seed/stub-supervisor";
-
-type SessionRecord = {
-  sessionId: string;
-  request: { runId?: string; readOnlySession?: boolean };
-  prompts: Array<{ prompt: string }>;
-};
-
-function readSessionRecords(): SessionRecord[] {
-  if (!existsSync(STUB_SESSIONS_DIR)) return [];
-
-  return readdirSync(STUB_SESSIONS_DIR)
-    .filter((name) => name.endsWith(".json"))
-    .map(
-      (name) =>
-        JSON.parse(
-          readFileSync(path.join(STUB_SESSIONS_DIR, name), "utf8"),
-        ) as SessionRecord,
-    );
-}
+import {
+  readStubSessionRecords,
+  type StubSessionRecord,
+} from "./_seed/session-records";
 
 async function waitForSession(
-  predicate: (record: SessionRecord) => boolean,
+  predicate: (record: StubSessionRecord) => boolean,
   timeoutMs = 30_000,
-): Promise<SessionRecord> {
+): Promise<StubSessionRecord> {
   const deadline = Date.now() + timeoutMs;
 
   for (;;) {
-    const match = readSessionRecords().find(predicate);
+    const match = readStubSessionRecords(STUB_SESSIONS_DIR).find(predicate);
 
     if (match) return match;
     if (Date.now() > deadline) {

@@ -1,7 +1,7 @@
 import type { TaskLaunchReceipt } from "@/lib/tasks/launch-types";
 import type { Locator, Page } from "@playwright/test";
 
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 
 import { test, expect } from "@playwright/test";
@@ -16,6 +16,7 @@ import {
   type ManualTaskLaunchFixture,
 } from "./_seed/manual-task-launch";
 import { STUB_SESSIONS_DIR } from "./_seed/stub-supervisor";
+import { readStubSessionRecords } from "./_seed/session-records";
 
 import { git } from "@/test-support/git-fixture";
 
@@ -256,21 +257,7 @@ test.describe("Manual task admission through the real browser and controlled pro
     expect(sessions).toEqual([
       { runner_id: fixture.runnerId, model: "gpt-6.1-sol", adapter: "codex" },
     ]);
-    const records = await Promise.all(
-      (await readdir(STUB_SESSIONS_DIR))
-        .filter((name) => name.endsWith(".json"))
-        .map(
-          async (name) =>
-            JSON.parse(
-              await readFile(`${STUB_SESSIONS_DIR}/${name}`, "utf8"),
-            ) as {
-              request: {
-                runId: string;
-                runner?: { runnerId: string; model: string; adapter: string };
-              };
-            },
-        ),
-    );
+    const records = readStubSessionRecords(STUB_SESSIONS_DIR);
 
     expect(
       records.find((record) => record.request.runId === runId)?.request.runner,
