@@ -287,6 +287,8 @@ authorized sets to avoid repeating grant plans per recursive edge. Its 256-entry
 Unicode/ordering check and actual built MCP workflow retain their original
 semantics and process deadline.
 
+Company graph plain-directory qualification extends the same owner/path witness and fenced host adoption used by standalone company work. A v2 Flow requires its explicit finite workspace-none/result-only capture; the internal adoption specification must identify `executionKind:flow`, while v1 agent specifications identify `agent`. Changing only a run-kind label cannot reinterpret an agent owner as a Flow. Existing opaque company/run paths, directory baseline generation and host workspace handles are reused without creating a repository workspace row. Generated main `0250_company_flow_workspace_witness` admits this explicit graph baseline branch without changing operational-agent terminal or cleanup contracts. This resource witness proves directory integrity only; result validity, business acceptance and external operation verification remain separate. Graph terminal cleanup and capability/driver qualification are subsequent owning gates.
+
 ### Company workspace adoption
 
 **Implemented native host boundary and company standalone dispatch; company Flow admission remains T20.1.**

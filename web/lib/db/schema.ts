@@ -2672,7 +2672,7 @@ export const runs = pgTable(
     ),
     operationalBaselineCheck: check(
       "runs_operational_baseline_check",
-      sql`${t.operationalIntegrityBaseline} IS NULL OR ((${t.agentKind} = 'operational' OR ${t.runKind}='agent' AND ${t.agentKind}='code_delivery' AND ${t.taskLaunchIntentId} IS NOT NULL) AND jsonb_typeof(${t.operationalIntegrityBaseline}) = 'object' AND ${t.operationalIntegrityBaseline}->'version' = '1'::jsonb AND jsonb_typeof(${t.operationalIntegrityBaseline}->'generation') = 'number' AND jsonb_typeof(${t.operationalIntegrityBaseline}->'source') = 'array' AND jsonb_typeof(${t.operationalIntegrityBaseline}->'platform') = 'array' AND pg_column_size(${t.operationalIntegrityBaseline}) <= 16777216) IS TRUE`,
+      sql`${t.operationalIntegrityBaseline} IS NULL OR ((${t.agentKind} = 'operational' OR ((${t.agentKind} = 'operational' OR (${t.runKind}='flow' AND ${t.companyId} IS NOT NULL AND ${t.projectId} IS NULL AND ${t.agentKind} IS NULL AND ${t.agentWorkspace}='none' AND ${t.companyExecutionSnapshot}->>'schemaVersion'='2' AND ${t.resultContract}->>'kind'='flow_export' AND ${t.resultContract}->'required'='true'::jsonb) OR ${t.runKind}='agent' AND ${t.agentKind}='code_delivery' AND ${t.taskLaunchIntentId} IS NOT NULL) AND jsonb_typeof(${t.operationalIntegrityBaseline}) = 'object' AND ${t.operationalIntegrityBaseline}->'version' = '1'::jsonb AND jsonb_typeof(${t.operationalIntegrityBaseline}->'generation') = 'number' AND jsonb_typeof(${t.operationalIntegrityBaseline}->'source') = 'array' AND jsonb_typeof(${t.operationalIntegrityBaseline}->'platform') = 'array' AND pg_column_size(${t.operationalIntegrityBaseline}) <= 16777216) IS TRUE`,
     ),
     operationalCleanupCheck: check(
       "runs_operational_cleanup_check",

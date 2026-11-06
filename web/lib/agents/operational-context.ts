@@ -17,7 +17,7 @@ import pino from "pino";
 
 import { canonicalCommandJson } from "../../../runtime/command-json";
 
-import { companyAgentExecutionSnapshotSchema } from "@/lib/agents/company-agent-execution-types";
+import { companyExecutionSnapshotSchema } from "@/lib/agents/company-execution-types";
 import { frozenOperationalDefinition } from "@/lib/agents/launch-contract";
 import {
   captureOperationalBaseline,
@@ -56,7 +56,7 @@ export function operationalResourceKind(
 }
 
 export async function operationalReferenceEvidence(
-  db: Db,
+  db: Pick<Db, "select">,
   run: Pick<Run, "id" | "projectId">,
 ): Promise<OperationalRefEvidence[]> {
   if (run.projectId === null) return [];
@@ -117,7 +117,10 @@ type OperationalWorkspaceRun = Pick<
   Partial<
     Pick<
       Run,
-      "operationalIntegrityBaseline" | "companyId" | "companyExecutionSnapshot"
+      | "operationalIntegrityBaseline"
+      | "companyId"
+      | "companyExecutionSnapshot"
+      | "runKind"
     >
   >;
 
@@ -143,7 +146,7 @@ export type OperationalWorkspaceContext =
 function companyOperationalWorkspace(
   run: OperationalWorkspaceRun,
 ): OperationalWorkspaceContext {
-  const capture = companyAgentExecutionSnapshotSchema.safeParse(
+  const capture = companyExecutionSnapshotSchema.safeParse(
     run.companyExecutionSnapshot,
   );
 
@@ -161,7 +164,12 @@ function companyOperationalWorkspace(
     );
   if (
     run.agentWorkspace !== "none" ||
-    run.resultContract?.kind !== "agent_operational"
+    (capture.data.schemaVersion === 2
+      ? run.runKind !== "flow" ||
+        run.resultContract?.kind !== "flow_export" ||
+        !run.resultContract.required
+      : (run.runKind !== undefined && run.runKind !== "agent") ||
+        run.resultContract?.kind !== "agent_operational")
   )
     throw new MaisterError(
       "CONFIG",
@@ -217,7 +225,7 @@ function companyOperationalWorkspace(
 }
 
 export async function operationalWorkspace(
-  db: Db,
+  db: Pick<Db, "select">,
   run: OperationalWorkspaceRun,
 ): Promise<OperationalWorkspaceContext> {
   if (run.companyId != null) return companyOperationalWorkspace(run);
@@ -279,7 +287,7 @@ export async function operationalWorkspace(
 }
 
 export async function inspectOperationalWorkspace(
-  db: Db,
+  db: Pick<Db, "select">,
   run: Pick<
     Run,
     | "id"
@@ -289,7 +297,7 @@ export async function inspectOperationalWorkspace(
     | "resultContract"
     | "operationalIntegrityBaseline"
   > &
-    Partial<Pick<Run, "companyId" | "companyExecutionSnapshot">>,
+    Partial<Pick<Run, "companyId" | "companyExecutionSnapshot" | "runKind">>,
 ): Promise<OperationalIntegrityResult> {
   frozenOperationalDefinition(run);
   const context = await operationalWorkspace(db, run);

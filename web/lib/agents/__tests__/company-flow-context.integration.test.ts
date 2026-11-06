@@ -8,11 +8,11 @@ import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 import type { PreparedSpecialistAssignment } from "@/lib/specialist-assignments/types";
 
 import { randomUUID } from "node:crypto";
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { join, resolve, sep } from "node:path";
 
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { stringify } from "yaml";
 
@@ -46,6 +46,14 @@ import {
   prepareCompanyAgentContext,
   captureCompanyAgentExecution,
 } from "../company-agent-context";
+import {
+  operationalWorkspace,
+  inspectOperationalWorkspace,
+} from "../operational-context";
+import {
+  captureOperationalBaseline,
+  captureOperationalGeneration,
+} from "../operational-integrity";
 
 import { resolveKnowledgePrincipal } from "@/lib/brain/knowledge-access";
 import { generateToken } from "@/lib/tokens/secret";
@@ -55,6 +63,10 @@ import { authorizeKnowledge } from "@/lib/brain/knowledge-access";
 import { nativeKnowledgeActorSchema } from "@/lib/company/types";
 import { resolveKnowledgeRunIdentity } from "@/lib/brain/knowledge-run-identity";
 import { recordNativeKnowledgeActor } from "@/lib/brain/knowledge-execution-actor";
+import {
+  loadWorkspaceSpecInput,
+  workspaceSpecFor,
+} from "@/lib/execution-host/adoption";
 import { createExecutionHosts } from "@/lib/execution-host";
 import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
 import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
@@ -65,7 +77,11 @@ import {
   startRealSupervisor,
   useRealSupervisorUrl,
 } from "@/test-support/real-supervisor";
-import { platformAcpRunners, platformRuntimeSettings } from "@/lib/db/schema";
+import {
+  runs,
+  platformAcpRunners,
+  platformRuntimeSettings,
+} from "@/lib/db/schema";
 import {
   createSpecialistAssignment,
   linkSpecialistAssignmentRunInTransaction,
@@ -159,6 +175,7 @@ beforeAll(async () => {
   );
   root = await mkdtemp(join(os.tmpdir(), "company-flow-context-"));
   vi.spyOn(os, "homedir").mockReturnValue(root);
+  vi.stubEnv("MAISTER_WORKTREES_ROOT", join(root, "worktrees"));
   await database.pool.query(
     "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'admin','active'),($3,$4,'member','active'),($5,$6,'member','active')",
     [
@@ -405,6 +422,7 @@ beforeAll(async () => {
     )
   ).rows;
   await applyMainMigration(database.db, "0249_company_flow_node_credentials");
+  await applyMainMigration(database.db, "0250_company_flow_workspace_witness");
   migrationTokensAfter = (
     await database.pool.query<{ value: JsonValue }>(
       "SELECT to_jsonb(t) AS value FROM project_tokens t ORDER BY id",
@@ -425,6 +443,7 @@ afterAll(async () => {
     if (root) await rm(root, { recursive: true, force: true });
   } finally {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   }
 });
 
@@ -522,6 +541,36 @@ async function seedRetainedStandalone(): Promise<void> {
   await database.pool.query("UPDATE runs SET status='Running' WHERE id=$1", [
     retainedRunId,
   ]);
+  const [retainedRun] = await database.db
+    .select()
+    .from(runs)
+    .where(eq(runs.id, retainedRunId));
+
+  if (!retainedRun) throw new Error("The retained v1 company Run is missing");
+  const owner = await operationalWorkspace(database.db, retainedRun);
+
+  await mkdir(owner.cwd, { recursive: true });
+  const baseline = await captureOperationalGeneration(
+    owner.cwd,
+    await captureOperationalBaseline(owner.cwd, "plain_directory"),
+    [],
+  );
+
+  await database.db
+    .update(runs)
+    .set({
+      operationalIntegrityBaseline: {
+        ...baseline,
+        owner: {
+          kind: "company",
+          companyId: request.companyId,
+          runId: retainedRunId,
+          cwd: owner.cwd,
+          runtimePath: owner.runtimePath,
+        },
+      },
+    })
+    .where(eq(runs.id, retainedRunId));
   retainedCompanyCredential = await issueCompanyAgentRunToken({
     db: database.db,
     runId: retainedRunId,
@@ -1320,6 +1369,141 @@ it("reserves one native company graph with frozen sessions/placement, refuses a 
     setDefaultTransportForTests(null);
   }
 }, 120000);
+
+it("retains a v2 company graph plain-directory witness and adopts its explicit owner through the existing real host boundary", async () => {
+  const [run] = await database.db
+    .select()
+    .from(runs)
+    .where(eq(runs.id, nativeFlowRunId));
+
+  if (!run) throw new Error("The native graph reservation is missing");
+  const owner = await operationalWorkspace(database.db, run);
+
+  expect(owner).toMatchObject({
+    ownerKind: "company",
+    companyId: request.companyId,
+    resourceKind: "plain_directory",
+    repoPath: null,
+    projectSlug: null,
+  });
+  await mkdir(owner.cwd, { recursive: true });
+  await writeFile(
+    join(owner.cwd, "observations.txt"),
+    "Bounded graph evidence",
+  );
+  const baseline = await captureOperationalGeneration(
+    owner.cwd,
+    await captureOperationalBaseline(owner.cwd, "plain_directory"),
+    [],
+  );
+  const retained = {
+    ...run,
+    operationalIntegrityBaseline: {
+      ...baseline,
+      owner: {
+        kind: "company" as const,
+        companyId: request.companyId,
+        runId: nativeFlowRunId,
+        cwd: owner.cwd,
+        runtimePath: owner.runtimePath,
+      },
+    },
+  };
+
+  await database.db
+    .update(runs)
+    .set({
+      operationalIntegrityBaseline: retained.operationalIntegrityBaseline,
+    })
+    .where(eq(runs.id, nativeFlowRunId));
+  await expect(
+    inspectOperationalWorkspace(database.db, retained),
+  ).resolves.toMatchObject({ verdict: "clean" });
+  await writeFile(
+    join(owner.cwd, "observations.txt"),
+    "Changed graph evidence",
+  );
+  await expect(
+    inspectOperationalWorkspace(database.db, retained),
+  ).resolves.toMatchObject({ verdict: "changed" });
+  await writeFile(
+    join(owner.cwd, "observations.txt"),
+    "Bounded graph evidence",
+  );
+  await expect(
+    operationalWorkspace(database.db, {
+      ...retained,
+      operationalIntegrityBaseline: {
+        ...retained.operationalIntegrityBaseline,
+        owner: { ...retained.operationalIntegrityBaseline.owner, cwd: root },
+      },
+    }),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "company_workspace_owner_mismatch" },
+  });
+  const spec = await loadWorkspaceSpecInput(database.db, nativeFlowRunId);
+
+  expect(spec.company).toMatchObject({
+    companyId: request.companyId,
+    executionKind: "flow",
+  });
+  if (!spec.company)
+    throw new Error("The native company graph has no explicit adoption owner");
+  expect(() =>
+    workspaceSpecFor({
+      ...spec,
+      company: { ...spec.company, executionKind: "agent" },
+    }),
+  ).toThrowError(expect.objectContaining({ code: "PRECONDITION" }));
+  expect(workspaceSpecFor(spec)).toMatchObject({
+    owner: { kind: "company", companyId: request.companyId },
+    projectSlug: "_company",
+    kind: "directory",
+    path: owner.cwd,
+  });
+  const supervisor = await startRealSupervisor({
+    runtimeRoot: join(root, "reservation-host"),
+    workspaceRoots: [join(root, "worktrees")],
+    fixtureArgs: ["--hang"],
+  });
+  const restoreUrl = useRealSupervisorUrl(supervisor.url);
+
+  setDefaultTransportForTests(null);
+  resetResolverForTests();
+  resetRegistrarStateForTests();
+  try {
+    const hosts = createExecutionHosts({
+      db: database.db,
+      transport: createLocalDirectTransport(),
+    });
+    const client = await hosts.forRun(nativeFlowRunId, { reason: "launch" });
+    const handle = await client.ensureWorkspace();
+
+    await expect(hosts.local().getWorkspace(handle)).resolves.toMatchObject({
+      runId: nativeFlowRunId,
+      owner: { kind: "company", companyId: request.companyId },
+      projectSlug: "_company",
+      kind: "directory",
+      releasedAt: null,
+    });
+    expect(await client.ensureWorkspace()).toBe(handle);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT (SELECT count(*)::int FROM workspaces) AS workspaces,(SELECT count(*)::int FROM projects) AS projects",
+        )
+      ).rows[0],
+    ).toEqual({ workspaces: 0, projects: 0 });
+  } finally {
+    await stopRuntimeEventConsumers();
+    await supervisor.stop();
+    restoreUrl();
+    resetResolverForTests();
+    resetRegistrarStateForTests();
+    setDefaultTransportForTests(null);
+  }
+});
 
 it("loads frozen company graph input and sessions without repository records, refusing unsupported hosts, disabled runners and changed schema bytes", async () => {
   const before = await counts();

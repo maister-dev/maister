@@ -47,7 +47,14 @@ export type WorkspaceSpecInput = {
   librarianWorkdir?: string | null;
 } & (
   | { project: { slug: string; repoPath: string }; company?: never }
-  | { project: null; company: { companyId: string; cwd: string } }
+  | {
+      project: null;
+      company: {
+        companyId: string;
+        cwd: string;
+        executionKind: "agent" | "flow";
+      };
+    }
 );
 
 function missingWorkspace(runId: string, what: string): MaisterError {
@@ -69,7 +76,7 @@ export function workspaceSpecFor(
   if (input.company) {
     if (
       project !== null ||
-      run.runKind !== "agent" ||
+      run.runKind !== input.company.executionKind ||
       run.agentWorkspace !== "none" ||
       run.localPackageId !== null ||
       input.localPackage !== null ||
@@ -167,7 +174,7 @@ async function pathIsDirectory(p: string): Promise<boolean> {
 }
 
 export async function loadWorkspaceSpecInput(
-  db: Db,
+  db: Pick<Db, "select">,
   runId: string,
 ): Promise<WorkspaceSpecInput> {
   const [run] = await db
@@ -199,13 +206,20 @@ export async function loadWorkspaceSpecInput(
       await import("@/lib/agents/operational-context");
     const owner = await operationalWorkspace(db, run);
 
-    if (owner.ownerKind !== "company")
+    if (
+      owner.ownerKind !== "company" ||
+      (run.runKind !== "agent" && run.runKind !== "flow")
+    )
       throw missingWorkspace(runId, "company owner");
 
     return {
       run,
       project: null,
-      company: { companyId: owner.companyId, cwd: owner.cwd },
+      company: {
+        companyId: owner.companyId,
+        cwd: owner.cwd,
+        executionKind: run.runKind,
+      },
       workspace: null,
       localPackage: null,
       agentPaths: {

@@ -1723,6 +1723,13 @@
       "when": 1794606477952,
       "tag": "0249_company_flow_node_credentials",
       "breakpoints": true
+    },
+    {
+      "idx": 250,
+      "version": "7",
+      "when": 1794606477953,
+      "tag": "0250_company_flow_workspace_witness",
+      "breakpoints": true
     }
   ]
 }
