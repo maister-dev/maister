@@ -251,3 +251,26 @@ Native source, owner, context, memory and record/revision checks use bounded
 authorized sets to avoid repeating grant plans per recursive edge. Its 256-entry
 Unicode/ordering check and actual built MCP workflow retain their original
 semantics and process deadline.
+
+### Company workspace adoption
+
+**Implemented native host boundary; actual agent session dispatch remains T20.**
+The server resolves a company Run's retained owner through the shared operational
+workspace resolver. Adoption sends its managed `.company/<owner-run-digest>`
+directory, explicit `{kind:company,companyId}` owner and reserved `_company`
+runtime namespace. The legacy wire field `projectSlug` names that runtime
+namespace; the host never resolves it against registered projects. No project,
+repository, local package or sibling mount is substituted. Later session creation
+uses the opaque workspace handle and inherits its cwd and log namespace.
+
+The supervisor accepts this owner only for an isolated directory, validates the
+managed company/run path witness and refuses owner retargeting on replay.
+SQLite schema 16 adds nullable `workspaces.company_id` with exclusive namespace,
+directory, repository and mount constraints. Migration from populated schema 15
+preserves old workspace bytes and leaves company ownership absent; no historical
+authority is inferred. Reopening the host retains a new company owner and
+`GET /workspaces/{id}` returns it without source paths. Existing project and
+librarian wire shapes remain unchanged. Invalid command payloads retain the
+supervisor's existing 409 mapping; `workspace_rejected/owner_mismatch` identifies
+a managed-path or replay-owner conflict. See the authoritative
+[supervisor contract](../api/supervisor.openapi.yaml).

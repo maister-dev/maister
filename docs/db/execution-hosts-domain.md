@@ -255,3 +255,15 @@ permitted; guarded forward corrections and a real run-delete race enforce this.
 - Source (Implemented): `web/lib/db/schema.ts`,
   `web/lib/db/migrations/0130_execution_hosts.sql`,
   `web/lib/execution-host/{hosts,assignments,commands}.ts`.
+
+## Company workspace owner in host SQLite
+
+Host state schema 16 adds nullable `workspaces.company_id`; it does not add a
+PostgreSQL ledger. Non-null ownership requires `_company` runtime namespace,
+`directory` kind, no repository and no context mounts. A null owner requires a
+legacy project/librarian namespace. The version-15 upgrade is additive and
+preserves populated workspace rows without inferring company ownership. The
+native Run/assignment capture remains the control-plane authority; a host handle
+is an opaque execution resource. HTTP shape and replay semantics are owned by
+[the runtime domain](../system-analytics/specialist-runtime.md#company-workspace-adoption)
+and [supervisor API](../api/supervisor.openapi.yaml).

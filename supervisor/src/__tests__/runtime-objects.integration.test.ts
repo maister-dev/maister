@@ -580,6 +580,7 @@ describe("runtime object transport", () => {
       if (columns.some((column) => column.name === name))
         db.exec(`ALTER TABLE runtime_objects DROP COLUMN ${name}`);
     }
+    db.exec("ALTER TABLE workspaces DROP COLUMN company_id");
     db.exec("PRAGMA user_version = 12;");
     db.close();
     const restarted = await bootHost({

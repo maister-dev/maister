@@ -4323,6 +4323,7 @@ components:
         - repo_path_mismatch
         - inside_state_dir
         - outside_workspace
+        - owner_mismatch
       description: |
         (Implemented — ADR-166) Which adoption rule rejected a path; present
         iff `details.reason = workspace_rejected`.
@@ -4546,11 +4547,40 @@ components:
         to `repoPath` (arbitrary location); `directory` — a plain directory
         under the roots (local-package assistant, ephemeral read-only
         checkouts, agent `none`).
+    CompanyWorkspaceOwner:
+      type: object
+      additionalProperties: false
+      required: [kind, companyId]
+      properties:
+        kind: { type: string, enum: [company] }
+        companyId: { type: string, minLength: 1, maxLength: 128, pattern: '^[^\u0000]+$' }
     AdoptWorkspacePayload:
+      example:
+        runId: run-company-1
+        projectSlug: _company
+        owner: { kind: company, companyId: company-1 }
+        kind: directory
+        path: /worktrees/.company/c2ecd1fc77aba72e4fc2c10e754e2a3d79a1e9a1f7953fa56f43b2cbb6e122c4
       type: object
       required: [runId, projectSlug, kind, path]
       additionalProperties: false
+      allOf:
+        - oneOf:
+            - required: [owner]
+              properties:
+                projectSlug: { type: string, enum: [_company] }
+                kind: { type: string, enum: [directory] }
+              not:
+                anyOf:
+                  - required: [repoPath]
+                  - required: [contextMounts]
+            - properties:
+                projectSlug:
+                  not: { type: string, enum: [_company] }
+              not:
+                required: [owner]
       properties:
+        owner: { $ref: "#/components/schemas/CompanyWorkspaceOwner" }
         runId:
           type: string
           minLength: 1
@@ -4561,8 +4591,14 @@ components:
           type: string
           minLength: 1
           maxLength: 64
-          pattern: "^(?:[a-z0-9]+(?:-[a-z0-9]+)*|_librarian)$"
+          pattern: "^(?:[a-z0-9]+(?:-[a-z0-9]+)*|_librarian|_company)$"
           description: |
+            `_company` is the reserved runtime namespace for an explicit company
+            owner, never a registered project. It requires `owner`, directory
+            kind, no repository or context mounts, and a managed path ending in
+            `.company/sha256(JSON.stringify([companyId,runId]))`. The owner is
+            retained in host SQLite and returned from handle inspection. Reusing
+            an active path under another owner refuses with `owner_mismatch`.
             Stored on the handle; the host derives `run_dir` from it and never
             resolves it against registered projects. Kebab-case, or
             (Designed — ADR-185) the one reserved literal `_librarian` for the
@@ -4656,7 +4692,19 @@ components:
       required: [executionWorkspaceId, runId, projectSlug, kind, adoptedAt]
       additionalProperties: false
       description: (Implemented — ADR-166) Path-free projection of an adopted handle.
+      allOf:
+        - oneOf:
+            - required: [owner]
+              properties:
+                projectSlug: { type: string, enum: [_company] }
+                kind: { type: string, enum: [directory] }
+            - properties:
+                projectSlug:
+                  not: { type: string, enum: [_company] }
+              not:
+                required: [owner]
       properties:
+        owner: { $ref: "#/components/schemas/CompanyWorkspaceOwner" }
         executionWorkspaceId: { type: string, pattern: "^ws_[0-9a-f]{32}$" }
         runId: { type: string }
         projectSlug: { type: string }

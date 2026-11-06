@@ -1381,6 +1381,7 @@ export type WireEnvelope<TPayload = unknown> = {
 export type WorkspaceKindWire = "git_worktree" | "repo_checkout" | "directory";
 
 export type AdoptWorkspaceWirePayload = {
+  owner?: Readonly<{ kind: "company"; companyId: string }>;
   runId: string;
   projectSlug: string;
   kind: WorkspaceKindWire;
@@ -1396,6 +1397,7 @@ export type AdoptWorkspaceWireResult = {
 };
 
 export type WorkspaceRecordWire = {
+  owner?: Readonly<{ kind: "company"; companyId: string }>;
   executionWorkspaceId: string;
   runId: string;
   projectSlug: string;

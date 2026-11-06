@@ -328,6 +328,73 @@ describe("execution-host identity", () => {
     migrated.close();
   });
 
+  it("CBS-02 upgrades populated v15 workspaces without inventing company ownership and retains new company owners", async () => {
+    const root = await tempRoot();
+    const stateDir = join(root, "s");
+    const initial = openHostState({ stateDir });
+    const legacy = {
+      id: "ws_legacy",
+      runId: "legacy-run",
+      projectSlug: "demo",
+      kind: "directory",
+      path: "/tmp/legacy",
+      realPath: "/tmp/legacy",
+      repoPath: null,
+      runDir: "/tmp/runtime/demo",
+      contextMounts: null,
+      adoptedAt: "2026-11-06T00:00:00.000Z",
+      releasedAt: null,
+    };
+
+    initial.insertWorkspace(legacy);
+    initial.close();
+    const prior = new DatabaseSync(join(stateDir, HOST_STATE_FILE));
+
+    prior.exec("ALTER TABLE workspaces DROP COLUMN company_id");
+    prior.exec("PRAGMA user_version = 15");
+    prior.close();
+    const migrated = openHostState({ stateDir });
+
+    expect(migrated.getWorkspace(legacy.id)).toEqual(legacy);
+    const company = {
+      ...legacy,
+      id: "ws_company",
+      runId: "company-run",
+      projectSlug: "_company",
+      companyId: "company-1",
+    };
+
+    migrated.insertWorkspace(company);
+    expect(() =>
+      migrated.insertWorkspace({
+        ...company,
+        id: "ws_wrong_namespace",
+        projectSlug: "demo",
+      }),
+    ).toThrow(/CHECK constraint/);
+    expect(() =>
+      migrated.insertWorkspace({
+        ...company,
+        id: "ws_wrong_kind",
+        kind: "repo_checkout",
+        repoPath: "/tmp/repository",
+      }),
+    ).toThrow(/CHECK constraint/);
+    expect(() =>
+      migrated.insertWorkspace({
+        ...company,
+        id: "ws_missing_owner",
+        companyId: null,
+      }),
+    ).toThrow(/CHECK constraint/);
+    migrated.close();
+    const reopened = openHostState({ stateDir });
+
+    expect(reopened.getWorkspace(legacy.id)).toEqual(legacy);
+    expect(reopened.getWorkspace(company.id)).toEqual(company);
+    reopened.close();
+  });
+
   it("H9: a fresh store starts at the current user_version and reopens without migrating", async () => {
     const root = await tempRoot();
     const stateDir = join(root, "s");

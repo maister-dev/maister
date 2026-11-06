@@ -1,6 +1,6 @@
 // ADR-166 T2.3 — workspace adoption + handle-based create (W1–W13).
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   mkdir,
   mkdtemp,
@@ -107,6 +107,117 @@ async function adopt(l: Lab, payload: Record<string, unknown>) {
 }
 
 describe("workspace adoption", () => {
+  it("CBS-02 retains explicit company ownership through HTTP adoption and host restart without a project or repository", async () => {
+    const l = await lab();
+    const companyId = randomUUID();
+    const companyPath = join(
+      l.wtRoot,
+      ".company",
+      createHash("sha256")
+        .update(JSON.stringify([companyId, l.runId]))
+        .digest("hex"),
+    );
+    const payload = {
+      runId: l.runId,
+      projectSlug: "_company",
+      owner: { kind: "company", companyId },
+      kind: "directory",
+      path: companyPath,
+    };
+
+    await mkdir(companyPath, { recursive: true });
+    const adopted = await adopt(l, payload);
+
+    expect(adopted.status).toBe(200);
+    const id = adopted.body.executionWorkspaceId as string;
+    const read = await fetch(`${l.host.url}/workspaces/${id}`);
+
+    expect(read.status).toBe(200);
+    expect(await read.json()).toMatchObject({
+      executionWorkspaceId: id,
+      projectSlug: "_company",
+      owner: payload.owner,
+      kind: "directory",
+    });
+    expect((await adopt(l, payload)).body).toMatchObject({
+      executionWorkspaceId: id,
+      replayed: true,
+    });
+    for (const changed of [
+      { ...payload, owner: undefined },
+      { ...payload, owner: { kind: "company", companyId, permission: "all" } },
+      { ...payload, projectSlug: "demo" },
+      { ...payload, kind: "repo_checkout", repoPath: l.repo },
+      { ...payload, contextMounts: [] },
+    ]) {
+      expect((await adopt(l, changed)).status).toBe(409);
+    }
+    const changedOwner = await adopt(l, {
+      ...payload,
+      owner: { kind: "company", companyId: randomUUID() },
+    });
+
+    expect(changedOwner.status).toBe(409);
+    expect(changedOwner.body).toMatchObject({
+      details: { reason: "workspace_rejected", rule: "owner_mismatch" },
+    });
+    const legacyRetarget = await adopt(l, {
+      runId: l.runId,
+      projectSlug: "demo",
+      kind: "directory",
+      path: companyPath,
+    });
+
+    expect(legacyRetarget.status).toBe(409);
+    const stateDir = l.host.stateDir;
+
+    booted.splice(booted.indexOf(l.host), 1);
+    await l.host.stop();
+    const restarted = await bootHost({
+      runtimeRoot: l.root,
+      workspaceRoots: [l.wtRoot],
+      stateDir,
+      fixtureArgs: ["--hang"],
+    });
+
+    booted.push(restarted);
+    const retained = await fetch(`${restarted.url}/workspaces/${id}`);
+
+    expect(await retained.json()).toMatchObject({
+      executionWorkspaceId: id,
+      owner: payload.owner,
+    });
+    const session = await postJson(
+      `${restarted.url}/sessions`,
+      envelope(
+        "session.create",
+        { hostKey: restarted.hostState.hostKey, runId: l.runId },
+        {
+          executionWorkspaceId: id,
+          stepId: "agent",
+          executor: { agent: "claude", model: "fixture" },
+          readOnlySession: true,
+        },
+      ),
+    );
+
+    expect(session.status).toBe(201);
+    const record = restarted.registry.get(session.body.sessionId)!.record;
+
+    expect(record.worktreePath).toBe(companyPath);
+    expect(record.repoPath).toBeUndefined();
+    expect(record.logPath).toBe(
+      join(
+        l.root,
+        ".maister",
+        "_company",
+        "runs",
+        l.runId,
+        `${record.sessionId}.log`,
+      ),
+    );
+  });
+
   it("LMM-08: releasing a librarian handle purges its workspace and Claude transcript, including on retry", async () => {
     const root = await realpath(
       await mkdtemp(join(tmpdir(), "librarian-purge-")),

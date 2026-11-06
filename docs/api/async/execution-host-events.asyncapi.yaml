@@ -575,6 +575,7 @@ components:
         - repo_path_mismatch
         - inside_state_dir
         - outside_workspace
+        - owner_mismatch
       description: |
         (Implemented — ADR-166) Which adoption rule rejected a path; present
         iff `details.reason = workspace_rejected`.

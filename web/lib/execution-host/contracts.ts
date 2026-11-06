@@ -58,6 +58,7 @@ export type ExecutionHostDataPlaneCapabilities = {
 };
 
 export type AdoptWorkspaceWire = {
+  owner?: Readonly<{ kind: "company"; companyId: string }>;
   runId: string;
   projectSlug: string;
   kind: WorkspaceKind;
@@ -73,6 +74,7 @@ export type AdoptWorkspaceResult = {
 };
 
 export type WorkspaceRecord = {
+  owner?: Readonly<{ kind: "company"; companyId: string }>;
   executionWorkspaceId: ExecutionWorkspaceId;
   runId: string;
   projectSlug: string;

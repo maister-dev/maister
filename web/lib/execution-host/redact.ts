@@ -43,6 +43,12 @@ function countOf(value: unknown): number {
 const PAYLOAD_PROJECTION: Readonly<Record<CommandKind, Projection>> = {
   "workspace.adopt": (p) => ({
     ...pickScalars(p, ["runId", "projectSlug", "kind"]),
+    ...(asObject(p.owner).kind === "company"
+      ? {
+          ownerKind: "company",
+          ...pickScalars(asObject(p.owner), ["companyId"]),
+        }
+      : {}),
     contextMountCount: countOf(p.contextMounts),
   }),
   "workspace.release": () => ({}),

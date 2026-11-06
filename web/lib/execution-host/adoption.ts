@@ -35,7 +35,6 @@ export type WorkspaceSpecInput = {
     rootRunId: string | null;
     workspaceMode: "own" | "shared" | null;
   };
-  project: { slug: string; repoPath: string };
   workspace: { worktreePath: string; parentRepoPath: string } | null;
   localPackage: { workingDir: string } | null;
   agentPaths: {
@@ -46,7 +45,10 @@ export type WorkspaceSpecInput = {
   ephemeralReadOnlyCheckoutExists: boolean;
   /** ADR-185: the conversation's directory; set only for a librarian run. */
   librarianWorkdir?: string | null;
-};
+} & (
+  | { project: { slug: string; repoPath: string }; company?: never }
+  | { project: null; company: { companyId: string; cwd: string } }
+);
 
 function missingWorkspace(runId: string, what: string): MaisterError {
   return new MaisterError(
@@ -63,6 +65,31 @@ export function workspaceSpecFor(
   input: WorkspaceSpecInput,
 ): AdoptWorkspaceWire {
   const { run, project } = input;
+
+  if (input.company) {
+    if (
+      project !== null ||
+      run.runKind !== "agent" ||
+      run.agentWorkspace !== "none" ||
+      run.localPackageId !== null ||
+      input.localPackage !== null ||
+      input.workspace !== null ||
+      (run.contextMounts?.length ?? 0) > 0 ||
+      run.workspaceMode !== null ||
+      run.rootRunId !== null
+    )
+      throw missingWorkspace(run.id, "isolated company owner");
+
+    return {
+      runId: run.id,
+      projectSlug: "_company",
+      owner: { kind: "company", companyId: input.company.companyId },
+      kind: "directory",
+      path: input.company.cwd,
+    };
+  }
+  if (project === null) throw missingWorkspace(run.id, "project");
+
   const mounts =
     run.contextMounts && run.contextMounts.length > 0
       ? { contextMounts: run.contextMounts }
@@ -153,6 +180,10 @@ export async function loadWorkspaceSpecInput(
       rootRunId: runs.rootRunId,
       workspaceMode: runs.workspaceMode,
       projectId: runs.projectId,
+      companyId: runs.companyId,
+      companyExecutionSnapshot: runs.companyExecutionSnapshot,
+      resultContract: runs.resultContract,
+      operationalIntegrityBaseline: runs.operationalIntegrityBaseline,
     })
     .from(runs)
     .where(eq(runs.id, runId))
@@ -162,6 +193,28 @@ export async function loadWorkspaceSpecInput(
     throw new MaisterError("PRECONDITION", `run ${runId} not found`, {
       details: { reason: "run_missing", runId },
     });
+  }
+  if (run.companyId != null) {
+    const { operationalWorkspace } =
+      await import("@/lib/agents/operational-context");
+    const owner = await operationalWorkspace(db, run);
+
+    if (owner.ownerKind !== "company")
+      throw missingWorkspace(runId, "company owner");
+
+    return {
+      run,
+      project: null,
+      company: { companyId: owner.companyId, cwd: owner.cwd },
+      workspace: null,
+      localPackage: null,
+      agentPaths: {
+        workdir: owner.cwd,
+        readOnlyWorkdir: owner.cwd,
+        sharedWorktree: null,
+      },
+      ephemeralReadOnlyCheckoutExists: false,
+    };
   }
   let localPackage: { slug: string; workingDir: string } | null = null;
 

@@ -2509,6 +2509,9 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     }
 
     const body: WorkspaceRecordResponse = {
+      ...(handle.companyId
+        ? { owner: { kind: "company" as const, companyId: handle.companyId } }
+        : {}),
       executionWorkspaceId: handle.id,
       runId: handle.runId,
       projectSlug: handle.projectSlug,

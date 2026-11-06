@@ -53,10 +53,11 @@ export function seedRuntimeInventory(stateDir: string, count: number): string {
   return hostKey;
 }
 
-/** Version 14 differs from the current schema only by this missing index. */
+/** Restore version 14 before the corrupt-path index and company workspace owner column. */
 export function restoreV14InventorySchema(db: DatabaseSync): void {
   db.exec(`BEGIN IMMEDIATE;
     DROP INDEX runtime_objects_corrupt_path_idx;
+    ALTER TABLE workspaces DROP COLUMN company_id;
     PRAGMA user_version = 14;
     COMMIT;`);
 }

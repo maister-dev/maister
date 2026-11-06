@@ -1546,11 +1546,36 @@ export function createFakeExecutionHost(
             typeof payload.projectSlug !== "string" ||
             !(
               KEBAB.test(payload.projectSlug) ||
-              // ADR-185: the supervisor's one reserved non-kebab slug.
-              payload.projectSlug === "_librarian"
+              // Reserved owner namespaces are not registered projects.
+              payload.projectSlug === "_librarian" ||
+              payload.projectSlug === "_company"
             )
           ) {
             throw precondition("projectSlug must be kebab-case", {});
+          }
+          if (
+            (payload.projectSlug === "_company") !==
+              (payload.owner?.kind === "company") ||
+            (payload.owner &&
+              (payload.kind !== "directory" ||
+                payload.contextMounts !== undefined ||
+                payload.repoPath !== undefined))
+          )
+            throw precondition(
+              "Company workspace owner and isolated directory are required",
+              {},
+            );
+          if (payload.owner) {
+            const expected = createHash("sha256")
+              .update(JSON.stringify([payload.owner.companyId, payload.runId]))
+              .digest("hex");
+            const segments = payload.path.split("/");
+
+            if (segments.at(-1) !== expected || segments.at(-2) !== ".company")
+              throw precondition(
+                "Workspace owner does not match its managed path",
+                { reason: "workspace_rejected", rule: "owner_mismatch" },
+              );
           }
           if (payload.kind === "directory" && payload.repoPath !== undefined) {
             throw precondition(
@@ -1592,12 +1617,23 @@ export function createFakeExecutionHost(
               w.path === payload.path &&
               !w.releasedAt,
           );
+
+          if (
+            (existing?.owner?.companyId ?? null) !==
+              (payload.owner?.companyId ?? null) &&
+            existing
+          )
+            throw precondition("Workspace owner changed", {
+              reason: "workspace_rejected",
+              rule: "owner_mismatch",
+            });
           const id =
             existing?.executionWorkspaceId ??
             asExecutionWorkspaceId(`ws_${randomUUID().replace(/-/g, "")}`);
 
           if (!existing) {
             workspaces.set(id, {
+              ...(payload.owner ? { owner: payload.owner } : {}),
               executionWorkspaceId: id,
               runId: payload.runId,
               projectSlug: payload.projectSlug,

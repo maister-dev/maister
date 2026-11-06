@@ -294,6 +294,26 @@ test("HITL refusal examples satisfy real JSON Schema validation", () => {
   }
 });
 
+test("company workspace OpenAPI requires an exclusive owner and isolated directory", () => {
+  const document = readContract("../docs/api/supervisor.openapi.yaml");
+  const validate = schemaValidator(document, "company-workspace", "AdoptWorkspacePayload");
+  const payload = document.components.schemas.AdoptWorkspacePayload.example;
+
+  assertValidExample(validate, payload);
+  const { owner, ...missingOwner } = payload;
+
+  for (const value of [missingOwner, { ...payload, owner: { ...owner, permission: "all" } }, { ...payload, projectSlug: "demo" }, { ...payload, kind: "repo_checkout", repoPath: "/repo" }, { ...payload, contextMounts: [] }])
+    assert.equal(validate(value), false, JSON.stringify(value));
+  assertValidExample(validate, { runId: "legacy-run", projectSlug: "demo", kind: "directory", path: "/workspace" });
+  const record = schemaValidator(document, "company-workspace-record", "WorkspaceRecord");
+  const value = { executionWorkspaceId: `ws_${"a".repeat(32)}`, runId: payload.runId, projectSlug: payload.projectSlug, owner, kind: "directory", adoptedAt: "2026-11-06T00:00:00.000Z", releasedAt: null };
+
+  assertValidExample(record, value);
+  const { owner: omitted, ...unowned } = value;
+
+  assert.equal(record(unowned), false);
+});
+
 test("external HITL inbox example includes every required read-state field", () => {
   const document = readContract("../docs/api/external/operations.openapi.yaml");
   const body =

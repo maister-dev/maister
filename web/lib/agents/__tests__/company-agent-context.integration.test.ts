@@ -11,6 +11,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -58,6 +59,14 @@ import {
   platformAcpRunners,
   platformRuntimeSettings,
 } from "@/lib/db/schema";
+import { createExecutionHosts } from "@/lib/execution-host";
+import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
+import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
+import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
+import {
+  startRealSupervisor,
+  useRealSupervisorUrl,
+} from "@/test-support/real-supervisor";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import { setDefaultTransportForTests } from "@/lib/execution-host/default-transport";
@@ -120,7 +129,9 @@ beforeAll(async () => {
   database = await startMainAndBrainPostgresTestDb({
     databaseName: "company_agent_context",
   });
-  root = await mkdtemp(join(os.tmpdir(), "company-agent-context-"));
+  root = await realpath(
+    await mkdtemp(join(os.tmpdir(), "company-agent-context-")),
+  );
   vi.stubEnv("MAISTER_WORKTREES_ROOT", join(root, "worktrees"));
   vi.spyOn(os, "homedir").mockReturnValue(root);
   await database.pool.query(
@@ -323,6 +334,72 @@ it("CBS-02 preflights a real pinned company specialist and exact assignment inpu
     ).rows[0],
   ).toEqual({ projects: 0, runs: 0, tokens: 0 });
 });
+
+it("CBS-02 adopts the server-resolved company directory through the real supervisor wire and retains its owner", async () => {
+  const db: Db = database.db;
+  const supervisor = await startRealSupervisor({
+    runtimeRoot: join(root, "adoption-host"),
+    workspaceRoots: [join(root, "worktrees")],
+    fixtureArgs: ["--hang"],
+  });
+  const restoreUrl = useRealSupervisorUrl(supervisor.url);
+
+  setDefaultTransportForTests(null);
+  resetResolverForTests();
+  resetRegistrarStateForTests();
+  try {
+    const { runId } = await reserveCompanyFixtureRun();
+    const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+    const owner = await operationalWorkspace(db, run);
+
+    await mkdir(owner.cwd, { recursive: true });
+    const hosts = createExecutionHosts({
+      db,
+      transport: createLocalDirectTransport(),
+    });
+    const client = await hosts.forRun(runId, { reason: "launch" });
+    const handle = await client.ensureWorkspace();
+    const record = await hosts.local().getWorkspace(handle);
+
+    expect(record).toMatchObject({
+      runId,
+      owner: { kind: "company", companyId: request.companyId },
+      projectSlug: "_company",
+      kind: "directory",
+      releasedAt: null,
+    });
+    expect(await client.ensureWorkspace()).toBe(handle);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind='workspace.adopt'",
+          [runId],
+        )
+      ).rows[0],
+    ).toEqual({ count: 1 });
+    expect(
+      (
+        await database.pool.query("SELECT project_id FROM runs WHERE id=$1", [
+          runId,
+        ])
+      ).rows[0],
+    ).toEqual({ project_id: null });
+    const prepared = await prepareUndispatchedAgentFailure(runId, {
+      db,
+      reason: "fixture_adoption_probe_complete",
+    });
+    const finalized = await db.transaction((tx) => prepared.apply(tx));
+
+    expect(finalized.finalized).toBe(true);
+  } finally {
+    await stopRuntimeEventConsumers();
+    await supervisor.stop();
+    restoreUrl();
+    resetRegistrarStateForTests();
+    resetResolverForTests();
+    setDefaultTransportForTests(null);
+  }
+}, 120000);
 
 it("CBS-02 shares the existing bounded agent pool across project and company work and promotes a queued company run once", async () => {
   const db: Db = database.db;
