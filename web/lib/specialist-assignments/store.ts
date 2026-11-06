@@ -28,7 +28,7 @@ import {
 } from "./types";
 import { decodeAssignmentInput, retainAssignmentInput } from "./input-snapshot";
 
-import { companyAgentExecutionSnapshotSchema } from "@/lib/agents/company-agent-execution-types";
+import { companyExecutionSnapshotSchema } from "@/lib/agents/company-execution-types";
 import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
 import { parseAgentDefinition } from "@/lib/agents/definition";
 import { parseScheduledRequestSnapshot } from "@/lib/agents/scheduled-request";
@@ -805,7 +805,7 @@ export async function linkSpecialistAssignmentRunInTransaction(
     )
   ).rows[0];
 
-  const companyCapture = companyAgentExecutionSnapshotSchema.safeParse(
+  const companyCapture = companyExecutionSnapshotSchema.safeParse(
     execution?.company_execution_snapshot,
   );
   const ownerMatches =
@@ -821,7 +821,9 @@ export async function linkSpecialistAssignmentRunInTransaction(
         companyCapture.data.assignment.inputRevision ===
           request.data.inputRevision &&
         companyCapture.data.specialistBinding.id ===
-          head.specialist_binding_id);
+          head.specialist_binding_id &&
+        (companyCapture.data.schemaVersion !== 2 ||
+          request.data.role === "coordinator"));
 
   if (!ownerMatches)
     throw new MaisterError(

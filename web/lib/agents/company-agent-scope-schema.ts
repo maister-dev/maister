@@ -7,7 +7,7 @@ import { configurationReferenceShape } from "./trigger-scope-schema";
 
 /** Legacy owner bytes remain unknown; new company agent receipts cannot carry repository ownership. */
 export function companyAgentSnapshotShape(
-  snapshot: AnyPgColumn,
+  snapshot: AnyPgColumn | SQL,
   companyId: AnyPgColumn,
 ): SQL {
   const assignment = sql`(${snapshot}->'assignment')`;
@@ -36,5 +36,20 @@ export function companyAgentSnapshotShape(
     AND ${witness}->>'kind'='company_grant' AND ${witness}->'owner'=${snapshot}->'owner' AND ${witness}->>'action'='assignments:update'
     AND jsonb_typeof(${witness}->'authorityId')='string' AND char_length(${witness}->>'authorityId') BETWEEN 1 AND 128
     AND CASE WHEN jsonb_typeof(${witness}->'revision')='number' THEN (${witness}->>'revision')::numeric BETWEEN 1 AND 2147483647 AND mod((${witness}->>'revision')::numeric,1)=0 ELSE false END
+    AND pg_column_size(${snapshot})<=32768) IS TRUE`;
+}
+
+/** Validate v2 graph identity using the unchanged common v1 field grammar, without rewriting retained JSON. */
+export function companyFlowSnapshotShape(
+  snapshot: AnyPgColumn,
+  companyId: AnyPgColumn,
+): SQL {
+  const common = sql`((${snapshot}-ARRAY['executionKind','coordinatorFlowBinding']) || '{"schemaVersion":1}'::jsonb)`;
+
+  return sql`(jsonb_typeof(${snapshot})='object' AND ${snapshot}->'schemaVersion'='2'::jsonb
+    AND ${snapshot} ?& ARRAY['executionKind','coordinatorFlowBinding']
+    AND ${snapshot}->>'executionKind'='flow'
+    AND ${configurationReferenceShape(sql`(${snapshot}->'coordinatorFlowBinding')`)}
+    AND ${companyAgentSnapshotShape(common, companyId)}
     AND pg_column_size(${snapshot})<=32768) IS TRUE`;
 }

@@ -1,5 +1,5 @@
 import type { CoordinatorChildLaunchContext } from "@/lib/orchestrator/child-launch-context";
-import type { CompanyAgentExecutionSnapshot } from "@/lib/agents/company-agent-execution-types";
+import type { CompanyExecutionSnapshot } from "@/lib/agents/company-execution-types";
 import type { CompanyFlowBindingSnapshot } from "@/lib/agents/company-flow-binding-types";
 import type { NativeDelegationInput } from "@/lib/orchestrator/native-input-types";
 import type { AgentSpecialist } from "@/lib/agents/specialist";
@@ -134,7 +134,10 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 
-import { companyAgentSnapshotShape } from "@/lib/agents/company-agent-scope-schema";
+import {
+  companyAgentSnapshotShape,
+  companyFlowSnapshotShape,
+} from "@/lib/agents/company-agent-scope-schema";
 import { agentRetryRecipeScopeShape } from "@/lib/agents/retry-scope-schema";
 import { triggerBindingScopeShape } from "@/lib/agents/trigger-scope-schema";
 import { scheduledRequestShape } from "@/lib/agents/scheduled-request-schema";
@@ -2254,7 +2257,7 @@ export const runs = pgTable(
     }),
     companyExecutionSnapshot: jsonb(
       "company_execution_snapshot",
-    ).$type<CompanyAgentExecutionSnapshot>(),
+    ).$type<CompanyExecutionSnapshot>(),
     taskQualificationSnapshot: jsonb(
       "task_qualification_snapshot",
     ).$type<TaskQualificationLaunchSnapshot>(),
@@ -2600,7 +2603,7 @@ export const runs = pgTable(
   (t) => ({
     companyAgentShape: check(
       "runs_company_agent_shape_check",
-      sql`((${t.companyId} IS NULL AND ${t.companyExecutionSnapshot} IS NULL) OR (${t.companyId} IS NOT NULL AND ${t.companyExecutionSnapshot} IS NOT NULL AND ${t.projectId} IS NULL AND ${t.taskId} IS NULL AND ${t.flowId} IS NULL AND ${t.flowRevisionId} IS NULL AND ${t.localPackageId} IS NULL AND ${t.runKind}='agent' AND ${t.agentKind}='operational' AND ${t.agentWorkspace}='none' AND ${t.persistent}=false AND ${t.sourceAgentId} IS NOT NULL AND (${t.agentId} IS NULL OR ${t.agentId}=${t.sourceAgentId}) AND ${t.resultContract}->'definition'->>'id'=${t.sourceAgentId} AND ${companyAgentSnapshotShape(t.companyExecutionSnapshot, t.companyId)})) IS TRUE`,
+      sql`((${t.companyId} IS NULL AND ${t.companyExecutionSnapshot} IS NULL) OR (${t.companyId} IS NOT NULL AND ${t.companyExecutionSnapshot} IS NOT NULL AND ${t.projectId} IS NULL AND ${t.taskId} IS NULL AND ${t.flowId} IS NULL AND ${t.flowRevisionId} IS NULL AND ${t.localPackageId} IS NULL AND ${t.runKind}='agent' AND ${t.agentKind}='operational' AND ${t.agentWorkspace}='none' AND ${t.persistent}=false AND ${t.sourceAgentId} IS NOT NULL AND (${t.agentId} IS NULL OR ${t.agentId}=${t.sourceAgentId}) AND ${t.resultContract}->'definition'->>'id'=${t.sourceAgentId} AND ${companyAgentSnapshotShape(t.companyExecutionSnapshot, t.companyId)}) OR (${t.companyId} IS NOT NULL AND ${t.companyExecutionSnapshot} IS NOT NULL AND ${t.projectId} IS NULL AND ${t.taskId} IS NULL AND ${t.flowId} IS NULL AND ${t.localPackageId} IS NULL AND ${t.runKind}='flow' AND ${t.agentKind} IS NULL AND ${t.agentWorkspace}='none' AND ${t.persistent}=false AND ${t.sourceAgentId} IS NOT NULL AND (${t.agentId} IS NULL OR ${t.agentId}=${t.sourceAgentId}) AND ${t.flowRevisionId} IS NOT NULL AND ${t.resultContract}->>'kind'='flow_export' AND ${t.resultContract}->'required'='true'::jsonb AND ${t.resultContract}->>'flowRevisionId'=${t.flowRevisionId} AND ${t.resultContract}->>'sha256' ~ '^[a-f0-9]{64}$' AND jsonb_typeof(${t.resultContract}->'schema')='object' AND ${companyFlowSnapshotShape(t.companyExecutionSnapshot, t.companyId)})) IS TRUE`,
     ),
     companyHistoryIndex: index("runs_company_agent_history_idx")
       .on(t.companyId, t.sourceAgentId, t.activitySortAt.desc(), t.id.desc())

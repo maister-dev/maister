@@ -1,3 +1,6 @@
+import type { JsonValue } from "@/lib/hitl-response-contract";
+import type { SqlTransaction } from "@/lib/db/sql-types";
+import type { CompanyFlowExecutionSnapshot } from "../company-execution-types";
 import type { CompanyFlowContextInput } from "../company-flow-context";
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 import type { PreparedSpecialistAssignment } from "@/lib/specialist-assignments/types";
@@ -7,10 +10,14 @@ import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { join, resolve, sep } from "node:path";
 
+import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { stringify } from "yaml";
 
-import { agentDefinitionSha256 } from "../activity-snapshot";
+import {
+  agentDefinitionSha256,
+  buildAgentActivitySnapshot,
+} from "../activity-snapshot";
 import { createCompanySpecialistBinding } from "../company-bindings";
 import {
   createCompanyFlowBinding,
@@ -22,8 +29,17 @@ import {
 } from "../company-flow-context";
 import { updateCompanyFlowBinding } from "../company-flow-binding-mutations";
 import { parseAgentDefinition } from "../definition";
+import { resolveInstalledAgentDefinition } from "../effective";
+import { buildOperationalContract } from "../launch-contract";
+import {
+  prepareCompanyAgentContext,
+  captureCompanyAgentExecution,
+} from "../company-agent-context";
 
-import { createSpecialistAssignment } from "@/lib/specialist-assignments/store";
+import {
+  createSpecialistAssignment,
+  linkSpecialistAssignmentRunInTransaction,
+} from "@/lib/specialist-assignments/store";
 import { createCompanyGrants, revokeCompanyGrant } from "@/lib/company/grants";
 import {
   installPackageRevision,
@@ -32,11 +48,20 @@ import {
 import { resolveFlowExportContract } from "@/lib/run-results/flow-export";
 import * as engine from "@/lib/flows/engine-version";
 import { git, initRepo } from "@/test-support/git-fixture";
-import { startMainPostgresTestDb } from "@/test-support/pg-container";
+import {
+  startMainPostgresTestDbUpTo,
+  applyMainMigration,
+} from "@/test-support/pg-container";
+import { seedProjectRow } from "@/test-support/execution-host-seed";
 
 let database: StartedPostgresTestDb;
 let root: string;
 let schemaPath: string;
+let storedFlowRunId: string;
+let baselineCounts: AllocationCounts;
+let migrationBeforeRows: { value: JsonValue }[];
+let migrationAfterRows: { value: JsonValue }[];
+let preparedAssignment: PreparedSpecialistAssignment;
 let request: CompanyFlowContextInput;
 const administratorId = randomUUID();
 const requesterId = randomUUID();
@@ -91,9 +116,12 @@ function useEngineVersion(version: string) {
 }
 
 beforeAll(async () => {
-  database = await startMainPostgresTestDb({
-    databaseName: "company_flow_context",
-  });
+  database = await startMainPostgresTestDbUpTo(
+    {
+      databaseName: "company_flow_context",
+    },
+    "0247_company_operational_attention",
+  );
   root = await mkdtemp(join(os.tmpdir(), "company-flow-context-"));
   vi.spyOn(os, "homedir").mockReturnValue(root);
   await database.pool.query(
@@ -137,6 +165,10 @@ beforeAll(async () => {
   await writeFile(
     join(source, "flows/rah-control/flow.yaml"),
     stringify(manifest),
+  );
+  await writeFile(
+    join(source, "maister-agents/migration-observer.md"),
+    "---\nname: Retained operations observer\ndescription: Inspect an authorized stand\nkind: operational\ncompletion: {contract: operational_v1}\nspecialist:\n  responsibilities: [Inspect authorized stand state]\n  targetClasses: [stand]\nmode: session\nworkspace: none\ntriggers: [manual]\nrisk_tier: read_only\n---\nPreserve supported observations and missing evidence.\n",
   );
   await initRepo(source);
   await git(
@@ -267,6 +299,8 @@ beforeAll(async () => {
     origin: { kind: "manual", interactionId: randomUUID() },
     destination: { kind: "inbox", userId: requesterId },
   };
+
+  preparedAssignment = input;
   const assignment = await createSpecialistAssignment(
     database.db,
     requesterId,
@@ -285,6 +319,30 @@ beforeAll(async () => {
     coordinatorBindingRevision: coordinator.binding.revision,
     triggerSource: "manual",
   };
+  await seedRetainedStandalone();
+  const project = await seedProjectRow(database.db);
+
+  await database.pool.query(
+    "INSERT INTO runs(id,project_id,run_kind,status,flow_version,flow_revision) VALUES($1,$2,'agent','Pending','agent','manual')",
+    [randomUUID(), project.id],
+  );
+  await database.pool.query(
+    "INSERT INTO runs(id,run_kind,status,flow_version,flow_revision,persistent,created_by_user_id,agent_workspace) VALUES($1,'librarian','NeedsInputIdle','librarian','manual',true,$2,'none')",
+    [randomUUID(), requesterId],
+  );
+  migrationBeforeRows = (
+    await database.pool.query<{ value: JsonValue }>(
+      "SELECT to_jsonb(r) AS value FROM runs r ORDER BY id",
+    )
+  ).rows;
+  await applyMainMigration(database.db, "0248_company_flow_execution");
+  migrationAfterRows = (
+    await database.pool.query<{ value: JsonValue }>(
+      "SELECT to_jsonb(r) AS value FROM runs r ORDER BY id",
+    )
+  ).rows;
+  await database.pool.query("DELETE FROM projects WHERE id=$1", [project.id]);
+  baselineCounts = await counts();
 }, 180000);
 
 afterAll(async () => {
@@ -312,6 +370,118 @@ async function counts(): Promise<AllocationCounts> {
   ).rows[0]!;
 }
 
+async function seedRetainedStandalone(): Promise<void> {
+  const effective = await resolveInstalledAgentDefinition(database.db, {
+    agentId: "rah:migration-observer",
+    packageInstallId: preparedAssignment.standingDefinition.packageInstallId,
+  });
+  const binding = await createCompanySpecialistBinding(
+    database.db,
+    requesterId,
+    effective.parsed.id,
+    {
+      owner: { kind: "company", companyId: request.companyId },
+      packageInstallId: effective.packageInstallId,
+      packageRevision: preparedAssignment.standingDefinition.packageRevision,
+      definitionSha256: agentDefinitionSha256(effective.parsed),
+      configuration: {},
+      grantActions: [],
+      enabled: true,
+      idempotencyKey: randomUUID(),
+    },
+  );
+  const result = buildOperationalContract(effective);
+  const work = await createSpecialistAssignment(database.db, requesterId, {
+    ...preparedAssignment,
+    specialistBindingId: binding.specialist.bindingId,
+    responsibleAgentId: effective.parsed.id,
+    executionPolicy: binding.specialist.executionPolicy,
+    origin: { kind: "manual", interactionId: randomUUID() },
+    standingDefinition: {
+      ...preparedAssignment.standingDefinition,
+      agentId: effective.parsed.id,
+      definition: effective.parsed,
+      definitionSha256: agentDefinitionSha256(effective.parsed),
+    },
+    objectiveInput: {
+      ...preparedAssignment.objectiveInput,
+      expectedResult: {
+        schemaRef: result.schemaRef,
+        schemaVersion: result.schemaVersion,
+        sha256: result.sha256,
+        required: true,
+      },
+    },
+  });
+
+  await database.db.transaction(async (tx) => {
+    const context = await prepareCompanyAgentContext(tx, requesterId, {
+      companyId: request.companyId,
+      assignmentId: work.id,
+      assignmentRevision: work.revision,
+      inputRevision: work.inputRevision,
+      bindingId: binding.specialist.bindingId,
+      bindingRevision: binding.specialist.configRevision,
+      triggerSource: "manual",
+    });
+    const runId = randomUUID();
+    const capture = captureCompanyAgentExecution(context);
+
+    await tx.execute(sql`INSERT INTO runs(id,run_kind,company_id,company_execution_snapshot,agent_id,source_agent_id,
+      agent_kind,agent_workspace,flow_version,flow_revision,status,result_contract,created_by_user_id,
+      launched_at,activity_sort_at,activity_timestamp_provenance,agent_config,execution_policy,agent_activity_snapshot)
+      VALUES(${runId},'agent',${request.companyId},${JSON.stringify(capture)}::jsonb,${effective.parsed.id},${effective.parsed.id},
+      'operational','none','agent','manual','Pending',${JSON.stringify(result)}::jsonb,${requesterId},now(),now(),'launch',
+      ${JSON.stringify(context.binding.snapshot.effectiveConfiguration)}::jsonb,${JSON.stringify(context.binding.snapshot.executionPolicy)}::jsonb,
+      ${JSON.stringify(buildAgentActivitySnapshot(effective.parsed.id, effective))}::jsonb)`);
+    await linkSpecialistAssignmentRunInTransaction(tx, requesterId, work.id, {
+      runId,
+      inputRevision: work.inputRevision,
+      expectedRevision: work.revision,
+      role: "specialist",
+      work: null,
+    });
+  });
+}
+
+it("preserves populated standalone/project/private bytes through 0233 and keeps project deletion independent of Brain", async () => {
+  expect(migrationAfterRows).toEqual(migrationBeforeRows);
+  expect(baselineCounts).toEqual({
+    projects: 0,
+    tasks: 0,
+    runs: 2,
+    sessions: 0,
+    links: 1,
+  });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS count FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('brain_record_revisions','brain_items')",
+      )
+    ).rows[0],
+  ).toEqual({ count: 0 });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT run_kind,project_id,company_id,company_execution_snapshot->'schemaVersion' AS version FROM runs ORDER BY run_kind",
+      )
+    ).rows,
+  ).toEqual([
+    {
+      run_kind: "agent",
+      project_id: null,
+      company_id: request.companyId,
+      version: 1,
+    },
+    {
+      run_kind: "librarian",
+      project_id: null,
+      company_id: null,
+      version: null,
+    },
+  ]);
+});
+
 it("refuses the actual unsupported host capability before allocating any repository or execution", async () => {
   expect(engine.MAISTER_ENGINE_VERSION).toBe("3.11.1");
   await expect(
@@ -322,13 +492,7 @@ it("refuses the actual unsupported host capability before allocating any reposit
     code: "CONFIG",
     details: { flowManifestIncompatibility: { kind: "engine_incompatible" } },
   });
-  expect(await counts()).toEqual({
-    projects: 0,
-    tasks: 0,
-    runs: 0,
-    sessions: 0,
-    links: 0,
-  });
+  expect(await counts()).toEqual(baselineCounts);
 });
 
 it("prepares exact trusted installed graph/input/result witnesses on a supported host without creating a carrier Task", async () => {
@@ -366,13 +530,7 @@ it("prepares exact trusted installed graph/input/result witnesses on a supported
       context.coordinator.snapshot.flowRevisionId,
     );
     expect(snapshot).not.toHaveProperty("projectId");
-    expect(await counts()).toEqual({
-      projects: 0,
-      tasks: 0,
-      runs: 0,
-      sessions: 0,
-      links: 0,
-    });
+    expect(await counts()).toEqual(baselineCounts);
   } finally {
     compatibility.mockRestore();
   }
@@ -434,13 +592,7 @@ it("honors the pinned Flow maximum on a newer host before execution allocation",
       code: "CONFIG",
       details: { flowManifestIncompatibility: { kind: "engine_incompatible" } },
     });
-    expect(await counts()).toEqual({
-      projects: 0,
-      tasks: 0,
-      runs: 0,
-      sessions: 0,
-      links: 0,
-    });
+    expect(await counts()).toEqual(baselineCounts);
   } finally {
     compatibility.mockRestore();
   }
@@ -538,29 +690,360 @@ it("refuses disabled coordinator configuration and requires the new reviewed rev
   }
 });
 
-it("uses current initiating authority after revocation rather than the frozen input witness", async () => {
-  const grant = (
-    await database.pool.query<{ id: string; revision: number }>(
-      "SELECT id,revision FROM company_grants WHERE principal_type='user' AND principal_id=$1 AND action='assignments:update' AND revoked_at IS NULL",
-      [requesterId],
-    )
-  ).rows[0]!;
+it("retains a company graph reservation and exact coordinator/input link atomically without a Project or Task", async () => {
+  const assignment = await createSpecialistAssignment(
+    database.db,
+    requesterId,
+    {
+      ...preparedAssignment,
+      origin: { kind: "manual", interactionId: randomUUID() },
+    },
+  );
+  const compatibility = useEngineVersion("3.12.0");
+  const runId = randomUUID();
 
-  await revokeCompanyGrant(database.db, administratorId, grant.id, {
-    expectedRevision: grant.revision,
-    reason: "Revoke coordinator admission",
-    idempotencyKey: randomUUID(),
-  });
-  await expect(
-    database.db.transaction((tx) =>
-      prepareCompanyFlowContext(tx, requesterId, request),
-    ),
-  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
-  expect(await counts()).toEqual({
-    projects: 0,
-    tasks: 0,
-    runs: 0,
-    sessions: 0,
-    links: 0,
-  });
+  try {
+    const snapshot = await database.db.transaction(async (tx) => {
+      const context = await prepareCompanyFlowContext(tx, requesterId, {
+        ...request,
+        assignmentId: assignment.id,
+        assignmentRevision: assignment.revision,
+        inputRevision: assignment.inputRevision,
+      });
+      const capture = captureCompanyFlowExecution(context);
+      const activity = buildAgentActivitySnapshot(
+        context.effective.parsed.id,
+        context.effective,
+      );
+
+      await tx.execute(sql`INSERT INTO runs(
+        id,run_kind,company_id,company_execution_snapshot,agent_id,source_agent_id,
+        agent_workspace,flow_version,flow_revision,flow_revision_id,status,result_contract,
+        created_by_user_id,launched_at,activity_sort_at,activity_timestamp_provenance,
+        agent_config,execution_policy,scheduled_request_snapshot,agent_activity_snapshot)
+        VALUES(${runId},'flow',${context.owner.companyId},${JSON.stringify(capture)}::jsonb,
+        ${context.effective.parsed.id},${context.effective.parsed.id},'none',
+        ${context.flowVersion},${context.coordinator.snapshot.packageRevision},${context.coordinator.snapshot.flowRevisionId},'Pending',
+        ${JSON.stringify(context.resultContract)}::jsonb,${requesterId},now(),now(),'launch',
+        ${JSON.stringify(context.binding.snapshot.effectiveConfiguration)}::jsonb,${JSON.stringify(context.binding.snapshot.executionPolicy)}::jsonb,
+        ${context.input.snapshot.scheduledRequest === null ? null : JSON.stringify(context.input.snapshot.scheduledRequest)}::jsonb,
+        ${JSON.stringify(activity)}::jsonb)`);
+      await linkSpecialistAssignmentRunInTransaction(
+        tx,
+        requesterId,
+        assignment.id,
+        {
+          runId,
+          inputRevision: assignment.inputRevision,
+          expectedRevision: assignment.revision,
+          role: "coordinator",
+          work: null,
+        },
+      );
+
+      return capture;
+    });
+
+    storedFlowRunId = runId;
+    expect(
+      (
+        await database.pool.query(
+          "SELECT run_kind,company_id,project_id,task_id,flow_id,company_execution_snapshot FROM runs WHERE id=$1",
+          [runId],
+        )
+      ).rows[0],
+    ).toEqual({
+      run_kind: "flow",
+      company_id: request.companyId,
+      project_id: null,
+      task_id: null,
+      flow_id: null,
+      company_execution_snapshot: snapshot,
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT role,input_revision FROM specialist_run_links WHERE run_id=$1",
+          [runId],
+        )
+      ).rows[0],
+    ).toEqual({
+      role: "coordinator",
+      input_revision: assignment.inputRevision,
+    });
+    expect(
+      (await database.pool.query("SELECT count(*)::int AS count FROM projects"))
+        .rows[0],
+    ).toEqual({ count: 0 });
+    expect(
+      (await database.pool.query("SELECT count(*)::int AS count FROM tasks"))
+        .rows[0],
+    ).toEqual({ count: 0 });
+  } finally {
+    compatibility.mockRestore();
+  }
+});
+
+async function insertClonedGraphReservation(
+  tx: SqlTransaction,
+  runId: string,
+  capture: unknown,
+  patch: Readonly<Record<string, unknown>>,
+): Promise<void> {
+  await tx.execute(sql`INSERT INTO runs
+    SELECT (jsonb_populate_record(NULL::runs,to_jsonb(source)||jsonb_build_object(
+      'id',${runId}::text,'company_execution_snapshot',${JSON.stringify(capture)}::jsonb
+    )||${JSON.stringify(patch)}::jsonb)).* FROM runs source WHERE source.id=${storedFlowRunId}`);
+}
+
+async function prepareFreshGraphReservation(): Promise<CompanyFlowExecutionSnapshot> {
+  const assignment = await createSpecialistAssignment(
+    database.db,
+    requesterId,
+    {
+      ...preparedAssignment,
+      origin: { kind: "manual", interactionId: randomUUID() },
+    },
+  );
+  const context = await database.db.transaction((tx) =>
+    prepareCompanyFlowContext(tx, requesterId, {
+      ...request,
+      assignmentId: assignment.id,
+      assignmentRevision: assignment.revision,
+      inputRevision: assignment.inputRevision,
+    }),
+  );
+
+  return captureCompanyFlowExecution(context);
+}
+
+it.each([
+  {
+    name: "coordinator witness",
+    capture: (value: CompanyFlowExecutionSnapshot) => ({
+      ...value,
+      coordinatorFlowBinding: {
+        ...value.coordinatorFlowBinding,
+        snapshotSha256: "0".repeat(64),
+      },
+    }),
+    patch: {},
+  },
+  {
+    name: "assignment input witness",
+    capture: (value: CompanyFlowExecutionSnapshot) => ({
+      ...value,
+      assignment: { ...value.assignment, inputSha256: "0".repeat(64) },
+    }),
+    patch: {},
+  },
+  {
+    name: "unknown version",
+    capture: (value: CompanyFlowExecutionSnapshot) => ({
+      ...value,
+      schemaVersion: 3,
+    }),
+    patch: {},
+  },
+  {
+    name: "extra authority",
+    capture: (value: CompanyFlowExecutionSnapshot) => ({
+      ...value,
+      confirmationAuthority: "invented",
+    }),
+    patch: {},
+  },
+  {
+    name: "non-Pending admission",
+    capture: (value: CompanyFlowExecutionSnapshot) => value,
+    patch: { status: "Running" },
+  },
+  {
+    name: "forged source revision",
+    capture: (value: CompanyFlowExecutionSnapshot) => value,
+    patch: { flow_revision: "invented" },
+  },
+  {
+    name: "operational-agent substitution",
+    capture: (value: CompanyFlowExecutionSnapshot) => value,
+    patch: { agent_kind: "operational" },
+  },
+  {
+    name: "optional result export",
+    capture: (value: CompanyFlowExecutionSnapshot) => value,
+    patch: { result_contract: { kind: "flow_export", required: false } },
+  },
+  {
+    name: "missing pinned Flow",
+    capture: (value: CompanyFlowExecutionSnapshot) => value,
+    patch: { flow_revision_id: null },
+  },
+  {
+    name: "fabricated project",
+    capture: (value: CompanyFlowExecutionSnapshot) => value,
+    patch: { project_id: "fabricated" },
+  },
+])(
+  "refuses invalid graph provenance at the database boundary: $name",
+  async ({ capture, patch }) => {
+    const compatibility = useEngineVersion("3.12.0");
+
+    try {
+      const valid = await prepareFreshGraphReservation();
+      const before = await counts();
+
+      await expect(
+        database.db.transaction((tx) =>
+          insertClonedGraphReservation(tx, randomUUID(), capture(valid), patch),
+        ),
+      ).rejects.toMatchObject({ cause: { code: "23514" } });
+      expect(await counts()).toEqual(before);
+    } finally {
+      compatibility.mockRestore();
+    }
+  },
+);
+
+it.each([
+  {
+    name: "producer identity",
+    patch: { producerNodeIds: ["fabricated-producer"] },
+  },
+  {
+    name: "native validation contract",
+    patch: { nativeContract: "fabricated_contract" },
+  },
+])(
+  "binds the frozen export routing to its pinned manifest: $name",
+  async ({ patch }) => {
+    const compatibility = useEngineVersion("3.12.0");
+
+    try {
+      const capture = await prepareFreshGraphReservation();
+      const retained = (
+        await database.pool.query<{ result_contract: Record<string, unknown> }>(
+          "SELECT result_contract FROM runs WHERE id=$1",
+          [storedFlowRunId],
+        )
+      ).rows[0]!;
+      const before = await counts();
+      const runId = randomUUID();
+
+      await expect(
+        database.db.transaction(async (tx) => {
+          await insertClonedGraphReservation(tx, runId, capture, {
+            result_contract: { ...retained.result_contract, ...patch },
+          });
+          await linkSpecialistAssignmentRunInTransaction(
+            tx,
+            requesterId,
+            capture.assignment.id,
+            {
+              runId,
+              inputRevision: capture.assignment.inputRevision,
+              expectedRevision: capture.assignmentRevision,
+              role: "coordinator",
+              work: null,
+            },
+          );
+        }),
+      ).rejects.toMatchObject({
+        cause: {
+          code: "23514",
+          constraint: "runs_company_execution_reference_check",
+        },
+      });
+      expect(await counts()).toEqual(before);
+    } finally {
+      compatibility.mockRestore();
+    }
+  },
+);
+
+it.each(["missing", "wrong_role"] as const)(
+  "requires the exact coordinator/input link at commit: %s",
+  async (link) => {
+    const compatibility = useEngineVersion("3.12.0");
+
+    try {
+      const capture = await prepareFreshGraphReservation();
+      const before = await counts();
+      const runId = randomUUID();
+
+      await expect(
+        database.db.transaction(async (tx) => {
+          await insertClonedGraphReservation(tx, runId, capture, {});
+          if (link === "wrong_role")
+            await tx.execute(sql`
+        INSERT INTO specialist_run_links(assignment_id,run_id,input_revision,role)
+        VALUES(${capture.assignment.id},${runId},${capture.assignment.inputRevision},'specialist')
+      `);
+        }),
+      ).rejects.toMatchObject({
+        cause: {
+          code: "23514",
+          constraint: "runs_company_execution_link_check",
+        },
+      });
+      expect(await counts()).toEqual(before);
+    } finally {
+      compatibility.mockRestore();
+    }
+  },
+);
+
+it.each(["flow_version", "flow_revision"] as const)(
+  "preserves immutable retained graph source identity: %s",
+  async (column) => {
+    const statement =
+      column === "flow_version"
+        ? "UPDATE runs SET flow_version='retargeted' WHERE id=$1"
+        : "UPDATE runs SET flow_revision='retargeted' WHERE id=$1";
+
+    await expect(
+      database.pool.query(statement, [storedFlowRunId]),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "runs_company_execution_immutable",
+    });
+  },
+);
+
+it("uses current initiating authority after revocation rather than the frozen input witness", async () => {
+  const compatibility = useEngineVersion("3.12.0");
+
+  try {
+    const capture = await prepareFreshGraphReservation();
+    const before = await counts();
+    const grant = (
+      await database.pool.query<{ id: string; revision: number }>(
+        "SELECT id,revision FROM company_grants WHERE principal_type='user' AND principal_id=$1 AND action='assignments:update' AND revoked_at IS NULL",
+        [requesterId],
+      )
+    ).rows[0]!;
+
+    await revokeCompanyGrant(database.db, administratorId, grant.id, {
+      expectedRevision: grant.revision,
+      reason: "Revoke coordinator admission",
+      idempotencyKey: randomUUID(),
+    });
+    await expect(
+      database.db.transaction((tx) =>
+        prepareCompanyFlowContext(tx, requesterId, request),
+      ),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(
+      database.db.transaction((tx) =>
+        insertClonedGraphReservation(tx, randomUUID(), capture, {}),
+      ),
+    ).rejects.toMatchObject({
+      cause: {
+        code: "23514",
+        constraint: "runs_company_execution_reference_check",
+      },
+    });
+    expect(await counts()).toEqual(before);
+  } finally {
+    compatibility.mockRestore();
+  }
 });

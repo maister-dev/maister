@@ -1709,6 +1709,13 @@
       "when": 1794606477950,
       "tag": "0247_company_operational_attention",
       "breakpoints": true
+    },
+    {
+      "idx": 248,
+      "version": "7",
+      "when": 1794606477951,
+      "tag": "0248_company_flow_execution",
+      "breakpoints": true
     }
   ]
 }
