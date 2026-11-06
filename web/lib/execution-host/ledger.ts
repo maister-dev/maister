@@ -40,6 +40,7 @@ import {
   childLaunchPromptContext,
 } from "@/lib/orchestrator/child-launch-context";
 import { MaisterError } from "@/lib/errors";
+import { isCompanyFlowResource } from "@/lib/agents/operational-context";
 import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence";
 import {
   nodeAttempts,
@@ -198,7 +199,7 @@ export async function issueCommand<TPayload>(
       "command-issued-on-stale-assignment-snapshot",
     );
 
-  // A terminal operational cleanup can seal bounded diagnosis under its
+  // A terminal resource cleanup can seal bounded diagnosis under its
   // original released generation. This exception grants no execution tools.
   const payload = input.payload as {
     kind?: unknown;
@@ -221,26 +222,28 @@ export async function issueCommand<TPayload>(
     payload.sizeBytes <= 25 * 1024 * 1024
   ) {
     const [owner] = await db
-      .select({ id: runs.id })
+      .select()
       .from(runs)
       .where(
         and(
           eq(runs.id, input.assignment.runId),
-          eq(runs.agentKind, "operational"),
           eq(runs.executionAssignmentId, input.assignment.id),
           inArray(runs.status, ["Done", "Failed", "Crashed", "Abandoned"]),
           sql`${runs.operationalCleanup}->>'state' = 'preserving'`,
         ),
       );
+    const eligibleOwner =
+      owner &&
+      (owner.agentKind === "operational" || isCompanyFlowResource(owner));
 
-    if (owner && input.kind === "runtime_object.reserve")
+    if (eligibleOwner && input.kind === "runtime_object.reserve")
       operationalEvidence =
         payload.kind === "diagnostic" &&
         payload.retentionClass === "run" &&
         typeof payload.logicalName === "string" &&
         payload.logicalName.startsWith("operational-diagnosis-");
     if (
-      owner &&
+      eligibleOwner &&
       input.kind === "runtime_object.upload" &&
       typeof payload.objectId === "string"
     ) {

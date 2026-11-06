@@ -2117,6 +2117,157 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
   }
 }, 120000);
 
+it("CBS-03 preserves unexpected native source as bounded host evidence before releasing its failed directory", async () => {
+  const hostRoot = join(root, "reservation-host");
+
+  await writeCompanyCapabilityCache(hostRoot);
+  const supervisor = await startRealSupervisor({
+    runtimeRoot: hostRoot,
+    workspaceRoots: [join(root, "worktrees")],
+    fixtureArgs: ["--hang"],
+    env: {
+      MAISTER_ADAPTER_SMOKE_CACHE_PATH: join(
+        hostRoot,
+        "adapter-smoke-cache.json",
+      ),
+    },
+  });
+  const restoreUrl = useRealSupervisorUrl(supervisor.url);
+  const compatibility = useEngineVersion("3.12.0");
+  const worker = startProjectionWorker({
+    db: database.db,
+    projectors: canonicalProjectors,
+  });
+  const previousCap = process.env.MAISTER_MAX_CONCURRENT_RUNS;
+  const direct = createLocalDirectTransport();
+  const unexpectedName = "unexpected-source.txt";
+  const unexpectedBytes = "Retained unexpected company source\n";
+  const transport: typeof direct = {
+    ...direct,
+    async startPrompt(...input: Parameters<typeof direct.startPrompt>) {
+      const [run] = await database.db
+        .select()
+        .from(runs)
+        .where(eq(runs.id, input[1].fence.runId));
+
+      if (!run) throw new Error("The controlled native Run is missing");
+      const context = await operationalWorkspace(database.db, run);
+
+      await writeFile(join(context.cwd, unexpectedName), unexpectedBytes);
+
+      return direct.startPrompt(...input);
+    },
+  };
+
+  setDefaultTransportForTests(transport);
+  resetResolverForTests();
+  resetRegistrarStateForTests();
+  try {
+    const output = {
+      schemaVersion: 1,
+      findings: [],
+      knowledgeProposals: [],
+      selection: [],
+    };
+    const work = await createSpecialistAssignment(database.db, requesterId, {
+      ...preparedAssignment,
+      origin: { kind: "manual", interactionId: randomUUID() },
+      objectiveInput: {
+        ...preparedAssignment.objectiveInput,
+        input:
+          "\nfixture-output:" +
+          JSON.stringify({
+            bytes: 0,
+            text: "```json maister:output\n" + JSON.stringify(output) + "\n```",
+          }) +
+          "\n",
+      },
+    });
+    const hosts = createExecutionHosts({ db: database.db, transport });
+    const receipt = await reserveCompanyFlowRun(
+      database.db,
+      requesterId,
+      {
+        ...request,
+        assignmentId: work.id,
+        assignmentRevision: work.revision,
+        inputRevision: work.inputRevision,
+      },
+      hosts,
+    );
+
+    expect(await tryStartRun(receipt.runId, { db: database.db })).toMatchObject(
+      {
+        started: true,
+      },
+    );
+    vi.stubEnv("MAISTER_MAX_CONCURRENT_RUNS", "1");
+    await runFlow(receipt.runId, {
+      db: database.db,
+      executionHosts: hosts,
+      runtimeRoot: hostRoot,
+    });
+    const [completed] = await database.db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, receipt.runId));
+
+    expect(completed).toMatchObject({
+      status: "Failed",
+      agentKind: null,
+      operationalTerminal: null,
+      operationalCleanup: { state: "released" },
+    });
+    const evidenceIds = completed!.operationalCleanup!.evidenceIds;
+
+    expect(evidenceIds.length).toBeGreaterThan(0);
+    const archived = await Promise.all(
+      evidenceIds.map((id) => direct.getRuntimeObjectContent(id)),
+    );
+    const archive = archived
+      .map((content) => new TextDecoder().decode(content.bytes))
+      .join("\n");
+
+    expect(archive).toContain(unexpectedName);
+    expect(archive).toContain(Buffer.from(unexpectedBytes).toString("base64"));
+    const context = await operationalWorkspace(database.db, completed!);
+
+    await expect(
+      readFile(join(context.cwd, unexpectedName)),
+    ).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT state FROM execution_assignments WHERE id=$1",
+          [completed!.executionAssignmentId],
+        )
+      ).rows,
+    ).toEqual([{ state: "released" }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status FROM specialist_assignments WHERE id=$1",
+          [work.id],
+        )
+      ).rows,
+    ).toEqual([{ status: "active" }]);
+  } finally {
+    await worker.stop();
+    await stopRuntimeEventConsumers();
+    await supervisor.stop();
+    restoreUrl();
+    compatibility.mockRestore();
+    resetResolverForTests();
+    resetRegistrarStateForTests();
+    setDefaultTransportForTests(null);
+    if (previousCap === undefined)
+      delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
+    else process.env.MAISTER_MAX_CONCURRENT_RUNS = previousCap;
+  }
+}, 90000);
+
 it("CBS-03 resumes native form and human waits through the same company assignment and frozen result contract", async () => {
   const hostRoot = join(root, "reservation-host");
 

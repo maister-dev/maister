@@ -1,0 +1,63 @@
+{
+  "task": "T20.1",
+  "slice": "Failed native source preservation under released assignment",
+  "date": "2026-11-07",
+  "baseCommit": "bcf4c6fad3e445bdc74e672bd9c8dea508a7ced0",
+  "engineVersion": "3.11.1",
+  "migrations": [],
+  "status": "Checkpoint qualified; task remains open",
+  "red": "Actual native graph source-integrity refusal left cleanup in retry/assignment_fenced instead of preserving evidence and releasing its directory (1/42)",
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "log": "integration.log.gz",
+      "files": 3,
+      "tests": 78,
+      "durationSeconds": 37.27
+    },
+    "unit": {
+      "exitCode": 0,
+      "log": "unit.log.gz",
+      "files": 889,
+      "tests": 9318,
+      "durationSeconds": 26.87
+    },
+    "types": {
+      "exitCode": 0,
+      "log": "types.log.gz"
+    },
+    "lint": {
+      "exitCode": 0,
+      "log": "lint.log.gz"
+    },
+    "format": {
+      "exitCode": 0,
+      "log": "format.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "log": "docs.log.gz"
+    }
+  },
+  "qualified": [
+    "Exact native Flow resource eligibility reuses the existing released-generation bounded diagnostic command exception",
+    "Original kind, retention, name, size, assignment, epoch and upload witnesses remain required; execution stays fenced",
+    "Real supervisor stores bounded manifest and NDJSON parts; the test reads unexpected source bytes back and verifies physical removal",
+    "Run remains Failed with no operational-agent terminal reinterpretation; business assignment remains active",
+    "Existing operational cleanup and released-assignment negative command cases remain green"
+  ],
+  "fixtureCorrections": [
+    "The first post-fix assertion treated the manifest as a content part. The final test reads all retained object parts before asserting preserved bytes."
+  ],
+  "qualificationBoundary": "Real PostgreSQL, pinned fixture Git package and owned supervisor use controlled ACP with prospective capability metadata. This is not actual adapter/model, companion or stand qualification.",
+  "sourceSha256": {
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "61d27c4875963b2167bafbfd176e4bbac7a7d30663105cfa928d3a704decf0eb",
+    "docs/system-analytics/specialist-runtime.md": "3b0a89aa9d70bdb0418f9abbad2c4799b1330a567385853fa1fbf246a369b796",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "8cfb5bdb209b917fba2d2ee8249644571cbe360aec37bf70d13f84b5af02b5c6",
+    "web/lib/execution-host/ledger.ts": "43ac8e9866d533698d3bfd059172e5111a9366043acb988482112d6240bb94b2"
+  }
+}

@@ -305,6 +305,16 @@ The managed company directory starts with a verified empty source generation bef
 
 Main `0251_company_flow_runtime` extends existing company lifecycle facts and bounded resource cleanup without reinterpreting `operational_v1` or populating `operational_terminal` for a graph. Shared disposition preserves failed/uncertain source evidence before removal and retains its existing retry/lease/release protocol. A queued company graph whose current binding/authority admission fails is durably Failed before any session effect. It cannot settle another live graph driver's preparation.
 
+Released execution assignments may seal bounded run-owned diagnostic archives
+only while their exact terminal resource is in `preserving`. The existing
+command admission exception accepts either an operational-agent owner or the
+same exact native company Flow resource predicate used by disposition. Diagnostic
+kind, run retention, name, maximum size, original assignment/epoch and immutable
+upload declaration must still match. This permits preservation after native
+integrity refusal without reopening execution or reclassifying the Flow as an
+operational agent. Source-integrity failure does not erase its retained technical
+result or complete the business assignment.
+
 Qualification currently uses real PostgreSQL migrations, the actual package loader with a pinned fixture Git package, an owned real supervisor and controlled ACP. Concurrent native driver invocations produce one create/prompt, a valid retained export, physical quiescence and released directory; the business assignment remains active. A changed reviewed coordinator refuses queued dispatch with zero ACP effects. Prospective engine metadata and capability-cache receipts are controlled fixture inputs, not real adapter/model smoke or companion/stand qualification. Native form and human-review waits are additionally qualified through the actual response route and both graph resumes below. Permission/idle restart/recovery, live graph cancellation, extended compatibility and engine activation remain open; the supported engine stays 3.11.1.
 
 ### Native permission approval boundary
