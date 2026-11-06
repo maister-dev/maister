@@ -7,7 +7,13 @@ and run-detail assignment ledger history are wired for the implemented wait
 classes.
 
 Flow roles are routing labels. They do not authorize users. Authorization stays
-with `project_members.role` and `requireProjectAction()`.
+with `project_members.role` and `requireProjectAction()` for project work.
+Company human work extends these same tables in `0229`/`0230`, with an exclusive
+company owner, current explicit assignment grants and retained Run source access.
+See [company human-work ownership](specialist-assignments-domain.md#existing-human-work-ownership-extension)
+for authority and migration compatibility. Existing company system identities
+close lifecycle work; they cannot answer as a human. Company claim/release/take-over
+uses the existing session routes and preserves project response owner fields.
 
 ```mermaid
 erDiagram
@@ -15,6 +21,9 @@ erDiagram
     PROJECTS ||--o{ ACTOR_IDENTITIES : "actor attribution"
     PROJECTS ||--o{ ASSIGNMENTS : "work queue"
     PROJECTS ||--o{ ASSIGNMENT_EVENTS : "assignment audit"
+    COMPANIES ||--o{ ACTOR_IDENTITIES : "company attribution"
+    COMPANIES ||--o{ ASSIGNMENTS : "company human work"
+    COMPANIES ||--o{ ASSIGNMENT_EVENTS : "company audit"
 
     USERS ||--o{ ACTOR_IDENTITIES : "optional user actor"
     TASKS ||--o{ ASSIGNMENTS : "optional task"
@@ -41,7 +50,8 @@ erDiagram
 
     ACTOR_IDENTITIES {
         text id PK
-        text project_id FK
+        text project_id FK "exclusive owner"
+        text company_id FK "exclusive owner"
         text kind "user|api_token|internal_agent|system"
         text label
         text user_id FK
@@ -55,7 +65,8 @@ erDiagram
 
     ASSIGNMENTS {
         text id PK
-        text project_id FK
+        text project_id FK "exclusive owner"
+        text company_id FK "exclusive owner"
         text run_id FK
         text task_id FK
         text node_id
@@ -83,7 +94,8 @@ erDiagram
     ASSIGNMENT_EVENTS {
         text id PK
         text assignment_id FK
-        text project_id FK
+        text project_id FK "exclusive owner"
+        text company_id FK "exclusive owner"
         text run_id FK
         text event_kind
         text actor_id FK

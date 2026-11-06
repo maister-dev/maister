@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { HumanWorkOwner } from "@/lib/assignments/company-ownership";
 import type { Logger } from "pino";
 import type { NextRequest, NextResponse } from "next/server";
 import type { ActorIdentity, Assignment } from "@/lib/db/schema";
@@ -9,7 +10,14 @@ import { NextResponse as Response } from "next/server";
 import { z } from "zod";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
-import { ensureUserActor } from "@/lib/assignments/service";
+import {
+  ensureCompanyUserActor,
+  ensureUserActor,
+} from "@/lib/assignments/service";
+import { humanWorkOwner } from "@/lib/assignments/company-ownership";
+import { assertCompanyRunReadAccess } from "@/lib/agents/company-run-read-access";
+import { authorizeCompanyUserAction } from "@/lib/company/authority";
+import { redactQueryError, queryErrorDiagnostics } from "@/lib/db/pg-error";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -26,9 +34,8 @@ type Db = any;
 
 export type RouteParams = { params: Promise<{ assignmentId: string }> };
 
-export type AssignmentActionDto = {
+export type AssignmentActionDto = HumanWorkOwner & {
   id: string;
-  projectId: string;
   runId: string;
   taskId: string | null;
   nodeId: string | null;
@@ -103,30 +110,36 @@ export function httpStatusForCode(code: string): number {
 }
 
 function errorResponse(
-  err: unknown,
+  error: unknown,
   ctx: { assignmentId: string; actionName: string; log: Logger },
 ): NextResponse {
+  const err = redactQueryError(error);
+
   if (isMaisterError(err)) {
     const status = httpStatusForCode(err.code);
 
-    ctx.log.warn(
+    ctx.log[status >= 500 ? "error" : "warn"](
       {
         assignmentId: ctx.assignmentId,
+        actionName: ctx.actionName,
         code: err.code,
         message: err.message,
         status,
+        ...queryErrorDiagnostics(error),
       },
-      `${ctx.actionName} error`,
+      "assignment action refused",
     );
 
     return Response.json({ code: err.code, message: err.message }, { status });
   }
 
-  const message = err instanceof Error ? err.message : String(err);
-
   ctx.log.error(
-    { assignmentId: ctx.assignmentId, err: message },
-    `${ctx.actionName} unhandled error`,
+    {
+      assignmentId: ctx.assignmentId,
+      actionName: ctx.actionName,
+      ...queryErrorDiagnostics(error),
+    },
+    "assignment action failed",
   );
 
   return Response.json(
@@ -175,7 +188,7 @@ export async function dtosForAssignments(
 
   return assignmentRows.map((assignment) => ({
     id: assignment.id,
-    projectId: assignment.projectId,
+    ...humanWorkOwner(assignment),
     runId: assignment.runId,
     taskId: assignment.taskId,
     nodeId: assignment.nodeId,
@@ -232,14 +245,35 @@ export async function handleAssignmentAction(args: {
       );
     }
 
-    await requireProjectAction(assignment.projectId, "answerHitl");
+    const owner = humanWorkOwner(assignment);
+    const label = sessionUser.name ?? sessionUser.email ?? sessionUser.id;
+    let actor: ActorIdentity;
 
-    const actor = await ensureUserActor({
-      db,
-      projectId: assignment.projectId,
-      userId: sessionUser.id,
-      label: sessionUser.name ?? sessionUser.email ?? sessionUser.id,
-    });
+    if (owner.projectId === null) {
+      await db.transaction((tx: Db) =>
+        authorizeCompanyUserAction(
+          tx,
+          sessionUser.id,
+          owner.companyId,
+          "assignments:answer",
+        ),
+      );
+      await assertCompanyRunReadAccess(db, sessionUser.id, assignment.runId);
+      actor = await ensureCompanyUserActor({
+        db,
+        companyId: owner.companyId,
+        userId: sessionUser.id,
+        label,
+      });
+    } else {
+      await requireProjectAction(owner.projectId, "answerHitl");
+      actor = await ensureUserActor({
+        db,
+        projectId: owner.projectId,
+        userId: sessionUser.id,
+        label,
+      });
+    }
     const changed = await args.run({
       req: args.req,
       db,
@@ -252,6 +286,7 @@ export async function handleAssignmentAction(args: {
       {
         assignmentId,
         projectId: changed.projectId,
+        companyId: changed.companyId ?? null,
         runId: changed.runId,
         actorId: actor.id,
         status: changed.status,

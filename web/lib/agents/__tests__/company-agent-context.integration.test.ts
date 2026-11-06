@@ -18,8 +18,10 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import { join, resolve, sep } from "node:path";
+import { Writable } from "node:stream";
 
 import { parse } from "yaml";
+import pino from "pino";
 import Ajv from "ajv";
 import { eq, sql } from "drizzle-orm";
 import { NextRequest } from "next/server";
@@ -112,6 +114,18 @@ import {
   reviewKnowledgeProposal,
 } from "@/lib/brain/knowledge-proposals";
 import { verifyToken, actorUserIdForToken } from "@/lib/tokens/verify";
+import { handleAssignmentAction } from "@/app/api/assignments/[assignmentId]/_shared";
+import { POST as claimHumanAssignmentPost } from "@/app/api/assignments/[assignmentId]/claim/route";
+import { createHitlRequest } from "@/lib/runs/hitl-create";
+import {
+  createHitlAssignmentForRun,
+  claimAssignment,
+  completeAssignment,
+  completeHitlAssignmentFromCurrentActor,
+  systemCloseActiveAssignmentsForRun,
+  ensureUserActor,
+  ensureCompanyUserActor,
+} from "@/lib/assignments/service";
 import { createCompanyGrants, revokeCompanyGrant } from "@/lib/company/grants";
 import {
   createSpecialistAssignment,
@@ -1760,6 +1774,338 @@ it("reserves company run ownership and its exact immutable assignment input link
       [runId, "0".repeat(64)],
     ),
   ).rejects.toMatchObject({ code: "23514" });
+});
+
+it("CBS-02 retains company human work in the existing assignment/actor ledger and refuses a foreign project actor", async () => {
+  const { runId, snapshot } = await reserveCompanyFixtureRun();
+  const hitlRequestId = randomUUID();
+
+  await database.db.transaction(async (tx) => {
+    await createHitlRequest(tx, {
+      id: hitlRequestId,
+      runId,
+      stepId: "agent",
+      kind: "permission",
+      prompt: "Review the bounded diagnostic permission",
+      schema: {
+        requestId: randomUUID(),
+        supervisorSessionId: randomUUID(),
+        options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
+      },
+    });
+  });
+  const human = await createHitlAssignmentForRun({
+    db: database.db,
+    runId,
+    hitlRequestId,
+    actionKind: "permission",
+    title: "Review diagnostic permission",
+  });
+
+  expect(human).toMatchObject({
+    projectId: null,
+    companyId: request.companyId,
+    runId,
+    hitlRequestId,
+    status: "open",
+    taskId: null,
+  });
+  await expect(
+    completeHitlAssignmentFromCurrentActor({ db: database.db, hitlRequestId }),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "company_human_actor_missing" },
+  });
+  const actor = await ensureCompanyUserActor({
+    db: database.db,
+    companyId: request.companyId,
+    userId,
+    label: "Authorized company operator",
+  });
+  const replayActor = await ensureCompanyUserActor({
+    db: database.db,
+    companyId: request.companyId,
+    userId,
+    label: "Authorized company operator",
+  });
+
+  expect(replayActor.id).toBe(actor.id);
+  const project = await seedProjectRow(database.db);
+  const foreignActor = await ensureUserActor({
+    db: database.db,
+    projectId: project.id,
+    userId,
+  });
+
+  await expect(
+    claimAssignment({
+      db: database.db,
+      assignmentId: human.id,
+      actorId: foreignActor.id,
+    }),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await expect(
+    claimAssignment({
+      db: database.db,
+      assignmentId: human.id,
+      actorId: actor.id,
+    }),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await database.pool.query(
+    "UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1",
+    [
+      runId,
+      JSON.stringify({
+        schemaVersion: 1,
+        state: "complete",
+        generation: 1,
+        restrictions: [
+          {
+            kind: "assignment_input",
+            assignmentId: snapshot.assignment.id,
+            inputRevision: snapshot.assignment.inputRevision,
+            inputSha256: snapshot.assignment.inputSha256,
+          },
+        ],
+      }),
+    ],
+  );
+  const answerGrant = await createCompanyGrants(database.db, administratorId, {
+    principalKind: "user",
+    principalId: userId,
+    actions: ["assignments:answer"],
+    idempotencyKey: randomUUID(),
+  });
+
+  browserSession.user = await requireActiveUserById(userId);
+  const diagnosticLines: string[] = [];
+  const diagnosticLog = pino(
+    { level: "debug" },
+    new Writable({
+      write(
+        chunk: Buffer,
+        _encoding: BufferEncoding,
+        done: (error?: Error | null) => void,
+      ) {
+        diagnosticLines.push(chunk.toString());
+        done();
+      },
+    }),
+  );
+
+  await database.pool.query(
+    "CREATE FUNCTION fail_company_human_claim() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.company_id IS NOT NULL AND NEW.status='claimed' THEN RAISE EXCEPTION 'private-company-claim-witness'; END IF; RETURN NEW; END $$",
+  );
+  await database.pool.query(
+    "CREATE TRIGGER fail_company_human_claim BEFORE UPDATE ON assignments FOR EACH ROW EXECUTE FUNCTION fail_company_human_claim()",
+  );
+  try {
+    const refused = await handleAssignmentAction({
+      req: new NextRequest(
+        `http://localhost/api/assignments/${human.id}/claim`,
+        { method: "POST" },
+      ),
+      routeParams: { params: Promise.resolve({ assignmentId: human.id }) },
+      actionName: "company claim diagnostic probe",
+      log: diagnosticLog,
+      run: ({ db, assignmentId, actor: responseActor }) =>
+        claimAssignment({ db, assignmentId, actorId: responseActor.id }),
+    });
+
+    expect(refused.status).toBe(500);
+    expect(diagnosticLines.join("")).not.toContain("Failed query:");
+    expect(diagnosticLines.join("")).not.toContain(
+      "private-company-claim-witness",
+    );
+    expect(diagnosticLines.join("")).toContain('"sqlState":"P0001"');
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status FROM assignments WHERE id=$1",
+          [human.id],
+        )
+      ).rows[0],
+    ).toEqual({ status: "open" });
+  } finally {
+    await database.pool.query(
+      "DROP TRIGGER fail_company_human_claim ON assignments",
+    );
+    await database.pool.query("DROP FUNCTION fail_company_human_claim()");
+  }
+  const claimed = await claimHumanAssignmentPost(
+    new NextRequest(`http://localhost/api/assignments/${human.id}/claim`, {
+      method: "POST",
+    }),
+    { params: Promise.resolve({ assignmentId: human.id }) },
+  );
+
+  expect(claimed.status).toBe(200);
+  const claimedBody: unknown = await claimed.json();
+
+  expect(claimedBody).toMatchObject({
+    projectId: null,
+    companyId: request.companyId,
+    status: "claimed",
+    assigneeActor: { id: actor.id, kind: "user" },
+  });
+  const contract: { components: { schemas: Record<string, object> } } = parse(
+    await readFile(resolve("../docs/api/web.openapi.yaml"), "utf8"),
+  );
+  const validate = new Ajv({ strict: false, validateFormats: false }).compile({
+    components: contract.components,
+    $ref: "#/components/schemas/Assignment",
+  });
+
+  expect(validate(claimedBody), JSON.stringify(validate.errors)).toBe(true);
+  browserSession.user = null;
+  await revokeCompanyGrant(
+    database.db,
+    administratorId,
+    answerGrant.page.items[0].id,
+    {
+      expectedRevision: 1,
+      reason: "Withdraw company answer authority",
+      idempotencyKey: randomUUID(),
+    },
+  );
+  await expect(
+    completeAssignment({
+      db: database.db,
+      assignmentId: human.id,
+      actorId: actor.id,
+    }),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await createCompanyGrants(database.db, administratorId, {
+    principalKind: "user",
+    principalId: userId,
+    actions: ["assignments:answer"],
+    idempotencyKey: randomUUID(),
+  });
+  await expect(
+    completeAssignment({
+      db: database.db,
+      assignmentId: human.id,
+      actorId: actor.id,
+    }),
+  ).resolves.toMatchObject({
+    status: "completed",
+    completedByActorId: actor.id,
+  });
+  const events = (
+    await database.pool.query(
+      "SELECT company_id,project_id,run_id,actor_id,event_kind FROM assignment_events WHERE assignment_id=$1 ORDER BY created_at,id",
+      [human.id],
+    )
+  ).rows;
+
+  expect(events.map((event) => event.event_kind).sort()).toEqual([
+    "claimed",
+    "completed",
+    "created",
+  ]);
+  expect(
+    events.every(
+      (event) =>
+        event.company_id === request.companyId &&
+        event.project_id === null &&
+        event.run_id === runId,
+    ),
+  ).toBe(true);
+  expect(
+    events
+      .filter((event) => event.event_kind !== "created")
+      .every((event) => event.actor_id === actor.id),
+  ).toBe(true);
+  await expect(
+    database.pool.query(
+      "UPDATE assignments SET assignee_actor_id=$2 WHERE id=$1",
+      [human.id, foreignActor.id],
+    ),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "human_assignment_actor_owner",
+  });
+  await expect(
+    database.pool.query(
+      "UPDATE assignments SET project_id=$2,company_id=NULL WHERE id=$1",
+      [human.id, project.id],
+    ),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "human_assignment_owner_immutable",
+  });
+  await expect(
+    database.pool.query(
+      "UPDATE assignment_events SET project_id=$2,company_id=NULL WHERE assignment_id=$1",
+      [human.id, project.id],
+    ),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "human_assignment_event_immutable",
+  });
+  await expect(
+    database.pool.query("UPDATE actor_identities SET user_id=$2 WHERE id=$1", [
+      actor.id,
+      administratorId,
+    ]),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "human_actor_principal_immutable",
+  });
+  const cancelledHitlId = randomUUID();
+
+  await database.db.transaction(async (tx) => {
+    await createHitlRequest(tx, {
+      id: cancelledHitlId,
+      runId,
+      stepId: "agent",
+      kind: "permission",
+      prompt: "Cancelled by lifecycle",
+      schema: {
+        requestId: randomUUID(),
+        supervisorSessionId: randomUUID(),
+        options: [],
+      },
+    });
+  });
+  const cancelledHuman = await createHitlAssignmentForRun({
+    db: database.db,
+    runId,
+    hitlRequestId: cancelledHitlId,
+    actionKind: "permission",
+    title: "Cancelled company work",
+  });
+
+  await expect(
+    systemCloseActiveAssignmentsForRun({
+      db: database.db,
+      runId,
+      reason: "Company wait ended",
+    }),
+  ).resolves.toMatchObject([
+    {
+      id: cancelledHuman.id,
+      status: "cancelled",
+      companyId: request.companyId,
+      projectId: null,
+    },
+  ]);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT actor.kind,actor.company_id FROM assignment_events event JOIN actor_identities actor ON actor.id=event.actor_id WHERE event.assignment_id=$1 AND event.event_kind='system_closed'",
+        [cancelledHuman.id],
+      )
+    ).rows[0],
+  ).toEqual({ kind: "system", company_id: request.companyId });
+  await database.pool.query("DELETE FROM projects WHERE id=$1", [project.id]);
+  expect(
+    (
+      await database.pool.query("SELECT status FROM assignments WHERE id=$1", [
+        human.id,
+      ])
+    ).rows[0],
+  ).toEqual({ status: "completed" });
 });
 
 it("rotates exact company run credentials with current grants, scope limits and transactional refusal recovery", async () => {

@@ -167,6 +167,7 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | `web/lib/agents/company-session-context.ts` | Frozen company input and role, current dispatch authority, source checks and separate prompt planes |
 | `web/lib/agents/company-run-read-access.ts` | Current explicit company reader authority and exact retained input/source disclosure for historical execution content |
 | `web/lib/agents/company-agent-launch.ts` | Atomic company Run reservation with exact input, frozen session and native host placement |
+| `web/lib/assignments/company-ownership.ts` | Existing human-work company ownership, stable user/system attribution and current claim/answer authority |
 | `web/lib/specialist-assignments/store.ts` | Durable company/project assignment heads, frozen input history, current authority, CAS and existing-run links |
 | `web/lib/run-results/operational-projection.ts` | Shared operational diagnostic projection for run details, collect and automation history |
 | `web/lib/gc/operational-disposition.ts` | Durable operational cleanup through existing workspace lifecycle claims |

@@ -794,9 +794,12 @@ export const actorIdentities = pgTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    companyId: text("company_id").references(() => companies.id, {
+      onDelete: "restrict",
+    }),
     kind: text("kind", {
       enum: ["user", "api_token", "internal_agent", "system"],
     }).notNull(),
@@ -816,6 +819,21 @@ export const actorIdentities = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    ownerShape: check(
+      "actor_identities_owner_shape",
+      sql`(${t.projectId} IS NOT NULL) <> (${t.companyId} IS NOT NULL)`,
+    ),
+    companyKind: check(
+      "actor_identities_company_kind",
+      sql`${t.companyId} IS NULL OR ${t.kind} IN ('user','system')`,
+    ),
+    companyUser: uniqueIndex("actor_identities_company_user_uq")
+      .on(t.companyId, t.userId)
+      .where(sql`${t.companyId} IS NOT NULL AND ${t.kind}='user'`),
+    companySystem: uniqueIndex("actor_identities_company_system_uq")
+      .on(t.companyId, t.systemKey)
+      .where(sql`${t.companyId} IS NOT NULL AND ${t.kind}='system'`),
+    companyIndex: index("actor_identities_company_idx").on(t.companyId),
     uniqProjectUserActor: uniqueIndex("actor_identities_project_user_uq")
       .on(t.projectId, t.userId)
       .where(sql`${t.kind} = 'user'`),
@@ -7036,9 +7054,12 @@ export const assignments = pgTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    companyId: text("company_id").references(() => companies.id, {
+      onDelete: "restrict",
+    }),
     runId: text("run_id")
       .notNull()
       .references(() => runs.id, { onDelete: "cascade" }),
@@ -7113,6 +7134,17 @@ export const assignments = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    ownerShape: check(
+      "assignments_owner_shape",
+      sql`(${t.projectId} IS NOT NULL) <> (${t.companyId} IS NOT NULL)`,
+    ),
+    companyShape: check(
+      "assignments_company_shape",
+      sql`${t.companyId} IS NULL OR (${t.taskId} IS NULL AND ${t.branch} IS NULL AND ${t.ref} IS NULL)`,
+    ),
+    companyStatus: index("assignments_company_status_idx")
+      .on(t.companyId, t.status, t.createdAt.desc(), t.id.desc())
+      .where(sql`${t.companyId} IS NOT NULL`),
     uniqHitlRequest: unique("assignments_hitl_request_uq").on(t.hitlRequestId),
     idxProjectStatus: index("assignments_project_status_idx").on(
       t.projectId,
@@ -7135,9 +7167,12 @@ export const assignmentEvents = pgTable(
     assignmentId: text("assignment_id")
       .notNull()
       .references(() => assignments.id, { onDelete: "cascade" }),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    companyId: text("company_id").references(() => companies.id, {
+      onDelete: "restrict",
+    }),
     runId: text("run_id")
       .notNull()
       .references(() => runs.id, { onDelete: "cascade" }),
@@ -7169,6 +7204,13 @@ export const assignmentEvents = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    ownerShape: check(
+      "assignment_events_owner_shape",
+      sql`(${t.projectId} IS NOT NULL) <> (${t.companyId} IS NOT NULL)`,
+    ),
+    companyCreated: index("assignment_events_company_created_idx")
+      .on(t.companyId, t.createdAt, t.id)
+      .where(sql`${t.companyId} IS NOT NULL`),
     idxAssignment: index("assignment_events_assignment_idx").on(t.assignmentId),
     idxProjectCreated: index("assignment_events_project_created_idx").on(
       t.projectId,

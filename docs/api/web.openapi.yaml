@@ -5980,6 +5980,11 @@ paths:
         Claims an assignment for the current Auth.js user actor. The route
         derives project, run, and actor ids from server state and ignores any
         cross-resource ids in the body.
+        Company-owned human work derives its company and exact Run/input source from server
+        state, requires current explicit assignments:read and assignments:answer, and uses a
+        company user actor. Actor identity never grants authority; current grants/source access
+        are checked again inside the mutation transaction. Project response owner fields retain
+        their existing shape; company responses carry projectId:null and companyId.
       operationId: claimAssignment
       parameters:
         - name: assignmentId
@@ -6005,6 +6010,11 @@ paths:
       description: |
         Reopens a claim held by the current actor. Body may carry a reason
         string only; actor/project/run ids are always server-derived.
+        Company-owned human work derives its company and exact Run/input source from server
+        state, requires current explicit assignments:read and assignments:answer, and uses a
+        company user actor. Actor identity never grants authority; current grants/source access
+        are checked again inside the mutation transaction. Project response owner fields retain
+        their existing shape; company responses carry projectId:null and companyId.
       operationId: releaseAssignment
       parameters:
         - name: assignmentId
@@ -6037,6 +6047,11 @@ paths:
         Transfers a claim from its current actor to the current Auth.js user
         actor and appends a `taken_over` assignment event. Body may carry a
         reason string only.
+        Company-owned human work derives its company and exact Run/input source from server
+        state, requires current explicit assignments:read and assignments:answer, and uses a
+        company user actor. Actor identity never grants authority; current grants/source access
+        are checked again inside the mutation transaction. Project response owner fields retain
+        their existing shape; company responses carry projectId:null and companyId.
       operationId: takeOverAssignment
       parameters:
         - name: assignmentId
@@ -25928,7 +25943,8 @@ components:
         - assigneeActor
       properties:
         id: { type: string, format: uuid }
-        projectId: { type: string, format: uuid }
+        projectId: { type: string, format: uuid, nullable: true }
+        companyId: { type: string, minLength: 1, maxLength: 128 }
         runId: { type: string, format: uuid }
         taskId: { type: string, format: uuid, nullable: true }
         nodeId: { type: string, nullable: true }
@@ -25939,9 +25955,15 @@ components:
           enum:
             - permission
             - form
+            - agent_question
             - human_review
             - manual_takeover
             - merge_conflict
+            - infra_recovery
+            - budget_breach
+            - hook_trip
+            - node_interrupt
+            - decision_request
         status:
           type: string
           enum:
@@ -25968,6 +25990,13 @@ components:
           nullable: true
           allOf:
             - $ref: "#/components/schemas/AssignmentActor"
+      oneOf:
+        - properties:
+            projectId: { type: string, format: uuid, nullable: false }
+          not: { required: [companyId] }
+        - required: [companyId]
+          properties:
+            projectId: { type: string, nullable: true, enum: [null] }
     AssignmentList:
       type: object
       required: [assignments]

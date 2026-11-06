@@ -24,7 +24,8 @@ table accounts {
 
 table actor_identities {
   id text [pk, not null]
-  project_id text [not null]
+  project_id text
+  company_id text
   kind text [not null]
   label text [not null]
   user_id text
@@ -36,6 +37,11 @@ table actor_identities {
   updated_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
+
+
+    (company_id, user_id) [name: 'actor_identities_company_user_uq', unique]
+    (company_id, system_key) [name: 'actor_identities_company_system_uq', unique]
+    company_id [name: 'actor_identities_company_idx']
     (project_id, user_id) [name: 'actor_identities_project_user_uq', unique]
     (project_id, token_id) [name: 'actor_identities_project_token_uq', unique]
     project_id [name: 'actor_identities_project_idx']
@@ -395,7 +401,8 @@ table artifact_instances {
 table assignment_events {
   id text [pk, not null]
   assignment_id text [not null]
-  project_id text [not null]
+  project_id text
+  company_id text
   run_id text [not null]
   event_kind text [not null]
   actor_id text
@@ -405,6 +412,8 @@ table assignment_events {
   created_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
+
+    (company_id, created_at, id) [name: 'assignment_events_company_created_idx']
     assignment_id [name: 'assignment_events_assignment_idx']
     (project_id, created_at) [name: 'assignment_events_project_created_idx']
   }
@@ -412,7 +421,8 @@ table assignment_events {
 
 table assignments {
   id text [pk, not null]
-  project_id text [not null]
+  project_id text
+  company_id text
   run_id text [not null]
   task_id text
   node_id text
@@ -437,6 +447,9 @@ table assignments {
   updated_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
+
+
+    (company_id, status, created_at, id) [name: 'assignments_company_status_idx']
     hitl_request_id [name: 'assignments_hitl_request_uq', unique]
     (project_id, status) [name: 'assignments_project_status_idx']
     (run_id, status) [name: 'assignments_run_status_idx']
@@ -4065,6 +4078,8 @@ ref accounts_user_id_users_id_fk: accounts.user_id > users.id [delete: cascade, 
 
 ref actor_identities_project_id_projects_id_fk: actor_identities.project_id > projects.id [delete: cascade, update: no action]
 
+ref actor_identities_company_id_companies_id_fk: actor_identities.company_id > companies.id [delete: restrict, update: no action]
+
 ref actor_identities_user_id_users_id_fk: actor_identities.user_id > users.id [delete: set null, update: no action]
 
 ref agent_incident_episodes_project_id_projects_id_fk: agent_incident_episodes.project_id > projects.id [delete: cascade, update: no action]
@@ -4143,11 +4158,15 @@ ref assignment_events_assignment_id_assignments_id_fk: assignment_events.assignm
 
 ref assignment_events_project_id_projects_id_fk: assignment_events.project_id > projects.id [delete: cascade, update: no action]
 
+ref assignment_events_company_id_companies_id_fk: assignment_events.company_id > companies.id [delete: restrict, update: no action]
+
 ref assignment_events_run_id_runs_id_fk: assignment_events.run_id > runs.id [delete: cascade, update: no action]
 
 ref assignment_events_actor_id_actor_identities_id_fk: assignment_events.actor_id > actor_identities.id [delete: set null, update: no action]
 
 ref assignments_project_id_projects_id_fk: assignments.project_id > projects.id [delete: cascade, update: no action]
+
+ref assignments_company_id_companies_id_fk: assignments.company_id > companies.id [delete: restrict, update: no action]
 
 ref assignments_run_id_runs_id_fk: assignments.run_id > runs.id [delete: cascade, update: no action]
 

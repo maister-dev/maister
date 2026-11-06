@@ -519,12 +519,13 @@ re-adding the same ref reactivates it instead of creating a second logical role.
 
 ## `actor_identities`
 
-(Implemented, migration `0018`.)
+(Implemented, migrations `0018`, `0229`, `0230`.)
 
 ```ts
 {
   id,
-  projectId,                      // FK -> projects.id (cascade)
+  projectId?,                     // Exclusive project/company owner; FK -> projects.id (cascade)
+  companyId?,                     // FK -> companies.id (restrict)
   kind: 'user' | 'api_token' | 'internal_agent' | 'system',
   label,
   userId?,                        // FK -> users.id (SET NULL)
@@ -4420,22 +4421,23 @@ injected value byte-identical to the raw review summary.
 
 ## `assignments`
 
-(Implemented, migration `0018`.)
+(Implemented, migrations `0018`, `0229`, `0230`.)
 
 ```ts
 {
   id,
-  projectId,                      // FK -> projects.id (cascade)
+  projectId?,                     // Exclusive project/company owner; FK -> projects.id (cascade)
+  companyId?,                     // FK -> companies.id (restrict)
   runId,                          // FK -> runs.id (cascade)
   taskId?,                        // FK -> tasks.id (SET NULL)
   nodeId?,
   stepId?,
   hitlRequestId?,                 // FK -> hitl_requests.id (cascade)
   nodeAttemptId?,                 // FK -> node_attempts.id (cascade)
-  actionKind: 'permission' | 'form' | 'human_review'
+  actionKind: 'permission' | 'form' | 'agent_question' | 'human_review'
             | 'manual_takeover' | 'merge_conflict'
             | 'infra_recovery' | 'budget_breach'
-            | 'hook_trip',        // 'hook_trip' Designed — ADR-108 (migration 0066)
+            | 'hook_trip' | 'node_interrupt' | 'decision_request',
   status: 'open' | 'claimed' | 'completed' | 'cancelled',
   roleRefs,                       // jsonb string[] snapshot
   title,
@@ -4462,13 +4464,14 @@ assignment per HITL wait when the row is linked to `hitl_requests`.
 
 ## `assignment_events`
 
-(Implemented, migration `0018`.)
+(Implemented, migrations `0018`, `0229`, `0230`.)
 
 ```ts
 {
   id,
   assignmentId,                   // FK -> assignments.id (cascade)
-  projectId,                      // FK -> projects.id (cascade)
+  projectId?,                     // Exclusive project/company owner; FK -> projects.id (cascade)
+  companyId?,                     // FK -> companies.id (restrict)
   runId,                          // FK -> runs.id (cascade)
   eventKind: 'created' | 'claimed' | 'released' | 'taken_over'
            | 'responded' | 'returned' | 'completed'

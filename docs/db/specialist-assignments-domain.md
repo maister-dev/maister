@@ -125,3 +125,27 @@ Accepted context/input/work/decision rows are immutable by guarded database writ
 New FK/cascade policy is RESTRICT for referenced assignment inputs/results/effects. Existing run/task/project cleanup cannot silently cascade accepted or unresolved specialist evidence. Authorized soft retirement removes current launchability while preserving historical snapshots. A future retention purge needs explicit reference checks and target receipt retirement, not age-only DELETE.
 
 Startup requires all main then Brain migrations; the runtime refuses new features while either ledger is pending. Fresh/populated/interrupted/second-boot integration and generated SQL/journal/snapshot/schema checks qualify rollout. Invalid existing state aborts loudly with actionable safe context rather than deleting rows.
+
+
+### Existing human-work ownership extension
+
+Company HITL uses the existing `actor_identities`, human `assignments` and
+`assignment_events` ledgers with exclusive nullable project/company ownership.
+Existing project rows retain their IDs, claims, events and real project cascade;
+new company rows require a real company and owned Run, never a fabricated project.
+Company actors are current users or server system identities. A scoped actor row
+is an attribution identity and supplies no action authority. Human claim/answer
+requires current explicit `assignments:read` and `assignments:answer` plus the Run's
+retained source access. Server lifecycle cancellation uses an owned system actor.
+Company human work has no repository task, branch or ref. It cannot complete
+without a retained responding actor; source-unavailable or revoked human action
+authority leaves work pending. Its event owner/Run and
+all actor references must match the assignment owner; accepted owner identity is
+immutable. User deletion may leave an orphan historical actor, which cannot act
+or be rebound to another user. Migration adds NULL company metadata to old rows;
+it invents no actors, historical authority or specialist assignment linkage.
+
+This ownership foundation belongs to native company lifecycle (T20/T21), before
+company Flow human/form waits. T24 later adds business question/input-revision
+semantics and reuses these identities/claims rather than introducing a second
+human-work ledger.

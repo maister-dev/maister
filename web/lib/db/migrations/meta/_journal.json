@@ -1681,6 +1681,20 @@
       "when": 1794606477946,
       "tag": "0243_native_source_array_planning",
       "breakpoints": true
+    },
+    {
+      "idx": 244,
+      "version": "7",
+      "when": 1794606477947,
+      "tag": "0244_company_human_work_ownership",
+      "breakpoints": true
+    },
+    {
+      "idx": 245,
+      "version": "7",
+      "when": 1794606477948,
+      "tag": "0245_human_work_owner_guards",
+      "breakpoints": true
     }
   ]
 }
