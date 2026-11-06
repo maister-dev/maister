@@ -315,7 +315,19 @@ integrity refusal without reopening execution or reclassifying the Flow as an
 operational agent. Source-integrity failure does not erase its retained technical
 result or complete the business assignment.
 
-Qualification currently uses real PostgreSQL migrations, the actual package loader with a pinned fixture Git package, an owned real supervisor and controlled ACP. Concurrent native driver invocations produce one create/prompt, a valid retained export, physical quiescence and released directory; the business assignment remains active. A changed reviewed coordinator refuses queued dispatch with zero ACP effects. Prospective engine metadata and capability-cache receipts are controlled fixture inputs, not real adapter/model smoke or companion/stand qualification. Native form and human-review waits are additionally qualified through the actual response route and both graph resumes below. Completion recovery, extended compatibility and engine activation remain open; the supported engine stays 3.11.1.
+Qualification currently uses real PostgreSQL migrations, the actual package loader with a pinned fixture Git package, an owned real supervisor and controlled ACP. Concurrent native driver invocations produce one create/prompt, a valid retained export, physical quiescence and released directory; the business assignment remains active. A changed reviewed coordinator refuses queued dispatch with zero ACP effects. Prospective engine metadata and capability-cache receipts are controlled fixture inputs, not real adapter/model smoke or companion/stand qualification. Native form and human-review waits are additionally qualified through the actual response route and both graph resumes below. Extended compatibility and engine activation remain open; the supported engine stays 3.11.1.
+
+Native completion qualification also covers missing and malformed required node
+output: the existing default mismatch policy fails the node and Run with `CONFIG`,
+publishes no public result and preserves/releases its failed resource through
+the existing disposition. A controlled interruption after atomic result/finish
+publication leaves the Run Running with a retained valid result and released
+driver lease. After supervisor SIGKILL/restart, the same graph driver consumes
+the saved finish continuation, preserves the exact result revision and reaches
+Done with one original prompt and attempt. It does not replay completed work.
+The form/coordinator/human-review scenario uses an actual `orchestrator` node
+with explicit depth/fanout/active-child and complete resource budgets. Company
+child admission and delegated-work qualification remain owned by T27/T30.
 
 ### Native permission approval boundary
 

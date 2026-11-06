@@ -1,0 +1,60 @@
+{
+  "task": "T20.1",
+  "slice": "Required-result refusal, native coordinator and post-publication recovery qualification",
+  "date": "2026-11-07",
+  "baseCommit": "0df2dcb0e408ce43c5d6ceaf7e0a580d97f6687b",
+  "engineVersion": "3.11.1",
+  "migrations": [],
+  "productionChanges": false,
+  "status": "Qualification-only checkpoint; engine activation remains open",
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "log": "integration.log.gz",
+      "files": 3,
+      "tests": 62,
+      "durationSeconds": 49.09
+    },
+    "owning-integration": {
+      "exitCode": 0,
+      "log": "owning-integration.log.gz",
+      "files": 1,
+      "tests": 45,
+      "durationSeconds": 31.86
+    },
+    "types": {
+      "exitCode": 0,
+      "log": "types.log.gz"
+    },
+    "lint": {
+      "exitCode": 0,
+      "log": "lint.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "log": "docs.log.gz"
+    }
+  },
+  "qualified": [
+    "Both absent and schema-invalid required output follow the documented default CONFIG mismatch policy, fail node/Run and publish no public result",
+    "Native failed-resource cleanup preserves bounded evidence and releases the directory while business assignment stays active",
+    "A real transport observation fault after atomic result/finish publication interrupts terminal preparation without cancellation intent",
+    "Actual supervisor SIGKILL/restart and a fresh graph driver consume the retained null-cursor finish continuation",
+    "The exact result row/revision stays unchanged; one Succeeded attempt and one create/prompt prove no repeated work",
+    "Actual native orchestrator executes within form/human waits and snapshots complete explicit bounds before its prompt"
+  ],
+  "fixtureCorrections": [
+    "The first negative assertion guessed PRECONDITION; existing docs/flow-dsl.md and runtime define the default required-output mismatch as CONFIG. The assertion was corrected without changing production.",
+    "The first orchestrator fixture omitted its already-required complete delegation budget and was refused at actual install. The final fixture declares all dimensions."
+  ],
+  "qualificationBoundary": "Actual pinned fixture package, PostgreSQL, owned supervisor and controlled ACP. Prospective engine predicate/cache metadata are still controlled. No real adapter/model, native companion/cooperation or stand qualification.",
+  "sourceSha256": {
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "e796864382d04b3d0f609bab3f4e821b601943351f16a9c9b4502591cd081207",
+    "docs/system-analytics/specialist-runtime.md": "310866ad1556241bf5ca1efbe8f4016d5887a6c8acfe4edd5fa1b9529efaa983",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "2e06d8b3aeb04491b37c26e3207699e8b175cbdd02a4edb0c6a6bed3014f7c9b"
+  }
+}

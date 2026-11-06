@@ -194,6 +194,20 @@ const dialogueManifest = {
     },
     {
       ...manifest.nodes[0],
+      type: "orchestrator",
+      settings: {
+        delegation: {
+          max_fanout: 1,
+          max_depth: 1,
+          max_active_children: 1,
+          budget: {
+            max_tokens: 10000,
+            wall_clock_minutes: 2,
+            max_child_runs: 1,
+            consecutive_failures: 1,
+          },
+        },
+      },
       action: {
         prompt:
           "Investigate {{ assignment.objective }} using {{ assignment.input }}. Component {{ steps.intake.vars.component }}.",
@@ -2072,6 +2086,84 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
         )
       ).rows,
     ).toEqual([{ projects: 0, tasks: 0, workspaces: 0 }]);
+    for (const refusal of [
+      { name: "missing", text: "No structured result was produced." },
+      {
+        name: "invalid",
+        text: '```json maister:output\n{"schemaVersion":1,"findings":"invalid","knowledgeProposals":[],"selection":[]}\n```',
+      },
+    ]) {
+      const work = await createSpecialistAssignment(database.db, requesterId, {
+        ...preparedAssignment,
+        origin: { kind: "manual", interactionId: randomUUID() },
+        objectiveInput: {
+          ...preparedAssignment.objectiveInput,
+          objective: `Qualify ${refusal.name} required native result`,
+          input:
+            "\nfixture-output:" +
+            JSON.stringify({ bytes: 0, text: refusal.text }) +
+            "\n",
+        },
+      });
+      const refused = await reserveCompanyFlowRun(
+        database.db,
+        requesterId,
+        {
+          ...request,
+          assignmentId: work.id,
+          assignmentRevision: work.revision,
+          inputRevision: work.inputRevision,
+        },
+        hosts,
+      );
+
+      vi.stubEnv("MAISTER_MAX_CONCURRENT_RUNS", "2");
+      expect(
+        await tryStartRun(refused.runId, { db: database.db }),
+      ).toMatchObject({
+        started: true,
+      });
+      vi.stubEnv("MAISTER_MAX_CONCURRENT_RUNS", "1");
+      await runFlow(refused.runId, {
+        db: database.db,
+        executionHosts: hosts,
+        runtimeRoot: hostRoot,
+      });
+      expect(
+        (
+          await database.pool.query(
+            "SELECT status,operational_terminal,operational_cleanup->>'state' AS cleanup FROM runs WHERE id=$1",
+            [refused.runId],
+          )
+        ).rows,
+      ).toEqual([
+        { status: "Failed", operational_terminal: null, cleanup: "released" },
+      ]);
+      expect(
+        (
+          await database.pool.query(
+            "SELECT status,error_code FROM node_attempts WHERE run_id=$1",
+            [refused.runId],
+          )
+        ).rows,
+      ).toEqual([{ status: "Failed", error_code: "CONFIG" }]);
+      expect(
+        (
+          await database.pool.query(
+            "SELECT count(*)::int AS count FROM run_results WHERE run_id=$1",
+            [refused.runId],
+          )
+        ).rows,
+      ).toEqual([{ count: 0 }]);
+      expect(
+        (
+          await database.pool.query(
+            "SELECT status FROM specialist_assignments WHERE id=$1",
+            [work.id],
+          )
+        ).rows,
+      ).toEqual([{ status: "active" }]);
+    }
     const stale = await database.pool.query<{ id: string }>(
       "SELECT id FROM runs WHERE company_id=$1 AND run_kind='flow' AND status='Pending' AND (company_execution_snapshot->'coordinatorFlowBinding'->>'revision')::int < $2 ORDER BY id LIMIT 1",
       [request.companyId, request.coordinatorBindingRevision],
@@ -2308,6 +2400,203 @@ it("CBS-03 cancels live native graph work once without allowing its completed ou
     browserUserId = requesterId;
     abort.abort();
     await driver;
+    await worker.stop();
+    await stopRuntimeEventConsumers();
+    await supervisor.stop();
+    restoreUrl();
+    compatibility.mockRestore();
+    resetResolverForTests();
+    resetRegistrarStateForTests();
+    setDefaultTransportForTests(null);
+    if (previousCap === undefined)
+      delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
+    else process.env.MAISTER_MAX_CONCURRENT_RUNS = previousCap;
+  }
+}, 90000);
+
+it("CBS-03 recovers a published native result after terminal preparation interruption without repeating the completed prompt", async () => {
+  const hostRoot = join(root, "reservation-host");
+
+  await writeCompanyCapabilityCache(hostRoot);
+  let supervisor = await startRealSupervisor({
+    runtimeRoot: hostRoot,
+    workspaceRoots: [join(root, "worktrees")],
+    fixtureArgs: ["--hang"],
+    env: {
+      MAISTER_ADAPTER_SMOKE_CACHE_PATH: join(
+        hostRoot,
+        "adapter-smoke-cache.json",
+      ),
+    },
+  });
+  const restoreUrl = useRealSupervisorUrl(supervisor.url);
+  const compatibility = useEngineVersion("3.12.0");
+  const worker = startProjectionWorker({
+    db: database.db,
+    projectors: canonicalProjectors,
+  });
+  const abort = new AbortController();
+  const previousCap = process.env.MAISTER_MAX_CONCURRENT_RUNS;
+  const direct = createLocalDirectTransport();
+  let targetRunId: string | null = null;
+  let interrupted = false;
+  const transport: typeof direct = {
+    ...direct,
+    async listSessions() {
+      const sessions = await direct.listSessions();
+
+      if (targetRunId && !interrupted) {
+        const closed = await database.pool.query<{ count: number }>(
+          "SELECT count(*)::int AS count FROM node_attempts WHERE run_id=$1 AND status='Succeeded' AND finish_continuation IS NOT NULL",
+          [targetRunId],
+        );
+
+        if (closed.rows[0]?.count === 1) {
+          interrupted = true;
+          abort.abort(
+            new DOMException(
+              "Controlled interruption after native result publication",
+              "AbortError",
+            ),
+          );
+          throw abort.signal.reason;
+        }
+      }
+
+      return sessions;
+    },
+  };
+
+  setDefaultTransportForTests(transport);
+  resetResolverForTests();
+  resetRegistrarStateForTests();
+  try {
+    const output = {
+      schemaVersion: 1,
+      findings: [],
+      knowledgeProposals: [],
+      selection: [],
+    };
+    const work = await createSpecialistAssignment(database.db, requesterId, {
+      ...preparedAssignment,
+      origin: { kind: "manual", interactionId: randomUUID() },
+      objectiveInput: {
+        ...preparedAssignment.objectiveInput,
+        input:
+          "\nfixture-output:" +
+          JSON.stringify({
+            bytes: 0,
+            text: "```json maister:output\n" + JSON.stringify(output) + "\n```",
+          }) +
+          "\n",
+      },
+    });
+    const hosts = createExecutionHosts({ db: database.db, transport });
+    const receipt = await reserveCompanyFlowRun(
+      database.db,
+      requesterId,
+      {
+        ...request,
+        assignmentId: work.id,
+        assignmentRevision: work.revision,
+        inputRevision: work.inputRevision,
+      },
+      hosts,
+    );
+
+    targetRunId = receipt.runId;
+    expect(await tryStartRun(receipt.runId, { db: database.db })).toMatchObject(
+      { started: true },
+    );
+    vi.stubEnv("MAISTER_MAX_CONCURRENT_RUNS", "1");
+    await expect(
+      runFlow(receipt.runId, {
+        db: database.db,
+        executionHosts: hosts,
+        runtimeRoot: hostRoot,
+        signal: abort.signal,
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(interrupted).toBe(true);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status,current_step_id,flow_driver_token,operational_cleanup,company_cancellation_intent FROM runs WHERE id=$1",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        status: "Running",
+        current_step_id: null,
+        flow_driver_token: null,
+        operational_cleanup: null,
+        company_cancellation_intent: null,
+      },
+    ]);
+    const before = (
+      await database.pool.query("SELECT * FROM run_results WHERE run_id=$1", [
+        receipt.runId,
+      ])
+    ).rows;
+
+    expect(before).toMatchObject([
+      { validity: "valid", value: output, revision: 1 },
+    ]);
+    await stopRuntimeEventConsumers();
+    supervisor = await supervisor.restart();
+    resetResolverForTests();
+    resetRegistrarStateForTests();
+    await runFlow(receipt.runId, {
+      db: database.db,
+      executionHosts: hosts,
+      runtimeRoot: hostRoot,
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status,operational_cleanup->>'state' AS cleanup,flow_driver_token FROM runs WHERE id=$1",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toEqual([
+      { status: "Done", cleanup: "released", flow_driver_token: null },
+    ]);
+    expect(
+      (
+        await database.pool.query("SELECT * FROM run_results WHERE run_id=$1", [
+          receipt.runId,
+        ])
+      ).rows,
+    ).toEqual(before);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status,count(*)::int AS count FROM node_attempts WHERE run_id=$1 GROUP BY status",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toEqual([{ status: "Succeeded", count: 1 }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT kind,count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt') GROUP BY kind ORDER BY kind",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toEqual([
+      { kind: "session.create", count: 1 },
+      { kind: "session.prompt", count: 1 },
+    ]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status FROM specialist_assignments WHERE id=$1",
+          [work.id],
+        )
+      ).rows,
+    ).toEqual([{ status: "active" }]);
+  } finally {
     await worker.stop();
     await stopRuntimeEventConsumers();
     await supervisor.stop();
@@ -2756,6 +3045,36 @@ it("CBS-03 resumes native form and human waits through the same company assignme
         )
       ).rows,
     ).toMatchObject([{ vars: { component: "component-cache" } }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT node_type,status FROM node_attempts WHERE run_id=$1 AND node_id='diagnose'",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toEqual([{ node_type: "orchestrator", status: "Succeeded" }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT delegation_bounds FROM runs WHERE id=$1",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toMatchObject([
+      {
+        delegation_bounds: {
+          maxDepth: 1,
+          maxFanout: 1,
+          maxActiveChildren: 1,
+          budget: {
+            maxTokens: 10000,
+            wallClockMinutes: 2,
+            maxChildRuns: 1,
+            consecutiveFailures: 1,
+          },
+        },
+      },
+    ]);
     expect(
       (await database.pool.query(frozenSql, [receipt.runId])).rows,
     ).toEqual([frozen]);
