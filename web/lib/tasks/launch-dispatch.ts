@@ -230,13 +230,17 @@ async function deferBoundTaskLaunch(
       .set({
         reason,
         dueAt: sql`clock_timestamp()+interval '1 second'`,
-        stateVersion: current.stateVersion + 1,
+        stateVersion:
+          current.reason === reason
+            ? current.stateVersion
+            : current.stateVersion + 1,
         updatedAt: sql`clock_timestamp()`,
       })
       .where(eq(taskLaunchIntents.id, intentId))
       .returning();
 
-    await emitTaskLaunchChanged(tx, deferred, { type: "system", id: null });
+    if (deferred.stateVersion !== current.stateVersion)
+      await emitTaskLaunchChanged(tx, deferred, { type: "system", id: null });
   });
 }
 
@@ -253,6 +257,15 @@ async function startBoundTaskLaunch(db: Db, intentId: string): Promise<void> {
     !intent.preparationIdentity
   )
     return;
+  if (intent.settingsSnapshot.kind === "agent") {
+    const [bound] = await db
+      .select({ status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, intent.runId));
+
+    // A Running agent's preparation/continuation already owns its effects.
+    if (bound?.status !== "Pending") return;
+  }
   const fence = intent.preparationIdentity.parentRepoPath
     ? await acquireRepositoryMutationFence(
         intent.preparationIdentity.parentRepoPath,

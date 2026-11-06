@@ -136,6 +136,7 @@ import {
 } from "@/lib/agents/preparation-workspace";
 import {
   assertAcceptedTaskAgentLaunchExecution,
+  assertTaskAgentPreparationSource,
   taskAgentPreparationWorkspace,
 } from "@/lib/tasks/launch-agent-execution";
 import {
@@ -4746,6 +4747,8 @@ async function driveAgentSession(
               },
             );
         } else if (!integrityBaseline) {
+          if (run.taskLaunchIntentId)
+            await assertTaskAgentPreparationSource(_db, run);
           integrityBaseline = await captureOperationalBaseline(
             cwd,
             preparationWorkspace?.resourceKind ?? operationalResourceKind(run),

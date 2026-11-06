@@ -77,8 +77,10 @@ export async function prepareTaskLaunchFirstDispatch(
     : assertFrozenTaskLaunchCurrent;
 
   await validateCurrent(db, intent);
-  if (agent) await assertFrozenTaskAgentRepository(db, intent);
-  else {
+  // Agent Running admits infrastructure preparation, whose physical owner
+  // verifies repository integrity at commitTaskAgentLaunchFirstDispatch.
+  // A scheduler-side probe here would race that owner's materialization.
+  if (!agent) {
     await assertFrozenTaskLaunchRepository(db, intent);
     await assertTaskLaunchBoundWorkspace(db, intent);
   }
@@ -167,7 +169,7 @@ export async function prepareTaskLaunchFirstDispatch(
           state: "queued",
           stateVersion: current.intent.stateVersion + 1,
           reason: "launch_capacity_wait",
-          dueAt: sql`clock_timestamp()`,
+          dueAt: sql`clock_timestamp()+interval '1 second'`,
           updatedAt: sql`clock_timestamp()`,
         })
         .where(eq(taskLaunchIntents.id, current.intent.id))

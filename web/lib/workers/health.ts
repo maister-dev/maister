@@ -7,7 +7,7 @@ import "server-only";
 // runner, the agent stack or `lib/execution-host` into its module graph — the
 // cycle that makes a mocked suite fail as SKIPS rather than as errors.
 //
-// The three slots are interned symbols rather than plain globals because Next
+// The four slots are interned symbols rather than plain globals because Next
 // bundles instrumentation separately from the production server entrypoint:
 // the writer resolves `runtime.ts` from the instrumentation bundle and this
 // reader resolves from whichever bundle imported it, so a module-scoped
@@ -15,14 +15,14 @@ import "server-only";
 // constraint for the lifecycle callbacks.
 
 export type DurableWorkerName =
-  "promptOwner" | "flowContinuation" | "agentContinuation";
+  "promptOwner" | "flowContinuation" | "agentContinuation" | "taskLaunch";
 
 export type DurableWorkerState = Readonly<{
   state: "running" | "degraded" | "stopped";
   reason: string | null;
 }>;
 
-/** The structural shape all three workers already expose. Declared locally —
+/** The structural shape all durable workers expose. Declared locally —
  * importing the type would drag its domain module into this graph. */
 export type DurableWorkerHandle = Readonly<{
   stop: () => Promise<void>;
@@ -38,6 +38,7 @@ export const DURABLE_WORKER_SLOT_KEYS: Readonly<
   promptOwner: Symbol.for("maister.durable-workers.promptOwner.v1"),
   flowContinuation: Symbol.for("maister.durable-workers.flowContinuation.v1"),
   agentContinuation: Symbol.for("maister.durable-workers.agentContinuation.v1"),
+  taskLaunch: Symbol.for("maister.durable-workers.taskLaunch.v1"),
 };
 
 type SlotGlobal = typeof globalThis &
@@ -84,5 +85,6 @@ export function durableWorkersHealth(): Readonly<
     promptOwner: read("promptOwner"),
     flowContinuation: read("flowContinuation"),
     agentContinuation: read("agentContinuation"),
+    taskLaunch: read("taskLaunch"),
   };
 }

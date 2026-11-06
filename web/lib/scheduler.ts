@@ -765,7 +765,40 @@ export async function releaseSlotOnIdle(
     .where(eq(runs.id, opts.runId));
   const pool = poolForRunKind(rows[0]?.runKind ?? "flow");
 
-  return promoteNextPending({ db: opts.db, runFlow: opts.runFlow, pool });
+  const { promotedRunId } = await promoteNextPending({
+    db: opts.db,
+    runFlow: opts.runFlow,
+    pool,
+  });
+
+  return { promotedRunId };
+}
+
+/** Version/lease churn is not progress if the same accepted request remains immediately eligible. */
+async function taskLaunchPromotionOutcome(
+  db: Db,
+  intentId: string,
+): Promise<{ promotedRunId: string | null; taskLaunchProgress: boolean }> {
+  const [current]: Array<{ runId: string | null; progressed: boolean }> =
+    await db
+      .select({
+        runId: taskLaunchIntents.runId,
+        progressed: sql<boolean>`coalesce(
+        ${taskLaunchIntents.dispatchCommittedAt} IS NOT NULL
+        OR ${taskLaunchIntents.state} NOT IN ('queued','preparing','run_bound')
+        OR ${taskLaunchIntents.state} IN ('queued','run_bound') AND ${taskLaunchIntents.dueAt}>clock_timestamp()
+        OR ${taskLaunchIntents.state}='preparing' AND ${taskLaunchIntents.leaseExpiresAt}>clock_timestamp()
+        OR ${taskLaunchIntents.state}='run_bound' AND ${taskLaunchIntents.settingsSnapshot}->>'kind'='agent'
+          AND EXISTS(SELECT 1 FROM runs preparing_agent WHERE preparing_agent.id=${taskLaunchIntents.runId}
+            AND preparing_agent.status='Running'), false)`,
+      })
+      .from(taskLaunchIntents)
+      .where(eq(taskLaunchIntents.id, intentId));
+
+  return {
+    promotedRunId: current?.runId ?? null,
+    taskLaunchProgress: !current || current.progressed,
+  };
 }
 
 // ADR-121 §4.4: the unified priority-ordered admission gate (a.k.a.
@@ -785,7 +818,7 @@ export async function releaseSlotOnIdle(
 // needs no new event wiring).
 export async function promoteNextPending(
   opts: PromoteNextPendingOptions = {},
-): Promise<{ promotedRunId: string | null }> {
+): Promise<{ promotedRunId: string | null; taskLaunchProgress?: boolean }> {
   const db = opts.db ?? getDb();
 
   const pool: SchedulerPool = opts.pool ?? "flow";
@@ -984,7 +1017,12 @@ export async function promoteNextPending(
       ${taskLaunchIntents.state}='queued' AND ${taskLaunchIntents.dueAt}<=clock_timestamp()
       OR ${taskLaunchIntents.state}='preparing' AND ${taskLaunchIntents.leaseExpiresAt}<=clock_timestamp()
       OR ${taskLaunchIntents.state}='run_bound' AND ${taskLaunchIntents.dispatchCommittedAt} IS NULL AND ${taskLaunchIntents.dueAt}<=clock_timestamp()
-    ) AND ${taskLaunchIntents.settingsSnapshot}->>'kind'=${pool} AND (${selfPreparation}>0 OR (${liveCount + reservedC2}-${selfPreparation}<${cap}
+    ) AND ${taskLaunchIntents.settingsSnapshot}->>'kind'=${pool}
+      AND NOT (${taskLaunchIntents.settingsSnapshot}->>'kind'='agent'
+        AND ${taskLaunchIntents.state}='run_bound' AND EXISTS (
+          SELECT 1 FROM runs preparing_agent WHERE preparing_agent.id=${taskLaunchIntents.runId}
+            AND preparing_agent.status='Running'))
+      AND (${selfPreparation}>0 OR (${liveCount + reservedC2}-${selfPreparation}<${cap}
       AND (${taskLaunchIntents.basis}->>'kind'<>'automatic' OR ${taskLaunchIntents.settingsSnapshot}->>'kind'='agent' OR ${taskLaunchIntents.settingsSnapshot} ? 'serverExecution' OR (
         ${liveCount + reservedC2}-${selfPreparation}<${cap - resolveAutoReserve()}
         AND (${projects.taskQueueSettings}->>'maxInFlightAuto' IS NULL OR
@@ -1095,7 +1133,10 @@ export async function promoteNextPending(
           .where(eq(taskLaunchIntents.id, ref.intentId));
 
         if (intent?.state === "run_bound")
-          return { kind: "task_bound" as const, intentId: intent.id };
+          return {
+            kind: "task_bound" as const,
+            intentId: intent.id,
+          };
         try {
           const claim = await claimTaskLaunchIntent(tx, ref.intentId);
 
@@ -1432,21 +1473,18 @@ export async function promoteNextPending(
   if (decision.kind === "task_intent") {
     const { driveClaimedTaskLaunchIntent } =
       await import("@/lib/tasks/launch-dispatch");
-    const receipt = await driveClaimedTaskLaunchIntent(db, decision.claim);
 
-    return { promotedRunId: receipt.runId };
+    await driveClaimedTaskLaunchIntent(db, decision.claim);
+
+    return taskLaunchPromotionOutcome(db, decision.claim.intentId);
   }
   if (decision.kind === "task_bound") {
     const { dispatchBoundTaskLaunchIntent } =
       await import("@/lib/tasks/launch-dispatch");
 
     await dispatchBoundTaskLaunchIntent(db, decision.intentId);
-    const [bound] = await db
-      .select({ runId: taskLaunchIntents.runId })
-      .from(taskLaunchIntents)
-      .where(eq(taskLaunchIntents.id, decision.intentId));
 
-    return { promotedRunId: bound?.runId ?? null };
+    return taskLaunchPromotionOutcome(db, decision.intentId);
   }
 
   if (decision.kind === "c2") {

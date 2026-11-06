@@ -117,5 +117,8 @@ describe("durable worker health surface", () => {
     expect(DURABLE_WORKER_SLOT_KEYS.agentContinuation).toBe(
       Symbol.for("maister.durable-workers.agentContinuation.v1"),
     );
+    expect(DURABLE_WORKER_SLOT_KEYS.taskLaunch).toBe(
+      Symbol.for("maister.durable-workers.taskLaunch.v1"),
+    );
   });
 });

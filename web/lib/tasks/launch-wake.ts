@@ -11,6 +11,7 @@ import {
   reconcileTaskLaunchIntents,
 } from "./launch-dispatch";
 
+import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
 import { queryErrorDiagnostics } from "@/lib/db/pg-error";
 import { MaisterError } from "@/lib/errors";
 
@@ -25,6 +26,7 @@ export function wakeAcceptedTaskLaunch(
   receipt: TaskLaunchReceipt,
 ): void {
   if (!["queued", "preparing", "run_bound"].includes(receipt.state)) return;
+  runEventWakeBus.wakeProjection();
   after(async () => {
     try {
       await dispatchTaskLaunchIntent(db, receipt.intentId);
@@ -42,6 +44,7 @@ export function wakeAcceptedTaskLaunch(
 
 /** Cancellation releases capacity after commit; wake the existing bounded queue reconciler. */
 export function wakeTaskLaunchQueue(db: Db): void {
+  runEventWakeBus.wakeProjection();
   after(async () => {
     try {
       await reconcileTaskLaunchIntents(db);

@@ -217,7 +217,11 @@ export async function claimTaskLaunchIntent(
           .update(taskLaunchIntents)
           .set({
             state: "queued",
-            stateVersion: intent.stateVersion + 1,
+            stateVersion:
+              intent.state === "queued" &&
+              intent.reason === "launch_parent_capacity_wait"
+                ? intent.stateVersion
+                : intent.stateVersion + 1,
             reason: "launch_parent_capacity_wait",
             dueAt: sql`clock_timestamp()+interval '1 second'`,
             leaseToken: null,
@@ -227,7 +231,11 @@ export async function claimTaskLaunchIntent(
           .where(eq(taskLaunchIntents.id, intent.id))
           .returning();
 
-        await emitTaskLaunchChanged(tx, waiting, { type: "system", id: null });
+        if (waiting.stateVersion !== intent.stateVersion)
+          await emitTaskLaunchChanged(tx, waiting, {
+            type: "system",
+            id: null,
+          });
 
         return null;
       }

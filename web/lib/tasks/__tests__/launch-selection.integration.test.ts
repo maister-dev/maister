@@ -1,9 +1,11 @@
+import type { TaskLaunchReceipt } from "@/lib/tasks/launch-types";
 import type { Db } from "@/lib/execution-host/db";
 
 import { randomUUID } from "node:crypto";
-import { rm } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
+import path from "node:path";
 
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 
 import {
@@ -27,18 +29,26 @@ import {
   renewTaskLaunchClaim,
   advanceTaskLaunchPreparation,
 } from "@/lib/tasks/launch-dispatch-claim";
+import { acquireRepositoryMutationFence } from "@/lib/project-config-persistence/repository-lock";
+import { startDurableWorkers, stopDurableWorkers } from "@/lib/workers/runtime";
 import { cancelInteractiveTaskLaunch } from "@/lib/tasks/launch-cancel";
 import {
   countLiveRuns,
   tryStartRun,
   promoteNextPending,
+  takeSchedulerLock,
 } from "@/lib/scheduler";
 import {
   dispatchTaskLaunchIntent,
+  dispatchBoundTaskLaunchIntent,
   prepareTaskLaunchIntent,
 } from "@/lib/tasks/launch-dispatch";
 import { enqueueQualifiedAutomaticTaskLaunch } from "@/lib/tasks/launch-automatic-enqueue";
 import { establishExecutionChildAdmission } from "@/lib/tasks/qualification-admission";
+import {
+  currentInstanceCeilings,
+  writeDelegationBoundsIfChanged,
+} from "@/lib/orchestrator/bounds-store";
 import { buildAutoLaunchRunPlanConsumer } from "@/lib/domain-events/auto-launch";
 import { addTaskRelation } from "@/lib/social/relations";
 import { prepareTaskQualification } from "@/lib/tasks/qualification";
@@ -51,6 +61,10 @@ import {
   launchAcceptedTaskRun,
 } from "@/lib/services/runs";
 import { taskLaunchReceipt } from "@/lib/tasks/launch-receipt";
+import {
+  seedAgentDefinition,
+  seedProjectRepo,
+} from "@/test-support/durable-workers-seed";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import { taskLaunchInputForRun } from "@/lib/tasks/launch-execution-input";
 import { abandonRunInTransaction } from "@/lib/runs/state-transitions";
@@ -106,7 +120,7 @@ afterEach(async () => {
 
   for (const intent of active) {
     if (
-      ["queued", "preparing", "held"].includes(intent.state) &&
+      ["queued", "preparing", "held", "run_bound"].includes(intent.state) &&
       !intent.dispatchCommittedAt
     )
       await cancelInteractiveTaskLaunch(
@@ -135,6 +149,630 @@ async function task(): Promise<typeof tasks.$inferSelect> {
 
   return row;
 }
+
+async function waitForLaunchDue(intentId: string): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const result = await database.pool.query<{ due: boolean }>(
+          "SELECT due_at<=clock_timestamp() due FROM task_launch_intents WHERE id=$1",
+          [intentId],
+        );
+
+        return result.rows[0].due;
+      },
+      { timeout: 10_000 },
+    )
+    .toBe(true);
+}
+
+async function launchTransitionCount(intentId: string): Promise<number> {
+  const result = await database.pool.query<{ n: number }>(
+    "SELECT count(*)::int n FROM domain_events WHERE kind='task.launch_changed' AND payload->>'intentId'=$1",
+    [intentId],
+  );
+
+  return result.rows[0].n;
+}
+
+async function abandonWorkerRuns(intentIds: readonly string[]): Promise<void> {
+  const bound = await database.db
+    .select()
+    .from(runs)
+    .where(inArray(runs.taskLaunchIntentId, [...intentIds]));
+
+  for (const run of bound) {
+    const [intent] = await database.db
+      .select()
+      .from(taskLaunchIntents)
+      .where(eq(taskLaunchIntents.id, run.taskLaunchIntentId!));
+
+    if (run.runKind === "flow" && intent.dispatchCommittedAt)
+      await expect
+        .poll(
+          async () => {
+            const [current] = await database.db
+              .select()
+              .from(runs)
+              .where(eq(runs.id, run.id));
+
+            return (
+              ["Done", "Failed", "Crashed", "Abandoned"].includes(
+                current.status,
+              ) ||
+              (current.status === "NeedsInput" &&
+                current.flowDriverToken === null)
+            );
+          },
+          { timeout: 10_000 },
+        )
+        .toBe(true);
+    await database.db.transaction((tx) => abandonRunInTransaction(tx, run.id));
+  }
+}
+
+it("R18 production workers bind rapid accepted requests after real repository contention without an HTTP wake or scheduler tick", async () => {
+  vi.stubEnv("MAISTER_WORKTREES_ROOT", `${root}/worktrees`);
+  vi.stubEnv("MAISTER_RUNTIME_ROOT", `${root}/runtime`);
+  const flowId = await reviewFlow();
+  const principal = await interactiveTaskLaunchPrincipal();
+  const firstTask = await task();
+  const first = await acceptInteractiveTaskLaunch(
+    database.db,
+    principal,
+    {
+      taskId: firstTask.id,
+      expectedTaskRevision: firstTask.revision,
+      expectedSettingsToken: await taskLaunchSettingsToken(
+        database.db,
+        firstTask.id,
+        { flowId },
+      ),
+      flowId,
+    },
+    randomUUID(),
+  );
+  const fence = await acquireRepositoryMutationFence(fixture.repo);
+
+  try {
+    const deferred = await dispatchTaskLaunchIntent(
+      database.db,
+      first.intentId,
+    );
+
+    expect(deferred).toMatchObject({
+      state: "queued",
+      reason: "operation_busy",
+      runId: null,
+    });
+  } finally {
+    await fence.release();
+  }
+  const secondTask = await task();
+  const second = await acceptInteractiveTaskLaunch(
+    database.db,
+    principal,
+    {
+      taskId: secondTask.id,
+      expectedTaskRevision: secondTask.revision,
+      expectedSettingsToken: await taskLaunchSettingsToken(
+        database.db,
+        secondTask.id,
+        { flowId },
+      ),
+      flowId,
+    },
+    randomUUID(),
+  );
+  const workers = startDurableWorkers();
+
+  try {
+    await expect
+      .poll(
+        async () => {
+          const rows = await database.db.select().from(taskLaunchIntents);
+
+          return [first, second].map(({ intentId }) => {
+            const row = rows.find((candidate) => candidate.id === intentId);
+
+            return row?.dispatchCommittedAt ? row.state : null;
+          });
+        },
+        { timeout: 10_000 },
+      )
+      .toEqual(["run_bound", "run_bound"]);
+    expect("taskLaunch" in workers).toBe(true);
+    const bound = await database.db.select().from(runs);
+
+    for (const receipt of [first, second]) {
+      const children = bound.filter(
+        (run) => run.taskLaunchIntentId === receipt.intentId,
+      );
+
+      expect(children).toHaveLength(1);
+      expect(children[0].taskAdmissionSnapshot).toMatchObject({
+        version: 2,
+        basis: "manual",
+        intentId: receipt.intentId,
+      });
+    }
+  } finally {
+    await stopDurableWorkers();
+    await abandonWorkerRuns([first.intentId, second.intentId]);
+    vi.unstubAllEnvs();
+  }
+});
+
+it("R18 restarted production workers reclaim an expired preparation and dispatch a retained bound Run without changing either identity", async () => {
+  vi.stubEnv("MAISTER_WORKTREES_ROOT", `${root}/worktrees`);
+  vi.stubEnv("MAISTER_RUNTIME_ROOT", `${root}/runtime`);
+  const principal = await interactiveTaskLaunchPrincipal();
+  const flowId = await reviewFlow();
+  const accepted: TaskLaunchReceipt[] = [];
+
+  for (const row of [await task(), await task()])
+    accepted.push(
+      await acceptInteractiveTaskLaunch(
+        database.db,
+        principal,
+        {
+          taskId: row.id,
+          expectedTaskRevision: row.revision,
+          flowId,
+          expectedSettingsToken: await taskLaunchSettingsToken(
+            database.db,
+            row.id,
+            { flowId },
+          ),
+        },
+        randomUUID(),
+      ),
+    );
+  const expired = await claimTaskLaunchIntent(
+    database.db,
+    accepted[0].intentId,
+  );
+  const boundClaim = await claimTaskLaunchIntent(
+    database.db,
+    accepted[1].intentId,
+  );
+
+  expect(expired).not.toBeNull();
+  expect(boundClaim).not.toBeNull();
+  await database.db
+    .update(taskLaunchIntents)
+    .set({ leaseExpiresAt: sql`clock_timestamp()+interval '20 milliseconds'` })
+    .where(eq(taskLaunchIntents.id, accepted[0].intentId));
+  const fence = await acquireRepositoryMutationFence(fixture.repo);
+
+  try {
+    await fence.run(async () =>
+      launchAcceptedTaskRun(
+        await acceptedTaskLaunchExecution(database.db, boundClaim!),
+        database.db,
+      ),
+    );
+  } finally {
+    await fence.release();
+  }
+  const before = await database.db
+    .select()
+    .from(taskLaunchIntents)
+    .where(
+      inArray(
+        taskLaunchIntents.id,
+        accepted.map((row) => row.intentId),
+      ),
+    );
+  const expiredDeadline = await database.pool.query<{ expired: boolean }>(
+    "SELECT lease_expires_at<=clock_timestamp() expired FROM task_launch_intents WHERE id=$1",
+    [accepted[0].intentId],
+  );
+
+  expect(expiredDeadline.rows[0].expired).toBe(true);
+  expect(before.find((row) => row.id === accepted[1].intentId)).toMatchObject({
+    state: "run_bound",
+    dispatchCommittedAt: null,
+    runId: boundClaim!.identity.runId,
+  });
+  let releaseLock: () => void = () => {};
+  let reportLocked: () => void = () => {};
+  const lockReady = new Promise<void>((resolve) => {
+    reportLocked = resolve;
+  });
+  const released = new Promise<void>((resolve) => {
+    releaseLock = resolve;
+  });
+  const schedulerLock = database.db.transaction(async (tx) => {
+    await takeSchedulerLock(tx);
+    reportLocked();
+    await released;
+  });
+
+  await lockReady;
+  const firstHandles = startDurableWorkers();
+  let stopSettled = false;
+  let stopping: Promise<void> | undefined;
+
+  try {
+    await expect
+      .poll(
+        async () => {
+          const result = await database.pool.query<{ n: number }>(
+            "SELECT count(*)::int n FROM pg_stat_activity WHERE wait_event_type='Lock' AND wait_event='advisory' AND query LIKE '%pg_advisory_xact_lock%'",
+          );
+
+          return result.rows[0].n;
+        },
+        { timeout: 10_000 },
+      )
+      .toBeGreaterThan(0);
+    stopping = stopDurableWorkers().then(() => {
+      stopSettled = true;
+    });
+    await database.pool.query("SELECT 1");
+    expect(stopSettled).toBe(false);
+  } finally {
+    releaseLock();
+    await schedulerLock;
+    await (stopping ?? stopDurableWorkers());
+  }
+  expect(firstHandles.taskLaunch.health().state).toBe("stopped");
+  const restarted = startDurableWorkers();
+
+  try {
+    expect(restarted.taskLaunch).not.toBe(firstHandles.taskLaunch);
+    await expect
+      .poll(
+        async () => {
+          const rows = await database.db
+            .select()
+            .from(taskLaunchIntents)
+            .where(
+              inArray(
+                taskLaunchIntents.id,
+                accepted.map((row) => row.intentId),
+              ),
+            );
+
+          return rows.filter((row) => row.dispatchCommittedAt !== null).length;
+        },
+        { timeout: 10_000 },
+      )
+      .toBe(2);
+    const after = await database.db
+      .select()
+      .from(taskLaunchIntents)
+      .where(
+        inArray(
+          taskLaunchIntents.id,
+          accepted.map((row) => row.intentId),
+        ),
+      );
+
+    expect(
+      after.find((row) => row.id === accepted[0].intentId)?.preparationIdentity,
+    ).toEqual(expired!.identity);
+    expect(
+      after.find((row) => row.id === accepted[1].intentId)?.preparationIdentity,
+    ).toEqual(boundClaim!.identity);
+    await expect(
+      renewTaskLaunchClaim(database.db, expired!),
+    ).rejects.toMatchObject({ details: { reason: "launch_worker_fenced" } });
+    for (const row of accepted)
+      expect(
+        await database.db
+          .select()
+          .from(runs)
+          .where(eq(runs.taskLaunchIntentId, row.intentId)),
+      ).toHaveLength(1);
+  } finally {
+    await stopDurableWorkers();
+    await abandonWorkerRuns(accepted.map((row) => row.intentId));
+    vi.unstubAllEnvs();
+  }
+});
+
+it("R18 services later eligible Flow and Agent requests while an older repository stays fenced", async () => {
+  vi.stubEnv("MAISTER_WORKTREES_ROOT", `${root}/worktrees`);
+  vi.stubEnv("MAISTER_RUNTIME_ROOT", `${root}/runtime`);
+  const principal = await interactiveTaskLaunchPrincipal();
+  const agent = await seedAgentDefinition(database.db, {
+    projectId: fixture.projectId,
+    installedPath: `${root}/worker-agent`,
+    terminalDelayMs: 0,
+  });
+  const peerAgent = await seedAgentDefinition(database.db, {
+    projectId: fixture.projectId,
+    installedPath: `${root}/worker-peer-agent`,
+    terminalDelayMs: 0,
+  });
+  const busyTask = await task();
+  const blocked = await acceptInteractiveTaskLaunch(
+    database.db,
+    principal,
+    {
+      taskId: busyTask.id,
+      expectedTaskRevision: busyTask.revision,
+      expectedSettingsToken: await taskLaunchSettingsToken(
+        database.db,
+        busyTask.id,
+      ),
+    },
+    randomUUID(),
+  );
+  const other = await seedProjectRepo(
+    database.db,
+    `${root}/worker-other-project`,
+  );
+  const flowId = await reviewFlow(fixture.flowId, other.projectId);
+  const [otherTask] = await database.db
+    .insert(tasks)
+    .values({
+      id: randomUUID(),
+      projectId: other.projectId,
+      number: 1,
+      title: "Independent repository",
+      prompt: "Execute without the blocked repository",
+      flowId,
+      runnerId: fixture.runnerId,
+    })
+    .returning();
+  const eligible = await acceptInteractiveTaskLaunch(
+    database.db,
+    principal,
+    {
+      taskId: otherTask.id,
+      expectedTaskRevision: otherTask.revision,
+      expectedSettingsToken: await taskLaunchSettingsToken(
+        database.db,
+        otherTask.id,
+      ),
+    },
+    randomUUID(),
+  );
+  const agentTask = await task();
+  const agentSelection = {
+    agentId: agent.agentId,
+    workspace: "none" as const,
+    runnerId: fixture.runnerId,
+  };
+  const agentIntent = await acceptInteractiveTaskLaunch(
+    database.db,
+    principal,
+    {
+      taskId: agentTask.id,
+      expectedTaskRevision: agentTask.revision,
+      ...agentSelection,
+      expectedSettingsToken: await taskLaunchSettingsToken(
+        database.db,
+        agentTask.id,
+        agentSelection,
+      ),
+    },
+    randomUUID(),
+  );
+  const fence = await acquireRepositoryMutationFence(fixture.repo);
+  const tokenModule = await import("@/lib/agents/tokens");
+  const issueToken = tokenModule.issueAgentRunToken;
+  let ownerHeld = false;
+  let releaseOwner: () => void = () => {};
+  const ownerReleased = new Promise<void>((resolve) => {
+    releaseOwner = resolve;
+  });
+  const tokenBarrier = vi
+    .spyOn(tokenModule, "issueAgentRunToken")
+    .mockImplementation(async (input) => {
+      const issued = await issueToken(input);
+
+      if (input.agentId === agent.agentId) {
+        ownerHeld = true;
+        await ownerReleased;
+      }
+
+      return issued;
+    });
+  let peerIntentId: string | null = null;
+  const workers = startDurableWorkers();
+
+  try {
+    await expect.poll(() => ownerHeld, { timeout: 10_000 }).toBe(true);
+    await dispatchBoundTaskLaunchIntent(database.db, agentIntent.intentId);
+    const [duringPreparation] = await database.db
+      .select()
+      .from(taskLaunchIntents)
+      .where(eq(taskLaunchIntents.id, agentIntent.intentId));
+
+    expect(duringPreparation).toMatchObject({
+      state: "run_bound",
+      reason: null,
+      dispatchCommittedAt: null,
+    });
+    const beforeModel = await database.pool.query<{ n: number }>(
+      "SELECT count(*)::int n FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt')",
+      [duringPreparation.runId],
+    );
+
+    expect(beforeModel.rows[0].n).toBe(0);
+    const peerTask = await task();
+    const peerSelection = {
+      agentId: peerAgent.agentId,
+      workspace: "none" as const,
+      runnerId: fixture.runnerId,
+    };
+    const peer = await acceptInteractiveTaskLaunch(
+      database.db,
+      principal,
+      {
+        taskId: peerTask.id,
+        expectedTaskRevision: peerTask.revision,
+        ...peerSelection,
+        expectedSettingsToken: await taskLaunchSettingsToken(
+          database.db,
+          peerTask.id,
+          peerSelection,
+        ),
+      },
+      randomUUID(),
+    );
+
+    peerIntentId = peer.intentId;
+    await expect
+      .poll(
+        async () => {
+          const [current] = await database.db
+            .select()
+            .from(taskLaunchIntents)
+            .where(eq(taskLaunchIntents.id, peer.intentId));
+
+          return !!current.dispatchCommittedAt;
+        },
+        { timeout: 10_000 },
+      )
+      .toBe(true);
+    releaseOwner();
+
+    await expect
+      .poll(
+        async () => {
+          const rows = await database.db
+            .select()
+            .from(taskLaunchIntents)
+            .where(
+              inArray(taskLaunchIntents.id, [
+                blocked.intentId,
+                eligible.intentId,
+                agentIntent.intentId,
+              ]),
+            );
+
+          return [eligible, agentIntent].map(({ intentId }) => {
+            const row = rows.find((candidate) => candidate.id === intentId);
+
+            return {
+              committed: !!row?.dispatchCommittedAt,
+              state: row?.state,
+              reason: row?.reason,
+            };
+          });
+        },
+        { timeout: 10_000 },
+      )
+      .toEqual([
+        expect.objectContaining({ committed: true }),
+        expect.objectContaining({ committed: true }),
+      ]);
+    await expect
+      .poll(
+        async () => {
+          const result = await database.pool.query<{ n: number }>(
+            "SELECT count(*)::int n FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt')",
+            [duringPreparation.runId],
+          );
+
+          return result.rows[0].n;
+        },
+        { timeout: 10_000 },
+      )
+      .toBe(2);
+    expect(workers.taskLaunch.health()).toEqual({
+      state: "running",
+      reason: null,
+    });
+    await stopDurableWorkers();
+    const [stillBlocked] = await database.db
+      .select()
+      .from(taskLaunchIntents)
+      .where(eq(taskLaunchIntents.id, blocked.intentId));
+
+    expect(stillBlocked).toMatchObject({
+      state: "queued",
+      reason: "operation_busy",
+      runId: null,
+      attempts: 0,
+    });
+    for (const row of [eligible, agentIntent])
+      expect(
+        await database.db
+          .select()
+          .from(runs)
+          .where(eq(runs.taskLaunchIntentId, row.intentId)),
+      ).toHaveLength(1);
+  } finally {
+    releaseOwner();
+    await stopDurableWorkers();
+    tokenBarrier.mockRestore();
+    await fence.release();
+    await abandonWorkerRuns([
+      eligible.intentId,
+      agentIntent.intentId,
+      ...(peerIntentId ? [peerIntentId] : []),
+    ]);
+    vi.unstubAllEnvs();
+  }
+});
+
+it("R18 refuses a dirty shared repository introduced after agent binding before freezing a baseline or creating a model session", async () => {
+  vi.stubEnv("MAISTER_WORKTREES_ROOT", `${root}/worktrees`);
+  vi.stubEnv("MAISTER_RUNTIME_ROOT", `${root}/runtime`);
+  const agent = await seedAgentDefinition(database.db, {
+    projectId: fixture.projectId,
+    installedPath: `${root}/worker-dirty-agent`,
+    terminalDelayMs: 0,
+  });
+  const row = await task();
+  const selection = {
+    agentId: agent.agentId,
+    workspace: "repo_read" as const,
+    runnerId: fixture.runnerId,
+  };
+  const receipt = await acceptInteractiveTaskLaunch(
+    database.db,
+    await interactiveTaskLaunchPrincipal(),
+    {
+      taskId: row.id,
+      expectedTaskRevision: row.revision,
+      ...selection,
+      expectedSettingsToken: await taskLaunchSettingsToken(
+        database.db,
+        row.id,
+        selection,
+      ),
+    },
+    randomUUID(),
+  );
+  const bound = await prepareTaskLaunchIntent(database.db, receipt.intentId);
+  const dirtyPath = path.join(fixture.repo, "R18-unaccepted.txt");
+
+  expect(bound.state).toBe("run_bound");
+  await writeFile(dirtyPath, "Unaccepted shared repository input\n");
+  try {
+    expect(await tryStartRun(bound.runId!, { db: database.db })).toMatchObject({
+      started: true,
+    });
+    const { startAgentSession } = await import("@/lib/agents/launch");
+
+    await startAgentSession(bound.runId!, { db: database.db });
+    const [current] = await database.db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, bound.runId!));
+    const commands = await database.pool.query<{ n: number }>(
+      "SELECT count(*)::int n FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt')",
+      [bound.runId],
+    );
+
+    expect(current).toMatchObject({
+      status: "Failed",
+      operationalIntegrityBaseline: null,
+    });
+    expect(commands.rows[0].n).toBe(0);
+  } finally {
+    await abandonWorkerRuns([receipt.intentId]);
+    await rm(dirtyPath, { force: true });
+    vi.unstubAllEnvs();
+  }
+});
 
 it("LA04 freezes the selected Brain decision without changing project/task defaults", async () => {
   const row = await task();
@@ -319,11 +957,14 @@ it("LA09 expired preparation ownership reacquires the same identity and rejects 
   expect(current.preparationPhase).toBe("checkout_ready");
 });
 
-async function reviewFlow(): Promise<string> {
+async function reviewFlow(
+  sourceFlowId: string = fixture.flowId,
+  projectId?: string,
+): Promise<string> {
   const [oldFlow] = await database.db
     .select()
     .from(flows)
-    .where(eq(flows.id, fixture.flowId));
+    .where(eq(flows.id, sourceFlowId));
   const [oldRevision] = await database.db
     .select()
     .from(flowRevisions)
@@ -350,6 +991,7 @@ async function reviewFlow(): Promise<string> {
     .values({ ...oldRevision, id: revisionId, flowRefId: flowId, manifest });
   await database.db.insert(flows).values({
     ...oldFlow,
+    projectId: projectId ?? oldFlow.projectId,
     id: flowId,
     flowRefId: flowId,
     enabledRevisionId: revisionId,
@@ -655,6 +1297,36 @@ it("LA07 releases a pre-dispatch capacity reservation and later reuses the same 
       .where(eq(taskLaunchIntents.id, accepted[0].intentId));
     const prepared = taskLaunchReceipt(firstBound);
 
+    const fence = await acquireRepositoryMutationFence(fixture.repo);
+
+    try {
+      await dispatchBoundTaskLaunchIntent(database.db, prepared.intentId);
+      const [waiting] = await database.db
+        .select()
+        .from(taskLaunchIntents)
+        .where(eq(taskLaunchIntents.id, prepared.intentId));
+      const transitions = await launchTransitionCount(waiting.id);
+
+      expect(waiting).toMatchObject({
+        state: "run_bound",
+        reason: "operation_busy",
+        dispatchCommittedAt: null,
+      });
+      await waitForLaunchDue(waiting.id);
+      await dispatchBoundTaskLaunchIntent(database.db, waiting.id);
+      const [renewed] = await database.db
+        .select()
+        .from(taskLaunchIntents)
+        .where(eq(taskLaunchIntents.id, waiting.id));
+
+      expect(renewed.stateVersion).toBe(waiting.stateVersion);
+      expect(renewed.dueAt!.getTime()).toBeGreaterThan(
+        waiting.dueAt!.getTime(),
+      );
+      expect(await launchTransitionCount(waiting.id)).toBe(transitions);
+    } finally {
+      await fence.release();
+    }
     await prepareTaskLaunchIntent(database.db, accepted[1].intentId);
     expect(await countLiveRuns(database.db, "flow")).toBe(2);
     vi.stubEnv("MAISTER_MAX_CONCURRENT_RUNS", "1");
@@ -687,9 +1359,26 @@ it("LA07 releases a pre-dispatch capacity reservation and later reuses the same 
       randomUUID(),
     );
     expect(await countLiveRuns(database.db, "flow")).toBe(0);
-    expect(await promoteNextPending({ db: database.db })).toEqual({
-      promotedRunId: prepared.runId,
-    });
+    startDurableWorkers();
+    try {
+      await expect
+        .poll(
+          async () => {
+            const [current] = await database.db
+              .select()
+              .from(taskLaunchIntents)
+              .where(eq(taskLaunchIntents.id, prepared.intentId));
+
+            return (
+              !!current.dispatchCommittedAt && current.runId === prepared.runId
+            );
+          },
+          { timeout: 10_000 },
+        )
+        .toBe(true);
+    } finally {
+      await stopDurableWorkers();
+    }
     await expect
       .poll(
         async () =>
@@ -1075,14 +1764,25 @@ it("LA08 as-plan child Flow acceptance retains parent admission and a durable qu
     preparationIdentity: null,
     attempts: 0,
   });
+  const waitingTransitions = await launchTransitionCount(waiting.id);
+
+  await waitForLaunchDue(waiting.id);
+  expect(await claimTaskLaunchIntent(database.db, waiting.id)).toBeNull();
+  const [renewedWaiting] = await database.db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.id, waiting.id));
+
+  expect(renewedWaiting.stateVersion).toBe(waiting.stateVersion);
+  expect(renewedWaiting.dueAt!.getTime()).toBeGreaterThan(
+    waiting.dueAt!.getTime(),
+  );
+  expect(await launchTransitionCount(waiting.id)).toBe(waitingTransitions);
   await database.db
     .update(runs)
     .set({ status: "Done" })
     .where(eq(runs.id, hogId));
-  await database.db
-    .update(taskLaunchIntents)
-    .set({ dueAt: new Date(0) })
-    .where(eq(taskLaunchIntents.id, intents[0].id));
+  await waitForLaunchDue(intents[0].id);
   const claim = await claimTaskLaunchIntent(database.db, intents[0].id);
 
   if (!claim) throw new Error("Child fixture did not claim");
@@ -1119,9 +1819,128 @@ it("LA08 as-plan child Flow acceptance retains parent admission and a durable qu
       parent: { parentRunId: parent.runId },
     },
   });
+  await writeDelegationBoundsIfChanged(database.db, admittedParentRunId, {
+    instance: currentInstanceCeilings(),
+    engineMin: "3.10.0",
+    declared: { max_active_children: 1 },
+    nodeId: "check",
+    nodeAttemptId: randomUUID(),
+  });
+  const activeSiblingId = randomUUID();
+
+  await database.db.insert(runs).values({
+    id: activeSiblingId,
+    flowVersion: "v1",
+    flowRevision: "active-capacity-fixture",
+    projectId: fixture.projectId,
+    runKind: "agent",
+    agentWorkspace: "none",
+    parentRunId: admittedParentRunId,
+    rootRunId: admittedParentRunId,
+    status: "Running",
+  });
   expect((await tryStartRun(childRun.id, { db: database.db })).started).toBe(
-    true,
+    false,
   );
+  const unrelatedTask = await task();
+  const unrelatedFlowId = await reviewFlow();
+  const unrelated = await acceptInteractiveTaskLaunch(
+    database.db,
+    await interactiveTaskLaunchPrincipal(),
+    {
+      taskId: unrelatedTask.id,
+      expectedTaskRevision: unrelatedTask.revision,
+      flowId: unrelatedFlowId,
+      expectedSettingsToken: await taskLaunchSettingsToken(
+        database.db,
+        unrelatedTask.id,
+        { flowId: unrelatedFlowId },
+      ),
+    },
+    randomUUID(),
+  );
+  const workers = startDurableWorkers();
+
+  try {
+    await expect
+      .poll(
+        async () => {
+          const [current] = await database.db
+            .select()
+            .from(taskLaunchIntents)
+            .where(eq(taskLaunchIntents.id, unrelated.intentId));
+
+          return !!current.dispatchCommittedAt;
+        },
+        { timeout: 10_000 },
+      )
+      .toBe(true);
+    expect(workers.taskLaunch.health()).toEqual({
+      state: "running",
+      reason: null,
+    });
+    await stopDurableWorkers();
+    const [blocked] = await database.db
+      .select()
+      .from(taskLaunchIntents)
+      .where(eq(taskLaunchIntents.id, intents[0].id));
+    const deadline = await database.pool.query<{ future: boolean }>(
+      "SELECT due_at>clock_timestamp() future FROM task_launch_intents WHERE id=$1",
+      [blocked.id],
+    );
+
+    expect(blocked).toMatchObject({
+      state: "queued",
+      reason: "launch_capacity_wait",
+      attempts: 0,
+      runId: childRun.id,
+    });
+    expect(deadline.rows[0].future).toBe(true);
+    expect(
+      await database.db
+        .select()
+        .from(runs)
+        .where(eq(runs.taskLaunchIntentId, blocked.id)),
+    ).toHaveLength(1);
+    expect(
+      (await database.db.select().from(runs).where(eq(runs.id, childRun.id)))[0]
+        .status,
+    ).toBe("Pending");
+    expect(
+      (
+        await database.pool.query<{ n: number }>(
+          "SELECT count(*)::int n FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt')",
+          [childRun.id],
+        )
+      ).rows[0].n,
+    ).toBe(0);
+  } finally {
+    await stopDurableWorkers();
+    await abandonWorkerRuns([unrelated.intentId]);
+    await database.db
+      .update(runs)
+      .set({ status: "Done" })
+      .where(eq(runs.id, activeSiblingId));
+  }
+  startDurableWorkers();
+  try {
+    await expect
+      .poll(
+        async () => {
+          const [current] = await database.db
+            .select()
+            .from(taskLaunchIntents)
+            .where(eq(taskLaunchIntents.id, intents[0].id));
+
+          return !!current.dispatchCommittedAt && current.runId === childRun.id;
+        },
+        { timeout: 10_000 },
+      )
+      .toBe(true);
+  } finally {
+    await stopDurableWorkers();
+  }
+
   await consumer.handle([event]);
   expect(
     await database.db

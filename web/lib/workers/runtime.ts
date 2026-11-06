@@ -10,6 +10,7 @@ import {
   type DurableWorkerName,
 } from "./health";
 
+import { startTaskLaunchWorker } from "@/lib/tasks/launch-worker";
 import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
 import { startAgentContinuationWorker } from "@/lib/agents/continuation-worker";
@@ -25,7 +26,7 @@ import { syncPromptOwners } from "@/lib/runs/sync-prompt-owner";
 import { gateChatPromptOwners } from "@/lib/services/gate-chat-prompt-owner";
 import { isApplicationStopping } from "@/lib/server-lifecycle";
 
-// The composition root for the three durable workers, reached ONLY from
+// The composition root for the four durable workers, reached ONLY from
 // `instrumentation-node.ts` through a dynamic `await import()`. It must not
 // live under `lib/execution-host/`: every domain registry below imports that
 // package, so a registry module inside it closes a cycle at module load — and
@@ -105,7 +106,7 @@ function slotted(
 }
 
 /**
- * Starts the prompt-owner recovery worker and the two continuation workers,
+ * Starts prompt-owner recovery, two continuations and accepted-launch recovery,
  * once per process. No environment variable gates any of them: a half-activated
  * owner is the state the deployment gate existed to prevent, so activation is
  * all-or-nothing.
@@ -136,6 +137,7 @@ export function startDurableWorkers(): DurableWorkers {
     agentContinuation: slotted("agentContinuation", () =>
       startAgentContinuationWorker({ db }),
     ),
+    taskLaunch: slotted("taskLaunch", () => startTaskLaunchWorker({ db })),
   };
 }
 
@@ -145,6 +147,7 @@ export async function stopDurableWorkers(): Promise<void> {
     "promptOwner",
     "flowContinuation",
     "agentContinuation",
+    "taskLaunch",
   ];
   const stopped = await Promise.allSettled(
     names.map(async (name) => {

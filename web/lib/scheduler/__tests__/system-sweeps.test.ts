@@ -616,6 +616,7 @@ describe("scheduler system sweeps", () => {
             reason: "EXECUTOR_UNAVAILABLE",
           },
           agentContinuation: { state: "stopped", reason: null },
+          taskLaunch: { state: "stopped", reason: null },
         },
       });
       // Diagnostic only: a health read must never fail the tick.

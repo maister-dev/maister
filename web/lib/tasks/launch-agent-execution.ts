@@ -344,6 +344,27 @@ export async function assertFrozenTaskAgentRepository(
     throw launchRefusal("qualification_evidence_stale", "PRECONDITION");
 }
 
+/** The physical preparation owner validates the accepted source before freezing its first baseline. */
+export async function assertTaskAgentPreparationSource(
+  db: Db,
+  run: Pick<Run, "id" | "projectId" | "taskId" | "taskLaunchIntentId">,
+): Promise<void> {
+  const [intent] = await db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.id, run.taskLaunchIntentId ?? ""));
+
+  if (
+    !intent ||
+    intent.runId !== run.id ||
+    intent.originalRunId !== run.id ||
+    intent.projectId !== run.projectId ||
+    intent.taskId !== run.taskId
+  )
+    throw launchRefusal("launch_worker_fenced");
+  await assertFrozenTaskAgentRepository(db, intent);
+}
+
 /** Only a durable current claim can construct the private allocator context. */
 export async function acceptedTaskAgentLaunchExecution(
   db: Db,
