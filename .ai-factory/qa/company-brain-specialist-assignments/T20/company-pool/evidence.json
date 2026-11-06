@@ -1,0 +1,62 @@
+{
+  "task": "T20",
+  "slice": "Existing agent pool admission and project-only started webhook scope",
+  "date": "2026-11-06",
+  "baseCommit": "c858a8e0852dd182e710b0ab867f9aa752897689",
+  "status": "Native direct admission/cap/queue slice qualified; T20 remains open",
+  "engineVersion": "3.11.1",
+  "migrations": [],
+  "red": {
+    "log": "red.log.gz",
+    "failure": "Company direct start and queue promotion create project-style run.started webhook rows with a NULL project."
+  },
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "files": 6,
+      "tests": 45,
+      "log": "integration-green.log.gz"
+    },
+    "unit": {
+      "exitCode": 0,
+      "files": 886,
+      "tests": 9263,
+      "log": "unit-green.log.gz"
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "log": "typecheck.log.gz"
+    },
+    "lint": {
+      "exitCode": 0,
+      "warnings": 0,
+      "log": "lint.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "tables": 171,
+      "log": "docs.log.gz"
+    }
+  },
+  "qualified": [
+    "Actual project and company agent rows consume the same existing global agent cap and Pending queue under its advisory lock.",
+    "A project holder queues company work; concurrent company admissions acquire one available slot; existing before-dispatch terminal application frees it.",
+    "Existing promotion callback receives queued company work once and a full pool prevents repeated dispatch.",
+    "Direct starts, queue promotion and queued-resume project webhook emitters require a real project; existing project started webhook remains present.",
+    "Existing priority, crash, shared-worktree and host-pressure scheduler suites remain green."
+  ],
+  "notYetQualified": [
+    "Actual company ACP session launch and prompt/input source capture",
+    "Actual company host idle-resume/interruption/recovery and current action guards",
+    "Company activity/read models and complete T20/T21 lifecycle",
+    "Remaining Flow/package/stand T20.1-T43 acceptance"
+  ],
+  "sourceSha256": {
+    "web/lib/scheduler.ts": "3a7a5fd68d6e67c0f8069d66d1308846ea8989b86ed420d21ac1418fcf0d19f9",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "4aae2ff5b1a4b9686d3d4593224a74f7656c4d2e2ad546846a184d976ad4820c"
+  }
+}

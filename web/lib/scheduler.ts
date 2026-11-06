@@ -607,13 +607,13 @@ export async function tryStartRun(
       liveCount - (acceptedDispatch?.ownsCapacity ? 1 : 0) < cap
     ) {
       await acceptedDispatch?.apply(tx);
-      const startedRows: Array<{ projectId: string }> = await tx
+      const startedRows: Array<{ projectId: string | null }> = await tx
         .update(runs)
         .set({ status: "Running", startedAt: new Date() })
         .where(and(eq(runs.id, runId), eq(runs.status, "Pending")))
         .returning({ projectId: runs.projectId });
 
-      if (startedRows.length > 0) {
+      if (startedRows[0]?.projectId != null) {
         await emitWebhookEvent({
           db: tx,
           type: "run.started",
@@ -1232,7 +1232,7 @@ export async function promoteNextPending(
             (targetAcpSessionId != null ||
               (runKind === "flow" && ref.resumeStartedAt != null));
 
-          const flipped: Array<{ projectId: string }> = await tx
+          const flipped: Array<{ projectId: string | null }> = await tx
             .update(runs)
             .set(
               isResume
@@ -1252,13 +1252,14 @@ export async function promoteNextPending(
 
           if (flipped.length === 0) continue;
 
-          await emitWebhookEvent({
-            db: tx,
-            type: "run.started",
-            projectId: flipped[0].projectId,
-            runId,
-            data: { trigger: "queue_promote" },
-          });
+          if (flipped[0].projectId !== null)
+            await emitWebhookEvent({
+              db: tx,
+              type: "run.started",
+              projectId: flipped[0].projectId,
+              runId,
+              data: { trigger: "queue_promote" },
+            });
 
           return {
             kind: "run" as const,
@@ -1349,7 +1350,7 @@ export async function promoteNextPending(
           });
 
           if (!resumed.ok) continue;
-          const [claimed]: Array<{ projectId: string }> = await tx
+          const [claimed]: Array<{ projectId: string | null }> = await tx
             .select({ projectId: runs.projectId })
             .from(runs)
             .where(eq(runs.id, runId));
@@ -1359,7 +1360,7 @@ export async function promoteNextPending(
           const resumed = await markResumed(runId, { db: tx });
 
           if (!resumed.ok) continue;
-          const flipped: Array<{ projectId: string }> = await tx
+          const flipped: Array<{ projectId: string | null }> = await tx
             .update(runs)
             .set({ resumeRequestedAt: null })
             .where(eq(runs.id, runId))
@@ -1368,13 +1369,14 @@ export async function promoteNextPending(
           claimedProjectId = flipped[0]?.projectId ?? null;
         }
 
-        await emitWebhookEvent({
-          db: tx,
-          type: "run.started",
-          projectId: claimedProjectId as string,
-          runId,
-          data: { trigger: "queue_resume" },
-        });
+        if (claimedProjectId !== null)
+          await emitWebhookEvent({
+            db: tx,
+            type: "run.started",
+            projectId: claimedProjectId,
+            runId,
+            data: { trigger: "queue_resume" },
+          });
 
         return {
           kind: "run" as const,

@@ -189,3 +189,13 @@ missing transport retains the bytes and a durable actionable retry reason.
 Finishing a Run never accepts or completes the durable specialist assignment.
 These native service/PostgreSQL/filesystem qualifications do not establish
 actual company ACP launch, interrupted-host recovery or stand-pilot readiness.
+
+
+Company standalone runs use the existing global agent pool, advisory admission
+lock and Pending queue. A project run can hold the same slot; racing company
+candidates cannot exceed the cap, and a slot freed through terminal application
+promotes queued work through the existing dispatch callback. Direct starts,
+queue promotion and queued resume emit project `run.started` webhooks only
+when an actual project owner exists. The native company cap qualification
+covers admission/queue/terminal release with a bounded dispatch seam; actual
+company session and idle-resume host behavior remain part of T20/T21.

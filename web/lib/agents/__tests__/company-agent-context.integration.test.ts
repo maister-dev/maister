@@ -46,9 +46,17 @@ import {
   captureOperationalBaseline,
   captureOperationalGeneration,
 } from "../operational-integrity";
-import { prepareAgentRunFinalization } from "../finalization";
+import {
+  prepareAgentRunFinalization,
+  prepareUndispatchedAgentFailure,
+} from "../finalization";
 
 import { runs } from "@/lib/db/schema";
+import {
+  tryStartRun,
+  promoteNextPending,
+  countLiveRuns,
+} from "@/lib/scheduler";
 import { disposeOperationalRun } from "@/lib/gc/operational-disposition";
 import { operationalSuccessFixture } from "@/test-support/operational-agent";
 import { getKnowledgeRecord } from "@/lib/brain/knowledge-records";
@@ -287,6 +295,94 @@ it("CBS-02 preflights a real pinned company specialist and exact assignment inpu
       )
     ).rows[0],
   ).toEqual({ projects: 0, runs: 0, tokens: 0 });
+});
+
+it("CBS-02 shares the existing bounded agent pool across project and company work and promotes a queued company run once", async () => {
+  const db: Db = database.db;
+  const previousCap = process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+
+  vi.stubEnv("MAISTER_MAX_CONCURRENT_AGENTS", "1");
+  try {
+    const project = await seedProjectRow(database.db);
+    const projectRunId = randomUUID();
+
+    await database.pool.query(
+      "INSERT INTO runs(id,run_kind,project_id,agent_id,agent_workspace,flow_version,flow_revision,status) VALUES($1,'agent',$2,$3,'none','agent','manual','Pending')",
+      [projectRunId, project.id, agentId],
+    );
+    const first = await reserveCompanyFixtureRun();
+    const second = await reserveCompanyFixtureRun();
+
+    expect(await tryStartRun(projectRunId, { db })).toMatchObject({
+      started: true,
+    });
+    expect(await tryStartRun(first.runId, { db })).toMatchObject({
+      started: false,
+    });
+    expect(await tryStartRun(second.runId, { db })).toMatchObject({
+      started: false,
+    });
+    expect(await countLiveRuns(db, "agent")).toBe(1);
+    const projectFailure = await prepareUndispatchedAgentFailure(projectRunId, {
+      db,
+      reason: "fixture_before_dispatch",
+    });
+
+    await db.transaction((tx) => projectFailure.apply(tx));
+    const contenders = [first.runId, second.runId];
+    const outcomes = await Promise.all(
+      contenders.map((runId) => tryStartRun(runId, { db })),
+    );
+
+    expect(outcomes.filter((outcome) => outcome.started)).toHaveLength(1);
+    expect(await countLiveRuns(db, "agent")).toBe(1);
+    const winner = contenders[outcomes.findIndex((outcome) => outcome.started)];
+    const queued =
+      contenders[outcomes.findIndex((outcome) => !outcome.started)];
+    const undispatched = await prepareUndispatchedAgentFailure(winner, {
+      db,
+      reason: "fixture_before_dispatch",
+    });
+
+    await db.transaction((tx) => undispatched.apply(tx));
+    expect(await countLiveRuns(db, "agent")).toBe(0);
+    const dispatched: string[] = [];
+    const promoted = await promoteNextPending({
+      db,
+      pool: "agent",
+      startAgentRun: (id) => {
+        dispatched.push(id);
+      },
+    });
+
+    expect(promoted).toMatchObject({ promotedRunId: queued });
+    expect(dispatched).toEqual([queued]);
+    expect(await countLiveRuns(db, "agent")).toBe(1);
+    await promoteNextPending({
+      db,
+      pool: "agent",
+      startAgentRun: (id) => {
+        dispatched.push(id);
+      },
+    });
+    expect(dispatched).toEqual([queued]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT run_id,project_id FROM webhook_events WHERE run_id=ANY($1::text[]) AND type='run.started'",
+          [[projectRunId, ...contenders]],
+        )
+      ).rows,
+    ).toEqual([{ run_id: projectRunId, project_id: project.id }]);
+    const last = await prepareUndispatchedAgentFailure(queued, {
+      db,
+      reason: "fixture_before_dispatch",
+    });
+
+    await db.transaction((tx) => last.apply(tx));
+  } finally {
+    vi.stubEnv("MAISTER_MAX_CONCURRENT_AGENTS", previousCap);
+  }
 });
 
 it("refuses stale business/input/binding revisions and forged launch fields without allocating work", async () => {
