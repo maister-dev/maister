@@ -99,8 +99,9 @@ when a graph only collects human/form input and needs no host preparation. The
 implemented Run lock and traversal token/lease prevent late node/HITL/event
 writes after abandonment without inventing an execution assignment. This is a
 separate traversal boundary, not permission to skip preparation or integrity for
-graphs that require host/CLI work. Native restart, browser and full integration
-qualification of that terminal race remain pending.
+graphs that require host/CLI work. Local database/API terminal-race qualification
+is recorded with the owning traversal contract; deployed acceptance remains
+separate.
 
 Failure settlement by the current preparer retains physical exclusion through
 the terminal DB commit. Apply requires the held owner, exact preparation and

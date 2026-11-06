@@ -203,9 +203,9 @@ is implemented to service accepted launch intents at web boot and database
 deadlines, with one Flow and one Agent service slot in the existing runtime.
 It requires no additional timer, secret or environment flag and does not depend
 on HTTP `after` callbacks or cron ticks for launch progress. Its fourth mandatory
-worker-health slot and joined shutdown are implemented; native restart, browser
-and full integration qualification remain pending. Keep the 60-second scheduler
-clock and host reconciliation backstops configured.
+worker-health slot and joined shutdown are locally qualified with the owning
+launch contract. Hosted and deployed acceptance remain separate. Keep the
+60-second scheduler clock and host reconciliation backstops configured.
 
 To roll back an external scheduler to the in-process single-box clock, stop the
 external caller, set `MAISTER_SCHEDULER_TIMER_ENABLED=true`, remove

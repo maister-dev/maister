@@ -228,8 +228,11 @@ Commit intent/snapshot/audit/outbox together. Git/host effects occur outside SQL
 
 ### Durable launch worker (Implemented)
 
-Native restart, browser and full integration qualification remain pending; the
-implemented service contract does not establish deployed acceptance.
+Local qualification covers real PostgreSQL/Git dispatch, production-worker
+restart, the combined controlled-provider browser lane and complete Web suites.
+The [qualification record](../../.ai-factory/plans/codex-manual-launch-triager-reliability.md#execution-evidence)
+binds exact source, results and cleanup. This does not establish hosted,
+live-provider or production acceptance.
 
 The existing `web/lib/workers/runtime.ts` composition includes a mandatory fourth
 worker, `taskLaunch`, with two named service slots: one `flow` and one `agent`.

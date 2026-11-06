@@ -119,7 +119,8 @@ Playwright `globalTeardown`. Its `releaseInvocation` override passes
 callback. Exact invocation process quiescence is checked before and after that
 callback. A Git cleanup or quiescence failure preserves registered parent roots
 and ownership markers, fails the lane, and still reaches database teardown.
-Browser qualification of this cleanup order remains pending.
+The combined browser lane qualifies this cleanup order locally; hosted
+qualification remains separate.
 
 ## A/B stabilization isolation and fault injection (implemented; final S5.2 qualification open)
 
@@ -935,7 +936,7 @@ release; it never grants finalizer authority. Missing report remains failure.
 Logs use structured role/identity/capability fields with bounded buffers; they
 never contain secrets, environment dumps, sentinel/SQLite/object bytes.
 
-### Platform case inventory and RED ownership (Implemented; current extension qualification pending)
+### Platform case inventory and RED ownership (Implemented; current required inventory)
 
 The historical qualified baseline has seven full suites/50 cases plus one
 separately invoked preflight. The current manifest additionally requires the
@@ -1000,11 +1001,11 @@ A14 is not applicable, and the existing workflow is unchanged.
 | `test-support/__tests__/durable-workers-boot.integration.test.ts` | applies the flow_node_attempt owner after the production web restarts | Existing; both platforms |
 | `test-support/__tests__/durable-workers-boot.integration.test.ts` | applies the agent_turn owner after the production web restarts | Existing; both platforms |
 | `test-support/__tests__/durable-workers-boot.integration.test.ts` | applies the scratch_message owner after the production web restarts | Existing; both platforms |
-| `test-support/__tests__/durable-workers-boot.integration.test.ts` | R18: a deferred accepted launch survives web death and binds once through the restarted production worker without another request | Local native passed; combined browser and hosted qualification pending |
+| `test-support/__tests__/durable-workers-boot.integration.test.ts` | R18: a deferred accepted launch survives web death and binds once through the restarted production worker without another request | Local native and combined browser passed; hosted qualification pending |
 | `test-support/__tests__/durable-workers-boot.integration.test.ts` | R1: a registry missing a schema kind refuses to compose with CONFIG and starts nothing | Existing; both platforms |
 | `test-support/__tests__/durable-workers-boot.integration.test.ts` | R2: composing the agent registry beside the consensus-draft one is a CONFIG failure by design | Existing; both platforms |
 | `test-support/__tests__/durable-workers-boot.integration.test.ts` | R4: stopping with nothing started resolves | Existing; both platforms |
-| `test-support/__tests__/durable-workers-boot.integration.test.ts` | R5: a double start returns the same four handles | Existing; both platforms; combined browser and hosted qualification pending |
+| `test-support/__tests__/durable-workers-boot.integration.test.ts` | R5: a double start returns the same four handles | Existing; both platforms; local native and combined browser passed; hosted qualification pending |
 | `test-support/__tests__/durable-workers-boot.integration.test.ts` | R3: start refuses while the application is stopping | Existing; both platforms |
 | `test-support/__tests__/durable-workers-concurrency.integration.test.ts` | D1: a live waiter and the durable worker on one command apply it exactly once | Existing; both platforms |
 | `test-support/__tests__/durable-workers-concurrency.integration.test.ts` | D2: two production web instances on one database apply a dead instance's command exactly once | Existing; both platforms |

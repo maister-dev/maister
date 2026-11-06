@@ -630,8 +630,8 @@ unchanged.
 Four durable workers share the projection worker's lifecycle and start beside
 it: **prompt-owner recovery**, **flow continuation**, **agent continuation** and
 the [durable launch worker](task-launch-admission.md#durable-launch-worker-implemented).
-The launch worker's native restart, browser and full integration qualification
-remain pending. Its `taskLaunch` runtime slot serves one Flow and one Agent
+The launch worker's local restart and combined qualification are recorded with
+its owning contract. Its `taskLaunch` runtime slot serves one Flow and one Agent
 slot through shared dispatch; it grants no execution authority and does not
 independently release shared dispatch claims.
 `startDurableWorkers()` is the fifth step of the instrumentation isolated-step

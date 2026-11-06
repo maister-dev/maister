@@ -35,8 +35,7 @@ generation controls.
 
 ### Creation before prompt admission
 
-**Implemented — terminalization fences every Flow traversal; native/browser/full
-qualification remains pending:** a human/form-only
+**Implemented — terminalization fences every Flow traversal:** a human/form-only
 Flow owns the same durable run/assignment traversal claim as a Flow with model
 or CLI work. This database ownership does not create an ACP session or require
 a Supervisor connection. A separate server-only unplaced-sessionless claim is
@@ -53,7 +52,9 @@ opening a HITL, or publishing a new input notification. This applies to current
 accepted launches and retained live legacy runs. Successful form collection
 continues through the existing no-model path. A losing terminal outcome CAS
 preserves the winning terminal state and must not log an outcome it did not
-commit. No historical Run, decision, or qualification row is rewritten.
+commit. No historical Run, decision, or qualification row is rewritten. Local
+database/API terminal-race controls and combined regression qualification are
+recorded in the [qualification record](../../.ai-factory/plans/codex-manual-launch-triager-reliability.md#execution-evidence).
 
 Flow node and AI/skill gate creation stores `execution_commands.create_intent`
 before transport. The private normalized envelope freezes workspace and runtime
@@ -638,7 +639,7 @@ Start refuses during `isApplicationStopping()`; four
 `Symbol.for("maister.durable-workers.*.v1")` process slots make a double start
 return the same four handles, and stop clears only slots this process still
 owns. The fourth worker serves [accepted launches](task-launch-admission.md#durable-launch-worker-implemented);
-its native restart, browser and full integration qualification remain pending.
+its local qualification is recorded with the launch contract.
 A plain module-scoped variable is not sufficient: Next bundles
 instrumentation separately from the production server entrypoint, so the health
 reader and the composition root resolve different module instances of the same
@@ -1967,7 +1968,7 @@ here rather than as new `PRM` ids.)
 - **PRM-08 (Implemented):** HITL pause, decision, checkpoint, and resume are durable/fenced and resume uses a new command and required incarnation.
 - **PRM-09 (Implemented):** Cancellation reuses the command ledger and has one terminal prompt outcome despite retry or ACK loss.
 - **PRM-10:** Fencing happens before ACP and records a durable fenced receipt/audit event without owner mutation.
-- **PRM-11 (Implemented; fourth-worker combined qualification pending):** `{commandId}` remains queryable through Postgres after web or supervisor process restart; `startDurableWorkers()` starts the four workers exactly once per process behind their `Symbol.for("maister.durable-workers.*.v1")` slots, `stopDurableWorkers()` is awaited inside the boot quiesce `Promise.allSettled` before the DB drain, and a claim release the worker cannot confirm MUST fail shutdown (`AggregateError: web workers could not drain`) and leave the durable claim to expire rather than be silently dropped.
+- **PRM-11 (Implemented):** `{commandId}` remains queryable through Postgres after web or supervisor process restart; `startDurableWorkers()` starts the four workers exactly once per process behind their `Symbol.for("maister.durable-workers.*.v1")` slots, `stopDurableWorkers()` is awaited inside the boot quiesce `Promise.allSettled` before the DB drain, and a claim release the worker cannot confirm MUST fail shutdown (`AggregateError: web workers could not drain`) and leave the durable claim to expire rather than be silently dropped.
 
   **Direct application shutdown:** the same obligation
   covers `applyPromptOwner` invoked by an HTTP waiter outside a worker slot.

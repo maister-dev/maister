@@ -94,7 +94,9 @@ or bypass its authority. Expired preparation and bound-but-undispatched requests
 remain recoverable without an HTTP callback or cron tick. The existing scheduler
 and host backstops retain their responsibilities.
 
-Native restart, browser and full integration qualification remain pending.
+Local queue, restart and combined browser qualification are recorded with the
+[launch contract](task-launch-admission.md#durable-launch-worker-implemented).
+Hosted and production acceptance remain separate.
 Required combined acceptance uses real PostgreSQL/Git fixtures: a busy owned
 repository released after acceptance and several rapid acceptances progress without HTTP `after` or
 cron; restart discovers expired preparation and bound-undispatched work; blocked
