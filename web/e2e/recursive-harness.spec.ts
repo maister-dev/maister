@@ -17,9 +17,7 @@
 // CI-ONLY: requires a free :3100 (the playwright webServer). It cannot run while
 // a `next dev` holds the Next 16 single-dev lock on the same project dir.
 
-import type { RecursiveTurnDiagnostic } from "./_seed/test-supervisor";
-
-import { readFile } from "node:fs/promises";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { test, expect } from "@playwright/test";
@@ -30,7 +28,7 @@ import {
   withE2EDb,
 } from "./_seed/db";
 import { loadFixtures } from "./_seed/fixtures";
-import { STUB_SESSIONS_DIR } from "./_seed/stub-supervisor";
+import { RECURSIVE_RESEARCH_RELEASE } from "./_seed/recursive-release";
 import {
   readTaskLaunchReceipt,
   waitForTaskLaunchRun,
@@ -44,153 +42,37 @@ const CRON_TOKEN = process.env.MAISTER_CRON_TOKEN ?? "e2e-cron-token-change-me";
 // default 30s budget.
 test.setTimeout(240_000);
 
-type RecursiveCommandDiagnostic = Readonly<{
-  id: string;
-  runId: string;
-  kind: string;
-  sessionId: string | null;
-  assignmentId: string;
-  assignmentEpoch: number;
-  logicalOperationKey: string | null;
-  state: string;
-  applicationState: string;
-  receiptPhase: string | null;
-  httpStatus: number | null;
-}>;
+function releaseResearchChildren(): void {
+  mkdirSync(path.dirname(RECURSIVE_RESEARCH_RELEASE), { recursive: true });
+  writeFileSync(RECURSIVE_RESEARCH_RELEASE, "");
+}
 
-// Preserve the actual failure before the wrapper releases its owned database.
-// Only known output-absence text is selected; arbitrary stdout stays private.
+// Keep content-free completion evidence available if the owning journey fails.
 test.afterEach(async () => {
+  releaseResearchChildren();
   const fixture = loadFixtures().byKey.rah;
-  const knownAbsenceSuffix =
-    "[structured output] structured output required but absent: no maister:output block in the captured output";
-  const snapshot = await withE2EDb(async (pool) => {
-    const runs = await pool.query<{
-      id: string;
+  const facts = await withE2EDb((pool) =>
+    pool.query<{
+      runId: string;
       parentRunId: string | null;
       status: string;
-      currentStepId: string | null;
-      runKind: string;
-    }>(
-      'SELECT id,parent_run_id AS "parentRunId",status,current_step_id AS "currentStepId",run_kind AS "runKind" FROM runs WHERE project_id=$1 ORDER BY started_at,id LIMIT 32',
-      [fixture.projectId],
-    );
-    const runIds = runs.rows.map((run) => run.id);
-    const attempts = await pool.query<{
-      id: string;
-      runId: string;
-      nodeId: string;
-      status: string;
       errorCode: string | null;
-      promptOrdinal: number;
+      promptOrdinal: number | null;
       sentinelPresent: boolean;
-      knownOutputAbsence: string | null;
+      knownOutputAbsence: boolean;
     }>(
-      `SELECT id,run_id AS "runId",node_id AS "nodeId",status,error_code AS "errorCode",
-         action_prompt_ordinal AS "promptOrdinal",
-         strpos(coalesce(stdout,''),'\`\`\`json maister:output')>0 AS "sentinelPresent",
-         CASE WHEN strpos(coalesce(stdout,''),$2)>0 THEN $2 ELSE NULL END AS "knownOutputAbsence"
-       FROM node_attempts WHERE run_id=ANY($1::text[]) ORDER BY started_at,id LIMIT 64`,
-      [runIds, knownAbsenceSuffix],
-    );
-    const commands = await pool.query<RecursiveCommandDiagnostic>(
-      `SELECT id,run_id AS "runId",kind,target_session_id AS "sessionId",
-         execution_assignment_id AS "assignmentId",assignment_epoch AS "assignmentEpoch",
-         logical_operation_key AS "logicalOperationKey",state,application_state AS "applicationState",
-         receipt_evidence->>'phase' AS "receiptPhase",
-         (receipt_evidence->>'httpStatus')::int AS "httpStatus"
-       FROM execution_commands WHERE run_id=ANY($1::text[]) AND kind IN ('session.create','session.prompt')
-       ORDER BY created_at,id LIMIT 128`,
-      [runIds],
-    );
-    const results = await pool.query<{
-      runId: string;
-      validity: string;
-      invalidReason: string | null;
-      collected: boolean;
-    }>(
-      `SELECT run_id AS "runId",validity,
-         CASE WHEN invalid_reason IN ('result_missing','malformed_json','oversize','unsafe_key','depth_limit','key_limit','array_limit','schema_mismatch')
-           THEN invalid_reason ELSE NULL END AS "invalidReason",
-         first_collected_at IS NOT NULL AS collected FROM run_results
-       WHERE run_id=ANY($1::text[]) ORDER BY run_id,revision LIMIT 64`,
-      [runIds],
-    );
-
-    return {
-      observedAt: new Date().toISOString(),
-      runs: runs.rows,
-      attempts: attempts.rows,
-      commands: commands.rows,
-      results: results.rows,
-    };
-  });
-  const flowRunIds = new Set(
-    snapshot.runs.filter((run) => run.runKind === "flow").map((run) => run.id),
-  );
-  const turns = await Promise.all(
-    snapshot.commands
-      .filter(
-        (command) =>
-          command.kind === "session.prompt" &&
-          command.sessionId &&
-          flowRunIds.has(command.runId),
-      )
-      .map(async (command) => {
-        const filename = path.join(
-          STUB_SESSIONS_DIR,
-          `${command.sessionId}.${command.id}.recursive-turn.json`,
-        );
-        let contents: string;
-
-        try {
-          contents = await readFile(filename, "utf8");
-        } catch (error) {
-          if (
-            error instanceof Error &&
-            "code" in error &&
-            error.code === "ENOENT"
-          )
-            return { commandId: command.id, available: false as const };
-          throw error;
-        }
-        const diagnostic = JSON.parse(contents) as RecursiveTurnDiagnostic;
-
-        expect(diagnostic.version).toBe(1);
-        expect(diagnostic.runId).toBe(command.runId);
-        expect(diagnostic.sessionId).toBe(command.sessionId);
-        expect(diagnostic.commandId).toBe(command.id);
-
-        return {
-          available: true as const,
-          runId: diagnostic.runId,
-          sessionId: diagnostic.sessionId,
-          commandId: diagnostic.commandId,
-          flowRef: diagnostic.flowRef,
-          isResume: diagnostic.isResume,
-          sessionPromptOrdinal: diagnostic.sessionPromptOrdinal,
-          sameSessionReprompt: diagnostic.sameSessionReprompt,
-          sentinelPresent: diagnostic.sentinelPresent,
-          collect: diagnostic.collect
-            ? {
-                httpStatus: diagnostic.collect.httpStatus,
-                validChildRunIds: [...diagnostic.collect.validChildRunIds],
-              }
-            : null,
-          outcome: diagnostic.outcome,
-          failureCategory: diagnostic.failureCategory,
-          turnReturnedAt: diagnostic.turnReturnedAt,
-          childrenSampledAt: diagnostic.childrenSampledAt,
-          children: diagnostic.children.map((child) => ({
-            id: child.id,
-            status: child.status,
-          })),
-        };
-      }),
+      `SELECT r.id AS "runId",r.parent_run_id AS "parentRunId",r.status,
+         n.error_code AS "errorCode",n.action_prompt_ordinal AS "promptOrdinal",
+         strpos(coalesce(n.stdout,''),'\`\`\`json maister:output')>0 AS "sentinelPresent",
+         strpos(coalesce(n.stdout,''),'[structured output] structured output required but absent: no maister:output block in the captured output')>0 AS "knownOutputAbsence"
+       FROM runs r LEFT JOIN node_attempts n ON n.run_id=r.id
+       WHERE r.project_id=$1 ORDER BY r.started_at,r.id,n.attempt LIMIT 32`,
+      [fixture.projectId],
+    ),
   );
 
   await test.info().attach("recursive-completion-facts", {
-    body: JSON.stringify({ ...snapshot, turns }),
+    body: JSON.stringify(facts.rows),
     contentType: "application/json",
   });
 });
@@ -200,6 +82,8 @@ test("recursive harness: depth-2 tree → result-only Done children → the root
   request,
 }) => {
   const fx = loadFixtures().byKey.rah;
+
+  rmSync(RECURSIVE_RESEARCH_RELEASE, { force: true });
 
   const tickDispatcher = async (): Promise<void> => {
     await withE2EDb((pool) =>
@@ -273,6 +157,9 @@ test("recursive harness: depth-2 tree → result-only Done children → the root
       { timeout: 60_000, intervals: [1000] },
     )
     .toBe("WaitingOnChildren");
+
+  // The observed park, rather than worker speed, authorizes fixture completion.
+  releaseResearchChildren();
 
   // Parking also covers accepted, unbound child intents. Observe their real
   // Run associations before inspecting the next level of the execution tree.
@@ -376,6 +263,40 @@ test("recursive harness: depth-2 tree → result-only Done children → the root
       [runId],
     ),
   ).toBe("2");
+
+  // Each research answer names exactly the real valid grandchildren consumed
+  // through collect, and derives its summary from those answers. A static
+  // successful sentinel cannot satisfy this assertion.
+  const research = await withE2EDb((pool) =>
+    pool.query<{
+      childRunId: string;
+      consumedChildRunIds: string[];
+      actualChildRunIds: string[];
+      summary: string;
+      actualSummary: string;
+      collectedValidResults: number;
+    }>(
+      `SELECT c.id AS "childRunId",rr.value->'consumedChildRunIds' AS "consumedChildRunIds",
+         array_agg(g.id ORDER BY g.id) AS "actualChildRunIds",rr.value->>'summary' AS summary,
+         string_agg(gr.value->>'summary','; ' ORDER BY g.id) AS "actualSummary",
+         count(*) FILTER (WHERE g.status='Done' AND gr.validity='valid' AND gr.first_collected_at IS NOT NULL)::int AS "collectedValidResults"
+       FROM runs c JOIN run_results rr ON rr.run_id=c.id AND rr.validity='valid'
+       JOIN runs g ON g.parent_run_id=c.id JOIN run_results gr ON gr.run_id=g.id AND gr.validity='valid'
+       WHERE c.parent_run_id=$1 GROUP BY c.id,rr.id ORDER BY c.id`,
+      [runId],
+    ),
+  );
+
+  expect(research.rows).toHaveLength(2);
+  for (const answer of research.rows) {
+    expect(answer.consumedChildRunIds).toHaveLength(2);
+    expect(new Set(answer.consumedChildRunIds).size).toBe(2);
+    expect([...answer.consumedChildRunIds].sort()).toEqual(
+      answer.actualChildRunIds,
+    );
+    expect(answer.collectedValidResults).toBe(2);
+    expect(answer.summary).toBe(answer.actualSummary);
+  }
 
   // ---- The root wakes, collects, and reduces. -----------------------------
   // Poll for the SETTLE, not merely for "no longer parked": the wake flips the

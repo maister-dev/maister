@@ -33,15 +33,10 @@
 import type { AddressInfo } from "node:net";
 import type { Pool } from "pg";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
+import type { CollectResult } from "@/lib/run-results/collect";
 
 import { createHash, randomUUID } from "node:crypto";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import {
   createServer,
   type IncomingMessage,
@@ -60,6 +55,7 @@ import { canonicalCommandJson } from "../../../runtime/command-json";
 import { objectDigest, objectEtag } from "../../../runtime/object-integrity";
 
 import { E2E_EXECUTION_HOST_SLUG } from "./fixtures";
+import { RECURSIVE_RESEARCH_RELEASE } from "./recursive-release";
 import {
   STUB_BOOT_ID,
   STUB_HOST_KEY,
@@ -192,28 +188,6 @@ export type DelegationTarget = {
 };
 
 export type DelegateHook = (req: DelegateRequest) => Promise<void>;
-
-/** Content-free observations of the controlled recursive provider, never prompt or result text. */
-export type RecursiveTurnDiagnostic = Readonly<{
-  version: 1;
-  runId: string;
-  sessionId: string;
-  commandId: string;
-  flowRef: string;
-  isResume: boolean;
-  sessionPromptOrdinal: number;
-  sameSessionReprompt: boolean;
-  sentinelPresent: boolean;
-  collect: Readonly<{
-    httpStatus: number;
-    validChildRunIds: readonly string[];
-  }> | null;
-  outcome: "completed" | "failed";
-  failureCategory: "collect_refused" | "delegate_refused" | "other" | null;
-  turnReturnedAt: string;
-  childrenSampledAt: string;
-  children: ReadonlyArray<Readonly<{ id: string; status: string }>>;
-}>;
 
 type SessionRecord = {
   sessionId: string;
@@ -431,13 +405,6 @@ export async function startTestSupervisor(
   // prompted again; this keyed set is that behaviour, and it is what makes the
   // simulated fan-out deterministic under parallel load.
   const delegatedRuns = new Set<string>();
-  const sessionPromptCounts = new Map<string, number>();
-  const sessionSentinelCounts = new Map<string, number>();
-  const diagnosticFlowRefs = new Map<string, string | null>();
-  const collectDiagnostics = new Map<
-    string,
-    NonNullable<RecursiveTurnDiagnostic["collect"]>
-  >();
   let monotonic = 0;
   let runtimeSequence = -1n;
   let acknowledgedThrough = -1n;
@@ -889,11 +856,6 @@ export async function startTestSupervisor(
   // than writing `run_results` directly is the point: the e2e proves the parse,
   // the validation and the publish, not just the row.
   const emitText = (rec: SessionRecord, text: string): void => {
-    if (text.includes("```json maister:output"))
-      sessionSentinelCounts.set(
-        rec.sessionId,
-        (sessionSentinelCounts.get(rec.sessionId) ?? 0) + 1,
-      );
     rec.pendingText.push(text);
   };
 
@@ -909,11 +871,7 @@ export async function startTestSupervisor(
       [runId],
     );
 
-    const flowRef = (rows.rows[0]?.flow_ref_id as string | undefined) ?? null;
-
-    diagnosticFlowRefs.set(runId, flowRef);
-
-    return flowRef;
+    return (rows.rows[0]?.flow_ref_id as string | undefined) ?? null;
   }
 
   /** True when the run carries a result contract (an RAH agent grandchild). */
@@ -934,10 +892,16 @@ export async function startTestSupervisor(
    * ids would produce a result the Lab's `consumed_results_ratio` marks down,
    * so the e2e drives the honest path and asserts the row it produces.
    */
-  async function collectValidChildren(rec: SessionRecord): Promise<string[]> {
+  async function collectChildren(
+    rec: SessionRecord,
+    signal?: AbortSignal,
+  ): Promise<CollectResult[]> {
     const { token, apiBaseUrl } = readFacade(rec.mcpServers);
 
-    if (!token || !apiBaseUrl) return [];
+    if (!token || !apiBaseUrl)
+      throw new Error(
+        "Controlled coordinator is missing its bound collect facade",
+      );
     const res = await fetch(`${apiBaseUrl}/api/v1/ext/runs/collect`, {
       method: "POST",
       headers: {
@@ -945,13 +909,9 @@ export async function startTestSupervisor(
         authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({ all: true }),
+      signal,
     });
 
-    if (rec.activePromptCommandId)
-      collectDiagnostics.set(rec.activePromptCommandId, {
-        httpStatus: res.status,
-        validChildRunIds: [],
-      });
     if (!res.ok) {
       throw new Error(
         `test-supervisor: collect returned ${res.status}: ${await res
@@ -959,28 +919,84 @@ export async function startTestSupervisor(
           .catch(() => "<no body>")}`,
       );
     }
-    const items = (await res.json()) as {
-      childRunId: string;
-      resultStatus?: string;
-    }[];
 
-    const validChildRunIds = items
-      .filter((item) => item.resultStatus === "valid")
-      .map((item) => item.childRunId);
+    return (await res.json()) as CollectResult[];
+  }
 
-    if (rec.activePromptCommandId)
-      collectDiagnostics.set(rec.activePromptCommandId, {
-        httpStatus: res.status,
-        validChildRunIds,
+  async function collectValidChildren(rec: SessionRecord): Promise<string[]> {
+    const children = await collectChildren(rec);
+
+    return children
+      .filter((child) => child.resultStatus === "valid")
+      .map((child) => child.childRunId);
+  }
+
+  // A research provider may finish on its first prompt: the engine need not
+  // resume a coordinator whose children have already settled. Consume the real
+  // authorized answers before emitting completion, independently of session age.
+  async function collectResearchSummary(rec: SessionRecord): Promise<{
+    summary: string;
+    outcome: "completed";
+    consumedChildRunIds: string[];
+  }> {
+    const deadline = performance.now() + 30_000;
+    const signal = AbortSignal.timeout(30_000);
+
+    while (performance.now() < deadline) {
+      const children = await collectChildren(rec, signal);
+      const distinctIds = new Set(children.map((child) => child.childRunId));
+
+      if (children.length > 2 || distinctIds.size !== children.length)
+        throw new Error(
+          "Controlled research collection requires two distinct direct children",
+        );
+      const completed = children.flatMap((child) => {
+        if (!child.settled) return [];
+        const value = child.result?.value;
+
+        if (
+          child.status !== "Done" ||
+          child.resultStatus !== "valid" ||
+          value === null ||
+          typeof value !== "object" ||
+          !("outcome" in value) ||
+          value.outcome !== "completed" ||
+          !("summary" in value) ||
+          typeof value.summary !== "string" ||
+          value.summary.trim().length === 0
+        )
+          throw new Error(
+            "Controlled research child settled without a valid completed result",
+          );
+
+        return [{ childRunId: child.childRunId, summary: value.summary }];
       });
 
-    return validChildRunIds;
+      if (completed.length === 2) {
+        const ordered = completed.toSorted((a, b) =>
+          a.childRunId.localeCompare(b.childRunId),
+        );
+
+        return {
+          summary: ordered.map((child) => child.summary).join("; "),
+          outcome: "completed",
+          consumedChildRunIds: ordered.map((child) => child.childRunId),
+        };
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(
+      "Controlled research collection did not receive two completed direct-child results within its bound",
+    );
   }
 
   // Decide + run the agent's turn for a session. Called on sendPrompt. For an
   // orchestrator turn 0 it spawns children first (awaited) so countPendingChildren
   // sees them when the runner makes the park decision after the prompt returns.
   async function driveTurn(rec: SessionRecord): Promise<void> {
+    const continuingFlow =
+      rec.runKind === "flow" && delegatedRuns.has(rec.runId);
+
     if (
       rec.runKind === "flow" &&
       (await flowRefOf(rec.runId))?.startsWith(MANUAL_LAUNCH_FLOW_PREFIX)
@@ -1041,13 +1057,13 @@ export async function startTestSupervisor(
     }
 
     // ADR-165: the completing turn publishes the run's result.
-    //   • a flow RESUME turn is the coordinator reducing — it collects first and
-    //     reports the ids it actually consumed;
+    //   • a continuing root turn reduces the children it actually collects;
+    //   • research consumes its agents even when they settle in its first turn;
     //   • an agent child with a contract answers its research profile.
-    if (rec.runKind === "flow" && rec.isResume) {
+    if (rec.runKind === "flow") {
       const flowRef = await flowRefOf(rec.runId);
 
-      if (flowRef === RAH_ROOT_FLOW_REF) {
+      if (flowRef === RAH_ROOT_FLOW_REF && (rec.isResume || continuingFlow)) {
         emitText(
           rec,
           sentinel({
@@ -1057,15 +1073,16 @@ export async function startTestSupervisor(
           }),
         );
       } else if (flowRef === RAH_RESEARCH_FLOW_REF) {
-        // The research coordinator collects its own agents, then exports.
-        await collectValidChildren(rec);
-        emitText(
-          rec,
-          sentinel({
-            summary: "researched the change surface",
-            outcome: "completed",
-          }),
-        );
+        const releaseDeadline = performance.now() + 90_000;
+
+        while (!existsSync(RECURSIVE_RESEARCH_RELEASE)) {
+          if (performance.now() >= releaseDeadline)
+            throw new Error(
+              "Controlled recursive research completion was not released after the root park",
+            );
+          await new Promise<void>((resolve) => setTimeout(resolve, 50));
+        }
+        emitText(rec, sentinel(await collectResearchSummary(rec)));
       }
     } else if (
       rec.runKind === "agent" &&
@@ -1220,60 +1237,6 @@ export async function startTestSupervisor(
     // before flushing this exit, matching the production lifecycle ordering.
     rec.exitPending = true;
     rec.exitCode = 0;
-  }
-
-  // Runs after completion publication. These reads cannot decide whether the
-  // engine parks; timestamps distinguish the later diagnostic child sample.
-  async function recordRecursiveTurnDiagnostic(
-    rec: SessionRecord,
-    turn: Readonly<{
-      commandId: string;
-      sessionPromptOrdinal: number;
-      sentinelCountBefore: number;
-      outcome: RecursiveTurnDiagnostic["outcome"];
-      failureCategory: RecursiveTurnDiagnostic["failureCategory"];
-      turnReturnedAt: string;
-    }>,
-  ): Promise<void> {
-    const flowRef = diagnosticFlowRefs.get(rec.runId);
-
-    if (
-      !opts.stubCompat ||
-      (flowRef !== RAH_ROOT_FLOW_REF && flowRef !== RAH_RESEARCH_FLOW_REF)
-    )
-      return;
-    const sentinelPresent =
-      (sessionSentinelCounts.get(rec.sessionId) ?? 0) >
-      turn.sentinelCountBefore;
-    const children = await opts.pool.query<{ id: string; status: string }>(
-      "SELECT id,status FROM runs WHERE parent_run_id=$1 ORDER BY id LIMIT 16",
-      [rec.runId],
-    );
-    const diagnostic: RecursiveTurnDiagnostic = {
-      version: 1,
-      runId: rec.runId,
-      sessionId: rec.sessionId,
-      commandId: turn.commandId,
-      flowRef,
-      isResume: rec.isResume,
-      sessionPromptOrdinal: turn.sessionPromptOrdinal,
-      sameSessionReprompt: turn.sessionPromptOrdinal > 0,
-      sentinelPresent,
-      collect: collectDiagnostics.get(turn.commandId) ?? null,
-      outcome: turn.outcome,
-      failureCategory: turn.failureCategory,
-      turnReturnedAt: turn.turnReturnedAt,
-      childrenSampledAt: new Date().toISOString(),
-      children: children.rows,
-    };
-    const target = path.join(
-      opts.stubCompat.sessionsDir,
-      `${rec.sessionId}.${turn.commandId}.recursive-turn.json`,
-    );
-    const temporary = `${target}.${randomUUID()}.tmp`;
-
-    writeFileSync(temporary, JSON.stringify(diagnostic), { mode: 0o600 });
-    renameSync(temporary, target);
   }
 
   /**
@@ -2554,73 +2517,12 @@ export async function startTestSupervisor(
         }
         // Drive the agent's turn (spawn children for orchestrator turn-0, then
         // queue the clean exit). Errors surface as a crash on the stream.
-        const sessionPromptOrdinal =
-          sessionPromptCounts.get(rec.sessionId) ?? 0;
-        const sentinelCountBefore =
-          sessionSentinelCounts.get(rec.sessionId) ?? 0;
-
-        sessionPromptCounts.set(rec.sessionId, sessionPromptOrdinal + 1);
-        const recordTurn = (
-          outcome: RecursiveTurnDiagnostic["outcome"],
-          failureCategory: RecursiveTurnDiagnostic["failureCategory"],
-          turnReturnedAt: string,
-        ): void => {
-          void recordRecursiveTurnDiagnostic(rec, {
-            commandId: env.command.id,
-            sessionPromptOrdinal,
-            sentinelCountBefore,
-            outcome,
-            failureCategory,
-            turnReturnedAt,
-          }).catch((error: unknown) => {
-            const errorName =
-              error instanceof Error &&
-              /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(error.name)
-                ? error.name
-                : "UnknownDiagnosticError";
-            const errorCode =
-              error instanceof Error &&
-              "code" in error &&
-              typeof error.code === "string" &&
-              /^[A-Z0-9_]{1,32}$/.test(error.code)
-                ? error.code
-                : null;
-
-            console.error(
-              JSON.stringify({
-                diagnostic: "recursive_turn_capture_failed",
-                errorName,
-                errorCode,
-                runId: rec.runId,
-                sessionId: rec.sessionId,
-                commandId: env.command.id,
-              }),
-            );
-          });
-        };
-
         void driveTurn(rec).then(
           () => {
-            const turnReturnedAt = new Date().toISOString();
-
             complete({ stopReason: "end_turn" });
             flushExit(rec);
-            recordTurn("completed", null, turnReturnedAt);
           },
           (err: unknown) => {
-            const turnReturnedAt = new Date().toISOString();
-            const failureCategory: RecursiveTurnDiagnostic["failureCategory"] =
-              err instanceof Error &&
-              err.message.startsWith("test-supervisor: collect returned ")
-                ? "collect_refused"
-                : err instanceof Error &&
-                    err.message.startsWith(
-                      "test-supervisor: delegate route returned ",
-                    )
-                  ? "delegate_refused"
-                  : "other";
-
-            recordTurn("failed", failureCategory, turnReturnedAt);
             const message = err instanceof Error ? err.message : String(err);
 
             console.error(`test-supervisor: turn failed: ${message}`);
