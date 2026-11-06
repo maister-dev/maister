@@ -111,6 +111,89 @@ function assertValidExample(validate, body) {
   assert.equal(validate(body), true, JSON.stringify(validate.errors));
 }
 
+test("qualification source failures preserve neutral model-start uncertainty in Web and external contracts", () => {
+  const schemas = [];
+
+  for (const [namespace, file] of [
+    ["web", "../docs/api/web.openapi.yaml"],
+    ["external", "../docs/api/external/operations.openapi.yaml"],
+  ]) {
+    const document = readContract(file);
+    const validate = schemaValidator(
+      document,
+      namespace,
+      "TaskQualificationSummary",
+    );
+    const summary = {
+      required: true,
+      mode: "required",
+      inputRevision: 2,
+      qualificationRevision: null,
+      qualificationId: null,
+      decision: null,
+      publicationState: null,
+      freshness: "unassessed",
+      blockedReason: "qualification_source_failed",
+      nextActions: [],
+      candidate: null,
+      sourceFailure: {
+        runId: "qualifier-run",
+        stage: null,
+        causeCode: null,
+        modelStarted: null,
+      },
+    };
+
+    assertValidExample(validate, summary);
+    assertValidExample(validate, {
+      ...summary,
+      sourceFailure: {
+        ...summary.sourceFailure,
+        stage: "baseline",
+        causeCode: "ENOENT",
+        modelStarted: false,
+      },
+    });
+    for (const details of [
+      { stage: "baseline" },
+      { causeCode: "ENOENT" },
+      { stage: "baseline", causeCode: "ENOENT" },
+    ]) {
+      assert.equal(
+        validate({
+          ...summary,
+          sourceFailure: { ...summary.sourceFailure, ...details },
+        }),
+        false,
+        "neutral source failure cannot claim proven preparation details",
+      );
+    }
+    assert.equal(
+      validate({
+        ...summary,
+        sourceFailure: { ...summary.sourceFailure, modelStarted: true },
+      }),
+      false,
+    );
+    assert.equal(
+      validate({
+        ...summary,
+        sourceFailure: {
+          ...summary.sourceFailure,
+          privateSource: "not public",
+        },
+      }),
+      false,
+    );
+    schemas.push(
+      document.components.schemas.TaskQualificationSummary.properties
+        .sourceFailure,
+    );
+  }
+
+  assert.deepEqual(schemas[1], schemas[0]);
+});
+
 test("HITL respond reason enums agree with the TypeScript contract", () => {
   for (const file of [
     "../docs/api/web.openapi.yaml",

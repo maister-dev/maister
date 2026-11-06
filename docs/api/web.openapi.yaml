@@ -21806,6 +21806,13 @@ components:
           additionalProperties: false
           description: Latest qualifier failed without a current accepted assessment and its frozen inputRevision/inputDigest match the current task input; absent for unbound legacy snapshots, input drift, current accepted assessments or any newer non-failed attempt. modelStarted false requires proven pre-model preparation failure; null makes no model-start claim and also has null stage/causeCode. Safe metadata only; no assessment is fabricated.
           required: [runId, stage, causeCode, modelStarted]
+          oneOf:
+            - properties:
+                modelStarted: { type: boolean, enum: [false] }
+            - properties:
+                modelStarted: { type: boolean, nullable: true, enum: [null] }
+                stage: { type: string, nullable: true, enum: [null] }
+                causeCode: { type: string, nullable: true, enum: [null] }
           properties:
             runId:
               {
@@ -22162,7 +22169,7 @@ components:
       type: object
       additionalProperties: false
       required: [causeChain]
-      description: Safe primary infrastructure cause retained before model dispatch. Messages, paths, stderr, source and credentials are excluded; absent on historical receipts.
+      description: Safe primary workspace-preparation cause. Preparation can fail on a continuation after earlier model execution, so this record alone does not prove that the model never ran. Messages, paths, stderr, source and credentials are excluded; the record may be absent on historical receipts.
       properties:
         runId: { type: string, minLength: 1, maxLength: 256 }
         assignmentId: { type: string, minLength: 1, maxLength: 256 }
