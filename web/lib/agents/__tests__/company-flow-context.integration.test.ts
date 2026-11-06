@@ -1,3 +1,4 @@
+import type { IssuedAgentToken } from "../tokens";
 import type { NativeKnowledgeActor } from "@/lib/company/types";
 import type { JsonValue } from "@/lib/hitl-response-contract";
 import type { SqlTransaction } from "@/lib/db/sql-types";
@@ -31,7 +32,10 @@ import {
 import { updateCompanyFlowBinding } from "../company-flow-binding-mutations";
 import { reserveCompanyFlowRun } from "../company-flow-launch";
 import { assertCompanyRunReadAccess } from "../company-run-read-access";
-import { issueCompanyAgentRunToken } from "../tokens";
+import {
+  issueCompanyAgentRunToken,
+  issueCompanyFlowNodeRunToken,
+} from "../tokens";
 import { updateCompanySpecialistBinding } from "../company-binding-mutations";
 import { parseAgentDefinition } from "../definition";
 import { resolveInstalledAgentDefinition } from "../effective";
@@ -41,6 +45,9 @@ import {
   captureCompanyAgentExecution,
 } from "../company-agent-context";
 
+import { resolveKnowledgePrincipal } from "@/lib/brain/knowledge-access";
+import { generateToken } from "@/lib/tokens/secret";
+import { verifyToken } from "@/lib/tokens/verify";
 import { appendNodeAttempt, markNodeRunning } from "@/lib/flows/graph/ledger";
 import { authorizeKnowledge } from "@/lib/brain/knowledge-access";
 import { nativeKnowledgeActorSchema } from "@/lib/company/types";
@@ -80,6 +87,10 @@ let root: string;
 let schemaPath: string;
 let storedFlowRunId: string;
 let nativeFlowRunId: string;
+let nativeNodeAttemptId: string;
+let retainedCompanyCredential: IssuedAgentToken;
+let migrationTokensBefore: { value: JsonValue }[];
+let migrationTokensAfter: { value: JsonValue }[];
 let baselineCounts: AllocationCounts;
 let migrationBeforeRows: { value: JsonValue }[];
 let migrationAfterRows: { value: JsonValue }[];
@@ -364,12 +375,39 @@ beforeAll(async () => {
     "INSERT INTO runs(id,run_kind,status,flow_version,flow_revision,persistent,created_by_user_id,agent_workspace) VALUES($1,'librarian','NeedsInputIdle','librarian','manual',true,$2,'none')",
     [randomUUID(), requesterId],
   );
+  for (const kind of ["project", "user"] as const) {
+    const credential = generateToken();
+
+    await database.pool.query(
+      "INSERT INTO project_tokens(id,project_id,name,token_kind,owner_user_id,prefix,token_hash,scopes,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,'[\"knowledge:read\"]'::jsonb,now()+interval '1 hour')",
+      [
+        randomUUID(),
+        kind === "project" ? project.id : null,
+        `retained-${kind}`,
+        kind,
+        kind === "user" ? requesterId : null,
+        credential.prefix,
+        credential.hash,
+      ],
+    );
+  }
   migrationBeforeRows = (
     await database.pool.query<{ value: JsonValue }>(
       "SELECT to_jsonb(r) AS value FROM runs r ORDER BY id",
     )
   ).rows;
   await applyMainMigration(database.db, "0248_company_flow_execution");
+  migrationTokensBefore = (
+    await database.pool.query<{ value: JsonValue }>(
+      "SELECT to_jsonb(t) AS value FROM project_tokens t ORDER BY id",
+    )
+  ).rows;
+  await applyMainMigration(database.db, "0249_company_flow_node_credentials");
+  migrationTokensAfter = (
+    await database.pool.query<{ value: JsonValue }>(
+      "SELECT to_jsonb(t) AS value FROM project_tokens t ORDER BY id",
+    )
+  ).rows;
   migrationAfterRows = (
     await database.pool.query<{ value: JsonValue }>(
       "SELECT to_jsonb(r) AS value FROM runs r ORDER BY id",
@@ -448,7 +486,7 @@ async function seedRetainedStandalone(): Promise<void> {
     },
   });
 
-  await database.db.transaction(async (tx) => {
+  const retainedRunId = await database.db.transaction(async (tx) => {
     const context = await prepareCompanyAgentContext(tx, requesterId, {
       companyId: request.companyId,
       assignmentId: work.id,
@@ -475,10 +513,35 @@ async function seedRetainedStandalone(): Promise<void> {
       role: "specialist",
       work: null,
     });
+
+    return runId;
+  });
+
+  await database.pool.query("UPDATE runs SET status='Running' WHERE id=$1", [
+    retainedRunId,
+  ]);
+  retainedCompanyCredential = await issueCompanyAgentRunToken({
+    db: database.db,
+    runId: retainedRunId,
   });
 }
 
-it("preserves populated standalone/project/private bytes through 0233 and keeps project deletion independent of Brain", async () => {
+it("preserves populated standalone/project/private Run and credential bytes through 0233/0234 and keeps project deletion independent of Brain", async () => {
+  expect(migrationTokensAfter).toEqual(migrationTokensBefore);
+  expect(migrationTokensBefore).toHaveLength(3);
+  await expect(
+    verifyToken(retainedCompanyCredential.secret, database.db),
+  ).resolves.toMatchObject({
+    companyId: request.companyId,
+    agentId: "rah:migration-observer",
+  });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS count FROM project_tokens",
+      )
+    ).rows[0],
+  ).toEqual({ count: 2 });
   expect(migrationAfterRows).toEqual(migrationBeforeRows);
   expect(baselineCounts).toEqual({
     projects: 0,
@@ -1244,7 +1307,7 @@ it("reserves one native company graph with frozen sessions/placement, refuses a 
           "SELECT (SELECT count(*)::int FROM platform_runtime_settings) AS defaults,(SELECT count(*)::int FROM project_tokens) AS tokens,(SELECT count(*)::int FROM execution_commands) AS commands,(SELECT count(*)::int FROM workspaces) AS workspaces",
         )
       ).rows[0],
-    ).toEqual({ defaults: 0, tokens: 0, commands: 0, workspaces: 0 });
+    ).toEqual({ defaults: 0, tokens: 2, commands: 0, workspaces: 0 });
   } finally {
     await stopRuntimeEventConsumers();
     await supervisor.stop();
@@ -1384,6 +1447,7 @@ it("uses exact company graph node attribution, current role authority and source
     db: database.db,
   });
 
+  nativeNodeAttemptId = newer.id;
   await markNodeRunning(newer.id, database.db);
   await expect(
     database.db.transaction((tx) =>
@@ -1400,6 +1464,108 @@ it("uses exact company graph node attribution, current role authority and source
       resolveKnowledgeRunIdentity(tx, nativeFlowRunId, newer.id),
     ),
   ).resolves.toMatchObject({ identity: { actor: { attemptId: newer.id } } });
+});
+
+it("mints and rotates exact company node credentials, verifies the current node and refuses retargeting or stale attempts", async () => {
+  const first = await issueCompanyFlowNodeRunToken({
+    db: database.db,
+    runId: nativeFlowRunId,
+    nodeAttemptId: nativeNodeAttemptId,
+  });
+
+  await expect(verifyToken(first.secret, database.db)).resolves.toMatchObject({
+    companyId: request.companyId,
+    projectId: null,
+    boundRunId: nativeFlowRunId,
+    agentId: "rah:evidence-researcher",
+    tokenKind: "agent",
+    scopes: ["knowledge:read", "knowledge:propose"],
+  });
+  await expect(
+    database.db.transaction((tx) =>
+      resolveKnowledgePrincipal(
+        tx,
+        { kind: "token", tokenId: first.tokenId },
+        "knowledge:read",
+      ),
+    ),
+  ).resolves.toMatchObject({
+    kind: "company_agent",
+    actor: { id: "rah:evidence-researcher", attemptId: nativeNodeAttemptId },
+  });
+  const rotated = await issueCompanyFlowNodeRunToken({
+    db: database.db,
+    runId: nativeFlowRunId,
+    nodeAttemptId: nativeNodeAttemptId,
+  });
+
+  await expect(verifyToken(first.secret, database.db)).rejects.toMatchObject({
+    kind: "revoked",
+  });
+  await expect(verifyToken(rotated.secret, database.db)).resolves.toMatchObject(
+    { tokenId: rotated.tokenId },
+  );
+  await expect(
+    database.pool.query(
+      "UPDATE project_tokens SET knowledge_node_attempt_id=NULL WHERE id=$1",
+      [rotated.tokenId],
+    ),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "project_tokens_knowledge_node_attempt_immutable",
+  });
+  const older = (
+    await database.pool.query<{ id: string }>(
+      "SELECT id FROM node_attempts WHERE run_id=$1 AND node_id='diagnose' ORDER BY attempt LIMIT 1",
+      [nativeFlowRunId],
+    )
+  ).rows[0]!;
+  const invalidBindings: readonly Readonly<Record<string, JsonValue>>[] = [
+    { knowledge_node_attempt_id: null },
+    { knowledge_node_attempt_id: older.id },
+    { agent_id: "rah:migration-observer" },
+    { owner_user_id: outsiderId },
+    { company_id: randomUUID() },
+    { scopes: ["knowledge:confirm"] },
+  ];
+
+  for (const patch of invalidBindings) {
+    await expect(
+      database.db.execute(
+        sql`INSERT INTO project_tokens SELECT (jsonb_populate_record(NULL::project_tokens,to_jsonb(source)||${JSON.stringify({ ...patch, id: randomUUID() })}::jsonb)).* FROM project_tokens source WHERE source.id=${rotated.tokenId}`,
+      ),
+    ).rejects.toMatchObject({
+      cause: {
+        code: "23514",
+        constraint: "project_tokens_company_reference_check",
+      },
+    });
+  }
+  const next = await appendNodeAttempt({
+    runId: nativeFlowRunId,
+    nodeId: "diagnose",
+    nodeType: "ai_coding",
+    db: database.db,
+  });
+
+  await markNodeRunning(next.id, database.db);
+  await expect(verifyToken(rotated.secret, database.db)).rejects.toMatchObject({
+    kind: "owner-unavailable",
+  });
+  await expect(
+    issueCompanyFlowNodeRunToken({
+      db: database.db,
+      runId: nativeFlowRunId,
+      nodeAttemptId: nativeNodeAttemptId,
+    }),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await expect(
+    issueCompanyFlowNodeRunToken({
+      db: database.db,
+      runId: nativeFlowRunId,
+      nodeAttemptId: next.id,
+    }),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
 });
 
 it("requires a separate reviewed company persona and fences changed coordinator configuration while retaining readable history", async () => {
@@ -1526,6 +1692,31 @@ it("requires a separate reviewed company persona and fences changed coordinator 
       authorizeKnowledge(tx, principal, owner, "knowledge:propose"),
     ),
   ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  const personaToken = await issueCompanyFlowNodeRunToken({
+    db: database.db,
+    runId: nativeFlowRunId,
+    nodeAttemptId: node.id,
+  });
+
+  await expect(
+    verifyToken(personaToken.secret, database.db),
+  ).resolves.toMatchObject({
+    agentId: actor.agentId,
+    scopes: ["knowledge:read"],
+  });
+  await expect(
+    database.db.transaction((tx) =>
+      resolveKnowledgePrincipal(
+        tx,
+        { kind: "token", tokenId: personaToken.tokenId },
+        "knowledge:read",
+      ),
+    ),
+  ).resolves.toMatchObject({
+    kind: "company_agent",
+    bindingId: persona.specialist.bindingId,
+    actor: { id: actor.agentId, attemptId: node.id },
+  });
   const readGrant = professionalGrant.page.items.find(
     (item) => item.action === "knowledge:read",
   );
@@ -1540,6 +1731,16 @@ it("requires a separate reviewed company persona and fences changed coordinator 
   await expect(
     database.db.transaction((tx) =>
       authorizeKnowledge(tx, principal, owner, "knowledge:read"),
+    ),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await expect(
+    database.db.transaction((tx) =>
+      authorizeKnowledge(
+        tx,
+        { kind: "token", tokenId: personaToken.tokenId },
+        owner,
+        "knowledge:read",
+      ),
     ),
   ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
   const prior = await getCompanyFlowBinding(

@@ -201,7 +201,7 @@ export async function resolveKnowledgePrincipal(
       token.project_id !== null ||
       token.company_id !== current.companyId ||
       token.company_run_id !== runId ||
-      token.agent_id !== current.agentId ||
+      token.agent_id !== resolved.identity.actor.id ||
       token.owner_user_id !== current.userId
     )
       throw new MaisterError(

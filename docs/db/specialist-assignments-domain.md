@@ -151,3 +151,5 @@ This ownership foundation belongs to native company lifecycle (T20/T21), before
 company Flow human/form waits. T24 later adds business question/input-revision
 semantics and reuses these identities/claims rather than introducing a second
 human-work ledger.
+
+**Company graph credentials (T20.1, 0234; graph dispatch remains Designed):** the existing company/native-node token CHECKs accept an explicitly company-owned `agent-run` credential bound to `knowledge_node_attempt_id`. The insert reference guard requires v2 owner/input/coordinator witnesses, trusted pinned Flow/provider, initiating current read/update authority, current immutable node attestation, that professional's own enabled exact binding and scopes within both binding action sets. Newer node attempts fence old references. The standalone branch still requires a null node. Existing token identity/node immutable guards, one-live-company-token-per-Run index, hashes, expiry, rotation and terminal/GC revocation are reused. No table, token kind, parallel credential store, execution ledger or Brain FK is introduced. Populated upgrades must retain all preexisting token bytes and project cascade cleanup.

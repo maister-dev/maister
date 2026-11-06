@@ -1,6 +1,7 @@
 import "server-only";
 
-import type { SqlDatabase } from "@/lib/db/sql-types";
+import type { CompanyRunCredentialOwner } from "./company-run-credential-owner";
+import type { SqlDatabase, SqlTransaction } from "@/lib/db/sql-types";
 
 import { randomUUID } from "node:crypto";
 
@@ -8,14 +9,17 @@ import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
 import { ACTIVE_AGENT_RUN_STATUSES } from "./activity-status";
+import {
+  requireCompanyRunCredentialOwner,
+  requireCompanyFlowNodeKnowledgeOwner,
+} from "./company-run-credential-owner";
 
-import { requireCompanyRunCredentialOwner } from "./company-run-credential-owner";
-
+import { assertNativeRunKnowledgeInputsInTransaction } from "@/lib/brain/knowledge-execution-access";
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import { AGENT_TOKEN_SCOPES, TOKEN_SCOPES } from "@/types/token-scopes";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { redactQueryError } from "@/lib/db/pg-error";
+import { redactQueryError, queryErrorDiagnostics } from "@/lib/db/pg-error";
 import { MaisterError } from "@/lib/errors";
 import { generateToken } from "@/lib/tokens/secret";
 import { MaisterError } from "@/lib/errors";
@@ -173,6 +177,81 @@ function legacyOrchestratorFamily(binding: RunBinding): SQL | undefined {
   );
 }
 
+/** Rotate the existing hash-only credential without changing its execution or professional binding. */
+async function retainCompanyRunCredential(
+  tx: SqlTransaction,
+  owner: CompanyRunCredentialOwner,
+  nodeAttemptId: string | null,
+): Promise<IssuedAgentToken> {
+  await authorizeCompanyUserAction(
+    tx,
+    owner.userId,
+    owner.companyId,
+    "assignments:update",
+  );
+  const scopes = (["knowledge:read", "knowledge:propose"] as const).filter(
+    (action) => owner.actionLimits.includes(action),
+  );
+  const { secret, prefix, hash } = generateToken();
+  const tokenId = randomUUID();
+  const name = `agent-run:${owner.runId}`;
+
+  await tx.execute(
+    sql`UPDATE project_tokens SET revoked_at=now() WHERE token_kind='agent' AND company_run_id=${owner.runId} AND revoked_at IS NULL`,
+  );
+  await tx.execute(sql`INSERT INTO project_tokens(id,company_id,company_run_id,name,token_kind,owner_user_id,agent_id,knowledge_node_attempt_id,prefix,token_hash,scopes,expires_at)
+    VALUES(${tokenId},${owner.companyId},${owner.runId},${name},'agent',${owner.userId},${owner.agentId},${nodeAttemptId},${prefix},${hash},${JSON.stringify(scopes)}::jsonb,${new Date(Date.now() + AGENT_TOKEN_TTL_HOURS * 3600000)})`);
+  log.info(
+    {
+      runId: owner.runId,
+      companyId: owner.companyId,
+      agentId: owner.agentId,
+      nodeAttemptId,
+      tokenId,
+      scopeCount: scopes.length,
+    },
+    "ephemeral company execution token issued",
+  );
+
+  return { tokenId, secret };
+}
+
+/** Company graph authority must be bound to the exact current server-attested node. */
+export async function issueCompanyFlowNodeRunToken(
+  args: Readonly<{ runId: string; nodeAttemptId: string; db?: SqlDatabase }>,
+): Promise<IssuedAgentToken> {
+  const db: SqlDatabase = args.db ?? getDb();
+
+  try {
+    return await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`SELECT id FROM runs WHERE id=${args.runId} FOR UPDATE`,
+      );
+      const rootOwner = await requireCompanyRunCredentialOwner(tx, args.runId);
+      const owner = await requireCompanyFlowNodeKnowledgeOwner(
+        tx,
+        rootOwner,
+        args.nodeAttemptId,
+      );
+
+      await assertNativeRunKnowledgeInputsInTransaction(tx, args.runId);
+
+      return retainCompanyRunCredential(tx, owner, args.nodeAttemptId);
+    });
+  } catch (error) {
+    log.warn(
+      {
+        runId: args.runId,
+        nodeAttemptId: args.nodeAttemptId,
+        code: error instanceof MaisterError ? error.code : undefined,
+        ...queryErrorDiagnostics(error),
+      },
+      "company Flow node credential refused",
+    );
+    throw redactQueryError(error);
+  }
+}
+
 // ADR-145 (Evaluation Lab) D10/D12: a judge attempt's ephemeral token carries
 // ONLY the four attempt-bound evaluator scopes — it does NOT spread
 // AGENT_TOKEN_SCOPES. A judge reads its token-bound evidence snapshot and submits
@@ -251,36 +330,7 @@ export async function issueCompanyAgentRunToken(
           "Company graph credentials require their exact current node; the standalone issuer cannot mint them",
         );
 
-      await authorizeCompanyUserAction(
-        tx,
-        owner.userId,
-        owner.companyId,
-        "assignments:update",
-      );
-      const scopes = (["knowledge:read", "knowledge:propose"] as const).filter(
-        (action) => owner.actionLimits.includes(action),
-      );
-      const { secret, prefix, hash } = generateToken();
-      const tokenId = randomUUID();
-      const name = `agent-run:${args.runId}`;
-
-      await tx.execute(
-        sql`UPDATE project_tokens SET revoked_at=now() WHERE token_kind='agent' AND company_run_id=${args.runId} AND revoked_at IS NULL`,
-      );
-      await tx.execute(sql`INSERT INTO project_tokens(id,company_id,company_run_id,name,token_kind,owner_user_id,agent_id,prefix,token_hash,scopes,expires_at)
-      VALUES(${tokenId},${owner.companyId},${owner.runId},${name},'agent',${owner.userId},${owner.agentId},${prefix},${hash},${JSON.stringify(scopes)}::jsonb,${new Date(Date.now() + AGENT_TOKEN_TTL_HOURS * 3600000)})`);
-      log.info(
-        {
-          runId: owner.runId,
-          companyId: owner.companyId,
-          agentId: owner.agentId,
-          tokenId,
-          scopeCount: scopes.length,
-        },
-        "ephemeral company agent token issued",
-      );
-
-      return { tokenId, secret };
+      return retainCompanyRunCredential(tx, owner, null);
     })
     .catch((error: unknown) => {
       throw redactQueryError(error);

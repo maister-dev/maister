@@ -4,7 +4,10 @@ import type { TokenKind } from "@/lib/tokens/issue";
 
 import { eq } from "drizzle-orm";
 
-import { requireCompanyRunCredentialOwner } from "@/lib/agents/company-run-credential-owner";
+import {
+  requireCompanyRunCredentialOwner,
+  requireCompanyFlowNodeKnowledgeOwner,
+} from "@/lib/agents/company-run-credential-owner";
 import { isMaisterError } from "@/lib/errors";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -199,10 +202,28 @@ export async function verifyToken(
         { tokenId: row.id, projectId: null },
       );
     try {
-      const owner = await requireCompanyRunCredentialOwner(
+      const rootOwner = await requireCompanyRunCredentialOwner(
         d,
         row.company_run_id,
       );
+      const owner =
+        typeof row.knowledge_node_attempt_id === "string"
+          ? await requireCompanyFlowNodeKnowledgeOwner(
+              d,
+              rootOwner,
+              row.knowledge_node_attempt_id,
+            )
+          : rootOwner;
+
+      if (
+        (rootOwner.snapshot.schemaVersion === 2) !==
+        (typeof row.knowledge_node_attempt_id === "string")
+      )
+        throw new TokenAuthError(
+          "owner-unavailable",
+          "The company credential has no exact execution/node binding",
+          { tokenId: row.id, projectId: null },
+        );
 
       if (
         owner.companyId !== companyId ||

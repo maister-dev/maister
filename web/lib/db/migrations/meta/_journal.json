@@ -1716,6 +1716,13 @@
       "when": 1794606477951,
       "tag": "0248_company_flow_execution",
       "breakpoints": true
+    },
+    {
+      "idx": 249,
+      "version": "7",
+      "when": 1794606477952,
+      "tag": "0249_company_flow_node_credentials",
+      "breakpoints": true
     }
   ]
 }
