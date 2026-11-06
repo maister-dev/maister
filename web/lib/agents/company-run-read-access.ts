@@ -7,7 +7,7 @@ import type { SqlDatabase, SqlTransaction } from "@/lib/db/sql-types";
 import { sql } from "drizzle-orm";
 import pino from "pino";
 
-import { companyAgentExecutionSnapshotSchema } from "./company-agent-execution-types";
+import { companyExecutionSnapshotSchema } from "./company-execution-types";
 
 import { knowledgeSourceReadPolicy } from "@/lib/brain/knowledge-query-policy";
 import { authorizeRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
@@ -56,7 +56,7 @@ async function assertCompanyRunReadAccessInTransaction(
     FOR SHARE OF execution,link,assignment,input
   `)
   ).rows;
-  const snapshot = companyAgentExecutionSnapshotSchema.safeParse(
+  const snapshot = companyExecutionSnapshotSchema.safeParse(
     row?.company_execution_snapshot,
   );
   const capture = knowledgeAccessCaptureSchema.safeParse(row?.knowledge_access);

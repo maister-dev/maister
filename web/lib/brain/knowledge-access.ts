@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { SqlDatabase, SqlTransaction } from "@/lib/db/sql-types";
-import type { CompanyAgentExecutionSnapshot } from "@/lib/agents/company-agent-execution-types";
+import type { CompanyExecutionSnapshot } from "@/lib/agents/company-execution-types";
 import type { CompanyAction, Owner } from "@/lib/company/types";
 import type { KnowledgeAction, KnowledgePrincipal } from "./knowledge-types";
 import type { KnowledgeAttribution } from "./record-types";
@@ -39,7 +39,7 @@ export type KnowledgeAuthority = Readonly<{
           }>;
           execution: Readonly<{
             runId: string;
-            launchSnapshot: CompanyAgentExecutionSnapshot;
+            launchSnapshot: CompanyExecutionSnapshot;
           }>;
         }>
     );
@@ -64,13 +64,13 @@ export type KnowledgePrincipalIdentity =
       actor: KnowledgeAuthorityActor & {
         kind: "agent";
         runId: string;
-        attemptId: null;
+        attemptId: string | null;
       };
       companyId: string;
       bindingId: string;
       initiatingUser: SessionUser;
       actionLimits: readonly CompanyAction[];
-      execution: CompanyAgentExecutionSnapshot;
+      execution: CompanyExecutionSnapshot;
     }>;
 
 export function knowledgeOwner(row: Readonly<Record<string, unknown>>): Owner {

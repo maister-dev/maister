@@ -16,6 +16,7 @@ import { AGENT_TOKEN_SCOPES, TOKEN_SCOPES } from "@/types/token-scopes";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { redactQueryError } from "@/lib/db/pg-error";
+import { MaisterError } from "@/lib/errors";
 import { generateToken } from "@/lib/tokens/secret";
 import { MaisterError } from "@/lib/errors";
 
@@ -243,6 +244,12 @@ export async function issueCompanyAgentRunToken(
         sql`SELECT id FROM runs WHERE id=${args.runId} FOR UPDATE`,
       );
       const owner = await requireCompanyRunCredentialOwner(tx, args.runId);
+
+      if (owner.snapshot.schemaVersion !== 1)
+        throw new MaisterError(
+          "UNAUTHORIZED",
+          "Company graph credentials require their exact current node; the standalone issuer cannot mint them",
+        );
 
       await authorizeCompanyUserAction(
         tx,

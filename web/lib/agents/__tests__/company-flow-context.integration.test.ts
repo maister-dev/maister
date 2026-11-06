@@ -1,3 +1,4 @@
+import type { NativeKnowledgeActor } from "@/lib/company/types";
 import type { JsonValue } from "@/lib/hitl-response-contract";
 import type { SqlTransaction } from "@/lib/db/sql-types";
 import type { CompanyFlowExecutionSnapshot } from "../company-execution-types";
@@ -29,6 +30,8 @@ import {
 } from "../company-flow-context";
 import { updateCompanyFlowBinding } from "../company-flow-binding-mutations";
 import { reserveCompanyFlowRun } from "../company-flow-launch";
+import { assertCompanyRunReadAccess } from "../company-run-read-access";
+import { issueCompanyAgentRunToken } from "../tokens";
 import { updateCompanySpecialistBinding } from "../company-binding-mutations";
 import { parseAgentDefinition } from "../definition";
 import { resolveInstalledAgentDefinition } from "../effective";
@@ -38,6 +41,11 @@ import {
   captureCompanyAgentExecution,
 } from "../company-agent-context";
 
+import { appendNodeAttempt, markNodeRunning } from "@/lib/flows/graph/ledger";
+import { authorizeKnowledge } from "@/lib/brain/knowledge-access";
+import { nativeKnowledgeActorSchema } from "@/lib/company/types";
+import { resolveKnowledgeRunIdentity } from "@/lib/brain/knowledge-run-identity";
+import { recordNativeKnowledgeActor } from "@/lib/brain/knowledge-execution-actor";
 import { createExecutionHosts } from "@/lib/execution-host";
 import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
 import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
@@ -71,6 +79,7 @@ let database: StartedPostgresTestDb;
 let root: string;
 let schemaPath: string;
 let storedFlowRunId: string;
+let nativeFlowRunId: string;
 let baselineCounts: AllocationCounts;
 let migrationBeforeRows: { value: JsonValue }[];
 let migrationAfterRows: { value: JsonValue }[];
@@ -175,6 +184,18 @@ beforeAll(async () => {
       "specialist:\n  responsibilities: [Coordinate authorized diagnosis]\n  targetClasses: [stand]\nflow: rah-control\nworkspace: none",
     ),
   );
+  const diagnosticRolePath = join(
+    source,
+    "maister-agents/contradiction-researcher.md",
+  );
+
+  await writeFile(
+    diagnosticRolePath,
+    (await readFile(diagnosticRolePath, "utf8")).replace(
+      "workspace: none",
+      "specialist:\n  responsibilities: [Inspect opposing diagnostic evidence]\n  targetClasses: [stand]\nworkspace: none",
+    ),
+  );
   await writeFile(
     join(source, "flows/rah-control/flow.yaml"),
     stringify(manifest),
@@ -240,7 +261,7 @@ beforeAll(async () => {
       definitionSha256: agentDefinitionSha256(definition),
       coordinatorFlowRevisionId: flow.id,
       configuration: {},
-      grantActions: [],
+      grantActions: ["knowledge:read", "knowledge:propose"],
       enabled: true,
       idempotencyKey: randomUUID(),
     },
@@ -1201,6 +1222,7 @@ it("reserves one native company graph with frozen sessions/placement, refuses a 
       hosts,
     );
 
+    nativeFlowRunId = explicit.runId;
     expect(explicit.status).toBe("Pending");
     expect(
       (
@@ -1233,6 +1255,355 @@ it("reserves one native company graph with frozen sessions/placement, refuses a 
     setDefaultTransportForTests(null);
   }
 }, 120000);
+
+it("uses exact company graph node attribution, current role authority and source-guarded history without issuing standalone credentials", async () => {
+  await expect(
+    assertCompanyRunReadAccess(database.db, requesterId, nativeFlowRunId),
+  ).resolves.toBeUndefined();
+  await expect(
+    assertCompanyRunReadAccess(database.db, outsiderId, nativeFlowRunId),
+  ).rejects.toMatchObject({ code: "PRECONDITION" });
+  await database.pool.query(
+    "UPDATE runs SET status='Running',current_step_id='diagnose' WHERE id=$1",
+    [nativeFlowRunId],
+  );
+  const node = await appendNodeAttempt({
+    runId: nativeFlowRunId,
+    nodeId: "diagnose",
+    nodeType: "ai_coding",
+    db: database.db,
+  });
+
+  await markNodeRunning(node.id, database.db);
+  const row = (
+    await database.pool.query(
+      "SELECT agent_activity_snapshot FROM runs WHERE id=$1",
+      [nativeFlowRunId],
+    )
+  ).rows[0]!;
+  const activity = row.agent_activity_snapshot;
+  const actor: NativeKnowledgeActor = nativeKnowledgeActorSchema.parse({
+    schemaVersion: 1,
+    agentId: activity.agentId,
+    packageInstallId: activity.packageInstallId,
+    packageName: activity.packageName,
+    definitionSha256: activity.definitionSha256,
+  });
+
+  await expect(
+    database.db.transaction((tx) =>
+      resolveKnowledgeRunIdentity(tx, nativeFlowRunId, null),
+    ),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await expect(
+    database.db.transaction((tx) =>
+      resolveKnowledgeRunIdentity(tx, nativeFlowRunId, node.id),
+    ),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await expect(
+    recordNativeKnowledgeActor(database.db, {
+      runId: nativeFlowRunId,
+      nodeAttemptId: node.id,
+      actor: { ...actor, definitionSha256: "e".repeat(64) },
+    }),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await recordNativeKnowledgeActor(database.db, {
+    runId: nativeFlowRunId,
+    nodeAttemptId: node.id,
+    actor,
+  });
+  await expect(
+    database.db.transaction((tx) =>
+      resolveKnowledgeRunIdentity(tx, nativeFlowRunId, node.id),
+    ),
+  ).resolves.toMatchObject({
+    runKind: "flow",
+    identity: {
+      kind: "company_agent",
+      companyId: request.companyId,
+      bindingId: request.bindingId,
+      actor: {
+        kind: "agent",
+        id: actor.agentId,
+        runId: nativeFlowRunId,
+        attemptId: node.id,
+      },
+      execution: { schemaVersion: 2, executionKind: "flow" },
+      actionLimits: ["knowledge:read", "knowledge:propose"],
+    },
+  });
+  await expect(
+    database.db.transaction((tx) =>
+      authorizeKnowledge(
+        tx,
+        { kind: "execution", runId: nativeFlowRunId, nodeAttemptId: node.id },
+        { kind: "company", companyId: request.companyId },
+        "knowledge:read",
+      ),
+    ),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await expect(
+    recordNativeKnowledgeActor(database.db, {
+      runId: nativeFlowRunId,
+      nodeAttemptId: node.id,
+      actor: { ...actor, definitionSha256: "f".repeat(64) },
+    }),
+  ).rejects.toMatchObject({ code: "CONFLICT" });
+  await expect(
+    issueCompanyAgentRunToken({ db: database.db, runId: nativeFlowRunId }),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS count FROM project_tokens WHERE company_run_id=$1",
+        [nativeFlowRunId],
+      )
+    ).rows[0],
+  ).toEqual({ count: 0 });
+  await database.pool.query("UPDATE agents SET enabled=false WHERE id=$1", [
+    actor.agentId,
+  ]);
+  try {
+    await expect(
+      database.db.transaction((tx) =>
+        resolveKnowledgeRunIdentity(tx, nativeFlowRunId, node.id),
+      ),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(
+      assertCompanyRunReadAccess(database.db, requesterId, nativeFlowRunId),
+    ).resolves.toBeUndefined();
+  } finally {
+    await database.pool.query("UPDATE agents SET enabled=true WHERE id=$1", [
+      actor.agentId,
+    ]);
+  }
+  const newer = await appendNodeAttempt({
+    runId: nativeFlowRunId,
+    nodeId: "diagnose",
+    nodeType: "ai_coding",
+    db: database.db,
+  });
+
+  await markNodeRunning(newer.id, database.db);
+  await expect(
+    database.db.transaction((tx) =>
+      resolveKnowledgeRunIdentity(tx, nativeFlowRunId, node.id),
+    ),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await recordNativeKnowledgeActor(database.db, {
+    runId: nativeFlowRunId,
+    nodeAttemptId: newer.id,
+    actor,
+  });
+  await expect(
+    database.db.transaction((tx) =>
+      resolveKnowledgeRunIdentity(tx, nativeFlowRunId, newer.id),
+    ),
+  ).resolves.toMatchObject({ identity: { actor: { attemptId: newer.id } } });
+});
+
+it("requires a separate reviewed company persona and fences changed coordinator configuration while retaining readable history", async () => {
+  const effective = await database.db.transaction(async (tx) => {
+    const row = (
+      await tx.execute(
+        sql`SELECT agent_activity_snapshot->>'packageInstallId' AS package_install_id FROM runs WHERE id=${nativeFlowRunId}`,
+      )
+    ).rows[0];
+
+    if (typeof row?.package_install_id !== "string")
+      throw new Error(
+        "The native graph fixture has no installed package witness",
+      );
+
+    return resolveInstalledAgentDefinition(tx, {
+      agentId: "rah:contradiction-researcher",
+      packageInstallId: row.package_install_id,
+    });
+  });
+  const actor: NativeKnowledgeActor = {
+    schemaVersion: 1,
+    agentId: effective.parsed.id,
+    packageInstallId: effective.packageInstallId,
+    packageName: effective.packageName,
+    definitionSha256: agentDefinitionSha256(effective.parsed),
+  };
+  const node = await appendNodeAttempt({
+    runId: nativeFlowRunId,
+    nodeId: "diagnose",
+    nodeType: "ai_coding",
+    db: database.db,
+  });
+
+  await markNodeRunning(node.id, database.db);
+  await expect(
+    recordNativeKnowledgeActor(database.db, {
+      runId: nativeFlowRunId,
+      nodeAttemptId: node.id,
+      actor,
+    }),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  if (!effective.resolvedRevision)
+    throw new Error(
+      "The company persona fixture has no resolved package revision",
+    );
+  const persona = await createCompanySpecialistBinding(
+    database.db,
+    requesterId,
+    actor.agentId,
+    {
+      owner: { kind: "company", companyId: request.companyId },
+      packageInstallId: actor.packageInstallId,
+      packageRevision: effective.resolvedRevision,
+      definitionSha256: actor.definitionSha256,
+      configuration: {},
+      grantActions: ["knowledge:read"],
+      enabled: true,
+      idempotencyKey: randomUUID(),
+    },
+  );
+
+  await recordNativeKnowledgeActor(database.db, {
+    runId: nativeFlowRunId,
+    nodeAttemptId: node.id,
+    actor,
+  });
+  await expect(
+    database.db.transaction((tx) =>
+      resolveKnowledgeRunIdentity(tx, nativeFlowRunId, node.id),
+    ),
+  ).resolves.toMatchObject({
+    identity: {
+      actor: { id: actor.agentId, attemptId: node.id },
+      bindingId: persona.specialist.bindingId,
+      actionLimits: ["knowledge:read"],
+    },
+  });
+  await createCompanyGrants(database.db, administratorId, {
+    principalKind: "user",
+    principalId: requesterId,
+    actions: ["knowledge:read", "knowledge:propose"],
+    idempotencyKey: randomUUID(),
+  });
+  const professionalGrant = await createCompanyGrants(
+    database.db,
+    administratorId,
+    {
+      principalKind: "agent",
+      principalId: actor.agentId,
+      actions: ["knowledge:read", "knowledge:propose"],
+      idempotencyKey: randomUUID(),
+    },
+  );
+  const principal = {
+    kind: "execution" as const,
+    runId: nativeFlowRunId,
+    nodeAttemptId: node.id,
+  };
+  const owner = { kind: "company" as const, companyId: request.companyId };
+
+  await expect(
+    database.db.transaction((tx) =>
+      authorizeKnowledge(tx, principal, owner, "knowledge:read"),
+    ),
+  ).resolves.toMatchObject({
+    actor: {
+      kind: "agent",
+      id: actor.agentId,
+      runId: nativeFlowRunId,
+      attemptId: node.id,
+    },
+    policy: {
+      version: 2,
+      initiator: { actor: { id: requesterId } },
+      execution: {
+        runId: nativeFlowRunId,
+        launchSnapshot: { schemaVersion: 2, executionKind: "flow" },
+      },
+    },
+  });
+  await expect(
+    database.db.transaction((tx) =>
+      authorizeKnowledge(tx, principal, owner, "knowledge:propose"),
+    ),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  const readGrant = professionalGrant.page.items.find(
+    (item) => item.action === "knowledge:read",
+  );
+
+  if (!readGrant)
+    throw new Error("The diagnostic role fixture has no current read grant");
+  await revokeCompanyGrant(database.db, administratorId, readGrant.id, {
+    expectedRevision: readGrant.revision,
+    reason: "Verify current node knowledge authority",
+    idempotencyKey: randomUUID(),
+  });
+  await expect(
+    database.db.transaction((tx) =>
+      authorizeKnowledge(tx, principal, owner, "knowledge:read"),
+    ),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  const prior = await getCompanyFlowBinding(
+    database.db,
+    requesterId,
+    request.coordinatorBindingId,
+  );
+  const replace = {
+    owner: prior.owner,
+    specialistBindingId: request.bindingId,
+    specialistRevision: request.bindingRevision,
+    flowRevisionId: prior.configuration.flowRevisionId,
+    manifestSha256: prior.configuration.manifestSha256,
+    execution: prior.configuration.execution,
+    roleMappings: prior.configuration.roleMappings,
+  };
+  const disabled = await updateCompanyFlowBinding(
+    database.db,
+    requesterId,
+    prior.id,
+    {
+      ...replace,
+      enabled: false,
+      expectedRevision: prior.revision,
+      idempotencyKey: randomUUID(),
+    },
+  );
+
+  await expect(
+    database.db.transaction((tx) =>
+      resolveKnowledgeRunIdentity(tx, nativeFlowRunId, node.id),
+    ),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await expect(
+    assertCompanyRunReadAccess(database.db, requesterId, nativeFlowRunId),
+  ).resolves.toBeUndefined();
+  const compatibility = useEngineVersion("3.12.0");
+
+  try {
+    const enabled = await updateCompanyFlowBinding(
+      database.db,
+      requesterId,
+      prior.id,
+      {
+        ...replace,
+        enabled: true,
+        expectedRevision: disabled.binding.revision,
+        idempotencyKey: randomUUID(),
+      },
+    );
+
+    request = {
+      ...request,
+      coordinatorBindingRevision: enabled.binding.revision,
+    };
+    await expect(
+      database.db.transaction((tx) =>
+        resolveKnowledgeRunIdentity(tx, nativeFlowRunId, node.id),
+      ),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  } finally {
+    compatibility.mockRestore();
+  }
+});
 
 it("uses current initiating authority after revocation rather than the frozen input witness", async () => {
   const compatibility = useEngineVersion("3.12.0");

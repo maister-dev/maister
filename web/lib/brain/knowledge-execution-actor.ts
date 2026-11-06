@@ -9,6 +9,10 @@ import pino from "pino";
 import { currentKnowledgeNodeAttemptPolicy } from "./knowledge-node-policy";
 
 import {
+  requireCompanyKnowledgeRunOwner,
+  requireCompanyFlowProfessionalRole,
+} from "@/lib/agents/company-run-credential-owner";
+import {
   knowledgeAccessCaptureSchema,
   nativeKnowledgeActorSchema,
 } from "@/lib/company/types";
@@ -36,7 +40,7 @@ export async function recordNativeKnowledgeActor(
   await db.transaction(async (tx) => {
     const row = (
       await tx.execute(sql`
-      SELECT r.project_id,r.knowledge_access,n.knowledge_actor,n.status FROM runs r JOIN node_attempts n ON n.run_id=r.id
+      SELECT r.project_id,r.company_id,r.knowledge_access,n.knowledge_actor,n.status FROM runs r JOIN node_attempts n ON n.run_id=r.id
       WHERE r.id=${input.runId} AND r.run_kind='flow' AND r.status IN ('Running','NeedsInput','NeedsInputIdle','WaitingOnChildren')
         AND n.id=${input.nodeAttemptId} AND ${currentKnowledgeNodeAttemptPolicy("n", sql`r.id`, sql`r.current_step_id`)}
         AND n.node_type IN ('ai_coding','judge','orchestrator') FOR UPDATE OF r,n
@@ -72,21 +76,27 @@ export async function recordNativeKnowledgeActor(
           { details: { reason: "native_knowledge_actor_changed" } },
         );
     }
-    const bound = (
-      await tx.execute(sql`
+    if (typeof row.company_id === "string" && row.project_id === null) {
+      const owner = await requireCompanyKnowledgeRunOwner(tx, input.runId);
+
+      await requireCompanyFlowProfessionalRole(tx, owner, actor.data);
+    } else {
+      const bound = (
+        await tx.execute(sql`
       SELECT a.id FROM agents a JOIN project_package_attachments pa ON pa.package_name=a.package_name
       JOIN package_installs pin ON pin.id=pa.package_install_id AND pin.name=a.package_name
       WHERE a.id=${actor.data.agentId} AND a.package_name=${actor.data.packageName} AND a.enabled AND a.quarantined_at IS NULL
         AND pa.project_id=${row.project_id} AND pin.id=${actor.data.packageInstallId} AND pin.package_status='Installed' AND pin.trust_status IN ('trusted','trusted_by_policy')
       FOR SHARE OF a,pa,pin
     `)
-    ).rows[0];
+      ).rows[0];
 
-    if (!bound)
-      throw new MaisterError(
-        "UNAUTHORIZED",
-        "The native Flow role's current trusted attachment is unavailable",
-      );
+      if (!bound)
+        throw new MaisterError(
+          "UNAUTHORIZED",
+          "The native Flow role's current trusted attachment is unavailable",
+        );
+    }
     if (row.knowledge_actor !== null) return;
     await tx.execute(
       sql`UPDATE node_attempts SET knowledge_actor=${JSON.stringify(actor.data)}::jsonb WHERE id=${input.nodeAttemptId} AND knowledge_actor IS NULL`,

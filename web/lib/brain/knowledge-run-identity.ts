@@ -11,7 +11,10 @@ import { sql } from "drizzle-orm";
 import { resolveKnowledgePrincipal } from "./knowledge-access";
 import { currentKnowledgeNodeAttemptPolicy } from "./knowledge-node-policy";
 
-import { requireCompanyKnowledgeRunOwner } from "@/lib/agents/company-run-credential-owner";
+import {
+  requireCompanyKnowledgeRunOwner,
+  requireCompanyFlowNodeKnowledgeOwner,
+} from "@/lib/agents/company-run-credential-owner";
 import { nativeKnowledgeActorSchema } from "@/lib/company/types";
 import { MaisterError } from "@/lib/errors";
 import { FINDINGS_CONTRACT } from "@/lib/run-results/findings-contract";
@@ -69,27 +72,36 @@ export async function resolveKnowledgeRunIdentity(
     );
   if (typeof run.company_id === "string") {
     if (
-      run.run_kind !== "agent" ||
       run.project_id !== null ||
-      nodeAttemptId !== null
+      (run.run_kind === "agent"
+        ? nodeAttemptId !== null
+        : nodeAttemptId === null)
     )
       throw new MaisterError(
         "UNAUTHORIZED",
-        "A company agent inspection must identify its exact standalone execution",
+        "Company inspection requires the standalone execution or the graph's exact current node",
       );
-    const owner = await requireCompanyKnowledgeRunOwner(tx, runId);
+    const rootOwner = await requireCompanyKnowledgeRunOwner(tx, runId);
     const role = launchRole(run);
 
     if (
-      role.agentId !== owner.professionalRole.agentId ||
-      role.packageInstallId !== owner.professionalRole.packageInstallId ||
-      role.packageName !== owner.professionalRole.packageName ||
-      role.definitionSha256 !== owner.professionalRole.definitionSha256
+      role.agentId !== rootOwner.professionalRole.agentId ||
+      role.packageInstallId !== rootOwner.professionalRole.packageInstallId ||
+      role.packageName !== rootOwner.professionalRole.packageName ||
+      role.definitionSha256 !== rootOwner.professionalRole.definitionSha256
     )
       throw new MaisterError(
         "UNAUTHORIZED",
         "Company execution role attribution does not match its exact reviewed configuration",
       );
+    const owner =
+      nodeAttemptId === null
+        ? rootOwner
+        : await requireCompanyFlowNodeKnowledgeOwner(
+            tx,
+            rootOwner,
+            nodeAttemptId,
+          );
     const initiator = await resolveKnowledgePrincipal(
       tx,
       { kind: "user", userId: owner.userId },
@@ -103,12 +115,17 @@ export async function resolveKnowledgeRunIdentity(
       );
 
     return {
-      runKind: "agent",
+      runKind: run.run_kind,
       identity: {
         kind: "company_agent",
-        actor: { kind: "agent", id: owner.agentId, runId, attemptId: null },
+        actor: {
+          kind: "agent",
+          id: owner.agentId,
+          runId,
+          attemptId: nodeAttemptId,
+        },
         companyId: owner.companyId,
-        bindingId: owner.snapshot.specialistBinding.id,
+        bindingId: owner.bindingId,
         initiatingUser: initiator.user,
         actionLimits: owner.actionLimits,
         execution: owner.snapshot,

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-**Implemented: specialist metadata, binding configuration, company standalone Run/session path and internal credentials; Designed: complete company lifecycle and graph execution — ADR-203.** Reusable specialist roles extend existing package agents and installed Flow bindings. This domain owns company execution and invocation scope; [assignments](specialist-assignments.md) owns durable work and [cooperation](specialist-cooperation.md) owns delegation/acceptance.
+**Implemented: specialist metadata, company bindings, standalone lifecycle, graph preflight/reservation and node knowledge identity; Designed: graph credentials/dispatch and complete phase qualification — ADR-203.** Reusable specialist roles extend existing package agents and installed Flow bindings. This domain owns company execution and invocation scope; [assignments](specialist-assignments.md) owns durable work and [cooperation](specialist-cooperation.md) owns delegation/acceptance.
 
 ## Domain entities
 
@@ -72,6 +72,14 @@ The result contains typed current binding, effective definition/configuration/ex
 The internal `reserveCompanyAgentRun` service admits one exact queued assignment through the existing `runs`, default `run_sessions`, execution-host placement and `specialist_run_links`. It rechecks current preflight under the assignment lock, freezes the reviewed configuration, policy, result and scheduled request, and classifies the exact assignment input before commit. Its assignment becomes `active` while the Run waits in the existing `Pending` queue; no process or credential is created by reservation. Competing admissions using the same business revision yield one committed Run and a conflict. Source denial rolls back the Run, session, placement, link, assignment transition and transactional outbox changes together.
 
 Company runner selection uses the shared standalone resolver: exact binding runner, declared agent default, then platform default. There is no project tier. An explicit binding/agent runner does not require a configured platform-default row; when every tier is absent, admission refuses without allocating a Run/session/link. A selected missing, disabled, unready or read-only-incompatible runner refuses admission; it never silently chooses a different configured runner. Required read-only diagnostics come from the selected execution-host boundary. Assignment and reviewed execution policies must have equal normalized axes; changing requested authority requires explicit review. Native input references are re-inspected under current initiating-user and executing-specialist authority, including exact available version witnesses. Declared private project memory or project MCP bindings are refused until their actual project admission is provided. Native standalone dispatch uses the shared owned-session path below. Native permission continuation and parked-host restart are qualified below; extended phase recovery remains T21 and company graph execution remains T20.1.
+
+### Company Flow node knowledge authority
+
+Company graph launch captures use the explicit v2 grammar. Current execution authority requires the exact enabled coordinator revision/digest, pinned trusted Flow and responsible specialist/input witnesses. Historical content inspection instead uses the receiving user's current company read and exact input/source closure; disabling execution does not erase authorized history.
+
+Before a company ACP node receives knowledge, the existing `node_attempts.knowledge_actor` freezes the server-resolved professional/package/definition identity. That role must have its own current enabled company specialist binding to the same trusted package and definition. Session/workspace-none policy is checked from the reviewed role. A role named in the manifest does not acquire authority from the coordinator. Its action limits are the intersection of the responsible coordinator's limits and its own reviewed binding; each knowledge action also requires current initiating-user and executing-agent grants and source access. Missing attestation, a different definition, disabled role/provider, stale node or newer attempt refuses. The original v2 capture is retained in knowledge authority metadata, and originating attribution includes the exact node attempt. A successful node does not confirm knowledge or complete the assignment.
+
+This identity/inspection extension does not authorize the standalone token issuer to mint a graph credential. Company graph node credentials require the separately qualified node-bound extension of the existing token contract before dispatch. No project, fabricated node, ambient role or personal memory supplies missing authority.
 
 ### Company agent credentials
 
