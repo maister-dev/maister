@@ -151,3 +151,15 @@ Both company agent and result-only Flow paths derive the following actions from 
 - [ADR-203](../decisions.md#adr-203-durable-specialist-assignments-and-company-coordinator-flows), [persistence](../db/specialist-assignments-domain.md), [agents](agents.md), [scheduled requests](scheduled-agent-requests.md).
 - [Flow DSL](../flow-dsl.md), [web API](../api/web.openapi.yaml), [supervisor](../supervisor.md), [execution prompt lifecycle](execution-prompt-lifecycle.md).
 - Implementation: `web/lib/agents/`, `web/lib/services/runs.ts`, `web/lib/flows/graph/`, `web/lib/tokens/`, existing scheduler and execution-host services.
+
+
+Company operational workspace ownership uses an opaque company/run digest below
+`worktreesRoot()/.company/`, with a separate adapter runtime directory. The
+existing integrity baseline retains the explicit company and run identities and
+both managed paths. Inspection refuses a different owner, moved/retargeted
+baseline, missing company execution capture or repository workspace before
+probing source bytes. Company runs have no repository reference history.
+Legacy project baseline owner JSON remains unchanged. The shared disposition
+uses the resolved runtime path and refuses repository allocation for a company
+owner; company terminal-event/finalization wiring and complete cleanup
+qualification remain part of T20.

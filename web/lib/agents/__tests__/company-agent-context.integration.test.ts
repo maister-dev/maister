@@ -3,11 +3,11 @@ import type { CompanyAgentExecutionSnapshot } from "../company-agent-execution-t
 import type { PreparedSpecialistAssignment } from "@/lib/specialist-assignments/types";
 
 import { randomUUID } from "node:crypto";
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { join, resolve, sep } from "node:path";
 
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
@@ -27,7 +27,17 @@ import {
   revokeAgentRunTokensForRun,
 } from "../tokens";
 import { buildOperationalContract } from "../launch-contract";
+import {
+  operationalWorkspace,
+  operationalReferenceEvidence,
+  inspectOperationalWorkspace,
+} from "../operational-context";
+import {
+  captureOperationalBaseline,
+  captureOperationalGeneration,
+} from "../operational-integrity";
 
+import { runs } from "@/lib/db/schema";
 import { getKnowledgeRecord } from "@/lib/brain/knowledge-records";
 import { searchKnowledge } from "@/lib/brain/knowledge-search";
 import {
@@ -74,6 +84,7 @@ beforeAll(async () => {
     databaseName: "company_agent_context",
   });
   root = await mkdtemp(join(os.tmpdir(), "company-agent-context-"));
+  vi.stubEnv("MAISTER_WORKTREES_ROOT", join(root, "worktrees"));
   vi.spyOn(os, "homedir").mockReturnValue(root);
   await database.pool.query(
     "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'admin','active'),($3,$4,'member','active')",
@@ -1259,6 +1270,87 @@ it("uses company Brain through current user and agent authority while retaining 
     (await getKnowledgeRecord(database.db, humanPrincipal, { recordId }))
       .revision,
   ).toBe(1);
+});
+
+it("CBS-02 resolves and inspects an owned company plain directory without a project and rejects retargeted baseline paths", async () => {
+  const { runId } = await reserveCompanyFixtureRun();
+  const [run] = await database.db.select().from(runs).where(eq(runs.id, runId));
+  const context = await operationalWorkspace(database.db, run);
+
+  expect(context).toMatchObject({
+    ownerKind: "company",
+    companyId: request.companyId,
+    resourceKind: "plain_directory",
+    repoPath: null,
+    projectSlug: null,
+  });
+  expect(context.cwd.startsWith(join(root, "worktrees") + sep)).toBe(true);
+  expect(context.runtimePath).not.toBe(context.cwd);
+  expect(await operationalReferenceEvidence(database.db, run)).toEqual([]);
+  await mkdir(context.cwd, { recursive: true });
+  await writeFile(
+    join(context.cwd, "observations.txt"),
+    "Bounded company evidence.",
+  );
+  const baseline = await captureOperationalGeneration(
+    context.cwd,
+    await captureOperationalBaseline(context.cwd, "plain_directory"),
+    [],
+  );
+  const owner = {
+    kind: "company" as const,
+    companyId: request.companyId,
+    runId,
+    cwd: context.cwd,
+    runtimePath: context.runtimePath,
+  };
+  const retained = {
+    ...run,
+    operationalIntegrityBaseline: { ...baseline, owner },
+  };
+
+  await database.db
+    .update(runs)
+    .set({
+      operationalIntegrityBaseline: retained.operationalIntegrityBaseline,
+    })
+    .where(eq(runs.id, runId));
+  expect(await operationalWorkspace(database.db, retained)).toEqual(context);
+  expect(
+    await inspectOperationalWorkspace(database.db, retained),
+  ).toMatchObject({ verdict: "clean" });
+  await writeFile(join(context.cwd, "observations.txt"), "Changed source.");
+  expect(
+    await inspectOperationalWorkspace(database.db, retained),
+  ).toMatchObject({ verdict: "changed" });
+  await expect(
+    operationalWorkspace(database.db, {
+      ...retained,
+      operationalIntegrityBaseline: {
+        ...baseline,
+        owner: { ...owner, cwd: root },
+      },
+    }),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "company_workspace_owner_mismatch" },
+  });
+  await expect(
+    operationalWorkspace(database.db, { ...run, agentWorkspace: "repo_read" }),
+  ).rejects.toMatchObject({ code: "CONFIG" });
+  await expect(
+    operationalWorkspace(database.db, {
+      ...run,
+      companyExecutionSnapshot: null,
+    }),
+  ).rejects.toMatchObject({ code: "PRECONDITION" });
+  await expect(
+    operationalWorkspace(database.db, {
+      ...run,
+      companyId: null,
+      companyExecutionSnapshot: null,
+    }),
+  ).rejects.toMatchObject({ code: "PRECONDITION" });
 });
 
 it("requires current explicit company admission authority even for an administrator and after an earlier successful preflight", async () => {

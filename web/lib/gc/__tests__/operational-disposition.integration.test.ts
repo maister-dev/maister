@@ -137,6 +137,9 @@ async function seed(
   const [run] = await db.select().from(runs).where(eq(runs.id, runId));
   const context = await operationalWorkspace(db, run);
 
+  if (context.ownerKind !== "project")
+    throw new Error("Expected a project fixture");
+
   if (context.resourceKind === "ephemeral_checkout")
     await addDetachedWorktree({
       projectRepoPath: context.repoPath,
@@ -238,6 +241,9 @@ async function seedUnstartedOperation() {
   });
   const current = await row(runId);
   const context = await operationalWorkspace(db, current);
+
+  if (context.ownerKind !== "project")
+    throw new Error("Expected a project fixture");
 
   return { runId, current, context };
 }

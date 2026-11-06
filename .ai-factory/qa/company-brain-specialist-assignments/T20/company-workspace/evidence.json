@@ -1,0 +1,69 @@
+{
+  "task": "T20",
+  "slice": "Explicit company operational workspace ownership and shared integrity inspection",
+  "date": "2026-11-06",
+  "baseCommit": "b6769ab52d8b62ebf77edfdc44a1a408003459ed",
+  "status": "Workspace owner and integrity slice qualified; T20 remains open",
+  "engineVersion": "3.11.1",
+  "migrations": [],
+  "red": {
+    "log": "red.log.gz",
+    "failure": "Existing operational resolver requires a project for a native company run."
+  },
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "files": 4,
+      "tests": 58,
+      "log": "integration-green.log.gz"
+    },
+    "unit": {
+      "exitCode": 0,
+      "files": 886,
+      "tests": 9263,
+      "log": "unit-green.log.gz"
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "log": "typecheck.log.gz"
+    },
+    "lint": {
+      "exitCode": 0,
+      "log": "lint.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "tables": 171,
+      "log": "docs.log.gz"
+    }
+  },
+  "qualified": [
+    "A real native company run resolves a managed opaque directory without project, task or repository and with separate adapter runtime state.",
+    "Exact retained company/run identity and both managed paths are checked before inspecting a stored company baseline; missing capture, retargeted paths and repository modes refuse.",
+    "Actual clean and modified source bytes produce the existing integrity verdicts; company repository reference evidence is empty.",
+    "Legacy project baseline ownership JSON remains unchanged; project cleanup and qualification consumers retain repository behavior through explicit owner narrowing."
+  ],
+  "fixtureCorrections": [
+    "The first post-implementation case inherited the test harness worktrees root; fixture now explicitly owns its temporary worktrees root.",
+    "The first combined run placed the new case after the existing destructive authority-revocation scenario; it now runs before authority teardown. All unchanged existing cases and the new case pass together."
+  ],
+  "notYetQualified": [
+    "Actual company admission/session/prompt and resume lifecycle",
+    "Company terminal domain events, finalization and complete disposition cleanup",
+    "Installable specialist/Flow package, stand diagnosis/restart/verification",
+    "Remaining T20-T43 criteria"
+  ],
+  "sourceSha256": {
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "7a96c9efe8e491bf40fe6167c4ed27b41b33987183d7208b517d290545cdc532",
+    "web/lib/agents/operational-context.ts": "daf1645e3f9fe9239f0eb291b96789a56c9451eb9c96c665721ca7408b397d02",
+    "web/lib/agents/workspace-paths.ts": "948dfa48188bded0def2b86f17848bd16b0036ff2341e5ab6ea0d8bfdbee4970",
+    "web/lib/gc/__tests__/operational-disposition.integration.test.ts": "2be2adcc1688d71fc1ac545b40961ea0680630fd0106f311f4076488f75a51a3",
+    "web/lib/gc/operational-disposition.ts": "f1ccd29c1d4dbdf61fa588838c5be339ed3925eb48c22a366bf50605f22b56b3",
+    "web/lib/run-results/operational-types.ts": "be83242600ff15b7b07db2d88ad625f6a54221f13caf40dec90b8ad925776769",
+    "web/lib/tasks/__tests__/qualification-publication.integration.test.ts": "186652fc0ed526285550b00552f44131c332b309d1538a158959cb470f427821"
+  }
+}

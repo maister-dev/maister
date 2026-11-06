@@ -105,7 +105,15 @@ export type OperationalIntegrityBaseline = {
     mount: ContextMountSnapshot;
     baseline: Omit<OperationalIntegrityBaseline, "contextMounts">;
   }>;
-  owner?: { cwd: string; repoPath: string; projectSlug: string };
+  owner?:
+    | { cwd: string; repoPath: string; projectSlug: string }
+    | {
+        kind: "company";
+        companyId: string;
+        runId: string;
+        cwd: string;
+        runtimePath: string;
+      };
 };
 
 export type OperationalTerminal = {

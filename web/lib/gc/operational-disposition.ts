@@ -351,6 +351,8 @@ export async function disposeOperationalRun(
     )
       throw cleanupError("operational_execution_not_quiescent");
     const context = await operationalWorkspace(db, run);
+    if (workspace && context.ownerKind !== "project")
+      throw cleanupError("company_workspace_unexpected_repository");
     const preparationFence = await acquirePreparationWorkspace(context);
 
     try {
@@ -421,6 +423,8 @@ export async function disposeOperationalRun(
           await renew();
           await restoreAgentMaterialization(context.cwd, runId);
           if (workspace) {
+          if (context.ownerKind !== "project")
+            throw cleanupError("company_workspace_unexpected_repository");
             const preserved = await (options.preserve ?? preserveWorktree)({
               runId,
               worktreePath: context.cwd,
@@ -489,7 +493,7 @@ export async function disposeOperationalRun(
     await renew();
     await removeOwnedPlainAgentDirectory({
       root: worktreesRoot(),
-      directoryPath: operationalAgentRuntimePath(context.projectSlug, runId),
+      directoryPath: context.runtimePath,
     });
     if (client && assignment?.executionWorkspaceId)
       await client.releaseWorkspace(assignment.executionWorkspaceId);
