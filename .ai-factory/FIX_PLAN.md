@@ -102,6 +102,19 @@ No required assertion is skipped, quarantined or weakened.
   confirm action; preserve all existing immutable settings and Run-binding
   assertions. Reproduce the enabled inert SSR button before the source fix;
   no retry-click, arbitrary wait or timeout increase substitutes for readiness.
+- [ ] R23: give the E2E wrapper sole destructive teardown ownership. Playwright
+  global teardown must not remove Git repositories while its Web plugin still
+  runs. After physical invocation-process quiescence, clean linked worktrees
+  through their still-existing parent repositories before removing registered
+  fixture roots; recheck quiescence before root removal. Reuse the existing
+  invocation release/reclaimer seam, retain original and cleanup failures, and
+  always reach database teardown. The R22 focused browser already reproduced
+  `ENOTEMPTY` in `e2e-agents/.git/info`, followed by missing Git metadata; a
+  passed test body with failed cleanup is not a qualified lane. Cover the
+  ordered real-Git cleanup and a callback introducing a live owned process,
+  then verify the focused browser exits with zero cleanup errors before the
+  complete coordinated browser lane. No delays, swallowed filesystem failures,
+  capacity changes or weakened assertions substitute for lifecycle ownership.
 - [ ] Complete the frozen combined 29-case browser lane, complete configured Web
   integration, static checks and final review; close the remaining seven plan
   tasks only after their acceptance checks pass, then remove this fix plan.

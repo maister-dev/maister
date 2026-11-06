@@ -21,7 +21,10 @@ import {
   fixtureProcessEnvironment,
   registerProcess,
   registerSpawnedProcess,
+  removeInvocationContainers,
+  removeInvocationRoots,
   releaseInvocation,
+  sweepInvocation,
   type Invocation,
   type ProcessRole,
 } from "@/test-support/process-invocation";
@@ -369,19 +372,24 @@ export async function runE2eInvocation(
 
     throw error;
   } finally {
-    // Owned processes, containers and roots go before the database and the
-    // worktrees root; the release never throws by contract, and the catch keeps
-    // the database teardown reachable if it ever does.
+    // Retire processes before touching Git; linked worktrees still need their
+    // registered parent repositories. Database teardown remains reachable even
+    // when quiescence or either root cleanup fails.
     const invocationCleanupErrors =
       e2eInvocation === undefined
         ? []
-        : await releaseInvocation(
-            e2eInvocation.invocation,
-            "e2e invocation",
-          ).catch((error: unknown) => [error]);
-    const cleanupOperations: Promise<unknown>[] = [
-      cleanupTestWorktrees(worktreesRoot),
-    ];
+        : await releaseInvocation(e2eInvocation.invocation, "e2e invocation", {
+            sweepInvocation,
+            removeInvocationContainers,
+            removeInvocationRoots: (invocation) =>
+              removeInvocationRoots(invocation, () =>
+                cleanupTestWorktrees(worktreesRoot),
+              ),
+          }).catch((error: unknown) => [error]);
+    const cleanupOperations: Promise<unknown>[] = [];
+
+    if (e2eInvocation === undefined)
+      cleanupOperations.push(cleanupTestWorktrees(worktreesRoot));
 
     if (testDatabase !== undefined) {
       cleanupOperations.push(testDatabase.stop());

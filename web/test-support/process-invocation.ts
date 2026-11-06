@@ -960,14 +960,21 @@ export async function preserveFixtureLog(
   );
 }
 
-/** Terminal invocation cleanup only; a fixture restart never calls this. */
-export async function removeInvocationRoots(
+async function assertInvocationProcessesQuiescent(
   invocation: Invocation,
 ): Promise<void> {
   if (ownedLiveProcesses(await readProcessSnapshot(invocation)).length)
     throw new InvocationOwnershipError(
       "cannot remove roots while invocation processes remain alive",
     );
+}
+
+/** Terminal cleanup; prepare linked roots only after their process owners retire. */
+export async function removeInvocationRoots(
+  invocation: Invocation,
+  beforeRootRemoval?: () => Promise<void>,
+): Promise<void> {
+  await assertInvocationProcessesQuiescent(invocation);
   const records = await invocationRecords(invocation);
 
   for (const record of records) {
@@ -977,6 +984,10 @@ export async function removeInvocationRoots(
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
+  }
+  if (beforeRootRemoval) {
+    await beforeRootRemoval();
+    await assertInvocationProcessesQuiescent(invocation);
   }
   const roots = records.filter(
     (record): record is RootRecord => record.kind === "root",

@@ -82,6 +82,8 @@ sequenceDiagram
   Helper->>Docker: stop container
 ```
 
+### E2E lifecycle
+
 The E2E wrapper owns its complete database lifecycle, including cancellation.
 
 ```mermaid
@@ -103,9 +105,21 @@ sequenceDiagram
     Wrapper->>Playwright: forward signal to the process group, then SIGKILL after grace if needed
     Playwright-->>Wrapper: process-group exit observed
   end
-  Wrapper->>Helper: stop database
+  Wrapper->>Wrapper: release invocation processes and containers
+  Wrapper->>Wrapper: prove quiescence, clean linked worktrees while parent Git roots exist
+  Wrapper->>Wrapper: recheck quiescence, then remove registered roots
+  Note over Wrapper,Helper: Cleanup failure retains parent roots, database stop is still attempted
+  Wrapper->>Helper: stop database in finally
   Helper->>Helper: end Pool before stopping container
 ```
+
+Git cleanup belongs to the wrapper after Playwright/Web shutdown, not a
+Playwright `globalTeardown`. Its `releaseInvocation` override passes
+`cleanupTestWorktrees` as the `removeInvocationRoots` `beforeRootRemoval`
+callback. Exact invocation process quiescence is checked before and after that
+callback. A Git cleanup or quiescence failure preserves registered parent roots
+and ownership markers, fails the lane, and still reaches database teardown.
+Browser qualification of this cleanup order remains pending.
 
 ## A/B stabilization isolation and fault injection (implemented; final S5.2 qualification open)
 
@@ -457,6 +471,8 @@ Three enforcement levels:
    before deletion. Parent-death cleanup and runner cleanup are idempotent.
    Never delete by `eh-web-rt-*` glob. Preserve ownership markers on failure so
    an explicit same-invocation recovery can retry; root deletion failure is red.
+   E2E linked-worktree cleanup follows the [wrapper lifecycle](#e2e-lifecycle)
+   before registered parent Git roots are removed.
 
 Runner SIGKILL cannot execute a finalizer. The watchdog must handle its orphaned
 fixture processes; normal/failure/catchable-signal runner paths own root cleanup.
@@ -1180,7 +1196,10 @@ from Darwin qualification.
    (the composition),
    `web/test-support/__tests__/execution-ab-process-cleanup.integration.test.ts`
    (the real A/B lane) and `web/e2e/__tests__/run.test.ts` (the wrapper fails
-   its lane on the release's errors and stops its database only after it).
+   its lane on the release's errors and always attempts database stop after it).
+   E2E Git/root disposal additionally follows the [quiescent linked-worktree
+   order](#e2e-lifecycle), covered by
+   `web/test-support/__tests__/worktree-test-root.integration.test.ts`.
 9. Disposing a fault barrier that is still `armed` or `reached` MUST fail
    before cleanup — enforced by `assertDrained()` in
    `web/test-support/supervisor-fault-proxy.ts`, which `close()` calls, and
@@ -1310,9 +1329,9 @@ AT-17. Browser half stays open under S5.3.
 - The E2E wrapper mints its own process invocation before the database starts,
   registers the Playwright child under it (an unverifiable child fails the
   lane) and hands its tag to Playwright, so everything Playwright spawns is
-  owned. After Playwright exits it releases the invocation (tagged survivors,
-  then invocation-owned containers, then roots), then stops the database; a
-  survivor fails the lane even when the sweep reaped it.
+  owned. After Playwright exits it follows the [E2E cleanup order](#e2e-lifecycle),
+  then attempts database stop even when release fails; a survivor fails the lane
+  even when the sweep reaped it.
 
 ## Linked artifacts
 

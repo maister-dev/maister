@@ -28,7 +28,6 @@ export default defineConfig({
   retries: 0,
   reporter: "list",
   globalSetup: "./e2e/global-setup.ts",
-  globalTeardown: "./e2e/global-teardown.ts",
   use: {
     baseURL: BASE_URL,
     trace: "on-first-retry",

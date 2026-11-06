@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -7,6 +7,12 @@ import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import {
+  createInvocation,
+  fixtureProcessEnvironment,
+  registerRoot,
+  removeInvocationRoots,
+} from "../process-invocation";
 import {
   cleanupTestWorktrees,
   createTestWorktreesRoot,
@@ -76,5 +82,108 @@ describe("test worktree roots", () => {
     await expect(
       git(repository, "worktree", "list", "--porcelain"),
     ).resolves.not.toContain(worktreePath);
+  });
+
+  it("retires linked worktrees before removing their registered parent repository", async () => {
+    const repository = await mkdtemp(
+      path.join(os.tmpdir(), "maister-root-order-repo-"),
+    );
+    const evidence = await mkdtemp(
+      path.join(os.tmpdir(), "maister-root-order-evidence-"),
+    );
+    const invocation = await createInvocation(evidence);
+    const worktreesRoot = createTestWorktreesRoot("vitest", randomUUID());
+    const worktreePath = path.join(worktreesRoot, "project", "run");
+
+    temporaryRepositories.push(repository, evidence, worktreesRoot);
+    await git(repository, "init");
+    await git(repository, "config", "user.email", "test@example.invalid");
+    await git(repository, "config", "user.name", "MAIster Test");
+    await writeFile(path.join(repository, "README.md"), "test\n");
+    await git(repository, "add", "README.md");
+    await git(repository, "commit", "-m", "initial");
+    await mkdir(path.dirname(worktreePath), { recursive: true });
+    await git(
+      repository,
+      "worktree",
+      "add",
+      "-b",
+      "test-worktree",
+      worktreePath,
+    );
+    await registerRoot(invocation, repository, "fixture");
+    let registryAfterCleanup: string | null = null;
+
+    await removeInvocationRoots(invocation, async () => {
+      await cleanupTestWorktrees(worktreesRoot);
+      registryAfterCleanup = await git(
+        repository,
+        "worktree",
+        "list",
+        "--porcelain",
+      );
+    });
+
+    expect(registryAfterCleanup).not.toBeNull();
+    expect(registryAfterCleanup).not.toContain(worktreePath);
+    await expect(access(repository)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(worktreePath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("refuses a live owned process before root preparation and rechecks after it", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "maister-root-quiescence-"),
+    );
+    const evidence = await mkdtemp(
+      path.join(os.tmpdir(), "maister-root-quiescence-evidence-"),
+    );
+    const invocation = await createInvocation(evidence);
+    const environment = await fixtureProcessEnvironment(invocation);
+    let child: ChildProcess | null = null;
+
+    temporaryRepositories.push(root, evidence);
+    await registerRoot(invocation, root, "fixture");
+    try {
+      await expect(
+        removeInvocationRoots(invocation, async () => {
+          child = spawn(process.execPath, ["-e", "process.stdin.resume()"], {
+            env: { ...process.env, ...environment },
+            stdio: ["pipe", "ignore", "ignore"],
+          });
+          await new Promise<void>((resolve, reject) => {
+            child!.once("spawn", resolve);
+            child!.once("error", reject);
+          });
+        }),
+      ).rejects.toThrow(
+        "cannot remove roots while invocation processes remain alive",
+      );
+      await expect(access(root)).resolves.toBeUndefined();
+      let preparedWhileLive = false;
+
+      await expect(
+        removeInvocationRoots(invocation, async () => {
+          preparedWhileLive = true;
+        }),
+      ).rejects.toThrow(
+        "cannot remove roots while invocation processes remain alive",
+      );
+      expect(preparedWhileLive).toBe(false);
+    } finally {
+      const owned = child as ChildProcess | null;
+
+      if (owned && owned.exitCode === null && owned.signalCode === null) {
+        const exited = new Promise<void>((resolve) =>
+          owned.once("exit", () => resolve()),
+        );
+
+        owned.kill("SIGTERM");
+        await exited;
+      }
+    }
+    await removeInvocationRoots(invocation);
+    await expect(access(root)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

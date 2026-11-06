@@ -24,7 +24,6 @@ export default defineConfig({
   workers: 1,
   reporter: "list",
   globalSetup: "./e2e/librarian-global-setup.ts",
-  globalTeardown: "./e2e/global-teardown.ts",
   use: { baseURL, trace: "on-first-retry" },
   projects: [
     { name: "setup", testMatch: /.*\.setup\.ts$/ },
