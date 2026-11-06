@@ -150,7 +150,11 @@ export async function requireCompanyFlowProfessionalRole(
   owner: CompanyRunCredentialOwner,
   actor: NativeKnowledgeActor,
 ): Promise<
-  Readonly<{ bindingId: string; actionLimits: readonly CompanyAction[] }>
+  Readonly<{
+    bindingId: string;
+    actionLimits: readonly CompanyAction[];
+    platformMcp: boolean;
+  }>
 > {
   log.debug(
     {
@@ -212,18 +216,22 @@ export async function requireCompanyFlowProfessionalRole(
 
   return {
     bindingId: row.id,
+    platformMcp: configuration.data.definition.platformMcp,
     actionLimits: owner.actionLimits.filter((action) =>
       configuration.data.grantActions.includes(action),
     ),
   };
 }
 
+export type CompanyFlowNodeKnowledgeOwner = CompanyRunCredentialOwner &
+  Readonly<{ platformMcp: boolean }>;
+
 /** Resolve only the server-attested professional of this exact current Flow node. */
 export async function requireCompanyFlowNodeKnowledgeOwner(
   tx: SqlTransaction,
   owner: CompanyRunCredentialOwner,
   nodeAttemptId: string,
-): Promise<CompanyRunCredentialOwner> {
+): Promise<CompanyFlowNodeKnowledgeOwner> {
   log.debug(
     { runId: owner.runId, nodeAttemptId, companyId: owner.companyId },
     "checking current company Flow node authority",
@@ -268,6 +276,7 @@ export async function requireCompanyFlowNodeKnowledgeOwner(
 
   return {
     ...owner,
+    platformMcp: professional.platformMcp,
     agentId: actor.data.agentId,
     professionalRole: actor.data,
     bindingId: professional.bindingId,

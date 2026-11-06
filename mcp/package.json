@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "pnpm test:unit && pnpm test:integration",
     "test:unit": "vitest run --project unit",
-    "test:integration": "vitest run --project integration",
+    "test:integration": "pnpm build && vitest run --project integration",
     "test:watch": "vitest --project unit"
   },
   "dependencies": {

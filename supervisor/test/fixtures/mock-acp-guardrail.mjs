@@ -479,6 +479,58 @@ class GuardrailAgent {
       for (let i = 0; i < count; i += 1) {
         await this.requestTool(sessionId, "WebFetch", `tc-cap-rep-${i}`);
       }
+    } else if (scenario === "company_native_mcp_only") {
+      await this.requestTool(sessionId, "Read", "tc-company-read", "read");
+      await this.requestTool(
+        sessionId,
+        "mcp__maister__knowledge_search",
+        "tc-company-search",
+        "other",
+      );
+      await this.requestTool(sessionId, "Bash", "tc-company-shell", "execute");
+      await this.requestTool(
+        sessionId,
+        "mcp__maister__knowledge_get",
+        "tc-company-get",
+        "other",
+      );
+      await this.requestTool(
+        sessionId,
+        "mcp__maister__knowledge_confirm",
+        "tc-company-confirm",
+        "other",
+      );
+      await this.requestTool(
+        sessionId,
+        "mcp__maister__knowledge_witness_get",
+        "tc-company-witness",
+        "other",
+      );
+      await this.requestTool(
+        sessionId,
+        "mcp__maister__librarian_memory_remember",
+        "tc-company-private",
+        "other",
+      );
+      await this.requestTool(
+        sessionId,
+        "mcp__maister__knowledge_propose",
+        "tc-company-propose",
+        "other",
+      );
+    } else if (scenario === "company_native_read_scope") {
+      await this.requestTool(
+        sessionId,
+        "mcp__maister__knowledge_propose",
+        "tc-company-denied-proposal",
+        "other",
+      );
+      await this.requestTool(
+        sessionId,
+        "mcp__maister__knowledge_search",
+        "tc-company-read-search",
+        "other",
+      );
     } else if (scenario === "librarian_mcp_only") {
       // ADR-185 D5: a librarian turn's MCP-only profile. A built-in file read
       // and a web fetch are denied; the maister facade tool is allowed inline.

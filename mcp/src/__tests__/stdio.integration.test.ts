@@ -34,8 +34,8 @@ describe("MCP stdio wire contract", () => {
     await close();
   }
 
-  async function connectClient(token: string): Promise<Client> {
-    const connected = await connectCompiledMcp({ baseUrl, token });
+  async function connectClient(identity: Readonly<{token:string;toolset?:string}>): Promise<Client> {
+    const connected = await connectCompiledMcp({baseUrl,...identity});
 
     processClosers.set(connected.client, connected.close);
 
@@ -145,7 +145,7 @@ describe("MCP stdio wire contract", () => {
       throw new Error("Expected an HTTP fixture TCP address");
     }
     baseUrl = `http://127.0.0.1:${address.port}`;
-    client = await connectClient("mai_wire_test");
+    client = await connectClient({ token: "mai_wire_test" });
   });
 
   afterAll(async () => {
@@ -603,7 +603,7 @@ describe("MCP stdio wire contract", () => {
   });
 
   it("rejects a call without credentials before reaching REST", async () => {
-    const unauthenticated = await connectClient("");
+    const unauthenticated = await connectClient({ token: "" });
     const count = requests.length;
 
     try {
@@ -670,6 +670,58 @@ describe("MCP stdio wire contract", () => {
         }),
       },
     ]);
+  });
+
+  it("the bundled company facade lists only native read/proposal tools and rejects review, private memory and repository calls before REST", async () => {
+    const company = await connectClient({
+      token: "mai_company_wire",
+      toolset: "company",
+    });
+
+    try {
+      const { tools } = await company.listTools();
+
+      expect(tools.map((tool) => tool.name).sort()).toEqual(
+        [
+          "knowledge_search",
+          "knowledge_get",
+          "knowledge_evidence",
+          "knowledge_conflicts",
+          "knowledge_witness_get",
+          "knowledge_proposal_get",
+          "knowledge_capture_source",
+          "knowledge_propose",
+        ].sort(),
+      );
+      const inspected = await company.callTool({
+        name: "knowledge_get",
+        arguments: { recordId: "record-1", revision: 1 },
+      });
+
+      expect(inspected.isError).not.toBe(true);
+      expect(requests.at(-1)).toMatchObject({
+        method: "GET",
+        url: "/api/v1/ext/knowledge/record-1?revision=1",
+        authorization: "Bearer mai_company_wire",
+      });
+      const count = requests.length;
+
+      for (const name of [
+        "knowledge_confirm",
+        "knowledge_decide",
+        "knowledge_proposals_list",
+        "librarian_memory_remember",
+        "agent_memory_write",
+        "run_promote",
+      ]) {
+        const refused = await company.callTool({ name, arguments: {} });
+
+        expect(refused.isError).toBe(true);
+      }
+      expect(requests).toHaveLength(count);
+    } finally {
+      await company.close();
+    }
   });
 
   it("rejects an unknown tool before reaching REST", async () => {

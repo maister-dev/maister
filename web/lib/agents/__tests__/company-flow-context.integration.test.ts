@@ -33,6 +33,7 @@ import { updateCompanyFlowBinding } from "../company-flow-binding-mutations";
 import { reserveCompanyFlowRun } from "../company-flow-launch";
 import { loadCompanyFlowSessionContext } from "../company-flow-session-context";
 import { resolveFlowBoundAgent } from "../flow-binding";
+import { resolveCompanyFlowNodeEnforcement } from "../company-flow-enforcement";
 import { assertCompanyRunReadAccess } from "../company-run-read-access";
 import {
   issueCompanyAgentRunToken,
@@ -233,6 +234,10 @@ beforeAll(async () => {
   await writeFile(
     join(source, "maister-agents/migration-observer.md"),
     "---\nname: Retained operations observer\ndescription: Inspect an authorized stand\nkind: operational\ncompletion: {contract: operational_v1}\nspecialist:\n  responsibilities: [Inspect authorized stand state]\n  targetClasses: [stand]\nmode: session\nworkspace: none\ntriggers: [manual]\nrisk_tier: read_only\n---\nPreserve supported observations and missing evidence.\n",
+  );
+  await writeFile(
+    join(source, "maister-agents/no-tool-observer.md"),
+    "---\nname: Tool-less observer\ndescription: Evaluate supplied assignment input without native tools\nspecialist:\n  responsibilities: [Evaluate supplied input]\n  targetClasses: [stand]\nmode: session\nworkspace: none\ntriggers: [manual, flow]\nrisk_tier: read_only\nplatform_mcp: false\nmemory: none\n---\nReturn a bounded result from supplied input without requesting tools.\n",
   );
   await initRepo(source);
   await git(
@@ -1587,6 +1592,68 @@ it("loads frozen company graph input and sessions without repository records, re
   }
 });
 
+it("respects an explicitly tool-less professional declaration even when reviewed action limits include knowledge", async () => {
+  const effective = await database.db.transaction((tx) =>
+    resolveInstalledAgentDefinition(tx, {
+      agentId: "rah:no-tool-observer",
+      packageInstallId: preparedAssignment.standingDefinition.packageInstallId,
+    }),
+  );
+
+  if (!effective.resolvedRevision)
+    throw new Error("The tool-less role has no exact installed revision");
+  await createCompanySpecialistBinding(
+    database.db,
+    requesterId,
+    effective.parsed.id,
+    {
+      owner: { kind: "company", companyId: request.companyId },
+      packageInstallId: effective.packageInstallId,
+      packageRevision: effective.resolvedRevision,
+      definitionSha256: agentDefinitionSha256(effective.parsed),
+      configuration: {},
+      grantActions: ["knowledge:read", "knowledge:propose"],
+      enabled: true,
+      idempotencyKey: randomUUID(),
+    },
+  );
+  await database.pool.query(
+    "UPDATE runs SET status='Running',current_step_id='diagnose' WHERE id=$1",
+    [nativeFlowRunId],
+  );
+  const node = await appendNodeAttempt({
+    runId: nativeFlowRunId,
+    nodeId: "diagnose",
+    nodeType: "ai_coding",
+    db: database.db,
+  });
+
+  await markNodeRunning(node.id, database.db);
+  const compatibility = useEngineVersion("3.12.0");
+
+  try {
+    await resolveFlowBoundAgent({
+      agentId: effective.parsed.id,
+      runId: nativeFlowRunId,
+      nodeAttemptId: node.id,
+      executorAgent: "claude",
+      worktreePath: join(root, "unused-company-persona"),
+      db: database.db,
+    });
+    await expect(
+      database.db.transaction((tx) =>
+        resolveCompanyFlowNodeEnforcement(tx, nativeFlowRunId, node.id),
+      ),
+    ).resolves.toMatchObject({
+      tools: { allow: [] },
+      mcps: { allowServers: [] },
+      enforcedClasses: ["tools", "mcps"],
+    });
+  } finally {
+    compatibility.mockRestore();
+  }
+});
+
 it("resolves the actual company Flow driving persona from its reviewed provider and attests its current node before returning prompt bytes", async () => {
   await database.pool.query(
     "UPDATE runs SET status='Running',current_step_id='diagnose' WHERE id=$1",
@@ -1613,6 +1680,11 @@ it("resolves the actual company Flow driving persona from its reviewed provider 
         requireFlowTrigger: false,
       }),
     ).rejects.toMatchObject({ code: "PRECONDITION" });
+    await expect(
+      database.db.transaction((tx) =>
+        resolveCompanyFlowNodeEnforcement(tx, nativeFlowRunId, node.id),
+      ),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     const bound = await resolveFlowBoundAgent({
       agentId: preparedAssignment.responsibleAgentId,
       runId: nativeFlowRunId,
@@ -1623,6 +1695,24 @@ it("resolves the actual company Flow driving persona from its reviewed provider 
       requireFlowTrigger: false,
     });
 
+    const profile = await database.db.transaction((tx) =>
+      resolveCompanyFlowNodeEnforcement(tx, nativeFlowRunId, node.id),
+    );
+
+    expect(profile).toMatchObject({
+      tools: {
+        allow: expect.arrayContaining([
+          "mcp__maister__knowledge_search",
+          "mcp__maister__knowledge_propose",
+        ]),
+      },
+      mcps: { allowServers: ["maister"] },
+      enforcedClasses: ["tools", "mcps"],
+    });
+    expect(profile.tools?.allow).not.toContain("Read");
+    expect(profile.tools?.allow).not.toContain(
+      "mcp__maister__knowledge_confirm",
+    );
     expect(bound).toEqual({
       mode: "session",
       prompt: `${preparedAssignment.standingDefinition.definition.prompt.trim()}\n\n## Specialist configuration\n{}`,
@@ -1976,6 +2066,14 @@ it("requires a separate reviewed company persona and fences changed coordinator 
       db: database.db,
     });
 
+    const profile = await database.db.transaction((tx) =>
+      resolveCompanyFlowNodeEnforcement(tx, nativeFlowRunId, node.id),
+    );
+
+    expect(profile.tools?.allow).toContain("mcp__maister__knowledge_search");
+    expect(profile.tools?.allow).not.toContain(
+      "mcp__maister__knowledge_propose",
+    );
     expect(bound).toEqual({
       mode: "session",
       prompt: `${effective.parsed.prompt.trim()}\n\n## Specialist configuration\n{}`,
@@ -2122,6 +2220,11 @@ it("requires a separate reviewed company persona and fences changed coordinator 
   await expect(
     database.db.transaction((tx) =>
       resolveKnowledgeRunIdentity(tx, nativeFlowRunId, node.id),
+    ),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await expect(
+    database.db.transaction((tx) =>
+      resolveCompanyFlowNodeEnforcement(tx, nativeFlowRunId, node.id),
     ),
   ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
   await expect(

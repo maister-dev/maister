@@ -1,0 +1,136 @@
+{
+  "task": "T20.1",
+  "slice": "Shared current-node native MCP-only policy and actual bundled facade/host guard contracts",
+  "date": "2026-11-06",
+  "baseCommit": "adf8143b3b311248357d91fb4f64ac9a443a5ea5",
+  "status": "Native policy components qualified; graph application/materialization/driver pending",
+  "engineVersion": "3.11.1",
+  "migrations": [],
+  "red": {
+    "facade": {
+      "tests": 9,
+      "failed": 1,
+      "log": "facade-red.log.gz",
+      "failure": "The real bundled process did not recognize the company subset and exposed the full legacy tool catalog."
+    },
+    "guard": {
+      "tests": 3,
+      "failed": 2,
+      "log": "guard-red.log.gz",
+      "failure": "The placeholder policy denied the valid native tools as well as unsafe calls, tripping the breaker early and refusing read-scope calls."
+    }
+  },
+  "gates": {
+    "webIntegration": {
+      "exitCode": 0,
+      "files": 7,
+      "tests": 117,
+      "durationSeconds": 57.44,
+      "log": "web-integration.log.gz"
+    },
+    "webUnit": {
+      "exitCode": 0,
+      "files": 889,
+      "tests": 9304,
+      "durationSeconds": 27.31,
+      "log": "web-unit.log.gz"
+    },
+    "mcpUnit": {
+      "exitCode": 0,
+      "files": 6,
+      "tests": 402,
+      "durationSeconds": 0.603,
+      "log": "mcp-unit.log.gz"
+    },
+    "mcpIntegration": {
+      "exitCode": 0,
+      "files": 1,
+      "tests": 9,
+      "durationSeconds": 0.803,
+      "log": "mcp-integration.log.gz"
+    },
+    "supervisorUnit": {
+      "exitCode": 0,
+      "files": 50,
+      "tests": 500,
+      "durationSeconds": 14.77,
+      "log": "supervisor-unit.log.gz"
+    },
+    "supervisorIntegration": {
+      "exitCode": 0,
+      "files": 38,
+      "tests": 350,
+      "durationSeconds": 87.01,
+      "log": "supervisor-integration.log.gz"
+    },
+    "web-types": {
+      "exitCode": 0,
+      "log": "web-types.log.gz"
+    },
+    "mcp-types": {
+      "exitCode": 0,
+      "log": "mcp-types.log.gz"
+    },
+    "supervisor-types": {
+      "exitCode": 0,
+      "log": "supervisor-types.log.gz"
+    },
+    "web-lint": {
+      "exitCode": 0,
+      "log": "web-lint.log.gz"
+    },
+    "mcp-lint": {
+      "exitCode": 0,
+      "log": "mcp-lint.log.gz"
+    },
+    "supervisor-lint": {
+      "exitCode": 0,
+      "log": "supervisor-lint.log.gz"
+    },
+    "format": {
+      "exitCode": 0,
+      "log": "format.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "log": "docs.log.gz"
+    }
+  },
+  "qualified": [
+    "One shared native scope/tool contract feeds the company facade subset and exact supervisor tool/MCP allow-lists.",
+    "The bundled dist/main.js process lists only eight existing native read/proposal tools, forwards an authenticated record GET correctly, and rejects review/confirmation/private-memory/repository calls before REST.",
+    "Current attested root/diagnostic roles yield their reviewed action intersection. Missing attestation and changed coordinator authority refuse; platform_mcp:false produces a tool-less policy even with configured knowledge limits.",
+    "Actual company-owned supervisor workspaces/sessions apply MCP-only policy without readOnlySession shortcuts. Controlled ACP attempts prove file/shell/confirmation/private-memory denial under auto approval, positive native calls, read-only scope and denial-breaker behavior.",
+    "No new token scope, permission grant, scheduler, attempt ledger or database migration is introduced. Existing private librarian and project/native RAH evidence behavior remain green."
+  ],
+  "qualificationBoundary": "Supervisor permission requests come from the controlled ACP fixture, not a real-model adapter. MCP stdio is the actual built bundle against a disposable loopback API fixture, not a stand or real knowledge handler. Web current-node policy uses real trusted package/PostgreSQL services. Graph materialization and dispatch must still apply this policy; engine remains 3.11.1.",
+  "intermediateFailures": [
+    "The first supervisor fixture tried to adopt the runtime root as a company directory. The existing owner guard correctly refused it. The fixture now uses the established .company/sha256([companyId,runId]) directory before the valid enforcement RED was recorded.",
+    "Final formatting identified only the newly added MJS scenario lines; formatting was corrected without changing behavior."
+  ],
+  "notYetQualified": [
+    "Graph capability/profile materialization with selected-runner enforcement readiness and durable effective-profile capture",
+    "Company branch in the existing graph loader/traversal and actual ACP node dispatch",
+    "Human/form/child waits and graph terminal cleanup/restart",
+    "Engine 3.12.0 activation, T21 full phase regression and actual companion/stand pilot"
+  ],
+  "sourceSha256": {
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "82c9e50dacb1119277d42856ca2d2ddb5638cfcaf85f748ca30eb9c9a86078bf",
+    "AGENTS.md": "d102b04843d9d3548d0fa229a363f52883a8ba8b2512a76456f4884acae0684c",
+    "docs/system-analytics/specialist-runtime.md": "1121d4034994f37005cc56799349a73172b3509a0930632261fb208e561b411c",
+    "runtime/company-flow-tools.ts": "f9f56ca23098a8f48cc51247d931fc44dbdaad4a30146cce8a4d30d19fbf4367",
+    "mcp/package.json": "846899e6bbe9d39e295c88cac2760e7322b5ad20b8c3d590a70908b2a78f467e",
+    "mcp/src/main.ts": "051858b5ef770ef7861eb8d3a7fddeadef5dbcbf7adff6626a7a3fa381e7c6ae",
+    "mcp/src/toolsets.ts": "3785696a912dab0d127333099f33dfaed3b2f615b0873b53308ee4776ce36a55",
+    "mcp/src/__tests__/stdio.integration.test.ts": "6282e06e0b4172813d289f42a5dd5b0db790a5c38472248411a2f537c4908668",
+    "supervisor/src/__tests__/company-native-mcp-only.integration.test.ts": "0e25cac0137ccc41b4ee7efccf39d86f1d557b61ab30d9da48e296bc768d62e2",
+    "supervisor/test/fixtures/mock-acp-guardrail.mjs": "4d001cd5667f5253d80539ce76011a24d8b9b9ed69e29d5fc9501c75b8aa566d",
+    "web/lib/agents/company-flow-enforcement.ts": "389624412fcc8005835e1f8a549b944132e5e8c7d31073b2c8e1c53fb5ef8f94",
+    "web/lib/agents/company-run-credential-owner.ts": "d80d87670a644793f53a0d0e00c64acdb3eba6aa3b42f75ec65e6ed084a82d0f",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "99298bdd66e4e0da97a422ee0a3a42376ede87c4a6edf8497031070c3aa02e74"
+  }
+}
