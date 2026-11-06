@@ -28,7 +28,10 @@ import {
   recordTakeoverReturn,
   REVIEW_REWORK_CLAIM_DECISION,
 } from "@/lib/flows/graph/ledger";
-import { loadRun, loadRunProjectId } from "@/lib/flows/graph/runner-core";
+import {
+  loadProjectRun as loadRun,
+  loadRunProjectId,
+} from "@/lib/flows/graph/runner-core";
 import { downstreamOf } from "@/lib/flows/graph/runner-graph";
 import { runFlow } from "@/lib/flows/runner";
 import { countOperatorCommits } from "@/lib/runs/claim-head";

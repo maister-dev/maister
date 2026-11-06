@@ -15,7 +15,9 @@ import {
   gt,
   inArray,
   isNull,
+  isNotNull,
   notInArray,
+  or,
   sql,
 } from "drizzle-orm";
 import pino from "pino";
@@ -26,6 +28,7 @@ import {
   inspectOperationalContextMount,
   operationalContextMountSnapshots,
   operationalWorkspace,
+  isCompanyFlowResource,
 } from "@/lib/agents/operational-context";
 import { restoreAgentMaterialization } from "@/lib/agents/dirty-watchdog";
 import { operationalAgentRuntimePath } from "@/lib/agents/workspace-paths";
@@ -110,8 +113,9 @@ export async function disposeOperationalRun(
   const [run] = await db.select().from(runs).where(eq(runs.id, runId));
 
   if (
-    run?.agentKind !== "operational" ||
-    !run.operationalTerminal ||
+    !run ||
+    (!(run.agentKind === "operational" && run.operationalTerminal) &&
+      !isCompanyFlowResource(run)) ||
     !run.operationalCleanup ||
     !TERMINAL.includes(run.status as (typeof TERMINAL)[number])
   )
@@ -606,7 +610,10 @@ export async function sweepOperationalDispositions(
     .from(runs)
     .where(
       and(
-        eq(runs.agentKind, "operational"),
+        or(
+          eq(runs.agentKind, "operational"),
+          and(eq(runs.runKind, "flow"), isNotNull(runs.companyId)),
+        ),
         inArray(runs.status, [...TERMINAL]),
         sql`${runs.operationalCleanup}->>'state' IN ('armed','retained','retry','removed','preserving')`,
         sql`(${runs.operationalCleanup}->>'dueAt')::timestamptz <= ${now}`,

@@ -2660,7 +2660,7 @@ export const runs = pgTable(
     operationalDueIndex: index("runs_operational_cleanup_due_idx")
       .on(sql`(${t.operationalCleanup}->>'dueAt')`, t.id)
       .where(
-        sql`${t.agentKind} = 'operational' AND ${t.operationalCleanup}->>'state' IN ('armed','retry','removed','preserving')`,
+        sql`(${t.agentKind} = 'operational' OR (${t.runKind}='flow' AND ${t.companyId} IS NOT NULL AND ${t.projectId} IS NULL AND ${t.agentKind} IS NULL AND ${t.agentWorkspace}='none' AND ${t.companyExecutionSnapshot}->>'schemaVersion'='2' AND ${t.resultContract}->>'kind'='flow_export' AND ${t.resultContract}->'required'='true'::jsonb)) AND ${t.operationalCleanup}->>'state' IN ('armed','retry','removed','preserving')`,
       ),
     operationalContractCheck: check(
       "runs_operational_contract_check",
@@ -2676,7 +2676,7 @@ export const runs = pgTable(
     ),
     operationalCleanupCheck: check(
       "runs_operational_cleanup_check",
-      sql`${t.operationalCleanup} IS NULL OR (${t.agentKind} = 'operational' AND jsonb_typeof(${t.operationalCleanup}) = 'object' AND ${t.operationalCleanup}->'version' = '1'::jsonb AND ${t.operationalCleanup}->>'state' IN ('retained','armed','preserving','removed','released','retry','exhausted') AND ${t.operationalCleanup}->>'resourceKind' IN ('worktree','ephemeral_checkout','plain_directory','shared_repository') AND ${t.operationalCleanup}->>'workspace' IN ('none','repo_read','worktree') AND ${t.operationalCleanup}->'attempts' IN ('0'::jsonb,'1'::jsonb,'2'::jsonb,'3'::jsonb,'4'::jsonb,'5'::jsonb) AND jsonb_typeof(${t.operationalCleanup}->'revision') = 'number' AND ${t.operationalCleanup}->>'revision' ~ '^[1-9][0-9]*$' AND jsonb_typeof(${t.operationalCleanup}->'evidenceIds') = 'array' AND (${t.operationalCleanup}->'lease' = 'null'::jsonb OR jsonb_typeof(${t.operationalCleanup}->'lease') = 'object' AND ${t.operationalCleanup}->'lease' ?& array['id','owner','expiresAt']) AND (${t.operationalCleanup}->>'state' <> 'released' OR jsonb_typeof(${t.operationalCleanup}->'releasedAt') = 'string') AND (${t.operationalCleanup}->>'state' NOT IN ('removed','released') OR jsonb_typeof(${t.operationalCleanup}->'removedAt') = 'string')) IS TRUE`,
+      sql`${t.operationalCleanup} IS NULL OR ((${t.agentKind} = 'operational' OR (${t.runKind}='flow' AND ${t.companyId} IS NOT NULL AND ${t.projectId} IS NULL AND ${t.agentKind} IS NULL AND ${t.agentWorkspace}='none' AND ${t.companyExecutionSnapshot}->>'schemaVersion'='2' AND ${t.resultContract}->>'kind'='flow_export' AND ${t.resultContract}->'required'='true'::jsonb)) AND jsonb_typeof(${t.operationalCleanup}) = 'object' AND ${t.operationalCleanup}->'version' = '1'::jsonb AND ${t.operationalCleanup}->>'state' IN ('retained','armed','preserving','removed','released','retry','exhausted') AND ${t.operationalCleanup}->>'resourceKind' IN ('worktree','ephemeral_checkout','plain_directory','shared_repository') AND ${t.operationalCleanup}->>'workspace' IN ('none','repo_read','worktree') AND ${t.operationalCleanup}->'attempts' IN ('0'::jsonb,'1'::jsonb,'2'::jsonb,'3'::jsonb,'4'::jsonb,'5'::jsonb) AND jsonb_typeof(${t.operationalCleanup}->'revision') = 'number' AND ${t.operationalCleanup}->>'revision' ~ '^[1-9][0-9]*$' AND jsonb_typeof(${t.operationalCleanup}->'evidenceIds') = 'array' AND (${t.operationalCleanup}->'lease' = 'null'::jsonb OR jsonb_typeof(${t.operationalCleanup}->'lease') = 'object' AND ${t.operationalCleanup}->'lease' ?& array['id','owner','expiresAt']) AND (${t.operationalCleanup}->>'state' <> 'released' OR jsonb_typeof(${t.operationalCleanup}->'releasedAt') = 'string') AND (${t.operationalCleanup}->>'state' NOT IN ('removed','released') OR jsonb_typeof(${t.operationalCleanup}->'removedAt') = 'string')) IS TRUE`,
     ),
     flowDriverClaim: check(
       "runs_flow_driver_claim_check",
@@ -8994,7 +8994,7 @@ export const domainEvents = pgTable(
     ),
     companyKindCheck: check(
       "domain_events_company_kind_check",
-      sql`(${t.companyId} IS NULL OR (${t.taskId} IS NULL AND ((${t.kind} IN ('knowledge.record_changed','specialist.assignment_changed') AND ${t.runId} IS NULL) OR (${t.kind} IN ('run.done','run.failed','run.crashed','run.abandoned','run.needs_input','run.operational_attention_acknowledged','run.operational_cleanup_changed') AND ${t.runId} IS NOT NULL)))) IS TRUE`,
+      sql`(${t.companyId} IS NULL OR (${t.taskId} IS NULL AND ((${t.kind} IN ('knowledge.record_changed','specialist.assignment_changed') AND ${t.runId} IS NULL) OR (${t.kind} IN ('run.done','run.failed','run.crashed','run.abandoned','run.needs_input','run.escalated','run.operational_attention_acknowledged','run.operational_cleanup_changed') AND ${t.runId} IS NOT NULL)))) IS TRUE`,
     ),
     specialistAssignmentIdx: index("domain_events_specialist_assignment_idx")
       .on(sql`(${t.payload}->>'assignmentId')`, t.id)

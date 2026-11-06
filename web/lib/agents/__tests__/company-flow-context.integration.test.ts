@@ -83,6 +83,10 @@ import {
   workspaceSpecFor,
 } from "@/lib/execution-host/adoption";
 import { createExecutionHosts } from "@/lib/execution-host";
+import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
+import { startProjectionWorker } from "@/lib/execution-host/events/projection-worker";
+import { runFlow } from "@/lib/flows/runner";
+import { tryStartRun } from "@/lib/scheduler";
 import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
 import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
@@ -442,6 +446,7 @@ beforeAll(async () => {
   ).rows;
   await applyMainMigration(database.db, "0249_company_flow_node_credentials");
   await applyMainMigration(database.db, "0250_company_flow_workspace_witness");
+  await applyMainMigration(database.db, "0251_company_flow_runtime");
   migrationTokensAfter = (
     await database.pool.query<{ value: JsonValue }>(
       "SELECT to_jsonb(t) AS value FROM project_tokens t ORDER BY id",
@@ -1555,6 +1560,26 @@ it("loads frozen company graph input and sessions without repository records, re
     });
     expect(context).not.toHaveProperty("task");
     expect(context).not.toHaveProperty("project");
+    const { loadRun } = await import("@/lib/flows/graph/runner-core");
+    const graphRun = await loadRun(database.db, nativeFlowRunId);
+
+    expect(graphRun).toMatchObject({
+      run: {
+        id: nativeFlowRunId,
+        companyId: request.companyId,
+        projectId: null,
+      },
+      task: null,
+      flow: null,
+      workspace: null,
+      projectSlug: "_company",
+      companyContext: { input: context.input },
+      execTrust: "trusted",
+    });
+    expect([...graphRun.sessions.keys()]).toEqual(["default"]);
+    expect(graphRun.sessions.get("default")?.runner).toEqual(
+      context.sessions[0]?.runnerSnapshot,
+    );
     const session = context.sessions[0]!;
 
     await database.pool.query(
@@ -1605,6 +1630,240 @@ it("loads frozen company graph input and sessions without repository records, re
     compatibility.mockRestore();
   }
 });
+
+it("CBS-03 executes a native company graph through the existing driver, real supervisor and controlled ACP process without repository records", async () => {
+  const hostRoot = join(root, "reservation-host");
+  const checkedAt = new Date().toISOString();
+
+  await writeFile(
+    join(hostRoot, "adapter-smoke-cache.json"),
+    JSON.stringify({
+      version: 2,
+      adapters: {
+        claude: {
+          status: "ok",
+          checkedAt,
+          protocolVersion: 1,
+          capabilityEnforcement: {
+            status: "ok",
+            checkedAt,
+            protocolVersion: 1,
+            probeVersion: 2,
+          },
+        },
+      },
+    }),
+  );
+  const supervisor = await startRealSupervisor({
+    runtimeRoot: hostRoot,
+    workspaceRoots: [join(root, "worktrees")],
+    fixtureArgs: ["--hang"],
+    env: {
+      MAISTER_ADAPTER_SMOKE_CACHE_PATH: join(
+        hostRoot,
+        "adapter-smoke-cache.json",
+      ),
+    },
+  });
+  const restoreUrl = useRealSupervisorUrl(supervisor.url);
+  const compatibility = useEngineVersion("3.12.0");
+  const worker = startProjectionWorker({
+    db: database.db,
+    projectors: canonicalProjectors,
+  });
+  const previousCap = process.env.MAISTER_MAX_CONCURRENT_RUNS;
+
+  setDefaultTransportForTests(null);
+  resetResolverForTests();
+  resetRegistrarStateForTests();
+  try {
+    const output = {
+      schemaVersion: 1,
+      findings: [],
+      knowledgeProposals: [],
+      selection: [],
+    };
+    const assignment = await createSpecialistAssignment(
+      database.db,
+      requesterId,
+      {
+        ...preparedAssignment,
+        origin: { kind: "manual", interactionId: randomUUID() },
+        objectiveInput: {
+          ...preparedAssignment.objectiveInput,
+          input:
+            "\nfixture-output:" +
+            JSON.stringify({
+              bytes: 0,
+              text:
+                "```json maister:output\n" + JSON.stringify(output) + "\n```",
+            }) +
+            "\n",
+        },
+      },
+    );
+    const hosts = createExecutionHosts({
+      db: database.db,
+      transport: createLocalDirectTransport(),
+    });
+
+    await expect(hosts.local().diagnostics()).resolves.toMatchObject({
+      kind: "ready",
+      diagnostics: {
+        adapters: expect.arrayContaining([
+          expect.objectContaining({
+            id: "claude",
+            smoke: expect.objectContaining({
+              capabilityEnforcement: expect.objectContaining({ status: "ok" }),
+            }),
+          }),
+        ]),
+      },
+    });
+    const receipt = await reserveCompanyFlowRun(
+      database.db,
+      requesterId,
+      {
+        ...request,
+        assignmentId: assignment.id,
+        assignmentRevision: assignment.revision,
+        inputRevision: assignment.inputRevision,
+      },
+      hosts,
+    );
+
+    expect(await tryStartRun(receipt.runId, { db: database.db })).toMatchObject(
+      { started: true },
+    );
+    // Keep unrelated admission fixtures queued while this controlled traversal owns its host.
+    vi.stubEnv("MAISTER_MAX_CONCURRENT_RUNS", "1");
+    await Promise.all([
+      runFlow(receipt.runId, {
+        db: database.db,
+        executionHosts: hosts,
+        runtimeRoot: hostRoot,
+      }),
+      runFlow(receipt.runId, {
+        db: database.db,
+        executionHosts: hosts,
+        runtimeRoot: hostRoot,
+      }),
+    ]);
+    const [completed] = await database.db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, receipt.runId));
+
+    expect(completed).toMatchObject({
+      status: "Done",
+      projectId: null,
+      companyId: request.companyId,
+      taskId: null,
+      flowId: null,
+      operationalIntegrityBaseline: {
+        owner: { kind: "company", companyId: request.companyId },
+      },
+      operationalCleanup: {
+        state: "released",
+        resourceKind: "plain_directory",
+        workspace: "none",
+      },
+    });
+    const commands = await database.pool.query<{ kind: string }>(
+      "SELECT kind FROM execution_commands WHERE run_id=$1",
+      [receipt.runId],
+    );
+
+    expect(
+      commands.rows.filter((command) => command.kind === "session.create"),
+    ).toHaveLength(1);
+    expect(
+      commands.rows.filter((command) => command.kind === "session.prompt"),
+    ).toHaveLength(1);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT validity,value FROM run_results WHERE run_id=$1",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toMatchObject([{ validity: "valid", value: output }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM project_tokens WHERE company_run_id=$1 AND revoked_at IS NULL",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toEqual([{ count: 0 }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status FROM specialist_assignments WHERE id=$1",
+          [assignment.id],
+        )
+      ).rows,
+    ).toEqual([{ status: "active" }]);
+    expect(
+      (await hosts.local().listSessions()).filter(
+        (session) => session.runId === receipt.runId,
+      ),
+    ).toMatchObject([{ status: "exited" }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT (SELECT count(*)::int FROM projects) AS projects,(SELECT count(*)::int FROM tasks) AS tasks,(SELECT count(*)::int FROM workspaces) AS workspaces",
+        )
+      ).rows,
+    ).toEqual([{ projects: 0, tasks: 0, workspaces: 0 }]);
+    const stale = await database.pool.query<{ id: string }>(
+      "SELECT id FROM runs WHERE company_id=$1 AND run_kind='flow' AND status='Pending' AND (company_execution_snapshot->'coordinatorFlowBinding'->>'revision')::int < $2 ORDER BY id LIMIT 1",
+      [request.companyId, request.coordinatorBindingRevision],
+    );
+
+    expect(stale.rows).toHaveLength(1);
+    const staleRunId = stale.rows[0]!.id;
+
+    vi.stubEnv("MAISTER_MAX_CONCURRENT_RUNS", "100");
+    expect(await tryStartRun(staleRunId, { db: database.db })).toMatchObject({
+      started: true,
+    });
+    await expect(
+      runFlow(staleRunId, {
+        db: database.db,
+        executionHosts: hosts,
+        runtimeRoot: hostRoot,
+      }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect(
+      (
+        await database.pool.query("SELECT status FROM runs WHERE id=$1", [
+          staleRunId,
+        ])
+      ).rows,
+    ).toEqual([{ status: "Failed" }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt')",
+          [staleRunId],
+        )
+      ).rows,
+    ).toEqual([{ count: 0 }]);
+  } finally {
+    if (previousCap === undefined)
+      delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
+    else process.env.MAISTER_MAX_CONCURRENT_RUNS = previousCap;
+    await worker.stop();
+    await stopRuntimeEventConsumers();
+    await supervisor.stop();
+    restoreUrl();
+    compatibility.mockRestore();
+    resetResolverForTests();
+    resetRegistrarStateForTests();
+    setDefaultTransportForTests(null);
+  }
+}, 120000);
 
 it("respects an explicitly tool-less professional declaration even when reviewed action limits include knowledge", async () => {
   const effective = await database.db.transaction((tx) =>

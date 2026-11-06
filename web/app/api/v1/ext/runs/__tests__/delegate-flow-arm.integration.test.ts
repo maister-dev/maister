@@ -478,7 +478,8 @@ it.each(["task", "run"] as const)(
       kind: "agent",
       id: agentId,
     });
-    const { loadRun } = await import("@/lib/flows/graph/runner-core");
+    const { loadProjectRun: loadRun } =
+      await import("@/lib/flows/graph/runner-core");
 
     expect((await loadRun(db, result.childRunId)).task.prompt).toBe(prompt);
   },
@@ -611,7 +612,8 @@ it("IT-CBE-06 native Flow delegation keeps original input out of shared carrier 
   expect(child.delegation_snapshot).toMatchObject({
     nativeInput: { prompt: privatePrompt, title: privateTitle },
   });
-  const { loadRun } = await import("@/lib/flows/graph/runner-core");
+  const { loadProjectRun: loadRun } =
+    await import("@/lib/flows/graph/runner-core");
   const loaded = await loadRun(db, result.childRunId);
 
   expect(loaded.task.prompt).toBe(privatePrompt);

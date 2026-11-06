@@ -27,7 +27,7 @@ import {
   runs,
   users,
 } from "@/lib/db/schema";
-import { loadRun } from "@/lib/flows/graph/runner-core";
+import { loadProjectRun as loadRun } from "@/lib/flows/graph/runner-core";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { buildContext } from "@/lib/flows/context";
 import { runNodeGates } from "@/lib/flows/graph/gates-exec";

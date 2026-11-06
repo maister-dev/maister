@@ -24,7 +24,10 @@ import {
   supersedePrior,
 } from "@/lib/flows/graph/artifact-store";
 import { downstreamOf } from "@/lib/flows/graph/runner-graph";
-import { loadRun, loadRunProjectId } from "@/lib/flows/graph/runner-core";
+import {
+  loadProjectRun as loadRun,
+  loadRunProjectId,
+} from "@/lib/flows/graph/runner-core";
 import { runFlow } from "@/lib/flows/runner";
 import { countOperatorCommits } from "@/lib/runs/claim-head";
 import { loadProjectMainBranch } from "@/lib/runs/takeover-context";

@@ -667,6 +667,22 @@ export async function agentMaterializationPathsForRun(
   return record ? [...record.paths] : [];
 }
 
+/** Platform generation witnesses include the existing ownership journal and mutex files. */
+export async function agentMaterializationWitnessPathsForRun(
+  cwd: string,
+  runId: string,
+): Promise<string[]> {
+  return [
+    ...(await agentMaterializationPathsForRun(cwd, runId)),
+    ".maister/agent-materialization/index.json",
+    `.maister/agent-materialization/runs/${runId}.json`,
+    ".maister/agent-materialization/mutex.sqlite",
+    ".maister/agent-materialization/mutex.sqlite-journal",
+    ".maister/agent-materialization/mutex.sqlite-shm",
+    ".maister/agent-materialization/mutex.sqlite-wal",
+  ];
+}
+
 export async function listAgentMaterializationRunIds(
   cwdInput: string,
 ): Promise<string[]> {

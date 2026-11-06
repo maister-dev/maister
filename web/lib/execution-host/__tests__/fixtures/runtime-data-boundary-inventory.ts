@@ -516,6 +516,21 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       ],
     ),
     ...classified(
+      "lib/agents/company-flow-workspace.ts",
+      "repository-worktree",
+      "Server-resolved company/run plain source and adapter directories use the existing shared materialization boundary; no supervisor-private paths or repository identity is supplied",
+      [
+        ["prepareCompanyFlowWorkspace", "node:fs/promises.mkdir", "write"],
+        ["prepareCompanyFlowWorkspace", "node:fs/promises.readdir", "list"],
+      ],
+      {
+        authority:
+          "Exact retained company Flow capture, current assignment authority and active execution generation",
+        lifetime:
+          "Existing source baseline and leased materialization until bounded terminal disposition",
+      },
+    ),
+    ...classified(
       "lib/agents/package-contract.ts",
       "repository-worktree",
       "Inert validation of package-owned agent sources before operational admission",
@@ -2682,6 +2697,9 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["captureOperationalGeneration", false],
     ["verifyOperationalIntegrity", false],
   ]),
+  ...wrappers("lib/agents/company-flow-workspace.ts", "repository-worktree", [
+    ["prepareCompanyFlowWorkspace", false],
+  ]),
   ...wrappers("lib/agents/package-contract.ts", "repository-worktree", [
     ["readPackageAgentSources", true],
     ["assertPackageOperationalContracts", true],
@@ -2861,6 +2879,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ]),
   ...wrappers("lib/agents/materialization-manifest.ts", "repository-worktree", [
     ["agentMaterializationPathsForRun", false],
+    ["agentMaterializationWitnessPathsForRun", false],
     ["assertSafeAgentMaterializationPath", false],
     ["listAgentMaterializationRunIds", false],
     ["materializeWithAgentLease", false],

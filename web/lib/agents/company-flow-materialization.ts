@@ -42,7 +42,7 @@ export async function materializeCompanyFlowNodeCapabilities(args: {
   nodeAttemptId: string;
   sessionName: string;
   worktreePath: string;
-  checkDiagnostics?: () => Promise<SupervisorDiagnosticsStatus>;
+  checkDiagnostics: () => Promise<SupervisorDiagnosticsStatus>;
 }): Promise<CompanyFlowMaterialization> {
   const current = await args.db.transaction(async (tx) => {
     const context = await loadCompanyFlowSessionContext(tx, args.runId);

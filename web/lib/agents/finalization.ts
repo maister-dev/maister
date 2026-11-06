@@ -93,6 +93,7 @@ import { promoteNextPending } from "@/lib/scheduler";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { isMaisterErrorCode } from "@/lib/errors-core";
 import { operationalTerminalDecision } from "@/lib/agents/operational-completion";
+import { initialResourceCleanup } from "@/lib/agents/resource-cleanup";
 import {
   inspectOperationalRun,
   operationalWorkspace,
@@ -974,24 +975,15 @@ async function prepareAgentFinalization(
         (terminalStatus === "Crashed" ? gcAgeDays() * 86_400_000 : 0),
     );
     const operationalCleanup: OperationalCleanup | null = terminalDecision
-      ? {
-          version: 1,
+      ? initialResourceCleanup({
           resourceKind: operationalResourceKind(preparedRun),
           workspace: preparedRun.agentWorkspace as NonNullable<
             Run["agentWorkspace"]
           >,
           state: terminalStatus === "Crashed" ? "retained" : "armed",
-          revision: 1,
           armedAt: endedAt.toISOString(),
-          attempts: 0,
           dueAt: cleanupDue.toISOString(),
-          errorCode: null,
-          evidenceIds: [],
-          removedAt: null,
-          releasedAt: null,
-          lease: null,
-          rearmReceipt: null,
-        }
+        })
       : null;
 
     // M42 (ADR-114): the agent run's session resume handle lives on its

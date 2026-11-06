@@ -19,7 +19,10 @@ import {
   getNodeAttemptsForRun,
   REVIEW_REWORK_CLAIM_DECISION,
 } from "@/lib/flows/graph/ledger";
-import { loadRun, loadRunProjectId } from "@/lib/flows/graph/runner-core";
+import {
+  loadProjectRun as loadRun,
+  loadRunProjectId,
+} from "@/lib/flows/graph/runner-core";
 import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
 import { captureClaimHead } from "@/lib/runs/claim-head";
 import { resolveReentryNode } from "@/lib/runs/reentry";

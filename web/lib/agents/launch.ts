@@ -211,7 +211,7 @@ import { resolveFacadeLaunch } from "@/lib/agents/facade-launch";
 import { readAgentMemory } from "@/lib/agents/memory-store";
 import {
   withAgentMaterializationLock,
-  agentMaterializationPathsForRun,
+  agentMaterializationWitnessPathsForRun,
 } from "@/lib/agents/materialization-manifest";
 import {
   prepareContextMounts,
@@ -5020,19 +5020,10 @@ async function driveAgentSession(
         (run.agentKind === "operational" || run.taskLaunchIntentId) &&
         integrityBaseline
       ) {
-        const ownedPaths = await agentMaterializationPathsForRun(cwd, runId);
         const next = await captureOperationalGeneration(
           cwd,
           integrityBaseline,
-          [
-            ...ownedPaths,
-            ".maister/agent-materialization/index.json",
-            `.maister/agent-materialization/runs/${runId}.json`,
-            ".maister/agent-materialization/mutex.sqlite",
-            ".maister/agent-materialization/mutex.sqlite-journal",
-            ".maister/agent-materialization/mutex.sqlite-shm",
-            ".maister/agent-materialization/mutex.sqlite-wal",
-          ],
+          await agentMaterializationWitnessPathsForRun(cwd, runId),
         );
 
         await preparation?.publishGeneration(

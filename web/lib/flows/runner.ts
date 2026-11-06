@@ -4,6 +4,7 @@ import pino from "pino";
 
 import {
   loadRun,
+  CompanyFlowLoadFailure,
   resolveFlowRuntimeRoot,
   type Db,
   type LoadedRun,
@@ -23,6 +24,7 @@ import { withFlowDriver } from "./graph/driver-lifetime";
 import { wakeParkedCoordinator } from "./graph/coordinator-wake";
 
 import { getDb } from "@/lib/db/client";
+import { finalizeCompanyFlowRun } from "@/lib/run-results/company-flow-terminal";
 import {
   createExecutionHosts,
   ensureAssignment,
@@ -51,6 +53,19 @@ export async function runFlow(
   try {
     loaded = await loadRun(db, runId);
   } catch (error) {
+    if (error instanceof CompanyFlowLoadFailure)
+      await finalizeCompanyFlowRun({
+        db,
+        rootDb: db,
+        runId,
+        requested: "Failed",
+        errorCode: error.code,
+        reason:
+          typeof error.details?.reason === "string"
+            ? error.details.reason
+            : "company_flow_admission_refused",
+        hosts: opts.executionHosts,
+      });
     logger.error({ error, runId }, "runFlow loadRun failed");
     throw error;
   }

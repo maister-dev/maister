@@ -61,7 +61,7 @@ export type RecordDefaultArtifactsArgs = {
   nodeAttemptId: string;
   nodeId: string;
   attempt: number;
-  workspace: WorkspaceRow;
+  workspace: WorkspaceRow | null;
 };
 
 // Record default ("index") artifact rows for a just-finished graph node. The
@@ -133,7 +133,10 @@ export async function recordDefaultArtifacts(
     );
   }
 
-  // 2. Diff artifact (always — uses safe fallback when git unavailable)
+  // Company work has no repository diff; its HITL evidence above remains real.
+  if (workspace === null) return;
+
+  // 2. Diff artifact (always for repository work)
   try {
     const baseCommit = await safeBaseCommit(workspace);
     const headRef = await safeHeadRef(workspace);

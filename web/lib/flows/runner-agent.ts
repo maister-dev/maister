@@ -65,6 +65,7 @@ import {
   usesStructuredKnowledgeContext,
 } from "@/lib/run-results/contract";
 import { nativeFindingsCompletionPrompt } from "@/lib/run-results/findings-prompt";
+import { assertOperationalDispatchIntegrity } from "@/lib/agents/operational-context";
 import { assertNativeRunKnowledgeInputs } from "@/lib/brain/knowledge-execution-access";
 import { queryErrorDiagnostics, redactQueryError } from "@/lib/db/pg-error";
 import {
@@ -1389,6 +1390,8 @@ async function dispatchAgentStep(
 
   if (usesStructuredKnowledgeContext(ctx))
     await assertNativeRunKnowledgeInputs(ctx.db ?? getDb(), ctx.runId);
+  if ("owner" in ctx.context.run && ctx.context.run.owner.kind === "company")
+    await assertOperationalDispatchIntegrity(ctx.db ?? getDb(), ctx.runId);
   // Existing immutable requests do not depend on today's template or context.
   // A consensus cell re-enters through its own logical operation key instead.
   if (ctx.promptOwner) {

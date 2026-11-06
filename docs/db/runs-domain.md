@@ -1,6 +1,6 @@
 # Runs domain ERD
 
-## Native knowledge actor snapshot (Designed — CB0 T14)
+## Native knowledge actor snapshot (Implemented)
 
 Main `0233_native_knowledge_execution` adds nullable immutable
 `node_attempts.knowledge_actor` metadata to the existing ledger. It records the

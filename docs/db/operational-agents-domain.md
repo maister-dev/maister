@@ -22,7 +22,7 @@ erDiagram
         jsonb result_contract "existing; new agent_operational member"
         jsonb operational_integrity_baseline "protected append-only generation evidence pointers"
         jsonb operational_terminal "write-once effective decision, no copied result body"
-        jsonb operational_cleanup "intent, attempts, due time, error and rowless claim"
+        jsonb operational_cleanup "shared agent or company-Flow resource intent, attempts, due time and claim"
     }
     OPERATIONAL_RUN_ACKNOWLEDGEMENTS {
         text user_id PK,FK "users CASCADE"
@@ -101,3 +101,5 @@ applied to owned ephemeral integration databases during implementation.
 ## Designed activity extension
 
 New activity/incident/attempt/retry fields are owned by [agent activity persistence](agent-activity-domain.md); qualification by [task qualification persistence](task-qualification-domain.md). Existing schema above remains authoritative until the additive migration lands.
+
+Main `0251_company_flow_runtime` shares the existing bounded resource disposition with explicit company-owned v2 result-only Flows. The Flow retains its required `flow_export` result and leaves `operational_terminal` NULL; it does not become an operational agent. Only its owned plain directory and adapter material are eligible. The existing cleanup leases, five-attempt bound, evidence preservation, due-time sweep and workspace-release receipts remain authoritative. Current retained owner/path and source-integrity checks precede removal. The v1 operational completion contract and prior rows remain unchanged.

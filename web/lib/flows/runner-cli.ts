@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { FlowContext, StepResult } from "./types";
+import type { ExecutionFlowContext as FlowContext, StepResult } from "./types";
 import type { FlowDriverClaim } from "./graph/driver-claim";
 
 import { spawn, type ChildProcess } from "node:child_process";

@@ -16,7 +16,10 @@ import { getDb } from "@/lib/db/client";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { claimTakeover } from "@/lib/flows/graph/ledger";
 import { compileManifest } from "@/lib/flows/graph/compile";
-import { loadRun, loadRunProjectId } from "@/lib/flows/graph/runner-core";
+import {
+  loadProjectRun as loadRun,
+  loadRunProjectId,
+} from "@/lib/flows/graph/runner-core";
 import { captureClaimHead } from "@/lib/runs/claim-head";
 import { markHumanWorking } from "@/lib/runs/state-transitions";
 

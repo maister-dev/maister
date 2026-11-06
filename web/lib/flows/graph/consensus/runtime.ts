@@ -1,8 +1,11 @@
 import "server-only";
 
-import type { FlowContext, StepResult } from "@/lib/flows/types";
+import type {
+  ExecutionFlowContext as FlowContext,
+  StepResult,
+} from "@/lib/flows/types";
 import type { CompiledNode } from "../compile";
-import type { Db, LoadedRun } from "../runner-core";
+import type { Db, LoadedProjectRun as LoadedRun } from "../runner-core";
 import type { AgentExecution } from "@/lib/flows/runner-agent";
 import type { ConsensusNodeDef } from "./drafts";
 import type { ParsedConsensusVerdict } from "./verdict";

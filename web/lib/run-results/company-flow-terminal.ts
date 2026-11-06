@@ -1,0 +1,267 @@
+import "server-only";
+
+import type { Db } from "@/lib/execution-host/db";
+import type { ExecutionHosts } from "@/lib/execution-host";
+import type { Run } from "@/lib/db/schema";
+import type { MaisterErrorCode } from "@/lib/errors";
+import type { TerminalCause } from "@/lib/domain-events/taxonomy";
+
+import { and, eq, isNull } from "drizzle-orm";
+import pino from "pino";
+
+import {
+  isCompanyFlowResource,
+  inspectOperationalRun,
+} from "@/lib/agents/operational-context";
+import { initialResourceCleanup } from "@/lib/agents/resource-cleanup";
+import {
+  readAgentDispatchEvidence,
+  assertAgentExecutionQuiescent,
+  assertAgentCancellationExecutionQuiescent,
+  assertAgentSessionBindingsQuiescent,
+  assertAgentCancellationBindingsQuiescent,
+} from "@/lib/agents/execution-quiescence";
+import { revokeAgentRunTokensForRun } from "@/lib/agents/tokens";
+import {
+  resolvePublicResult,
+  recordInvalidRunResult,
+} from "@/lib/run-results/ledger";
+import { deriveResultStatus } from "@/lib/run-results/status";
+import { releaseAssignmentForRun } from "@/lib/execution-host/assignments";
+import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
+import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { hitlRequests, runs } from "@/lib/db/schema";
+import { contentDigest } from "@/lib/evaluations/digest";
+import { closedAnswerResponse } from "@/lib/hitl-closed-answer";
+import { gcAgeDays } from "@/lib/instance-config";
+import { disposeOperationalRun } from "@/lib/gc/operational-disposition";
+import { MaisterError } from "@/lib/errors";
+
+const log = pino({
+  name: "company-flow-terminal",
+  level: process.env.LOG_LEVEL ?? "info",
+});
+
+function terminalWitness(run: Run): string {
+  return contentDigest({
+    owner: run.companyExecutionSnapshot,
+    assignmentId: run.executionAssignmentId,
+    driverToken: run.flowDriverToken,
+    contract: run.resultContract,
+    baseline: run.operationalIntegrityBaseline,
+    knowledgeAccess: run.knowledgeAccess,
+  });
+}
+
+/** Settle the existing graph ledger with a required public result and a quiescent, witnessed plain directory. */
+export async function finalizeCompanyFlowRun(args: {
+  db: Db;
+  rootDb: Db;
+  runId: string;
+  requested: "Done" | "Failed" | "Crashed";
+  errorCode: MaisterErrorCode | null;
+  reason?: string;
+  hosts?: ExecutionHosts;
+  driverToken?: string;
+}): Promise<boolean> {
+  const [run] = await args.db
+    .select()
+    .from(runs)
+    .where(eq(runs.id, args.runId));
+
+  if (!run || !isCompanyFlowResource(run) || run.companyId === null)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Company graph finalization requires its exact retained execution owner",
+    );
+  if (run.status !== "Running" && run.status !== "NeedsInput") return false;
+  const contract = run.resultContract;
+  const producerRef = contract.producerNodeIds[0];
+
+  if (!producerRef)
+    throw new MaisterError(
+      "CONFIG",
+      "The retained company Flow result contract has no producer identity",
+    );
+  if (
+    run.flowDriverToken !== null &&
+    run.flowDriverToken !== args.driverToken &&
+    run.flowDriverLeaseExpiresAt !== null &&
+    run.flowDriverLeaseExpiresAt.getTime() > Date.now()
+  )
+    throw new MaisterError(
+      "CONFLICT",
+      "The current graph traversal still owns company execution preparation",
+      { details: { reason: "flow_driver_owned" } },
+    );
+  const companyId = run.companyId;
+  const dispatch = await readAgentDispatchEvidence(args.rootDb, run.id);
+  const dispatched = dispatch.hasOwnedCommand || dispatch.hasBoundSession;
+
+  if (dispatched) await assertAgentExecutionQuiescent(args.rootDb, run);
+  else await assertAgentCancellationExecutionQuiescent(args.rootDb, run);
+  const publicResult = await resolvePublicResult(args.db, run.id);
+  const resultStatus = deriveResultStatus({
+    runStatus: "Review",
+    contract: run.resultContract,
+    newestRow: publicResult.newest,
+    validRow: publicResult.valid,
+  });
+  const integrity = await inspectOperationalRun(args.rootDb, run);
+  const successful =
+    args.requested === "Done" &&
+    dispatched &&
+    resultStatus === "valid" &&
+    integrity.verdict === "clean";
+  const status = successful
+    ? "Done"
+    : args.requested === "Crashed"
+      ? "Crashed"
+      : "Failed";
+  const resultReason =
+    resultStatus === "missing"
+      ? "result_missing"
+      : resultStatus === "invalid"
+        ? "result_invalid"
+        : resultStatus === "stale"
+          ? "result_stale"
+          : "result_unavailable";
+  const reason =
+    args.reason ??
+    (resultStatus !== "valid"
+      ? resultReason
+      : integrity.verdict !== "clean"
+        ? "company_flow_integrity_refused"
+        : !dispatched
+          ? "company_flow_dispatch_unproven"
+          : args.requested === "Done"
+            ? "graph_completed"
+            : "graph_execution_failed");
+  const endedAt = new Date();
+  const cleanup = initialResourceCleanup({
+    resourceKind: "plain_directory",
+    workspace: "none",
+    state: status === "Crashed" ? "retained" : "armed",
+    armedAt: endedAt.toISOString(),
+    dueAt: new Date(
+      endedAt.getTime() + (status === "Crashed" ? gcAgeDays() * 86400000 : 0),
+    ).toISOString(),
+  });
+  const finalized = await args.db.transaction(async (tx) => {
+    const [current] = await tx
+      .select()
+      .from(runs)
+      .where(eq(runs.id, run.id))
+      .for("update");
+
+    if (
+      !current ||
+      (current.status !== "Running" && current.status !== "NeedsInput")
+    )
+      return false;
+    if (terminalWitness(current) !== terminalWitness(run))
+      throw new MaisterError(
+        "CONFLICT",
+        "Company graph terminal witnesses changed after preparation",
+      );
+    const currentResult = await resolvePublicResult(tx, run.id);
+
+    if (
+      currentResult.valid?.id !== publicResult.valid?.id ||
+      currentResult.newest?.id !== publicResult.newest?.id
+    )
+      throw new MaisterError(
+        "CONFLICT",
+        "Company graph public result changed after terminal preparation",
+      );
+    if (dispatched) await assertAgentSessionBindingsQuiescent(tx, current);
+    else await assertAgentCancellationBindingsQuiescent(tx, current);
+    await tx
+      .update(runs)
+      .set({
+        status,
+        endedAt,
+        currentStepId: null,
+        operationalCleanup: cleanup,
+      })
+      .where(and(eq(runs.id, run.id), eq(runs.status, current.status)));
+    if (args.requested === "Done" && resultStatus === "missing")
+      await recordInvalidRunResult(tx, {
+        runId: run.id,
+        contract,
+        reason: "result_missing",
+        producerKind: "flow_node",
+        producerRef,
+      });
+    await revokeAgentRunTokensForRun(run.id, tx);
+    await releaseAssignmentForRun(tx, run.id, "run_terminal");
+    await tx
+      .update(hitlRequests)
+      .set({
+        respondedAt: endedAt,
+        response: closedAnswerResponse("session_ended", endedAt),
+      })
+      .where(
+        and(eq(hitlRequests.runId, run.id), isNull(hitlRequests.respondedAt)),
+      );
+    await systemCloseActiveAssignmentsForRun({
+      db: tx,
+      runId: run.id,
+      reason: "company graph execution settled",
+    });
+    const scope = {
+      db: tx,
+      companyId,
+      runId: run.id,
+      parentRunId: run.parentRunId,
+      actor: { type: "system" as const, id: null },
+      payload: {
+        runId: run.id,
+        flowId: null,
+        taskId: null,
+        runKind: "flow",
+        reason,
+        resultStatus,
+        resultRevision: publicResult.valid?.revision ?? null,
+        integrity: integrity.verdict,
+        baselineGeneration:
+          run.operationalIntegrityBaseline?.generation ?? null,
+      },
+    };
+
+    if (status === "Done")
+      await emitDomainEvent({ ...scope, kind: "run.done" });
+    else {
+      const cause: TerminalCause = {
+        code: args.errorCode ?? "CONFIG",
+        reason,
+        source: "graph",
+      };
+
+      await emitDomainEvent({
+        ...scope,
+        kind: status === "Crashed" ? "run.crashed" : "run.failed",
+        cause,
+      });
+    }
+
+    return true;
+  });
+
+  log.info(
+    {
+      runId: run.id,
+      companyId: run.companyId,
+      status,
+      reason,
+      resultStatus,
+      integrity: integrity.verdict,
+      finalized,
+    },
+    "company graph terminal contract evaluated",
+  );
+  if (finalized)
+    await disposeOperationalRun(run.id, { db: args.rootDb, hosts: args.hosts });
+
+  return finalized;
+}

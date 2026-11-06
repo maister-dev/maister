@@ -143,6 +143,34 @@ export type OperationalWorkspaceContext =
       repoPath: null;
     };
 
+/** Retained company graph ownership admits the same resource lifecycle without impersonating an operational-agent result. */
+export function isCompanyFlowResource(
+  run: OperationalWorkspaceRun,
+): run is OperationalWorkspaceRun & {
+  companyId: string;
+  runKind: "flow";
+  resultContract: Extract<
+    NonNullable<Run["resultContract"]>,
+    { kind: "flow_export" }
+  > & { required: true };
+} {
+  const capture = companyExecutionSnapshotSchema.safeParse(
+    run.companyExecutionSnapshot,
+  );
+
+  return (
+    run.runKind === "flow" &&
+    run.projectId === null &&
+    run.companyId != null &&
+    run.agentWorkspace === "none" &&
+    run.resultContract?.kind === "flow_export" &&
+    run.resultContract.required &&
+    capture.success &&
+    capture.data.schemaVersion === 2 &&
+    capture.data.owner.companyId === run.companyId
+  );
+}
+
 function companyOperationalWorkspace(
   run: OperationalWorkspaceRun,
 ): OperationalWorkspaceContext {
@@ -488,7 +516,8 @@ export async function assertOperationalDispatchIntegrity(
 ): Promise<void> {
   const [run] = await db.select().from(runs).where(eq(runs.id, runId));
 
-  if (run?.agentKind !== "operational") return;
+  if (!run || (run.agentKind !== "operational" && !isCompanyFlowResource(run)))
+    return;
   const result = await inspectOperationalRun(db, run);
 
   if (result.verdict !== "clean")

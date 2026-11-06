@@ -118,3 +118,5 @@ MUST honor `min(cursor_event_id)` across registered consumers.
 - Narrative: [`../database-schema.md`](../database-schema.md).
 - Decision record: ADR-086 in [`../decisions.md`](../decisions.md).
 - Source (Implemented): `web/lib/db/schema.ts` (migration `0046_domain_events.sql`).
+
+Company Run facts use an explicit retained company owner. Main `0251_company_flow_runtime` extends the existing reference guard from finite operational agents to exact v2 workspace-none Flow captures with a pinned required export and no project/Task/project-Flow. It also admits the existing `run.escalated` kind for company work. The guard preserves immutable event ownership and rejects cross-owner Run references. Project webhook subscriptions do not receive company work; assignment result delivery has its own destination contract.
