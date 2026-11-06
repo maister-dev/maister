@@ -1,0 +1,94 @@
+{
+  "task": "T20.1",
+  "slice": "Native form and human review continuation",
+  "date": "2026-11-07",
+  "baseCommit": "4452cb88f76826ba1aa6b28dfcc17201f37768c9",
+  "engineVersion": "3.11.1",
+  "migrations": [],
+  "status": "Checkpoint qualified; T20.1 remains open",
+  "red": [
+    "Valid company form input returned 409/project slug not found",
+    "Form-first resume refused retained generation-zero source integrity"
+  ],
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "log": "integration.log.gz",
+      "files": 4,
+      "tests": 105,
+      "durationSeconds": 41.07
+    },
+    "owning-integration": {
+      "exitCode": 0,
+      "log": "owning-integration.log.gz",
+      "files": 1,
+      "tests": 40,
+      "durationSeconds": 13.16
+    },
+    "unit": {
+      "exitCode": 0,
+      "log": "unit.log.gz",
+      "files": 889,
+      "tests": 9318,
+      "durationSeconds": 26.88
+    },
+    "types": {
+      "exitCode": 0,
+      "log": "types.log.gz"
+    },
+    "lint": {
+      "exitCode": 0,
+      "log": "lint.log.gz"
+    },
+    "test-lint": {
+      "exitCode": 0,
+      "log": "test-lint.log.gz"
+    },
+    "format": {
+      "exitCode": 0,
+      "log": "format.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "log": "docs.log.gz"
+    }
+  },
+  "qualified": [
+    "Actual trusted Git package loader, company configuration, PostgreSQL, HTTP HITL response route and owned supervisor with controlled ACP",
+    "Form-to-specialist-to-human-review traversal resumes exact Run/assignment/input/result captures",
+    "Required field refusal uses existing 422 contract before mutation",
+    "Current company authority and pending cancellation are checked under the Run/HITL lock",
+    "Current user attribution closes both human assignments; form vars persist and one specialist prompt spans both resumes",
+    "A verified empty generation precedes first form wait; generation zero is not accepted by integrity validation",
+    "Technical Done retains valid export, released directory and released graph driver; business assignment remains active",
+    "Reserved company namespace is shared by adoption, graph loading and response delivery; no project webhook disclosure"
+  ],
+  "fixtureCorrections": [
+    "Source package-root form schema placement and immutable revision query corrected before runtime RED",
+    "Custom specialist binding and explicit runner supplied, preserving the no-platform-default fixture",
+    "Required field expectation follows existing 422 contract",
+    "Queued-authority qualification precedes additional Flow completions; review test awaits durable Run pause rather than early card insertion"
+  ],
+  "qualificationBoundary": "Prospective engine predicate and capability cache receipts are controlled fixtures. Real adapter/model, installable companion and stand pilot are not qualified.",
+  "notYetQualified": [
+    "Native graph permission/idle/restart recovery and live cancellation",
+    "Full T21 compatibility regression",
+    "Engine activation and actual companion/stand pilot"
+  ],
+  "sourceSha256": {
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "0a13b8513b28973e3d520407169969faccf75850a96f3b29e1b664ffb8fea3a3",
+    "docs/api/web.openapi.yaml": "47dabe75136a708c1db9c144d8b6d49da5ce0f85c077308364b5de7312128e91",
+    "docs/db/specialist-assignments-domain.md": "2b57d2f126e5a75b5d0914e39f6cd83a00264756da5439d1cf207d3f756de4b3",
+    "docs/system-analytics/specialist-runtime.md": "811b976075c7dd87f3e3cd73bba3275ed9a7d43bdb9ef5c6ce5a37940d42c7f0",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "db3ea6c11f5f531f807408c0285d8f1a40f076d6e680524160e586921bbda63b",
+    "web/lib/agents/company-flow-workspace.ts": "0f55cbcc1f1aa7ebfa9d59dbcba0567292a83e93d954d7b7102582a3b31880d4",
+    "web/lib/execution-host/adoption.ts": "10907cd39fc6fa7f55697b49850f16cca1648cc08a29b7762546a2f74e9ede12",
+    "web/lib/flow-paths.ts": "4b5c56a8fc79f645e31a7cb517ba9f43594a74db25c7046161c3700ffaa2e163",
+    "web/lib/flows/graph/runner-core.ts": "848dac08877b2237a6f8148474baaa217a5d291d6f54ec3ce1266b23822effa4",
+    "web/lib/services/hitl.ts": "655ebe31f42e9b619f60c39a6747456783e5ae2ad389d068541ab5fce2602fb8"
+  }
+}

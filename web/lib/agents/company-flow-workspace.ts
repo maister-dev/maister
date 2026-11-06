@@ -80,7 +80,11 @@ export async function prepareCompanyFlowWorkspace(
 
   await mkdir(runtimePath, { recursive: true });
   const baseline: OperationalIntegrityBaseline = {
-    ...(await captureOperationalBaseline(cwd, "plain_directory")),
+    ...(await captureOperationalGeneration(
+      cwd,
+      await captureOperationalBaseline(cwd, "plain_directory"),
+      [],
+    )),
     owner: {
       kind: "company",
       companyId: run.companyId,

@@ -8944,8 +8944,15 @@ paths:
         (`requireProjectAction("answerHitl")`). The `projectId` is derived
         from the run row, never from the body.
 
-        Company standalone Runs require current explicit assignments:read and
-        assignments:answer plus complete exact retained assignment-input/source access.
+        Company standalone Runs and native company result-only Flow Runs require current
+        explicit assignments:read and assignments:answer plus complete exact retained
+        assignment-input/source access. Native Flow form/human delivery uses the reserved
+        company runtime namespace without a project lookup. Form values become the existing
+        node-attempt vars; review decisions resume the same frozen assignment and contract.
+        Current company authority is rechecked under the Run/HITL lock before claiming
+        form/review input. A pending cancellation intent refuses delivery with 409.
+        Required form fields retain the existing 422 NEEDS_INPUT response. Project webhook
+        subscriptions do not receive company form/review content.
         Current company authority applies even to an administrator or a caller with
         a project preauthorization. Permission intent admission repeats that check
         under the Run/HITL lock before saving an answer or creating an input command.

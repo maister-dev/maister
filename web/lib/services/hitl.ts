@@ -84,6 +84,8 @@ import {
   assertReviewFeedbackPresent,
   buildReviewFeedbackPreview,
 } from "@/lib/review-comments/feedback-packet";
+import { COMPANY_RUNTIME_NAMESPACE } from "@/lib/flow-paths";
+import { isCompanyFlowResource } from "@/lib/agents/operational-context";
 import { runtimeRoot } from "@/lib/runtime-root";
 import { assertAgentQuestionResponse } from "@/lib/services/agent-question-response";
 import { assertParkedAssistantAnswerable } from "@/lib/scratch-runs/authorization";
@@ -3564,14 +3566,24 @@ async function handleFormHumanResponse(
       ? { ...(rawResponse as Record<string, unknown>), confidence }
       : rawResponse;
 
-  const projectRows = await db
-    .select({ slug: projects.slug })
-    .from(projects)
-    .where(eq(projects.id, runRow.projectId));
-  const projectSlug = projectRows[0]?.slug;
+  let projectSlug: string;
 
-  if (!projectSlug) {
-    throw new MaisterError("PRECONDITION", "project slug not found");
+  if (typeof runRow.companyId === "string") {
+    if (!isCompanyFlowResource(runRow))
+      throw new MaisterError(
+        "PRECONDITION",
+        "Company form or review delivery requires its retained native Flow owner",
+      );
+    projectSlug = COMPANY_RUNTIME_NAMESPACE;
+  } else {
+    const projectRows = await db
+      .select({ slug: projects.slug })
+      .from(projects)
+      .where(eq(projects.id, runRow.projectId));
+    const slug = projectRows[0]?.slug;
+
+    if (!slug) throw new MaisterError("PRECONDITION", "project slug not found");
+    projectSlug = slug;
   }
 
   // Phase 1: claim the row before touching the filesystem. Concurrent
@@ -3590,6 +3602,25 @@ async function handleFormHumanResponse(
 
     if (!lockedHitl || !lockedRun) {
       throw new MaisterError("PRECONDITION", "row vanished mid-transaction");
+    }
+    if (typeof lockedRun.companyId === "string") {
+      if (args.actor.kind !== "user")
+        throw new MaisterError(
+          "UNAUTHORIZED",
+          "Company form and review require a current human responder",
+        );
+      await authorizeCompanyHitlResponder(
+        tx,
+        args.actor.userId,
+        runId,
+        lockedRun.companyId,
+      );
+      if (lockedRun.companyCancellationIntent)
+        throw new MaisterError(
+          "CONFLICT",
+          "Company Run cancellation is pending; reconcile the retained stop intent",
+          { details: { reason: "company_cancellation_pending" } },
+        );
     }
     if (TERMINAL_RUN_STATUS.has(lockedRun.status)) {
       throw new MaisterError(
@@ -3851,7 +3882,7 @@ async function handleFormHumanResponse(
     );
     await args.recordSuccessAudit?.(tx, 200);
 
-    if (stamped.length > 0) {
+    if (stamped.length > 0 && runRow.projectId) {
       await emitWebhookEvent({
         db: tx,
         type: "hitl.responded",

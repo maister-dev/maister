@@ -301,11 +301,33 @@ The existing `loadRun` returns an explicit company branch with exact assignment 
 
 The node's actual reviewed professional is resolved and attested before its capability profile or token. Capability evidence comes from the selected execution host; the current probe-version receipt must be acceptable. Physical confinement is MCP-only, with exact knowledge scopes and the company facade subset; tool-less roles receive no facade credential. The profile and effective policy use existing materialization/prompt records. Standing role instructions/configuration, scheduled request and frozen assignment input remain separate prompt planes.
 
-The managed company directory starts with an empty source baseline before platform writes. An existing baseline must still match before continuation; an unwitnessed nonempty directory refuses. Only paths in the existing Run-owned file lease and ownership journal may extend a generation. Profiles remain leased until terminal disposition. A required valid public Flow result, observed session teardown and clean source integrity are all necessary for technical Done. Failure or missing/invalid/stale output cannot enter project Review or automatic repository delivery. Result and driver-generation witnesses are rechecked under the Run lock; current credentials revoke and placement releases with the terminal fact. Business assignment completion and fact confirmation remain separate.
+The managed company directory starts with a verified empty source generation before platform writes or the first human/form wait. Generation zero remains unverified; an empty admitted directory is checked through the existing generation-capture protocol rather than weakening integrity validation. An existing baseline must still match before continuation; an unwitnessed nonempty directory refuses. Only paths in the existing Run-owned file lease and ownership journal may extend a generation. Profiles remain leased until terminal disposition. A required valid public Flow result, observed session teardown and clean source integrity are all necessary for technical Done. Failure or missing/invalid/stale output cannot enter project Review or automatic repository delivery. Result and driver-generation witnesses are rechecked under the Run lock; current credentials revoke and placement releases with the terminal fact. Business assignment completion and fact confirmation remain separate.
 
 Main `0251_company_flow_runtime` extends existing company lifecycle facts and bounded resource cleanup without reinterpreting `operational_v1` or populating `operational_terminal` for a graph. Shared disposition preserves failed/uncertain source evidence before removal and retains its existing retry/lease/release protocol. A queued company graph whose current binding/authority admission fails is durably Failed before any session effect. It cannot settle another live graph driver's preparation.
 
-Qualification currently uses real PostgreSQL migrations, the actual package loader with a pinned fixture Git package, an owned real supervisor and controlled ACP. Concurrent native driver invocations produce one create/prompt, a valid retained export, physical quiescence and released directory; the business assignment remains active. A changed reviewed coordinator refuses queued dispatch with zero ACP effects. Prospective engine metadata and capability-cache receipts are controlled fixture inputs, not real adapter/model smoke or companion/stand qualification. Human/form waits, permission/idle restart/recovery and engine activation remain open; the supported engine stays 3.11.1.
+Qualification currently uses real PostgreSQL migrations, the actual package loader with a pinned fixture Git package, an owned real supervisor and controlled ACP. Concurrent native driver invocations produce one create/prompt, a valid retained export, physical quiescence and released directory; the business assignment remains active. A changed reviewed coordinator refuses queued dispatch with zero ACP effects. Prospective engine metadata and capability-cache receipts are controlled fixture inputs, not real adapter/model smoke or companion/stand qualification. Native form and human-review waits are additionally qualified through the actual response route and both graph resumes below. Permission/idle restart/recovery, live graph cancellation, extended compatibility and engine activation remain open; the supported engine stays 3.11.1.
+
+### Native company form and review continuation
+
+Explicit `form` and `human` nodes use the existing HITL, company human assignment,
+actor, response artifact and node-attempt ledgers. Shared `_company` namespace
+resolution replaces a project-slug lookup only for the exact retained native
+company Flow resource; it never fabricates a project. Required form validation
+runs before mutation and retains the existing 422 contract. Current human
+read/answer/source authority is rechecked under the Run/HITL lock, and pending
+cancellation refuses input. Existing claim/replay and completion attribution
+remain authoritative. Project webhook subscriptions receive no company response.
+
+A real pinned package, PostgreSQL and owned supervisor qualification runs
+form→specialist→human-review→Done. The response artifacts resume the same Run;
+form values survive as `steps.<node>.vars`, the assignment/input/result capture
+remains byte-identical, and the specialist receives one prompt across both
+resumes. Human work records both current responding actors. A required valid
+public result and quiescent clean source are still necessary for technical Done;
+the durable specialist assignment remains active. These are graph input/review
+waits; business clarification/input-head changes belong to T24. Controlled ACP
+and prospective compatibility receipts do not establish real package/model or
+stand readiness.
 
 ### Company workspace adoption
 

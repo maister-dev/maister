@@ -7,6 +7,9 @@ import { z } from "zod";
 
 import { MaisterError } from "@/lib/errors";
 
+/** Reserved runtime namespace; project slug validation excludes this identity. */
+export const COMPANY_RUNTIME_NAMESPACE = "_company";
+
 export const SAFE_PATH_SEGMENT = /^[A-Za-z0-9._-]+$/;
 
 const notDotRef = (s: string): boolean =>

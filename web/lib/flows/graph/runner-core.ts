@@ -25,7 +25,7 @@ import { isNativeFindingsContract } from "@/lib/run-results/contract";
 import { runtimeRoot as configuredRuntimeRoot } from "@/lib/runtime-root";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import * as schemaModule from "@/lib/db/schema";
-import { systemCachePath } from "@/lib/flow-paths";
+import { COMPANY_RUNTIME_NAMESPACE, systemCachePath } from "@/lib/flow-paths";
 import { parseExecutableStoredFlowManifest } from "@/lib/flows/manifest-parser";
 import { loadCompanyFlowSessionContext } from "@/lib/agents/company-flow-session-context";
 
@@ -289,7 +289,7 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
           },
         ]),
       ),
-      projectSlug: "_company",
+      projectSlug: COMPANY_RUNTIME_NAMESPACE,
       flowInstallPath: context.flowInstallPath,
       execTrust: "trusted",
     };

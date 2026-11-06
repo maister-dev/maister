@@ -24,6 +24,7 @@ import { join, resolve, sep } from "node:path";
 import { eq, sql, getTableColumns } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { stringify } from "yaml";
+import { NextRequest } from "next/server";
 
 import {
   agentDefinitionSha256,
@@ -89,6 +90,7 @@ import { startProjectionWorker } from "@/lib/execution-host/events/projection-wo
 import { runFlow } from "@/lib/flows/runner";
 import { requireActiveUserById } from "@/lib/authz";
 import { POST as stopRunPost } from "@/app/api/runs/[runId]/stop/route";
+import { POST as respondHitlPost } from "@/app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route";
 import { tryStartRun } from "@/lib/scheduler";
 import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
 import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
@@ -166,6 +168,37 @@ const manifest = {
       },
       output: { result },
       transitions: { success: "done" },
+    },
+  ],
+};
+
+const dialogueManifest = {
+  ...manifest,
+  name: "rah-company-dialogue",
+  nodes: [
+    {
+      id: "intake",
+      type: "form",
+      settings: {
+        form_schema: "./schemas/request.json",
+        roles: ["maintainer"],
+      },
+      transitions: { success: "diagnose" },
+    },
+    {
+      ...manifest.nodes[0],
+      action: {
+        prompt:
+          "Investigate {{ assignment.objective }} using {{ assignment.input }}. Component {{ steps.intake.vars.component }}.",
+      },
+      transitions: { success: "review" },
+    },
+    {
+      id: "review",
+      type: "human",
+      settings: { roles: ["maintainer"] },
+      finish: { human: { decisions: ["approve"] } },
+      transitions: { approve: "done" },
     },
   ],
 };
@@ -264,6 +297,35 @@ beforeAll(async () => {
   await writeFile(
     join(source, "maister-agents/no-tool-observer.md"),
     "---\nname: Tool-less observer\ndescription: Evaluate supplied assignment input without native tools\nspecialist:\n  responsibilities: [Evaluate supplied input]\n  targetClasses: [stand]\nmode: session\nworkspace: none\ntriggers: [manual, flow]\nrisk_tier: read_only\nplatform_mcp: false\nmemory: none\n---\nReturn a bounded result from supplied input without requesting tools.\n",
+  );
+  const dialoguePath = join(source, "flows/rah-company-dialogue");
+
+  await cp(join(source, "flows/rah-control"), dialoguePath, {
+    recursive: true,
+  });
+  await writeFile(join(dialoguePath, "flow.yaml"), stringify(dialogueManifest));
+  await writeFile(
+    join(source, "schemas/request.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      fields: [{ name: "component", type: "string", required: true }],
+    }),
+  );
+  await writeFile(
+    join(source, "maister-agents/dialogue-coordinator.md"),
+    (await readFile(rolePath, "utf8")).replace(
+      "flow: rah-control",
+      "flow: rah-company-dialogue",
+    ),
+  );
+  const packagePath = join(source, "maister-package.yaml");
+
+  await writeFile(
+    packagePath,
+    (await readFile(packagePath, "utf8")).replace(
+      "flows:\n",
+      "flows:\n  - id: rah-company-dialogue\n    path: flows/rah-company-dialogue\n",
+    ),
   );
   await initRepo(source);
   await git(
@@ -2028,6 +2090,347 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
       ).rows,
     ).toEqual([{ count: 0 }]);
   } finally {
+    if (previousCap === undefined)
+      delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
+    else process.env.MAISTER_MAX_CONCURRENT_RUNS = previousCap;
+    await worker.stop();
+    await stopRuntimeEventConsumers();
+    await supervisor.stop();
+    restoreUrl();
+    compatibility.mockRestore();
+    resetResolverForTests();
+    resetRegistrarStateForTests();
+    setDefaultTransportForTests(null);
+  }
+}, 120000);
+
+it("CBS-03 resumes native form and human waits through the same company assignment and frozen result contract", async () => {
+  const hostRoot = join(root, "reservation-host");
+  const checkedAt = new Date().toISOString();
+
+  await writeFile(
+    join(hostRoot, "adapter-smoke-cache.json"),
+    JSON.stringify({
+      version: 2,
+      adapters: {
+        claude: {
+          status: "ok",
+          checkedAt,
+          protocolVersion: 1,
+          capabilityEnforcement: {
+            status: "ok",
+            checkedAt,
+            protocolVersion: 1,
+            probeVersion: 2,
+          },
+        },
+      },
+    }),
+  );
+  const supervisor = await startRealSupervisor({
+    runtimeRoot: hostRoot,
+    workspaceRoots: [join(root, "worktrees")],
+    fixtureArgs: ["--hang"],
+    env: {
+      MAISTER_ADAPTER_SMOKE_CACHE_PATH: join(
+        hostRoot,
+        "adapter-smoke-cache.json",
+      ),
+    },
+  });
+  const restoreUrl = useRealSupervisorUrl(supervisor.url);
+  const compatibility = useEngineVersion("3.12.0");
+  const worker = startProjectionWorker({
+    db: database.db,
+    projectors: canonicalProjectors,
+  });
+  const previousRuntime = process.env.MAISTER_RUNTIME_ROOT;
+  const previousCap = process.env.MAISTER_MAX_CONCURRENT_RUNS;
+
+  vi.stubEnv("MAISTER_RUNTIME_ROOT", hostRoot);
+  setDefaultTransportForTests(null);
+  resetResolverForTests();
+  resetRegistrarStateForTests();
+  try {
+    await createCompanyGrants(database.db, administratorId, {
+      principalKind: "user",
+      principalId: requesterId,
+      actions: ["assignments:answer"],
+      idempotencyKey: randomUUID(),
+    });
+    const effective = await resolveInstalledAgentDefinition(database.db, {
+      agentId: "rah:dialogue-coordinator",
+      packageInstallId: preparedAssignment.standingDefinition.packageInstallId,
+    });
+    const flow = (
+      await database.pool.query<{
+        id: string;
+        manifest_digest: string;
+        installed_path: string;
+      }>(
+        "SELECT id,manifest_digest,installed_path FROM flow_revisions WHERE flow_ref_id='rah-company-dialogue' AND resolved_revision=$1",
+        [preparedAssignment.standingDefinition.packageRevision],
+      )
+    ).rows[0]!;
+    const configured = await getCompanyFlowBinding(
+      database.db,
+      requesterId,
+      request.coordinatorBindingId,
+    );
+    const specialist = await createCompanySpecialistBinding(
+      database.db,
+      requesterId,
+      effective.parsed.id,
+      {
+        runnerId: configured.configuration.specialist.runnerId,
+        owner: { kind: "company", companyId: request.companyId },
+        packageInstallId: effective.packageInstallId,
+        packageRevision: preparedAssignment.standingDefinition.packageRevision,
+        definitionSha256: agentDefinitionSha256(effective.parsed),
+        coordinatorFlowRevisionId: flow.id,
+        configuration: {},
+        grantActions: ["knowledge:read", "knowledge:propose"],
+        enabled: true,
+        idempotencyKey: randomUUID(),
+      },
+    );
+    const coordinator = await createCompanyFlowBinding(
+      database.db,
+      requesterId,
+      {
+        owner: { kind: "company", companyId: request.companyId },
+        specialistBindingId: specialist.specialist.bindingId,
+        specialistRevision: specialist.specialist.configRevision,
+        flowRevisionId: flow.id,
+        manifestSha256: flow.manifest_digest,
+        execution: { workspace: "none", completion: "result" },
+        enabled: true,
+        roleMappings: { maintainer: [requesterId] },
+        idempotencyKey: randomUUID(),
+      },
+    );
+    const contract = await resolveFlowExportContract({
+      flowRefId: "rah-company-dialogue",
+      manifest: dialogueManifest,
+      revision: {
+        id: flow.id,
+        installedPath: flow.installed_path,
+        resolvedRevision: preparedAssignment.standingDefinition.packageRevision,
+      },
+    });
+
+    if (!contract)
+      throw new Error("The dialogue Flow has no required result contract");
+    const output = {
+      schemaVersion: 1,
+      findings: [],
+      knowledgeProposals: [],
+      selection: [],
+    };
+    const assignment = await createSpecialistAssignment(
+      database.db,
+      requesterId,
+      {
+        ...preparedAssignment,
+        specialistBindingId: specialist.specialist.bindingId,
+        responsibleAgentId: effective.parsed.id,
+        standingDefinition: {
+          ...preparedAssignment.standingDefinition,
+          agentId: effective.parsed.id,
+          definition: effective.parsed,
+          definitionSha256: agentDefinitionSha256(effective.parsed),
+        },
+        objectiveInput: {
+          ...preparedAssignment.objectiveInput,
+          input:
+            "\nfixture-output:" +
+            JSON.stringify({
+              bytes: 0,
+              text:
+                "```json maister:output\n" + JSON.stringify(output) + "\n```",
+            }) +
+            "\n",
+          expectedResult: {
+            schemaRef: contract.schemaRef,
+            schemaVersion: contract.schemaVersion,
+            sha256: contract.sha256,
+            required: true,
+          },
+        },
+        origin: { kind: "manual", interactionId: randomUUID() },
+      },
+    );
+    const hosts = createExecutionHosts({
+      db: database.db,
+      transport: createLocalDirectTransport(),
+    });
+    const receipt = await reserveCompanyFlowRun(
+      database.db,
+      requesterId,
+      {
+        ...request,
+        assignmentId: assignment.id,
+        assignmentRevision: assignment.revision,
+        inputRevision: assignment.inputRevision,
+        bindingId: specialist.specialist.bindingId,
+        bindingRevision: specialist.specialist.configRevision,
+        coordinatorBindingId: coordinator.binding.id,
+        coordinatorBindingRevision: coordinator.binding.revision,
+      },
+      hosts,
+    );
+
+    expect(await tryStartRun(receipt.runId, { db: database.db })).toMatchObject(
+      { started: true },
+    );
+    const frozenSql =
+      "SELECT execution.company_execution_snapshot AS snapshot,execution.result_contract AS contract,link.input_revision FROM runs execution JOIN specialist_run_links link ON link.run_id=execution.id WHERE execution.id=$1";
+    const frozen = (
+      await database.pool.query<{
+        snapshot: JsonValue;
+        contract: JsonValue;
+        input_revision: number;
+      }>(frozenSql, [receipt.runId])
+    ).rows[0]!;
+
+    vi.stubEnv("MAISTER_MAX_CONCURRENT_RUNS", "1");
+    await runFlow(receipt.runId, {
+      db: database.db,
+      executionHosts: hosts,
+      runtimeRoot: hostRoot,
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status,current_step_id FROM runs WHERE id=$1",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toEqual([{ status: "NeedsInput", current_step_id: "intake" }]);
+    const form = (
+      await database.pool.query<{ id: string }>(
+        "SELECT id FROM hitl_requests WHERE run_id=$1 AND kind='form' AND responded_at IS NULL",
+        [receipt.runId],
+      )
+    ).rows[0]!;
+    const answer = (
+      hitlRequestId: string,
+      response: Readonly<Record<string, string>>,
+    ): Promise<Response> =>
+      respondHitlPost(
+        new NextRequest(
+          `http://localhost/api/runs/${receipt.runId}/hitl/${hitlRequestId}/respond`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ response }),
+          },
+        ),
+        { params: Promise.resolve({ runId: receipt.runId, hitlRequestId }) },
+      );
+
+    browserUserId = requesterId;
+    expect((await answer(form.id, {})).status).toBe(422);
+    expect(
+      (await answer(form.id, { component: "component-cache" })).status,
+    ).toBe(200);
+    await expect
+      .poll(
+        async () =>
+          (
+            await database.pool.query<{ id: string }>(
+              "SELECT id FROM hitl_requests WHERE run_id=$1 AND kind='human' AND responded_at IS NULL",
+              [receipt.runId],
+            )
+          ).rows[0]?.id,
+        { timeout: 20000, interval: 50 },
+      )
+      .toBeTruthy();
+    const review = (
+      await database.pool.query<{ id: string }>(
+        "SELECT id FROM hitl_requests WHERE run_id=$1 AND kind='human' AND responded_at IS NULL",
+        [receipt.runId],
+      )
+    ).rows[0]!;
+
+    await expect
+      .poll(
+        async () =>
+          (
+            await database.pool.query<{ status: string }>(
+              "SELECT status FROM runs WHERE id=$1",
+              [receipt.runId],
+            )
+          ).rows[0]?.status,
+        { timeout: 10000, interval: 50 },
+      )
+      .toBe("NeedsInput");
+    expect((await answer(review.id, { decision: "approve" })).status).toBe(200);
+    await expect
+      .poll(
+        async () =>
+          (
+            await database.pool.query<{
+              status: string;
+              cleanup: string | null;
+              driver: string | null;
+            }>(
+              "SELECT status,operational_cleanup->>'state' AS cleanup,flow_driver_token AS driver FROM runs WHERE id=$1",
+              [receipt.runId],
+            )
+          ).rows[0],
+        { timeout: 20000, interval: 50 },
+      )
+      .toEqual({ status: "Done", cleanup: "released", driver: null });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind='session.prompt'",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toEqual([{ count: 1 }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status FROM specialist_assignments WHERE id=$1",
+          [assignment.id],
+        )
+      ).rows,
+    ).toEqual([{ status: "active" }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT vars FROM node_attempts WHERE run_id=$1 AND node_id='intake'",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toMatchObject([{ vars: { component: "component-cache" } }]);
+    expect(
+      (await database.pool.query(frozenSql, [receipt.runId])).rows,
+    ).toEqual([frozen]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT validity,value FROM run_results WHERE run_id=$1",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toMatchObject([{ validity: "valid", value: output }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT human.status,human.role_refs,actor.user_id FROM assignments human JOIN actor_identities actor ON actor.id=human.completed_by_actor_id WHERE human.run_id=$1 ORDER BY human.action_kind",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toEqual([
+      { status: "completed", role_refs: ["maintainer"], user_id: requesterId },
+      { status: "completed", role_refs: ["maintainer"], user_id: requesterId },
+    ]);
+  } finally {
+    if (previousRuntime === undefined) delete process.env.MAISTER_RUNTIME_ROOT;
+    else process.env.MAISTER_RUNTIME_ROOT = previousRuntime;
     if (previousCap === undefined)
       delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
     else process.env.MAISTER_MAX_CONCURRENT_RUNS = previousCap;

@@ -11,6 +11,7 @@ import pino, { type Logger } from "pino";
 
 import { asExecutionWorkspaceId } from "./types";
 
+import { COMPANY_RUNTIME_NAMESPACE } from "@/lib/flow-paths";
 import {
   librarianConversations,
   localPackages,
@@ -89,7 +90,7 @@ export function workspaceSpecFor(
 
     return {
       runId: run.id,
-      projectSlug: "_company",
+      projectSlug: COMPANY_RUNTIME_NAMESPACE,
       owner: { kind: "company", companyId: input.company.companyId },
       kind: "directory",
       path: input.company.cwd,
