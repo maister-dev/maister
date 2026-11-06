@@ -2446,6 +2446,8 @@ table project_package_attachments {
 table project_tokens {
   id text [pk, not null]
   project_id text
+  company_id text
+  company_run_id text
   name text [not null]
   token_kind text [not null, default: 'project']
   owner_user_id text
@@ -2465,6 +2467,8 @@ table project_tokens {
   revocation_reason text
 
   indexes {
+
+    company_run_id [name: 'project_tokens_company_live_run_uq', unique]
     prefix [name: 'project_tokens_prefix_idx']
     project_id [name: 'project_tokens_project_idx']
     owner_user_id [name: 'project_tokens_owner_idx']
@@ -2801,6 +2805,8 @@ table run_transcript_states {
 table runs {
   id text [pk, not null]
   run_kind text [not null, default: 'flow']
+  company_id text
+  company_execution_snapshot jsonb
   task_qualification_snapshot jsonb
   task_admission_checked_at "timestamp with time zone"
   task_admission_snapshot jsonb
@@ -2879,6 +2885,8 @@ table runs {
   execution_assignment_id text
 
   indexes {
+
+    (company_id, source_agent_id, activity_sort_at, id) [name: 'runs_company_agent_history_idx']
 
 
     task_launch_intent_id [name: 'runs_task_launch_intent_uq', unique]
@@ -4553,6 +4561,10 @@ ref project_package_attachments_package_install_id_package_installs_id_fk: proje
 
 ref project_tokens_project_id_projects_id_fk: project_tokens.project_id > projects.id [delete: cascade, update: no action]
 
+ref project_tokens_company_id_companies_id_fk: project_tokens.company_id > companies.id [delete: restrict, update: no action]
+
+ref project_tokens_company_run_id_runs_id_fk: project_tokens.company_run_id > runs.id [delete: cascade, update: no action]
+
 ref project_tokens_owner_user_id_users_id_fk: project_tokens.owner_user_id > users.id [delete: set null, update: no action]
 
 ref project_tokens_agent_id_agents_id_fk: project_tokens.agent_id > agents.id [delete: cascade, update: no action]
@@ -4632,6 +4644,7 @@ ref run_transcript_states_run_id_runs_id_fk: run_transcript_states.run_id > runs
 ref run_transcript_states_node_attempt_id_node_attempts_id_fk: run_transcript_states.node_attempt_id > node_attempts.id [delete: cascade, update: no action]
 
 ref runs_task_launch_intent_id_task_launch_intents_id_fk: runs.task_launch_intent_id > task_launch_intents.id [delete: restrict, update: no action]
+ref runs_company_id_companies_id_fk: runs.company_id > companies.id [delete: restrict, update: no action]
 
 ref runs_agent_id_agents_id_fk: runs.agent_id > agents.id [delete: set null, update: no action]
 

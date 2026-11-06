@@ -28,6 +28,7 @@ import {
 } from "./types";
 import { decodeAssignmentInput, retainAssignmentInput } from "./input-snapshot";
 
+import { companyAgentExecutionSnapshotSchema } from "@/lib/agents/company-agent-execution-types";
 import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
 import { parseAgentDefinition } from "@/lib/agents/definition";
 import { parseScheduledRequestSnapshot } from "@/lib/agents/scheduled-request";
@@ -61,7 +62,7 @@ export async function beginAssignmentTransaction(
   await tx.execute(sql`SET LOCAL lock_timeout='5s'`);
 }
 
-function unavailableAssignment(): MaisterError {
+export function unavailableAssignment(): MaisterError {
   return new MaisterError(
     "PRECONDITION",
     "Specialist assignment reference is unavailable",
@@ -800,18 +801,32 @@ export async function linkSpecialistAssignmentRunInTransaction(
   await getSpecialistAssignmentInTransaction(tx, userId, assignmentId);
   const execution = (
     await tx.execute(
-      sql`SELECT id,project_id FROM runs WHERE id=${request.data.runId} FOR UPDATE`,
+      sql`SELECT id,project_id,company_id,company_execution_snapshot FROM runs WHERE id=${request.data.runId} FOR UPDATE`,
     )
   ).rows[0];
 
-  if (
-    !execution ||
-    owner.kind !== "project" ||
-    execution.project_id !== owner.projectId
-  )
+  const companyCapture = companyAgentExecutionSnapshotSchema.safeParse(
+    execution?.company_execution_snapshot,
+  );
+  const ownerMatches =
+    execution !== undefined &&
+    (owner.kind === "project"
+      ? execution.project_id === owner.projectId &&
+        execution.company_id === null
+      : execution.company_id === owner.companyId &&
+        execution.project_id === null &&
+        companyCapture.success &&
+        companyCapture.data.owner.companyId === owner.companyId &&
+        companyCapture.data.assignment.id === assignmentId &&
+        companyCapture.data.assignment.inputRevision ===
+          request.data.inputRevision &&
+        companyCapture.data.specialistBinding.id ===
+          head.specialist_binding_id);
+
+  if (!ownerMatches)
     throw new MaisterError(
       "PRECONDITION",
-      "Execution owner does not match the assignment; company work requires native company admission",
+      "Execution owner and immutable input must match the exact assignment admission",
     );
   const existing = (
     await tx.execute(

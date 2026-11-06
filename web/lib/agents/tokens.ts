@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { SqlDatabase } from "@/lib/db/sql-types";
+
 import { randomUUID } from "node:crypto";
 
 import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
@@ -7,9 +9,13 @@ import pino from "pino";
 
 import { ACTIVE_AGENT_RUN_STATUSES } from "./activity-status";
 
+import { requireCompanyRunCredentialOwner } from "./company-run-credential-owner";
+
+import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import { AGENT_TOKEN_SCOPES, TOKEN_SCOPES } from "@/types/token-scopes";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { redactQueryError } from "@/lib/db/pg-error";
 import { generateToken } from "@/lib/tokens/secret";
 import { MaisterError } from "@/lib/errors";
 
@@ -224,6 +230,56 @@ export async function issueAgentRunToken(args: {
   );
 
   return { tokenId, secret };
+}
+
+/** Company tokens extend the existing hash-only run credential and terminal revocation lifecycle. */
+export async function issueCompanyAgentRunToken(
+  args: Readonly<{ runId: string; db?: SqlDatabase }>,
+): Promise<IssuedAgentToken> {
+  const db: SqlDatabase = args.db ?? getDb();
+  const issued = await db
+    .transaction(async (tx) => {
+      await tx.execute(
+        sql`SELECT id FROM runs WHERE id=${args.runId} FOR UPDATE`,
+      );
+      const owner = await requireCompanyRunCredentialOwner(tx, args.runId);
+
+      await authorizeCompanyUserAction(
+        tx,
+        owner.userId,
+        owner.companyId,
+        "assignments:update",
+      );
+      const scopes = (["knowledge:read", "knowledge:propose"] as const).filter(
+        (action) => owner.actionLimits.includes(action),
+      );
+      const { secret, prefix, hash } = generateToken();
+      const tokenId = randomUUID();
+      const name = `agent-run:${args.runId}`;
+
+      await tx.execute(
+        sql`UPDATE project_tokens SET revoked_at=now() WHERE token_kind='agent' AND company_run_id=${args.runId} AND revoked_at IS NULL`,
+      );
+      await tx.execute(sql`INSERT INTO project_tokens(id,company_id,company_run_id,name,token_kind,owner_user_id,agent_id,prefix,token_hash,scopes,expires_at)
+      VALUES(${tokenId},${owner.companyId},${owner.runId},${name},'agent',${owner.userId},${owner.agentId},${prefix},${hash},${JSON.stringify(scopes)}::jsonb,${new Date(Date.now() + AGENT_TOKEN_TTL_HOURS * 3600000)})`);
+      log.info(
+        {
+          runId: owner.runId,
+          companyId: owner.companyId,
+          agentId: owner.agentId,
+          tokenId,
+          scopeCount: scopes.length,
+        },
+        "ephemeral company agent token issued",
+      );
+
+      return { tokenId, secret };
+    })
+    .catch((error: unknown) => {
+      throw redactQueryError(error);
+    });
+
+  return issued;
 }
 
 // ADR-145 (Evaluation Lab) D12: a judge attempt runs as a dedicated agent Run

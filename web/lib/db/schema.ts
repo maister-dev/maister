@@ -1,4 +1,5 @@
 import type { CoordinatorChildLaunchContext } from "@/lib/orchestrator/child-launch-context";
+import type { CompanyAgentExecutionSnapshot } from "@/lib/agents/company-agent-execution-types";
 import type { CompanyFlowBindingSnapshot } from "@/lib/agents/company-flow-binding-types";
 import type { NativeDelegationInput } from "@/lib/orchestrator/native-input-types";
 import type { AgentSpecialist } from "@/lib/agents/specialist";
@@ -133,6 +134,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 
+import { companyAgentSnapshotShape } from "@/lib/agents/company-agent-scope-schema";
 import { agentRetryRecipeScopeShape } from "@/lib/agents/retry-scope-schema";
 import { triggerBindingScopeShape } from "@/lib/agents/trigger-scope-schema";
 import { scheduledRequestShape } from "@/lib/agents/scheduled-request-schema";
@@ -2229,6 +2231,12 @@ export const runs = pgTable(
   {
     id: text("id").primaryKey(),
     runKind: text("run_kind", { enum: RUN_KINDS }).notNull().default("flow"),
+    companyId: text("company_id").references(() => companies.id, {
+      onDelete: "restrict",
+    }),
+    companyExecutionSnapshot: jsonb(
+      "company_execution_snapshot",
+    ).$type<CompanyAgentExecutionSnapshot>(),
     taskQualificationSnapshot: jsonb(
       "task_qualification_snapshot",
     ).$type<TaskQualificationLaunchSnapshot>(),
@@ -2572,6 +2580,14 @@ export const runs = pgTable(
     ),
   },
   (t) => ({
+    companyAgentShape: check(
+      "runs_company_agent_shape_check",
+      sql`((${t.companyId} IS NULL AND ${t.companyExecutionSnapshot} IS NULL) OR (${t.companyId} IS NOT NULL AND ${t.companyExecutionSnapshot} IS NOT NULL AND ${t.projectId} IS NULL AND ${t.taskId} IS NULL AND ${t.flowId} IS NULL AND ${t.flowRevisionId} IS NULL AND ${t.localPackageId} IS NULL AND ${t.runKind}='agent' AND ${t.agentKind}='operational' AND ${t.agentWorkspace}='none' AND ${t.persistent}=false AND ${t.sourceAgentId} IS NOT NULL AND (${t.agentId} IS NULL OR ${t.agentId}=${t.sourceAgentId}) AND ${t.resultContract}->'definition'->>'id'=${t.sourceAgentId} AND ${companyAgentSnapshotShape(t.companyExecutionSnapshot, t.companyId)})) IS TRUE`,
+    ),
+    companyHistoryIndex: index("runs_company_agent_history_idx")
+      .on(t.companyId, t.sourceAgentId, t.activitySortAt.desc(), t.id.desc())
+      .where(sql`${t.companyId} IS NOT NULL`),
+
     taskQualificationShape: check(
       "runs_task_qualification_snapshot_check",
       sql`${t.taskQualificationSnapshot} IS NULL OR (${t.runKind} = 'agent' AND ${t.agentKind} = 'operational' AND jsonb_typeof(${t.taskQualificationSnapshot}) = 'object' AND ${t.taskQualificationSnapshot}->'version' = '1'::jsonb AND ${t.taskQualificationSnapshot}->>'role' IN ('intake','qualifier') AND (${t.taskQualificationSnapshot}->>'role' <> 'qualifier' OR ${t.agentWorkspace} = 'repo_read' AND ${t.taskQualificationSnapshot}->>'taskId' = ${t.taskId} AND length(${t.taskQualificationSnapshot}->>'target') BETWEEN 1 AND 255 AND ${t.taskQualificationSnapshot}->>'sha' ~ '^[a-f0-9]{40}([a-f0-9]{24})?$')) IS TRUE`,
@@ -8136,6 +8152,12 @@ export const projectTokens = pgTable(
     project_id: text("project_id").references(() => projects.id, {
       onDelete: "cascade",
     }),
+    company_id: text("company_id").references(() => companies.id, {
+      onDelete: "restrict",
+    }),
+    company_run_id: text("company_run_id").references(() => runs.id, {
+      onDelete: "cascade",
+    }),
     name: text("name").notNull(),
     token_kind: text("token_kind", {
       enum: ["project", "user", "agent", "librarian"],
@@ -8183,6 +8205,13 @@ export const projectTokens = pgTable(
     }),
   },
   (t) => ({
+    companyScopeCheck: check(
+      "project_tokens_company_scope_check",
+      sql`((${t.company_id} IS NULL AND ${t.company_run_id} IS NULL) OR (${t.company_id} IS NOT NULL AND ${t.company_run_id} IS NOT NULL AND ${t.project_id} IS NULL AND ${t.token_kind}='agent' AND ${t.agent_id} IS NOT NULL AND ${t.name}='agent-run:'||${t.company_run_id} AND ${t.expires_at} IS NOT NULL AND ${t.librarian_turn_id} IS NULL AND ${t.knowledge_node_attempt_id} IS NULL AND jsonb_typeof(${t.scopes})='array' AND ${t.scopes}<@'["knowledge:read","knowledge:propose"]'::jsonb)) IS TRUE`,
+    ),
+    companyLiveRunIndex: uniqueIndex("project_tokens_company_live_run_uq")
+      .on(t.company_run_id)
+      .where(sql`${t.company_id} IS NOT NULL AND ${t.revoked_at} IS NULL`),
     idxPrefix: index("project_tokens_prefix_idx").on(t.prefix),
     idxProject: index("project_tokens_project_idx").on(t.project_id),
     idxOwner: index("project_tokens_owner_idx").on(t.owner_user_id),
@@ -8207,7 +8236,7 @@ export const projectTokens = pgTable(
     ),
     agentProjectCheck: check(
       "project_tokens_agent_project_check",
-      sql`${t.token_kind} != 'agent' OR (${t.project_id} IS NOT NULL AND ${t.agent_id} IS NOT NULL)`,
+      sql`${t.token_kind} != 'agent' OR (${t.agent_id} IS NOT NULL AND ((${t.project_id} IS NOT NULL AND ${t.company_id} IS NULL AND ${t.company_run_id} IS NULL) OR (${t.project_id} IS NULL AND ${t.company_id} IS NOT NULL AND ${t.company_run_id} IS NOT NULL)))`,
     ),
     userOwnerCheck: check(
       "project_tokens_user_owner_check",

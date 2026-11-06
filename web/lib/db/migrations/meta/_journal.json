@@ -1653,6 +1653,20 @@
       "when": 1794606477942,
       "tag": "0239_company_retry_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 240,
+      "version": "7",
+      "when": 1794606477943,
+      "tag": "0240_company_agent_execution",
+      "breakpoints": true
+    },
+    {
+      "idx": 241,
+      "version": "7",
+      "when": 1794606477944,
+      "tag": "0241_company_agent_credentials",
+      "breakpoints": true
     }
   ]
 }

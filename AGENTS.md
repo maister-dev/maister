@@ -160,6 +160,8 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | `web/lib/agents/launch-contract.ts` | Immutable agent kind, definition and operational completion snapshots |
 | `web/lib/agents/trigger-binding-snapshot.ts` | Owner-aware trigger configuration witnesses; existing request snapshots stay v1 and company dispatch is separately gated |
 | `web/lib/agents/retry-snapshot.ts` | Retained v1/v2 project and v3 company retry reading without rewriting historical bytes |
+| `web/lib/agents/company-agent-context.ts` | Current company agent preflight and immutable server-owned execution capture; session dispatch pending |
+| `web/lib/agents/company-run-credential-owner.ts` | Current company run/input/configuration/account authority for ephemeral credentials |
 | `web/lib/agents/company-flow-bindings.ts` | Reviewed company coordinator pins and immutable configuration/routing receipts; execution remains separately gated |
 | `web/lib/agents/company-bindings.ts` | Explicit company role pins and immutable configuration receipts, independent of projects |
 | `web/lib/specialist-assignments/store.ts` | Durable company/project assignment heads, frozen input history, current authority, CAS and existing-run links |
