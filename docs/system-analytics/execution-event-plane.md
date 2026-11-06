@@ -627,6 +627,14 @@ unchanged.
 
 ### Durable worker boot, quiesce and health (Implemented)
 
+The [durable launch worker](task-launch-admission.md#durable-launch-worker-designed)
+is a Designed fourth mandatory runtime slot, `taskLaunch`, with one Flow and one
+Agent service slot. Its boot, health and joined shutdown extend the same
+composition below; it grants no execution authority and does not independently
+release shared dispatch claims. The existing worker-health map accepts the new
+name. The three-worker description below remains the current implementation
+until that extension is qualified.
+
 Three durable workers share the projection worker's lifecycle and start beside
 it: **prompt-owner recovery**, **flow continuation** and **agent continuation**.
 `startDurableWorkers()` is the fifth step of the instrumentation isolated-step

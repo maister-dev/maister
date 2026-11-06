@@ -169,7 +169,8 @@ a plain `db:migrate` on such an installation stops at `0135` by design. See
 
 ### Scheduler clock
 
-Periodic recovery is available only while the unified scheduler clock ticks.
+Scheduler-owned periodic recovery is available only while the unified scheduler
+clock ticks.
 For the supported single-box systemd install, set this explicitly in
 `/etc/maister/maister.env`:
 
@@ -193,8 +194,18 @@ instances. Never place the token in a URL or log. A configured token proves
 only that the route is enabled; verify advancing `system_sweep.default` and
 `domain_event_dispatch.default` attempt timestamps on `/admin/scheduler`.
 Explicit false without a token is `missing_tick` and logs a WARN naming both
-configuration variables. In that state recovery, checkpoint cleanup and
-parked-parent wakes do not run.
+configuration variables. In that state scheduler recovery, checkpoint cleanup
+and the scheduler's parked-parent wake backstop do not run; boot and continuation
+workers retain their separate duties.
+
+The [durable task-launch worker](system-analytics/task-launch-admission.md#durable-launch-worker-designed)
+is Designed to service accepted launch intents at web boot and database
+deadlines, with one Flow and one Agent service slot in the existing runtime.
+It requires no additional timer, secret or environment flag and does not depend
+on HTTP `after` callbacks or cron ticks for launch progress. Its fourth mandatory
+worker-health slot and joined shutdown must be qualified before treating that
+independent launch service as available. Keep the 60-second scheduler clock and
+host reconciliation backstops configured.
 
 To roll back an external scheduler to the in-process single-box clock, stop the
 external caller, set `MAISTER_SCHEDULER_TIMER_ENABLED=true`, remove

@@ -218,9 +218,60 @@ in either reservation lane keeps its selection: publication retains the full rou
 proposal and records `routingApplication` in `task_activity.triage_set` as `applied`,
 `not_applied_active_launch` or `not_applied_independent_hold` with safe proposal IDs.
 
-`launch-dispatch` is a bounded reconciler invoked after acceptance, by slot-free dispatch and existing `system_sweep`; no new timer or filesystem watcher. Index `(state,due_at,id)`, keyset progress and classified retry attempts prevent poison/held rows starving later work. Capacity and host-pressure waits do not consume genuine failure budget or prove task failure.
+`launch-dispatch` is currently a bounded reconciler invoked after acceptance, by
+slot-free dispatch and existing `system_sweep`. Index `(state,due_at,id)`, keyset
+progress and classified retry attempts prevent poison/held rows starving later
+work. Capacity and host-pressure waits do not consume genuine failure budget or
+prove task failure.
 
 Commit intent/snapshot/audit/outbox together. Git/host effects occur outside SQL transactions. Bind run, intent link, task status and slot handoff atomically. Persist the first-dispatch commitment under current ownership before executable effects; an earlier edit holds, a later edit affects future requests. Unknown create/prompt effects join existing command receipts instead of redispatching. Every execution reader, including restart and terminal delivery, reads frozen input/settings.
+
+### Durable launch worker (Designed)
+
+The existing `web/lib/workers/runtime.ts` composition adds a mandatory fourth
+worker, `taskLaunch`, with two named service slots: one `flow` and one `agent`.
+These are dispatch concurrency slots, not extra execution capacity. Startup,
+duplicate-start protection, health and quiesce use the existing durable-worker
+lifecycle; no environment flag permits partial activation. The four-worker health
+map reports startup/service failure rather than presenting an incomplete set as
+healthy. The existing `Record<string, DurableWorkerState>` observation surface
+accepts the additional worker name without a public grant or strict DTO change.
+
+Each pool reconciles durable `queued` intents whose `due_at` has arrived,
+`preparing` intents whose preparation lease has expired, and due `run_bound`
+intents without `dispatch_committed_at`. Eligibility and remaining wait duration
+come from PostgreSQL `clock_timestamp()`. Held, cancelled, settled and committed
+requests are not new dispatch candidates. Existing due/lease columns and
+`task_launch_intents_recovery_idx(state,due_at,id)` suffice; no migration or
+second queue is introduced.
+
+A wake requests fair service of its pool through
+`promoteNextPending({db,pool})`; an intent ID in a notification is only a hint,
+never authority to select or claim that request. The shared scheduler retains
+priority/FIFO and source eligibility, then maps its `task_intent` decision to
+`driveClaimedTaskLaunchIntent` and its `task_bound` decision to
+`dispatchBoundTaskLaunchIntent`. These retain the existing preparation/dispatch
+claims, actor/source revalidation, cap/reserve accounting, failure budget and
+fencing. A blocked candidate cannot monopolize a bounded page or prevent the
+other pool from progressing.
+
+Committed launch changes and slot/availability wakes are advisory. Each slot
+reconciles at startup and after its next database deadline even if a wake is
+lost, emitted by another process or arrives before waiting. Waiting uses the
+continuation workers' abortable `runEventWakeBus.waitForProjection` convention,
+with a one-second maximum reconciliation wait. A full pass without durable
+progress waits before resetting its scan; already-due but ineligible work does
+not create a tight loop. There is no `setInterval`, client polling or filesystem
+polling. HTTP `after` callbacks and the existing 60-second scheduler and host
+reconciliation backstops remain useful but are not required for this worker's
+progress.
+
+Stop prevents new scheduler claims, aborts idle waits and awaits active shared
+dispatch before the existing database drain. It does not independently release
+or steal a preparation/dispatch lease; the shared owner completes or surfaces
+its own failure. Repeated stop joins the same shutdown operation. Start/stop,
+pool, service failure and safe intent/run correlation are structured diagnostics;
+ordinary no-work/capacity waits do not degrade health or fail a task.
 
 ### Successor and continuation lineage
 

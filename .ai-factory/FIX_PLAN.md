@@ -3,11 +3,11 @@
 ## Post-rebase review corrections
 
 Master remains `ee8a6255331a5a7250f29fe9676f9f09a3450c9f`, verified again
-through GitHub on 2026-11-04. The requested branch is rebased at `abb4578d0`.
-Its frozen integration gate completed with 651 passing, three failing and two
-optional-load files skipped; 5841 tests passed and twelve failed. Exact cleanup
-completed without errors. The reviewed corrections were prepared separately
-and transferred back with matching hashes for all 45 changed files. Final P4 qualification passes; browser and complete Web qualification remain pending.
+through GitHub on 2026-11-06. The branch is rebased. At frozen `aab070c39`,
+complete Web unit passes 887 files / 9244 tests; types, all changed Web lint,
+complete docs/ERD and contracts pass. The latest combined browser lane completed
+all 29 cases: 26 passed, three failed, no unrun cases or leaks. Full Web
+integration remains pending until these failures are resolved.
 
 - [x] R1: preserve native stdout synchronously before asynchronous spool open;
   retain the real-child exit/spool barrier regression and bounded buffering.
@@ -35,16 +35,19 @@ and transferred back with matching hashes for all 45 changed files. Final P4 qua
   execution is possible; retain the explicitly proven Task pre-model notice.
 - [ ] R11: materialize the delegated browser Flow bundle from its stored
   definition and observe its exact immutable child-intent Run bindings.
-- [ ] R12: wait for actual bound recursive Flow children before inspecting
+- [x] R12: wait for actual bound recursive Flow children before inspecting
   descendants; retain exact counts, parent proof, result and wake assertions.
-- [ ] R13: assert the browser fault's proven baseline Git stage and safe cause,
+- [x] R13: assert the browser fault's proven baseline Git stage and safe cause,
   retaining zero model commands/assessments and actionable neutral Run copy.
 
-P4's complete six-case owner passes with exact cleanup. The first combined
-browser gate completed 26 passes and three fixture failures, with no skipped
-cases or leaks; its real manual PR and RU keyboard/failed-triage journeys passed.
-The R11–R13 corrections require the next frozen combined browser gate. R10's
-real-locale component regressions pass without a public-contract change.
+P4's complete six-case owner passes with exact cleanup. The latest browser
+failures are: one delayed second delegated-Flow binding; an M38 accepted intent
+that bound after the test deadline, before routing was exercised; and recursive
+research children that failed although all four agent grandchildren completed.
+Safe snapshots and traces remain under `/private/tmp/maister-e2e-aab070c39-*`.
+Their causes are not established by ordering alone. Manual PR delivery, RU
+keyboard/queued launch, optional assessment and Triager automatic delivery,
+Stop/cleanup and real baseline Git-failure diagnostics passed in this lane.
 
 All fixes require focused RED/GREEN evidence where behavior changes, complete
 required gates, independent review and local phase commits. No production or
@@ -70,6 +73,12 @@ No required assertion is skipped, quarantined or weakened.
 - [x] R17: align the external failed-qualifier schema with the real nullable
   source projection and its Web counterpart; preserve neutral/proven distinctions
   and accurate continuation-preparation diagnostic descriptions.
+- [ ] R18: reproduce and resolve pending-launch wake/deadline ownership using
+  existing durable claims and capacity protection. Establish exact queue owners;
+  do not mask the observed binding delay with larger test timeouts.
+- [ ] R19: establish the recursive intermediate-child failure cause and fix its
+  real producer/consumer boundary; retain exact child results and completion
+  semantics, without accepting failed children as successful test outcomes.
 - [ ] Complete the frozen combined 29-case browser lane, complete configured Web
   integration, static checks and final review; close the remaining seven plan
   tasks only after their acceptance checks pass, then remove this fix plan.

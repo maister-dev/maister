@@ -84,6 +84,25 @@ requests. No client polling or second execution engine is introduced. Priority,
 FIFO and relation readiness still select work; acceptance, preparation and model
 execution remain different outcomes.
 
+### Autonomous accepted-request service (Designed)
+
+The [durable launch worker](task-launch-admission.md#durable-launch-worker-designed)
+adds one Flow and one Agent service slot under the existing web worker runtime.
+Advisory pool wakes and startup/database-deadline reconciliation call the same
+shared scheduler; they cannot promote a selected intent ahead of eligible work
+or bypass its authority. Expired preparation and bound-but-undispatched requests
+remain recoverable without an HTTP callback or cron tick. The existing scheduler
+and host backstops retain their responsibilities.
+
+Acceptance uses real PostgreSQL/Git fixtures: a busy owned repository released
+after acceptance and several rapid acceptances progress without HTTP `after` or
+cron; restart discovers expired preparation and bound-undispatched work; blocked
+work in either pool does not starve its other eligible candidates or the other
+pool. Repeated wakes and competing worker instances preserve one binding and
+first dispatch. A no-progress pass waits, and stop admits no new claim while
+joining active shared dispatch without an independent lease release. Existing
+authorization, cap, retry and fencing assertions remain required.
+
 ## Expectations
 
 - **TQ-01:** Ordinary repeated/competing manual and automatic requests cannot

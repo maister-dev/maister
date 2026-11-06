@@ -3,7 +3,7 @@
 Branch: `codex/manual-launch-triager-reliability`
 Created: 2026-11-02 (Europe/Moscow)
 Inspected source: `cb183968df5bac9b9ce652a6bdb6aa2bb79b45ff`
-Status: **Rebased; review corrections integrated; final qualification pending.** Both implementation tracks and the independently reviewed admission, preparation, checkpoint and cleanup corrections are implemented. Migration 0227 preserves historical rows and bounded private witnesses. Complete Web unit verification passes 887 files / 9242 tests; Supervisor passes 518 unit and 375 integration tests; MCP passes 378 unit and 12 transport tests. P4's whole six-case owner and targeted authority, preparation, Triager delivery and checkpoint tests pass. The combined browser gate passed 26 cases, including manual PR and RU keyboard launch; its three fixture corrections and the complete final Web integration gate remain pending before seven tasks close. No production deployment, live-model run or live GitHub PR is claimed.
+Status: **Rebased; final qualification and two failure investigations remain open.** Complete Web unit passes 887 files / 9244 tests on `aab070c39`; types, lint, docs/155-table ERD and API/event contracts pass. Supervisor passes 518 unit and 375 integration tests; MCP passes 378 unit and 12 transport tests on unchanged package source. The current combined browser lane executed all 29 cases with 26 passes, three failures and clean teardown. Manual PR, RU keyboard/queued launch, optional assessment, Triager automatic delivery and baseline infrastructure diagnostics passed. Delayed queue binding and failed recursive intermediate children require focused cause/reproduction work before the final browser/full Web integration gates and seven remaining tasks can close. No production, live-model or live GitHub PR result is claimed.
 
 ## Settings
 
@@ -214,6 +214,41 @@ Existing run-bound response variants retain their required `runId`. The compatib
 `TaskLaunchReceipt` has required `schemaVersion: 1`, `intentId`, `taskId`, `state`, `stateVersion`, `basis`, `acceptedAt`, snapshot revision/settings summary, and nullable `runId`; `reason` and safe actionable field categories are present for held/failed states. Run status/queue fields appear only when a run exists; `settled` includes the actual terminal outcome. POST, replay, GET and MCP serialize this same DTO. Unauthorized replay rechecks access before exposing the stored outcome. Keys are scoped to principal+operation+project; exact request-digest mismatch is `409` with no mutation. `AllowDuplicate` cannot bypass this intent/reservation backstop. Evidence/reference arrays and response payload sizes must inherit explicit existing bounds, with new bounds specified in P0.2 rather than arbitrary unchecked JSON.
 
 P0.2 defines examples for every intent state, both compatibility JSON 202 variants (including Web SSE-accepting requests), and uncertain storage/transport outcomes in `docs/api/web.openapi.yaml` and `docs/api/external/operations.openapi.yaml`; aligns `docs/api/async/attention-stream.asyncapi.yaml` and `web-runs.asyncapi.yaml`; adds the event to `web/lib/domain-events/taxonomy.ts`, emitter schema and schema.ts guard in the same slice. A table of body/query/url/auth/server identifiers accompanies each new operation. Strict response validation and exact request-key replay tests are acceptance, not prose-only promises.
+
+### Pending launch wake ownership (R18 design checkpoint)
+
+Acceptance is a durable intent decision; its Next `after` callback is an advisory
+pool wake, not proof that the selected intent was dispatched. The shared
+scheduler may correctly choose a different higher-priority candidate. A queued
+`due_at` after busy or parent-capacity deferral must have a deadline owner even
+when no further HTTP, cron or host-pressure event arrives.
+
+Register a task-launch worker under the existing durable-worker runtime and
+health lifecycle, with one Flow slot and one agent slot. Each slot reads bounded
+persisted readiness and invokes the existing pool dispatcher. Queued-due and
+expired-preparing work enter the existing claim/drive branch; bound work without
+a dispatch commitment enters the existing bound-dispatch branch. Active leases,
+executed and terminal/held/cancelled work do not acquire new authority. Candidate
+selection grants no ownership; shared SQL claims, capacity, actor, frozen-input,
+parent and physical-process fencing remain authoritative.
+
+Use the existing event-wake/abort convention with bounded DB-clock deadline and
+startup reconciliation. An advisory wake can be lost or originate before commit;
+it is never the source of truth. Wait after no progress instead of spinning on a
+blocked prefix. The two named launch slots do not borrow host-projection tuning.
+This consumes durable admission requests; it adds no client/filesystem polling,
+new execution engine or independent interval scheduler. Existing broad recovery
+backstops remain. Stop prevents new claims and awaits active shared dispatch;
+this worker never releases a claim or finalizes a Run on another owner's behalf.
+
+No migration is needed: existing intent states, due/lease fields and recovery
+index support this selection. Update production boot/health registration as one
+all-or-nothing lifecycle. Extend the existing real-Postgres/Git launch-selection
+owner: actual busy deferral then release plus rapid acceptances must bind once
+without HTTP callbacks/cron/manual promotion; expired preparation and bound
+undispatched work recover after stop/start; a blocked Flow pool cannot starve
+agent work, and stop cannot start later work. Keep existing admission and native
+process guards as independent owners, with no duplicate matrix.
 
 ## Decisions: preparation ownership (Designed)
 
@@ -437,7 +472,7 @@ Every code task inherits the logging/redaction and TDD contracts and must name i
   - Acceptance: Web/API/MCP service parity, positive interactive launch/qualified automatic request/valid parent proof, negative PAT/Librarian/agent forgery, cross-project intent attack, revoked user, malformed source, reused grant and invalid parent. No endpoint remains dependent on client-declared source; old run success schema and new asynchronous receipt are both truthful.
 
 - [ ] **A4. Preserve admission through queue, dispatch, retries and recovery** (depends A3 and B6).
-  - Files: `web/lib/scheduler.ts`, `scheduler/c2-eligibility.ts`, `scheduler/handlers/auto-launch-triaged.ts`, `web/lib/tasks/qualification-predicates.ts`, `qualification-admission.ts`, `web/lib/flows/graph/runner-core.ts`, `runner-graph.ts`, `web/lib/flows/context.ts`, `graph/run-context.ts`, `graph/gate-prompt-completion.ts`, `web/lib/agents/launch.ts`, `web/lib/runs/recover.ts`, `resume-recovery.ts`, `web/lib/agents/retry.ts` and retry guards/ownership; delegated child admission helpers.
+  - Files: `web/lib/tasks/launch-worker.ts`, `web/lib/workers/runtime.ts`, `web/lib/workers/health.ts`, `web/lib/tasks/launch-wake.ts`, `web/lib/scheduler.ts`, `scheduler/c2-eligibility.ts`, `scheduler/handlers/auto-launch-triaged.ts`, `web/lib/tasks/qualification-predicates.ts`, `qualification-admission.ts`, `web/lib/flows/graph/runner-core.ts`, `runner-graph.ts`, `web/lib/flows/context.ts`, `graph/run-context.ts`, `graph/gate-prompt-completion.ts`, `web/lib/agents/launch.ts`, `web/lib/runs/recover.ts`, `resume-recovery.ts`, `web/lib/agents/retry.ts` and retry guards/ownership; delegated child admission helpers.
   - Share qualification semantics but split manual readiness from automatic candidate predicates. New automatic roots, including legacy tasks, need current accepted assessment; execution children are excluded from C2 and admitted only via parent proof. Apply bounded automatic retry/poison/backoff policy without consuming human intent again.
   - Add an explicit legacy-task qualification opt-in using existing `requireTaskRequalification` / fresh-qualification machinery. Current `sendTaskToTriageInTransaction` leaves mode legacy under legacy project policy, while agent-authored assessment submission refuses legacy mode (`qualification_not_required`); merely tightening C2 would strand these tasks. An authorized opt-in transaction advances the task into required qualification and emits the correct Triager work/automation intent. Do not silently migrate all legacy tasks; preserve their historical receipts. Test legacy project → user opt-in → Triager publication → automatic queue.
   - Queue promotion reads intent/run snapshots, revalidates origin/RBAC/Flow/runner/technical/semantic settings, and holds drift. Use existing scheduler lock before global count; test cap reservations, queue position and cancellation/hold releasing capacity with queue wake. Do not reuse C2 classification for manual Pending work.
@@ -554,10 +589,10 @@ Local phase commits are authorized; no push, PR merge or deployment is performed
 
 - The branch is rebased onto `ee8a6255331a5a7250f29fe9676f9f09a3450c9f`; GitHub's current master and local ancestry were verified again through GitHub on 2026-11-06. Post-rebase changes are local phase commits. No push, merge or deployment is authorized.
 - Local reproductions establish destructive concurrent preparation, lost primary filesystem causes, stale same-assignment settlement, checkpoint/completion causality and the HITL/ACK PostgreSQL lock inversion. Exact owners, real barriers and safe diagnostics distinguish these findings from historical MAI-27: its original inner exception remains unknown. Successful later probes do not reconstruct the failed checkout.
-- Completed broad checkpoints: Web unit **887 files / 9242 tests**; Supervisor unit **51 / 518** and integration **39 / 375**; MCP unit **6 / 378** and transport integration **1 / 12**. Logs: `/private/tmp/maister-final-main-web-unit.log`, `/private/tmp/maister-review-supervisor-full-{unit,integration}.log`, `/private/tmp/maister-review-mcp-{unit,integration}.log`. These results do not substitute for the complete final Web integration gate.
+- Completed broad checkpoints: Web unit **887 files / 9244 tests**; Supervisor unit **51 / 518** and integration **39 / 375**; MCP unit **6 / 378** and transport integration **1 / 12**. Logs: `/private/tmp/maister-final-aab070c39-web-unit.log`, `/private/tmp/maister-review-supervisor-full-{unit,integration}.log`, `/private/tmp/maister-review-mcp-{unit,integration}.log`. These results do not substitute for the complete final Web integration gate.
 - The entire P4 owner passes **6/6** on `10d255160`, with exact invocation cleanup and no leaks (`/private/tmp/maister-p4-partitions-10d255160b.log` and its cleanup report). Focused real PostgreSQL/Git/process checks cover immutable admission, queued changes, capacity, derived children, rotated tokens, preparation ownership, terminal settlement, cleanup and checkpoint errors. Real-Supervisor Triager completion publishes a machine assessment and accepts the selected automatic delivery Flow without duplicate work.
 - The last complete frozen Web integration run, at `abb4578d0`, was **not green**: **651 files passed / 3 failed / 2 existing optional-load files skipped; 5841 tests passed / 12 failed / 2 skipped**. It completed naturally with zero cleanup errors. Its twelve failures have reviewed focused corrections; final complete qualification remains required. Evidence: `/private/tmp/maister-web-full-integration-abb4578d0.log` and its failure/cleanup reports.
-- The latest combined browser gate executed all **29 cases: 26 passed / 3 fixture failures**, with no skipped cases or leaks. Manual PR delivery and RU keyboard/failed-triage launch passed. Corrected fixtures now install the actual delegated Flow, wait for exact bound child intents and assert the demonstrated baseline Git failure. The next frozen combined browser run is pending. Evidence: `/private/tmp/maister-e2e-final-11-10d255160.log` and its trace directory.
+- The latest frozen combined browser gate at `aab070c39` executed all **29 cases: 26 passed / 3 failed**, with no unrun cases or leaks. Flow delegation observed only one bound child before its deadline; M38 timed out before Run binding and did not establish a routing failure; recursive research children failed while all four agent grandchildren completed. Actual safe snapshots establish those states but do not reconstruct the original queue reason or inner completion cause. Source inspection identifies a missing direct due-time wake after busy deferral; a focused reproduction and owner-consistent fix remain required. Manual PR, RU keyboard/queue/cancel, optional assessment, Triager automatic delivery and real baseline diagnostics passed. Evidence: `/private/tmp/maister-e2e-final-11-aab070c39.log`, its traces, and `/private/tmp/maister-e2e-aab070c39-{failure,recursive}-db.json`.
 - Neutral EN/RU Run preparation copy preserves infrastructure classification without inferring absent historical model execution; task-level before-model copy still requires explicit source proof. Coupled component checks pass **23/23** after the two-locale RED. Missing Flow installation/capture regressions also reproduce native ENOENT and pass **7/7** with typed safe refusals, retained internal cause and no admission/model effects. The finite capability/agent sibling audit passes **42/42**, including real package, definition, copy and private-capture disappearance; callback and validation errors remain exact.
-- Current Web types, zero-warning scoped lint, full docs/155-table ERD, API/event/generated-schema contracts and schema drift checks pass. Latest docs/contracts logs are `/private/tmp/maister-final-rebased-docs-all.log` and `/private/tmp/maister-final-rebased-contracts.log`. Migrations through **0227** preserve populated historical receipt/assessment bytes; no historical repair or backfill is performed.
+- Current Web types, zero-warning scoped lint, full docs/155-table ERD, API/event/generated-schema contracts and schema drift checks pass. Latest docs/contracts logs are `/private/tmp/maister-final-aab070c39-docs.log` and `/private/tmp/maister-final-aab070c39-contracts.log`; all twelve contract validator cases pass. Migrations through **0227** preserve populated historical receipt/assessment bytes; no historical repair or backfill is performed.
 - **Pending completion:** final frozen browser and complete Web integration gates, final delta review, exact cleanup, and closing B5/B6/A4/A5/A6/V1/V2. No live model, paid provider, live GitHub PR or production execution is claimed; PR delivery is verified through the existing provider fixture.
