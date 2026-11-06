@@ -48,8 +48,11 @@ The initial contract admits `ai_coding`, `orchestrator`, `human` and `form` node
 It refuses other node types, repository context mounts, writable workspace access,
 launch setup/probes and pre-finish gates before admission. Human review uses
 explicit `human`/`form` nodes, and output validation uses the existing required
-result contract. Referenced package capabilities and role/runner policies still
-require action-time preflight; metadata cannot grant tools or cooperation rights.
+result contract. The initial native path refuses package/node `mcps`, node
+`skills`, `restrictions`, `tools`, `settingsProfile`, `enforcement`, `hooks` and
+permission-mode overrides. Current reviewed professional policy supplies the
+exact native knowledge MCP-only surface. Role and runner policies still require
+action-time preflight; metadata cannot grant tools or cooperation rights.
 
 Grammar/authoring support is qualified separately from execution. The running
 3.11.1 engine continues to refuse enablement of a 3.12.0 company Flow until the

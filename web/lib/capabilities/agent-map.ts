@@ -2,7 +2,7 @@ import type { CapabilityAgent } from "@/lib/config.schema";
 import type {
   CapabilityMaterial,
   CapabilityProfileEntry,
-  ResolvedCapabilityProfile,
+  MaterializableCapabilityProfile,
 } from "@/lib/capabilities/types";
 
 import pino from "pino";
@@ -70,7 +70,7 @@ export type AgentMaterialization = {
 };
 
 export type MapProfileToAgentArtifactsArgs = {
-  profile: ResolvedCapabilityProfile;
+  profile: MaterializableCapabilityProfile;
   agent: CapabilityAgent;
   tools?: string[];
   permissionMode?: "ask" | "allow" | "deny";

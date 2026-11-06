@@ -64,6 +64,11 @@ and is therefore refused here. Use explicit human/form nodes and required result
 validation. Authoring acceptance alone does not enable company execution: the
 host remains at 3.11.1 until the native graph runtime is qualified. Existing
 binding enablement refuses the higher capability floor before execution.
+The initial native company path also refuses package/node \`mcps\`, node
+\`skills\`, \`restrictions\`, \`tools\`, \`settingsProfile\`, \`enforcement\`,
+\`hooks\` and permission-mode overrides. Its current reviewed professional policy
+supplies the exact native knowledge MCP-only surface; project capability defaults
+and ambient built-in tools cannot enter through this declaration.
 
 The company graph prompt contract uses \`assignment.id\`, \`assignment.inputRevision\`,
 \`assignment.inputSha256\`, and the frozen objective fields \`assignment.objective\`,

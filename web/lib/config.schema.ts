@@ -1428,6 +1428,13 @@ export const flowYamlV1Schema = graphOnlyManifestInputSchema.pipe(
           message:
             "Plain-workspace result execution does not support setup or shell probes",
         });
+      if ((manifest.mcps?.length ?? 0) > 0)
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["mcps"],
+          message:
+            "Plain-workspace result execution uses reviewed native company tools, not project MCP references",
+        });
       for (const [index, node] of manifest.nodes.entries()) {
         if (
           node.type !== "ai_coding" &&
@@ -1480,6 +1487,30 @@ export const flowYamlV1Schema = graphOnlyManifestInputSchema.pipe(
               "Plain-workspace result execution does not support repository takeover or further tracks",
           });
         if (node.type !== "ai_coding" && node.type !== "orchestrator") continue;
+        const settings = node.settings;
+        const unsupported = (
+          [
+            "mcps",
+            "skills",
+            "restrictions",
+            "tools",
+            "settingsProfile",
+            "enforcement",
+            "hooks",
+          ] as const
+        ).filter((key) => settings?.[key] !== undefined);
+
+        if (
+          unsupported.length > 0 ||
+          settings?.permissionMode === "allow" ||
+          settings?.permissionMode === "deny"
+        )
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["nodes", index, "settings"],
+            message:
+              "Plain-workspace result execution uses server-owned MCP-only enforcement; project capability selections and permission overrides are unsupported",
+          });
         if ((node.settings?.context_repos?.length ?? 0) > 0)
           ctx.addIssue({
             code: z.ZodIssueCode.custom,

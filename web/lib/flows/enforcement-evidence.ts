@@ -45,6 +45,15 @@ export async function assertEnforcementEvidence(args: {
 
   if (!strictEnforced) return;
 
+  await assertCapabilityGuardEvidence(args);
+}
+
+/** Shared evidence gate for server-owned policies, including a deny-all native profile. */
+export async function assertCapabilityGuardEvidence(args: {
+  agent: CapabilityAgent;
+  permissionPolicy: string;
+  checkDiagnostics?: () => Promise<SupervisorDiagnosticsStatus>;
+}): Promise<void> {
   if (args.permissionPolicy === "dangerously_skip_permissions") {
     throw new MaisterError(
       "EXECUTOR_UNAVAILABLE",

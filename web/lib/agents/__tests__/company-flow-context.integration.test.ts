@@ -6,9 +6,18 @@ import type { CompanyFlowExecutionSnapshot } from "../company-execution-types";
 import type { CompanyFlowContextInput } from "../company-flow-context";
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 import type { PreparedSpecialistAssignment } from "@/lib/specialist-assignments/types";
+import type { SupervisorDiagnosticsStatus } from "@/lib/execution-host";
 
 import { randomUUID } from "node:crypto";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import { join, resolve, sep } from "node:path";
 
@@ -34,6 +43,7 @@ import { reserveCompanyFlowRun } from "../company-flow-launch";
 import { loadCompanyFlowSessionContext } from "../company-flow-session-context";
 import { resolveFlowBoundAgent } from "../flow-binding";
 import { resolveCompanyFlowNodeEnforcement } from "../company-flow-enforcement";
+import { companyAgentWorkdirPath } from "../workspace-paths";
 import { assertCompanyRunReadAccess } from "../company-run-read-access";
 import {
   issueCompanyAgentRunToken,
@@ -59,7 +69,11 @@ import {
 import { resolveKnowledgePrincipal } from "@/lib/brain/knowledge-access";
 import { generateToken } from "@/lib/tokens/secret";
 import { verifyToken } from "@/lib/tokens/verify";
-import { appendNodeAttempt, markNodeRunning } from "@/lib/flows/graph/ledger";
+import {
+  appendNodeAttempt,
+  markNodeRunning,
+  setMaterializationPlan,
+} from "@/lib/flows/graph/ledger";
 import { authorizeKnowledge } from "@/lib/brain/knowledge-access";
 import { nativeKnowledgeActorSchema } from "@/lib/company/types";
 import { resolveKnowledgeRunIdentity } from "@/lib/brain/knowledge-run-identity";
@@ -1713,6 +1727,121 @@ it("resolves the actual company Flow driving persona from its reviewed provider 
     expect(profile.tools?.allow).not.toContain(
       "mcp__maister__knowledge_confirm",
     );
+    const { materializeCompanyFlowNodeCapabilities } =
+      await import("../company-flow-materialization");
+    const worktreePath = companyAgentWorkdirPath(
+      request.companyId,
+      nativeFlowRunId,
+    );
+    const materialization = {
+      db: database.db,
+      runId: nativeFlowRunId,
+      nodeAttemptId: node.id,
+      sessionName: "default",
+      worktreePath,
+    };
+    const unavailable = async (): Promise<SupervisorDiagnosticsStatus> => ({
+      kind: "unavailable",
+      reason: "http",
+      message: "qualification host unavailable",
+    });
+
+    await expect(
+      materializeCompanyFlowNodeCapabilities({
+        ...materialization,
+        checkDiagnostics: unavailable,
+      }),
+    ).rejects.toMatchObject({ code: "EXECUTOR_UNAVAILABLE" });
+    const diagnostics = async (): Promise<SupervisorDiagnosticsStatus> => ({
+      kind: "ready",
+      diagnostics: {
+        status: "ready",
+        version: "qualification",
+        checkedAt: new Date().toISOString(),
+        envRefs: [],
+        adapters: [
+          {
+            id: "claude",
+            binary: "controlled-acp",
+            source: "override",
+            path: null,
+            available: true,
+            version: null,
+            error: null,
+            smoke: {
+              status: "ok",
+              reason: null,
+              checkedAt: null,
+              protocolVersion: 1,
+              readOnlySession: {
+                status: "ok",
+                reason: null,
+                checkedAt: null,
+                protocolVersion: 1,
+                probeVersion: 1,
+                staleReason: null,
+              },
+              capabilityEnforcement: {
+                status: "ok",
+                reason: null,
+                checkedAt: null,
+                protocolVersion: 1,
+              },
+            },
+          },
+        ],
+      },
+    });
+    const materialized = await materializeCompanyFlowNodeCapabilities({
+      ...materialization,
+      checkDiagnostics: diagnostics,
+    });
+    const onDisk: unknown = JSON.parse(
+      await readFile(materialized.capabilityProfilePath, "utf8"),
+    );
+
+    expect(onDisk).toMatchObject({
+      projectId: null,
+      owner: { kind: "company", companyId: request.companyId },
+      selectedMcpIds: [],
+      selectedSkillIds: [],
+      supported: [],
+    });
+    expect(materialized.enforcementProfile).toEqual(profile);
+    expect(materialized.plan.enforcementProfile).toEqual(profile);
+    await setMaterializationPlan(node.id, materialized.plan, database.db);
+    const retainedPlan = await database.pool.query<{
+      materialization_plan: unknown;
+    }>("SELECT materialization_plan FROM node_attempts WHERE id=$1", [node.id]);
+
+    expect(retainedPlan.rows[0].materialization_plan).toEqual(
+      materialized.plan,
+    );
+    expect(materialized.plan.resolvedRevisions).toEqual([]);
+    expect(materialized.mcpServers).toEqual([]);
+    expect(materialized.plan.materializedFiles).toContain(
+      join(await realpath(worktreePath), ".claude/settings.local.json"),
+    );
+    const settings: unknown = JSON.parse(
+      await readFile(join(worktreePath, ".claude/settings.local.json"), "utf8"),
+    );
+
+    expect(settings).toMatchObject({ permissions: { defaultMode: "default" } });
+    expect(JSON.stringify(settings)).not.toContain("bypassPermissions");
+    await expect(
+      materializeCompanyFlowNodeCapabilities({
+        ...materialization,
+        worktreePath: join(root, "unowned-company-directory"),
+        checkDiagnostics: diagnostics,
+      }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+    await expect(
+      materializeCompanyFlowNodeCapabilities({
+        ...materialization,
+        sessionName: "unfrozen-session",
+        checkDiagnostics: diagnostics,
+      }),
+    ).rejects.toMatchObject({ code: "CONFIG" });
     expect(bound).toEqual({
       mode: "session",
       prompt: `${preparedAssignment.standingDefinition.definition.prompt.trim()}\n\n## Specialist configuration\n{}`,

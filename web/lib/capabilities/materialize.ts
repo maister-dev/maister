@@ -4,7 +4,7 @@ import type { CapabilityAgent } from "@/lib/config.schema";
 import type { ScratchAdapterLaunch } from "@/lib/db/schema";
 import type {
   CapabilityProfileEntry,
-  ResolvedCapabilityProfile,
+  MaterializableCapabilityProfile,
 } from "@/lib/capabilities/types";
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
@@ -57,7 +57,7 @@ export const SETTINGS_OWNED_MARKER_SUFFIX = ".maister-owned";
 export type MaterializeCapabilityProfileArgs = {
   runId: string;
   worktreePath: string;
-  profile: ResolvedCapabilityProfile;
+  profile: MaterializableCapabilityProfile;
   executor?: {
     executorRefId: string;
     agent: string;
@@ -109,7 +109,7 @@ function assertInsideWorktree(worktreePath: string, childPath: string): void {
   }
 }
 
-function instructionLines(profile: ResolvedCapabilityProfile): string[] {
+function instructionLines(profile: MaterializableCapabilityProfile): string[] {
   const entries = [...profile.enforced, ...profile.instructed];
 
   if (entries.length === 0) {
@@ -150,8 +150,8 @@ function stripMaterialConfig<
 }
 
 function redactProfileForDisk(
-  profile: ResolvedCapabilityProfile,
-): ResolvedCapabilityProfile {
+  profile: MaterializableCapabilityProfile,
+): MaterializableCapabilityProfile {
   return {
     ...profile,
     enforced: profile.enforced.map(stripMaterialConfig),

@@ -226,6 +226,16 @@ describe("CBS-03 result-only execution declaration", () => {
     },
     { setup: "setup.sh" },
     { requirements: [{ name: "shell probe", probe: "true" }] },
+    { mcps: ["project:database"] },
+    ...[
+      { mcps: ["project:database"] },
+      { skills: ["project:skill"] },
+      { restrictions: ["project:restriction"] },
+      { tools: { claude: ["Read"] } },
+      { permissionMode: "allow" },
+      { enforcement: { tools: "instruct" } },
+      { settingsProfile: "project:settings" },
+    ].map((settings) => ({ nodes: [{ ...producer, settings }] })),
   ])(
     "refuses an unsupported lifecycle or repository capability before admission: %j",
     (change) => {

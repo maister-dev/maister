@@ -175,6 +175,7 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | `web/lib/agents/company-flow-session-context.ts` | Restore exact company graph input, current authority, pinned export and frozen runners without repository records |
 | `web/lib/agents/company-flow-persona.ts` | Resolve current reviewed company node professionals through the shared Flow persona/attestation path |
 | `web/lib/agents/company-flow-enforcement.ts` | Current attested role/limits to shared native MCP-only tool policy; graph application remains gated |
+| `web/lib/agents/company-flow-materialization.ts` | Current company/frozen-session policy through shared capability evidence, file ownership and materialization contracts |
 | `web/lib/specialist-assignments/store.ts` | Durable company/project assignment heads, frozen input history, current authority, CAS and existing-run links |
 | `web/lib/run-results/operational-projection.ts` | Shared operational diagnostic projection for run details, collect and automation history |
 | `web/lib/gc/operational-disposition.ts` | Durable operational cleanup through existing workspace lifecycle claims |
