@@ -65,9 +65,9 @@ manager-side [execution event plane](execution-event-plane.md),
   `<MAISTER_EXECUTION_HOST_STATE_DIR>/state.sqlite` (default
   `<MAISTER_RUNTIME_ROOT>/.maister/execution-host/`) holding
   `host_identity`, `run_fences`, `workspaces`, `command_receipts`, durable
-  runtime-event streams/outbox, and the private runtime-object registry
-  (schema `user_version` 14 with guarded in-place upgrades). The web tier never
-  reads it.
+  runtime-event streams/outbox, the private runtime-object registry and
+  `session_process_obligations` (schema `user_version` 16 with guarded in-place
+  upgrades). The web tier never reads it.
 - **Execution assignment** — one row in `execution_assignments` per
   `(run, epoch)`: `state ∈ {active, superseded, released}`,
   `placement_reason` (ten tokens), the optional `execution_workspace_id` +

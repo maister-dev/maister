@@ -45,11 +45,14 @@ running or completed successor. Source history and recorded trigger/request
 provenance remain inspectable. Operational pre-work retries and fresh qualifier
 assessment retain the separate [retry contract](../../system-analytics/agent-retry.md).
 
-A baseline/workspace failure before session creation or prompting shows a
-localized explanation that the model did not start, an infrastructure cause and
-an actionable next step. Technical details retain stage, operation and safe cause-chain data.
-It is not a model refusal or a negative assessment. Missing historical inner
-causes remain unknown; a later successful probe does not reconstruct them.
+Workspace-preparation failures show an infrastructure cause and an actionable
+next step, not a model refusal or a negative assessment. Run wording remains
+neutral about earlier model execution because preparation can fail on a
+continuation. Only a task-source failure projection bound to the current input
+with `modelStarted === false` permits the localized explanation that the model
+did not start. Technical details retain stage, operation and safe cause-chain
+data. Missing historical inner causes remain unknown; a later successful probe
+does not reconstruct them.
 
 ## EN/RU copy
 
