@@ -35,7 +35,13 @@ import type { Pool } from "pg";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
 
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import {
   createServer,
   type IncomingMessage,
@@ -186,6 +192,28 @@ export type DelegationTarget = {
 };
 
 export type DelegateHook = (req: DelegateRequest) => Promise<void>;
+
+/** Content-free observations of the controlled recursive provider, never prompt or result text. */
+export type RecursiveTurnDiagnostic = Readonly<{
+  version: 1;
+  runId: string;
+  sessionId: string;
+  commandId: string;
+  flowRef: string;
+  isResume: boolean;
+  sessionPromptOrdinal: number;
+  sameSessionReprompt: boolean;
+  sentinelPresent: boolean;
+  collect: Readonly<{
+    httpStatus: number;
+    validChildRunIds: readonly string[];
+  }> | null;
+  outcome: "completed" | "failed";
+  failureCategory: "collect_refused" | "delegate_refused" | "other" | null;
+  turnReturnedAt: string;
+  childrenSampledAt: string;
+  children: ReadonlyArray<Readonly<{ id: string; status: string }>>;
+}>;
 
 type SessionRecord = {
   sessionId: string;
@@ -403,6 +431,13 @@ export async function startTestSupervisor(
   // prompted again; this keyed set is that behaviour, and it is what makes the
   // simulated fan-out deterministic under parallel load.
   const delegatedRuns = new Set<string>();
+  const sessionPromptCounts = new Map<string, number>();
+  const sessionSentinelCounts = new Map<string, number>();
+  const diagnosticFlowRefs = new Map<string, string | null>();
+  const collectDiagnostics = new Map<
+    string,
+    NonNullable<RecursiveTurnDiagnostic["collect"]>
+  >();
   let monotonic = 0;
   let runtimeSequence = -1n;
   let acknowledgedThrough = -1n;
@@ -854,6 +889,11 @@ export async function startTestSupervisor(
   // than writing `run_results` directly is the point: the e2e proves the parse,
   // the validation and the publish, not just the row.
   const emitText = (rec: SessionRecord, text: string): void => {
+    if (text.includes("```json maister:output"))
+      sessionSentinelCounts.set(
+        rec.sessionId,
+        (sessionSentinelCounts.get(rec.sessionId) ?? 0) + 1,
+      );
     rec.pendingText.push(text);
   };
 
@@ -869,7 +909,11 @@ export async function startTestSupervisor(
       [runId],
     );
 
-    return (rows.rows[0]?.flow_ref_id as string | undefined) ?? null;
+    const flowRef = (rows.rows[0]?.flow_ref_id as string | undefined) ?? null;
+
+    diagnosticFlowRefs.set(runId, flowRef);
+
+    return flowRef;
   }
 
   /** True when the run carries a result contract (an RAH agent grandchild). */
@@ -903,6 +947,11 @@ export async function startTestSupervisor(
       body: JSON.stringify({ all: true }),
     });
 
+    if (rec.activePromptCommandId)
+      collectDiagnostics.set(rec.activePromptCommandId, {
+        httpStatus: res.status,
+        validChildRunIds: [],
+      });
     if (!res.ok) {
       throw new Error(
         `test-supervisor: collect returned ${res.status}: ${await res
@@ -915,9 +964,17 @@ export async function startTestSupervisor(
       resultStatus?: string;
     }[];
 
-    return items
+    const validChildRunIds = items
       .filter((item) => item.resultStatus === "valid")
       .map((item) => item.childRunId);
+
+    if (rec.activePromptCommandId)
+      collectDiagnostics.set(rec.activePromptCommandId, {
+        httpStatus: res.status,
+        validChildRunIds,
+      });
+
+    return validChildRunIds;
   }
 
   // Decide + run the agent's turn for a session. Called on sendPrompt. For an
@@ -1163,6 +1220,60 @@ export async function startTestSupervisor(
     // before flushing this exit, matching the production lifecycle ordering.
     rec.exitPending = true;
     rec.exitCode = 0;
+  }
+
+  // Runs after completion publication. These reads cannot decide whether the
+  // engine parks; timestamps distinguish the later diagnostic child sample.
+  async function recordRecursiveTurnDiagnostic(
+    rec: SessionRecord,
+    turn: Readonly<{
+      commandId: string;
+      sessionPromptOrdinal: number;
+      sentinelCountBefore: number;
+      outcome: RecursiveTurnDiagnostic["outcome"];
+      failureCategory: RecursiveTurnDiagnostic["failureCategory"];
+      turnReturnedAt: string;
+    }>,
+  ): Promise<void> {
+    const flowRef = diagnosticFlowRefs.get(rec.runId);
+
+    if (
+      !opts.stubCompat ||
+      (flowRef !== RAH_ROOT_FLOW_REF && flowRef !== RAH_RESEARCH_FLOW_REF)
+    )
+      return;
+    const sentinelPresent =
+      (sessionSentinelCounts.get(rec.sessionId) ?? 0) >
+      turn.sentinelCountBefore;
+    const children = await opts.pool.query<{ id: string; status: string }>(
+      "SELECT id,status FROM runs WHERE parent_run_id=$1 ORDER BY id LIMIT 16",
+      [rec.runId],
+    );
+    const diagnostic: RecursiveTurnDiagnostic = {
+      version: 1,
+      runId: rec.runId,
+      sessionId: rec.sessionId,
+      commandId: turn.commandId,
+      flowRef,
+      isResume: rec.isResume,
+      sessionPromptOrdinal: turn.sessionPromptOrdinal,
+      sameSessionReprompt: turn.sessionPromptOrdinal > 0,
+      sentinelPresent,
+      collect: collectDiagnostics.get(turn.commandId) ?? null,
+      outcome: turn.outcome,
+      failureCategory: turn.failureCategory,
+      turnReturnedAt: turn.turnReturnedAt,
+      childrenSampledAt: new Date().toISOString(),
+      children: children.rows,
+    };
+    const target = path.join(
+      opts.stubCompat.sessionsDir,
+      `${rec.sessionId}.${turn.commandId}.recursive-turn.json`,
+    );
+    const temporary = `${target}.${randomUUID()}.tmp`;
+
+    writeFileSync(temporary, JSON.stringify(diagnostic), { mode: 0o600 });
+    renameSync(temporary, target);
   }
 
   /**
@@ -2443,12 +2554,73 @@ export async function startTestSupervisor(
         }
         // Drive the agent's turn (spawn children for orchestrator turn-0, then
         // queue the clean exit). Errors surface as a crash on the stream.
+        const sessionPromptOrdinal =
+          sessionPromptCounts.get(rec.sessionId) ?? 0;
+        const sentinelCountBefore =
+          sessionSentinelCounts.get(rec.sessionId) ?? 0;
+
+        sessionPromptCounts.set(rec.sessionId, sessionPromptOrdinal + 1);
+        const recordTurn = (
+          outcome: RecursiveTurnDiagnostic["outcome"],
+          failureCategory: RecursiveTurnDiagnostic["failureCategory"],
+          turnReturnedAt: string,
+        ): void => {
+          void recordRecursiveTurnDiagnostic(rec, {
+            commandId: env.command.id,
+            sessionPromptOrdinal,
+            sentinelCountBefore,
+            outcome,
+            failureCategory,
+            turnReturnedAt,
+          }).catch((error: unknown) => {
+            const errorName =
+              error instanceof Error &&
+              /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(error.name)
+                ? error.name
+                : "UnknownDiagnosticError";
+            const errorCode =
+              error instanceof Error &&
+              "code" in error &&
+              typeof error.code === "string" &&
+              /^[A-Z0-9_]{1,32}$/.test(error.code)
+                ? error.code
+                : null;
+
+            console.error(
+              JSON.stringify({
+                diagnostic: "recursive_turn_capture_failed",
+                errorName,
+                errorCode,
+                runId: rec.runId,
+                sessionId: rec.sessionId,
+                commandId: env.command.id,
+              }),
+            );
+          });
+        };
+
         void driveTurn(rec).then(
           () => {
+            const turnReturnedAt = new Date().toISOString();
+
             complete({ stopReason: "end_turn" });
             flushExit(rec);
+            recordTurn("completed", null, turnReturnedAt);
           },
           (err: unknown) => {
+            const turnReturnedAt = new Date().toISOString();
+            const failureCategory: RecursiveTurnDiagnostic["failureCategory"] =
+              err instanceof Error &&
+              err.message.startsWith("test-supervisor: collect returned ")
+                ? "collect_refused"
+                : err instanceof Error &&
+                    err.message.startsWith(
+                      "test-supervisor: delegate route returned ",
+                    )
+                  ? "delegate_refused"
+                  : "other";
+
+            recordTurn("failed", failureCategory, turnReturnedAt);
             const message = err instanceof Error ? err.message : String(err);
 
             console.error(`test-supervisor: turn failed: ${message}`);

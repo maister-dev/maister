@@ -17,6 +17,11 @@
 // CI-ONLY: requires a free :3100 (the playwright webServer). It cannot run while
 // a `next dev` holds the Next 16 single-dev lock on the same project dir.
 
+import type { RecursiveTurnDiagnostic } from "./_seed/test-supervisor";
+
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+
 import { test, expect } from "@playwright/test";
 
 import {
@@ -25,6 +30,7 @@ import {
   withE2EDb,
 } from "./_seed/db";
 import { loadFixtures } from "./_seed/fixtures";
+import { STUB_SESSIONS_DIR } from "./_seed/stub-supervisor";
 import {
   readTaskLaunchReceipt,
   waitForTaskLaunchRun,
@@ -37,6 +43,157 @@ const CRON_TOKEN = process.env.MAISTER_CRON_TOKEN ?? "e2e-cron-token-change-me";
 // real graph, plus four agent grandchildren — minutes of wall clock past the
 // default 30s budget.
 test.setTimeout(240_000);
+
+type RecursiveCommandDiagnostic = Readonly<{
+  id: string;
+  runId: string;
+  kind: string;
+  sessionId: string | null;
+  assignmentId: string;
+  assignmentEpoch: number;
+  logicalOperationKey: string | null;
+  state: string;
+  applicationState: string;
+  receiptPhase: string | null;
+  httpStatus: number | null;
+}>;
+
+// Preserve the actual failure before the wrapper releases its owned database.
+// Only known output-absence text is selected; arbitrary stdout stays private.
+test.afterEach(async () => {
+  const fixture = loadFixtures().byKey.rah;
+  const knownAbsenceSuffix =
+    "[structured output] structured output required but absent: no maister:output block in the captured output";
+  const snapshot = await withE2EDb(async (pool) => {
+    const runs = await pool.query<{
+      id: string;
+      parentRunId: string | null;
+      status: string;
+      currentStepId: string | null;
+      runKind: string;
+    }>(
+      'SELECT id,parent_run_id AS "parentRunId",status,current_step_id AS "currentStepId",run_kind AS "runKind" FROM runs WHERE project_id=$1 ORDER BY started_at,id LIMIT 32',
+      [fixture.projectId],
+    );
+    const runIds = runs.rows.map((run) => run.id);
+    const attempts = await pool.query<{
+      id: string;
+      runId: string;
+      nodeId: string;
+      status: string;
+      errorCode: string | null;
+      promptOrdinal: number;
+      sentinelPresent: boolean;
+      knownOutputAbsence: string | null;
+    }>(
+      `SELECT id,run_id AS "runId",node_id AS "nodeId",status,error_code AS "errorCode",
+         action_prompt_ordinal AS "promptOrdinal",
+         strpos(coalesce(stdout,''),'\`\`\`json maister:output')>0 AS "sentinelPresent",
+         CASE WHEN strpos(coalesce(stdout,''),$2)>0 THEN $2 ELSE NULL END AS "knownOutputAbsence"
+       FROM node_attempts WHERE run_id=ANY($1::text[]) ORDER BY started_at,id LIMIT 64`,
+      [runIds, knownAbsenceSuffix],
+    );
+    const commands = await pool.query<RecursiveCommandDiagnostic>(
+      `SELECT id,run_id AS "runId",kind,target_session_id AS "sessionId",
+         execution_assignment_id AS "assignmentId",assignment_epoch AS "assignmentEpoch",
+         logical_operation_key AS "logicalOperationKey",state,application_state AS "applicationState",
+         receipt_evidence->>'phase' AS "receiptPhase",
+         (receipt_evidence->>'httpStatus')::int AS "httpStatus"
+       FROM execution_commands WHERE run_id=ANY($1::text[]) AND kind IN ('session.create','session.prompt')
+       ORDER BY created_at,id LIMIT 128`,
+      [runIds],
+    );
+    const results = await pool.query<{
+      runId: string;
+      validity: string;
+      invalidReason: string | null;
+      collected: boolean;
+    }>(
+      `SELECT run_id AS "runId",validity,
+         CASE WHEN invalid_reason IN ('result_missing','malformed_json','oversize','unsafe_key','depth_limit','key_limit','array_limit','schema_mismatch')
+           THEN invalid_reason ELSE NULL END AS "invalidReason",
+         first_collected_at IS NOT NULL AS collected FROM run_results
+       WHERE run_id=ANY($1::text[]) ORDER BY run_id,revision LIMIT 64`,
+      [runIds],
+    );
+
+    return {
+      observedAt: new Date().toISOString(),
+      runs: runs.rows,
+      attempts: attempts.rows,
+      commands: commands.rows,
+      results: results.rows,
+    };
+  });
+  const flowRunIds = new Set(
+    snapshot.runs.filter((run) => run.runKind === "flow").map((run) => run.id),
+  );
+  const turns = await Promise.all(
+    snapshot.commands
+      .filter(
+        (command) =>
+          command.kind === "session.prompt" &&
+          command.sessionId &&
+          flowRunIds.has(command.runId),
+      )
+      .map(async (command) => {
+        const filename = path.join(
+          STUB_SESSIONS_DIR,
+          `${command.sessionId}.${command.id}.recursive-turn.json`,
+        );
+        let contents: string;
+
+        try {
+          contents = await readFile(filename, "utf8");
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            "code" in error &&
+            error.code === "ENOENT"
+          )
+            return { commandId: command.id, available: false as const };
+          throw error;
+        }
+        const diagnostic = JSON.parse(contents) as RecursiveTurnDiagnostic;
+
+        expect(diagnostic.version).toBe(1);
+        expect(diagnostic.runId).toBe(command.runId);
+        expect(diagnostic.sessionId).toBe(command.sessionId);
+        expect(diagnostic.commandId).toBe(command.id);
+
+        return {
+          available: true as const,
+          runId: diagnostic.runId,
+          sessionId: diagnostic.sessionId,
+          commandId: diagnostic.commandId,
+          flowRef: diagnostic.flowRef,
+          isResume: diagnostic.isResume,
+          sessionPromptOrdinal: diagnostic.sessionPromptOrdinal,
+          sameSessionReprompt: diagnostic.sameSessionReprompt,
+          sentinelPresent: diagnostic.sentinelPresent,
+          collect: diagnostic.collect
+            ? {
+                httpStatus: diagnostic.collect.httpStatus,
+                validChildRunIds: [...diagnostic.collect.validChildRunIds],
+              }
+            : null,
+          outcome: diagnostic.outcome,
+          failureCategory: diagnostic.failureCategory,
+          turnReturnedAt: diagnostic.turnReturnedAt,
+          childrenSampledAt: diagnostic.childrenSampledAt,
+          children: diagnostic.children.map((child) => ({
+            id: child.id,
+            status: child.status,
+          })),
+        };
+      }),
+  );
+
+  await test.info().attach("recursive-completion-facts", {
+    body: JSON.stringify({ ...snapshot, turns }),
+    contentType: "application/json",
+  });
+});
 
 test("recursive harness: depth-2 tree → result-only Done children → the root reduces what it collected", async ({
   page,
