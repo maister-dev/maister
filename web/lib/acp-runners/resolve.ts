@@ -764,7 +764,7 @@ export type RunSessionResolutionInput = {
   readonly projectFlow: { readonly defaultRunnerId?: string | null };
   readonly platformFlow: { readonly defaultRunnerId?: string | null };
   readonly project: { readonly defaultRunnerId?: string | null };
-  readonly platform: { readonly defaultRunnerId: string };
+  readonly platform: { readonly defaultRunnerId: string | null };
   readonly runners: readonly RunnerCatalogEntry[];
 };
 

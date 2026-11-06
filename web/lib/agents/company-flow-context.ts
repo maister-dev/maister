@@ -53,6 +53,7 @@ export type CompanyFlowAdmissionContext = CompanySpecialistContext &
     resultContract: Extract<RunResultContract, { kind: "flow_export" }>;
     flowInstallPath: string;
     flowVersion: string;
+    flowDefaultRunnerId: string | null;
   }>;
 
 /** Current exact pins and authority are checked again inside native reservation; this inspection creates no execution. */
@@ -155,7 +156,7 @@ export async function prepareCompanyFlowContext(
   compileManifest(current.manifest);
   const revision = (
     await tx.execute(sql`
-    SELECT installed_path,resolved_revision,version_label FROM flow_revisions
+    SELECT installed_path,resolved_revision,version_label,default_runner_id FROM flow_revisions
     WHERE id=${reviewed.flowRevisionId} AND package_status='Installed' AND exec_trust='trusted' FOR SHARE
   `)
   ).rows[0];
@@ -163,7 +164,9 @@ export async function prepareCompanyFlowContext(
   if (
     typeof revision?.installed_path !== "string" ||
     typeof revision.resolved_revision !== "string" ||
-    typeof revision.version_label !== "string"
+    typeof revision.version_label !== "string" ||
+    (revision.default_runner_id !== null &&
+      typeof revision.default_runner_id !== "string")
   )
     throw new MaisterError(
       "PRECONDITION",
@@ -217,6 +220,7 @@ export async function prepareCompanyFlowContext(
     resultContract,
     flowInstallPath: revision.installed_path,
     flowVersion: revision.version_label,
+    flowDefaultRunnerId: revision.default_runner_id,
   };
 }
 

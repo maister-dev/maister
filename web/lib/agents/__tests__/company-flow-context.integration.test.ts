@@ -28,6 +28,8 @@ import {
   prepareCompanyFlowContext,
 } from "../company-flow-context";
 import { updateCompanyFlowBinding } from "../company-flow-binding-mutations";
+import { reserveCompanyFlowRun } from "../company-flow-launch";
+import { updateCompanySpecialistBinding } from "../company-binding-mutations";
 import { parseAgentDefinition } from "../definition";
 import { resolveInstalledAgentDefinition } from "../effective";
 import { buildOperationalContract } from "../launch-contract";
@@ -36,6 +38,17 @@ import {
   captureCompanyAgentExecution,
 } from "../company-agent-context";
 
+import { createExecutionHosts } from "@/lib/execution-host";
+import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
+import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
+import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
+import { resetResolverForTests } from "@/lib/execution-host/resolver";
+import { setDefaultTransportForTests } from "@/lib/execution-host/default-transport";
+import {
+  startRealSupervisor,
+  useRealSupervisorUrl,
+} from "@/test-support/real-supervisor";
+import { platformAcpRunners, platformRuntimeSettings } from "@/lib/db/schema";
 import {
   createSpecialistAssignment,
   linkSpecialistAssignmentRunInTransaction,
@@ -796,7 +809,7 @@ async function insertClonedGraphReservation(
     )||${JSON.stringify(patch)}::jsonb)).* FROM runs source WHERE source.id=${storedFlowRunId}`);
 }
 
-async function prepareFreshGraphReservation(): Promise<CompanyFlowExecutionSnapshot> {
+async function createFreshCompanyFlowRequest(): Promise<CompanyFlowContextInput> {
   const assignment = await createSpecialistAssignment(
     database.db,
     requesterId,
@@ -805,13 +818,19 @@ async function prepareFreshGraphReservation(): Promise<CompanyFlowExecutionSnaps
       origin: { kind: "manual", interactionId: randomUUID() },
     },
   );
+
+  return {
+    ...request,
+    assignmentId: assignment.id,
+    assignmentRevision: assignment.revision,
+    inputRevision: assignment.inputRevision,
+  };
+}
+
+async function prepareFreshGraphReservation(): Promise<CompanyFlowExecutionSnapshot> {
+  const input = await createFreshCompanyFlowRequest();
   const context = await database.db.transaction((tx) =>
-    prepareCompanyFlowContext(tx, requesterId, {
-      ...request,
-      assignmentId: assignment.id,
-      assignmentRevision: assignment.revision,
-      inputRevision: assignment.inputRevision,
-    }),
+    prepareCompanyFlowContext(tx, requesterId, input),
   );
 
   return captureCompanyFlowExecution(context);
@@ -1008,6 +1027,212 @@ it.each(["flow_version", "flow_revision"] as const)(
     });
   },
 );
+
+it("reserves one native company graph with frozen sessions/placement, refuses a disabled runner and admits an explicit runner without platform defaults", async () => {
+  const supervisor = await startRealSupervisor({
+    runtimeRoot: join(root, "reservation-host"),
+    workspaceRoots: [join(root, "worktrees")],
+    fixtureArgs: ["--hang"],
+  });
+  const restoreUrl = useRealSupervisorUrl(supervisor.url);
+  const compatibility = useEngineVersion("3.12.0");
+  const runnerId = randomUUID();
+
+  setDefaultTransportForTests(null);
+  resetResolverForTests();
+  resetRegistrarStateForTests();
+  try {
+    await database.db.insert(platformAcpRunners).values({
+      id: runnerId,
+      adapter: "claude",
+      capabilityAgent: "claude",
+      model: "company-graph-reservation-fixture",
+      provider: { kind: "anthropic" },
+      readinessStatus: "Ready",
+    });
+    await database.db
+      .insert(platformRuntimeSettings)
+      .values({ id: "singleton", defaultRunnerId: runnerId });
+    const hosts = createExecutionHosts({
+      db: database.db,
+      transport: createLocalDirectTransport(),
+    });
+    const input = await createFreshCompanyFlowRequest();
+    const before = await counts();
+    const raced = await Promise.allSettled([
+      reserveCompanyFlowRun(database.db, requesterId, input, hosts),
+      reserveCompanyFlowRun(database.db, requesterId, input, hosts),
+    ]);
+    const accepted = raced.filter((item) => item.status === "fulfilled");
+
+    expect(accepted).toHaveLength(1);
+    expect(raced.filter((item) => item.status === "rejected")).toMatchObject([
+      { reason: { code: "CONFLICT" } },
+    ]);
+    const winner = accepted[0];
+
+    if (!winner || winner.status !== "fulfilled")
+      throw new Error("The native reservation winner is missing");
+    expect(winner.value).toMatchObject({
+      assignmentId: input.assignmentId,
+      assignmentRevision: 3,
+      status: "Pending",
+    });
+    expect(await counts()).toEqual({
+      ...before,
+      runs: before.runs + 1,
+      sessions: before.sessions + 1,
+      links: before.links + 1,
+    });
+    const retained = (
+      await database.pool.query(
+        "SELECT r.run_kind,r.project_id,r.task_id,r.flow_id,r.company_execution_snapshot,r.knowledge_access,s.session_name,s.runner_id,s.runner_snapshot,a.epoch AS assignment_epoch FROM runs r JOIN run_sessions s ON s.run_id=r.id JOIN execution_assignments a ON a.id=r.execution_assignment_id WHERE r.id=$1",
+        [winner.value.runId],
+      )
+    ).rows[0];
+
+    expect(retained).toMatchObject({
+      run_kind: "flow",
+      project_id: null,
+      task_id: null,
+      flow_id: null,
+      company_execution_snapshot: {
+        schemaVersion: 2,
+        executionKind: "flow",
+        assignment: {
+          id: input.assignmentId,
+          inputRevision: input.inputRevision,
+        },
+      },
+      knowledge_access: {
+        schemaVersion: 1,
+        state: "complete",
+        restrictions: [
+          {
+            kind: "assignment_input",
+            assignmentId: input.assignmentId,
+            inputRevision: input.inputRevision,
+          },
+        ],
+      },
+      session_name: "default",
+      runner_id: runnerId,
+      runner_snapshot: { id: runnerId },
+      assignment_epoch: 1,
+    });
+    const rejectedInput = await createFreshCompanyFlowRequest();
+    const beforeDisabled = await counts();
+
+    await database.pool.query(
+      "UPDATE platform_acp_runners SET enabled=false WHERE id=$1",
+      [runnerId],
+    );
+    await expect(
+      reserveCompanyFlowRun(database.db, requesterId, rejectedInput, hosts),
+    ).rejects.toMatchObject({ code: "EXECUTOR_UNAVAILABLE" });
+    expect(await counts()).toEqual(beforeDisabled);
+    await database.pool.query(
+      "UPDATE platform_acp_runners SET enabled=true WHERE id=$1",
+      [runnerId],
+    );
+    await database.pool.query(
+      "DELETE FROM platform_runtime_settings WHERE id='singleton'",
+    );
+    const context = await database.db.transaction((tx) =>
+      prepareCompanyFlowContext(tx, requesterId, rejectedInput),
+    );
+    const configuration = context.binding.snapshot;
+    const specialist = await updateCompanySpecialistBinding(
+      database.db,
+      requesterId,
+      configuration.agentId,
+      request.bindingId,
+      {
+        owner: context.owner,
+        packageInstallId: configuration.packageInstallId,
+        packageRevision: configuration.packageRevision,
+        definitionSha256: configuration.definitionSha256,
+        enabled: true,
+        configuration: configuration.configuration,
+        grantActions: [...configuration.grantActions],
+        runnerId,
+        executionPolicy: configuration.executionPolicy,
+        coordinatorFlowRevisionId: configuration.coordinatorFlowRevisionId,
+        expectedRevision: request.bindingRevision,
+        idempotencyKey: randomUUID(),
+      },
+    );
+    const current = await getCompanyFlowBinding(
+      database.db,
+      requesterId,
+      request.coordinatorBindingId,
+    );
+    const coordinator = await updateCompanyFlowBinding(
+      database.db,
+      requesterId,
+      current.id,
+      {
+        owner: current.owner,
+        specialistBindingId: request.bindingId,
+        specialistRevision: specialist.specialist.configRevision,
+        flowRevisionId: current.configuration.flowRevisionId,
+        manifestSha256: current.configuration.manifestSha256,
+        execution: current.configuration.execution,
+        roleMappings: current.configuration.roleMappings,
+        enabled: true,
+        expectedRevision: current.revision,
+        idempotencyKey: randomUUID(),
+      },
+    );
+
+    request = {
+      ...request,
+      bindingRevision: specialist.specialist.configRevision,
+      coordinatorBindingRevision: coordinator.binding.revision,
+    };
+    const explicit = await reserveCompanyFlowRun(
+      database.db,
+      requesterId,
+      {
+        ...rejectedInput,
+        bindingRevision: request.bindingRevision,
+        coordinatorBindingRevision: request.coordinatorBindingRevision,
+      },
+      hosts,
+    );
+
+    expect(explicit.status).toBe("Pending");
+    expect(
+      (
+        await database.pool.query(
+          "SELECT runner_id,runner_resolution_tier,resolution_source FROM run_sessions WHERE run_id=$1",
+          [explicit.runId],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        runner_id: runnerId,
+        runner_resolution_tier: "binding",
+        resolution_source: "company-specialist-binding",
+      },
+    ]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT (SELECT count(*)::int FROM platform_runtime_settings) AS defaults,(SELECT count(*)::int FROM project_tokens) AS tokens,(SELECT count(*)::int FROM execution_commands) AS commands,(SELECT count(*)::int FROM workspaces) AS workspaces",
+        )
+      ).rows[0],
+    ).toEqual({ defaults: 0, tokens: 0, commands: 0, workspaces: 0 });
+  } finally {
+    await stopRuntimeEventConsumers();
+    await supervisor.stop();
+    restoreUrl();
+    compatibility.mockRestore();
+    resetResolverForTests();
+    resetRegistrarStateForTests();
+    setDefaultTransportForTests(null);
+  }
+}, 120000);
 
 it("uses current initiating authority after revocation rather than the frozen input witness", async () => {
   const compatibility = useEngineVersion("3.12.0");

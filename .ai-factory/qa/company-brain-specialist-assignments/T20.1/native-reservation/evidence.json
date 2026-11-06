@@ -1,0 +1,85 @@
+{
+  "task": "T20.1",
+  "slice": "Native Pending company Flow reservation on existing ledgers",
+  "date": "2026-11-06",
+  "baseCommit": "af70e0875b18d2aff7d7e763224d098c24a03c2e",
+  "status": "Reservation qualified; graph dispatch pending",
+  "engineVersion": "3.11.1",
+  "migrations": [],
+  "red": {
+    "reservation": {
+      "tests": 30,
+      "failed": 1,
+      "log": "reservation-red.log.gz",
+      "failure": "Unavailable native reservation produced no winner."
+    },
+    "provenance": {
+      "tests": 30,
+      "failed": 1,
+      "log": "provenance-red.log.gz",
+      "failure": "Reviewed binding was falsely labelled launchOverride/launch-dialog."
+    }
+  },
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "files": 6,
+      "tests": 89,
+      "durationSeconds": 32.86,
+      "log": "integration-green.log.gz"
+    },
+    "unit": {
+      "exitCode": 0,
+      "files": 889,
+      "tests": 9304,
+      "durationSeconds": 24.33,
+      "log": "unit-green.log.gz"
+    },
+    "types": {
+      "exitCode": 0,
+      "log": "types.log.gz"
+    },
+    "lint": {
+      "exitCode": 0,
+      "log": "lint.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "log": "docs.log.gz"
+    }
+  },
+  "qualified": [
+    "Exact current assignment/coordinator preflight repeats in atomic reservation; current authority and input witnesses are retained.",
+    "Shared Flow session inspection selects real runners; selected disabled/unready/unsafe runners refuse rather than fall back.",
+    "Current read-only host evidence is required for every session; immutable snapshots and actual source provenance are retained.",
+    "Existing placement, Run, run_sessions and exact coordinator/input links commit with queued-to-active assignment/outbox facts.",
+    "Concurrent identical requests reserve one Run; disabled-runner refusal preserves counts; explicit reviewed runner needs no platform default row.",
+    "Standalone and Flow launchers share the initial activation service; full standalone integration and populated migration/project deletion remain green."
+  ],
+  "qualificationBoundary": "The actual local supervisor is used for placement/read-only evidence, not ACP dispatch. A controlled pure engine predicate admits prospective 3.12.0 fixture metadata. Actual engine remains 3.11.1. No graph process, credential, command, project/task/workspace row or pilot effect is created.",
+  "intermediateFailures": [
+    "One test query incorrectly used execution_assignments.assignment_epoch instead of source-confirmed epoch; corrected before final GREEN.",
+    "An early test command used a workspace-relative path where pnpm requires a package-relative filter and executed no tests; it was discarded and actual six-file qualification executes all 89 cases.",
+    "Initial contract validation hit sandbox EPERM for tsx IPC; the unchanged validator passed with local socket access."
+  ],
+  "notYetQualified": [
+    "Current company Flow node professional/source/credential authority",
+    "Graph loading/plain materialization/dispatch and human/form continuation",
+    "Required-result finalization, cleanup/restart and engine 3.12.0 activation",
+    "T21 complete phase regression, actual installable specialist package and stand pilot"
+  ],
+  "sourceSha256": {
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "b74b44bffdb462502ff76763ad3ceb8ab95722ff2f24f00f1577abab0bbd7239",
+    "docs/system-analytics/specialist-runtime.md": "ceed1cf371c308f7fcd8d9a7422383803ec777ae46445b483f731fde6e0cfa8d",
+    "web/lib/acp-runners/resolve.ts": "55fc6bddd25b753f9ac491ce9b67de7e7a7e25aeeb7717e9a4cce23beac26e61",
+    "web/lib/agents/company-flow-launch.ts": "93b05611dba29b7f7593152c0f358bf5d92ca324f29777c26d614f1ba363b382",
+    "web/lib/agents/company-agent-launch.ts": "be53f213ebed35f09a6478188c90f22691d5c8bca9c1e87388f2cbe433baba34",
+    "web/lib/agents/company-flow-context.ts": "a616e7a1d9bb8307f604c2a331b19d1b4dfae9196e51fc51e97755ee8cb4f7b6",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "f9490d938f96bbf19fdd1d5c5bd3911bb9a627ecf96e5f5ba7ed21cdf577b060",
+    "web/lib/specialist-assignments/store.ts": "9c345d8e8df40e9045bc764b13aae488a7a9b03a8445cb86a898e201a9a9e543"
+  }
+}

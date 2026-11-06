@@ -35,13 +35,12 @@ import {
   runSessions,
 } from "@/lib/db/schema";
 import { redactQueryError, queryErrorDiagnostics } from "@/lib/db/pg-error";
-import { emitSpecialistAssignmentChange } from "@/lib/domain-events/outbox";
 import { MaisterError } from "@/lib/errors";
 import { createExecutionHosts, mintPlacement } from "@/lib/execution-host";
 import { localHost } from "@/lib/execution-host/resolver";
 import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
 import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence";
-import { linkSpecialistAssignmentRunInTransaction } from "@/lib/specialist-assignments/store";
+import { activateInitialSpecialistAssignmentRunInTransaction } from "@/lib/specialist-assignments/store";
 
 const log = pino({
   name: "agents:company-launch",
@@ -160,39 +159,19 @@ export async function reserveCompanyAgentRun(
         reason: "launch",
         host,
       });
-      const linked = await linkSpecialistAssignmentRunInTransaction(
-        tx,
-        userId,
-        context.assignment.id,
-        {
-          runId,
-          inputRevision: context.input.revision,
-          expectedRevision: context.assignment.revision,
-          role: "specialist",
-          work: null,
-        },
-      );
-
-      if (linked.assignment.revision >= 2147483647)
-        throw new MaisterError(
-          "CONFLICT",
-          "Assignment revision is exhausted; preserve its history and submit new work",
+      const assignmentRevision =
+        await activateInitialSpecialistAssignmentRunInTransaction(
+          tx,
+          userId,
+          context.assignment.id,
+          {
+            runId,
+            inputRevision: context.input.revision,
+            expectedRevision: context.assignment.revision,
+            role: "specialist",
+          },
         );
-      await tx.execute(
-        sql`UPDATE specialist_assignments SET status='active',revision=revision+1,updated_at=clock_timestamp() WHERE id=${context.assignment.id} AND revision=${linked.assignment.revision}`,
-      );
-      const assignmentRevision = linked.assignment.revision + 1;
 
-      await emitSpecialistAssignmentChange({
-        db: tx,
-        owner: context.owner,
-        assignmentId: context.assignment.id,
-        revision: assignmentRevision,
-        previousStatus: "queued",
-        status: "active",
-        cause: "state",
-        actor: { type: "user", id: userId },
-      });
       await assertNativeRunKnowledgeInputsInTransaction(tx, runId);
       for (const reference of context.input.snapshot.objectiveInput.inputRefs)
         await inspectKnowledgeEvidenceReference(

@@ -911,6 +911,72 @@ export async function linkSpecialistAssignmentRunInTransaction(
   };
 }
 
+/** Link the initial reserved execution and activate its queued assignment atomically. */
+export async function activateInitialSpecialistAssignmentRunInTransaction(
+  tx: SqlTransaction,
+  userId: string,
+  assignmentId: string,
+  input: Readonly<
+    Pick<
+      SpecialistRunLinkInput,
+      "runId" | "inputRevision" | "expectedRevision"
+    > & {
+      role: "coordinator" | "specialist";
+    }
+  >,
+): Promise<number> {
+  const linked = await linkSpecialistAssignmentRunInTransaction(
+    tx,
+    userId,
+    assignmentId,
+    { ...input, work: null },
+  );
+
+  if (linked.duplicate || linked.assignment.status !== "queued")
+    throw new MaisterError(
+      "CONFLICT",
+      "Initial execution activation requires a new link on a queued assignment",
+    );
+  if (linked.assignment.revision >= 2147483647)
+    throw new MaisterError(
+      "CONFLICT",
+      "Assignment revision is exhausted; preserve its history and submit new work",
+    );
+  const assignmentRevision = linked.assignment.revision + 1;
+  const updated = await tx.execute(sql`
+    UPDATE specialist_assignments SET status='active',revision=revision+1,updated_at=clock_timestamp()
+    WHERE id=${assignmentId} AND revision=${linked.assignment.revision} AND status='queued'
+    RETURNING id
+  `);
+
+  if (updated.rows.length !== 1)
+    throw new MaisterError(
+      "CONFLICT",
+      "Assignment changed before initial execution activation",
+    );
+  await emitSpecialistAssignmentChange({
+    db: tx,
+    owner: linked.assignment.owner,
+    assignmentId,
+    revision: assignmentRevision,
+    previousStatus: "queued",
+    status: "active",
+    cause: "state",
+    actor: { type: "user", id: userId },
+  });
+  log.debug(
+    {
+      assignmentId,
+      runId: input.runId,
+      revision: assignmentRevision,
+      status: "active",
+    },
+    "initial assignment execution activated",
+  );
+
+  return assignmentRevision;
+}
+
 export async function linkSpecialistAssignmentRun(
   db: SqlDatabase,
   userId: string,
