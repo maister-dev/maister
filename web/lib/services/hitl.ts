@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Db } from "@/lib/execution-host/db";
 import type {
   BudgetAxis,
   BudgetScope,
@@ -32,9 +33,13 @@ import {
   completeAssignment,
   ensureApiTokenActor,
   ensureUserActor,
+  ensureCompanyUserActor,
   systemCloseActiveAssignmentsForRun,
   systemCloseActiveAssignmentsForHitlRequest,
 } from "@/lib/assignments/service";
+import { humanWorkOwner } from "@/lib/assignments/company-ownership";
+import { assertCompanyRunReadAccess } from "@/lib/agents/company-run-read-access";
+import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import { atomicWriteJson } from "@/lib/atomic";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -743,7 +748,7 @@ type ResponseAssignmentClaim = {
 async function claimAssignmentForResponse(args: {
   db: any;
   hitlRequestId: string;
-  projectId: string;
+  projectId: string | null;
   actor: HitlActor;
 }): Promise<ResponseAssignmentClaim> {
   const [assignment] = await args.db
@@ -753,21 +758,38 @@ async function claimAssignmentForResponse(args: {
 
   if (!assignment) return null;
 
-  const actor =
-    args.actor.kind === "user"
-      ? await ensureUserActor({
-          db: args.db,
-          projectId: args.projectId,
-          userId: args.actor.userId,
-          label: args.actor.label,
-        })
-      : await ensureApiTokenActor({
-          db: args.db,
-          projectId: args.projectId,
-          tokenId: args.actor.tokenId,
-          ownerUserId: args.actor.ownerUserId ?? null,
-          label: args.actor.label,
-        });
+  const owner = humanWorkOwner(assignment);
+  let actor: Awaited<ReturnType<typeof ensureUserActor>>;
+
+  if (owner.projectId === null) {
+    if (args.actor.kind !== "user")
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "Company human work requires a current human responder",
+      );
+    actor = await ensureCompanyUserActor({
+      db: args.db,
+      companyId: owner.companyId,
+      userId: args.actor.userId,
+      label: args.actor.label,
+    });
+  } else {
+    actor =
+      args.actor.kind === "user"
+        ? await ensureUserActor({
+            db: args.db,
+            projectId: owner.projectId,
+            userId: args.actor.userId,
+            label: args.actor.label,
+          })
+        : await ensureApiTokenActor({
+            db: args.db,
+            projectId: owner.projectId,
+            tokenId: args.actor.tokenId,
+            ownerUserId: args.actor.ownerUserId ?? null,
+            label: args.actor.label,
+          });
+  }
 
   if (
     assignment.status === "claimed" &&
@@ -1143,6 +1165,19 @@ async function handlePermissionResponse(
 
     if (!lockedHitl || !lockedRun) {
       throw new MaisterError("PRECONDITION", "row vanished mid-transaction");
+    }
+    if (typeof lockedRun.companyId === "string") {
+      if (args.actor.kind !== "user")
+        throw new MaisterError(
+          "UNAUTHORIZED",
+          "Company human consent requires a current human responder",
+        );
+      await authorizeCompanyHitlResponder(
+        tx,
+        args.actor.userId,
+        runId,
+        lockedRun.companyId,
+      );
     }
     if (lockedHitl.supersededAt)
       throw new MaisterError(
@@ -6889,6 +6924,24 @@ async function handleAgentQuestionResponse(
   );
 }
 
+/** Company human consent never inherits project or administrator authority. */
+async function authorizeCompanyHitlResponder(
+  db: Db,
+  userId: string,
+  runId: string,
+  companyId: string,
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await authorizeCompanyUserAction(
+      tx,
+      userId,
+      companyId,
+      "assignments:answer",
+    );
+    await assertCompanyRunReadAccess(tx, userId, runId);
+  });
+}
+
 export async function respondToHitl(
   input: RespondInput,
   actor: HitlActor,
@@ -6942,7 +6995,17 @@ export async function respondToHitl(
     // carries member-level RBAC (any active user, per ADR-096); a project run
     // keeps its project-scoped answerHitl gate. requireActiveSession is already
     // enforced by the calling route, so this branch only needs the project gate.
-    if (runRow.projectId && actor.preauthorizedProjectId !== runRow.projectId) {
+    if (typeof runRow.companyId === "string") {
+      await authorizeCompanyHitlResponder(
+        db,
+        actor.userId,
+        runId,
+        runRow.companyId,
+      );
+    } else if (
+      runRow.projectId &&
+      actor.preauthorizedProjectId !== runRow.projectId
+    ) {
       await requireProjectAction(runRow.projectId, "answerHitl");
     }
   } else {

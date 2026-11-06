@@ -558,7 +558,7 @@ class LifecycleAgent {
             (_, index) =>
               this.connection.requestPermission({
                 sessionId: params.sessionId,
-                toolCall: {
+                toolCall: spec.permissionToolCall ?? {
                   toolCallId: `owned-permission-${index}`,
                   title: "fixture write",
                   kind: "edit",

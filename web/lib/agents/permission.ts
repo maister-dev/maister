@@ -16,6 +16,7 @@ import { canonicalCommandJson } from "../../../runtime/command-json";
 import { createHitlRequest } from "@/lib/runs/hitl-create";
 import {
   agentTurns,
+  assignments,
   executionCommands,
   hitlRequests,
   runs,
@@ -28,12 +29,16 @@ import {
   PromptOwnerDeferred,
   PromptOwnerInvariantError,
 } from "@/lib/execution-host/prompt-owners";
+import { MaisterError } from "@/lib/errors";
 import { nextKeepaliveAt } from "@/lib/runs/keepalive-config";
 import { findAgentPromptHalt } from "@/lib/execution-host/agent-pause-source";
 import { OWNED_TURN_VARIANTS } from "@/lib/agents/turn-variants";
 import { supersedeAgentPausePermissions } from "@/lib/execution-host/agent-pause-permissions";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
-import { completeHitlAssignmentFromCurrentActor } from "@/lib/assignments/service";
+import {
+  createHitlAssignmentForRun,
+  completeHitlAssignmentFromCurrentActor,
+} from "@/lib/assignments/service";
 import {
   agentPermissionSourceSchema,
   agentPermissionEnvelopeSchema,
@@ -248,6 +253,45 @@ export async function recordOwnedAgentPermission(
   }
 }
 
+async function retainCompanyPermissionAssignment(
+  tx: Db,
+  runId: string,
+  hitlRequestId: string,
+): Promise<void> {
+  const [run] = await tx
+    .select({ companyId: runs.companyId })
+    .from(runs)
+    .where(eq(runs.id, runId));
+
+  if (!run)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Agent permission Run is unavailable",
+    );
+  if (run.companyId === null) return;
+  const [existing] = await tx
+    .select({ runId: assignments.runId, companyId: assignments.companyId })
+    .from(assignments)
+    .where(eq(assignments.hitlRequestId, hitlRequestId));
+
+  if (existing) {
+    if (existing.runId !== runId || existing.companyId !== run.companyId)
+      throw new MaisterError(
+        "PRECONDITION",
+        "Company permission human work has a different retained owner",
+      );
+
+    return;
+  }
+  await createHitlAssignmentForRun({
+    db: tx,
+    runId,
+    hitlRequestId,
+    actionKind: "permission",
+    title: "Agent requests a tool permission",
+  });
+}
+
 export async function recordOwnedAgentPermissionInTransaction(
   tx: Db,
   client: BoundClient,
@@ -305,6 +349,8 @@ export async function recordOwnedAgentPermissionInTransaction(
     )
       throw new PromptOwnerInvariantError("agent_permission_replay_identity");
 
+    await retainCompanyPermissionAssignment(tx, assignment.runId, existing.id);
+
     return true;
   }
   const id = randomUUID();
@@ -323,6 +369,7 @@ export async function recordOwnedAgentPermissionInTransaction(
     },
     prompt: "Agent requests a tool permission",
   });
+  await retainCompanyPermissionAssignment(tx, assignment.runId, id);
   const [pause] = await tx
     .select()
     .from(hitlRequests)

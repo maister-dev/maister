@@ -8944,6 +8944,20 @@ paths:
         (`requireProjectAction("answerHitl")`). The `projectId` is derived
         from the run row, never from the body.
 
+        Company standalone Runs require current explicit assignments:read and
+        assignments:answer plus complete exact retained assignment-input/source access.
+        Current company authority applies even to an administrator or a caller with
+        a project preauthorization. Permission intent admission repeats that check
+        under the Run/HITL lock before saving an answer or creating an input command.
+        Company permission requests use the existing human assignment/actor/event ledger;
+        receiving user identity is derived from the session and retained through ACK.
+        Checkpointed reissues preserve the original decision actor and recheck current
+        read/answer/source authority before preparing input. A revoked responder cannot
+        authorize delivery through an old saved decision; a current re-grant permits
+        continuation without a new assignment or duplicate input.
+        Acceptance of this permission does not confirm a Company Brain assertion or
+        complete the specialist assignment. Native wait facts commit with the HITL.
+
         Scratch runs reuse this endpoint for permission cards rendered inside
         the scratch dialog. The URL `runId` and `hitlRequestId` identify the
         pending request; supervisor session id, ACP request id, allowed options,

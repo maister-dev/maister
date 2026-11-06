@@ -25,7 +25,10 @@ import "server-only";
 
 import { eq } from "drizzle-orm";
 
-import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import {
+  emitDomainEvent,
+  runDomainEventScope,
+} from "@/lib/domain-events/outbox";
 import { hitlRequests, runs } from "@/lib/db/schema";
 
 // FIXME(any): dual drizzle-orm peer-dep variants, as elsewhere in lib/runs.
@@ -92,28 +95,34 @@ async function emitNeedsInput(
   // regardless — and adding the call would oblige every db stub in every suite
   // that reaches a HITL creation to grow a method it does not otherwise need.
   const [run] = (await tx
-    .select({ projectId: runs.projectId, taskId: runs.taskId })
+    .select({
+      projectId: runs.projectId,
+      companyId: runs.companyId,
+      taskId: runs.taskId,
+    })
     .from(runs)
     .where(eq(runs.id, values.runId))) as Array<{
     projectId: string | null;
+    companyId: string | null;
     taskId: string | null;
   }>;
 
   if (!run) return;
 
-  // ADR-097: a project-less local-package assistant run has NO project, and
-  // `domain_events.project_id` is NOT NULL. Emitting anyway aborts the
-  // transaction and takes the HITL row down with it — so the assistant could
-  // never get a permission answered at all. `scratch-runs/events.ts` already
-  // skips its project-scoped webhooks on this same condition; the event plane
-  // skips for the same reason, and the scratch dialog stays the live record.
-  if (run.projectId === null) return;
+  // Private local assistants keep their separate store. A retained company owner
+  // opens the same native wait fact without fabricating project or task identity.
+  if (run.projectId === null && typeof run.companyId !== "string") return;
+  const scope =
+    run.projectId === null
+      ? runDomainEventScope(run)
+      : { projectId: run.projectId };
 
   await emitDomainEvent({
     db: tx,
     kind: "run.needs_input",
-    projectId: run.projectId,
-    taskId: values.taskId ?? run.taskId ?? null,
+    ...scope,
+    taskId:
+      run.projectId === null ? null : (values.taskId ?? run.taskId ?? null),
     runId: values.runId,
     payload: { hitlRequestId: values.id, kind: values.kind },
   });

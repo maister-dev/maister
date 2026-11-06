@@ -346,3 +346,33 @@ prompt or result. Business assignment acceptance remains separate. The fixture
 also verifies explicit binding-runner admission without a platform-default row and
 atomic refusal when every runner tier is absent. This qualifies native mechanics;
 it does not establish real model/companion-package or stand-pilot readiness.
+
+
+### Native company permission and human delivery
+
+Company operational permission requests retain the exact owned prompt/session
+source and create one company human-work assignment in the existing ledger in
+the same transaction. Canonical replay retains that work and its actor history.
+The shared HITL response service requires current explicit company read/answer
+authority and the Run's exact source access, including for administrators and
+callers with a project preauthorization. Permission intent admission rechecks
+under the existing Run/HITL lock; refusing an answer creates no response or input
+command. The authorized current user becomes the scoped human actor; native input
+ACK completes the human work under that actor, while the specialist assignment
+remains subject to separate result acceptance.
+
+Main `0246_company_hitl_wait_events` admits the existing `run.needs_input` fact
+for an exact retained company operational Run, without a project/task owner.
+The single native HITL writer emits that fact atomically; private local assistants
+retain their separate notification path. Existing company event owner/reference
+and immutable routing guards remain active.
+
+An actual idle checkpoint releases the existing execution assignment. The normal
+continuation worker reconciles the retained prompt/checkpoint evidence and admits
+one resumed turn. A reissued company permission uses the original human decision
+actor, with current read/answer/source authority checked by the existing human
+claim service before input preparation. Revocation while capacity is unavailable
+preserves the decision but prevents delivery; a current re-grant permits recovery
+without another input or business assignment. ACK completes the original and
+linked reissued human work under the same actor. Inbox UI, full interruption
+recovery and company coordinator Flow qualification retain their own gates.

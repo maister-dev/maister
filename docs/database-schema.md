@@ -4692,6 +4692,12 @@ only). No UPDATE/DELETE application paths; future pruning MUST honor
 }
 ```
 
+Company ownership is an exclusive alternative to project ownership. Main
+`0246_company_hitl_wait_events` permits `run.needs_input` for an exact
+company operational Run with no task. The existing `0227` reference and
+immutable routing guards apply; the HITL row and wait fact commit together.
+Private local assistants retain their separate notification path.
+
 Dispatch reads are PK-range scans (`id > cursor ORDER BY id`), gated by the
 xid8 horizon (`tx_id < pg_snapshot_xmin(pg_current_snapshot())`) so a
 late-committing lower `id` is never skipped. **(Implemented, migration

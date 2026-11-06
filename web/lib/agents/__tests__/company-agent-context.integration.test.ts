@@ -59,8 +59,10 @@ import {
 } from "../finalization";
 import { reserveCompanyAgentRun } from "../company-agent-launch";
 import { startAgentSession } from "../launch";
+import { startAgentContinuationWorker } from "../continuation-worker";
 import { getCompanyAgentRunHistory } from "../activity-queries";
 
+import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { readTranscriptPage } from "@/lib/runs/transcript-page";
 import { authorizePeekRun } from "@/lib/runs/peek-read-model";
 import { requireActiveUserById } from "@/lib/authz";
@@ -115,6 +117,7 @@ import {
 } from "@/lib/brain/knowledge-proposals";
 import { verifyToken, actorUserIdForToken } from "@/lib/tokens/verify";
 import { handleAssignmentAction } from "@/app/api/assignments/[assignmentId]/_shared";
+import { POST as respondHitlPost } from "@/app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route";
 import { POST as claimHumanAssignmentPost } from "@/app/api/assignments/[assignmentId]/claim/route";
 import { createHitlRequest } from "@/lib/runs/hitl-create";
 import {
@@ -264,6 +267,28 @@ beforeAll(async () => {
       }) +
       "\n",
   );
+  for (const delivery of ["live", "checkpointed"] as const) {
+    await writeFile(
+      join(source, `maister-agents/permission-${delivery}-observer.md`),
+      primarySource +
+        "fixture-output:" +
+        JSON.stringify({
+          bytes: 0,
+          permission: true,
+          permissionToolCall: {
+            toolCallId: "company-proposal-proof",
+            title: "mcp__maister__knowledge_propose",
+            kind: "other",
+            status: "pending",
+          },
+          text:
+            "```json maister:output\n" +
+            JSON.stringify(operationalSuccessFixture()) +
+            "\n```",
+        }) +
+        "\n",
+    );
+  }
   await initRepo(source);
   await git(
     source,
@@ -640,6 +665,369 @@ it("CBS-02 completes a company assignment Run through the real supervisor and AC
     setDefaultTransportForTests(null);
   }
 }, 90000);
+
+it.each(["live", "checkpointed"] as const)(
+  "CBS-02 routes a real company permission through current human authority and the existing owned delivery (%s)",
+  async (delivery) => {
+    const db: Db = database.db;
+    const supervisor = await startRealSupervisor({
+      runtimeRoot: join(root, `company-permission-${delivery}-host`),
+      workspaceRoots: [join(root, "worktrees")],
+      fixtureArgs: ["--hang", "--supports-resume"],
+    });
+    const restoreUrl = useRealSupervisorUrl(supervisor.url);
+    const worker = startProjectionWorker({
+      db,
+      projectors: canonicalProjectors,
+    });
+    const abort = new AbortController();
+    const previousCap = process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+    let driver: Promise<Readonly<{ error: unknown | null }>> | undefined;
+    let continuation:
+      ReturnType<typeof startAgentContinuationWorker> | undefined;
+    let blockerRunId: string | undefined;
+
+    setDefaultTransportForTests(null);
+    resetResolverForTests();
+    resetRegistrarStateForTests();
+    vi.stubEnv("MAISTER_MAX_CONCURRENT_AGENTS", "100");
+    try {
+      const roleId = `rah:permission-${delivery}-observer`;
+      const effective = await resolveInstalledAgentDefinition(db, {
+        agentId: roleId,
+        packageInstallId: assignmentInput.standingDefinition.packageInstallId,
+      });
+      const runnerId = randomUUID();
+
+      await db.insert(platformAcpRunners).values({
+        id: runnerId,
+        adapter: "claude",
+        capabilityAgent: "claude",
+        model: "company-permission-fixture",
+        provider: { kind: "anthropic" },
+        readinessStatus: "Ready",
+      });
+      const binding = await createCompanySpecialistBinding(db, userId, roleId, {
+        owner: { kind: "company", companyId: request.companyId },
+        packageInstallId: effective.packageInstallId,
+        packageRevision: effective.resolvedRevision!,
+        definitionSha256: agentDefinitionSha256(effective.parsed),
+        enabled: true,
+        configuration: {},
+        grantActions: ["knowledge:read", "knowledge:propose"],
+        runnerId,
+        idempotencyKey: randomUUID(),
+      });
+      const contract = buildOperationalContract(effective);
+      const assignment = await createSpecialistAssignment(db, userId, {
+        ...assignmentInput,
+        specialistBindingId: binding.specialist.bindingId,
+        responsibleAgentId: roleId,
+        standingDefinition: {
+          ...assignmentInput.standingDefinition,
+          agentId: roleId,
+          definition: effective.parsed,
+          definitionSha256: agentDefinitionSha256(effective.parsed),
+        },
+        objectiveInput: {
+          ...assignmentInput.objectiveInput,
+          expectedResult: {
+            schemaRef: contract.schemaRef,
+            schemaVersion: contract.schemaVersion,
+            sha256: contract.sha256,
+            required: true,
+          },
+        },
+      });
+      const hosts = createExecutionHosts({
+        db,
+        transport: createLocalDirectTransport(),
+      });
+      const receipt = await reserveCompanyAgentRun(
+        db,
+        userId,
+        {
+          ...request,
+          assignmentId: assignment.id,
+          bindingId: binding.specialist.bindingId,
+        },
+        hosts,
+      );
+
+      expect(await tryStartRun(receipt.runId, { db })).toMatchObject({
+        started: true,
+      });
+      driver = startAgentSession(receipt.runId, {
+        db,
+        executionHosts: hosts,
+        signal: abort.signal,
+      }).then(
+        () => ({ error: null }),
+        (error) => ({ error }),
+      );
+      await expect
+        .poll(
+          async () =>
+            (
+              await database.pool.query(
+                "SELECT count(*)::int AS count FROM hitl_requests WHERE run_id=$1 AND kind='permission'",
+                [receipt.runId],
+              )
+            ).rows[0].count,
+          { timeout: 30000, interval: 50 },
+        )
+        .toBe(1);
+      const hitl = (
+        await database.pool.query(
+          "SELECT id,response,responded_at FROM hitl_requests WHERE run_id=$1 AND kind='permission'",
+          [receipt.runId],
+        )
+      ).rows[0];
+
+      expect(
+        (
+          await database.pool.query(
+            "SELECT count(*)::int AS count FROM domain_events WHERE kind='run.needs_input' AND run_id=$1 AND company_id=$2 AND project_id IS NULL AND task_id IS NULL AND payload->>'hitlRequestId'=$3",
+            [receipt.runId, request.companyId, hitl.id],
+          )
+        ).rows[0],
+      ).toEqual({ count: 1 });
+      browserSession.user = await requireActiveUserById(userId);
+      const denied = await respondHitlPost(
+        new NextRequest(
+          `http://localhost/api/runs/${receipt.runId}/hitl/${hitl.id}/respond`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ optionId: "allow" }),
+          },
+        ),
+        {
+          params: Promise.resolve({
+            runId: receipt.runId,
+            hitlRequestId: hitl.id,
+          }),
+        },
+      );
+
+      expect(denied.status).toBe(403);
+      expect(
+        (
+          await database.pool.query(
+            "SELECT response,responded_at FROM hitl_requests WHERE id=$1",
+            [hitl.id],
+          )
+        ).rows[0],
+      ).toEqual({ response: null, responded_at: null });
+      expect(
+        (
+          await database.pool.query(
+            "SELECT count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind='session.input'",
+            [receipt.runId],
+          )
+        ).rows[0],
+      ).toEqual({ count: 0 });
+      const human = (
+        await database.pool.query(
+          "SELECT id,status,company_id,project_id FROM assignments WHERE hitl_request_id=$1",
+          [hitl.id],
+        )
+      ).rows[0];
+
+      expect(human).toMatchObject({
+        status: "open",
+        company_id: request.companyId,
+        project_id: null,
+      });
+      const responderId = randomUUID();
+
+      await database.pool.query(
+        "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+        [responderId, `${responderId}@example.test`],
+      );
+      const responseGrants = await createCompanyGrants(db, administratorId, {
+        principalKind: "user",
+        principalId: responderId,
+        actions: ["assignments:read", "assignments:answer"],
+        idempotencyKey: randomUUID(),
+      });
+
+      if (delivery === "checkpointed") {
+        await database.pool.query(
+          "UPDATE runs SET keepalive_until=now()-interval '1 second' WHERE id=$1",
+          [receipt.runId],
+        );
+        expect(await runSweepTick({ db, executionHosts: hosts })).toMatchObject(
+          {
+            idledCount: 1,
+          },
+        );
+        abort.abort();
+        await driver;
+        const blockerProject = await seedProjectRow(database.db);
+
+        blockerRunId = randomUUID();
+        await database.pool.query(
+          "INSERT INTO runs(id,project_id,run_kind,status,flow_version,flow_revision) VALUES($1,$2,'agent','Running','fixture','fixture')",
+          [blockerRunId, blockerProject.id],
+        );
+        vi.stubEnv("MAISTER_MAX_CONCURRENT_AGENTS", "1");
+        expect(
+          (await db.select().from(runs).where(eq(runs.id, receipt.runId)))[0]
+            .status,
+        ).toBe("NeedsInputIdle");
+      }
+      browserSession.user = await requireActiveUserById(responderId);
+      const accepted = await respondHitlPost(
+        new NextRequest(
+          `http://localhost/api/runs/${receipt.runId}/hitl/${hitl.id}/respond`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ optionId: "allow" }),
+          },
+        ),
+        {
+          params: Promise.resolve({
+            runId: receipt.runId,
+            hitlRequestId: hitl.id,
+          }),
+        },
+      );
+
+      expect(accepted.status).toBe(delivery === "live" ? 200 : 202);
+      if (delivery === "live") expect(await driver).toEqual({ error: null });
+      if (delivery === "checkpointed") {
+        const answerGrant = responseGrants.page.items.find(
+          (grant) => grant.action === "assignments:answer",
+        )!;
+
+        await revokeCompanyGrant(db, administratorId, answerGrant.id, {
+          expectedRevision: answerGrant.revision,
+          reason:
+            "Withdraw consent authority while checkpoint delivery waits for capacity",
+          idempotencyKey: randomUUID(),
+        });
+        await database.pool.query(
+          "UPDATE runs SET status='Failed' WHERE id=$1",
+          [blockerRunId],
+        );
+        continuation = startAgentContinuationWorker({
+          db,
+          executionHosts: hosts,
+        });
+        await expect
+          .poll(
+            async () =>
+              (
+                await database.pool.query(
+                  "SELECT count(*)::int AS count FROM execution_events WHERE run_id=$1 AND event_type='session.permission_request'",
+                  [receipt.runId],
+                )
+              ).rows[0].count,
+            { timeout: 30000, interval: 50 },
+          )
+          .toBe(2);
+        expect(
+          (
+            await database.pool.query(
+              "SELECT count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind='session.input'",
+              [receipt.runId],
+            )
+          ).rows[0],
+        ).toEqual({ count: 0 });
+        expect(
+          (
+            await database.pool.query(
+              "SELECT status,assignee_actor_id FROM assignments WHERE run_id=$1 AND hitl_request_id<>$2",
+              [receipt.runId, hitl.id],
+            )
+          ).rows,
+        ).toEqual([]);
+        await createCompanyGrants(db, administratorId, {
+          principalKind: "user",
+          principalId: responderId,
+          actions: ["assignments:answer"],
+          idempotencyKey: randomUUID(),
+        });
+      }
+
+      await expect
+        .poll(
+          async () =>
+            (await db.select().from(runs).where(eq(runs.id, receipt.runId)))[0]
+              .status,
+          { timeout: 30000, interval: 50 },
+        )
+        .toBe("Done");
+      expect(
+        (await db.select().from(runs).where(eq(runs.id, receipt.runId)))[0],
+      ).toMatchObject({
+        status: "Done",
+        companyId: request.companyId,
+        projectId: null,
+      });
+      expect(
+        (
+          await database.pool.query(
+            "SELECT human.status,actor.user_id,actor.company_id FROM assignments human JOIN actor_identities actor ON actor.id=human.completed_by_actor_id WHERE human.id=$1",
+            [human.id],
+          )
+        ).rows[0],
+      ).toEqual({
+        status: "completed",
+        user_id: responderId,
+        company_id: request.companyId,
+      });
+      expect(
+        (
+          await database.pool.query(
+            "SELECT count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind='session.input'",
+            [receipt.runId],
+          )
+        ).rows[0],
+      ).toEqual({ count: 1 });
+      expect(
+        (
+          await database.pool.query(
+            "SELECT human.status,actor.user_id,actor.company_id FROM assignments human JOIN actor_identities actor ON actor.id=human.completed_by_actor_id WHERE human.run_id=$1 ORDER BY human.id",
+            [receipt.runId],
+          )
+        ).rows,
+      ).toEqual(
+        Array.from({ length: delivery === "live" ? 1 : 2 }, () => ({
+          status: "completed",
+          user_id: responderId,
+          company_id: request.companyId,
+        })),
+      );
+      expect(
+        (
+          await database.pool.query(
+            "SELECT status,revision FROM specialist_assignments WHERE id=$1",
+            [assignment.id],
+          )
+        ).rows[0],
+      ).toEqual({ status: "active", revision: 3 });
+    } finally {
+      browserSession.user = null;
+      abort.abort();
+      await driver;
+      await continuation?.stop();
+      await worker.stop();
+      await stopRuntimeEventConsumers();
+      await supervisor.stop();
+      restoreUrl();
+      resetRegistrarStateForTests();
+      resetResolverForTests();
+      setDefaultTransportForTests(null);
+      if (previousCap === undefined)
+        delete process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+      else process.env.MAISTER_MAX_CONCURRENT_AGENTS = previousCap;
+    }
+  },
+  90000,
+);
 
 it("CBS-02 shares the existing bounded agent pool across project and company work and promotes a queued company run once", async () => {
   const db: Db = database.db;

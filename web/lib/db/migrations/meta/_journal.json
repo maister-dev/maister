@@ -1695,6 +1695,13 @@
       "when": 1794606477948,
       "tag": "0245_human_work_owner_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 246,
+      "version": "7",
+      "when": 1794606477949,
+      "tag": "0246_company_hitl_wait_events",
+      "breakpoints": true
     }
   ]
 }
