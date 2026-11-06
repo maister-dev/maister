@@ -373,6 +373,9 @@ one resumed turn. A reissued company permission uses the original human decision
 actor, with current read/answer/source authority checked by the existing human
 claim service before input preparation. Revocation while capacity is unavailable
 preserves the decision but prevents delivery; a current re-grant permits recovery
-without another input or business assignment. ACK completes the original and
+without another input or business assignment. Qualification also restarts the actual
+supervisor on its retained SQLite/runtime directory after checkpoint: host identity
+stays stable, boot identity changes, and the exact frozen Run/result contract and
+canonical ACP session handle survive. ACK completes the original and
 linked reissued human work under the same actor. Inbox UI, full interruption
 recovery and company coordinator Flow qualification retain their own gates.

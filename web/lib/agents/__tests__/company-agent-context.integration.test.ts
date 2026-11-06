@@ -75,6 +75,7 @@ import {
 import { authorizeRuntimeObjectContentActor } from "@/lib/execution-host/runtime-object-access";
 import {
   runs,
+  runSessions,
   platformAcpRunners,
   platformRuntimeSettings,
 } from "@/lib/db/schema";
@@ -670,7 +671,7 @@ it.each(["live", "checkpointed"] as const)(
   "CBS-02 routes a real company permission through current human authority and the existing owned delivery (%s)",
   async (delivery) => {
     const db: Db = database.db;
-    const supervisor = await startRealSupervisor({
+    let supervisor = await startRealSupervisor({
       runtimeRoot: join(root, `company-permission-${delivery}-host`),
       workspaceRoots: [join(root, "worktrees")],
       fixtureArgs: ["--hang", "--supports-resume"],
@@ -864,6 +865,47 @@ it.each(["live", "checkpointed"] as const)(
         );
         abort.abort();
         await driver;
+        const beforeHealth = await hosts.local().health();
+        const frozen = await db
+          .select({
+            snapshot: runs.companyExecutionSnapshot,
+            contract: runs.resultContract,
+            acpSessionId: runSessions.acpSessionId,
+          })
+          .from(runs)
+          .innerJoin(runSessions, eq(runSessions.runId, runs.id))
+          .where(eq(runs.id, receipt.runId));
+
+        await stopRuntimeEventConsumers();
+        supervisor = await supervisor.restart();
+        resetRegistrarStateForTests();
+        resetResolverForTests();
+        const afterHealth = await hosts.local().health();
+
+        expect(beforeHealth.kind).toBe("ready");
+        expect(afterHealth.kind).toBe("ready");
+        if (beforeHealth.kind !== "ready" || afterHealth.kind !== "ready")
+          throw new Error(
+            "Company recovery fixture did not retain a ready execution host",
+          );
+        expect(afterHealth.identity?.hostKey).toBe(
+          beforeHealth.identity?.hostKey,
+        );
+        expect(afterHealth.identity?.bootId).not.toBe(
+          beforeHealth.identity?.bootId,
+        );
+        expect(
+          await db
+            .select({
+              snapshot: runs.companyExecutionSnapshot,
+              contract: runs.resultContract,
+              acpSessionId: runSessions.acpSessionId,
+            })
+            .from(runs)
+            .innerJoin(runSessions, eq(runSessions.runId, runs.id))
+            .where(eq(runs.id, receipt.runId)),
+        ).toEqual(frozen);
+        expect(frozen[0].acpSessionId).toEqual(expect.any(String));
         const blockerProject = await seedProjectRow(database.db);
 
         blockerRunId = randomUUID();
