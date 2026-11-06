@@ -60,7 +60,7 @@ export const companyAgentContextInputSchema = z
 export type CompanyAgentContextInput = z.infer<
   typeof companyAgentContextInputSchema
 >;
-export type CompanyAgentContext = Readonly<{
+export type CompanySpecialistContext = Readonly<{
   owner: Readonly<{ kind: "company"; companyId: string }>;
   assignment: SpecialistAssignment;
   input: AssignmentInputRevision;
@@ -68,13 +68,14 @@ export type CompanyAgentContext = Readonly<{
   effective: EffectiveAgentDefinition;
   authority: CompanyUserAuthority;
 }>;
+export type CompanyAgentContext = CompanySpecialistContext;
 
 /** Re-run inside admission's transaction; a previously returned context never authorizes a later effect. */
-export async function prepareCompanyAgentContext(
+export async function prepareCompanySpecialistContext(
   tx: SqlTransaction,
   userId: string,
   value: unknown,
-): Promise<CompanyAgentContext> {
+): Promise<CompanySpecialistContext> {
   const parsed = companyAgentContextInputSchema.safeParse(value);
 
   if (!parsed.success)
@@ -84,8 +85,6 @@ export async function prepareCompanyAgentContext(
       { details: { reason: "company_agent_context_invalid" } },
     );
   const request = parsed.data;
-
-  await beginAssignmentTransaction(tx);
 
   log.debug(
     {
@@ -97,43 +96,11 @@ export async function prepareCompanyAgentContext(
     },
     "company agent preflight started",
   );
-  await authorizeCompanyUserAction(
+  const authority = await lockCompanyAssignmentForExecution(
     tx,
     userId,
-    request.companyId,
-    "assignments:read",
+    request,
   );
-  const authority = await authorizeCompanyUserAction(
-    tx,
-    userId,
-    request.companyId,
-    "assignments:update",
-  );
-  const owned = (
-    await tx.execute(
-      sql`SELECT id FROM specialist_assignments WHERE id=${request.assignmentId} AND company_id=${request.companyId} AND project_id IS NULL FOR UPDATE`,
-    )
-  ).rows[0];
-
-  if (!owned) throw unavailableAssignment();
-  const head = await lockSpecialistAssignment(
-    tx,
-    request.assignmentId,
-    request.assignmentRevision,
-  );
-
-  if (head.company_id !== request.companyId || head.project_id !== null)
-    throw unavailableAssignment();
-  if (
-    head.status !== "queued" ||
-    head.input_revision !== request.inputRevision ||
-    head.specialist_binding_id !== request.bindingId
-  )
-    throw new MaisterError(
-      "CONFLICT",
-      "Company work changed or is not queued for this specialist and input; inspect the assignment before admission",
-      { details: { reason: "company_assignment_changed" } },
-    );
   const bindingHead = decodeCompanyBindingHead(
     (
       await tx.execute(
@@ -188,13 +155,6 @@ export async function prepareCompanyAgentContext(
       "The installed specialist does not match its reviewed package and definition witness",
       { details: { reason: "company_agent_pin_changed" } },
     );
-  assertStandaloneCompanyAgentDefinition(definition);
-  if (binding.snapshot.coordinatorFlowRevisionId !== null)
-    throw new MaisterError(
-      "CONFIG",
-      "This specialist requires its exact company coordinator Flow admission",
-      { details: { reason: "company_coordinator_required" } },
-    );
   if (!definition.triggers.includes(request.triggerSource))
     throw new MaisterError(
       "CONFIG",
@@ -245,6 +205,94 @@ export async function prepareCompanyAgentContext(
       "Assignment standing input differs from this specialist configuration; update the requested work explicitly",
       { details: { reason: "company_assignment_standing_changed" } },
     );
+  log.debug(
+    {
+      companyId: request.companyId,
+      assignmentId: assignment.id,
+      bindingId: binding.bindingId,
+      inputRevision: input.revision,
+      bindingRevision: binding.revision,
+      packageInstallId: effective.packageInstallId,
+    },
+    "company specialist input preflight passed",
+  );
+
+  return {
+    owner: { kind: "company", companyId: request.companyId },
+    assignment,
+    input,
+    binding,
+    effective,
+    authority,
+  };
+}
+
+/** Lock the business owner before any configuration, matching assignment transition order. */
+export async function lockCompanyAssignmentForExecution(
+  tx: SqlTransaction,
+  userId: string,
+  request: CompanyAgentContextInput,
+): Promise<CompanyUserAuthority> {
+  await beginAssignmentTransaction(tx);
+
+  await authorizeCompanyUserAction(
+    tx,
+    userId,
+    request.companyId,
+    "assignments:read",
+  );
+  const authority = await authorizeCompanyUserAction(
+    tx,
+    userId,
+    request.companyId,
+    "assignments:update",
+  );
+  const owned = (
+    await tx.execute(
+      sql`SELECT id FROM specialist_assignments WHERE id=${request.assignmentId} AND company_id=${request.companyId} AND project_id IS NULL FOR UPDATE`,
+    )
+  ).rows[0];
+
+  if (!owned) throw unavailableAssignment();
+  const head = await lockSpecialistAssignment(
+    tx,
+    request.assignmentId,
+    request.assignmentRevision,
+  );
+
+  if (head.company_id !== request.companyId || head.project_id !== null)
+    throw unavailableAssignment();
+  if (
+    head.status !== "queued" ||
+    head.input_revision !== request.inputRevision ||
+    head.specialist_binding_id !== request.bindingId
+  )
+    throw new MaisterError(
+      "CONFLICT",
+      "Company work changed or is not queued for this specialist and input; inspect the assignment before admission",
+      { details: { reason: "company_assignment_changed" } },
+    );
+
+  return authority;
+}
+
+/** Re-run inside admission; standalone sessions may not discard a declared coordinator. */
+export async function prepareCompanyAgentContext(
+  tx: SqlTransaction,
+  userId: string,
+  value: unknown,
+): Promise<CompanyAgentContext> {
+  const context = await prepareCompanySpecialistContext(tx, userId, value);
+  const { effective, binding, input } = context;
+  const definition = effective.parsed;
+
+  assertStandaloneCompanyAgentDefinition(definition);
+  if (binding.snapshot.coordinatorFlowRevisionId !== null)
+    throw new MaisterError(
+      "CONFIG",
+      "This specialist requires its exact company coordinator Flow admission",
+      { details: { reason: "company_coordinator_required" } },
+    );
   const result = buildOperationalContract(effective);
 
   if (
@@ -261,34 +309,15 @@ export async function prepareCompanyAgentContext(
       "Assignment requires a different result contract from this pinned specialist",
       { details: { reason: "company_assignment_result_mismatch" } },
     );
-  log.debug(
-    {
-      companyId: request.companyId,
-      assignmentId: assignment.id,
-      bindingId: binding.bindingId,
-      inputRevision: input.revision,
-      bindingRevision: binding.revision,
-      packageInstallId: effective.packageInstallId,
-    },
-    "company agent preflight passed",
-  );
 
-  return {
-    owner: { kind: "company", companyId: request.companyId },
-    assignment,
-    input,
-    binding,
-    effective,
-    authority,
-  };
+  return context;
 }
 
-/** Capture only validated server identities; do not use this historical receipt to authorize later actions. */
-export function captureCompanyAgentExecution(
-  context: CompanyAgentContext,
-): CompanyAgentExecutionSnapshot {
-  return companyAgentExecutionSnapshotSchema.parse({
-    schemaVersion: 1,
+/** Shared identity fields are captured from newly prepared server state, never converted from retained v1 bytes. */
+export function captureCompanySpecialistExecutionIdentity(
+  context: CompanySpecialistContext,
+): Omit<CompanyAgentExecutionSnapshot, "schemaVersion"> {
+  return {
     owner: context.owner,
     assignmentRevision: context.assignment.revision,
     assignment: {
@@ -301,6 +330,18 @@ export function captureCompanyAgentExecution(
       revision: context.binding.revision,
       snapshotSha256: context.binding.snapshotDigest,
     },
-    authority: context.authority,
+    authority: companyAgentExecutionSnapshotSchema.shape.authority.parse(
+      context.authority,
+    ),
+  };
+}
+
+/** Capture only validated server identities; do not use this historical receipt to authorize later actions. */
+export function captureCompanyAgentExecution(
+  context: CompanyAgentContext,
+): CompanyAgentExecutionSnapshot {
+  return companyAgentExecutionSnapshotSchema.parse({
+    schemaVersion: 1,
+    ...captureCompanySpecialistExecutionIdentity(context),
   });
 }

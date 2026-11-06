@@ -24,7 +24,10 @@ import { resolveInstalledAgentDefinition } from "./effective";
 
 import { MaisterError } from "@/lib/errors";
 import { isEngineCompatible } from "@/lib/flows/engine-version";
-import { parseExecutableStoredFlowManifest } from "@/lib/flows/manifest-parser";
+import {
+  parseExecutableStoredFlowManifest,
+  parseGraphOnlyFlowManifest,
+} from "@/lib/flows/manifest-parser";
 
 /** Capture accepted configuration under current provider/role/user authority, without admitting execution. */
 export async function captureCompanyFlowBinding(
@@ -100,13 +103,14 @@ export async function captureCompanyFlowBinding(
       "CONFLICT",
       "The coordinator Flow manifest differs from the reviewed content witness",
     );
-  const manifest = parseExecutableStoredFlowManifest(flow.manifest, {
+  const manifestContext = {
     surface: "company-flow-binding-capture",
     flowRefId: flow.flow_ref_id,
     revision: role.packageRevision,
     manifestLabel: "company coordinator Flow",
-    code: "CONFIG",
-  });
+    code: "CONFIG" as const,
+  };
+  const manifest = parseGraphOnlyFlowManifest(flow.manifest, manifestContext);
 
   if (!companyFlowRoleMappingsMatch(manifest, input.roleMappings))
     throw new MaisterError(
@@ -157,6 +161,7 @@ export async function captureCompanyFlowBinding(
   });
 
   if (input.enabled) {
+    parseExecutableStoredFlowManifest(flow.manifest, manifestContext);
     const compatible = isEngineCompatible(COMPANY_EXECUTION_ENGINE_MIN);
     const declaration = companyFlowExecutionSchema.safeParse(
       manifest.execution,

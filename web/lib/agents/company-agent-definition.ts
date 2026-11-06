@@ -5,7 +5,7 @@ import type { ParsedAgentDefinition } from "./definition";
 import { MaisterError } from "@/lib/errors";
 
 /** Company standalone execution cannot silently discard repository, memory or coordinator declarations. */
-export function assertStandaloneCompanyAgentDefinition(
+export function assertCompanySessionDefinition(
   definition: ParsedAgentDefinition,
 ): void {
   if (
@@ -17,7 +17,7 @@ export function assertStandaloneCompanyAgentDefinition(
   )
     throw new MaisterError(
       "CONFIG",
-      "Standalone company sessions require a finite workspace-none role without repository qualification",
+      "Company sessions require a finite workspace-none role without repository qualification",
       { details: { reason: "company_agent_workspace_unsupported" } },
     );
   if (
@@ -31,6 +31,13 @@ export function assertStandaloneCompanyAgentDefinition(
         details: { reason: "company_agent_project_capability_unsupported" },
       },
     );
+}
+
+/** Standalone admission never substitutes a session for a pinned coordinator graph. */
+export function assertStandaloneCompanyAgentDefinition(
+  definition: ParsedAgentDefinition,
+): void {
+  assertCompanySessionDefinition(definition);
   if (definition.flow !== null)
     throw new MaisterError(
       "CONFIG",

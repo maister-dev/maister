@@ -1,0 +1,92 @@
+{
+  "task": "T20.1",
+  "slice": "Exact coordinator context, additive capture grammar and governed configuration compatibility",
+  "date": "2026-11-06",
+  "baseCommit": "58c003af07d481309a24bac27083fec612822253",
+  "status": "Scoped context/configuration qualified; native graph execution remains pending",
+  "engineVersion": "3.11.1",
+  "migrations": [],
+  "red": {
+    "legacyPath": {
+      "tests": 9,
+      "failed": 9,
+      "log": "legacy-path-red.log.gz"
+    },
+    "captureGrammar": {
+      "tests": 14,
+      "failed": 1,
+      "log": "capture-red.log.gz"
+    },
+    "disabledConfiguration": {
+      "tests": 53,
+      "failed": 1,
+      "log": "disabled-configuration-red.log.gz"
+    }
+  },
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "files": 3,
+      "tests": 53,
+      "durationSeconds": 25.04,
+      "log": "integration-green.log.gz"
+    },
+    "unit": {
+      "exitCode": 0,
+      "files": 889,
+      "tests": 9304,
+      "durationSeconds": 25.05,
+      "log": "unit-green.log.gz"
+    },
+    "types": {
+      "exitCode": 0,
+      "log": "types.log.gz"
+    },
+    "lint": {
+      "exitCode": 0,
+      "log": "lint.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "log": "docs.log.gz"
+    }
+  },
+  "qualified": [
+    "Shared current assignment, input, specialist/provider pin, policy and source checks remain under real standalone lifecycle regression.",
+    "Coordinator context uses assignment -> Flow binding -> specialist lock order and exact reviewed revisions without creating a Project, Task, Run, session or run link.",
+    "Actual trusted Git package and pinned schema bytes resolve a required flow_export contract; changed schema content, stale business/input/configuration revisions and current-authority revocation refuse.",
+    "Closed version-2 capture grammar retains exact coordinator configuration witnesses without rewriting version-1 standalone captures or allowing authority/version confusion.",
+    "Disabled configuration remains reviewable/disableable under a host outside the manifest range; enabling still uses the existing full executable parser and rejects atomically."
+  ],
+  "qualificationBoundary": "Only the pure isEngineCompatible predicate is controlled to exercise a prospective 3.12.0/3.13.0 host. Package loading, configuration services, immutable receipts, assignment storage and schema reads use actual Git/filesystem/Postgres. Actual 3.11.1 refuses the future Flow. This is not actual supported-host graph dispatch or installable stand-package/pilot qualification.",
+  "intermediateFailures": [
+    "The initial draft preceded the behavioral legacy-path fixture. Qualification RED explicitly exercises the legacy standalone admission alias; no draft execution or import-only failure is counted as behavioral proof.",
+    "Initial fixture used a display title as manifest.name rather than its exact installed Flow reference; setup was corrected before the recorded legacy-path RED.",
+    "The first graph validator call omitted its nodes argument; integration and typecheck detected it, and the typed existing signature is now used.",
+    "Initial unsupported-engine assertions expected PRECONDITION. Source inspection showed the existing full manifest parser already enforces min/max with CONFIG/engine_incompatible; expectations and SDD were corrected without replacing that gate. No engine-range implementation gap is claimed.",
+    "The extracted shared identity initially exposed a broad authority action type. It now validates the actual authority through the existing strict assignments:update schema rather than asserting or inventing the action.",
+    "The real disabled-configuration failure was fixed by separating graph-shape configuration parsing from executable enablement parsing."
+  ],
+  "notYetQualified": [
+    "Main-store v2 Run ownership/reference guard and atomic coordinator/input link",
+    "Native company graph reservation, per-node professional/tool/permission policy and credential attribution",
+    "Plain graph runtime, company human/form continuation, required-result terminal/cleanup/recovery",
+    "Engine 3.12.0 activation, T21 phase qualification, actual companion package and stand pilot"
+  ],
+  "sourceSha256": {
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "6a26215886aede2124dfca44f549936fc09ac7f1747f76408f5a6d5eee95b8a6",
+    "AGENTS.md": "abbeaf27d059e9af0396c35b307759612d10de43ca70262c5ea8a07983df624c",
+    "docs/system-analytics/specialist-runtime.md": "9f5a18e058103fa7a467eb9f3d49ff5d6bbd7d606d9b8b616840f80589a0e4b1",
+    "web/lib/agents/company-agent-context.ts": "f1ed26c8cf6b12afb3fe5c94dc66930efe185a0f278111fa3c976cce3059a0cd",
+    "web/lib/agents/company-agent-definition.ts": "1bdee26dce517253e63f37abfa2ae7aea8f4ab7802ac70e33d35645286d57ddc",
+    "web/lib/agents/company-flow-binding-capture.ts": "84a57bbf4c6f40d17ffdcbdef837f38c994c32792128bab042e0c352ee67d793",
+    "web/lib/agents/company-flow-context.ts": "da9ef1283274244ecbd5fc9652a8450919803cc0e346801eb5459cb598d39839",
+    "web/lib/agents/company-execution-types.ts": "fa61bd2d59d1ef91808f0e62ac83aeadcd9f562d00cb53c2755f4ca7c7e6746a",
+    "web/lib/agents/__tests__/company-execution-snapshot.test.ts": "8d5dd436e429ec387cff20153f8f7ade6041f55231ca524ec575c927e839119e",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "8a7c3ba489c8ab88867d1220610cdf31f6388f631df674baf0cd9adc53c7192b"
+  }
+}
