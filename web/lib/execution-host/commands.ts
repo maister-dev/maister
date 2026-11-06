@@ -17,6 +17,7 @@ import {
   runs,
   type ExecutionCommand,
 } from "@/lib/db/schema";
+import { pgErrorOf } from "@/lib/db/pg-error";
 import { MaisterError } from "@/lib/errors";
 
 const defaultLog = pino({
@@ -54,6 +55,19 @@ export function isTerminalCommandState(state: CommandState): boolean {
   return (TERMINAL_COMMAND_STATES as readonly string[]).includes(state);
 }
 
+/** Translate only the durable company cancellation fence; preserve every unrelated error. */
+export function rethrowCommandAdmissionError(error: unknown): never {
+  if (
+    pgErrorOf(error)?.constraint === "execution_commands_company_cancellation"
+  )
+    throw new MaisterError(
+      "CONFLICT",
+      "Company Run cancellation refuses new execution commands",
+      { details: { reason: "company_cancellation_pending" } },
+    );
+  throw error;
+}
+
 export async function insertCommand(
   tx: Db,
   input: InsertCommandInput,
@@ -78,7 +92,8 @@ export async function insertCommand(
       createdAt: now,
       updatedAt: now,
     })
-    .returning();
+    .returning()
+    .catch(rethrowCommandAdmissionError);
 
   return row;
 }

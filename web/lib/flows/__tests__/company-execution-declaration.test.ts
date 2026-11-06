@@ -114,6 +114,68 @@ describe("CBS-03 result-only execution declaration", () => {
   });
 
   it.each([
+    ...["diff", "commit_set"].map((kind) => ({
+      label: `repository artifact ${kind}`,
+      nodes: [
+        { ...producer, output: { result, produces: [{ id: "change", kind }] } },
+      ],
+    })),
+    {
+      label: "repository plan review",
+      nodes: [
+        producer,
+        {
+          id: "review",
+          type: "human",
+          settings: {
+            plan_review: {
+              plan_document_artifact: "plan",
+              plan_review_artifact: "review",
+              comments_var: "comments",
+              answers_var: "answers",
+              rework_transition: "rework",
+              max_decision_reworks: 2,
+            },
+          },
+          transitions: { approve: "done", rework: "diagnose" },
+        },
+      ],
+    },
+    {
+      label: "unapplied artifact permission selection",
+      nodes: [
+        { ...producer, settings: { artifactAccess: ["private-report"] } },
+      ],
+    },
+    ...["ai_coding", "orchestrator"].map((type) => ({
+      label: `implicit ${type} finish review`,
+      nodes: [
+        { ...producer, type, finish: { human: { decisions: ["approve"] } } },
+      ],
+    })),
+  ])(
+    "refuses $label at editor and loader while preserving project authoring",
+    async ({ nodes }) => {
+      const value = { ...manifest, nodes };
+      const { execution: _execution, ...projectValue } = value;
+
+      expect(flowYamlV1Schema.safeParse(projectValue).success).toBe(true);
+      expect(flowYamlV1Schema.safeParse(value).success).toBe(false);
+      const text = stringify(value);
+
+      expect(flowYamlDiagnostics(text)).toContainEqual(
+        expect.objectContaining({ severity: "error" }),
+      );
+      const path = join(directory, "flow.yaml");
+
+      await writeFile(path, text);
+      await expect(loadFlowManifest(path)).rejects.toMatchObject({
+        code: "CONFIG",
+      });
+    },
+  );
+
+  it.each([
     null,
     { workspace: "none" },
     { workspace: "worktree", completion: "result" },

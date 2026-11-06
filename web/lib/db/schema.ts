@@ -1,4 +1,5 @@
 import type { CoordinatorChildLaunchContext } from "@/lib/orchestrator/child-launch-context";
+import type { CompanyRunCancellationIntent } from "@/lib/runs/cancellation-types";
 import type { CompanyExecutionSnapshot } from "@/lib/agents/company-execution-types";
 import type { CompanyFlowBindingSnapshot } from "@/lib/agents/company-flow-binding-types";
 import type { NativeDelegationInput } from "@/lib/orchestrator/native-input-types";
@@ -2449,6 +2450,9 @@ export const runs = pgTable(
       .default(0),
     // Flow traversal coordination, separate from execution-host assignment and
     // prompt application. Every continuation write checks this renewable token.
+    companyCancellationIntent: jsonb(
+      "company_cancellation_intent",
+    ).$type<CompanyRunCancellationIntent>(),
     flowDriverToken: text("flow_driver_token"),
     flowDriverLeaseExpiresAt: timestamp("flow_driver_lease_expires_at", {
       withTimezone: true,
@@ -2673,6 +2677,10 @@ export const runs = pgTable(
     operationalBaselineCheck: check(
       "runs_operational_baseline_check",
       sql`${t.operationalIntegrityBaseline} IS NULL OR ((${t.agentKind}='operational' OR (${t.runKind}='agent' AND ${t.agentKind}='code_delivery' AND ${t.taskLaunchIntentId} IS NOT NULL) OR (${t.runKind}='flow' AND ${t.companyId} IS NOT NULL AND ${t.projectId} IS NULL AND ${t.agentKind} IS NULL AND ${t.agentWorkspace}='none' AND ${t.companyExecutionSnapshot}->>'schemaVersion'='2' AND ${t.resultContract}->>'kind'='flow_export' AND ${t.resultContract}->'required'='true'::jsonb)) AND jsonb_typeof(${t.operationalIntegrityBaseline})='object' AND ${t.operationalIntegrityBaseline}->'version'='1'::jsonb AND jsonb_typeof(${t.operationalIntegrityBaseline}->'generation')='number' AND jsonb_typeof(${t.operationalIntegrityBaseline}->'source')='array' AND jsonb_typeof(${t.operationalIntegrityBaseline}->'platform')='array' AND pg_column_size(${t.operationalIntegrityBaseline})<=16777216) IS TRUE`,
+    ),
+    companyCancellationIntentCheck: check(
+      "runs_company_cancellation_intent_check",
+      sql`${t.companyCancellationIntent} IS NULL OR (${t.companyId} IS NOT NULL AND ${t.projectId} IS NULL AND jsonb_typeof(${t.companyCancellationIntent})='object' AND ${t.companyCancellationIntent}->'version'='1'::jsonb AND ${t.companyCancellationIntent} ?& array['version','userId','requestedAt','assignmentId','driverToken'] AND ${t.companyCancellationIntent} - array['version','userId','requestedAt','assignmentId','driverToken']='{}'::jsonb AND jsonb_typeof(${t.companyCancellationIntent}->'userId')='string' AND char_length(${t.companyCancellationIntent}->>'userId') BETWEEN 1 AND 128 AND ${t.companyCancellationIntent}->>'requestedAt' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$' AND (${t.companyCancellationIntent}->'assignmentId'='null'::jsonb OR jsonb_typeof(${t.companyCancellationIntent}->'assignmentId')='string') AND (${t.companyCancellationIntent}->'driverToken'='null'::jsonb OR jsonb_typeof(${t.companyCancellationIntent}->'driverToken')='string')) IS TRUE`,
     ),
     operationalCleanupCheck: check(
       "runs_operational_cleanup_check",

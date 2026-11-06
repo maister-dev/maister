@@ -70,6 +70,14 @@ export async function runFlow(
     throw error;
   }
 
+  if (loaded.run.companyCancellationIntent) {
+    logger.info(
+      { companyId: loaded.run.companyId },
+      "company graph continuation deferred to retained cancellation",
+    );
+
+    return;
+  }
   const graph = compileManifest(loaded.manifest);
   const requirements = flowTraversalRequirements(graph);
 

@@ -25,7 +25,11 @@ import { canonicalCommandJson } from "../../../runtime/command-json";
 import { ADMISSIBLE_PROMPT_INCARNATION_STATES } from "./session-binding";
 import { isAdmissible } from "./assignments";
 import { lockConsensusDraftCommandAdmission } from "./consensus-command-admission";
-import { insertCommand, markFenced } from "./commands";
+import {
+  insertCommand,
+  markFenced,
+  rethrowCommandAdmissionError,
+} from "./commands";
 import { asAssignmentId, asCommandId } from "./types";
 import { PromptOwnerSchema } from "./prompt-owner-contract";
 import { readPromptRequest, storePromptRequest } from "./command-request";
@@ -391,7 +395,10 @@ export async function issueOwnedPrompt(
       throw ownedPromptConflict("owner_binding");
 
     const [binding] = await tx
-      .select({ incarnationId: runSessionIncarnations.id })
+      .select({
+        incarnationId: runSessionIncarnations.id,
+        companyCancellationIntent: runs.companyCancellationIntent,
+      })
       .from(runs)
       .innerJoin(
         executionAssignments,
@@ -428,6 +435,8 @@ export async function issueOwnedPrompt(
       .for("no key update")
       .limit(1);
 
+    if (binding?.companyCancellationIntent)
+      throw ownedPromptConflict("company_cancellation_pending");
     if (!binding) throw ownedPromptConflict("inactive_incarnation");
     const [existing] = await tx
       .select()
@@ -546,7 +555,8 @@ export async function issueOwnedPrompt(
         createdAt: issuedAt,
         updatedAt: issuedAt,
       })
-      .returning();
+      .returning()
+      .catch(rethrowCommandAdmissionError);
     const frozen = readPromptRequest(row, input.host.hostKey);
 
     (input.logger ?? defaultLog).debug(

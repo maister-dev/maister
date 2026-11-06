@@ -203,6 +203,7 @@ export async function assertFlowDriverCommit(
           ? eq(runs.executionAssignmentId, claim.assignmentId)
           : isNull(runs.executionAssignmentId),
         eq(runs.runKind, "flow"),
+        isNull(runs.companyCancellationIntent),
         eq(runs.flowDriverToken, claim.token),
         sql`${runs.flowDriverLeaseExpiresAt} > clock_timestamp()`,
       ),
@@ -237,6 +238,7 @@ async function acquireFlowDriverLease(
       and(
         eq(runs.id, runId),
         eq(runs.runKind, "flow"),
+        isNull(runs.companyCancellationIntent),
         or(eq(runs.status, "Running"), eq(runs.status, "NeedsInput")),
         or(
           isNull(runs.flowDriverToken),

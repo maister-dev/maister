@@ -2865,6 +2865,7 @@ table runs {
   resume_started_at "timestamp with time zone"
   crash_recover_next_retry_at "timestamp with time zone"
   crash_recover_attempts integer [not null, default: 0]
+  company_cancellation_intent jsonb
   flow_driver_token text
   flow_driver_lease_expires_at "timestamp with time zone"
   resume_requested_at "timestamp with time zone"
@@ -2910,6 +2911,7 @@ table runs {
 
 
     (operational_cleanup, id) [name: 'runs_operational_cleanup_due_idx']
+
 
 
 

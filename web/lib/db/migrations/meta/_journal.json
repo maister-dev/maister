@@ -1737,6 +1737,13 @@
       "when": 1794606477954,
       "tag": "0251_company_flow_runtime",
       "breakpoints": true
+    },
+    {
+      "idx": 252,
+      "version": "7",
+      "when": 1794606477955,
+      "tag": "0252_company_run_cancellation",
+      "breakpoints": true
     }
   ]
 }

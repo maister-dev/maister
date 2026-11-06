@@ -875,6 +875,40 @@ it.each(["live", "checkpointed", "cancelled"] as const)(
       });
 
       if (delivery === "cancelled") {
+        const direct = createLocalDirectTransport();
+
+        setDefaultTransportForTests({
+          ...direct,
+          deleteSession: async (
+            ...input: Parameters<typeof direct.deleteSession>
+          ): Promise<Awaited<ReturnType<typeof direct.deleteSession>>> => {
+            const result = await direct.deleteSession(...input);
+
+            // Hold the real DELETE response until the prompt worker observes the retained stop intent.
+            await expect
+              .poll(
+                async () =>
+                  (
+                    await database.pool.query<{ cause: string | null }>(
+                      "SELECT application_error->'causeDetails'->>'causeCode' AS cause FROM execution_commands WHERE run_id=$1 AND kind='session.prompt' ORDER BY created_at DESC LIMIT 1",
+                      [receipt.runId],
+                    )
+                  ).rows[0]?.cause,
+                { timeout: 10000, interval: 50 },
+              )
+              .toBe("company_cancellation_pending");
+            expect(
+              (
+                await database.pool.query(
+                  "SELECT status,company_cancellation_intent->>'userId' AS user_id FROM runs WHERE id=$1",
+                  [receipt.runId],
+                )
+              ).rows,
+            ).toEqual([{ status: "NeedsInput", user_id: responderId }]);
+
+            return result;
+          },
+        });
         browserSession.user = await requireActiveUserById(responderId);
         await expect
           .poll(

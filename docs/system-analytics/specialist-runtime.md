@@ -438,14 +438,31 @@ recovery and company coordinator Flow qualification retain their own gates.
 ### Company Run stop contract
 
 The existing `POST /api/runs/{runId}/stop` owner dispatch must admit a company
-standalone operational Run without a project/worktree. Current explicit
+standalone operational Run or native result-only company Flow without a
+project/worktree. Current explicit
 `assignments:read` and `assignments:cancel`, plus the exact retained input/source
 closure, authorize the human action; an administrator has no implicit grant.
 `Pending`, `Running`, `NeedsInput`, `NeedsInputIdle`, `Review` and `Crashed`
-are cancellable through the existing operational finalizer. An already
+are cancellable through their existing operational-agent or native graph
+finalizer. Both use the shared terminal source-state policy. Native graph
+cancellation preserves the Flow result contract and leaves `operational_terminal`
+null. An already
 `Abandoned` Run still requires current authority and returns the same terminal outcome without another command/event;
 `Done` and `Failed` refuse with 409. Missing/currently inaccessible ownership is
 concealed as 404; missing cancellation authority with read access is 403.
+
+Main `0252_company_run_cancellation` retains the first operator's closed v1
+stop intent on the existing Run before transport. It records user, observation
+time and exact assignment/driver witnesses without inventing prior history.
+Current authority is required on each retry; another operator receives an
+ownership conflict. This immutable control metadata is separate from result
+acceptance and the business assignment. The existing prompt application worker
+defers behind this intent; Flow driver admission/commit yields. A DB guard
+refuses new create/prompt/input/steer commands and competing Done/Failed
+completion. The real-supervisor regression holds a DELETE response until prompt
+application observes the retained intent, then retries cancellation under the
+same operator. A lost response cannot turn cancellation into missing-result
+failure or another execution.
 
 The native bound command ledger records each session deletion before transport.
 Unconfirmed host teardown or pending canonical exit evidence returns 503 and
@@ -455,7 +472,11 @@ effect count. Current
 cancellation authority is rechecked before deletion and terminal application.
 Canonical quiescence, typed cancellation, credential revocation, human-work
 closure and cleanup use existing mechanisms. Human-work cancellation and the canonical terminal fact retain the
-current company user actor; the stopped specialist remains execution provenance. Stopping an execution does not cancel or complete
+current company user actor; the stopped specialist remains execution provenance.
+The graph finalizer rechecks current reader/source/cancellation authority under
+the Run lock, preserves the exact driver witness and obtains the company user
+actor from the server. Concurrent Pending cancellation creates one terminal fact
+and no create/prompt command. Stopping an execution does not cancel or complete
 its business assignment, nor reconcile unknown external stand effects. The
 response retains `{ok,runId,runStatus:"Abandoned",supervisorStopped}`. Project
 and private execution routes retain their existing admission and behavior.

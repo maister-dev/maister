@@ -5,6 +5,7 @@ import type { ExecutionHosts } from "@/lib/execution-host";
 import type { Run } from "@/lib/db/schema";
 import type { MaisterErrorCode } from "@/lib/errors";
 import type { TerminalCause } from "@/lib/domain-events/taxonomy";
+import type { DomainEventActor } from "@/lib/domain-events/outbox";
 
 import { and, eq, isNull } from "drizzle-orm";
 import pino from "pino";
@@ -13,6 +14,8 @@ import {
   isCompanyFlowResource,
   inspectOperationalRun,
 } from "@/lib/agents/operational-context";
+import { authorizeCompanyRunUserAction } from "@/lib/agents/company-run-read-access";
+import { TERMINAL_CAS_SOURCE } from "@/lib/agents/finalization";
 import { initialResourceCleanup } from "@/lib/agents/resource-cleanup";
 import {
   readAgentDispatchEvidence,
@@ -28,7 +31,11 @@ import {
 } from "@/lib/run-results/ledger";
 import { deriveResultStatus } from "@/lib/run-results/status";
 import { releaseAssignmentForRun } from "@/lib/execution-host/assignments";
-import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
+import {
+  systemCloseActiveAssignmentsForRun,
+  cancelActiveAssignmentsForRun,
+  ensureCompanyUserActor,
+} from "@/lib/assignments/service";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { hitlRequests, runs } from "@/lib/db/schema";
 import { contentDigest } from "@/lib/evaluations/digest";
@@ -47,6 +54,7 @@ function terminalWitness(run: Run): string {
     owner: run.companyExecutionSnapshot,
     assignmentId: run.executionAssignmentId,
     driverToken: run.flowDriverToken,
+    cancellation: run.companyCancellationIntent,
     contract: run.resultContract,
     baseline: run.operationalIntegrityBaseline,
     knowledgeAccess: run.knowledgeAccess,
@@ -54,16 +62,20 @@ function terminalWitness(run: Run): string {
 }
 
 /** Settle the existing graph ledger with a required public result and a quiescent, witnessed plain directory. */
-export async function finalizeCompanyFlowRun(args: {
-  db: Db;
-  rootDb: Db;
-  runId: string;
-  requested: "Done" | "Failed" | "Crashed";
-  errorCode: MaisterErrorCode | null;
-  reason?: string;
-  hosts?: ExecutionHosts;
-  driverToken?: string;
-}): Promise<boolean> {
+export async function finalizeCompanyFlowRun(
+  args: {
+    db: Db;
+    rootDb: Db;
+    runId: string;
+    errorCode: MaisterErrorCode | null;
+    reason?: string;
+    hosts?: ExecutionHosts;
+    driverToken?: string;
+  } & (
+    | { requested: "Done" | "Failed" | "Crashed" }
+    | { requested: "Abandoned"; userId: string }
+  ),
+): Promise<boolean> {
   const [run] = await args.db
     .select()
     .from(runs)
@@ -74,7 +86,16 @@ export async function finalizeCompanyFlowRun(args: {
       "PRECONDITION",
       "Company graph finalization requires its exact retained execution owner",
     );
-  if (run.status !== "Running" && run.status !== "NeedsInput") return false;
+  const sourceStatuses = TERMINAL_CAS_SOURCE[args.requested];
+
+  if (!sourceStatuses.includes(run.status)) return false;
+  if (args.requested === "Abandoned")
+    await authorizeCompanyRunUserAction(
+      args.db,
+      args.userId,
+      run.id,
+      "assignments:cancel",
+    );
   const contract = run.resultContract;
   const producerRef = contract.producerNodeIds[0];
 
@@ -113,11 +134,14 @@ export async function finalizeCompanyFlowRun(args: {
     dispatched &&
     resultStatus === "valid" &&
     integrity.verdict === "clean";
-  const status = successful
-    ? "Done"
-    : args.requested === "Crashed"
-      ? "Crashed"
-      : "Failed";
+  const status =
+    args.requested === "Abandoned"
+      ? "Abandoned"
+      : successful
+        ? "Done"
+        : args.requested === "Crashed"
+          ? "Crashed"
+          : "Failed";
   const resultReason =
     resultStatus === "missing"
       ? "result_missing"
@@ -154,11 +178,25 @@ export async function finalizeCompanyFlowRun(args: {
       .where(eq(runs.id, run.id))
       .for("update");
 
-    if (
-      !current ||
-      (current.status !== "Running" && current.status !== "NeedsInput")
-    )
+    if (!current || !sourceStatuses.includes(current.status)) return false;
+    if (current.companyCancellationIntent && args.requested !== "Abandoned")
       return false;
+    if (
+      args.requested === "Abandoned" &&
+      current.companyCancellationIntent?.userId !== args.userId
+    )
+      throw new MaisterError(
+        "CONFLICT",
+        "Company Flow cancellation requires its retained operator intent",
+        { details: { reason: "company_stop_owned" } },
+      );
+    if (args.requested === "Abandoned")
+      await authorizeCompanyRunUserAction(
+        tx,
+        args.userId,
+        run.id,
+        "assignments:cancel",
+      );
     if (terminalWitness(current) !== terminalWitness(run))
       throw new MaisterError(
         "CONFLICT",
@@ -204,17 +242,36 @@ export async function finalizeCompanyFlowRun(args: {
       .where(
         and(eq(hitlRequests.runId, run.id), isNull(hitlRequests.respondedAt)),
       );
-    await systemCloseActiveAssignmentsForRun({
-      db: tx,
-      runId: run.id,
-      reason: "company graph execution settled",
-    });
+    let actor: DomainEventActor = { type: "system", id: null };
+
+    if (args.requested === "Abandoned") {
+      const human = await ensureCompanyUserActor({
+        db: tx,
+        companyId,
+        userId: args.userId,
+      });
+
+      await cancelActiveAssignmentsForRun({
+        db: tx,
+        runId: run.id,
+        actorId: human.id,
+        eventKind: "cancelled",
+        reason: "Company Flow Run stopped by operator",
+      });
+      actor = { type: "user", id: args.userId };
+    } else {
+      await systemCloseActiveAssignmentsForRun({
+        db: tx,
+        runId: run.id,
+        reason: "company graph execution settled",
+      });
+    }
     const scope = {
       db: tx,
       companyId,
       runId: run.id,
       parentRunId: run.parentRunId,
-      actor: { type: "system" as const, id: null },
+      actor,
       payload: {
         runId: run.id,
         flowId: null,
@@ -233,14 +290,19 @@ export async function finalizeCompanyFlowRun(args: {
       await emitDomainEvent({ ...scope, kind: "run.done" });
     else {
       const cause: TerminalCause = {
-        code: args.errorCode ?? "CONFIG",
+        code: status === "Abandoned" ? null : (args.errorCode ?? "CONFIG"),
         reason,
-        source: "graph",
+        source: status === "Abandoned" ? "operator" : "graph",
       };
 
       await emitDomainEvent({
         ...scope,
-        kind: status === "Crashed" ? "run.crashed" : "run.failed",
+        kind:
+          status === "Abandoned"
+            ? "run.abandoned"
+            : status === "Crashed"
+              ? "run.crashed"
+              : "run.failed",
         cause,
       });
     }

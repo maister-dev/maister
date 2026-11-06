@@ -746,11 +746,17 @@ async function prepareAgentFinalization(
         id: runs.id,
         status: runs.status,
         assignmentId: runs.executionAssignmentId,
+        companyCancellationIntent: runs.companyCancellationIntent,
       })
       .from(runs)
       .where(eq(runs.id, runId))
       .for("update");
 
+    if (
+      locked?.companyCancellationIntent &&
+      (outcome !== "Abandoned" || opts.closeAssignments?.kind !== "user")
+    )
+      return { finalized: false };
     if (!locked || !sourceStatuses.includes(locked.status))
       return { finalized: false };
     if (opts.expectedAssignmentId !== undefined) {
@@ -1182,7 +1188,9 @@ async function prepareAgentFinalization(
           human.companyId !== row.companyId ||
           human.projectId !== null ||
           human.userId === null ||
-          human.disabledAt !== null
+          human.disabledAt !== null ||
+          (locked.companyCancellationIntent != null &&
+            locked.companyCancellationIntent.userId !== human.userId)
         )
           throw new MaisterError(
             "PRECONDITION",

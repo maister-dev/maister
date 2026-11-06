@@ -842,9 +842,15 @@ export const agentPromptOwner = definePromptOwnerAdapter(
         signal,
       );
     const [run] = await db
-      .select({ persistent: runs.persistent, status: runs.status })
+      .select({
+        persistent: runs.persistent,
+        status: runs.status,
+        companyCancellationIntent: runs.companyCancellationIntent,
+      })
       .from(runs)
       .where(eq(runs.id, ref.runId));
+    if (run?.companyCancellationIntent)
+      throw new PromptOwnerDeferred("company_cancellation_pending");
     const persistent = run?.persistent ?? false;
 
     // ADR-183 D-M3: the host parked this turn under outbox pressure. The run

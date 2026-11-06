@@ -12,6 +12,8 @@ import {
   prepareAgentRunFinalization,
   TERMINAL_CAS_SOURCE,
 } from "@/lib/agents/finalization";
+import { isCompanyFlowResource } from "@/lib/agents/operational-context";
+import { finalizeCompanyFlowRun } from "@/lib/run-results/company-flow-terminal";
 import { ensureCompanyUserActor } from "@/lib/assignments/service";
 import { requireActiveSession } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
@@ -68,6 +70,53 @@ async function authorizeCompanyStop(
   }
 }
 
+async function claimCompanyStop(
+  db: Db,
+  userId: string,
+  runId: string,
+): Promise<Run> {
+  return db.transaction(async (tx) => {
+    const run = await authorizeCompanyStop(tx, userId, runId);
+
+    if (run.status === "Abandoned") return run;
+    if (run.companyCancellationIntent) {
+      if (run.companyCancellationIntent.userId !== userId)
+        throw new MaisterError(
+          "CONFLICT",
+          "Company Run cancellation is owned by another operator; reconcile the retained stop intent",
+          { details: { reason: "company_stop_owned" } },
+        );
+
+      return run;
+    }
+    const [claimed] = await tx
+      .update(runs)
+      .set({
+        companyCancellationIntent: {
+          version: 1,
+          userId,
+          requestedAt: new Date().toISOString(),
+          assignmentId: run.executionAssignmentId,
+          driverToken: run.flowDriverToken,
+        },
+      })
+      .where(eq(runs.id, runId))
+      .returning();
+
+    log.info(
+      {
+        runId,
+        companyId: run.companyId,
+        userId,
+        assignmentId: run.executionAssignmentId,
+      },
+      "company cancellation intent retained before session teardown",
+    );
+
+    return claimed;
+  });
+}
+
 /** Owner dispatch reuses the operational cancellation and project lifecycle owners. */
 export async function stopRun(runId: string): Promise<StopWorkbenchRunResult> {
   const user = await requireActiveSession();
@@ -78,7 +127,7 @@ export async function stopRun(runId: string): Promise<StopWorkbenchRunResult> {
     .where(eq(runs.id, runId));
 
   if (owner?.companyId == null) return stopWorkbenchRun(runId);
-  const run = await authorizeCompanyStop(db, user.id, runId);
+  const run = await claimCompanyStop(db, user.id, runId);
 
   if (run.status === "Abandoned")
     return {
@@ -87,11 +136,6 @@ export async function stopRun(runId: string): Promise<StopWorkbenchRunResult> {
       runStatus: "Abandoned",
       supervisorStopped: false,
     };
-  const actor = await ensureCompanyUserActor({
-    db,
-    companyId: owner.companyId,
-    userId: user.id,
-  });
   let supervisorStopped = false;
 
   if (run.executionAssignmentId) {
@@ -106,25 +150,46 @@ export async function stopRun(runId: string): Promise<StopWorkbenchRunResult> {
       supervisorStopped = true;
     }
   }
-  const prepared = await prepareAgentRunFinalization(runId, "Abandoned", {
-    db,
-    reason: "operator",
-    closeOpenHitl: true,
-    closeAssignments: {
-      kind: "user",
-      actorId: actor.id,
-      eventKind: "cancelled",
-      reason: "Company Run stopped by operator",
-    },
-  });
-  const result = await db.transaction(async (tx) => {
-    await authorizeCompanyStop(tx, user.id, runId);
+  let finalized: boolean;
 
-    return prepared.apply(tx);
-  });
+  if (isCompanyFlowResource(run)) {
+    finalized = await finalizeCompanyFlowRun({
+      db,
+      rootDb: db,
+      runId,
+      requested: "Abandoned",
+      userId: user.id,
+      errorCode: null,
+      reason: "operator",
+      driverToken: run.flowDriverToken ?? undefined,
+    });
+  } else {
+    const actor = await ensureCompanyUserActor({
+      db,
+      companyId: owner.companyId,
+      userId: user.id,
+    });
+    const prepared = await prepareAgentRunFinalization(runId, "Abandoned", {
+      db,
+      reason: "operator",
+      closeOpenHitl: true,
+      closeAssignments: {
+        kind: "user",
+        actorId: actor.id,
+        eventKind: "cancelled",
+        reason: "Company Run stopped by operator",
+      },
+    });
+    const result = await db.transaction(async (tx) => {
+      await authorizeCompanyStop(tx, user.id, runId);
 
-  await prepared.afterCommit(result);
-  if (!result.finalized) {
+      return prepared.apply(tx);
+    });
+
+    await prepared.afterCommit(result);
+    finalized = result.finalized;
+  }
+  if (!finalized) {
     const current = await authorizeCompanyStop(db, user.id, runId);
 
     if (current.status !== "Abandoned")
@@ -142,7 +207,7 @@ export async function stopRun(runId: string): Promise<StopWorkbenchRunResult> {
       companyId: owner.companyId,
       userId: user.id,
       supervisorStopped,
-      finalized: result.finalized,
+      finalized,
     },
     "company Run stopped through native finalization",
   );

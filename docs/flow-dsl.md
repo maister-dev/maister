@@ -46,10 +46,12 @@ mandatory; process exit or agent prose does not replace it.
 
 The initial contract admits `ai_coding`, `orchestrator`, `human` and `form` nodes.
 It refuses other node types, repository context mounts, writable workspace access,
-launch setup/probes and pre-finish gates before admission. Human review uses
+launch setup/probes, repository `diff`/`commit_set` outputs, repository plan
+review and pre-finish gates before admission. Human review uses
 explicit `human`/`form` nodes, and output validation uses the existing required
 result contract. The initial native path refuses package/node `mcps`, node
-`skills`, `restrictions`, `tools`, `settingsProfile`, `enforcement`, `hooks` and
+`skills`, `restrictions`, `tools`, `settingsProfile`, `artifactAccess`,
+`enforcement`, `hooks`, implicit AI/coordinator finish review and
 permission-mode overrides. Current reviewed professional policy supplies the
 exact native knowledge MCP-only surface. Role and runner policies still require
 action-time preflight; metadata cannot grant tools or cooperation rights.

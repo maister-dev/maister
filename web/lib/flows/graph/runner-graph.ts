@@ -1561,6 +1561,8 @@ async function executeNodeAction(
   switch (def.type) {
     case "cli":
     case "check":
+      requireProjectFlowRun(loaded);
+
       return runCliStep(
         { id: node.id, type: "cli", command: def.action.command },
         {
@@ -4042,7 +4044,7 @@ export async function runGraph(
       // past it (success, failure, or rework — all leave the pause), so the
       // gate-chat L3 baseline refs for the run are stale — GC them. Bounded
       // at 1 per hitlRequest; best-effort (non-git fixtures / no refs).
-      if (reusesCurrentAttempt) {
+      if (reusesCurrentAttempt && !isCompanyFlowRun(loaded)) {
         try {
           await deleteRunCheckpointRefs(worktreePath, runId, [
             "chat-checkpoints",

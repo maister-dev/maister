@@ -58,14 +58,16 @@ Absent \`execution\` preserves existing repository behavior without new defaults
 The declared subset allows only \`ai_coding\`, \`orchestrator\`, \`human\`, and
 \`form\` nodes. It refuses \`setup\`, shell \`requirements\`, pre-finish gates,
 repository \`context_repos\`, writable workspace access, human \`allowTakeover\`
-and \`allowFurtherTracks\`. Explicit retry and rework workspace policies must be
+and \`allowFurtherTracks\`, repository \`diff\`/\`commit_set\` outputs and
+repository \`plan_review\`. AI/coordinator \`finish.human\` is refused in favor
+of an explicit human node. Explicit retry and rework workspace policies must be
 \`keep\`; an omitted retry workspace policy retains its repository rewind default
 and is therefore refused here. Use explicit human/form nodes and required result
 validation. Authoring acceptance alone does not enable company execution: the
 host remains at 3.11.1 until the native graph runtime is qualified. Existing
 binding enablement refuses the higher capability floor before execution.
 The initial native company path also refuses package/node \`mcps\`, node
-\`skills\`, \`restrictions\`, \`tools\`, \`settingsProfile\`, \`enforcement\`,
+\`skills\`, \`restrictions\`, \`tools\`, \`settingsProfile\`, \`artifactAccess\`, \`enforcement\`,
 \`hooks\` and permission-mode overrides. Its current reviewed professional policy
 supplies the exact native knowledge MCP-only surface; project capability defaults
 and ambient built-in tools cannot enter through this declaration.

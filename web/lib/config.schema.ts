@@ -1450,6 +1450,41 @@ export const flowYamlV1Schema = graphOnlyManifestInputSchema.pipe(
           });
           continue;
         }
+        for (const [artifactIndex, artifact] of (
+          node.output?.produces ?? []
+        ).entries()) {
+          if (artifact.kind === "diff" || artifact.kind === "commit_set")
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: [
+                "nodes",
+                index,
+                "output",
+                "produces",
+                artifactIndex,
+                "kind",
+              ],
+              message:
+                "Plain-workspace result execution cannot produce repository diff or commit-set artifacts",
+            });
+        }
+        if (node.type === "human" && node.settings?.plan_review !== undefined)
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["nodes", index, "settings", "plan_review"],
+            message:
+              "Plain-workspace result execution does not support repository plan review",
+          });
+        if (
+          (node.type === "ai_coding" || node.type === "orchestrator") &&
+          node.finish?.human !== undefined
+        )
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["nodes", index, "finish", "human"],
+            message:
+              "Plain-workspace result execution requires an explicit human node for review",
+          });
         if ((node.pre_finish?.gates?.length ?? 0) > 0)
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
@@ -1495,6 +1530,7 @@ export const flowYamlV1Schema = graphOnlyManifestInputSchema.pipe(
             "restrictions",
             "tools",
             "settingsProfile",
+            "artifactAccess",
             "enforcement",
             "hooks",
           ] as const

@@ -11041,8 +11041,8 @@ paths:
         Requires project membership at `member` or above
         (`requireProjectAction("recoverRun")`). Body is empty; run kind, project
         id, workspace, and session handles are server-derived.
-        Company standalone operational Runs use the same endpoint with current explicit
-        assignments:read and assignments:cancel plus exact retained input/source access.
+        Company standalone operational Runs and native company result-only Flow Runs
+        use the same endpoint with current explicit assignments:read and assignments:cancel plus exact retained input/source access.
         No administrator/project grant substitutes for company authority. Pending and
         paused company Runs are allowed; a repeated Abandoned stop is idempotent
         while the receiving user retains current cancellation authority. Done
@@ -11051,7 +11051,14 @@ paths:
         session deletion and terminal application. The existing owned command ledger,
         canonical quiescence, token revocation and human-work cleanup apply; an unknown
         host outcome is 503, never proof of abandonment. The business assignment is not
-        completed or cancelled by this execution action.
+        completed or cancelled by this execution action. Native company Flow cancellation
+        uses its graph finalizer, records the current user as the terminal actor,
+        preserves the Flow result contract and leaves operational_terminal null.
+        The exact server-read driver witness is fenced during terminal application.
+        The first authorized operator's immutable stop intent is persisted before
+        session teardown. Retries require current authority and preserve its actor;
+        a different operator receives 409 company_stop_owned. New execution commands
+        and competing result completion are fenced while the intent is pending.
       operationId: stopRunWorkbench
       parameters:
         - name: runId

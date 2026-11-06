@@ -1,0 +1,119 @@
+{
+  "task": "T20.1",
+  "slice": "Native admission audit and durable company cancellation",
+  "date": "2026-11-07",
+  "baseCommit": "51fde86bb1e5c55e37c046a3735dd9791b34d3e7",
+  "engineVersion": "3.11.1",
+  "migrations": [
+    "0237_company_run_cancellation"
+  ],
+  "status": "Checkpoint qualified; task and release remain open",
+  "red": [
+    "Six previously accepted unsupported native combinations",
+    "Pending native Flow cancellation returned 409 instead of 200",
+    "Real standalone permission stop lost to missing-result failure after physical teardown"
+  ],
+  "gates": {
+    "unit": {
+      "exitCode": 0,
+      "log": "unit.log.gz",
+      "files": 889,
+      "tests": 9318,
+      "durationSeconds": 26.16
+    },
+    "types": {
+      "exitCode": 0,
+      "log": "types.log.gz"
+    },
+    "lint": {
+      "exitCode": 0,
+      "log": "lint.log.gz"
+    },
+    "test-lint": {
+      "exitCode": 0,
+      "log": "test-lint.log.gz"
+    },
+    "finalizer-lint": {
+      "exitCode": 0,
+      "log": "finalizer-lint.log.gz"
+    },
+    "format": {
+      "exitCode": 0,
+      "log": "format.log.gz"
+    },
+    "finalizer-format": {
+      "exitCode": 0,
+      "log": "finalizer-format.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "log": "docs.log.gz"
+    },
+    "schema-drift": {
+      "exitCode": 0,
+      "log": "schema-drift.log.gz"
+    },
+    "erd": {
+      "exitCode": 0,
+      "log": "erd.log.gz"
+    },
+    "integration": {
+      "exitCode": 0,
+      "log": "integration.log.gz",
+      "files": 2,
+      "tests": 75,
+      "durationSeconds": 43.66
+    }
+  },
+  "additionalIntegration": {
+    "log": "extended-integration.log.gz",
+    "passingOtherFiles": 5,
+    "passingOtherTests": 64,
+    "boundary": "Production source unchanged; combined run had a new test barrier reading causeCode instead of causeDetails.causeCode plus dependent pool failure. Corrected owning two-file rerun passes all 75."
+  },
+  "qualified": [
+    "Actual editor/loader admission refusal with unchanged project authoring",
+    "Concurrent company Flow stop/replay retains one current user terminal fact and no ACP effect",
+    "Retained cancellation intent is immutable, source-authorized and current-permission gated",
+    "Actual command insertion is refused by the migration guard and mapped to CONFLICT",
+    "Real supervisor DELETE response held until actual prompt worker observes cancellation; replay remains Abandoned",
+    "Populated migration preserves old v1/project/private data with new NULL metadata and no Brain dependency for project deletion"
+  ],
+  "notYetQualified": [
+    "Native graph human/form/permission/idle/restart and live graph cancellation",
+    "Full T21 compatibility regression",
+    "Engine activation and real companion/stand pilot"
+  ],
+  "sourceSha256": {
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "055213c52fdfe72f20d844ffdf1028028573bc73b86ec7832c4a85f86bccd361",
+    "docs/api/web.openapi.yaml": "9264d194a867359d0f6c53819b7584a22622953bf11aade9191395bf26768085",
+    "docs/database-schema.md": "77521df342f81195110fca4eceddc83d78f85998aa1f527cf4cf1eb617058883",
+    "docs/db/erd.dbml": "dd10946605782aaf865e6051c5192c6302d0986be08ba0bdf5fe810fb29cf075",
+    "docs/db/runs-domain.md": "73345a1ee34b728ac2669c4189dfb1862a71ad32682853e788e41b8e5de29fda",
+    "docs/flow-dsl.md": "999e06cf919311625cddb0d1297fc32033ef0952e39662f5721f38cb8bf8dbe6",
+    "docs/system-analytics/specialist-runtime.md": "d8bb15808abbf041545d4f37fdc9148de077f1a95eb5d04fd4325000b81ff735",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "afd97a683824a5c3e0af43bcc08be6edcba31e64b523dae662f29aee7530fdd0",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "2e368e3160390d2b2a3b72439db8cd323aed03107f97812f56dcd4ef27b671b9",
+    "web/lib/agents/finalization.ts": "d083b2835ce91bf9d53f0cfa81062d8e45f62fd20a069429d7a046ed6b410f9c",
+    "web/lib/agents/prompt-owner.ts": "662df9a134bfa838e59f71fe66fc8ba5bc591278075473aa8e3dae252d966112",
+    "web/lib/config.schema.ts": "efbb86b6eb305f2f545ca8af01545c8ba7be9630dcd55b6aedf1a9f43783a0f7",
+    "web/lib/db/migrations/0237_company_run_cancellation.sql": "d1cae43d22357f81fd6fd2287137a6c286eb8c361f4096b5057a7eaca636bbd5",
+    "web/lib/db/migrations/meta/0237_snapshot.json": "6a2aa6237d07a4d4e19e93d03078201f090a5acbcc4bfb13602789e1995d79ca",
+    "web/lib/db/migrations/meta/_journal.json": "2c0c04ed5dbee27b83c2b0ef2cb7428dcd051cc3921e89816ec48a8dc0e9982d",
+    "web/lib/db/schema.ts": "e186e27e60dccf58a3c51bb8d1dda3a7fe0fedfc0920bac7026a102b47c25d33",
+    "web/lib/execution-host/commands.ts": "4e7abed409cd79b0ee38f8f1c4576c15f0da00806a4af587d727dc9461253e6b",
+    "web/lib/execution-host/ledger.ts": "e430f1f6de90ab13eb7a1a031506f9c6013d1afe97b457dd7317c361be2716d4",
+    "web/lib/flows/__tests__/company-execution-declaration.test.ts": "5f96ea9280842e7ccbc0716766e0cfd79b8ae7be185198526eb005caf8ff7156",
+    "web/lib/flows/flow-dsl-grammar.ts": "82c42fe8b690c40753f38811f425dd9b8940e6aedc0e5f34e3f8bf3943b07bf0",
+    "web/lib/flows/graph/driver-claim.ts": "211921451241cb330df4d280058d99042d7215b76646bece23aeb48adf20c87b",
+    "web/lib/flows/graph/runner-graph.ts": "fe8edd0fdb2247610842d20b81193e7fd61a5e722807e3630b213dbb43798096",
+    "web/lib/flows/runner.ts": "efb51e435dd99d24b5acc596e7409955a0391b1b20edf2becbf0bb5f37c799f4",
+    "web/lib/run-results/company-flow-terminal.ts": "cea8dde52db5b8fba00d129b21054b92e5ab60a2cf163c4f43ae8f29e4b06cd3",
+    "web/lib/runs/cancellation-types.ts": "e874567b2b3525cefe2da00372d2f1f4e81bb708dacde88b6d063e3543c621e4",
+    "web/lib/runs/stop.ts": "a822515127f4afc7675781519268aac328a12487a2da82bdbb3ccf408832d562"
+  }
+}

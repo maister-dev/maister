@@ -9,6 +9,22 @@ legacy NULL remains unknown. Logical identity pointers and update-only guards
 leave project/attempt cascades intact. The exact shape, binding, recovery and
 source-capture rules are owned by [evidence findings](../system-analytics/evidence-findings.md#flow-role-attestation-and-source-capture).
 
+## Company cancellation intent (Implemented)
+
+Main `0252_company_run_cancellation` adds nullable
+`runs.company_cancellation_intent`: a closed v1 server-recorded stop intent with
+`userId`, `requestedAt`, `assignmentId` and `driverToken`. Existing rows retain
+NULL. The first currently authorized operator claims it under the Run lock
+before any session teardown; it is immutable and remains inspectable after
+Abandoned. Another operator receives an ownership conflict rather than replacing
+attribution. This is Run control metadata, not another attempt or command ledger.
+Current authority is rechecked before physical deletion and terminal application.
+The DB guard rejects new create/prompt/input/steer commands and Done/Failed
+completion while cancellation is pending. Prompt application defers and Flow
+driver claims/commits yield; cancellation settles only with canonical quiescence.
+An unknown teardown response remains retryable under the retained intent.
+No Brain foreign key or repository is introduced.
+
 ## Cut-over runs-domain transition (ADR-131 — Implemented)
 
 The post-0093/0094 runs domain has no STEP_RUNS entity or fallback join.
@@ -159,6 +175,7 @@ erDiagram
         text status "Pending|Running|NeedsInput|NeedsInputIdle|HumanWorking|WaitingOnChildren|Review|Crashed|Done|Abandoned|Failed"
         text acp_session_id "resume handle (ACP session/resume); Implemented ADR-114 (0082): moved to run_sessions (per session)"
         text current_step_id "runner cursor"
+        jsonb company_cancellation_intent "0237: immutable server stop intent; NULL for legacy/project runs"
         text flow_version "tag snapshot; scratch sentinel"
         text flow_revision "git SHA snapshot; manual sentinel"
         text flow_revision_id FK "nullable for scratch"

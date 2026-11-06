@@ -21,7 +21,7 @@ import {
 import os from "node:os";
 import { join, resolve, sep } from "node:path";
 
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, getTableColumns } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { stringify } from "yaml";
 
@@ -83,9 +83,12 @@ import {
   workspaceSpecFor,
 } from "@/lib/execution-host/adoption";
 import { createExecutionHosts } from "@/lib/execution-host";
+import { insertCommand } from "@/lib/execution-host/commands";
 import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
 import { startProjectionWorker } from "@/lib/execution-host/events/projection-worker";
 import { runFlow } from "@/lib/flows/runner";
+import { requireActiveUserById } from "@/lib/authz";
+import { POST as stopRunPost } from "@/app/api/runs/[runId]/stop/route";
 import { tryStartRun } from "@/lib/scheduler";
 import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
 import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
@@ -136,6 +139,7 @@ let request: CompanyFlowContextInput;
 const administratorId = randomUUID();
 const requesterId = randomUUID();
 const outsiderId = randomUUID();
+let browserUserId = requesterId;
 const result = {
   schema: "./schemas/evidence-findings.v1.json",
   required: true,
@@ -167,6 +171,10 @@ const manifest = {
 };
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => database.db }));
+vi.mock("@/lib/authz", async (original) => ({
+  ...(await original<typeof import("@/lib/authz")>()),
+  requireActiveSession: async () => requireActiveUserById(browserUserId),
+}));
 
 function useEngineVersion(version: string) {
   return vi
@@ -447,6 +455,7 @@ beforeAll(async () => {
   await applyMainMigration(database.db, "0249_company_flow_node_credentials");
   await applyMainMigration(database.db, "0250_company_flow_workspace_witness");
   await applyMainMigration(database.db, "0251_company_flow_runtime");
+  await applyMainMigration(database.db, "0252_company_run_cancellation");
   migrationTokensAfter = (
     await database.pool.query<{ value: JsonValue }>(
       "SELECT to_jsonb(t) AS value FROM project_tokens t ORDER BY id",
@@ -454,7 +463,7 @@ beforeAll(async () => {
   ).rows;
   migrationAfterRows = (
     await database.pool.query<{ value: JsonValue }>(
-      "SELECT to_jsonb(r) AS value FROM runs r ORDER BY id",
+      "SELECT to_jsonb(r)-'company_cancellation_intent' AS value FROM runs r ORDER BY id",
     )
   ).rows;
   await database.pool.query("DELETE FROM projects WHERE id=$1", [project.id]);
@@ -565,8 +574,12 @@ async function seedRetainedStandalone(): Promise<void> {
   await database.pool.query("UPDATE runs SET status='Running' WHERE id=$1", [
     retainedRunId,
   ]);
+  const {
+    companyCancellationIntent: _newCancellationColumn,
+    ...legacyRunColumns
+  } = getTableColumns(runs);
   const [retainedRun] = await database.db
-    .select()
+    .select(legacyRunColumns)
     .from(runs)
     .where(eq(runs.id, retainedRunId));
 
@@ -618,6 +631,13 @@ it("preserves populated standalone/project/private Run and credential bytes thro
     ).rows[0],
   ).toEqual({ count: 2 });
   expect(migrationAfterRows).toEqual(migrationBeforeRows);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS count FROM runs WHERE company_cancellation_intent IS NOT NULL",
+      )
+    ).rows,
+  ).toEqual([{ count: 0 }]);
   expect(baselineCounts).toEqual({
     projects: 0,
     tasks: 0,
@@ -1630,6 +1650,163 @@ it("loads frozen company graph input and sessions without repository records, re
     compatibility.mockRestore();
   }
 });
+
+it("CBS-03 cancels a Pending company Flow with current authority, one attributed outcome and no ACP effect", async () => {
+  const supervisor = await startRealSupervisor({
+    runtimeRoot: join(root, "reservation-host"),
+    workspaceRoots: [join(root, "worktrees")],
+    fixtureArgs: ["--hang"],
+  });
+  const restoreUrl = useRealSupervisorUrl(supervisor.url);
+  const compatibility = useEngineVersion("3.12.0");
+
+  resetResolverForTests();
+  resetRegistrarStateForTests();
+  setDefaultTransportForTests(null);
+  try {
+    const hosts = createExecutionHosts({
+      db: database.db,
+      transport: createLocalDirectTransport(),
+    });
+    const input = await createFreshCompanyFlowRequest();
+    const receipt = await reserveCompanyFlowRun(
+      database.db,
+      requesterId,
+      input,
+      hosts,
+    );
+    const stop = (): Promise<Response> =>
+      stopRunPost(
+        new Request(`http://localhost/api/runs/${receipt.runId}/stop`, {
+          method: "POST",
+        }),
+        { params: Promise.resolve({ runId: receipt.runId }) },
+      );
+
+    browserUserId = requesterId;
+    expect((await stop()).status).toBe(403);
+    const cancellation = await createCompanyGrants(
+      database.db,
+      administratorId,
+      {
+        principalKind: "user",
+        principalId: requesterId,
+        actions: ["assignments:cancel"],
+        idempotencyKey: randomUUID(),
+      },
+    );
+
+    const responses = await Promise.all([stop(), stop()]);
+
+    for (const response of responses) {
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        runId: receipt.runId,
+        runStatus: "Abandoned",
+        supervisorStopped: false,
+      });
+    }
+    expect((await stop()).status).toBe(200);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT company_cancellation_intent->>'userId' AS user_id FROM runs WHERE id=$1",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toEqual([{ user_id: requesterId }]);
+    await expect(
+      database.pool.query(
+        "UPDATE runs SET company_cancellation_intent=NULL WHERE id=$1",
+        [receipt.runId],
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "runs_company_cancellation_immutable",
+    });
+    const placement = (
+      await database.pool.query<{ id: string; host_id: string; epoch: number }>(
+        "SELECT assignment.id,assignment.execution_host_id AS host_id,assignment.epoch FROM runs execution JOIN execution_assignments assignment ON assignment.id=execution.execution_assignment_id WHERE execution.id=$1",
+        [receipt.runId],
+      )
+    ).rows[0]!;
+
+    await expect(
+      insertCommand(database.db, {
+        runId: receipt.runId,
+        assignmentId: placement.id,
+        hostId: placement.host_id,
+        assignmentEpoch: placement.epoch,
+        kind: "session.create",
+        payload: {},
+        maxAttempts: 1,
+      }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "company_cancellation_pending" },
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status,operational_terminal FROM runs WHERE id=$1",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toEqual([{ status: "Abandoned", operational_terminal: null }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT kind,company_id,project_id,actor_type,actor_id FROM domain_events WHERE run_id=$1 AND kind='run.abandoned'",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        kind: "run.abandoned",
+        company_id: input.companyId,
+        project_id: null,
+        actor_type: "user",
+        actor_id: requesterId,
+      },
+    ]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt')",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toEqual([{ count: 0 }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status FROM specialist_assignments WHERE id=$1",
+          [input.assignmentId],
+        )
+      ).rows,
+    ).toEqual([{ status: "active" }]);
+    await revokeCompanyGrant(
+      database.db,
+      administratorId,
+      cancellation.page.items[0]!.id,
+      {
+        expectedRevision: cancellation.page.items[0]!.revision,
+        reason: "Withdraw cancellation authority before replay",
+        idempotencyKey: randomUUID(),
+      },
+    );
+    expect((await stop()).status).toBe(403);
+  } finally {
+    browserUserId = requesterId;
+    await stopRuntimeEventConsumers();
+    await supervisor.stop();
+    restoreUrl();
+    compatibility.mockRestore();
+    resetResolverForTests();
+    resetRegistrarStateForTests();
+    setDefaultTransportForTests(null);
+  }
+}, 120000);
 
 it("CBS-03 executes a native company graph through the existing driver, real supervisor and controlled ACP process without repository records", async () => {
   const hostRoot = join(root, "reservation-host");
