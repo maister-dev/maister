@@ -150,6 +150,19 @@ async function recordAccess(
       )
     ).rows[0];
 
+    if (authority.policy.version === 2) {
+      const initiatingGrant = (
+        await tx.execute(
+          sql`SELECT id FROM brain_record_grants WHERE record_id=${recordId} AND principal_type='user' AND principal_id=${authority.policy.initiator.actor.id} AND action=${action} AND revoked_at IS NULL FOR SHARE`,
+        )
+      ).rows[0];
+
+      if (!initiatingGrant)
+        throw new MaisterError(
+          "UNAUTHORIZED",
+          "The initiating principal lacks this record action",
+        );
+    }
     if (!grant)
       throw new MaisterError(
         "PRECONDITION",

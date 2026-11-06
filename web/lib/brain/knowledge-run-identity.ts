@@ -8,14 +8,16 @@ import type { NativeKnowledgeActor } from "@/lib/company/types";
 
 import { sql } from "drizzle-orm";
 
+import { resolveKnowledgePrincipal } from "./knowledge-access";
 import { currentKnowledgeNodeAttemptPolicy } from "./knowledge-node-policy";
 
+import { requireCompanyKnowledgeRunOwner } from "@/lib/agents/company-run-credential-owner";
 import { nativeKnowledgeActorSchema } from "@/lib/company/types";
 import { MaisterError } from "@/lib/errors";
 import { FINDINGS_CONTRACT } from "@/lib/run-results/findings-contract";
 
 export type KnowledgeRunIdentity = Readonly<{
-  identity: Extract<KnowledgePrincipalIdentity, { kind: "agent" }>;
+  identity: Exclude<KnowledgePrincipalIdentity, { kind: "user" }>;
   runKind: "agent" | "flow";
 }>;
 
@@ -56,18 +58,67 @@ export async function resolveKnowledgeRunIdentity(
 ): Promise<KnowledgeRunIdentity> {
   const run = (
     await tx.execute(
-      sql`SELECT id,run_kind,project_id,source_agent_id,agent_activity_snapshot,current_step_id,result_contract FROM runs WHERE id=${runId} AND status IN ('Pending','Running','NeedsInput','NeedsInputIdle','WaitingOnChildren','Review') FOR SHARE`,
+      sql`SELECT id,run_kind,project_id,company_id,source_agent_id,agent_activity_snapshot,current_step_id,result_contract FROM runs WHERE id=${runId} AND status IN ('Pending','Running','NeedsInput','NeedsInputIdle','WaitingOnChildren','Review') FOR SHARE`,
     )
   ).rows[0];
 
-  if (
-    !run ||
-    typeof run.project_id !== "string" ||
-    (run.run_kind !== "agent" && run.run_kind !== "flow")
-  )
+  if (!run || (run.run_kind !== "agent" && run.run_kind !== "flow"))
     throw new MaisterError(
       "UNAUTHORIZED",
       "An active specialist execution is required",
+    );
+  if (typeof run.company_id === "string") {
+    if (
+      run.run_kind !== "agent" ||
+      run.project_id !== null ||
+      nodeAttemptId !== null
+    )
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "A company agent inspection must identify its exact standalone execution",
+      );
+    const owner = await requireCompanyKnowledgeRunOwner(tx, runId);
+    const role = launchRole(run);
+
+    if (
+      role.agentId !== owner.professionalRole.agentId ||
+      role.packageInstallId !== owner.professionalRole.packageInstallId ||
+      role.packageName !== owner.professionalRole.packageName ||
+      role.definitionSha256 !== owner.professionalRole.definitionSha256
+    )
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "Company execution role attribution does not match its exact reviewed configuration",
+      );
+    const initiator = await resolveKnowledgePrincipal(
+      tx,
+      { kind: "user", userId: owner.userId },
+      "knowledge:read",
+    );
+
+    if (initiator.kind !== "user")
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "A current initiating company principal is required",
+      );
+
+    return {
+      runKind: "agent",
+      identity: {
+        kind: "company_agent",
+        actor: { kind: "agent", id: owner.agentId, runId, attemptId: null },
+        companyId: owner.companyId,
+        bindingId: owner.snapshot.specialistBinding.id,
+        initiatingUser: initiator.user,
+        actionLimits: owner.actionLimits,
+        execution: owner.snapshot,
+      },
+    };
+  }
+  if (typeof run.project_id !== "string")
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "An active bound specialist execution is required",
     );
   const nativeResult =
     (run.result_contract as { nativeContract?: unknown } | null)

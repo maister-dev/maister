@@ -1,4 +1,5 @@
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
+import type { CompanyAgentExecutionSnapshot } from "../company-agent-execution-types";
 import type { PreparedSpecialistAssignment } from "@/lib/specialist-assignments/types";
 
 import { randomUUID } from "node:crypto";
@@ -7,6 +8,7 @@ import os from "node:os";
 import { join, resolve, sep } from "node:path";
 
 import { sql } from "drizzle-orm";
+import { NextRequest } from "next/server";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
 import {
@@ -26,6 +28,12 @@ import {
 } from "../tokens";
 import { buildOperationalContract } from "../launch-contract";
 
+import { getKnowledgeRecord } from "@/lib/brain/knowledge-records";
+import { searchKnowledge } from "@/lib/brain/knowledge-search";
+import {
+  createKnowledgeProposal,
+  reviewKnowledgeProposal,
+} from "@/lib/brain/knowledge-proposals";
 import { verifyToken, actorUserIdForToken } from "@/lib/tokens/verify";
 import { createCompanyGrants, revokeCompanyGrant } from "@/lib/company/grants";
 import {
@@ -37,7 +45,7 @@ import {
   installPackageRevision,
   trustPackageRevision,
 } from "@/lib/packages/attach";
-import { startMainPostgresTestDb } from "@/test-support/pg-container";
+import { startMainAndBrainPostgresTestDb } from "@/test-support/pg-container";
 import { seedProjectRow } from "@/test-support/execution-host-seed";
 import { git, initRepo } from "@/test-support/git-fixture";
 
@@ -61,7 +69,8 @@ const agentId = "rah:evidence-researcher";
 vi.mock("@/lib/db/client", () => ({ getDb: () => database.db }));
 
 beforeAll(async () => {
-  database = await startMainPostgresTestDb({
+  vi.stubEnv("AUTH_SECRET", "company-agent-knowledge-cursor-fixture");
+  database = await startMainAndBrainPostgresTestDb({
     databaseName: "company_agent_context",
   });
   root = await mkdtemp(join(os.tmpdir(), "company-agent-context-"));
@@ -225,6 +234,7 @@ afterAll(async () => {
     if (root) await rm(root, { recursive: true, force: true });
   } finally {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   }
 });
 
@@ -573,7 +583,13 @@ it("refuses disabled and retired configuration, and standing input that changes 
   });
 });
 
-it("reserves company run ownership and its exact immutable assignment input link in the existing run ledger", async () => {
+async function reserveCompanyFixtureRun(): Promise<
+  Readonly<{
+    runId: string;
+    assignmentId: string;
+    snapshot: CompanyAgentExecutionSnapshot;
+  }>
+> {
   const assignment = await createSpecialistAssignment(
     database.db,
     userId,
@@ -601,6 +617,16 @@ it("reserves company run ownership and its exact immutable assignment input link
     return snapshot;
   });
 
+  return { runId, assignmentId: assignment.id, snapshot: prepared };
+}
+
+it("reserves company run ownership and its exact immutable assignment input link in the existing run ledger", async () => {
+  const {
+    runId,
+    assignmentId,
+    snapshot: prepared,
+  } = await reserveCompanyFixtureRun();
+
   expect(
     (
       await database.pool.query(
@@ -623,7 +649,7 @@ it("reserves company run ownership and its exact immutable assignment input link
       )
     ).rows[0],
   ).toEqual({
-    assignment_id: assignment.id,
+    assignment_id: assignmentId,
     input_revision: 1,
     role: "specialist",
   });
@@ -650,6 +676,17 @@ it("reserves company run ownership and its exact immutable assignment input link
   ).rejects.toMatchObject({
     cause: { code: "23514", constraint: "runs_company_execution_link_check" },
   });
+  await expect(
+    database.pool.query(
+      "UPDATE runs SET company_execution_snapshot=jsonb_set(company_execution_snapshot,'{assignment,inputSha256}',to_jsonb($2::text)) WHERE id=$1",
+      [runId, "0".repeat(64)],
+    ),
+  ).rejects.toMatchObject({ code: "23514" });
+});
+
+it("rotates exact company run credentials with current grants, scope limits and transactional refusal recovery", async () => {
+  const { runId } = await reserveCompanyFixtureRun();
+
   await expect(
     issueCompanyAgentRunToken({ db: database.db, runId }),
   ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
@@ -793,12 +830,435 @@ it("reserves company run ownership and its exact immutable assignment input link
   await expect(
     verifyToken(currentToken.secret, database.db),
   ).rejects.toMatchObject({ kind: "revoked" });
+});
+
+it("uses company Brain through current user and agent authority while retaining professional proposal attribution", async () => {
+  const { runId, snapshot: prepared } = await reserveCompanyFixtureRun();
+
+  await database.pool.query("UPDATE runs SET status='Running' WHERE id=$1", [
+    runId,
+  ]);
+  const replacement = await issueCompanyAgentRunToken({
+    db: database.db,
+    runId,
+  });
+
+  await database.pool.query(
+    "UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1",
+    [
+      runId,
+      JSON.stringify({
+        schemaVersion: 1,
+        state: "complete",
+        generation: 1,
+        restrictions: [],
+      }),
+    ],
+  );
+  await createCompanyGrants(database.db, administratorId, {
+    principalKind: "user",
+    principalId: userId,
+    actions: ["knowledge:read", "knowledge:propose", "knowledge:review"],
+    idempotencyKey: randomUUID(),
+  });
+  await createCompanyGrants(database.db, administratorId, {
+    principalKind: "agent",
+    principalId: agentId,
+    actions: ["knowledge:read", "knowledge:propose"],
+    idempotencyKey: randomUUID(),
+  });
+  const humanPrincipal = { kind: "user" as const, userId };
+  const nativePrincipal = {
+    kind: "token" as const,
+    tokenId: replacement.tokenId,
+  };
+  const draft = {
+    title: "Company inspection procedure",
+    kind: "procedure" as const,
+    assertion: "Inspect the configured health probe before taking action.",
+    basis: "unknown" as const,
+    evidence: [],
+    missingEvidence: [
+      {
+        state: "absent" as const,
+        reason: "No external observation is being claimed.",
+      },
+    ],
+    limitations: ["This is an unconfirmed procedure."],
+  };
+  const humanProposal = await createKnowledgeProposal(database.db, {
+    kind: "knowledge_add",
+    owner: { kind: "company", companyId: request.companyId },
+    principal: humanPrincipal,
+    idempotencyKey: `company-procedure:${runId}`,
+    draft,
+  });
+  const accepted = await reviewKnowledgeProposal(database.db, {
+    proposalId: humanProposal.id,
+    principal: humanPrincipal,
+    expectedRevision: 1,
+    decision: "accept",
+    reason: "Retain the explicit procedure without confirming it",
+    idempotencyKey: `company-procedure-review:${runId}`,
+  });
+
+  if (!accepted.acceptedRecordId)
+    throw new Error("Accepted procedure has no record identity");
+  const recordId = accepted.acceptedRecordId;
+
+  expect(
+    await getKnowledgeRecord(database.db, nativePrincipal, { recordId }),
+  ).toMatchObject({
+    id: recordId,
+    owner: { kind: "company", companyId: request.companyId },
+    confirmation: { state: "unconfirmed" },
+  });
+  const { GET: knowledgeHttpGet } =
+    await import("@/app/api/v1/ext/knowledge/[recordId]/route");
+  const readableHttp = await knowledgeHttpGet(
+    new NextRequest(`http://localhost/api/v1/ext/knowledge/${recordId}`, {
+      headers: { Authorization: `Bearer ${replacement.secret}` },
+    }),
+    { params: Promise.resolve({ recordId }) },
+  );
+
+  expect(readableHttp.status).toBe(200);
+  expect(readableHttp.headers.get("Cache-Control")).toBe("private, no-store");
+  expect(readableHttp.headers.get("Vary")).toContain("Authorization");
+  const readableBody: unknown = await readableHttp.json();
+
+  expect(readableBody).toMatchObject({
+    id: recordId,
+    owner: { kind: "company", companyId: request.companyId },
+  });
+  expect(
+    (
+      await searchKnowledge(database.db, nativePrincipal, {
+        q: "inspection",
+        limit: 10,
+      })
+    ).items.map((item) => item.id),
+  ).toContain(recordId);
+  const agentProposal = await createKnowledgeProposal(database.db, {
+    kind: "knowledge_add",
+    owner: { kind: "company", companyId: request.companyId },
+    principal: nativePrincipal,
+    idempotencyKey: `company-agent-proposal:${runId}`,
+    draft: { ...draft, title: "Proposed reusable diagnostic limitation" },
+  });
+
+  expect(
+    (
+      await database.pool.query(
+        "SELECT knowledge_attribution,authority_snapshot FROM brain_proposals WHERE id=$1",
+        [agentProposal.id],
+      )
+    ).rows[0],
+  ).toMatchObject({
+    knowledge_attribution: {
+      kind: "agent",
+      id: agentId,
+      runId,
+      attemptId: null,
+    },
+    authority_snapshot: {
+      submit: {
+        version: 2,
+        initiator: { actor: { kind: "user", id: userId } },
+        execution: {
+          runId,
+          launchSnapshot: { specialistBinding: prepared.specialistBinding },
+        },
+      },
+    },
+  });
   await expect(
-    database.pool.query(
-      "UPDATE runs SET company_execution_snapshot=jsonb_set(company_execution_snapshot,'{assignment,inputSha256}',to_jsonb($2::text)) WHERE id=$1",
-      [runId, "0".repeat(64)],
-    ),
-  ).rejects.toMatchObject({ code: "23514" });
+    reviewKnowledgeProposal(database.db, {
+      proposalId: agentProposal.id,
+      principal: nativePrincipal,
+      expectedRevision: 1,
+      decision: "accept",
+      reason: "An agent cannot grant its own acceptance authority",
+      idempotencyKey: `forged-review:${runId}`,
+    }),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await database.pool.query(
+    "INSERT INTO brain_record_grants(record_id,principal_type,principal_id,action,created_by) VALUES($1,'agent',$2,'knowledge:read',$3::jsonb)",
+    [
+      recordId,
+      agentId,
+      JSON.stringify({
+        kind: "user",
+        id: userId,
+        runId: null,
+        attemptId: null,
+      }),
+    ],
+  );
+  await expect(
+    getKnowledgeRecord(database.db, nativePrincipal, { recordId }),
+  ).rejects.toMatchObject({
+    details: { reason: "knowledge_reference_unavailable" },
+  });
+  const hiddenBodies: unknown[] = [];
+
+  for (const selected of [recordId, randomUUID()]) {
+    const hiddenHttp = await knowledgeHttpGet(
+      new NextRequest(`http://localhost/api/v1/ext/knowledge/${selected}`, {
+        headers: { Authorization: `Bearer ${replacement.secret}` },
+      }),
+      { params: Promise.resolve({ recordId: selected }) },
+    );
+
+    expect(hiddenHttp.status).toBe(404);
+    hiddenBodies.push(await hiddenHttp.json());
+  }
+  expect(hiddenBodies[0]).toEqual(hiddenBodies[1]);
+  expect(
+    (
+      await searchKnowledge(database.db, nativePrincipal, {
+        q: "inspection",
+        limit: 10,
+      })
+    ).items,
+  ).toEqual([]);
+  await database.pool.query(
+    "INSERT INTO brain_record_grants(record_id,principal_type,principal_id,action,created_by) VALUES($1,'user',$2,'knowledge:read',$3::jsonb)",
+    [
+      recordId,
+      userId,
+      JSON.stringify({
+        kind: "user",
+        id: userId,
+        runId: null,
+        attemptId: null,
+      }),
+    ],
+  );
+  expect(
+    (await getKnowledgeRecord(database.db, nativePrincipal, { recordId })).id,
+  ).toBe(recordId);
+  const acceptedAgent = await reviewKnowledgeProposal(database.db, {
+    proposalId: agentProposal.id,
+    principal: humanPrincipal,
+    expectedRevision: 1,
+    decision: "accept",
+    reason: "Retain the limitation with its original professional attribution",
+    idempotencyKey: `company-agent-review:${runId}`,
+  });
+
+  if (!acceptedAgent.acceptedRecordId)
+    throw new Error("Accepted agent limitation has no record identity");
+  expect(
+    await getKnowledgeRecord(database.db, nativePrincipal, {
+      recordId: acceptedAgent.acceptedRecordId,
+    }),
+  ).toMatchObject({
+    attribution: { kind: "agent", id: agentId, runId },
+    confirmation: { state: "unconfirmed" },
+  });
+  const firstPage = await searchKnowledge(database.db, nativePrincipal, {
+    q: "",
+    limit: 1,
+  });
+
+  expect(firstPage.nextCursor).not.toBeNull();
+  const userReadGrant = (
+    await database.pool.query(
+      "SELECT id,revision FROM company_grants WHERE principal_type='user' AND principal_id=$1 AND action='knowledge:read' AND revoked_at IS NULL",
+      [userId],
+    )
+  ).rows[0]!;
+
+  await revokeCompanyGrant(database.db, administratorId, userReadGrant.id, {
+    expectedRevision: userReadGrant.revision,
+    reason: "Knowledge access revoked independently of assignment access",
+    idempotencyKey: randomUUID(),
+  });
+  await expect(
+    getKnowledgeRecord(database.db, nativePrincipal, { recordId }),
+  ).rejects.toMatchObject({
+    details: { reason: "knowledge_reference_unavailable" },
+  });
+  expect(
+    (await searchKnowledge(database.db, nativePrincipal, { q: "", limit: 10 }))
+      .items,
+  ).toEqual([]);
+  await expect(
+    searchKnowledge(database.db, nativePrincipal, {
+      q: "",
+      limit: 1,
+      cursor: firstPage.nextCursor!,
+    }),
+  ).rejects.toMatchObject({ code: "CONFIG" });
+  await createCompanyGrants(database.db, administratorId, {
+    principalKind: "user",
+    principalId: userId,
+    actions: ["knowledge:read"],
+    idempotencyKey: randomUUID(),
+  });
+  const agentReadGrant = (
+    await database.pool.query(
+      "SELECT id,revision FROM company_grants WHERE principal_type='agent' AND principal_id=$1 AND action='knowledge:read' AND revoked_at IS NULL",
+      [agentId],
+    )
+  ).rows[0]!;
+
+  await revokeCompanyGrant(database.db, administratorId, agentReadGrant.id, {
+    expectedRevision: agentReadGrant.revision,
+    reason: "Professional source access revoked",
+    idempotencyKey: randomUUID(),
+  });
+  await expect(
+    getKnowledgeRecord(database.db, nativePrincipal, { recordId }),
+  ).rejects.toMatchObject({
+    details: { reason: "knowledge_reference_unavailable" },
+  });
+  expect(
+    (await searchKnowledge(database.db, nativePrincipal, { q: "", limit: 10 }))
+      .items,
+  ).toEqual([]);
+  await expect(
+    createKnowledgeProposal(database.db, {
+      kind: "knowledge_add",
+      owner: { kind: "company", companyId: request.companyId },
+      principal: nativePrincipal,
+      idempotencyKey: `revoked-source-proposal:${runId}`,
+      draft,
+    }),
+  ).rejects.toMatchObject({
+    details: { reason: "knowledge_reference_unavailable" },
+  });
+  await createCompanyGrants(database.db, administratorId, {
+    principalKind: "agent",
+    principalId: agentId,
+    actions: ["knowledge:read"],
+    idempotencyKey: randomUUID(),
+  });
+
+  const project = await seedProjectRow(database.db);
+
+  await database.pool.query(
+    "UPDATE projects SET brain_enabled=true WHERE id=$1",
+    [project.id],
+  );
+  await database.pool.query(
+    "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'owner')",
+    [randomUUID(), project.id, userId],
+  );
+  const privateRecordId = (
+    await database.pool.query(
+      "INSERT INTO brain_items(id,project_id,kind,title,content,confidence,content_hash) VALUES($1,$2,'assertion','Project-private knowledge','A project-owned private observation',0.3,$3) RETURNING id",
+      [randomUUID(), project.id, randomUUID()],
+    )
+  ).rows[0]!.id;
+
+  expect(
+    (
+      await getKnowledgeRecord(database.db, humanPrincipal, {
+        recordId: privateRecordId,
+      })
+    ).owner,
+  ).toEqual({ kind: "project", projectId: project.id });
+  await expect(
+    getKnowledgeRecord(database.db, nativePrincipal, {
+      recordId: privateRecordId,
+    }),
+  ).rejects.toMatchObject({
+    details: { reason: "knowledge_reference_unavailable" },
+  });
+  const derived = await createKnowledgeProposal(database.db, {
+    kind: "knowledge_add",
+    owner: { kind: "company", companyId: request.companyId },
+    principal: humanPrincipal,
+    idempotencyKey: `project-source-company:${runId}`,
+    draft: {
+      ...draft,
+      title: "Derived project-private summary",
+      evidence: [
+        {
+          relation: "references",
+          reference: { kind: "knowledge", id: privateRecordId, revision: 1 },
+        },
+      ],
+    },
+  });
+  const acceptedDerived = await reviewKnowledgeProposal(database.db, {
+    proposalId: derived.id,
+    principal: humanPrincipal,
+    expectedRevision: 1,
+    decision: "accept",
+    reason: "Retain its project source restriction",
+    idempotencyKey: `project-source-company-review:${runId}`,
+  });
+
+  if (!acceptedDerived.acceptedRecordId)
+    throw new Error("Derived source has no retained record identity");
+  await expect(
+    getKnowledgeRecord(database.db, nativePrincipal, {
+      recordId: acceptedDerived.acceptedRecordId,
+    }),
+  ).rejects.toMatchObject({
+    details: { reason: "knowledge_reference_unavailable" },
+  });
+  expect(
+    (
+      await searchKnowledge(database.db, nativePrincipal, {
+        q: "Derived project-private",
+        limit: 10,
+      })
+    ).items,
+  ).toEqual([]);
+
+  await database.pool.query(
+    "INSERT INTO brain_record_grants(record_id,principal_type,principal_id,action,created_by) VALUES($1,'agent',$2,'knowledge:propose',$3::jsonb)",
+    [
+      recordId,
+      agentId,
+      JSON.stringify({
+        kind: "user",
+        id: userId,
+        runId: null,
+        attemptId: null,
+      }),
+    ],
+  );
+  const correction = {
+    kind: "knowledge_correct" as const,
+    owner: { kind: "company" as const, companyId: request.companyId },
+    principal: nativePrincipal,
+    targetRecordId: recordId,
+    expectedRecordRevision: 1,
+    idempotencyKey: `company-correction:${runId}`,
+    draft: {
+      ...draft,
+      assertion: "Inspection requires independent post-action verification.",
+    },
+  };
+
+  await expect(
+    createKnowledgeProposal(database.db, correction),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await database.pool.query(
+    "INSERT INTO brain_record_grants(record_id,principal_type,principal_id,action,created_by) VALUES($1,'user',$2,'knowledge:propose',$3::jsonb)",
+    [
+      recordId,
+      userId,
+      JSON.stringify({
+        kind: "user",
+        id: userId,
+        runId: null,
+        attemptId: null,
+      }),
+    ],
+  );
+  expect(await createKnowledgeProposal(database.db, correction)).toMatchObject({
+    status: "pending",
+  });
+  expect(
+    (await getKnowledgeRecord(database.db, humanPrincipal, { recordId }))
+      .revision,
+  ).toBe(1);
 });
 
 it("requires current explicit company admission authority even for an administrator and after an earlier successful preflight", async () => {

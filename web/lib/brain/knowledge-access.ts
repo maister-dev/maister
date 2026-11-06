@@ -1,7 +1,8 @@
 import "server-only";
 
 import type { SqlDatabase, SqlTransaction } from "@/lib/db/sql-types";
-import type { Owner } from "@/lib/company/types";
+import type { CompanyAgentExecutionSnapshot } from "@/lib/agents/company-agent-execution-types";
+import type { CompanyAction, Owner } from "@/lib/company/types";
 import type { KnowledgeAction, KnowledgePrincipal } from "./knowledge-types";
 import type { KnowledgeAttribution } from "./record-types";
 import type { SessionUser } from "@/lib/authz";
@@ -10,6 +11,7 @@ import { sql } from "drizzle-orm";
 
 import { resolveKnowledgeRunIdentity } from "./knowledge-run-identity";
 
+import { requireCompanyRunCredentialOwner } from "@/lib/agents/company-run-credential-owner";
 import { projectRolesForActions } from "@/lib/authz";
 import { MaisterError } from "@/lib/errors";
 import { parseBoundRunId } from "@/lib/tokens/verify";
@@ -18,14 +20,29 @@ export type KnowledgeTransaction = SqlTransaction;
 export type KnowledgeDatabase = SqlDatabase;
 export type KnowledgeAuthorityActor = KnowledgeAttribution &
   Readonly<{ kind: "user" | "agent"; id: string }>;
+type KnowledgeAuthorityPolicyBase = Readonly<{
+  authorityId: string;
+  authorityRevision: number;
+  confirmationClasses: readonly string[];
+}>;
 export type KnowledgeAuthority = Readonly<{
   actor: KnowledgeAuthorityActor;
-  policy: Readonly<{
-    version: 1;
-    authorityId: string;
-    authorityRevision: number;
-    confirmationClasses: readonly string[];
-  }>;
+  policy: KnowledgeAuthorityPolicyBase &
+    (
+      | Readonly<{ version: 1 }>
+      | Readonly<{
+          version: 2;
+          initiator: Readonly<{
+            actor: KnowledgeAuthorityActor & { kind: "user" };
+            authorityId: string;
+            authorityRevision: number;
+          }>;
+          execution: Readonly<{
+            runId: string;
+            launchSnapshot: CompanyAgentExecutionSnapshot;
+          }>;
+        }>
+    );
 }>;
 export type KnowledgePrincipalIdentity =
   | Readonly<{
@@ -41,6 +58,19 @@ export type KnowledgePrincipalIdentity =
       bindingId: string;
       canReadBrain: boolean;
       canWriteBrain: boolean;
+    }>
+  | Readonly<{
+      kind: "company_agent";
+      actor: KnowledgeAuthorityActor & {
+        kind: "agent";
+        runId: string;
+        attemptId: null;
+      };
+      companyId: string;
+      bindingId: string;
+      initiatingUser: SessionUser;
+      actionLimits: readonly CompanyAction[];
+      execution: CompanyAgentExecutionSnapshot;
     }>;
 
 export function knowledgeOwner(row: Readonly<Record<string, unknown>>): Owner {
@@ -115,7 +145,7 @@ export async function resolveKnowledgePrincipal(
   }
   const token = (
     await tx.execute(
-      sql`SELECT id,name,token_kind,owner_user_id,project_id,agent_id,scopes,knowledge_node_attempt_id FROM project_tokens WHERE id=${principal.tokenId} AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>now()) FOR SHARE`,
+      sql`SELECT id,name,token_kind,owner_user_id,project_id,company_id,company_run_id,agent_id,scopes,knowledge_node_attempt_id FROM project_tokens WHERE id=${principal.tokenId} AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>now()) FOR SHARE`,
     )
   ).rows[0];
 
@@ -163,6 +193,24 @@ export async function resolveKnowledgePrincipal(
       : null,
   );
 
+  if (resolved.identity.kind === "company_agent") {
+    const current = await requireCompanyRunCredentialOwner(tx, runId);
+
+    if (
+      token.token_kind !== "agent" ||
+      token.project_id !== null ||
+      token.company_id !== current.companyId ||
+      token.company_run_id !== runId ||
+      token.agent_id !== current.agentId ||
+      token.owner_user_id !== current.userId
+    )
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "The credential does not match its current company execution and initiating principal",
+      );
+
+    return resolved.identity;
+  }
   if (
     token.project_id !== resolved.identity.projectId ||
     (token.token_kind === "agent" &&
@@ -195,6 +243,54 @@ export async function authorizeKnowledge(
       "Knowledge owner is outside this credential's project boundary",
     );
 
+  if (identity.kind === "company_agent") {
+    if (
+      owner.kind !== "company" ||
+      owner.companyId !== identity.companyId ||
+      !["knowledge:read", "knowledge:propose"].includes(action) ||
+      !identity.actionLimits.includes(action)
+    )
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "The company execution lacks authority for this knowledge owner and action",
+      );
+    const initiatorActor = {
+      kind: "user" as const,
+      id: identity.initiatingUser.id,
+      runId: null,
+      attemptId: null,
+    };
+    const initiator = await authorizeCompanyPrincipal(
+      tx,
+      initiatorActor,
+      owner.companyId,
+      action,
+    );
+    const professional = await authorizeCompanyPrincipal(
+      tx,
+      identity.actor,
+      owner.companyId,
+      action,
+    );
+
+    return {
+      actor: professional.actor,
+      policy: {
+        ...professional.policy,
+        version: 2,
+        confirmationClasses: [],
+        initiator: {
+          actor: initiatorActor,
+          authorityId: initiator.policy.authorityId,
+          authorityRevision: initiator.policy.authorityRevision,
+        },
+        execution: {
+          runId: identity.actor.runId,
+          launchSnapshot: identity.execution,
+        },
+      },
+    };
+  }
   if (owner.kind === "company")
     return authorizeCompanyPrincipal(
       tx,

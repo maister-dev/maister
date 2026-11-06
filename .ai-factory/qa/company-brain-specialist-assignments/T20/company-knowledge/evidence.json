@@ -1,0 +1,72 @@
+{
+  "task": "T20",
+  "slice": "Native company execution knowledge identity and current dual-principal authority",
+  "date": "2026-11-06",
+  "baseCommit": "67c32606448b113a8fa5373cc4d700dc80e2f065",
+  "status": "Qualified native knowledge slice; T20 remains open",
+  "engineVersion": "3.11.1",
+  "migrations": [],
+  "testMethod": "Real PostgreSQL and Brain store, installed synthetic Git role, native services and actual bearer route handler; no ACP session or real companion readiness claimed.",
+  "redCase": {
+    "log": "red.log.gz",
+    "observation": "Project-only identity rejects a company execution with An active specialist execution is required."
+  },
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "files": 16,
+      "tests": 181,
+      "log": "integration-green.log.gz"
+    },
+    "unit": {
+      "exitCode": 0,
+      "files": 886,
+      "tests": 9263,
+      "log": "unit-green.log.gz"
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "log": "typecheck.log.gz"
+    },
+    "lint": {
+      "exitCode": 0,
+      "log": "lint.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "tables": 171,
+      "log": "docs.log.gz",
+      "finalLog": "docs-final.log.gz"
+    }
+  },
+  "qualified": [
+    "Company run identity preserves the professional actor and originating run without a project; server Pending inspection does not admit Pending API tokens.",
+    "Current role limits and both initiating-user and professional company grants are intersected for read/propose.",
+    "Restricted record read/correction requires both record grants; source closure applies before search LIMIT and native bearer reads conceal restricted/missing identically.",
+    "Immutable proposal policy v2 captures exact grant witnesses, server run and launch snapshot; existing v1 JSON shapes remain unchanged.",
+    "Grant revocation invalidates cursor/source access and prevents proposal laundering; accepting work or a proposal never implies confirmation.",
+    "Project-owned sources and inherited project restrictions remain unavailable on this initial company-native path; private stores remain separate."
+  ],
+  "notYetQualified": [
+    "Actual company session launch, workspace materialization, prompt input capture, resume, terminal and cleanup lifecycle",
+    "Explicit project admission/cooperation source sharing bridge",
+    "Company result-only Flow runtime and actual installable specialist/stand restart pilot",
+    "Remaining T20-T43 acceptance"
+  ],
+  "logSanitization": "Disposable query parameters and credential-shaped strings are redacted. No production data collected.",
+  "sourceSha256": {
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "4773848713ad6daface12ef5bb4f89aece655363858435c797707def26ed0aa8",
+    "web/lib/agents/company-run-credential-owner.ts": "90e0d1e1577bb00a95beb6bfd075314e7814e32c3837197e394bd05f881352f3",
+    "web/lib/brain/knowledge-access.ts": "a606b43ded2fb5041d2acc23d622b18fa027fc3c55051a9f341b83a5ce5c9f46",
+    "web/lib/brain/knowledge-context-policy.ts": "1ca243339b7f3df4581ea43cc114699781b6d91c5d92082b7ecdf8adffbc9a2d",
+    "web/lib/brain/knowledge-cursor.ts": "3e14ca9df9bc6d4d2a6a1d36e6f9f7dd99ff9756325a90f951c6a27db797c838",
+    "web/lib/brain/knowledge-proposals.ts": "a365277a27b2305fb1f9f48b29327b477e6897f6847b9c077c4488c9f44684bd",
+    "web/lib/brain/knowledge-query-policy.ts": "068ebba81d9c8c28da910e824d662d41190bd456fb819a6ec83460eca317f8f1",
+    "web/lib/brain/knowledge-restrictions.ts": "37acb9987581428b1c8e3244923da29e1c1447f8966677ab50e58126241fd45d",
+    "web/lib/brain/knowledge-run-identity.ts": "e151501a6799f5635fac74fe5f900b461936c243cc842354f4862ed4f5056843"
+  }
+}

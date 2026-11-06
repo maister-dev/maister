@@ -12,6 +12,7 @@ export function projectContextReadPolicy(
   identity: KnowledgePrincipalIdentity,
   project: SQL,
 ): SQL {
+  if (identity.kind === "company_agent") return sql`false`;
   const boundary =
     identity.kind === "user" && identity.boundProjectId !== null
       ? sql`${project}=${identity.boundProjectId}`

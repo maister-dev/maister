@@ -68,12 +68,29 @@ export async function knowledgeCursorScope(
     )
   ).rows;
 
+  const initiatingPolicy =
+    identity.kind === "company_agent"
+      ? {
+          grants: (
+            await tx.execute(
+              sql`SELECT id,company_id,action,revision FROM company_grants WHERE principal_type='user' AND principal_id=${identity.initiatingUser.id} AND revoked_at IS NULL ORDER BY id FOR SHARE`,
+            )
+          ).rows,
+          recordGrants: (
+            await tx.execute(
+              sql`SELECT record_id,action FROM brain_record_grants WHERE principal_type='user' AND principal_id=${identity.initiatingUser.id} AND revoked_at IS NULL ORDER BY record_id,action FOR SHARE`,
+            )
+          ).rows,
+        }
+      : null;
+
   return contentDigest({
     principal,
     identity,
     grants,
     memberships,
     recordGrants,
+    ...(initiatingPolicy === null ? {} : { initiatingPolicy }),
     filters,
   });
 }

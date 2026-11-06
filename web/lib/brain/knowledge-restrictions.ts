@@ -204,6 +204,15 @@ export async function authorizeKnowledgeRecordRead(
       )
     ).rows[0];
 
+    if (authority.policy.version === 2) {
+      const initiatingGrant = (
+        await tx.execute(
+          sql`SELECT id FROM brain_record_grants WHERE record_id=${id} AND principal_type='user' AND principal_id=${authority.policy.initiator.actor.id} AND action='knowledge:read' AND revoked_at IS NULL FOR SHARE`,
+        )
+      ).rows[0];
+
+      if (!initiatingGrant) throw unavailableKnowledgeReference();
+    }
     if (!grant) throw unavailableKnowledgeReference();
   }
 

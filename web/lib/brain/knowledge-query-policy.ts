@@ -19,6 +19,15 @@ export function knowledgeOwnerActionPolicy(
   company: SQL,
   action: KnowledgeAction,
 ): SQL {
+  if (identity.kind === "company_agent") {
+    const allowed =
+      (action === "knowledge:read" || action === "knowledge:propose") &&
+      identity.actionLimits.includes(action);
+
+    return sql`${allowed} AND ${company}=${identity.companyId}
+      AND EXISTS (SELECT 1 FROM company_grants cg WHERE cg.company_id=${company} AND cg.principal_type='agent' AND cg.principal_id=${identity.actor.id} AND cg.action=${action} AND cg.revoked_at IS NULL FOR SHARE)
+      AND EXISTS (SELECT 1 FROM company_grants initiating_grant WHERE initiating_grant.company_id=${company} AND initiating_grant.principal_type='user' AND initiating_grant.principal_id=${identity.initiatingUser.id} AND initiating_grant.action=${action} AND initiating_grant.revoked_at IS NULL FOR SHARE)`;
+  }
   if (identity.kind === "user" && identity.boundProjectId !== null) {
     const projectPolicy = knowledgeOwnerActionPolicy(
       { ...identity, boundProjectId: null },
@@ -75,7 +84,12 @@ function readableRecord(
 ): SQL {
   const table = sql.identifier(alias);
 
-  return sql`${readableOwner(identity, sql`${table}.project_id`, sql`${table}.company_id`)} AND (${table}.visibility='owner_grants' OR EXISTS (SELECT 1 FROM brain_record_grants rg WHERE rg.record_id=${table}.id AND rg.principal_type=${identity.actor.kind} AND rg.principal_id=${identity.actor.id} AND rg.action='knowledge:read' AND rg.revoked_at IS NULL FOR SHARE))`;
+  const initiatingRecordGrant =
+    identity.kind === "company_agent"
+      ? sql`EXISTS (SELECT 1 FROM brain_record_grants initiating_record_grant WHERE initiating_record_grant.record_id=${table}.id AND initiating_record_grant.principal_type='user' AND initiating_record_grant.principal_id=${identity.initiatingUser.id} AND initiating_record_grant.action='knowledge:read' AND initiating_record_grant.revoked_at IS NULL FOR SHARE)`
+      : sql`true`;
+
+  return sql`${readableOwner(identity, sql`${table}.project_id`, sql`${table}.company_id`)} AND (${table}.visibility='owner_grants' OR (${initiatingRecordGrant} AND EXISTS (SELECT 1 FROM brain_record_grants rg WHERE rg.record_id=${table}.id AND rg.principal_type=${identity.actor.kind} AND rg.principal_id=${identity.actor.id} AND rg.action='knowledge:read' AND rg.revoked_at IS NULL FOR SHARE)))`;
 }
 
 /** Apply source closure before LIMIT/cursors so inaccessible records cannot consume public page slots. */

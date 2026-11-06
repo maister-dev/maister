@@ -86,6 +86,8 @@ All grants are checked from current server state, including account availability
 | Confirm/revoke | confirm knowledge plus named policy and exact evidence access | Default human authority; a configured verifier may act only within its explicit assertion class; ordinary agent cannot self-confirm |
 | Manage access/policy | manage company knowledge or existing project management authority | Server validates policy revision; removal affects subsequent read/write/action, not past authorized disclosure |
 
+Company standalone credentials resolve a server-owned company execution identity rather than a synthetic project attachment. Native company read/propose intersects the configured role action limit, current professional grant and current initiating-user grant; restricted record/source policy applies to both recipients. Its initial authority is confined to the bound company, with project/context/private-memory dependencies unavailable until explicitly admitted through the project/cooperation path. Search applies the same intersection before LIMIT and binds both current grant sets into its cursor. Proposal authority snapshot v2 records the professional grant, current initiating knowledge grant and exact server run/launch capture; old v1 snapshots remain unchanged. This extends native authorization and attributable proposal storage; actual company session/Flow launch remains the CB1 runtime gate. See [company execution knowledge identity](specialist-runtime.md#company-execution-knowledge-identity).
+
 ### Mutations and refusal table
 
 | Transition | Preconditions | Atomic effect | Refusal |
