@@ -199,3 +199,49 @@ queue promotion and queued resume emit project `run.started` webhooks only
 when an actual project owner exists. The native company cap qualification
 covers admission/queue/terminal release with a bounded dispatch seam; actual
 company session and idle-resume host behavior remain part of T20/T21.
+
+
+Assignment prompt-source contract (T20 source resolution Implemented; actual
+launch capture Designed): the native restriction
+`{kind: "assignment_input", assignmentId, inputRevision, inputSha256}` names
+an exact immutable input and content witness. It is a source restriction,
+separate from model evidence references and confirmation. An initiating user
+needs current assignment read authority and the input's inherited source
+permissions. A company execution receives only its server-bound assignment and
+exact retained input; appointment to one assignment grants no other assignment
+or Company Brain record access. Existing project-agent sharing remains denied
+until its explicit assignment/delegation binding is implemented.
+
+Source closure follows the retained input's own restrictions. Direct reads,
+search filtering before LIMIT, proposal review and outward results must apply
+the same closure and current grants. A wrong revision/digest, missing input,
+foreign execution or revoked reader is unavailable. This is a logical source
+reference with no Brain-to-project foreign key. Current assignment head
+changes do not rewrite a previously captured input. Company prompt capture
+must commit this classification with the Run/input link before any prompt or
+external effect; a model cannot supply or widen it.
+
+
+The native source resolver validates and locks an execution's exact appointment
+before evaluating `assignment_input`. Human readers use current company
+`assignments:read` grants or the existing project assignment read policy; company
+ownership has no administrator shortcut. A company execution matches only the
+input already validated in its server identity. Inherited record, repository and
+memory restrictions remain independently binding. Source-only project
+references are logical: deleting a source project succeeds and makes its source
+unavailable while retaining the company's immutable assignment input.
+
+Retrieval computes accessible record/revision dependencies once for the source
+closure and then tests membership, preserving exact versus current-version
+checks before LIMIT. Company grant checks are fixed to the execution's bound
+company. The small native integration fixture has a 500 ms database execution
+budget; EXPLAIN-based qualification caught and removed repeated grant planning
+that previously spent about one second in JIT compilation per query. This is a
+fixture regression bound, not a production latency guarantee. Existing stored
+source arrays and legacy capture bytes are unchanged; the source kind itself requires no data rewrite or invented
+historical attribution. Main `0243_native_source_array_planning` adds only a pure
+JSON iterator with a four-row planner estimate, which returns every source entry.
+Native source, owner, context, memory and record/revision checks use bounded
+authorized sets to avoid repeating grant plans per recursive edge. Its 256-entry
+Unicode/ordering check and actual built MCP workflow retain their original
+semantics and process deadline.

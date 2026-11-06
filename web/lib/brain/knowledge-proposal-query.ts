@@ -13,6 +13,7 @@ import {
 import {
   knowledgeOwnerActionPolicy,
   knowledgeReadPolicyCte,
+  knowledgeSourceReadPolicy,
   knowledgeRevisionReadPolicyCte,
 } from "./knowledge-query-policy";
 
@@ -37,6 +38,7 @@ function sourceAllows(identity: KnowledgePrincipalIdentity, ref: SQL): SQL {
     WHEN 'company' THEN ${knowledgeOwnerActionPolicy(identity, sql`NULL::text`, sql`${ref}->>'companyId'`, "knowledge:read")}
     WHEN 'project' THEN ${knowledgeOwnerActionPolicy(identity, sql`${ref}->>'projectId'`, sql`NULL::text`, "knowledge:read")}
     WHEN 'project_context' THEN ${projectContextReadPolicy(identity, sql`${ref}->>'projectId'`)}
+    WHEN 'assignment_input' THEN ${knowledgeSourceReadPolicy(identity, ref)}
     WHEN 'agent_memory' THEN ${agentMemoryReadPolicy(identity, sql`${ref}->>'projectId'`, sql`${ref}->>'agentId'`)}
     WHEN 'record' THEN EXISTS (${recordPolicy} SELECT 1 FROM knowledge_readable_records)
     ELSE false END`;
@@ -67,12 +69,12 @@ export function knowledgeProposalReadPolicyCte(
     FROM brain_proposals p WHERE p.kind IN ('knowledge_add','knowledge_correct') AND (${selection}) AND (${read}) AND ((${review}) OR (${propose}))
     AND NOT EXISTS (
       SELECT 1 FROM (
-        SELECT ref FROM jsonb_array_elements(coalesce(p.source_restrictions,'[]'::jsonb)) ref
+        SELECT ref FROM native_knowledge_source_restrictions(coalesce(p.source_restrictions,'[]'::jsonb)) ref
         UNION ALL
         SELECT jsonb_build_object('kind',CASE WHEN o.company_id IS NULL THEN 'project' ELSE 'company' END,CASE WHEN o.company_id IS NULL THEN 'projectId' ELSE 'companyId' END,coalesce(o.company_id,o.project_id))
         FROM jsonb_array_elements(p.draft->'evidence') proof JOIN brain_evidence_witnesses w ON proof->'reference'->>'kind'='witness' AND w.id=proof->'reference'->>'id' JOIN brain_evidence_observations o ON o.id=w.observation_id
         UNION ALL
-        SELECT ref FROM jsonb_array_elements(p.draft->'evidence') proof JOIN brain_evidence_witnesses w ON proof->'reference'->>'kind'='witness' AND w.id=proof->'reference'->>'id' CROSS JOIN LATERAL jsonb_array_elements(w.restrictions) ref
+        SELECT ref FROM jsonb_array_elements(p.draft->'evidence') proof JOIN brain_evidence_witnesses w ON proof->'reference'->>'kind'='witness' AND w.id=proof->'reference'->>'id' CROSS JOIN LATERAL native_knowledge_source_restrictions(w.restrictions) ref
       ) source_refs WHERE NOT (${sourceAllows(identity, sql`source_refs.ref`)})
     )
     AND (p.published_record_id IS NULL OR EXISTS (${published} SELECT 1 FROM knowledge_readable_records))

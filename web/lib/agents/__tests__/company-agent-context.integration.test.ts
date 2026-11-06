@@ -20,6 +20,7 @@ import { join, resolve, sep } from "node:path";
 import { eq, sql } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 import {
   prepareCompanyAgentContext,
@@ -60,6 +61,13 @@ import {
 import { disposeOperationalRun } from "@/lib/gc/operational-disposition";
 import { operationalSuccessFixture } from "@/test-support/operational-agent";
 import { getKnowledgeRecord } from "@/lib/brain/knowledge-records";
+import { resolveKnowledgePrincipal } from "@/lib/brain/knowledge-access";
+import {
+  knowledgeSourceReadPolicy,
+  knowledgeReadPolicyCte,
+} from "@/lib/brain/knowledge-query-policy";
+import { assertNativeRunKnowledgeInputs } from "@/lib/brain/knowledge-execution-access";
+import { authorizeSourceRestrictions } from "@/lib/brain/knowledge-restrictions";
 import { searchKnowledge } from "@/lib/brain/knowledge-search";
 import {
   createKnowledgeProposal,
@@ -703,7 +711,9 @@ it("refuses disabled and retired configuration, and standing input that changes 
   });
 });
 
-async function reserveCompanyFixtureRun(): Promise<
+async function reserveCompanyFixtureRun(
+  input: PreparedSpecialistAssignment = assignmentInput,
+): Promise<
   Readonly<{
     runId: string;
     assignmentId: string;
@@ -713,7 +723,7 @@ async function reserveCompanyFixtureRun(): Promise<
   const assignment = await createSpecialistAssignment(
     database.db,
     userId,
-    assignmentInput,
+    input,
   );
   const runId = randomUUID();
   const prepared = await database.db.transaction(async (tx) => {
@@ -952,6 +962,157 @@ it("rotates exact company run credentials with current grants, scope limits and 
   ).rejects.toMatchObject({ kind: "revoked" });
 });
 
+it("CBS-02 authorizes only the executing specialist's exact assignment input without implying Company Brain read access", async () => {
+  const { runId, snapshot } = await reserveCompanyFixtureRun();
+  const reference = {
+    kind: "assignment_input" as const,
+    assignmentId: snapshot.assignment.id,
+    inputRevision: snapshot.assignment.inputRevision,
+    inputSha256: snapshot.assignment.inputSha256,
+  };
+
+  await database.pool.query(
+    "UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1",
+    [
+      runId,
+      JSON.stringify({
+        schemaVersion: 1,
+        state: "complete",
+        generation: 1,
+        restrictions: [reference],
+      }),
+    ],
+  );
+  await expect(
+    assertNativeRunKnowledgeInputs(database.db, runId),
+  ).resolves.toBeUndefined();
+  await expect(
+    authorizeSourceRestrictions(
+      database.db,
+      { kind: "execution", runId, nodeAttemptId: null },
+      [{ kind: "company", companyId: request.companyId }],
+    ),
+  ).rejects.toMatchObject({
+    details: { reason: "knowledge_reference_unavailable" },
+  });
+  const other = await reserveCompanyFixtureRun();
+
+  await database.pool.query(
+    "UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1",
+    [
+      other.runId,
+      JSON.stringify({
+        schemaVersion: 1,
+        state: "complete",
+        generation: 1,
+        restrictions: [reference],
+      }),
+    ],
+  );
+  await expect(
+    assertNativeRunKnowledgeInputs(database.db, other.runId),
+  ).rejects.toMatchObject({
+    details: { reason: "knowledge_reference_unavailable" },
+  });
+  for (const changed of [
+    { ...reference, inputRevision: 2 },
+    { ...reference, inputSha256: "0".repeat(64) },
+  ]) {
+    await expect(
+      authorizeSourceRestrictions(database.db, { kind: "user", userId }, [
+        changed,
+      ]),
+    ).rejects.toMatchObject({
+      details: { reason: "knowledge_reference_unavailable" },
+    });
+  }
+});
+
+it("CBS-02 preserves nested assignment source restrictions and lets the source project be deleted without Brain blocking it", async () => {
+  const project = await seedProjectRow(database.db);
+
+  await database.pool.query(
+    "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'member')",
+    [randomUUID(), project.id, userId],
+  );
+  const { runId, snapshot } = await reserveCompanyFixtureRun({
+    ...assignmentInput,
+    sourceRestrictions: [{ kind: "project_context", projectId: project.id }],
+  });
+  const reference = {
+    kind: "assignment_input" as const,
+    assignmentId: snapshot.assignment.id,
+    inputRevision: snapshot.assignment.inputRevision,
+    inputSha256: snapshot.assignment.inputSha256,
+  };
+  const human = { kind: "user" as const, userId };
+
+  await expect(
+    authorizeSourceRestrictions(database.db, human, [reference]),
+  ).resolves.toMatchObject({
+    visited: expect.arrayContaining([
+      expect.stringContaining("project_context:"),
+    ]),
+  });
+  const humanCanRead = async (): Promise<boolean> =>
+    database.db.transaction(async (tx) => {
+      const identity = await resolveKnowledgePrincipal(
+        tx,
+        human,
+        "knowledge:read",
+      );
+
+      return z
+        .boolean()
+        .parse(
+          (
+            await tx.execute(
+              sql`SELECT ${knowledgeSourceReadPolicy(identity, sql`${JSON.stringify(reference)}::jsonb`)} AS readable`,
+            )
+          ).rows[0].readable,
+        );
+    });
+
+  expect(await humanCanRead()).toBe(true);
+  await database.pool.query(
+    "UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1",
+    [
+      runId,
+      JSON.stringify({
+        schemaVersion: 1,
+        state: "complete",
+        generation: 1,
+        restrictions: [reference],
+      }),
+    ],
+  );
+  await expect(
+    assertNativeRunKnowledgeInputs(database.db, runId),
+  ).rejects.toMatchObject({
+    details: { reason: "knowledge_reference_unavailable" },
+  });
+  await database.pool.query(
+    "DELETE FROM project_members WHERE project_id=$1 AND user_id=$2",
+    [project.id, userId],
+  );
+  expect(await humanCanRead()).toBe(false);
+  await expect(
+    authorizeSourceRestrictions(database.db, human, [reference]),
+  ).rejects.toMatchObject({
+    details: { reason: "knowledge_reference_unavailable" },
+  });
+  await database.pool.query("DELETE FROM projects WHERE id=$1", [project.id]);
+  expect(await humanCanRead()).toBe(false);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT input_revision FROM specialist_assignments WHERE id=$1",
+        [snapshot.assignment.id],
+      )
+    ).rows[0],
+  ).toEqual({ input_revision: 1 });
+});
+
 it("uses company Brain through current user and agent authority while retaining professional proposal attribution", async () => {
   const { runId, snapshot: prepared } = await reserveCompanyFixtureRun();
 
@@ -971,7 +1132,14 @@ it("uses company Brain through current user and agent authority while retaining 
         schemaVersion: 1,
         state: "complete",
         generation: 1,
-        restrictions: [],
+        restrictions: [
+          {
+            kind: "assignment_input",
+            assignmentId: prepared.assignment.id,
+            inputRevision: prepared.assignment.inputRevision,
+            inputSha256: prepared.assignment.inputSha256,
+          },
+        ],
       }),
     ],
   );
@@ -1177,6 +1345,93 @@ it("uses company Brain through current user and agent authority while retaining 
     attribution: { kind: "agent", id: agentId, runId },
     confirmation: { state: "unconfirmed" },
   });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT source_restrictions FROM brain_items WHERE id=$1",
+        [acceptedAgent.acceptedRecordId],
+      )
+    ).rows[0].source_restrictions,
+  ).toEqual(
+    expect.arrayContaining([
+      {
+        kind: "assignment_input",
+        assignmentId: prepared.assignment.id,
+        inputRevision: prepared.assignment.inputRevision,
+        inputSha256: prepared.assignment.inputSha256,
+      },
+    ]),
+  );
+  expect(
+    (
+      await searchKnowledge(database.db, nativePrincipal, { q: "", limit: 10 })
+    ).items.map((item) => item.id),
+  ).toContain(acceptedAgent.acceptedRecordId);
+  const queryPlan = await database.db.transaction(async (tx) => {
+    const identity = await resolveKnowledgePrincipal(
+      tx,
+      nativePrincipal,
+      "knowledge:read",
+    );
+    const result = await tx.execute(
+      sql`EXPLAIN (ANALYZE, FORMAT JSON) ${knowledgeReadPolicyCte(identity, sql`true`)} SELECT id FROM knowledge_readable_records LIMIT 10`,
+    );
+
+    return z
+      .array(
+        z.object({
+          JIT: z.unknown().optional(),
+          "Execution Time": z.number(),
+          "Planning Time": z.number(),
+        }),
+      )
+      .min(1)
+      .parse(result.rows[0]["QUERY PLAN"])[0];
+  });
+
+  expect(queryPlan["Execution Time"] + queryPlan["Planning Time"]).toBeLessThan(
+    500,
+  );
+  const foreign = await reserveCompanyFixtureRun();
+
+  await database.pool.query(
+    "UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1",
+    [
+      foreign.runId,
+      JSON.stringify({
+        schemaVersion: 1,
+        state: "complete",
+        generation: 1,
+        restrictions: [
+          {
+            kind: "assignment_input",
+            assignmentId: foreign.snapshot.assignment.id,
+            inputRevision: foreign.snapshot.assignment.inputRevision,
+            inputSha256: foreign.snapshot.assignment.inputSha256,
+          },
+        ],
+      }),
+    ],
+  );
+  await assertNativeRunKnowledgeInputs(database.db, foreign.runId);
+  await expect(
+    getKnowledgeRecord(
+      database.db,
+      { kind: "execution", runId: foreign.runId, nodeAttemptId: null },
+      { recordId: acceptedAgent.acceptedRecordId },
+    ),
+  ).rejects.toMatchObject({
+    details: { reason: "knowledge_reference_unavailable" },
+  });
+  expect(
+    (
+      await searchKnowledge(
+        database.db,
+        { kind: "execution", runId: foreign.runId, nodeAttemptId: null },
+        { q: "", limit: 10 },
+      )
+    ).items.map((item) => item.id),
+  ).not.toContain(acceptedAgent.acceptedRecordId);
   const firstPage = await searchKnowledge(database.db, nativePrincipal, {
     q: "",
     limit: 1,

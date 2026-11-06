@@ -9,6 +9,7 @@ import type { KnowledgeTransaction } from "./knowledge-access";
 
 import { sql } from "drizzle-orm";
 
+import { assignmentInputReadPolicy } from "./knowledge-assignment-policy";
 import {
   authorizeKnowledge,
   knowledgeOwner,
@@ -132,6 +133,47 @@ async function authorizeContextRestriction(
   return next;
 }
 
+async function authorizeAssignmentInputRestriction(
+  tx: KnowledgeTransaction,
+  principal: KnowledgePrincipal,
+  restriction: Extract<
+    KnowledgeAccessRestriction,
+    { kind: "assignment_input" }
+  >,
+  state: KnowledgeAccessWalk,
+): Promise<KnowledgeAccessWalk> {
+  const key = `assignment_input:${JSON.stringify(restriction)}`;
+
+  if (state.visited.includes(key)) return state;
+  const next = enterRestriction(state, key);
+  const identity = await resolveKnowledgePrincipal(
+    tx,
+    principal,
+    "knowledge:read",
+  );
+  const policy = assignmentInputReadPolicy(
+    identity,
+    sql`${restriction.assignmentId}`,
+    sql`${restriction.inputRevision}`,
+    sql`${restriction.inputSha256}`,
+  );
+  const row = (
+    await tx.execute(sql`
+    SELECT source_restrictions FROM specialist_input_revisions
+    WHERE assignment_id=${restriction.assignmentId} AND revision=${restriction.inputRevision} AND digest=${restriction.inputSha256} AND (${policy}) FOR SHARE
+  `)
+  ).rows[0];
+
+  if (!row) throw unavailableKnowledgeReference();
+
+  return authorizeSourceRestrictions(
+    tx,
+    principal,
+    row.source_restrictions,
+    next,
+  );
+}
+
 export async function authorizeSourceRestrictions(
   tx: KnowledgeTransaction,
   principal: KnowledgePrincipal,
@@ -142,6 +184,15 @@ export async function authorizeSourceRestrictions(
   let current = state;
 
   for (const restriction of restrictions ?? []) {
+    if (restriction.kind === "assignment_input") {
+      current = await authorizeAssignmentInputRestriction(
+        tx,
+        principal,
+        restriction,
+        current,
+      );
+      continue;
+    }
     current =
       restriction.kind === "agent_memory" ||
       restriction.kind === "project_context"
@@ -255,7 +306,11 @@ export function restrictionsForKnowledgeAccess(
     if (kind === "record") return { kind, recordId: id };
     if (kind === "project") return { kind, projectId: id };
     if (kind === "company") return { kind, companyId: id };
-    if (kind === "agent_memory" || kind === "project_context") {
+    if (
+      kind === "agent_memory" ||
+      kind === "project_context" ||
+      kind === "assignment_input"
+    ) {
       const parsed = knowledgeAccessRestrictionSchema.safeParse(
         JSON.parse(id) as unknown,
       );

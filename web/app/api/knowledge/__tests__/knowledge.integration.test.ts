@@ -15,12 +15,16 @@ import path from "node:path";
 import { readFile } from "node:fs/promises";
 
 import { Ajv } from "ajv";
+import { sql } from "drizzle-orm";
+import { z } from "zod";
 import { NextRequest } from "next/server";
 import { parse } from "yaml";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 
 import knowledgeToolSchemas from "../../../../../runtime/knowledge-tool-input.schema.json";
 
+import { resolveKnowledgePrincipal } from "@/lib/brain/knowledge-access";
+import { knowledgeReadPolicyCte } from "@/lib/brain/knowledge-query-policy";
 import { MaisterError } from "@/lib/errors";
 import { startMainAndBrainPostgresTestDb } from "@/test-support/pg-container";
 import {
@@ -810,6 +814,28 @@ it("IT-CBX-02 the built MCP publishes nested native schemas and calls the real H
     "INSERT INTO brain_items(id,company_id,kind,title,content,content_hash,confidence) VALUES($1,$2,'assertion','MCP retained record',$3,$4,0.3)",
     [recordId, companyId, query, randomUUID()],
   );
+  // Measure this exact reference independently of other retained qualification records.
+  const queryTiming = await database.db.transaction(async (tx) => {
+    const identity = await resolveKnowledgePrincipal(
+      tx,
+      { kind: "token", tokenId: issued.tokenId },
+      "knowledge:read",
+    );
+    const result = await tx.execute(
+      sql`EXPLAIN (ANALYZE, FORMAT JSON) ${knowledgeReadPolicyCte(identity, sql`i.id=${recordId}`)} SELECT id FROM knowledge_readable_records LIMIT 10`,
+    );
+
+    return z
+      .array(
+        z.object({ "Execution Time": z.number(), "Planning Time": z.number() }),
+      )
+      .min(1)
+      .parse(result.rows[0]["QUERY PLAN"])[0];
+  });
+
+  expect(
+    queryTiming["Execution Time"] + queryTiming["Planning Time"],
+  ).toBeLessThan(500);
   const received: string[] = [];
   const failures: unknown[] = [];
   const http = createServer((incoming, outgoing) => {

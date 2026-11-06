@@ -1,0 +1,112 @@
+{
+  "task": "T20",
+  "slice": "Exact assignment input source identity, inherited source policy and bounded query planning",
+  "date": "2026-11-06",
+  "baseCommit": "aab2ae73980a6f3889586e815ab3e5f4d5082174",
+  "status": "Native source-policy slice qualified; actual company prompt/session capture and T20 remain open",
+  "engineVersion": "3.11.1",
+  "migrations": [
+    "0228_native_source_array_planning"
+  ],
+  "migrationSafety": "Generated custom forward migration/journal/snapshot adds only an immutable strict pure JSON iterator, applied solely to owned disposable databases. A four-row estimate is not a limit; all 256 Unicode entries/order and empty/null/invalid inputs are qualified. No historical metadata rewrite or deployment.",
+  "redCases": [
+    "Unknown assignment_input cannot form complete native source capture.",
+    "A derived accepted record disappears from authorized search because source closure does not understand assignment inputs.",
+    "Initial correlated source plans spend about 1.0-1.4 seconds in JIT compilation per small fixture query.",
+    "The actual built MCP workflow exceeds its unchanged 20-second deadline.",
+    "The native source iterator does not exist before the generated migration."
+  ],
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "files": 17,
+      "tests": 189,
+      "log": "integration-green.log.gz"
+    },
+    "unit": {
+      "exitCode": 0,
+      "files": 886,
+      "tests": 9263,
+      "log": "unit-green.log.gz"
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "log": "typecheck.log.gz"
+    },
+    "lintChanged": {
+      "exitCode": 0,
+      "warnings": 0,
+      "log": "lint-changed.log.gz"
+    },
+    "lintGlobal": {
+      "exitCode": 0,
+      "warnings": 16,
+      "scope": "Import-order warnings outside changed files; no unrelated source edits made.",
+      "log": "lint-global.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "tables": 171,
+      "log": "docs.log.gz",
+      "checkpointLog": "docs-checkpoint.log.gz"
+    },
+    "schemaDrift": {
+      "exitCode": 0,
+      "result": "No schema changes",
+      "log": "no-drift.log.gz"
+    }
+  },
+  "qualified": [
+    "Own exact assignment input is accessible without broad Company Brain grants; other assignment inputs and wrong revision/digest references are unavailable.",
+    "Human source reads use current assignment authority and inherited source restrictions; a company professional cannot inherit repository access from the requester.",
+    "Native proposals retain assignment restrictions through acceptance; direct reads, search before LIMIT and proposal inspection share the same dependency closure.",
+    "Company knowledge and individual record grants remain independent; current source revocation and restricted/missing concealment regressions pass.",
+    "Deleting a logical source project leaves immutable company input history intact and makes the source unavailable.",
+    "Set-based owner/context/memory/record/input policies retain current grant locks and exact/current revision distinction; NULL dependency decisions refuse.",
+    "The actual built MCP workflow passes with its unchanged process deadline. Exact-reference company/human fixture planning/execution budgets remain 500 ms.",
+    "No parallel knowledge store, scheduler or execution ledger introduced."
+  ],
+  "retainedFailedGates": [
+    {
+      "log": "initial-owning-wire-failure.log.gz",
+      "result": "187 passed/1 failed across 16 files; built MCP process deadline exposed the human query-plan regression. Repaired in shared source/owner/context planning, without timeout increase."
+    },
+    {
+      "log": "retained-fixture-budget-failure.log.gz",
+      "result": "188 passed/1 failed across 17 files; the new small-fixture timing probe selected other retained HTTP fixture records. The exact-reference probe is now scoped to its seeded record; full HTTP15 and final owning189 pass."
+    }
+  ],
+  "queryPlanObservation": {
+    "beforeJitMs": 1378.98,
+    "beforeExecutionMs": 1389.301,
+    "afterExecutionMs": 104.624,
+    "afterPlanningMs": 1.106,
+    "afterTotalCost": 326681.44,
+    "scope": "Owned disposable human query-plan diagnostic, before removing temporary instrumentation; final exact-reference fixture budgets pass. Not a production SLA."
+  },
+  "notYetQualified": [
+    "Actual company Run admission and atomic initial prompt-source capture",
+    "Actual company ACP session/prompt/permission/host interruption and resume lifecycle",
+    "Company activity/read models and retry runtime",
+    "Company result-only Flow T20.1, installable specialist package and configured stand restart/independent verification",
+    "Remaining T20-T43 acceptance"
+  ],
+  "sourceSha256": {
+    "web/app/api/knowledge/__tests__/knowledge.integration.test.ts": "95bb670a010488d68a579f0c64d602b1cafac1efddb0dffd2236ebb45cf64d81",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "ab3c1c0d45fc859d29a51825a1bd918c65c8f9a47651785d01586786f86d8d30",
+    "web/lib/brain/knowledge-assignment-policy.ts": "c084a151c2c0b51749a93ce611a41a40662a1365429d228762ea3ac8e6b28c43",
+    "web/lib/brain/knowledge-context-policy.ts": "138134bb06774247ae4a665524df1f0cdfe427c9f657e4c533ce88e1a284474f",
+    "web/lib/brain/knowledge-proposal-query.ts": "ca1e63e6aad53234ee8ec174e0a523ac5d271861b5ccfa64c309491fe82d460e",
+    "web/lib/brain/knowledge-query-policy.ts": "2a7151e0065a7dde734eedde3c7fa0598e24d503ac8fad7c288b0baa53157ba9",
+    "web/lib/brain/knowledge-restrictions.ts": "6ea343e8dd181d99595d374ea9fb2faf46ea733d254ce1dee20d83f7d4862a66",
+    "web/lib/company/types.ts": "258408a72ff728ed04fe231c5af3533f2daaf077783d47a9108e99b843ad63df",
+    "web/lib/db/__tests__/native-source-array.integration.test.ts": "e44b71ad8024050bd87b5989292bba8d706e7754cf43d4492e0831b96d28bd06",
+    "web/lib/db/migrations/0228_native_source_array_planning.sql": "c0b6d379705cc65f31ef42f62a1f10af1a55c0f4253a8771f7e48e8fea815677",
+    "web/lib/db/migrations/meta/0228_snapshot.json": "715db5fc2c5c956f9c634e678fc939c4b934b7c780fd1b548518eb24d36e659d",
+    "web/lib/db/migrations/meta/_journal.json": "9c7f81d6a136820f31983d41b4b905b9655223f819d55e5a29f1c031d02a2189"
+  }
+}

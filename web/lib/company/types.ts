@@ -36,6 +36,14 @@ export const knowledgeAccessRestrictionSchema = z.union([
     .strict(),
   z
     .object({
+      kind: z.literal("assignment_input"),
+      assignmentId: postgresTextSchema.min(1).max(128),
+      inputRevision: z.number().int().positive().max(2147483647),
+      inputSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    })
+    .strict(),
+  z
+    .object({
       kind: z.literal("record"),
       recordId: postgresTextSchema.min(1).max(128),
     })

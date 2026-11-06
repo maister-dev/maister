@@ -1674,6 +1674,13 @@
       "when": 1794606477945,
       "tag": "0242_company_run_terminal_events",
       "breakpoints": true
+    },
+    {
+      "idx": 243,
+      "version": "7",
+      "when": 1794606477946,
+      "tag": "0243_native_source_array_planning",
+      "breakpoints": true
     }
   ]
 }

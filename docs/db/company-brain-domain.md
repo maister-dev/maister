@@ -208,3 +208,16 @@ Main `0232_company_grant_requests` adds nullable creation/revocation key and can
 Native company knowledge uses the existing company grants, run/assignment/input/configuration records and Brain proposal storage. Its resolved internal principal is company-bound and does not infer repository or personal-memory access. Read/propose requires the current professional grant, initiating-user matching grant, reviewed action limit and full source intersection; restricted record actions require both grants. SQL search policy and direct record/evidence/proposal checks share this boundary. Both grant sets bind continuation cursors.
 
 Existing `authority_snapshot.submit` stores internal policy v1 for legacy user/project-agent submissions and v2 for company executions. V2 retains primary professional authority ID/revision, empty confirmation classes, `initiator` with server user actor and current knowledge-grant ID/revision, and `execution: {runId, launchSnapshot}` with the exact version-1 company capture. These values are server computed and immutable; current permission checks never authorize from the retained JSON. Human review may append its independent v1 review policy without rewriting the submit witness. No new table, backfill, fabricated historical principal or migration is needed for the existing JSONB extension. HTTP request/record DTOs are unchanged; no client field can nominate authority. Actual company session launch and package/stand readiness remain separate gates.
+
+
+The internal native source union includes `assignment_input` with assignment ID,
+exact positive input revision and SHA-256 witness. It resolves against immutable
+main-store input history and current appointment/reader authority, then follows
+the input's own source restrictions. It creates no database foreign key to the
+source project or Brain record and does not confer Company Brain read or
+confirmation authority. Existing bounded JSONB arrays already store this shape;
+no migration rewrites historical source metadata. Main
+`0243_native_source_array_planning` adds the pure
+`native_knowledge_source_restrictions(jsonb)` iterator with a small-row planner
+estimate; this estimate never truncates the actual array. See the [company runtime
+source contract](../system-analytics/specialist-runtime.md).
