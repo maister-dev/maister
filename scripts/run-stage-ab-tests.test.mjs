@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import { laneConcurrency, lanePackages, laneSuites, vitestArgs, validateLaneReport, requiredIsolationCases, webShardFiles, parseLaneInvocation } from "./run-stage-ab-tests.mjs";
@@ -25,14 +26,14 @@ test("CLI accepts only valid web shards and preserves unsharded slices", () => {
   }
 });
 
-test("isolation CI parts retain the complete disjoint 19/31 whole-suite inventory", () => {
+test("isolation CI parts retain the complete disjoint 19/32 whole-suite inventory", () => {
   const first = parseLaneInvocation(["isolation", "--part", "1/2"], "darwin");
   const second = parseLaneInvocation(["isolation", "--part", "2/2"], "darwin");
 
   assert.deepEqual(first, { slice: "isolation", files: laneSuites.isolation.slice(0, 2) });
   assert.deepEqual(second, { slice: "isolation", files: laneSuites.isolation.slice(2) });
   assert.deepEqual([...first.files, ...second.files], laneSuites.isolation);
-  assert.deepEqual([first, second].map(({ files }) => files.reduce((total, file) => total + requiredIsolationCases[file].length, 0)), [19, 31]);
+  assert.deepEqual([first, second].map(({ files }) => files.reduce((total, file) => total + requiredIsolationCases[file].length, 0)), [19, 32]);
   assert.deepEqual(parseLaneInvocation(["isolation"], "darwin"), { slice: "isolation", files: laneSuites.isolation });
   for (const args of [["isolation", "--part", "0/2"], ["isolation", "--part", "3/2"],
     ["isolation", "--part", "1/3"], ["web", "--part", "1/2"], ["supervisor", "--part", "1/2"]])
@@ -139,6 +140,31 @@ test("the complete isolation manifest passes and rejects duplicate or skipped re
   assert.throws(() => validateLaneReport(skipped, files), /case failed or was skipped/);
 });
 
+test("the native boot reporter accepts exactly the nine declared production worker controls", () => {
+  const file = "test-support/__tests__/durable-workers-boot.integration.test.ts";
+  const source = readFileSync(new URL(`../web/${file}`, import.meta.url), "utf8");
+  const titles = [
+    ...Array.from(source.matchAll(/ownerKind: "([^"]+)"/gu), ([, kind]) =>
+      `applies the ${kind} owner after the production web restarts`),
+    ...Array.from(source.matchAll(/\bit\("([^"]+)"/gu), ([, title]) => title),
+  ];
+  const report = {
+    testResults: [{ name: `/repo/web/${file}`, assertionResults:
+      titles.map((title) => ({ title, status: "passed" })) }],
+    numFailedTests: 0, numPendingTests: 0, numTodoTests: 0,
+    numRuntimeErrorTestSuites: 0, success: true,
+  };
+
+  assert.equal(titles.length, 9);
+  validateLaneReport(report, [file]);
+  for (const missing of titles) {
+    const incomplete = structuredClone(report);
+
+    incomplete.testResults[0].assertionResults = incomplete.testResults[0].assertionResults.filter(({ title }) => title !== missing);
+    assert.throws(() => validateLaneReport(incomplete, [file]), /required case/u, missing);
+  }
+});
+
 test("the report rejects a duplicated selection and a name that only shares a suffix", () => {
   const file = laneSuites.web[0];
   const result = (name) => ({ name, assertionResults: [{ title: "control", status: "passed" }] });
@@ -161,15 +187,15 @@ const linuxTitles = [
   "LI-parent: startup ready and active-probe parent death close the namespace before exit-sweep containment",
 ];
 
-test("platform selection requires Linux55 and preserves Darwin50", () => {
+test("platform selection requires Linux56 and preserves Darwin51", () => {
   const linux = parseLaneInvocation(["isolation"], "linux");
   const darwin = parseLaneInvocation(["isolation"], "darwin");
 
   assert.deepEqual(linux.files, [...laneSuites.isolation, linuxOwner]);
-  assert.equal(linux.files.flatMap((file) => requiredIsolationCases[file]).length, 55);
+  assert.equal(linux.files.flatMap((file) => requiredIsolationCases[file]).length, 56);
   assert.deepEqual(requiredIsolationCases[linuxOwner], linuxTitles);
   assert.deepEqual(darwin.files, laneSuites.isolation);
-  assert.equal(darwin.files.flatMap((file) => requiredIsolationCases[file]).length, 50);
+  assert.equal(darwin.files.flatMap((file) => requiredIsolationCases[file]).length, 51);
 });
 
 test("Linux isolation refuses parts and unknown platforms refuse selection", () => {

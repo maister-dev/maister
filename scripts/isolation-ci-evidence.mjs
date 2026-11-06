@@ -105,13 +105,14 @@ export async function aggregateIsolationEvidence(directory, identity, jobResult)
   assert.equal(new Set(stages.map(({ receipt }) => receipt.invocationId)).size, 4, "outer isolation invocations must be distinct");
   const parts = stages.filter(({ receipt }) => receipt.stage === "part");
   const files = parts.flatMap((row) => row.files);
+  const cases = laneSuites.isolation.reduce((total, file) => total + requiredIsolationCases[file].length, 0);
 
   assert.deepEqual(files, laneSuites.isolation, "combined isolation inventory is incomplete or duplicated");
-  assert.equal(parts.reduce((total, row) => total + row.cases, 0), 50, "combined isolation must retain all original 50 cases");
+  assert.equal(parts.reduce((total, row) => total + row.cases, 0), cases, "combined isolation must retain the exact required case manifest");
 
   return {
     schema: "maister.isolation-ci-combined.v1", identity, outcome: "passed", platform: "darwin/x64", node: "24.19.0",
-    files, cases: 50, preflights: 2, jobResult,
+    files, cases, preflights: 2, jobResult,
     stages: stages.map(({ receipt, receiptSha256 }) => ({ ...receipt, receiptSha256 })),
   };
 }
