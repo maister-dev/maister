@@ -226,6 +226,8 @@ describe("AttachEditModal configuration section (ADR-111)", () => {
                   schemaVersion: 1,
                   reviewerUserId: "actual-operator",
                   reviewedAt: "2026-11-07T07:00:00.000Z",
+                  sourceRevision: 1,
+                  sourceSha256: "0".repeat(64),
                 }
               : null,
           },
@@ -243,6 +245,67 @@ describe("AttachEditModal configuration section (ADR-111)", () => {
       expect(calls).toHaveLength(1);
       expect(calls[0].schedules[0].reviewForAssignments).toBe(expected);
       expect(JSON.stringify(calls)).not.toContain("reviewerUserId");
+    },
+  );
+
+  it.each([false, true])(
+    "sets and clears separate event context sharing through the form (previous approval: %s)",
+    async (sharing) => {
+      const calls: Array<{
+        schedules: readonly {
+          reviewForAssignments?: boolean;
+          shareEventContext?: boolean;
+        }[];
+      }> = [];
+
+      vi.stubGlobal(
+        "fetch",
+        vi.fn<FetchLike>(async (_input, init) => {
+          calls.push(JSON.parse(String(init?.body)));
+
+          return new Response(JSON.stringify({ ok: true }), {
+            headers: { "content-type": "application/json" },
+          });
+        }),
+      );
+      render({
+        ...buildRow(),
+        schedules: [
+          {
+            id: "91d76dcb-8fbd-4f77-a860-78e1f011549d",
+            triggerType: "event",
+            eventKinds: ["run.done"],
+            enabled: true,
+            assignmentReview: {
+              schemaVersion: 2,
+              reviewerUserId: "actual-operator",
+              reviewedAt: "2026-11-07T07:00:00.000Z",
+              sourceRevision: 1,
+              sourceSha256: "0".repeat(64),
+              eventCursor: "91",
+              sourceSharing: sharing ? "producing_run" : "none",
+            },
+          },
+        ],
+      });
+      const checkbox = document.body.querySelector<HTMLInputElement>(
+        'input[aria-describedby="schedule-sharing-help-0"]',
+      );
+
+      expect(checkbox).not.toBeNull();
+      expect(checkbox!.checked).toBe(sharing);
+      await toggleCheckbox(checkbox!);
+      await click(findButton("agentsAttach.save"));
+      await flush();
+      expect(calls).toHaveLength(1);
+      expect(calls[0].schedules[0]).toMatchObject({
+        reviewForAssignments: true,
+        ...(!sharing ? { shareEventContext: true } : {}),
+      });
+      expect(calls[0].schedules[0].shareEventContext).toBe(
+        sharing ? undefined : true,
+      );
+      expect(JSON.stringify(calls)).not.toContain("eventCursor");
     },
   );
 

@@ -30,6 +30,10 @@ import {
   queryErrorDiagnostics,
   redactQueryError,
 } from "@/lib/db/pg-error";
+import {
+  resolveAgentChainDepth,
+  resolveProjectEventChainDepth,
+} from "@/lib/agents/chain-depth";
 import { prepareProjectCoordinatorAssignmentAdmission } from "@/lib/specialist-assignments/project-admission";
 import { activateInitialSpecialistAssignmentRunInTransaction } from "@/lib/specialist-assignments/store";
 import { contentDigest } from "@/lib/evaluations/digest";
@@ -1959,6 +1963,32 @@ async function* executeFlowLaunch(
             "CONFIG",
             "Project assignment coordinator admission requires its responsible professional role",
           );
+        const nativeChain = input.specialistAssignment
+          ? input.specialistAssignment.source?.kind === "event"
+            ? await resolveProjectEventChainDepth(
+                tx,
+                project.id,
+                input.specialistAssignment.source.eventId,
+              )
+            : await resolveAgentChainDepth({
+                db: tx,
+                trigger: {
+                  source: input.triggerSource ?? "manual",
+                  eventId: input.triggerEventId,
+                },
+              })
+          : null;
+
+        if (nativeChain?.atCap)
+          throw new MaisterError(
+            "PRECONDITION",
+            "Project coordinator event chain is exhausted",
+            {
+              details: {
+                reason: nativeChain.reason ?? "chain_depth_exhausted",
+              },
+            },
+          );
         const assignmentAdmission =
           input.specialistAssignment && agentId
             ? await prepareProjectCoordinatorAssignmentAdmission(
@@ -1971,6 +2001,7 @@ async function* executeFlowLaunch(
                   triggerEventId: input.triggerEventId ?? null,
                   agentScheduleId: input.agentScheduleId ?? null,
                   scheduledRequestSnapshot,
+                  agentChainDepth: nativeChain?.depth,
                   agentId,
                   taskId: task.id,
                   executionPolicy,
@@ -2066,6 +2097,7 @@ async function* executeFlowLaunch(
             // agent's persona on every ai_coding node.
             agentId: agentId ?? null,
             sourceAgentId: agentId ?? null,
+            ...(nativeChain ? { agentChainDepth: nativeChain.depth } : {}),
             launchedAt: agentActivity ? sql`CURRENT_TIMESTAMP` : null,
             activitySortAt: agentActivity ? sql`CURRENT_TIMESTAMP` : null,
             activityTimestampProvenance: agentActivity ? "launch" : null,

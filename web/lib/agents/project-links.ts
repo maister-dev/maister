@@ -34,6 +34,7 @@ import { parseProjectSourceReview } from "@/lib/agents/project-source-review-typ
 import {
   authorizeProjectSourceReview,
   projectSourceContentDigest,
+  captureProjectEventCursor,
 } from "@/lib/agents/project-source-review";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -63,6 +64,7 @@ export type AgentScheduleInput = {
   enabled?: boolean;
   requestAtLaunch?: string | null;
   reviewForAssignments?: boolean;
+  shareEventContext?: boolean;
 };
 
 export type AttachedAgentView = {
@@ -597,11 +599,25 @@ export async function updateAgentLink(
   const normalizedSchedules = input.patch.schedules?.map((schedule) => ({
     id: schedule.id,
     reviewForAssignments: schedule.reviewForAssignments ?? false,
+    shareEventContext: schedule.shareEventContext ?? false,
     values: normalizeSchedule(schedule, now),
   }));
   const reviewsNativeSources =
     normalizedSchedules?.some((schedule) => schedule.reviewForAssignments) ??
     false;
+
+  if (
+    normalizedSchedules?.some(
+      (schedule) =>
+        schedule.shareEventContext &&
+        (!schedule.reviewForAssignments ||
+          schedule.values.triggerType !== "event"),
+    )
+  )
+    throw new MaisterError(
+      "CONFIG",
+      "Event context sharing requires explicit review of an event source",
+    );
 
   if (reviewsNativeSources) {
     if (input.actorUserId == null)
@@ -684,6 +700,13 @@ export async function updateAgentLink(
         input.projectId,
       );
     }
+    const eventCursor = normalizedSchedules?.some(
+      (schedule) =>
+        schedule.reviewForAssignments &&
+        schedule.values.triggerType === "event",
+    )
+      ? await captureProjectEventCursor(tx, input.projectId)
+      : null;
     const set: Record<string, unknown> = { updatedAt: now };
 
     if (input.patch.enabled !== undefined) set.enabled = input.patch.enabled;
@@ -847,22 +870,48 @@ export async function updateAgentLink(
           schedule.values.requestAtLaunch === undefined
             ? (previous?.requestAtLaunch ?? null)
             : schedule.values.requestAtLaunch;
-        const projectSourceReview: ProjectSourceReview | null =
-          reviewsNativeSources &&
+        let projectSourceReview: ProjectSourceReview | null = null;
+
+        if (
           schedule.reviewForAssignments &&
           input.actorUserId != null &&
           schedule.values.triggerType !== "mention"
-            ? {
-                schemaVersion: 1,
-                reviewerUserId: input.actorUserId,
-                reviewedAt: now.toISOString(),
-                sourceRevision: (linkRows[0].schedulesRevision as number) + 1,
-                sourceSha256: projectSourceContentDigest({
-                  ...schedule.values,
-                  requestAtLaunch,
-                }),
-              }
-            : null;
+        ) {
+          const review = {
+            reviewerUserId: input.actorUserId,
+            reviewedAt: now.toISOString(),
+            sourceRevision: (linkRows[0].schedulesRevision as number) + 1,
+            sourceSha256: projectSourceContentDigest({
+              ...schedule.values,
+              requestAtLaunch,
+            }),
+          };
+
+          if (schedule.values.triggerType === "event") {
+            if (eventCursor === null)
+              throw new MaisterError(
+                "CONFIG",
+                "Reviewed event source requires its observed enrollment cursor",
+              );
+            const previousReview = parseProjectSourceReview(
+              previous?.projectSourceReview,
+            );
+            const enrollmentCursor =
+              previousReview?.schemaVersion === 2 &&
+              previousReview.sourceSha256 === review.sourceSha256
+                ? previousReview.eventCursor
+                : eventCursor;
+
+            projectSourceReview = {
+              ...review,
+              schemaVersion: 2,
+              eventCursor: enrollmentCursor,
+              sourceSharing: schedule.shareEventContext
+                ? "producing_run"
+                : "none",
+            };
+          } else projectSourceReview = { ...review, schemaVersion: 1 };
+        }
 
         if (schedule.id) {
           if (

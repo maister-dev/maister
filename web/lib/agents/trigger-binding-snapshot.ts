@@ -63,6 +63,14 @@ export async function captureTriggerBindingSnapshot(
 
     if (review === null)
       return parseAgentTriggerBindingSnapshot({ version: 1, ...base });
+    if (source.triggerType === "event" && review.schemaVersion !== 2)
+      throw new MaisterError(
+        "NEEDS_INPUT",
+        "Native project event subscriptions require a new explicit event review",
+        {
+          details: { reason: "project_event_review_required" },
+        },
+      );
     if (review.sourceSha256 !== projectSourceContentDigest(source))
       throw new MaisterError(
         "CONFIG",

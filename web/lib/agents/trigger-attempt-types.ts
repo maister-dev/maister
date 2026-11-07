@@ -104,12 +104,15 @@ export const projectTriggerBindingSnapshotSchema = legacyBindingSchema
           snapshot.eventKinds.length > 0 &&
           snapshot.eventKinds.length <= 16;
 
-    if (!valid)
+    if (
+      !valid ||
+      (snapshot.review.schemaVersion === 2 && snapshot.triggerType !== "event")
+    )
       context.addIssue({
         code: "custom",
         path: ["triggerType"],
         message:
-          "Reviewed project invocation must retain its actual cron or event selector",
+          "Reviewed project invocation must retain its actual cron or event selector and review kind",
       });
   });
 

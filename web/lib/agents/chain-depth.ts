@@ -27,7 +27,8 @@ export type ChainDepth = {
   // consumer's idempotent contract means a throw redelivers the whole window
   // forever.
   atCap: boolean;
-  reason?: "company_event_chain_unclassified";
+  reason?:
+    "company_event_chain_unclassified" | "project_event_chain_unclassified";
 };
 
 /** Native coordinator terminal facts are system-authored but still spend their producing Run's event-chain budget. */
@@ -76,6 +77,49 @@ export async function resolveCompanyEventChainDepth(
       reason: "company_event_chain_unclassified",
     };
   }
+  const depth = row.agent_chain_depth + 1;
+
+  return { depth, atCap: depth > cap };
+}
+
+/** Project professional events retain the producing chain even for system-authored Flow terminal facts. */
+export async function resolveProjectEventChainDepth(
+  db: SqlTransaction,
+  projectId: string,
+  eventId: number,
+): Promise<ChainDepth> {
+  const row = (
+    await db.execute(sql`
+    SELECT event.actor_type,event.run_id,producing.agent_chain_depth,
+      (producing.knowledge_access->>'state'='complete' AND EXISTS (
+        SELECT 1 FROM specialist_run_links appointment WHERE appointment.run_id=producing.id
+      ) AND (producing.trigger_source IN ('manual','cron','webhook') OR (producing.trigger_source='domain_event' AND EXISTS (
+        SELECT 1 FROM agent_trigger_attempts invocation WHERE invocation.reserved_run_id=producing.id
+          AND invocation.project_id=producing.project_id AND invocation.company_id IS NULL
+          AND invocation.trigger_source='domain_event' AND invocation.trigger_event_id=producing.trigger_event_id
+          AND invocation.schedule_id=producing.agent_schedule_id
+      )))) AS chain_classified
+    FROM domain_events event LEFT JOIN runs producing ON producing.id=event.run_id
+      AND producing.project_id=event.project_id AND producing.company_id IS NULL
+    WHERE event.id=${eventId} AND event.project_id=${projectId} AND event.company_id IS NULL
+    FOR SHARE OF event
+  `)
+  ).rows[0];
+  const cap = maxAgentChainDepth();
+
+  if (row?.actor_type === "user" && row.run_id === null)
+    return { depth: 0, atCap: cap <= 0 };
+  if (
+    row?.chain_classified !== true ||
+    typeof row.agent_chain_depth !== "number" ||
+    !Number.isSafeInteger(row.agent_chain_depth) ||
+    row.agent_chain_depth < 0
+  )
+    return {
+      depth: cap,
+      atCap: true,
+      reason: "project_event_chain_unclassified",
+    };
   const depth = row.agent_chain_depth + 1;
 
   return { depth, atCap: depth > cap };

@@ -1390,7 +1390,7 @@ export const agentSchedules = pgTable(
     ),
     projectSourceReviewShape: check(
       "agent_schedules_project_review_check",
-      sql`(${t.projectSourceReview} IS NULL OR (${t.projectId} IS NOT NULL AND ${t.companyId} IS NULL AND ${t.triggerType} IN ('cron','event') AND ${projectSourceReviewShape(sql`${t.projectSourceReview}`)})) IS TRUE`,
+      sql`(${t.projectSourceReview} IS NULL OR (${t.projectId} IS NOT NULL AND ${t.companyId} IS NULL AND ${t.triggerType} IN ('cron','event') AND (${t.projectSourceReview}->'schemaVersion'<>'2'::jsonb OR ${t.triggerType}='event') AND ${projectSourceReviewShape(sql`${t.projectSourceReview}`)})) IS TRUE`,
     ),
     companyCreation: uniqueIndex("agent_schedules_company_creation_uq")
       .on(t.companyId, t.createdBy, t.creationKey)
@@ -9024,6 +9024,9 @@ export const domainEvents = pgTable(
     companyKindIdIdx: index("domain_events_company_kind_id_idx")
       .on(t.companyId, t.kind, t.id)
       .where(sql`${t.companyId} IS NOT NULL`),
+    projectSequenceIdx: index("domain_events_project_sequence_idx")
+      .on(t.projectId, t.id)
+      .where(sql`${t.projectId} IS NOT NULL`),
     actorTypeCheck: check(
       "domain_events_actor_type_check",
       sql`${t.actorType} in ('user', 'system', 'agent')`,

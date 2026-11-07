@@ -31,6 +31,7 @@ const scheduleSchema = z
     enabled: z.boolean().optional(),
     requestAtLaunch: z.string().nullable().optional(),
     reviewForAssignments: z.boolean().optional(),
+    shareEventContext: z.boolean().optional(),
   })
   .strict();
 

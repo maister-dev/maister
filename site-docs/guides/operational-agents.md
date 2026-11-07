@@ -118,7 +118,7 @@ recover that batch before starting another; accepted items are not duplicated.
 
 ## Review project automation input
 
-For a professional's cron source, select **Review for specialist assignments**
+For a professional's cron or event source, select **Review for specialist assignments**
 before saving. MAIster checks the current pinned role and your project settings
 authority, then records your review of the selector and recurring request.
 The project agent API exposes this read-only witness as `assignmentReview`.
@@ -141,8 +141,26 @@ the professional. Updating source settings applies to future invocations and
 preserves the original input of retained attempts.
 
 Execution results and original scheduled input are inspectable separately. A valid
-Run result remains subject to assignment acceptance. Native project event
-assignment routing and installable stand-pilot qualification remain in progress.
+Run result remains subject to assignment acceptance. Installable stand-pilot
+qualification remains in progress.
+
+For an event source, select the matching event kinds and review it. Only events
+after its observed enrollment point are eligible. Saving an unchanged selector
+preserves that point; a changed selector establishes a new one. Earlier reviews
+require explicit event review before native assignments can start.
+
+Run-derived events additionally require **Share the producing run context**.
+This shares only the matching run's classified evidence and assignment inputs with
+the appointed specialist or coordinator roles. Each role still needs current
+access to underlying records and private memory. Unchecking sharing withdraws
+access for admitted work too; reapproval restores eligible access without changing
+original inputs. A direct user-authored project fact with no producing run needs
+no run-context sharing. Missing or unclassified provenance refuses explicitly.
+
+Each matching professional receives its own assignment. Repeated event delivery
+retains the same Run, self-authored facts are suppressed, and chained events share
+a bounded recursion budget even when a coordinator's completion is system-authored.
+Inspect the source incident when review, sharing or evidence is unavailable.
 
 ## Address a professional in a task comment
 

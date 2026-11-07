@@ -31,9 +31,27 @@ export const projectCronAppointmentSchema = z
 export type ProjectCronAppointment = z.infer<
   typeof projectCronAppointmentSchema
 >;
+export const projectEventAppointmentSchema = projectCommentAppointmentSchema
+  .extend({ kind: z.literal("event") })
+  .strict();
+export type ProjectEventAppointment = z.infer<
+  typeof projectEventAppointmentSchema
+>;
+export const PROJECT_EVENT_REASON_CODES = [
+  "project_event_review_required",
+  "project_event_appointment_unavailable",
+  "project_event_source_changed",
+  "project_event_sharing_required",
+  "project_event_source_unclassified",
+  "project_event_chain_unclassified",
+  "project_event_appointment_required",
+  "project_event_appointment_mismatch",
+  "project_event_source_kinds_invalid",
+] as const;
 export const projectSourceAppointmentSchema = z.union([
   projectCommentAppointmentSchema,
   projectCronAppointmentSchema,
+  projectEventAppointmentSchema,
 ]);
 export type ProjectSourceAppointment = z.infer<
   typeof projectSourceAppointmentSchema

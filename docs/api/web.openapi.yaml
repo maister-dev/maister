@@ -25827,7 +25827,10 @@ components:
         current settings operator using the installed specialist pin. It applies
         to cron/event sources only. False/omitted clears review; ordinary edits
         and request clearing do not require a resolvable pin merely to withhold
-        approval. Review metadata itself is server-only.
+        approval. Event-only shareEventContext=true requires review intent and
+        separately approves producing-run context sharing. Event review v2 records
+        an observed enrollment cursor; unchanged selectors retain it across saves.
+        Old event review v1 needs explicit new review. Review metadata is server-only.
       required: [triggerType]
       properties:
         id: { type: string, format: uuid }
@@ -25844,42 +25847,83 @@ components:
           nullable: true
           description: Optional literal cron request; limit applies after normalization.
         reviewForAssignments: { type: boolean, default: false }
+        shareEventContext: { type: boolean, default: false }
     ProjectSourceReview:
       nullable: true
-      type: object
-      properties:
-        schemaVersion:
-          type: number
-          enum:
-            - 1
-        reviewerUserId:
-          type: string
-          minLength: 1
-          maxLength: 128
-          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
-        reviewedAt:
-          type: string
-          format: date-time
-          pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z))$
-        sourceRevision:
-          type: integer
-          minimum: 1
-          maximum: 2147483647
-        sourceSha256:
-          type: string
-          pattern: ^[a-f0-9]{64}$
-      required:
-        - schemaVersion
-        - reviewerUserId
-        - reviewedAt
-        - sourceRevision
-        - sourceSha256
-      additionalProperties: false
+      anyOf:
+        - type: object
+          properties:
+            schemaVersion:
+              type: number
+              enum:
+                - 1
+            reviewerUserId:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+            reviewedAt:
+              type: string
+              format: date-time
+              pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z))$
+            sourceRevision:
+              type: integer
+              minimum: 1
+              maximum: 2147483647
+            sourceSha256:
+              type: string
+              pattern: ^[a-f0-9]{64}$
+          required:
+            - schemaVersion
+            - reviewerUserId
+            - reviewedAt
+            - sourceRevision
+            - sourceSha256
+          additionalProperties: false
+        - type: object
+          properties:
+            schemaVersion:
+              type: number
+              enum:
+                - 2
+            reviewerUserId:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+            reviewedAt:
+              type: string
+              format: date-time
+              pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z))$
+            sourceRevision:
+              type: integer
+              minimum: 1
+              maximum: 2147483647
+            sourceSha256:
+              type: string
+              pattern: ^[a-f0-9]{64}$
+            eventCursor:
+              type: string
+              pattern: ^(0|[1-9][0-9]{0,18})$
+            sourceSharing:
+              type: string
+              enum:
+                - none
+                - producing_run
+          required:
+            - schemaVersion
+            - reviewerUserId
+            - reviewedAt
+            - sourceRevision
+            - sourceSha256
+            - eventCursor
+            - sourceSharing
+          additionalProperties: false
     AgentScheduleView:
       type: object
       additionalProperties: false
-      description: Implemented source review metadata and native project cron
-        intake; native project event assignment routing remains pending T22. Explicit review intent in a collection save by a current
+      description: Implemented source review metadata and native project cron/event
+        intake. Explicit review intent in a collection save by a current
         settings operator review native cron/event sources using the effective
         installed project pin. Null means unreviewed history, ordinary agent or
         mention source. Request bodies cannot supply review metadata. Review is

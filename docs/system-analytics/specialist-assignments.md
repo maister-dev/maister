@@ -242,7 +242,7 @@ Existing legacy workspace/runner launch overrides retain their original contract
 
 ### Project automation review
 
-**Implemented source review storage/API; native cron/event dispatch qualification remains T22.**
+**Implemented source review and native cron/event admission; installable stand qualification remains separate.**
 
 Historical project schedules have no recorded human authority. Migration leaves
 their new `assignmentReview` null, without changing `createdBy`, original request
@@ -253,7 +253,7 @@ effective installed project definition declares a specialist. The server checks
 the current active operator's project settings authority inside the save
 transaction. Ordinary sources and mentions retain null review metadata.
 
-The read-only version-one review contains `reviewerUserId`, UTC `reviewedAt`, the
+The read-only base review contains `reviewerUserId`, UTC `reviewedAt`, the
 accepted collection `sourceRevision` and `sourceSha256`. The digest covers the
 normalized selector and literal recurring request, with sorted event kinds;
 enabled state, runtime counters and next-fire time are separate eligibility data.
@@ -266,7 +266,7 @@ the complete save, including review SET/CLEAR, so concurrent editors cannot
 combine one user's authority with another user's request.
 Ordinary source edits and clearing without approval preserve the existing broken-pin
 repair path. Approval requires the actual current pin; no catalog substitute or
-inferred historical approver is used. The cron editor's review checkbox sends only
+inferred historical approver is used. The cron/event editor's review checkbox sends only
 intent. It never submits reviewer identity, permission or confirmation metadata.
 The existing API requires repository-input visibility for this projection. The
 project server component withholds both literal request and review metadata from
@@ -275,8 +275,9 @@ readers without that visibility; a content digest cannot bypass that boundary.
 Native project cron dispatch validates the reviewed source and current initiating
 authority, captures the review in a versioned invocation snapshot and preserves
 the existing version-one recurring request in its separate input plane. The next
-section defines its canonical claim/Run admission. Native project event routing
-remains T22 work; source review alone does not establish that path's readiness.
+section defines its canonical claim/Run admission. Native event review additionally
+captures enrollment and separate sharing approval under the event contract below;
+source review alone is not a general knowledge or execution grant.
 
 ### Reviewed project cron invocation
 
@@ -312,6 +313,64 @@ revocation, changed-source refusal, reserved identity and lost-settlement recove
 are qualified through the actual registered scheduler, default standalone and
 coordinator drivers, real supervisor and controlled ACP processes. These platform
 checks do not establish real-model or installable stand-pilot readiness.
+
+### Reviewed project event invocation
+
+**Implemented native platform contract; installable stand qualification remains separate.**
+
+New native project event reviews use review version 2, retaining the existing
+reviewer/time/collection revision/content digest and adding `eventCursor` and
+`sourceSharing`. The cursor is the server-observed maximum event ID for this
+project at review, represented as a canonical decimal string (zero means an
+observed empty outbox). Native subscriptions consume only greater event IDs.
+Rereview of an unchanged selector retains its observed enrollment cursor, including
+sharing changes and ordinary attachment saves; queued matching events are not
+silently skipped. A new, previously unreviewed or changed selector captures a new
+cursor. Review timestamps do not invent a temporal validity interval. Existing event
+review v1 remains inspectable and requires an explicit new review before native
+event admission. Cron reviews remain v1, and no old attribution is backfilled.
+
+`reviewForAssignments:true` approves source selection. The separate event-only
+`shareEventContext:true` approves `sourceSharing:producing_run`; omission/false
+records `sourceSharing:none`. Sharing cannot be requested without review intent
+or through a cron/mention source. The server records both under the existing
+collection CAS and actual operator authority. This authorizes only the matching
+producing Run's classified context for the appointed professional/Flow roles.
+Each recipient still needs current access to underlying records, company sources
+and private memory. It does not create general assignment or Brain read access.
+
+The common version-3 project binding snapshot captures this review. Native event
+origin is `{kind:event,eventId,subscriptionId}` and the requester/destination come
+from the actual review operator. Input and stored trigger payload contain only
+validated event/kind/project/task/Run identifiers, never an unvalidated payload
+body. Server-recorded source restrictions survive into the assignment and Run
+independently of model citations. A user-authored project fact without a producing
+Run has its project context; an agent/system fact with missing or unclassified
+provenance refuses explicitly. A foreign/missing producing Run is never treated
+as a public project event.
+
+The source appointment validates the actual open claim, current source/review,
+watermark, event, producing Run and exact reserved identity at fresh admission.
+The registered consumer retains existing claim/replay ledgers, with independent
+native subscriptions, bounded source pages, explicit malformed-source handling,
+self-exclusion using the producing professional and current chain caps. Native
+project coordinators record their actual chain depth. A historical default zero
+without a classified native appointment does not prove a chain root; system-authored
+terminal facts inherit their producing chain. Existing per-professional event-kind
+exclusivity remains; distinct professionals consume their own subscription independently.
+
+Permission to inspect a producing assignment input is constrained by the real
+event appointment, exact source closure, current receiving appointment/provider,
+initiating authority and live sharing approval. Unrelated inputs remain denied.
+Withdrawing sharing also governs already admitted event work before disclosure or
+effects; reapproval can restore access without rewriting its original input or
+executing a duplicate delivery. Selector/enrollment changes govern fresh intake.
+Real registered-consumer qualification covers standalone and coordinator completion,
+cursor rewind, old-event exclusion, sharing revocation/reapproval, unrelated input
+refusal, missing sharing, direct user facts, unknown provenance, self/depth bounds,
+25 malformed sources before healthy work and preserved evidence. These checks use
+local PostgreSQL and the real supervisor with controlled ACP; they do not establish
+installable stand-pilot readiness.
 
 ### Native task-comment intake
 

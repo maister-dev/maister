@@ -5636,6 +5636,19 @@ selector, fence and original cron request or owned source event. Existing identi
 guards retain immutable attempt history. No new table, FK or execution ledger is
 added; deleting a project retains its existing cascade and needs no Brain access.
 
+Main `0258_project_event_context` adds the closed version-two event review to
+existing source heads and project v3 claim snapshots. It retains recorded review
+metadata and adds the observed canonical decimal `eventCursor` (0 through signed
+Postgres bigint maximum) and explicit `sourceSharing:none|producing_run`. Version
+two source reviews are event-only. Historical review v1 and existing claim bytes
+remain untouched and receive no inferred enrollment or sharing permission. The
+replacement INSERT guard requires a current v2 review for fresh reviewed event
+claims, an exact source/review/fence, actual project event and event ID above the
+recorded cursor. Cron v1 review, company v2 claims and all immutable history retain
+their existing contracts. `domain_events_project_sequence_idx(project_id,id)` is
+partial to actual project facts and bounds observed-cursor lookup. No table or
+Brain FK is added; populated main-only upgrade and project deletion remain valid.
+
 The additive input fields have no independent lifecycle or cascade.
 
 ```mermaid

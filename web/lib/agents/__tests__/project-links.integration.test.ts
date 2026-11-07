@@ -229,6 +229,7 @@ it("retains server-reviewed native automation authority with atomic CAS and expl
       triggerType: "event" as const,
       eventKinds: ["run.done"],
       reviewForAssignments: true,
+      shareEventContext: true,
     },
     { triggerType: "mention" as const },
   ];
@@ -264,7 +265,12 @@ it("retains server-reviewed native automation authority with atomic CAS and expl
       },
     });
     expect(reviewed.schedules[1]).toMatchObject({
-      assignmentReview: { reviewerUserId: reviewer },
+      assignmentReview: {
+        schemaVersion: 2,
+        reviewerUserId: reviewer,
+        sourceSharing: "producing_run",
+        eventCursor: expect.stringMatching(/^(0|[1-9][0-9]*)$/),
+      },
     });
     expect(reviewed.schedules[2]).toMatchObject({ assignmentReview: null });
     const stored = (
@@ -373,14 +379,80 @@ it("retains server-reviewed native automation authority with atomic CAS and expl
     expect(
       competing.find((result) => result.status === "rejected"),
     ).toMatchObject({ reason: { code: "CONFLICT" } });
+    const beforeResave = await current();
+    const originalCron = beforeResave.schedules.find(
+      (source) => source.triggerType === "cron",
+    )!;
+
+    expect(originalCron.requestAtLaunch).toBe(
+      `Request reviewed by ${originalCron.assignmentReview?.reviewerUserId}`,
+    );
+    const priorEvent = beforeResave.schedules.find(
+      (source) => source.triggerType === "event",
+    )!;
+    const observed = (
+      await pool.query<{ id: string }>(
+        "INSERT INTO domain_events(kind,project_id,actor_type,actor_id,payload,occurred_at) VALUES('task.created',$1,'user',$2,'{}'::jsonb,clock_timestamp()) RETURNING id",
+        [fx.projectId, reviewer],
+      )
+    ).rows[0]!;
+
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        actorUserId: secondReviewer,
+        patch: {
+          schedulesRevision: beforeResave.schedulesRevision,
+          schedules: beforeResave.schedules.map((source) => ({
+            ...source,
+            reviewForAssignments: source.triggerType !== "mention",
+          })),
+        },
+      },
+      db,
+    );
+    const resaved = await current();
+    const resavedEvent = resaved.schedules.find(
+      (source) => source.triggerType === "event",
+    )!;
+
+    expect(resavedEvent.assignmentReview).toMatchObject({
+      schemaVersion: 2,
+      eventCursor:
+        priorEvent.assignmentReview?.schemaVersion === 2
+          ? priorEvent.assignmentReview.eventCursor
+          : undefined,
+    });
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        actorUserId: secondReviewer,
+        patch: {
+          schedulesRevision: resaved.schedulesRevision,
+          schedules: resaved.schedules.map((source) => ({
+            ...source,
+            ...(source.triggerType === "event"
+              ? { eventKinds: ["run.failed"] }
+              : {}),
+            reviewForAssignments: source.triggerType !== "mention",
+          })),
+        },
+      },
+      db,
+    );
+    expect(
+      (await current()).schedules.find(
+        (source) => source.triggerType === "event",
+      )!.assignmentReview,
+    ).toMatchObject({ schemaVersion: 2, eventCursor: String(observed.id) });
     const retained = await current();
     const retainedCron = retained.schedules.find(
       (source) => source.triggerType === "cron",
     )!;
 
-    expect(retainedCron.requestAtLaunch).toBe(
-      `Request reviewed by ${retainedCron.assignmentReview?.reviewerUserId}`,
-    );
+    expect(retainedCron.requestAtLaunch).toBe(originalCron.requestAtLaunch);
     await updateAgentLink(
       {
         projectId: fx.projectId,

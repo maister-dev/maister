@@ -8,7 +8,7 @@ import type { DomainEventConsumer } from "@/lib/domain-events/consumers";
 import type { DomainEventRow, ProjectDomainEventRow } from "@/lib/db/schema";
 import type { ProjectSourceReview } from "@/lib/agents/project-source-review-types";
 
-import { and, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, lte, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { isProjectDomainEvent } from "@/lib/domain-events/scope";
@@ -18,7 +18,10 @@ import {
   claimEventAgentAttempt,
   settleAgentTriggerAttempt,
 } from "@/lib/agents/trigger-attempts";
-import { resolveAgentChainDepth } from "@/lib/agents/chain-depth";
+import {
+  resolveAgentChainDepth,
+  resolveProjectEventChainDepth,
+} from "@/lib/agents/chain-depth";
 import { dispatchCompanyAgentEvents } from "@/lib/agents/company-event-dispatch";
 import { launchAgentRun, type LaunchAgentRunResult } from "@/lib/agents/launch";
 import { MENTION_SUPPRESSION_STATUSES } from "@/lib/agents/summonability";
@@ -34,8 +37,12 @@ import { recordTaskActivityOnce } from "@/lib/social/activity";
 import {
   PROJECT_COMMENT_REASON_CODES,
   PROJECT_CRON_REASON_CODES,
+  PROJECT_EVENT_REASON_CODES,
 } from "@/lib/specialist-assignments/project-source-types";
 import { isNativeProjectSpecialist } from "@/lib/specialist-assignments/project-specialist";
+import { submitProjectEventAssignment } from "@/lib/specialist-assignments/project-event-intake";
+import { projectEventSourceReviewSchema } from "@/lib/agents/project-source-review-types";
+import { projectTriggerBindingSnapshotSchema } from "@/lib/agents/trigger-attempt-types";
 import { submitProjectCronAssignment } from "@/lib/specialist-assignments/project-cron-intake";
 import { submitProjectCommentAssignment } from "@/lib/specialist-assignments/project-comment-intake";
 
@@ -376,6 +383,8 @@ type EventMatchRow = {
   agentId: string;
   projectId: string;
   eventMatch: { kinds?: string[] } | null;
+  projectSourceReview: ProjectSourceReview | null;
+  bindingRevision: number;
 };
 
 type ClarificationAnswerTarget = {
@@ -872,151 +881,341 @@ export function buildAgentTriggersConsumer(
           });
         }
 
-        const rows: EventMatchRow[] = await _db
-          .select({
-            scheduleId: agentSchedules.id,
-            agentId: agentSchedules.agentId,
-            projectId: agentSchedules.projectId,
-            eventMatch: agentSchedules.eventMatch,
-          })
-          .from(agentSchedules)
-          .innerJoin(agents, eq(agents.id, agentSchedules.agentId))
-          .innerJoin(
-            agentProjectLinks,
-            and(
-              eq(agentProjectLinks.agentId, agentSchedules.agentId),
-              eq(agentProjectLinks.projectId, agentSchedules.projectId),
-            ),
-          )
-          .where(
-            and(
-              eq(agentSchedules.triggerType, "event"),
-              eq(agentSchedules.enabled, true),
-              eq(agentSchedules.projectId, event.projectId),
-              eq(agents.enabled, true),
-              sql`${agents.quarantinedAt} IS NULL`,
-              eq(agentProjectLinks.enabled, true),
-            ),
-          );
-
-        const matchingRows = rows
-          .filter((row) => (row.eventMatch?.kinds ?? []).includes(event.kind))
-          .sort((left, right) =>
-            left.scheduleId.localeCompare(right.scheduleId),
-          );
         let ownerRunId: string | null = null;
         let ownerSelected = false;
+        let sourceCursor: string | null = null;
+        const [producing] =
+          event.runId === null
+            ? []
+            : await _db
+                .select({
+                  sourceAgentId: runs.sourceAgentId,
+                  agentId: runs.agentId,
+                })
+                .from(runs)
+                .where(
+                  and(
+                    eq(runs.id, event.runId),
+                    eq(runs.projectId, event.projectId),
+                    sql`${runs.companyId} IS NULL`,
+                  ),
+                );
 
-        for (const row of matchingRows) {
-          const fence = await claimAgentScheduleTelemetry({
-            db: _db,
-            scheduleId: row.scheduleId,
-            now: new Date(),
-            eventId: Number(event.id),
-          });
+        while (true) {
+          const rows: EventMatchRow[] = await _db
+            .select({
+              scheduleId: agentSchedules.id,
+              agentId: agentSchedules.agentId,
+              projectId: agentSchedules.projectId,
+              eventMatch: agentSchedules.eventMatch,
+              projectSourceReview: agentSchedules.projectSourceReview,
+              bindingRevision: agentProjectLinks.schedulesRevision,
+            })
+            .from(agentSchedules)
+            .innerJoin(agents, eq(agents.id, agentSchedules.agentId))
+            .innerJoin(
+              agentProjectLinks,
+              and(
+                eq(agentProjectLinks.agentId, agentSchedules.agentId),
+                eq(agentProjectLinks.projectId, agentSchedules.projectId),
+              ),
+            )
+            .where(
+              and(
+                sourceCursor === null
+                  ? undefined
+                  : gt(agentSchedules.id, sourceCursor),
+                eq(agentSchedules.triggerType, "event"),
+                eq(agentSchedules.enabled, true),
+                eq(agentSchedules.projectId, event.projectId),
+                eq(agents.enabled, true),
+                sql`${agents.quarantinedAt} IS NULL`,
+                eq(agentProjectLinks.enabled, true),
+              ),
+            )
+            .orderBy(agentSchedules.id)
+            .limit(PER_TICK_LIMIT);
 
-          if (!fence) continue;
+          if (rows.length === 0) break;
+          sourceCursor = rows[rows.length - 1]!.scheduleId;
+          for (const row of rows) {
+            let fence: ProjectAgentTriggerClaim | null;
+            let native = false;
 
-          // Self-exclusion (ADR-089): an event actored by the matched agent
-          // never re-triggers it — structural loop termination for the
-          // triage Q&A loop. Its telemetry still explains why no launch occurred.
-          if (event.actorType === "agent" && event.actorId === row.agentId) {
-            await recordAgentScheduleOutcome({
-              db: _db,
-              scheduleId: row.scheduleId,
-              fence,
-              outcome: "suppressed",
-              errorCode: "PRECONDITION",
-              errorMessage:
-                "Self-actored event is not eligible for this binding",
-              now: new Date(),
-            });
-            continue;
-          }
+            try {
+              native =
+                row.projectSourceReview !== null ||
+                (await isNativeProjectSpecialist(_db, {
+                  projectId: row.projectId,
+                  sourceAgentId: row.agentId,
+                }));
+              const kinds =
+                projectTriggerBindingSnapshotSchema.shape.eventKinds.safeParse(
+                  row.eventMatch?.kinds,
+                );
 
-          if (ownerSelected) {
-            await recordAgentScheduleOutcome({
-              db: _db,
-              scheduleId: row.scheduleId,
-              fence,
-              outcome: "suppressed",
-              runId: ownerRunId,
-              errorCode: "CONFLICT",
-              errorMessage: "A lower-id matching binding owns this event",
-              now: new Date(),
-            });
-            continue;
-          }
+              if (!kinds.success || kinds.data.length === 0)
+                throw new MaisterError(
+                  "CONFIG",
+                  "Project event source requires validated event kinds",
+                  { details: { reason: "project_event_source_kinds_invalid" } },
+                );
+              if (!kinds.data.includes(event.kind)) continue;
+              if (native) {
+                const review = projectEventSourceReviewSchema.safeParse(
+                  row.projectSourceReview,
+                );
 
-          if (await chainDepthExhausted(_db, event.id, row.agentId)) {
-            await recordAgentScheduleOutcome({
-              db: _db,
-              scheduleId: row.scheduleId,
-              fence,
-              outcome: "refused",
-              errorCode: "chain_depth_exhausted",
-              now: new Date(),
-            });
-            continue;
-          }
-
-          ownerSelected = true;
-          try {
-            const result = await launch({
-              agentId: row.agentId,
-              projectId: row.projectId,
-              taskId: event.taskId ?? null,
-              trigger: {
-                source: "domain_event",
+                if (!review.success)
+                  throw new MaisterError(
+                    "NEEDS_INPUT",
+                    "Native project events require a current explicit event review",
+                    { details: { reason: "project_event_review_required" } },
+                  );
+                if (BigInt(event.id) <= BigInt(review.data.eventCursor))
+                  continue;
+              }
+              fence = await claimAgentScheduleTelemetry({
+                db: _db,
+                scheduleId: row.scheduleId,
+                now: new Date(),
                 eventId: Number(event.id),
-                payload: {
-                  kind: event.kind,
-                  payload: event.payload as Record<string, unknown>,
-                },
-              },
-              agentScheduleId: row.scheduleId,
-              runId: fence.reservedRunId,
-              db: _db,
-            });
-            const outcome = outcomeForLaunch(result);
+              });
+            } catch (error) {
+              if (
+                !isMaisterError(error) ||
+                !["CONFIG", "PRECONDITION", "CONFLICT", "NEEDS_INPUT"].includes(
+                  error.code,
+                )
+              )
+                throw error;
+              const reason =
+                typeof error.details?.reason === "string" &&
+                (PROJECT_EVENT_REASON_CODES as readonly string[]).includes(
+                  error.details.reason,
+                )
+                  ? error.details.reason
+                  : error.code;
 
-            ownerRunId = outcome.runId;
-            await recordAgentScheduleOutcome({
-              db: _db,
-              scheduleId: row.scheduleId,
-              fence,
-              outcome: outcome.outcome,
-              runId: outcome.runId,
-              now: new Date(),
-            });
-            log.info(
-              {
-                eventId: event.id,
-                agentId: row.agentId,
+              await _db
+                .update(agentSchedules)
+                .set({
+                  lastOutcome: "refused",
+                  lastErrorCode: reason,
+                  lastErrorMessage:
+                    "Project event source capture requires attention",
+                  updatedAt: new Date(),
+                })
+                .where(
+                  and(
+                    eq(agentSchedules.id, row.scheduleId),
+                    eq(agentSchedules.enabled, true),
+                    sql`${agentSchedules.projectSourceReview} IS NOT DISTINCT FROM ${row.projectSourceReview === null ? null : JSON.stringify(row.projectSourceReview)}::jsonb`,
+                    sql`${agentSchedules.eventMatch} IS NOT DISTINCT FROM ${JSON.stringify(row.eventMatch)}::jsonb`,
+                    sql`EXISTS(SELECT 1 FROM agent_project_links WHERE project_id=${row.projectId} AND agent_id=${row.agentId} AND schedules_revision=${row.bindingRevision})`,
+                  ),
+                );
+              log.warn(
+                {
+                  sourceId: row.scheduleId,
+                  eventId: event.id,
+                  code: error.code,
+                  reason: error.details?.reason,
+                },
+                "project event source capture refused",
+              );
+              continue;
+            }
+
+            if (!fence) continue;
+            if (native) {
+              try {
+                const selfAuthored =
+                  (event.actorType === "agent" &&
+                    event.actorId === row.agentId) ||
+                  producing?.sourceAgentId === row.agentId ||
+                  producing?.agentId === row.agentId;
+                const chain = selfAuthored
+                  ? null
+                  : await resolveProjectEventChainDepth(
+                      _db,
+                      row.projectId,
+                      Number(event.id),
+                    );
+
+                if (selfAuthored || chain?.atCap) {
+                  await recordAgentScheduleOutcome({
+                    db: _db,
+                    scheduleId: row.scheduleId,
+                    fence,
+                    outcome: "suppressed",
+                    errorCode: selfAuthored
+                      ? "self_authored_event"
+                      : (chain?.reason ?? "chain_depth_exhausted"),
+                    now: new Date(),
+                  });
+                  continue;
+                }
+                const receipt = await submitProjectEventAssignment(_db, fence);
+                const [execution] = await _db
+                  .select({ status: runs.status })
+                  .from(runs)
+                  .where(eq(runs.id, fence.reservedRunId));
+
+                if (
+                  !receipt.assignment.runIds.includes(fence.reservedRunId) ||
+                  !execution
+                )
+                  throw new MaisterError(
+                    "CRASH",
+                    "Native event intake did not retain its exact reserved Run",
+                  );
+                await recordAgentScheduleOutcome({
+                  db: _db,
+                  scheduleId: row.scheduleId,
+                  fence,
+                  outcome: receipt.duplicate
+                    ? "deduplicated"
+                    : execution.status === "Pending"
+                      ? "queued"
+                      : "launched",
+                  runId: fence.reservedRunId,
+                  now: new Date(),
+                });
+              } catch (error) {
+                if (!isMaisterError(error) || error.code === "CRASH")
+                  throw error;
+                const reason =
+                  typeof error.details?.reason === "string" &&
+                  (PROJECT_EVENT_REASON_CODES as readonly string[]).includes(
+                    error.details.reason,
+                  )
+                    ? error.details.reason
+                    : error.code;
+
+                await recordAgentScheduleOutcome({
+                  db: _db,
+                  scheduleId: row.scheduleId,
+                  fence,
+                  outcome: "refused",
+                  errorCode: reason,
+                  now: new Date(),
+                });
+                log.warn(
+                  {
+                    sourceId: row.scheduleId,
+                    eventId: event.id,
+                    attemptId: fence.id,
+                    code: error.code,
+                    reason,
+                  },
+                  "native project event admission refused",
+                );
+              }
+              continue;
+            }
+
+            // Self-exclusion (ADR-089): an event actored by the matched agent
+            // never re-triggers it — structural loop termination for the
+            // triage Q&A loop. Its telemetry still explains why no launch occurred.
+            if (event.actorType === "agent" && event.actorId === row.agentId) {
+              await recordAgentScheduleOutcome({
+                db: _db,
                 scheduleId: row.scheduleId,
+                fence,
+                outcome: "suppressed",
+                errorCode: "PRECONDITION",
+                errorMessage:
+                  "Self-actored event is not eligible for this binding",
+                now: new Date(),
+              });
+              continue;
+            }
+
+            if (ownerSelected) {
+              await recordAgentScheduleOutcome({
+                db: _db,
+                scheduleId: row.scheduleId,
+                fence,
+                outcome: "suppressed",
+                runId: ownerRunId,
+                errorCode: "CONFLICT",
+                errorMessage: "A lower-id matching binding owns this event",
+                now: new Date(),
+              });
+              continue;
+            }
+
+            if (await chainDepthExhausted(_db, event.id, row.agentId)) {
+              await recordAgentScheduleOutcome({
+                db: _db,
+                scheduleId: row.scheduleId,
+                fence,
+                outcome: "refused",
+                errorCode: "chain_depth_exhausted",
+                now: new Date(),
+              });
+              continue;
+            }
+
+            ownerSelected = true;
+            try {
+              const result = await launch({
+                agentId: row.agentId,
+                projectId: row.projectId,
+                taskId: event.taskId ?? null,
+                trigger: {
+                  source: "domain_event",
+                  eventId: Number(event.id),
+                  payload: {
+                    kind: event.kind,
+                    payload: event.payload as Record<string, unknown>,
+                  },
+                },
+                agentScheduleId: row.scheduleId,
+                runId: fence.reservedRunId,
+                db: _db,
+              });
+              const outcome = outcomeForLaunch(result);
+
+              ownerRunId = outcome.runId;
+              await recordAgentScheduleOutcome({
+                db: _db,
+                scheduleId: row.scheduleId,
+                fence,
                 outcome: outcome.outcome,
-              },
-              "event-triggered agent schedule settled",
-            );
-          } catch (err) {
-            await recordAgentScheduleOutcome({
-              db: _db,
-              scheduleId: row.scheduleId,
-              fence,
-              outcome: isMaisterError(err) ? "refused" : "failed",
-              errorCode: isMaisterError(err) ? err.code : "CRASH",
-              errorMessage: "Agent schedule launch was refused",
-              now: new Date(),
-            });
-            log.warn(
-              {
-                eventId: event.id,
-                agentId: row.agentId,
+                runId: outcome.runId,
+                now: new Date(),
+              });
+              log.info(
+                {
+                  eventId: event.id,
+                  agentId: row.agentId,
+                  scheduleId: row.scheduleId,
+                  outcome: outcome.outcome,
+                },
+                "event-triggered agent schedule settled",
+              );
+            } catch (err) {
+              await recordAgentScheduleOutcome({
+                db: _db,
                 scheduleId: row.scheduleId,
-                code: isMaisterError(err) ? err.code : "CRASH",
-              },
-              "event-triggered agent launch refused",
-            );
+                fence,
+                outcome: isMaisterError(err) ? "refused" : "failed",
+                errorCode: isMaisterError(err) ? err.code : "CRASH",
+                errorMessage: "Agent schedule launch was refused",
+                now: new Date(),
+              });
+              log.warn(
+                {
+                  eventId: event.id,
+                  agentId: row.agentId,
+                  scheduleId: row.scheduleId,
+                  code: isMaisterError(err) ? err.code : "CRASH",
+                },
+                "event-triggered agent launch refused",
+              );
+            }
           }
         }
       }

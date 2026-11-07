@@ -11,6 +11,7 @@ import type { ProjectSpecialistIntakeRequest } from "./intake-types";
 import type { ProjectSourceAppointment } from "./project-source-types";
 import type { LaunchAgentRunInput } from "@/lib/agents/launch";
 import type { SpecialistIntakeReceipt } from "./intake-types";
+import type { KnowledgeAccessRestriction } from "@/lib/company/types";
 
 import { sql } from "drizzle-orm";
 import { z } from "zod";
@@ -44,6 +45,7 @@ export type ProjectRequestInvocation = Readonly<{
   scheduledRequest: PreparedSpecialistAssignment["scheduledRequest"];
   taskId: string | null;
   source?: ProjectSourceAppointment;
+  sourceRestrictions?: readonly KnowledgeAccessRestriction[];
 }>;
 const log = pino({
   name: "project-request-intake",
@@ -148,6 +150,7 @@ async function prepareProjectSpecialistAssignment(
     scheduledRequest: invocation.scheduledRequest,
     sourceRestrictions: [
       { kind: "project_context", projectId: owner.projectId },
+      ...(invocation.sourceRestrictions ?? []),
     ],
     executionPolicy: resolveAgentContextExecutionPolicy(context),
     origin: invocation.origin,

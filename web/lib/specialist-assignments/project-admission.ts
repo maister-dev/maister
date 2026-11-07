@@ -24,6 +24,7 @@ import { authorizeAssignment } from "./access";
 import { projectSourceAppointmentSchema } from "./project-source-types";
 import { loadProjectCommentAppointment } from "./project-comment-appointment";
 import { loadProjectCronAppointment } from "./project-cron-appointment";
+import { loadProjectEventAppointment } from "./project-event-appointment";
 import { assertProjectCoordinatorProvider } from "./project-flow-provider";
 
 import { resolveAgentConfig } from "@/lib/agents/config";
@@ -70,6 +71,7 @@ export type ProjectAssignmentLaunchContext = Readonly<{
   triggerEventId?: number | null;
   agentScheduleId?: string | null;
   scheduledRequestSnapshot?: ScheduledAgentRequestSnapshot | null;
+  agentChainDepth?: number | null;
 }>;
 
 /** Hold responsibility and compare the exact frozen input before the existing Run insert. */
@@ -265,6 +267,46 @@ export async function prepareProjectAssignmentAdmission(
         "Native project cron admission must preserve its exact source, reviewer and original scheduled request",
         { details: { reason: "project_cron_appointment_mismatch" } },
       );
+  } else if (assignment.origin.kind === "event") {
+    if (
+      reference.source?.kind !== "event" ||
+      reference.source.runId !== context.runId ||
+      context.triggerSource !== "domain_event" ||
+      context.triggerEventId !== reference.source.eventId ||
+      context.agentScheduleId !== reference.source.scheduleId
+    )
+      throw new MaisterError(
+        "CONFIG",
+        "Native event admission requires its exact reserved source Run",
+        { details: { reason: "project_event_appointment_required" } },
+      );
+    const source = await loadProjectEventAppointment(tx, reference.source);
+
+    if (
+      source.projectId !== context.projectId ||
+      source.bindingId !== context.bindingId ||
+      source.agentId !== context.effective.parsed.id ||
+      source.userId !== reference.userId ||
+      assignment.origin.subscriptionId !== reference.source.scheduleId ||
+      assignment.origin.eventId !== String(reference.source.eventId) ||
+      snapshot.scheduledRequest !== null ||
+      context.scheduledRequestSnapshot != null ||
+      context.agentChainDepth !== source.chainDepth ||
+      snapshot.objectiveInput.input !==
+        JSON.stringify({ schemaVersion: 1, event: source.event }) ||
+      source.sourceRestrictions.some(
+        (restriction) =>
+          !snapshot.sourceRestrictions.some(
+            (retained) =>
+              contentDigest(retained) === contentDigest(restriction),
+          ),
+      )
+    )
+      throw new MaisterError(
+        "CONFLICT",
+        "Native event admission must preserve the actual source, reviewer, chain and evidence",
+        { details: { reason: "project_event_appointment_mismatch" } },
+      );
   } else if (reference.source)
     throw new MaisterError(
       "CONFIG",
@@ -326,6 +368,7 @@ export async function prepareProjectCoordinatorAssignmentAdmission(
     triggerEventId?: number | null;
     agentScheduleId?: string | null;
     scheduledRequestSnapshot?: ScheduledAgentRequestSnapshot | null;
+    agentChainDepth?: number | null;
   }>,
 ): Promise<
   Readonly<{
@@ -389,33 +432,34 @@ export async function loadProjectAssignmentExecutionInput(
     ) ?? [];
 
   if (references.length === 0) return null;
-  if (
-    references.length !== 1 ||
-    typeof run.id !== "string" ||
-    typeof run.projectId !== "string"
-  )
+  if (typeof run.id !== "string" || typeof run.projectId !== "string")
     throw new MaisterError(
       "CONFIG",
       "Project execution must have one exact original assignment input",
     );
-  const reference = references[0]!;
   const projectId = run.projectId;
 
   return db.transaction(async (tx) => {
     const link = (
       await tx.execute(sql`
-      SELECT input.actor->>'id' AS user_id
+      SELECT input.actor->>'id' AS user_id,input.assignment_id,input.revision,input.digest
       FROM specialist_run_links link
       JOIN specialist_assignments assignment ON assignment.id=link.assignment_id
       JOIN specialist_input_revisions input ON input.assignment_id=link.assignment_id AND input.revision=link.input_revision
       WHERE link.run_id=${run.id} AND assignment.project_id=${run.projectId}
-        AND link.assignment_id=${reference.assignmentId} AND link.input_revision=${reference.inputRevision}
-        AND input.digest=${reference.inputSha256} AND input.actor->>'kind'='user'
+        AND input.actor->>'kind'='user'
       FOR SHARE OF link,assignment,input
     `)
     ).rows[0];
 
-    if (typeof link?.user_id !== "string")
+    const reference = references.find(
+      (item) =>
+        item.assignmentId === link?.assignment_id &&
+        item.inputRevision === link?.revision &&
+        item.inputSha256 === link?.digest,
+    );
+
+    if (!reference || typeof link?.user_id !== "string")
       throw new MaisterError(
         "UNAUTHORIZED",
         "The execution's exact assignment appointment is unavailable",

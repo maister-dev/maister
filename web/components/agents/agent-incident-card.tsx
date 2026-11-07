@@ -28,6 +28,12 @@ function causeKey(
   if (
     [
       "project_source_review_required",
+      "project_event_review_required",
+      "project_event_source_changed",
+      "project_event_sharing_required",
+      "project_event_source_unclassified",
+      "project_event_chain_unclassified",
+      "project_event_source_kinds_invalid",
       "project_source_review_changed",
       "project_cron_source_changed",
       "project_scheduled_request_missing",

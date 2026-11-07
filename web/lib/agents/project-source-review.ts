@@ -5,6 +5,8 @@ import type { ProjectRole } from "@/lib/db/schema";
 
 import { sql } from "drizzle-orm";
 
+import { projectEventCursorSchema } from "./project-source-review-types";
+
 import { projectRolesForActions } from "@/lib/authz";
 import { resolveKnowledgePrincipal } from "@/lib/brain/knowledge-access";
 import { contentDigest } from "@/lib/evaluations/digest";
@@ -30,6 +32,29 @@ export function projectSourceContentDigest(
     eventKinds: [...(source.eventMatch?.kinds ?? [])].sort(),
     requestAtLaunch: source.requestAtLaunch ?? null,
   });
+}
+
+/** Observe this project's existing outbox sequence; an empty visible outbox is a known zero, never guessed history. */
+export async function captureProjectEventCursor(
+  tx: SqlTransaction,
+  projectId: string,
+): Promise<string> {
+  const parsed = projectEventCursorSchema.safeParse(
+    (
+      await tx.execute(
+        sql`SELECT COALESCE(max(id),0)::text AS cursor FROM domain_events WHERE project_id=${projectId} AND company_id IS NULL`,
+      )
+    ).rows[0]?.cursor,
+  );
+
+  if (!parsed.success)
+    throw new MaisterError(
+      "CONFIG",
+      "The project event enrollment cursor is unavailable",
+      { details: { reason: "project_event_cursor_unavailable" } },
+    );
+
+  return parsed.data;
 }
 
 /** Reuse current identity and the existing project action policy while locking authority for the save. */

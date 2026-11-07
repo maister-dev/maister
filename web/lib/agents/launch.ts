@@ -292,7 +292,10 @@ import {
   type SteerSettlement,
 } from "@/lib/execution-host/steer-settlement";
 import { cancelOpenAgentQuestionsForTaskInTransaction } from "@/lib/services/agent-question";
-import { resolveAgentChainDepth } from "@/lib/agents/chain-depth";
+import {
+  resolveAgentChainDepth,
+  resolveProjectEventChainDepth,
+} from "@/lib/agents/chain-depth";
 import { maxAgentChainDepth } from "@/lib/instance-config";
 import { admitDelegatedChild } from "@/lib/orchestrator/admission";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
@@ -1766,10 +1769,14 @@ async function launchAgentRunWithAdmission(
   // below. Refusing after `addWorktree` left a directory and a branch ref behind
   // with no `runs`/`workspaces` row for GC to key on, so every repeated refusal
   // leaked disk and pre-claimed the next launch's path.
-  const chain = await resolveAgentChainDepth({
-    trigger: input.trigger,
-    db: _db,
-  });
+  const chain =
+    input.specialistAssignment?.source?.kind === "event"
+      ? await resolveProjectEventChainDepth(
+          _db,
+          input.projectId,
+          input.specialistAssignment.source.eventId,
+        )
+      : await resolveAgentChainDepth({ trigger: input.trigger, db: _db });
 
   if (chain.atCap) {
     log.warn(
@@ -2213,6 +2220,7 @@ async function launchAgentRunWithAdmission(
                 executionPolicy,
                 resultContract: runRow.resultContract,
                 scheduledRequestSnapshot: runRow.scheduledRequestSnapshot,
+                agentChainDepth: chain.depth,
               },
             )
           : null;

@@ -118,6 +118,8 @@ import {
   knowledgeReadPolicyCte,
 } from "@/lib/brain/knowledge-query-policy";
 import { assertNativeRunKnowledgeInputs } from "@/lib/brain/knowledge-execution-access";
+import { resolveProjectEventChainDepth } from "@/lib/agents/chain-depth";
+import { maxAgentChainDepth } from "@/lib/instance-config";
 import { authorizeSourceRestrictions } from "@/lib/brain/knowledge-restrictions";
 import { searchKnowledge } from "@/lib/brain/knowledge-search";
 import {
@@ -3566,7 +3568,491 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
         )
       ).rows,
     ).toEqual([{ status: "active" }]);
+    expect(
+      (
+        await saveProjectSchedules("rah:wire-observer", [
+          {
+            triggerType: "event",
+            eventKinds: ["run.done"],
+            enabled: true,
+            reviewForAssignments: true,
+            shareEventContext: true,
+          },
+        ])
+      ).status,
+    ).toBe(200);
+    const eventSource = (
+      await database.pool.query<{ id: string }>(
+        "SELECT id FROM agent_schedules WHERE project_id=$1 AND agent_id='rah:wire-observer' AND trigger_type='event'",
+        [project.id],
+      )
+    ).rows[0]!;
+
+    await database.pool.query(
+      "INSERT INTO execution_host_pressure(execution_host_id,pressured_since) SELECT id,now() FROM execution_hosts WHERE kind='local_direct' AND retired_at IS NULL ON CONFLICT DO NOTHING",
+    );
+    try {
+      expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+      expect(
+        (
+          await database.pool.query(
+            "SELECT count(*)::int AS count FROM specialist_assignments WHERE project_id=$1 AND origin->>'kind'='event'",
+            [project.id],
+          )
+        ).rows,
+      ).toEqual([{ count: 0 }]);
+    } finally {
+      await database.pool.query("DELETE FROM execution_host_pressure");
+    }
+    await fireCron(flowCronSource.id);
+    await vi.waitFor(
+      async () => {
+        expect(
+          (
+            await database.pool.query(
+              "SELECT count(*)::int AS count FROM runs WHERE project_id=$1 AND agent_schedule_id=$2 AND status='Done'",
+              [project.id, flowCronSource.id],
+            )
+          ).rows,
+        ).toEqual([{ count: 2 }]);
+      },
+      { timeout: 30000, interval: 25 },
+    );
+    await database.pool.query(
+      "INSERT INTO execution_host_pressure(execution_host_id,pressured_since) SELECT id,now() FROM execution_hosts WHERE kind='local_direct' AND retired_at IS NULL ON CONFLICT DO NOTHING",
+    );
+    let eventRunId: string;
+
+    try {
+      expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+      const eventWork = (
+        await database.pool.query<{
+          run_id: string;
+          reserved_run_id: string;
+          status: string;
+          agent_chain_depth: number;
+          source_run_id: string;
+          knowledge_access: { restrictions: unknown[] };
+        }>(
+          "SELECT link.run_id,invocation.reserved_run_id,run.status,run.agent_chain_depth,event.run_id AS source_run_id,run.knowledge_access FROM specialist_assignments work JOIN specialist_run_links link ON link.assignment_id=work.id JOIN runs run ON run.id=link.run_id JOIN agent_trigger_attempts invocation ON invocation.reserved_run_id=run.id JOIN domain_events event ON event.id=invocation.trigger_event_id WHERE work.project_id=$1 AND work.origin->>'kind'='event' AND work.origin->>'subscriptionId'=$2",
+          [project.id, eventSource.id],
+        )
+      ).rows;
+
+      expect(eventWork).toHaveLength(1);
+      eventRunId = eventWork[0]!.run_id;
+      expect(eventWork[0]).toMatchObject({
+        reserved_run_id: eventRunId,
+        status: "Pending",
+        agent_chain_depth: 1,
+      });
+      const producer = (
+        await database.pool.query<{
+          knowledge_access: { restrictions: unknown[] };
+          agent_chain_depth: number;
+        }>("SELECT knowledge_access,agent_chain_depth FROM runs WHERE id=$1", [
+          eventWork[0]!.source_run_id,
+        ])
+      ).rows[0]!;
+
+      expect(producer.agent_chain_depth).toBe(0);
+      expect(eventWork[0]!.knowledge_access.restrictions).toEqual(
+        expect.arrayContaining(producer.knowledge_access.restrictions),
+      );
+      const principal = {
+        kind: "execution" as const,
+        runId: eventRunId,
+        nodeAttemptId: null,
+      };
+
+      await expect(
+        authorizeSourceRestrictions(
+          db,
+          principal,
+          producer.knowledge_access.restrictions,
+        ),
+      ).resolves.toBeDefined();
+      const unrelated = (
+        await database.pool.query<{ knowledge_access: unknown }>(
+          "SELECT knowledge_access FROM runs WHERE id=$1",
+          [flowCron[0]!.run_id],
+        )
+      ).rows[0]!;
+
+      await expect(
+        authorizeSourceRestrictions(
+          db,
+          principal,
+          (unrelated.knowledge_access as { restrictions: unknown[] })
+            .restrictions,
+        ),
+      ).rejects.toMatchObject({
+        code: "PRECONDITION",
+        details: { reason: "knowledge_reference_unavailable" },
+      });
+      await database.pool.query(
+        "UPDATE domain_event_consumers SET cursor_event_id=(SELECT trigger_event_id-1 FROM runs WHERE id=$1) WHERE consumer_id='agent_triggers'",
+        [eventRunId],
+      );
+      expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+      expect(
+        (
+          await database.pool.query(
+            "SELECT count(*)::int AS count FROM specialist_assignments WHERE project_id=$1 AND origin->>'kind'='event'",
+            [project.id],
+          )
+        ).rows,
+      ).toEqual([{ count: 1 }]);
+      const retained = (
+        await database.pool.query(
+          "SELECT to_jsonb(input) AS value FROM specialist_input_revisions input JOIN specialist_run_links link ON link.assignment_id=input.assignment_id AND link.input_revision=input.revision WHERE link.run_id=$1",
+          [eventRunId],
+        )
+      ).rows;
+
+      expect(
+        (
+          await saveProjectSchedules("rah:wire-observer", [
+            {
+              id: eventSource.id,
+              triggerType: "event",
+              eventKinds: ["run.done"],
+              enabled: true,
+              reviewForAssignments: true,
+            },
+          ])
+        ).status,
+      ).toBe(200);
+      await expect(
+        authorizeSourceRestrictions(
+          db,
+          principal,
+          eventWork[0]!.knowledge_access.restrictions,
+        ),
+      ).rejects.toMatchObject({
+        code: "PRECONDITION",
+        details: { reason: "knowledge_reference_unavailable" },
+      });
+      expect(
+        (
+          await saveProjectSchedules("rah:wire-observer", [
+            {
+              id: eventSource.id,
+              triggerType: "event",
+              eventKinds: ["run.done"],
+              enabled: true,
+              reviewForAssignments: true,
+              shareEventContext: true,
+            },
+          ])
+        ).status,
+      ).toBe(200);
+      await expect(
+        authorizeSourceRestrictions(
+          db,
+          principal,
+          eventWork[0]!.knowledge_access.restrictions,
+        ),
+      ).resolves.toBeDefined();
+      expect(
+        (
+          await database.pool.query(
+            "SELECT to_jsonb(input) AS value FROM specialist_input_revisions input JOIN specialist_run_links link ON link.assignment_id=input.assignment_id AND link.input_revision=input.revision WHERE link.run_id=$1",
+            [eventRunId],
+          )
+        ).rows,
+      ).toEqual(retained);
+    } finally {
+      await database.pool.query("DELETE FROM execution_host_pressure");
+    }
+    await database.pool.query(
+      "UPDATE scheduler_jobs SET next_run_at=clock_timestamp()-interval '1 second' WHERE id='agent_tick.dispatcher'",
+    );
+    await runSchedulerTick({ jobKind: "agent_tick" });
+    await vi.waitFor(
+      async () => {
+        expect(
+          (
+            await database.pool.query("SELECT status FROM runs WHERE id=$1", [
+              eventRunId,
+            ])
+          ).rows,
+        ).toEqual([{ status: "Done" }]);
+      },
+      { timeout: 30000, interval: 25 },
+    );
+
+    await attachAgent(
+      {
+        projectId: project.id,
+        agentId: "rah:event-observer",
+        runnerOverrideId: runnerId,
+      },
+      db,
+    );
+    for (const agentId of ["rah:event-observer", "rah:flow-coordinator"])
+      expect(
+        (
+          await saveProjectSchedules(agentId, [
+            {
+              triggerType: "event",
+              eventKinds: ["run.done"],
+              enabled: true,
+              reviewForAssignments: true,
+              shareEventContext: true,
+            },
+          ])
+        ).status,
+      ).toBe(200);
+    await database.pool.query(
+      "INSERT INTO agent_schedules(id,agent_id,project_id,trigger_type,event_match,project_source_review,enabled) SELECT '000-event-malformed-'||series,'rah:wire-observer',$1,'event','{\"kinds\":\"invalid\"}'::jsonb,project_source_review,true FROM generate_series(1,25) series CROSS JOIN agent_schedules WHERE id=$2",
+      [project.id, eventSource.id],
+    );
+    const producerResponse = await submitRouted("rah:wire-observer", {
+      ...value,
+      idempotencyKey: randomUUID(),
+      input:
+        "Produce independent classified evidence for native event recipients.",
+    });
+
+    expect(producerResponse.status).toBe(201);
+    const producerReceipt = specialistAssignmentSchema.parse(
+      await producerResponse.json(),
+    );
+    const producingRunId = producerReceipt.runIds[0]!;
+
+    await vi.waitFor(
+      async () => {
+        expect(
+          (
+            await database.pool.query("SELECT status FROM runs WHERE id=$1", [
+              producingRunId,
+            ])
+          ).rows,
+        ).toEqual([{ status: "Done" }]);
+      },
+      { timeout: 30000, interval: 25 },
+    );
+    expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+    const receiverWork = (
+      await database.pool.query<{
+        run_id: string;
+        source_agent_id: string;
+        run_kind: string;
+        agent_chain_depth: number;
+      }>(
+        "SELECT link.run_id,run.source_agent_id,run.run_kind,run.agent_chain_depth FROM specialist_assignments work JOIN specialist_run_links link ON link.assignment_id=work.id JOIN runs run ON run.id=link.run_id JOIN domain_events fact ON fact.id::text=work.origin->>'eventId' WHERE work.project_id=$1 AND work.origin->>'kind'='event' AND fact.run_id=$2 ORDER BY run.source_agent_id",
+        [project.id, producingRunId],
+      )
+    ).rows;
+
+    expect(receiverWork).toEqual([
+      {
+        run_id: expect.any(String),
+        source_agent_id: "rah:event-observer",
+        run_kind: "agent",
+        agent_chain_depth: 1,
+      },
+      {
+        run_id: expect.any(String),
+        source_agent_id: "rah:flow-coordinator",
+        run_kind: "flow",
+        agent_chain_depth: 1,
+      },
+    ]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM agent_schedules WHERE project_id=$1 AND id LIKE '000-event-malformed-%' AND last_outcome='refused'",
+          [project.id],
+        )
+      ).rows,
+    ).toEqual([{ count: 25 }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT invocation.outcome,invocation.reason_code FROM agent_trigger_attempts invocation JOIN domain_events fact ON fact.id=invocation.trigger_event_id WHERE invocation.schedule_id=$1 AND fact.run_id=$2",
+          [eventSource.id, producingRunId],
+        )
+      ).rows,
+    ).toEqual([{ outcome: "suppressed", reason_code: "self_authored_event" }]);
+    for (const receiver of receiverWork) {
+      await vi.waitFor(
+        async () => {
+          expect(
+            (
+              await database.pool.query("SELECT status FROM runs WHERE id=$1", [
+                receiver.run_id,
+              ])
+            ).rows,
+          ).toEqual([{ status: "Done" }]);
+        },
+        { timeout: 30000, interval: 25 },
+      );
+      expect(
+        (
+          await database.pool.query(
+            "SELECT validity FROM run_results WHERE run_id=$1",
+            [receiver.run_id],
+          )
+        ).rows,
+      ).toEqual([{ validity: "valid" }]);
+    }
+
+    const rollbackMarker = new Error("Qualification-only state must roll back");
+
+    await expect(
+      db.transaction(async (tx) => {
+        for (const classification of ["unknown", "capped"] as const) {
+          const fixtureRunId = randomUUID();
+
+          await tx.execute(
+            sql`INSERT INTO runs SELECT (jsonb_populate_record(NULL::runs,to_jsonb(original)||jsonb_build_object('id',${fixtureRunId}::text,'agent_chain_depth',${classification === "capped" ? maxAgentChainDepth() : 0}::int))).* FROM runs original WHERE original.id=${producingRunId}`,
+          );
+          if (classification === "capped")
+            await tx.execute(
+              sql`INSERT INTO specialist_run_links SELECT assignment_id,${fixtureRunId},input_revision,role,work_id,work_revision,linked_at FROM specialist_run_links WHERE run_id=${producingRunId}`,
+            );
+          const fact = (
+            await tx.execute(
+              sql`INSERT INTO domain_events(kind,project_id,run_id,actor_type,payload,occurred_at) VALUES('run.done',${project.id},${fixtureRunId},'system','{}'::jsonb,clock_timestamp()) RETURNING id`,
+            )
+          ).rows[0]!;
+          const chain = await resolveProjectEventChainDepth(
+            tx,
+            project.id,
+            Number(fact.id),
+          );
+
+          expect(chain).toEqual(
+            classification === "capped"
+              ? { depth: maxAgentChainDepth() + 1, atCap: true }
+              : {
+                  depth: maxAgentChainDepth(),
+                  atCap: true,
+                  reason: "project_event_chain_unclassified",
+                },
+          );
+        }
+        throw rollbackMarker;
+      }),
+    ).rejects.toBe(rollbackMarker);
+    for (const roleId of ["rah:event-observer", "rah:flow-coordinator"])
+      expect((await saveProjectSchedules(roleId, [])).status).toBe(200);
+    expect(
+      (
+        await saveProjectSchedules("rah:wire-observer", [
+          {
+            id: eventSource.id,
+            triggerType: "event",
+            eventKinds: ["run.done"],
+            enabled: true,
+            reviewForAssignments: true,
+          },
+        ])
+      ).status,
+    ).toBe(200);
+    const privateProducerResponse = await submitRouted("rah:flow-coordinator", {
+      ...flowRequest,
+      idempotencyKey: randomUUID(),
+    });
+
+    expect(privateProducerResponse.status).toBe(201);
+    const privateProducer = specialistAssignmentSchema.parse(
+      await privateProducerResponse.json(),
+    );
+    const privateProducerId = privateProducer.runIds[0]!;
+
+    await vi.waitFor(
+      async () => {
+        expect(
+          (
+            await database.pool.query("SELECT status FROM runs WHERE id=$1", [
+              privateProducerId,
+            ])
+          ).rows,
+        ).toEqual([{ status: "Done" }]);
+      },
+      { timeout: 30000, interval: 25 },
+    );
+    expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT invocation.outcome,invocation.reason_code,invocation.run_id FROM agent_trigger_attempts invocation JOIN domain_events fact ON fact.id=invocation.trigger_event_id WHERE invocation.schedule_id=$1 AND fact.run_id=$2",
+          [eventSource.id, privateProducerId],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        outcome: "refused",
+        reason_code: "project_event_sharing_required",
+        run_id: null,
+      },
+    ]);
+    expect(
+      (
+        await saveProjectSchedules("rah:wire-observer", [
+          {
+            id: eventSource.id,
+            triggerType: "event",
+            eventKinds: ["task.comment_added"],
+            enabled: true,
+            reviewForAssignments: true,
+          },
+        ])
+      ).status,
+    ).toBe(200);
+    const userFactResponse = await taskCommentPost(
+      new NextRequest(
+        `http://localhost/api/projects/${project.slug}/tasks/9001/comments`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            body: "A bounded project fact without a producing agent Run.",
+          }),
+        },
+      ),
+      { params: Promise.resolve({ slug: project.slug, number: "9001" }) },
+    );
+
+    expect(userFactResponse.status).toBe(201);
+    const userComment: { comment: { id: string } } =
+      await userFactResponse.json();
+
+    expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+    const rootWork = (
+      await database.pool.query<{
+        id: string;
+        agent_chain_depth: number;
+        input: string;
+      }>(
+        "SELECT run.id,run.agent_chain_depth,input.objective_input->>'input' AS input FROM specialist_assignments work JOIN specialist_input_revisions input ON input.assignment_id=work.id AND input.revision=1 JOIN specialist_run_links link ON link.assignment_id=work.id JOIN runs run ON run.id=link.run_id JOIN domain_events fact ON fact.id::text=work.origin->>'eventId' WHERE work.project_id=$1 AND work.origin->>'kind'='event' AND fact.payload->>'commentId'=$2",
+        [project.id, userComment.comment.id],
+      )
+    ).rows;
+
+    expect(rootWork).toHaveLength(1);
+    expect(rootWork[0]!.agent_chain_depth).toBe(0);
+    expect(rootWork[0]!.input).not.toContain("bounded project fact");
+    await vi.waitFor(
+      async () => {
+        expect(
+          (
+            await database.pool.query("SELECT status FROM runs WHERE id=$1", [
+              rootWork[0]!.id,
+            ])
+          ).rows,
+        ).toEqual([{ status: "Done" }]);
+      },
+      { timeout: 30000, interval: 25 },
+    );
   } finally {
+    await database.pool.query(
+      "UPDATE agent_schedules SET enabled=false WHERE project_id=$1",
+      [project.id],
+    );
     browserSession.user = null;
     await worker.stop();
     await stopRuntimeEventConsumers();

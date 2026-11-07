@@ -8,7 +8,10 @@ import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
 import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
-import { claimCronAgentAttempt } from "@/lib/agents/trigger-attempts";
+import {
+  claimCronAgentAttempt,
+  claimEventAgentAttempt,
+} from "@/lib/agents/trigger-attempts";
 import { projectSourceContentDigest } from "@/lib/agents/project-source-review";
 import {
   startMainPostgresTestDb,
@@ -29,6 +32,182 @@ beforeAll(async () => {
 afterAll(async () => {
   await database?.stop();
 });
+
+it("IT-CBX-01 event review upgrade retains historical approval without inventing enrollment or sharing and guards new claims", async () => {
+  const legacy = await startMainPostgresTestDbUpTo(
+    { databaseName: "project_event_upgrade" },
+    "0257_project_trigger_review",
+  );
+
+  try {
+    const project = await seedProjectRow(legacy.db);
+    const role = "legacy:event-review";
+
+    await legacy.pool.query(
+      "INSERT INTO agents(id,package_name,version_label,origin,name,description,workspace,mode,triggers,risk_tier,source_path) VALUES($1,'legacy','v1','git','Legacy role','Retained identity','none','session','[\"domain_event\"]'::jsonb,'read_only','/tmp/legacy-event.md')",
+      [role],
+    );
+    const review = {
+      schemaVersion: 1,
+      reviewerUserId: "historical-recorded-operator",
+      reviewedAt: new Date().toISOString(),
+      sourceRevision: 1,
+      sourceSha256: projectSourceContentDigest({
+        triggerType: "event",
+        cronExpr: null,
+        timezone: null,
+        eventMatch: { kinds: ["task.created"] },
+        requestAtLaunch: null,
+      }),
+    };
+
+    await legacy.pool.query(
+      "INSERT INTO agent_schedules(id,agent_id,project_id,trigger_type,event_match,project_source_review,last_attempt_fence) VALUES('legacy-event-source',$1,$2,'event','{\"kinds\":[\"task.created\"]}'::jsonb,$3::jsonb,1)",
+      [role, project.id, JSON.stringify(review)],
+    );
+    const event = (
+      await legacy.pool.query<{ id: string }>(
+        "INSERT INTO domain_events(kind,project_id,actor_type,actor_id,payload,occurred_at) VALUES('task.created',$1,'user','historical-recorded-operator','{}',clock_timestamp()) RETURNING id",
+        [project.id],
+      )
+    ).rows[0]!;
+    const snapshot = {
+      version: 3,
+      scheduleId: "legacy-event-source",
+      triggerType: "event",
+      owner: { kind: "project", projectId: project.id },
+      review,
+      cronExpr: null,
+      timezone: null,
+      eventKinds: ["task.created"],
+    };
+    const old = (
+      await legacy.pool.query(
+        "INSERT INTO agent_trigger_attempts(id,project_id,source_agent_id,schedule_id,binding_snapshot,fence,delivery_key,trigger_source,trigger_event_id,reserved_run_id,claimed_at,due_at) VALUES('legacy-event-attempt',$1,$2,'legacy-event-source',$3::jsonb,1,'event:old','domain_event',$4,'legacy-event-run',now(),now()) RETURNING to_jsonb(agent_trigger_attempts) AS value",
+        [project.id, role, JSON.stringify(snapshot), event.id],
+      )
+    ).rows;
+    const head = (
+      await legacy.pool.query(
+        "SELECT to_jsonb(source) AS value FROM agent_schedules source WHERE id='legacy-event-source'",
+      )
+    ).rows;
+
+    await legacy.db.transaction((tx) =>
+      applyMainMigration(tx, "0258_project_event_context"),
+    );
+    expect(
+      (
+        await legacy.pool.query(
+          "SELECT to_jsonb(source) AS value FROM agent_schedules source WHERE id='legacy-event-source'",
+        )
+      ).rows,
+    ).toEqual(head);
+    expect(
+      (
+        await legacy.pool.query(
+          "SELECT to_jsonb(agent_trigger_attempts) AS value FROM agent_trigger_attempts WHERE id='legacy-event-attempt'",
+        )
+      ).rows,
+    ).toEqual(old);
+    const next = (
+      await legacy.pool.query<{ id: string }>(
+        "INSERT INTO domain_events(kind,project_id,actor_type,actor_id,payload,occurred_at) VALUES('task.created',$1,'user','historical-recorded-operator','{}',clock_timestamp()) RETURNING id",
+        [project.id],
+      )
+    ).rows[0]!;
+
+    await expect(
+      claimEventAgentAttempt(
+        legacy.db,
+        "legacy-event-source",
+        new Date(),
+        Number(next.id),
+      ),
+    ).rejects.toMatchObject({
+      code: "NEEDS_INPUT",
+      details: { reason: "project_event_review_required" },
+    });
+    const current = {
+      ...review,
+      schemaVersion: 2,
+      eventCursor: event.id,
+      sourceSharing: "none",
+    };
+
+    for (const invalid of [
+      { ...current, eventCursor: "-1" },
+      { ...current, eventCursor: "9223372036854775808" },
+      { ...current, eventCursor: null },
+      { ...current, sourceSharing: "all" },
+    ])
+      await expect(
+        legacy.pool.query(
+          "UPDATE agent_schedules SET project_source_review=$1::jsonb WHERE id='legacy-event-source'",
+          [JSON.stringify(invalid)],
+        ),
+      ).rejects.toMatchObject({
+        code: "23514",
+        constraint: "agent_schedules_project_review_check",
+      });
+    await legacy.pool.query(
+      "UPDATE agent_schedules SET project_source_review=$1::jsonb WHERE id='legacy-event-source'",
+      [JSON.stringify(current)],
+    );
+    const claim = await claimEventAgentAttempt(
+      legacy.db,
+      "legacy-event-source",
+      new Date(),
+      Number(next.id),
+    );
+
+    expect(claim?.bindingSnapshot).toMatchObject({
+      version: 3,
+      review: current,
+    });
+    await expect(
+      legacy.db.transaction(async (tx) => {
+        await tx.execute(
+          sql`UPDATE agent_schedules SET last_attempt_fence=last_attempt_fence+1 WHERE id='legacy-event-source'`,
+        );
+        await tx.execute(sql`INSERT INTO agent_trigger_attempts SELECT (jsonb_populate_record(NULL::agent_trigger_attempts,to_jsonb(original)||jsonb_build_object(
+        'id','old-event-after-review','reserved_run_id','old-event-after-review-run','delivery_key','event:older','fence',original.fence+1,'trigger_event_id',${event.id}::bigint
+      ))).* FROM agent_trigger_attempts original WHERE original.id=${claim!.id}`);
+      }),
+    ).rejects.toMatchObject({
+      cause: {
+        code: "23514",
+        constraint: "agent_trigger_project_review_reference",
+      },
+    });
+    await legacy.pool.query("DELETE FROM projects WHERE id=$1", [project.id]);
+    expect(
+      (
+        await legacy.pool.query(
+          "SELECT id FROM agent_schedules WHERE project_id=$1",
+          [project.id],
+        )
+      ).rows,
+    ).toEqual([]);
+    expect(
+      (
+        await legacy.pool.query(
+          "SELECT id FROM agent_trigger_attempts WHERE project_id=$1",
+          [project.id],
+        )
+      ).rows,
+    ).toEqual([]);
+    expect(
+      (
+        await legacy.pool.query(
+          "SELECT to_regclass('public.brain_items') AS present",
+        )
+      ).rows,
+    ).toEqual([{ present: null }]);
+  } finally {
+    await legacy.stop();
+  }
+}, 180000);
 
 it("IT-CBX-01 project source review upgrade preserves legacy bytes and permits project deletion without Brain", async () => {
   const legacy = await startMainPostgresTestDbUpTo(
