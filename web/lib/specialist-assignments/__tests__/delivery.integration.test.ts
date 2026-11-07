@@ -13,6 +13,7 @@ import os from "node:os";
 import { join, resolve } from "node:path";
 
 import { sql } from "drizzle-orm";
+import { NextRequest } from "next/server";
 import Ajv from "ajv";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
@@ -22,9 +23,22 @@ import {
   createSpecialistAssignment,
   activateInitialSpecialistAssignmentRunInTransaction,
   getSpecialistAssignmentInput,
+  getSpecialistAssignment,
+  cancelSpecialistAssignment,
 } from "../store";
 import { specialistAssignmentDeliveryConsumer } from "../delivery-capture";
+import { assignmentDeliveryViewSchema } from "../delivery-read-types";
+import {
+  getSpecialistAssignmentDelivery,
+  replaySpecialistAssignmentDelivery,
+} from "../delivery-read";
 
+import { GET as deliveryGet } from "@/app/api/specialist-assignments/[assignmentId]/delivery/route";
+import { POST as deliveryReplay } from "@/app/api/specialist-assignments/[assignmentId]/delivery/[deliveryId]/replay/route";
+import { GET as externalDeliveryGet } from "@/app/api/v1/ext/specialist-assignments/[assignmentId]/delivery/route";
+import { POST as externalDeliveryReplay } from "@/app/api/v1/ext/specialist-assignments/[assignmentId]/delivery/[deliveryId]/replay/route";
+import { MaisterError } from "@/lib/errors";
+import { issueUserAccessToken, issueToken } from "@/lib/tokens/issue";
 import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
 import { parseAgentDefinition } from "@/lib/agents/definition";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
@@ -82,6 +96,24 @@ const output = {
   selection: [],
 };
 
+const deliverySession = vi.hoisted(() => ({ userId: null as string | null }));
+
+vi.mock("@/lib/authz", async (original) => {
+  const actual = await original<typeof import("@/lib/authz")>();
+
+  return {
+    ...actual,
+    requireActiveSession: async () => {
+      if (deliverySession.userId === null)
+        throw new MaisterError(
+          "UNAUTHENTICATED",
+          "An authenticated delivery operator is required",
+        );
+
+      return actual.requireActiveUserById(deliverySession.userId);
+    },
+  };
+});
 vi.mock("@/lib/db/client", () => ({ getDb: () => database.db }));
 
 beforeAll(async () => {
@@ -674,3 +706,530 @@ it("IT-CBA-06 reads a large authorized native Inbox without combining independen
     details: { reason: "knowledge_reference_budget_exceeded" },
   });
 }, 120000);
+
+it("IT-CBA-06 inspects an actual retained result before and after transport dispatch", async () => {
+  const target = await recipient();
+  const work = await readyResult(target, {
+    kind: "inbox",
+    userId: target.userId,
+  });
+  const pending = await getSpecialistAssignmentDelivery(
+    database.db,
+    target.userId,
+    work.assignmentId,
+    { runId: work.runId },
+  );
+
+  expect(pending).toMatchObject({
+    schemaVersion: 1,
+    assignmentId: work.assignmentId,
+    deliveryId: work.deliveryId,
+    runId: work.runId,
+    inputRevision: 1,
+    resultRevision: 1,
+    destination: { kind: "inbox", userId: target.userId },
+    transport: {
+      state: "awaiting_dispatch",
+      id: null,
+      stateSha256: null,
+      attemptCount: 0,
+      lastAttemptNo: 0,
+    },
+  });
+  await runWebhookDeliveryJob({ db: database.db });
+  const delivered = await getSpecialistAssignmentDelivery(
+    database.db,
+    target.userId,
+    work.assignmentId,
+    { runId: work.runId },
+  );
+
+  expect(delivered.transport).toMatchObject({
+    state: "delivered",
+    attemptCount: 1,
+    lastAttemptNo: 1,
+    nextAttemptAt: null,
+  });
+  expect(delivered.transport.stateSha256).toMatch(/^[a-f0-9]{64}$/);
+  const differentDatabaseTimezone = await database.db.transaction(
+    async (tx) => {
+      await tx.execute(sql`SET LOCAL TIME ZONE 'Asia/Tokyo'`);
+
+      return getSpecialistAssignmentDelivery(
+        tx,
+        target.userId,
+        work.assignmentId,
+        { runId: work.runId },
+      );
+    },
+  );
+
+  expect(differentDatabaseTimezone.transport.stateSha256).toBe(
+    delivered.transport.stateSha256,
+  );
+  expect(delivered).not.toHaveProperty("sourceRestrictions");
+  expect(delivered).not.toHaveProperty("requesterUserId");
+  expect(delivered.transport).not.toHaveProperty("lastErrorMessage");
+});
+
+it("IT-CBA-06 replays one inspected transport cycle and rejects concurrent and delayed duplicate witnesses", async () => {
+  const target = await recipient();
+  const work = await readyResult(target, {
+    kind: "inbox",
+    userId: target.userId,
+  });
+
+  await runWebhookDeliveryJob({ db: database.db });
+  await markInboxItemRead(
+    { itemId: work.deliveryId, userId: target.userId },
+    database.db,
+  );
+  const inspection = await getSpecialistAssignmentDelivery(
+    database.db,
+    administratorId,
+    work.assignmentId,
+    { runId: work.runId },
+  );
+  const expectedStateSha256 = z
+    .string()
+    .parse(inspection.transport.stateSha256);
+  const counts = (
+    await database.pool.query(
+      "SELECT (SELECT count(*)::int FROM runs) AS runs,(SELECT count(*)::int FROM specialist_assignments) AS assignments",
+    )
+  ).rows;
+  const readAt = (
+    await database.pool.query("SELECT read_at FROM inbox_items WHERE id=$1", [
+      work.deliveryId,
+    ])
+  ).rows;
+  const replay = () =>
+    replaySpecialistAssignmentDelivery(
+      database.db,
+      administratorId,
+      work.assignmentId,
+      work.deliveryId,
+      { schemaVersion: 1, expectedStateSha256 },
+    );
+  const concurrent = await Promise.allSettled([replay(), replay()]);
+
+  expect(concurrent.filter((item) => item.status === "fulfilled")).toHaveLength(
+    1,
+  );
+  expect(concurrent.filter((item) => item.status === "rejected")).toMatchObject(
+    [
+      {
+        reason: {
+          code: "CONFLICT",
+          details: { reason: "assignment_delivery_state_conflict" },
+        },
+      },
+    ],
+  );
+  expect(await runWebhookDeliveryJob({ db: database.db })).toMatchObject({
+    delivered: 1,
+  });
+  const after = await getSpecialistAssignmentDelivery(
+    database.db,
+    administratorId,
+    work.assignmentId,
+    { runId: work.runId },
+  );
+
+  expect(after.transport).toMatchObject({
+    state: "delivered",
+    attemptCount: 1,
+    lastAttemptNo: 2,
+  });
+  expect(after.transport.stateSha256).not.toBe(expectedStateSha256);
+  await expect(replay()).rejects.toMatchObject({ code: "CONFLICT" });
+  expect(
+    (
+      await database.pool.query("SELECT read_at FROM inbox_items WHERE id=$1", [
+        work.deliveryId,
+      ])
+    ).rows,
+  ).toEqual(readAt);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT (SELECT count(*)::int FROM runs) AS runs,(SELECT count(*)::int FROM specialist_assignments) AS assignments",
+      )
+    ).rows,
+  ).toEqual(counts);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS count FROM inbox_items WHERE assignment_delivery_id=$1",
+        [work.deliveryId],
+      )
+    ).rows,
+  ).toEqual([{ count: 1 }]);
+});
+
+it("IT-CBA-06 keeps authorized delivery history after recipient revocation and cancellation while refusing replay", async () => {
+  const target = await recipient();
+  const work = await readyResult(target, {
+    kind: "inbox",
+    userId: target.userId,
+  });
+
+  await runWebhookDeliveryJob({ db: database.db });
+  const inspect = () =>
+    getSpecialistAssignmentDelivery(
+      database.db,
+      administratorId,
+      work.assignmentId,
+      { runId: work.runId },
+    );
+  const original = await inspect();
+  const replay = () =>
+    replaySpecialistAssignmentDelivery(
+      database.db,
+      administratorId,
+      work.assignmentId,
+      work.deliveryId,
+      {
+        schemaVersion: 1,
+        expectedStateSha256: z.string().parse(original.transport.stateSha256),
+      },
+    );
+
+  await database.pool.query(
+    "DELETE FROM project_members WHERE project_id=$1 AND user_id=$2",
+    [target.projectId, target.userId],
+  );
+  expect(await inspect()).toEqual(original);
+  await expect(replay()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await expect(
+    getSpecialistAssignmentDelivery(
+      database.db,
+      target.userId,
+      work.assignmentId,
+      { runId: work.runId },
+    ),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await database.pool.query(
+    "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'member')",
+    [randomUUID(), target.projectId, target.userId],
+  );
+  await database.pool.query("UPDATE runs SET status='Done' WHERE id=$1", [
+    work.runId,
+  ]);
+  const assignment = await getSpecialistAssignment(
+    database.db,
+    administratorId,
+    work.assignmentId,
+  );
+
+  await cancelSpecialistAssignment(
+    database.db,
+    administratorId,
+    work.assignmentId,
+    assignment.revision,
+    "Requested work cancelled",
+  );
+  expect(await inspect()).toEqual(original);
+  await expect(replay()).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "assignment_delivery_superseded" },
+  });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT status,attempt_count FROM webhook_deliveries WHERE specialist_delivery_id=$1",
+        [work.deliveryId],
+      )
+    ).rows,
+  ).toEqual([{ status: "delivered", attempt_count: 1 }]);
+  await expect(
+    getSpecialistAssignmentDelivery(
+      database.db,
+      administratorId,
+      work.assignmentId,
+      { runId: randomUUID() },
+    ),
+  ).rejects.toMatchObject({
+    details: { reason: "assignment_delivery_reference_unavailable" },
+  });
+});
+
+it("IT-CBA-06 enforces session origin, closed bounded contracts and personal-token audit at delivery HTTP boundaries", async () => {
+  const target = await recipient();
+  const work = await readyResult(target, {
+    kind: "inbox",
+    userId: target.userId,
+  });
+
+  await runWebhookDeliveryJob({ db: database.db });
+  const url = `http://localhost/api/specialist-assignments/${work.assignmentId}/delivery`;
+  const params = {
+    params: Promise.resolve({
+      assignmentId: work.assignmentId,
+      deliveryId: work.deliveryId,
+    }),
+  };
+
+  deliverySession.userId = null;
+  expect(
+    (await deliveryGet(new NextRequest(url + `?runId=${work.runId}`), params))
+      .status,
+  ).toBe(401);
+  deliverySession.userId = administratorId;
+  try {
+    const response = await deliveryGet(
+      new NextRequest(url + `?runId=${work.runId}`),
+      params,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    const inspection = assignmentDeliveryViewSchema.parse(
+      await response.json(),
+    );
+    const body = {
+      schemaVersion: 1,
+      expectedStateSha256: inspection.transport.stateSha256,
+    };
+    const post = (value: unknown, origin = "http://localhost") =>
+      deliveryReplay(
+        new NextRequest(url + `/${work.deliveryId}/replay`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            origin,
+            host: "localhost",
+          },
+          body: typeof value === "string" ? value : JSON.stringify(value),
+        }),
+        params,
+      );
+
+    expect((await post(body, "http://foreign.test")).status).toBe(403);
+    expect(
+      (await post({ ...body, requesterUserId: target.userId })).status,
+    ).toBe(400);
+    expect((await post(JSON.stringify(body) + " ".repeat(4096))).status).toBe(
+      413,
+    );
+    for (const query of [
+      `?runId=${work.runId}&runId=${work.runId}`,
+      `?runId=${work.runId}&actorId=x`,
+      `?runId=${work.runId}&resultRevision=2147483648`,
+      `?runId=${work.runId}&resultRevision=1e0`,
+    ])
+      expect(
+        (await deliveryGet(new NextRequest(url + query), params)).status,
+      ).toBe(400);
+    expect(
+      (
+        await deliveryGet(
+          new NextRequest(url + `?runId=${randomUUID()}`),
+          params,
+        )
+      ).status,
+    ).toBe(404);
+    const foreign = await recipient();
+    const foreignWork = await readyResult(foreign, {
+      kind: "inbox",
+      userId: foreign.userId,
+    });
+
+    expect(
+      (
+        await deliveryReplay(
+          new NextRequest(url + `/${foreignWork.deliveryId}/replay`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              origin: "http://localhost",
+              host: "localhost",
+            },
+            body: JSON.stringify(body),
+          }),
+          {
+            params: Promise.resolve({
+              assignmentId: work.assignmentId,
+              deliveryId: foreignWork.deliveryId,
+            }),
+          },
+        )
+      ).status,
+    ).toBe(404);
+    const readOnly = await issueUserAccessToken(
+      {
+        ownerUserId: administratorId,
+        name: "delivery-read",
+        scopes: ["assignments:read"],
+      },
+      database.db,
+    );
+    const recover = await issueUserAccessToken(
+      {
+        ownerUserId: administratorId,
+        name: "delivery-recovery",
+        scopes: ["assignments:read", "assignments:recover"],
+      },
+      database.db,
+    );
+    const extUrl = url.replace("/api/", "/api/v1/ext/");
+    const extPost = (secret: string, value: unknown) =>
+      externalDeliveryReplay(
+        new NextRequest(extUrl + `/${work.deliveryId}/replay`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            authorization: `Bearer ${secret}`,
+          },
+          body: JSON.stringify(value),
+        }),
+        params,
+      );
+
+    expect(
+      (
+        await externalDeliveryGet(
+          new NextRequest(extUrl + `?runId=${work.runId}`, {
+            headers: { authorization: `Bearer ${readOnly.secret}` },
+          }),
+          params,
+        )
+      ).status,
+    ).toBe(200);
+    expect((await extPost(readOnly.secret, body)).status).toBe(403);
+    const projectToken = await issueToken(
+      {
+        projectId: target.projectId,
+        name: "delivery-project-refusal",
+        scopes: ["assignments:recover"],
+      },
+      database.db,
+    );
+
+    expect((await extPost(projectToken.secret, body)).status).toBe(403);
+    expect(
+      (
+        await extPost(recover.secret, {
+          ...body,
+          destination: { kind: "inbox", userId: administratorId },
+        })
+      ).status,
+    ).toBe(422);
+    expect((await extPost(recover.secret, body)).status).toBe(200);
+    expect((await extPost(recover.secret, body)).status).toBe(409);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT method,status_code,scope_used FROM token_audit_log WHERE token_id=$1 ORDER BY created_at,id",
+          [recover.tokenId],
+        )
+      ).rows,
+    ).toEqual([
+      { method: "POST", status_code: 422, scope_used: "assignments:recover" },
+      { method: "POST", status_code: 200, scope_used: "assignments:recover" },
+      { method: "POST", status_code: 409, scope_used: "assignments:recover" },
+    ]);
+    await runWebhookDeliveryJob({ db: database.db });
+    const current = await getSpecialistAssignmentDelivery(
+      database.db,
+      administratorId,
+      work.assignmentId,
+      { runId: work.runId },
+    );
+
+    expect(
+      (
+        await post({
+          schemaVersion: 1,
+          expectedStateSha256: current.transport.stateSha256,
+        })
+      ).status,
+    ).toBe(200);
+    await runWebhookDeliveryJob({ db: database.db });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM inbox_items WHERE assignment_delivery_id=$1",
+          [work.deliveryId],
+        )
+      ).rows,
+    ).toEqual([{ count: 1 }]);
+  } finally {
+    deliverySession.userId = null;
+  }
+});
+
+it("IT-CBA-06 selects retained result revisions and refuses replay after actual result supersession", async () => {
+  const target = await recipient();
+  const work = await readyResult(target, {
+    kind: "inbox",
+    userId: target.userId,
+  });
+
+  await runWebhookDeliveryJob({ db: database.db });
+  const original = await getSpecialistAssignmentDelivery(
+    database.db,
+    administratorId,
+    work.assignmentId,
+    { runId: work.runId },
+  );
+
+  await database.db.transaction(async (tx) => {
+    await publishRunResult(tx, {
+      runId: work.runId,
+      contract,
+      value: output,
+      valueBytes: Buffer.byteLength(JSON.stringify(output)),
+      producerKind: "flow_node",
+      producerRef: "research",
+    });
+    await emitDomainEvent({
+      db: tx,
+      kind: "run.review_opened",
+      projectId: target.projectId,
+      runId: work.runId,
+      actor: { type: "system", id: null },
+      payload: { runId: work.runId, resultStatus: "valid", cause: "completed" },
+    });
+  });
+  expect(
+    await dispatchDomainEvents({
+      db: database.db,
+      consumers: [specialistAssignmentDeliveryConsumer],
+    }),
+  ).toMatchObject({ failures: 0 });
+  expect(
+    await getSpecialistAssignmentDelivery(
+      database.db,
+      administratorId,
+      work.assignmentId,
+      { runId: work.runId, resultRevision: 1 },
+    ),
+  ).toEqual(original);
+  expect(
+    await getSpecialistAssignmentDelivery(
+      database.db,
+      administratorId,
+      work.assignmentId,
+      { runId: work.runId },
+    ),
+  ).toMatchObject({
+    resultRevision: 2,
+    transport: { state: "awaiting_dispatch" },
+  });
+  await expect(
+    replaySpecialistAssignmentDelivery(
+      database.db,
+      administratorId,
+      work.assignmentId,
+      work.deliveryId,
+      {
+        schemaVersion: 1,
+        expectedStateSha256: z.string().parse(original.transport.stateSha256),
+      },
+    ),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "assignment_delivery_result_unavailable" },
+  });
+});

@@ -6137,6 +6137,118 @@ paths:
             minLength: 1
             maxLength: 128
           description: URL selector resolved and authorized against server state; no filesystem path.
+  /api/v1/ext/specialist-assignments/{assignmentId}/delivery:
+    get:
+      operationId: extSpecialistAssignmentDeliveryGet
+      summary: Inspect retained delivery for an assignment Run
+      description: >-
+        Requires current assignment and retained-source access. Select a known Run; omitted
+        resultRevision selects its latest retained result-availability receipt. Unknown or
+        repeated query keys refuse. History remains inspectable after cancellation or
+        supersession under current reader access. No result bodies, endpoint, credentials
+        or unrestricted transport errors are returned.
+        Only global personal user tokens may use the external surface; required token audit
+        records reads and recovery requests. Responses are private and no-store.
+      x-implementation-status: Implemented
+      x-required-scope: assignments:read
+      security:
+        - projectToken: []
+      parameters:
+        - name: assignmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+        - name: runId
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+        - name: resultRevision
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2147483647
+      responses:
+        "200":
+          description: Authorized delivery metadata; replay returns the queued transport state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBAssignmentDeliveryView"
+        "422":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+  /api/v1/ext/specialist-assignments/{assignmentId}/delivery/{deliveryId}/replay:
+    post:
+      operationId: extSpecialistAssignmentDeliveryReplay
+      summary: Requeue an exact terminal delivery cycle
+      description: >-
+        Requires current caller read/recover and original recipient/source/destination authority.
+        Exact current input and settled valid result are rechecked. A locked state witness
+        including the append-only attempt ordinal rejects stale or concurrent duplicate replay.
+        Preserves the business receipt and peer idempotency identity; repeats no assignment,
+        Run, operation or result publication. Session writes require canonical same-origin.
+        Body is limited to 4096 bytes.
+        Only global personal user tokens may use the external surface; required token audit
+        records reads and recovery requests. Responses are private and no-store.
+      x-implementation-status: Implemented
+      x-required-scope: assignments:recover
+      security:
+        - projectToken: []
+      parameters:
+        - name: assignmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+        - name: deliveryId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBAssignmentDeliveryReplay"
+      responses:
+        "200":
+          description: Authorized delivery metadata; replay returns the queued transport state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBAssignmentDeliveryView"
+        "422":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
   /api/v1/ext/specialist-assignments/{assignmentId}/inputs:
     post:
       operationId: extSpecialistAssignmentInput
@@ -14195,6 +14307,152 @@ components:
               type: string
               minLength: 1
               maxLength: 128
+    CBAssignmentDeliveryReplay:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, expectedStateSha256]
+      properties:
+        schemaVersion:
+          type: integer
+          enum: [1]
+        expectedStateSha256:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+    CBAssignmentDeliveryView:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          schemaVersion,
+          assignmentId,
+          deliveryId,
+          inputRevision,
+          inputSha256,
+          signal,
+          runId,
+          resultRevision,
+          resultSha256,
+          witnessAlgorithm,
+          schemaRef,
+          resultSchemaVersion,
+          schemaSha256,
+          destination,
+          createdAt,
+          transport,
+        ]
+      properties:
+        schemaVersion:
+          type: integer
+          enum: [1]
+        signal:
+          type: string
+          enum: [result_available]
+        witnessAlgorithm:
+          type: string
+          enum: [postgres_jsonb_sha256_v1]
+        destination:
+          $ref: "#/components/schemas/CBAssignmentDestination"
+        createdAt:
+          type: string
+          format: date-time
+        transport:
+          $ref: "#/components/schemas/CBAssignmentDeliveryTransport"
+        assignmentId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        deliveryId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        runId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        schemaRef:
+          type: string
+          minLength: 1
+          maxLength: 512
+        inputRevision:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        resultRevision:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        resultSchemaVersion:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        inputSha256:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        resultSha256:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        schemaSha256:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+    CBAssignmentDeliveryTransport:
+      description: Awaiting dispatch has null transport identity/witness/timestamps and zero counts. Terminal states have no next attempt. State witness covers exact stored state and append-only attempt ordinal.
+      type: object
+      additionalProperties: false
+      required:
+        [
+          id,
+          state,
+          attemptCount,
+          lastAttemptNo,
+          lastHttpStatus,
+          lastErrorKind,
+          nextAttemptAt,
+          deliveredAt,
+          updatedAt,
+          stateSha256,
+        ]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+        state:
+          type: string
+          enum: [awaiting_dispatch, pending, delivered, dead]
+        attemptCount:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+        lastAttemptNo:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+        lastHttpStatus:
+          type: integer
+          minimum: 100
+          maximum: 599
+          nullable: true
+        lastErrorKind:
+          type: string
+          enum: [timeout, network, http, config]
+          nullable: true
+        stateSha256:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+          nullable: true
+        nextAttemptAt:
+          type: string
+          format: date-time
+          nullable: true
+        deliveredAt:
+          type: string
+          format: date-time
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
     CBAssignmentDestination:
       description: Server-frozen delivery destination validated before assignment persistence. Inbox recipient
         is the actual requester. Task and optional thread belong to the assignment project; company work cannot

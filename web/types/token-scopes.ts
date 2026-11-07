@@ -72,6 +72,8 @@ export const TOKEN_SCOPES = [
   "assignments:update",
   // Human answers are never granted to agent, coordinator or librarian credentials.
   "assignments:answer",
+  // Human delivery recovery is excluded from every machine grant set.
+  "assignments:recover",
   // ADR-152 (agent memory): the agent's OWN per-attachment memory.md. A SEPARATE
   // store from Project Brain — reusing `memory:write` would make one grant open
   // two stores, re-coupling exactly the axes ADR-152 separates. Access is

@@ -816,6 +816,72 @@ Crash before intake commit leaves no assignment orphan; after commit reuses sour
 - [Human assignments](assignments.md), [HITL](hitl.md), [scheduled requests](scheduled-agent-requests.md), [web API](../api/web.openapi.yaml), [error taxonomy](../error-taxonomy.md).
 - Implementation: `web/lib/specialist-assignments/` (base store implemented), existing agent-question, prompt-owner, result and outbox services; invocation/cooperation remain designed.
 
+### Native delivery inspection and replay (Implemented — T25 qualification partial)
+
+The native surface selects delivery for a known assignment Run, rather than
+adding another unbounded history feed. Session and global personal-token clients
+use `GET /api/specialist-assignments/{assignmentId}/delivery` and its
+`/api/v1/ext` counterpart. Required query `runId` is a nonblank PostgreSQL-safe
+identity of at most 128 characters. Optional `resultRevision` is a positive signed
+32-bit integer; omission selects the latest retained result-availability receipt
+for that Run. Unknown or duplicate query keys refuse. A foreign/missing selector
+has one safe `assignment_delivery_reference_unavailable`/404 response. Current
+`assignments:read` and complete current caller access to the assignment and the
+receipt's frozen sources apply before metadata leaves the service. This is a
+control/evidence view; it never returns result bodies, endpoints, credentials,
+raw HTTP response bodies or unrestricted error messages.
+
+The closed v1 view contains assignment/delivery identity, original input revision
+and SHA256, signal `result_available`, exact Run/result/schema revision and digest
+witnesses, frozen typed destination, receipt creation time, and existing transport
+state. State is `awaiting_dispatch` when no transport exists, otherwise the
+existing `pending|delivered|dead`. Transport inspection exposes only its ID,
+attempt count, append-only last attempt ordinal, last status/error class,
+next-attempt/delivered/update timestamps, and a nullable server-computed
+`stateSha256`. The hash covers the actual transport identity/state and append-only
+attempt ordinal, including exact, time-zone-independent database epoch timestamps. It is an optimistic state
+witness, never authority. History inspection does not require pending-delivery
+eligibility: cancellation, superseded input/result, disabled recipients or changed
+target configuration cannot erase otherwise currently accessible historical
+metadata. In particular, a control-plane reader may inspect a blocked delivery
+without reviving its recipient's permissions.
+
+`POST /api/specialist-assignments/{assignmentId}/delivery/{deliveryId}/replay`
+and the external counterpart take only
+`{schemaVersion:1,expectedStateSha256:<lowercase 64-hex>}` (4-KiB body limit).
+Session writes require the existing canonical same-origin check; external writes
+require a verified global personal token with `assignments:recover`, required
+token audit, and its actual user identity. Project, agent and
+librarian credentials cannot impersonate a human recovery operator. All selectors
+are resolved through the assignment; caller-supplied authors, targets, policies,
+Run identities and payloads are refused.
+
+Replay atomically checks current caller read/recover and source authority, the
+original recipient's current source/destination authority, exact current input
+and settled valid result, and the existing terminal transport state. It locks the
+actual transport and compares `expectedStateSha256` before invoking the existing
+`replayDelivery` in the same transaction. A changed state or an already queued
+transport returns 409 without a second cycle. The append-only attempt ordinal
+prevents a delayed duplicate from matching again after a later cycle finishes.
+The existing replay resets only its bounded transport retry cycle and preserves
+attempt history, business receipt, frozen destination and stable peer idempotency
+identity. No assignment, Run, operation, result publication or knowledge
+confirmation is repeated. Queueing returns the updated private/no-store view;
+the existing delivery worker owns subsequent effects and rechecks current
+recipient/source access. No new execution, scheduler or attempt ledger is added.
+
+Qualification uses actual stored receipts and real internal/loopback delivery:
+missing/foreign references and actor/target forgery; current caller recovery
+authority; original-recipient/source revocation after inspection; stale state
+witness and concurrent/delayed duplicate replay; preserved Inbox read state and
+one control-only task reply; cancellation and superseded result/input refusing
+replay while authorized history remains visible; unchanged Run/assignment counts;
+required personal-token audit and session origin refusal. Public API status
+mapping remains 400 for session schema failures, 422 for external schema failures,
+401/403 for current authentication/authority, 404 for unavailable references,
+409 for stale/busy/superseded recovery and 413 for body size. No fixture-only result
+establishes installed stand-pilot readiness.
+
 ### Qualified project coordinator source handoff (Partial — reopened T22)
 
 An automatic project coordinator request first retains its original assignment,

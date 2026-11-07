@@ -89,8 +89,8 @@ permissions even if the provider was subsequently disabled. Private request text
 stays in the assignment input; stored native trigger metadata carries only its
 delivery identity. A new key creates independent queued work. Company and project
 assignments expose progress and results through the retained Run under current
-access. The assignment records the user's Inbox as its destination; automatic
-final-result delivery there is still in progress.
+access. The assignment records the user's Inbox as its destination; result availability is delivered there under current recipient/source access.
+Assignment acceptance remains a separate decision.
 
 Omitting the owner header selects the older project-token webhook payload
 contract and its `202` Run response. Use the explicit project header for a durable
@@ -120,6 +120,46 @@ If a response is lost, repeat the exact request and key. A retained reservation
 reuses its assignment and Run. Use a new key only for intentionally independent
 work. Revocation applies to subsequent reads and actions even when older input
 and authority snapshots remain inspectable.
+
+## Inspect result delivery and replay a failed cycle
+
+Use `GET /api/specialist-assignments/{assignmentId}/delivery?runId={runId}`
+with your browser session, or add `/v1/ext` after `/api` with a global personal
+`assignments:read` token. Select a Run from the assignment. Optional
+`resultRevision` selects an exact retained revision; omission selects the latest
+retained receipt. Current assignment and source access are required, including
+for historical results.
+
+The response shows the frozen destination, exact input/result witnesses and
+transport state: `awaiting_dispatch`, `pending`, `delivered` or `dead`. It includes
+bounded attempt metadata and `stateSha256`; result bodies, endpoint credentials
+and raw transport responses are excluded. Cancellation or a superseded result
+does not erase delivery history that you can still access.
+
+To retry delivery, send `POST` to
+`/api/specialist-assignments/{assignmentId}/delivery/{deliveryId}/replay` with
+`Content-Type: application/json` and the inspected witness:
+
+```json
+{
+  "schemaVersion": 1,
+  "expectedStateSha256": "replace-with-the-inspected-64-hex-digest"
+}
+```
+
+Use the actual returned digest. The body is limited to 4 KiB. Browser writes must
+originate from the same MAIster origin. Personal API clients use the external
+path and `assignments:recover`; project and agent credentials cannot perform this
+human recovery action. Your current read/recovery authority, the original
+recipient's current access, destination and exact current result are rechecked.
+
+A successful `200` queues delivery only. It preserves the delivery identity,
+Inbox read state and existing task reply; it does not repeat specialist work or
+complete the assignment. A pending cycle or stale witness returns `409`. Inspect
+the latest state before deciding whether to retry. Cancelled or superseded work
+cannot be revived through delivery replay. A lost replay response can be checked
+by inspecting the same receipt; repeating an old witness cannot queue another
+cycle, even after an intervening delivery finishes.
 
 ## Inspect and update working context
 

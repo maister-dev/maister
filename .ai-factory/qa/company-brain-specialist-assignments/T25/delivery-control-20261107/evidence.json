@@ -1,0 +1,153 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-07T19:32:26.212175+00:00",
+  "baseline": "9a1b4493844c4bc3b719a9e59865b883b5bb29c6",
+  "status": "qualified-local-delivery-control-checkpoint-T25-open",
+  "red": [
+    "Real retained receipt cannot be inspected by the initial unavailable service scaffold.",
+    "Actual personal recovery token issuance refuses the required unregistered scope.",
+    "Same transport state produces different witnesses in actual UTC and Asia/Tokyo transactions."
+  ],
+  "gates": {
+    "integration": {
+      "passed": 9,
+      "files": 1,
+      "seconds": 11.56
+    },
+    "unit": {
+      "passed": 9312,
+      "files": 891,
+      "seconds": 28.21
+    },
+    "types": "passed",
+    "lintAndFormat": "passed",
+    "contracts": "passed;84 requirements;45 tasks",
+    "docs": "passed;176 tables",
+    "publicBuild": "passed with local preview-cache permission",
+    "publicLinks": "passed"
+  },
+  "verified": [
+    "Actual receipt before fanout and after delivery",
+    "Closed safe metadata without result body, raw transport errors or source payloads",
+    "Exact retained result selector and latest revision",
+    "Concurrent and delayed duplicate replay refuses a second cycle",
+    "Exact database epoch timestamp state witness stable across connection time zones",
+    "Current operator and original recipient/source authority",
+    "Cancellation and actual result supersession retain authorized history and refuse replay",
+    "Session same-origin, body limits and ambiguous/forged selectors",
+    "Global personal read/recovery scopes and required success/refusal audit",
+    "Project bearer cannot impersonate a human recovery operator",
+    "Original Inbox read state and single native item survive replay",
+    "No additional assignment or Run allocated"
+  ],
+  "remaining": [
+    "T25 populated delivery upgrade and effect/ack rollback qualification",
+    "Company-only delivery qualification and remaining recipient/retry cases",
+    "T22 diagnostics/order/cancellation cases",
+    "T26-T43 and actual installed stand pilot"
+  ],
+  "effects": "Owned local test databases and fixture HTTP peer only; no production action or remote push.",
+  "sources": [
+    {
+      "path": ".ai-factory/plans/codex-company-brain-specialist-assignments.md",
+      "sha256": "acb7111c494bd34119e8eda483c57cbcde73de52c3dee973e385e28c1b5a990e"
+    },
+    {
+      "path": "docs/api/external/operations.openapi.yaml",
+      "sha256": "09618f38edfcbf8bebf88d2140dd93ca563726e872feb5fc349402e5312b395c"
+    },
+    {
+      "path": "docs/api/web.openapi.yaml",
+      "sha256": "30e7181fb83588dfd91f513c24f4e063892ef1faf9ba38e746497382afff89bd"
+    },
+    {
+      "path": "docs/system-analytics/specialist-assignments.md",
+      "sha256": "e756029d6cdd08eca071dd20814efab7b1874e8b5767d099f4ca201d286391e9"
+    },
+    {
+      "path": "site-docs/guides/company-specialist-webhooks.md",
+      "sha256": "5262cd362d0e632314d64964e8b3849af39bb878d7147b0cdfe518554291f341"
+    },
+    {
+      "path": "site-docs/ru/guides/company-specialist-webhooks.md",
+      "sha256": "18a635977e37ea3b02ce47290386e5b95c40202c8a3f727d689d6275f86e314d"
+    },
+    {
+      "path": "web/app/api/specialist-assignments/[assignmentId]/delivery/[deliveryId]/replay/route.ts",
+      "sha256": "3f4f8c369815daa31ce817f46755838c0912e8029c09a044039a07cc22e6d62c"
+    },
+    {
+      "path": "web/app/api/specialist-assignments/[assignmentId]/delivery/route.ts",
+      "sha256": "e3fd938c74eaeef245b401ea2a93abba84ef7d0abce284ed3a5972880f31d294"
+    },
+    {
+      "path": "web/app/api/v1/ext/specialist-assignments/[assignmentId]/delivery/[deliveryId]/replay/route.ts",
+      "sha256": "95e9bc2d7bec91d1154494fcca3999e68c6d573a9358db4d18fb4bff4d3f9107"
+    },
+    {
+      "path": "web/app/api/v1/ext/specialist-assignments/[assignmentId]/delivery/route.ts",
+      "sha256": "aba6e1448c9cb7c92d4d80c42599ea60c06a57ab534dc992e9efde90a344eb16"
+    },
+    {
+      "path": "web/components/board/panels/__tests__/integrations-panel.test.ts",
+      "sha256": "c0b105ac133aa6b60223a435c05e9c8044b30507cc65e269d33c7d2decb81a45"
+    },
+    {
+      "path": "web/components/board/panels/integrations-panel.tsx",
+      "sha256": "b6216a2d077fed747ae40a5a645334e62aa93c2aac07cd257cea433bae78dba9"
+    },
+    {
+      "path": "web/components/board/token-actions.tsx",
+      "sha256": "37198a04dfe890765063d0475da6b5c03bc80791a1a640dac920c00136ad9d77"
+    },
+    {
+      "path": "web/lib/brain/knowledge-http.ts",
+      "sha256": "737737d3e7c830d92bbe2a5b78f0e065aa4c71e659067d87dbbddf8419ebec4f"
+    },
+    {
+      "path": "web/lib/specialist-assignments/__tests__/delivery.integration.test.ts",
+      "sha256": "392a849e9ab0e246d42e39656c2c2601490f5830b808bdf559efd2eb06a072d4"
+    },
+    {
+      "path": "web/lib/specialist-assignments/delivery-read-types.ts",
+      "sha256": "f13466c3fcc5c385fca288ab7a9fd0c6ac324d56199a4c297dcc4bc0971f1851"
+    },
+    {
+      "path": "web/lib/specialist-assignments/delivery-read.ts",
+      "sha256": "4da40f0617d4260784a825d919d57910bcdd27f24d989bc6836a0630d9476c57"
+    },
+    {
+      "path": "web/lib/specialist-assignments/external.ts",
+      "sha256": "0b2cbbae5f40324316d7c11a061ccf1f00d1a93eb84aee793d266c9f3d1cc970"
+    },
+    {
+      "path": "web/lib/tokens/ext-handler.ts",
+      "sha256": "a0c46d81634c117f890954a74a7db6267ca834d146152aae64b76da8cec8ddea"
+    },
+    {
+      "path": "web/messages/en.json",
+      "sha256": "68d74c86f968c87b1438064520b374b36a36b6fb1c895a8e5f311b76bd39e0ab"
+    },
+    {
+      "path": "web/messages/ru.json",
+      "sha256": "bd8d1b04e5e5018f2abacd4913349c82fd7488d19ecdc130333b52df75b98f8a"
+    },
+    {
+      "path": "web/types/token-scopes.ts",
+      "sha256": "59cc8ba686eb65c3c2d24cb96ba9cad79bd016acfbd3a9feee07c9f1a9355b24"
+    }
+  ],
+  "logs": [
+    "inspection-red.log.gz",
+    "recovery-scope-red.log.gz",
+    "timezone-red.log.gz",
+    "owning-green.log.gz",
+    "unit-green.log.gz",
+    "types-green.log.gz",
+    "lint-green.log.gz",
+    "contracts-green.log.gz",
+    "docs-green.log.gz",
+    "public-build-green.log.gz",
+    "public-links-green.log.gz"
+  ]
+}
