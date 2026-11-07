@@ -5,6 +5,7 @@ import type { KnowledgePrincipalIdentity } from "./knowledge-access";
 
 import { sql } from "drizzle-orm";
 
+import { projectAssignmentInitiatorPolicy } from "@/lib/specialist-assignments/project-initiator-policy";
 import { projectRolesForActions } from "@/lib/authz";
 
 export function assignmentInputOwnerReadPolicy(
@@ -144,7 +145,16 @@ function projectAssignmentInputReadPolicy(
         AND binding.enabled AND role.enabled AND role.quarantined_at IS NULL
         AND execution.source_agent_id=role.id
         AND execution.project_id=requested.project_id AND execution.company_id IS NULL
-        AND execution.created_by_user_id=initiator.id AND original.actor->>'kind'='user'
+        AND (${projectAssignmentInitiatorPolicy({
+          runId: sql`execution.id`,
+          createdByUserId: sql`execution.created_by_user_id`,
+          projectId: sql`execution.project_id`,
+          taskId: sql`execution.task_id`,
+          userId: sql`initiator.id`,
+          assignmentId: sql`original.assignment_id`,
+          inputRevision: sql`original.revision`,
+          inputSha256: sql`original.digest`,
+        })}) AND original.actor->>'kind'='user'
         AND requested.requester->>'kind'='user' AND requested.requester->>'id'=initiator.id
         AND initiator.account_status='active' AND NOT initiator.must_change_password
         AND original.standing_definition->>'agentId'=role.id

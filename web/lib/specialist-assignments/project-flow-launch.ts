@@ -9,11 +9,12 @@ import type { ProjectCoordinatorFlowSnapshot } from "./types";
 import { and, eq, inArray, sql } from "drizzle-orm";
 
 import { assertProjectCoordinatorProvider } from "./project-flow-provider";
+import { retainProjectSourceHandoff } from "./project-source-handoff";
 import { reserveProjectAssignmentTask } from "./project-task";
 
 import { createAgentFlowTaskLaunchSource } from "@/lib/agents/flow-launch-authority";
 import { taskLaunchIntents } from "@/lib/db/schema";
-import { MaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 import { createTask } from "@/lib/services/tasks";
 import { assertInteractiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
 import {
@@ -22,7 +23,18 @@ import {
   serverTaskLaunchRequest,
 } from "@/lib/tasks/launch-intent";
 import { taskLaunchReceipt } from "@/lib/tasks/launch-receipt";
-import { wakeAcceptedTaskLaunch } from "@/lib/tasks/launch-wake";
+
+export type ProjectCoordinatorAdmission = Readonly<
+  | { kind: "accepted"; receipt: TaskLaunchReceipt }
+  | {
+      kind: "qualification_wait";
+      taskId: string;
+      reason:
+        | "qualification_required"
+        | "qualification_stale"
+        | "qualification_evidence_stale";
+    }
+>;
 
 /** Preserve the assignment's private input while entering the existing durable task admission. */
 export async function acceptProjectCoordinatorAssignmentLaunch(
@@ -30,7 +42,7 @@ export async function acceptProjectCoordinatorAssignmentLaunch(
   input: LaunchAgentRunInput,
   flow: ProjectCoordinatorFlowSnapshot,
   principal?: InteractiveTaskLaunchPrincipal,
-): Promise<TaskLaunchReceipt> {
+): Promise<ProjectCoordinatorAdmission> {
   const reference = input.specialistAssignment;
 
   if (!reference || input.nativeInput || input.parentRunId)
@@ -87,11 +99,10 @@ export async function acceptProjectCoordinatorAssignmentLaunch(
   if (existing) {
     const receipt = taskLaunchReceipt(existing);
 
-    wakeAcceptedTaskLaunch(db, receipt);
-
-    return receipt;
+    return { kind: "accepted", receipt };
   }
   await assertProjectCoordinatorProvider(db, input.projectId, flow);
+  await retainProjectSourceHandoff(db, input.projectId, carrier.admission);
   const source = await createAgentFlowTaskLaunchSource(db, {
     ...input,
     taskId: carrier.taskId,
@@ -105,17 +116,31 @@ export async function acceptProjectCoordinatorAssignmentLaunch(
       : {}),
   });
   const key = `specialist_assignment:${reference.assignmentId}:${reference.inputRevision}`;
-  const receipt = principal
-    ? await acceptInteractiveSourceTaskLaunch(
-        db,
-        principal,
-        source,
-        request,
-        key,
-      )
-    : await acceptServerTaskLaunch(db, source, request, key);
 
-  wakeAcceptedTaskLaunch(db, receipt);
+  try {
+    const receipt = principal
+      ? await acceptInteractiveSourceTaskLaunch(
+          db,
+          principal,
+          source,
+          request,
+          key,
+        )
+      : await acceptServerTaskLaunch(db, source, request, key);
 
-  return receipt;
+    return { kind: "accepted", receipt };
+  } catch (error) {
+    const reason = isMaisterError(error) ? error.details?.reason : null;
+
+    if (
+      !principal &&
+      isMaisterError(error) &&
+      error.code === "PRECONDITION" &&
+      (reason === "qualification_required" ||
+        reason === "qualification_stale" ||
+        reason === "qualification_evidence_stale")
+    )
+      return { kind: "qualification_wait", taskId: carrier.taskId, reason };
+    throw error;
+  }
 }

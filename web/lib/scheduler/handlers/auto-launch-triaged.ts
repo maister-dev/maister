@@ -3,6 +3,7 @@ import "server-only";
 import { inArray } from "drizzle-orm";
 import pino from "pino";
 
+import { resumeQualifiedProjectAssignments } from "@/lib/specialist-assignments/project-source-resume";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
@@ -126,6 +127,7 @@ export async function runAutoLaunchTriagedJob(
         );
       }
     }
+    await resumeQualifiedProjectAssignments(db);
     await reconcileTaskLaunchIntents(db);
 
     return summary;

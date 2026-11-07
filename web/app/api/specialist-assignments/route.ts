@@ -5,6 +5,7 @@ import { type NextRequest, type NextResponse } from "next/server";
 import { interactiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
 import { assertInteractiveLaunchOrigin } from "@/lib/tasks/launch-http";
 import { requireActiveSession } from "@/lib/authz";
+import { wakeAcceptedTaskLaunch } from "@/lib/tasks/launch-wake";
 import { getDb } from "@/lib/db/client";
 import {
   knowledgeErrorResponse,
@@ -26,6 +27,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       await readKnowledgeJson(request),
       principal,
     );
+
+    if (receipt.projectAdmission?.kind === "accepted")
+      wakeAcceptedTaskLaunch(getDb(), receipt.projectAdmission.receipt);
     const assignment = await getSpecialistAssignment(
       getDb(),
       user.id,

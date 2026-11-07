@@ -12,6 +12,7 @@ import {
   knowledgeErrorResponse,
   knowledgeJson,
 } from "@/lib/brain/knowledge-http";
+import { wakeAcceptedTaskLaunch } from "@/lib/tasks/launch-wake";
 import { getDb } from "@/lib/db/client";
 import { decodeRouteParam } from "@/lib/route-params";
 import { MaisterError } from "@/lib/errors";
@@ -58,6 +59,9 @@ export async function handleOwnedAgentWebhook(
         request.headers.get("idempotency-key"),
         value,
       );
+
+      if (receipt.projectAdmission?.kind === "accepted")
+        wakeAcceptedTaskLaunch(getDb(), receipt.projectAdmission.receipt);
 
       return knowledgeJson(receipt.assignment, receipt.duplicate ? 200 : 201);
     },

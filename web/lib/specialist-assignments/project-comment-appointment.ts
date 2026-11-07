@@ -6,6 +6,7 @@ import type { ProjectCommentAppointment } from "./project-source-types";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 
+import { queuedProjectSourceHandoffPredicate } from "./project-source-handoff-query";
 import { projectCommentAppointmentSchema } from "./project-source-types";
 
 import { captureTriggerBindingSnapshot } from "@/lib/agents/trigger-binding-snapshot";
@@ -74,7 +75,7 @@ export async function loadProjectCommentAppointment(
     WHERE invocation.id=${appointment.attemptId} AND invocation.schedule_id=${appointment.scheduleId}
       AND invocation.trigger_event_id=${appointment.eventId} AND invocation.reserved_run_id=${appointment.runId}
       AND invocation.company_id IS NULL AND invocation.trigger_source='domain_event' AND invocation.provenance='claim'
-      AND invocation.outcome IS NULL AND invocation.scheduled_request_snapshot IS NULL
+      AND (invocation.outcome IS NULL OR ${queuedProjectSourceHandoffPredicate()}) AND invocation.scheduled_request_snapshot IS NULL
     FOR SHARE OF invocation,source,binding,event,comment,task
   `)
   ).rows[0];

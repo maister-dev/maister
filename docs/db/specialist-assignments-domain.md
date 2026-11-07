@@ -294,3 +294,24 @@ routing-receipt pointer. Legacy rows still require a project and task. Native
 recipient/owner/result/source references are checked at insertion and remain
 immutable while recipient-owned read timestamps use the existing mutations.
 There is no Brain FK, new execution ledger or second transport-attempt ledger.
+
+
+### Project source ownership before a Run (Designed — reopened T22)
+
+Planned additive main `0267_specialist_source_handoff` extends only the existing
+`agent_trigger_attempts` row with nullable closed v1 `specialist_assignment` JSONB.
+The [assignment contract](../system-analytics/specialist-assignments.md#qualified-project-coordinator-source-handoff-partial--reopened-t22)
+owns its exact grammar, current-authority and recovery behavior. A CHECK enforces
+project-only scope and bounded shape. A trigger validates its exact immutable
+assignment/input/source binding, admits its first capture only before reservation
+use, and refuses later mutation. Existing source identity/fence and queued-to-Run
+guards remain authoritative. Legacy/company NULLs and all existing source/request
+snapshots are preserved. There is no new source execution table, Brain FK,
+backfilled attribution or project-deletion veto. Fresh, populated, repeated and
+interrupted startup qualification must precede an Implemented label.
+
+The partial expression index `agent_trigger_attempt_assignment_idx` covers
+non-NULL handoff assignment IDs. Bounded resumption reuses this lookup and skips
+carriers already owned by canonical launch intents; their existing worker owns
+further dispatch and recovery. Historical attempts incur no invented pointer or
+additional owner constraint.

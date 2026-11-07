@@ -7,6 +7,7 @@ import type { ProjectEventAppointment } from "./project-source-types";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 
+import { queuedProjectSourceHandoffPredicate } from "./project-source-handoff-query";
 import { projectEventAppointmentSchema } from "./project-source-types";
 
 import { projectTriggerBindingSnapshotSchema } from "@/lib/agents/trigger-attempt-types";
@@ -87,7 +88,7 @@ export async function loadProjectEventAppointment(
     WHERE invocation.id=${reference.attemptId} AND invocation.schedule_id=${reference.scheduleId}
       AND invocation.reserved_run_id=${reference.runId} AND invocation.company_id IS NULL
       AND invocation.trigger_source='domain_event' AND invocation.trigger_event_id=${reference.eventId}
-      AND invocation.scheduled_request_snapshot IS NULL AND invocation.provenance='claim' AND invocation.outcome IS NULL
+      AND invocation.scheduled_request_snapshot IS NULL AND invocation.provenance='claim' AND (invocation.outcome IS NULL OR ${queuedProjectSourceHandoffPredicate()})
     FOR SHARE OF invocation,source,binding,event
   `)
     ).rows[0],

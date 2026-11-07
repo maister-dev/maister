@@ -815,3 +815,90 @@ Crash before intake commit leaves no assignment orphan; after commit reuses sour
 - [ADR-203](../decisions.md#adr-203-durable-specialist-assignments-and-company-coordinator-flows), [persistence](../db/specialist-assignments-domain.md), [runtime](specialist-runtime.md), [cooperation](specialist-cooperation.md).
 - [Human assignments](assignments.md), [HITL](hitl.md), [scheduled requests](scheduled-agent-requests.md), [web API](../api/web.openapi.yaml), [error taxonomy](../error-taxonomy.md).
 - Implementation: `web/lib/specialist-assignments/` (base store implemented), existing agent-question, prompt-owner, result and outbox services; invocation/cooperation remain designed.
+
+### Qualified project coordinator source handoff (Partial — reopened T22)
+
+An automatic project coordinator request first retains its original assignment,
+private input and carrier task. A missing or stale positive qualification returns
+that queued business work without manufacturing a task-launch receipt or Run.
+The existing task qualification service remains the only assessment writer. Its
+input includes the carrier's exact `qualification_source_version` witness; a
+label-only or earlier-input assessment cannot authorize this work. A real
+same-origin session can instead create its one-shot manual launch intent.
+
+For comment, cron and event origins, additive main `0267_specialist_source_handoff`
+adds nullable `agent_trigger_attempts.specialist_assignment`. Its closed v1
+value is `{schemaVersion:1, assignment:{id,inputRevision,inputSha256}, source}`.
+`id` and every source identity are nonblank PostgreSQL-safe strings of at most
+128 characters; `inputRevision` is a positive signed 32-bit integer and
+`inputSha256` is lowercase 64-hex SHA-256. `source` is the existing closed
+`ProjectSourceAppointment`: kind `task_comment`, `cron` or `event`, original
+attempt/schedule/reserved-Run identities, and a positive safe event ID only for
+comment/event work. The complete JSON value is bounded to 2048 UTF-8 bytes.
+Legacy and company rows remain NULL. No historical attribution is inferred.
+
+The source appointment and actual queued project assignment/input must agree on
+owner, responsible role, source kind and immutable source identity. The existing
+attempt captures this pointer once, before any Run or launch intent owns its
+reserved identity. Existing non-NULL pointers are immutable. The capture and a
+queued source acknowledgement commit together; the original reserved Run identity
+and scheduler fence do not change. This is an extension of the existing source
+attempt, not another execution or retry ledger. Company invocations retain their
+existing admission. Project deletion and ordinary source cleanup remain possible;
+this pointer introduces no Brain FK or deletion guard.
+
+A queued source without a Run is explicitly awaiting qualification. Its current
+assignment/input pointer supplies the finite source-ownership proof needed to
+construct an automatic task-launch source later. It supplies neither a positive
+assessment nor manual authority. Existing intent acceptance still validates the
+current exact assessment, evidence SHA, owner/source access, provider, role,
+configuration and constraints. The original source resolver recognizes an open
+claim or that exact retained queued pointer; a generic queued attempt, changed
+input, foreign owner or changed source cannot acquire this privilege. Existing
+queued-intent-to-Run binding then adopts the original reserved identity and keeps
+the source acknowledgement immutable.
+
+The existing `agent_triggers` consumer resumes matching work after
+`task.qualification_changed`. The existing automatic-launch job supplies bounded
+recovery of missed wakes and provider/authority restoration, using at most 100
+oldest queued project carriers with a current accepted ready assessment per pass and the existing admission locks and
+intent worker. No timer, scheduler, process or attempt ledger is added. Manual
+and webhook requests without source attempts resume from their original
+assignment/input/origin and current requester, never from an invented session.
+A non-ready, stale or revoked assessment keeps work queued. Current revocation,
+source disablement, changed review/provider/input and cancellation prevent effects;
+restoring a precondition does not rewrite frozen input or historical authority.
+
+Recovery covers each durable boundary: intake before carrier retention; carrier
+before source capture; source capture/acknowledgement before qualification;
+qualification before wake; accepted intent before Run binding; Run binding before
+producer acknowledgement. Replay adopts the same assignment, input, source fence,
+intent and reserved Run. A source that became `unknown` before capture may be
+reassociated only under its original source lock after exact intake/input matching
+and proof that no Run or intent used the reservation; uncertain execution is never
+reset or retried through this path. Cancellation and an unavailable original
+requester remain explicit durable blockers. Technical completion still does not
+accept the assignment or confirm a Brain assertion.
+
+Qualification must exercise real human assessment publication, registered event
+consumption and the existing worker/ACP path. It must cover waiting without model
+effects, same-key replay, changed input/source/role, both qualification/replay race
+orders, expired producer ownership, lost wake/restart, revoked current authority,
+cancelled work, immutable pointer tampering and project deletion without Brain
+access. The actual project intake composite qualifies comment, cron, event and webhook
+coordinators through human assessment, registered consumers and the real supervisor.
+Concurrent source deliveries adopt one queued admission, expired producer leases
+do not relabel retained work unknown, and a changed private-input witness refuses
+before allocation. Recovery before the initial source-pointer commit, exhaustive
+qualification/replay ordering and the remaining interruption cases remain unqualified;
+T22 stays open. Fixtures cannot establish stand-pilot readiness.
+
+Automatic project coordinator Runs retain system creation attribution
+(`created_by_user_id=NULL`). Original requester authority comes from the exact
+native assignment input and its bound canonical `agent_trigger` launch intent:
+assignment ID, input revision, requester ID, carrier task and the input SHA256
+source-version witness must all match. `projectAssignmentInitiatorPolicy`
+provides this shared predicate for current input disclosure and context updates.
+The initiating account, current project membership, attachment and package gates
+still apply. An arbitrary system Run, source selector or model-supplied user ID
+cannot satisfy this binding; no historical creator is invented.

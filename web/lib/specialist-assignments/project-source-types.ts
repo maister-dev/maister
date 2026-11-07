@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { postgresTextSchema } from "@/lib/text-schema";
 
-const identity = postgresTextSchema.min(1).max(128);
+const identity = postgresTextSchema.min(1).max(128).regex(/\S/);
 
 /** Binds a native comment invocation to the existing source/attempt ledger, without creating an execution ledger. */
 export const projectCommentAppointmentSchema = z
@@ -76,3 +76,23 @@ export const PROJECT_COMMENT_REASON_CODES = [
   "project_comment_appointment_mismatch",
   "project_comment_input_too_large",
 ] as const;
+
+/** A retained source reservation owns queued business input, never qualification or mutation authority. */
+export const projectSourceHandoffSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    assignment: z
+      .object({
+        id: identity,
+        inputRevision: z.number().int().min(1).max(2147483647),
+        inputSha256: z.string().regex(/^[a-f0-9]{64}$/),
+      })
+      .strict(),
+    source: projectSourceAppointmentSchema,
+  })
+  .strict()
+  .refine(
+    (value) => new TextEncoder().encode(JSON.stringify(value)).length <= 2048,
+    "Project source handoff must fit its bounded identity envelope",
+  );
+export type ProjectSourceHandoff = z.infer<typeof projectSourceHandoffSchema>;

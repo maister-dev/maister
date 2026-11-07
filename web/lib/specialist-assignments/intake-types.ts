@@ -1,3 +1,4 @@
+import type { ProjectCoordinatorAdmission } from "./project-flow-launch";
 import type { SqlTransaction } from "@/lib/db/sql-types";
 import type {
   PreparedSpecialistAssignment,
@@ -55,6 +56,7 @@ export type PrepareSpecialistIntake = (
   tx: SqlTransaction,
 ) => Promise<PreparedSpecialistAssignment>;
 export type SpecialistIntakeReceipt = Readonly<{
+  projectAdmission?: ProjectCoordinatorAdmission;
   receiptId: string;
   assignment: SpecialistAssignment;
   inputRevision: number;

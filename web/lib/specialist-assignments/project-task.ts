@@ -74,9 +74,10 @@ export async function reserveProjectAssignmentTask(
       typeof head.project_task_id === "string"
         ? head.project_task_id
         : await createTask(tx);
+    const sourceVersion = `specialist-assignment:v1:${reference.assignmentId}:${reference.inputRevision}:${input.digest}`;
     const task = (
       await tx.execute(
-        sql`SELECT id FROM tasks WHERE id=${taskId} AND project_id=${projectId} AND flow_id=${input.snapshot.standingDefinition.coordinatorFlow.flowId} FOR SHARE`,
+        sql`SELECT id,qualification_source_version FROM tasks WHERE id=${taskId} AND project_id=${projectId} AND flow_id=${input.snapshot.standingDefinition.coordinatorFlow.flowId} FOR SHARE`,
       )
     ).rows[0];
 
@@ -86,10 +87,20 @@ export async function reserveProjectAssignmentTask(
         "The assignment's project task or declared Flow was retargeted",
         { details: { reason: "project_assignment_task_changed" } },
       );
-    if (typeof head.project_task_id === "string")
+    if (typeof head.project_task_id === "string") {
+      if (task.qualification_source_version !== sourceVersion)
+        throw new MaisterError(
+          "CONFLICT",
+          "The carrier qualification witness no longer names the exact private assignment input",
+          {
+            details: { reason: "project_assignment_input_changed" },
+          },
+        );
+
       return { taskId, admission: reference };
+    }
     await tx.execute(
-      sql`UPDATE tasks SET qualification_source_version=${`specialist-assignment:v1:${reference.assignmentId}:${reference.inputRevision}:${input.digest}`} WHERE id=${taskId} AND project_id=${projectId}`,
+      sql`UPDATE tasks SET qualification_source_version=${sourceVersion} WHERE id=${taskId} AND project_id=${projectId}`,
     );
     const changed = await tx.execute(sql`
       UPDATE specialist_assignments SET project_task_id=${taskId},revision=revision+1,updated_at=clock_timestamp()

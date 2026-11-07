@@ -119,6 +119,10 @@ it("IT-CBX-01 event review upgrade retains historical approval without inventing
       )
     ).rows[0]!;
 
+    // Historical bytes are asserted above; today's writer also requires its additive nullable source envelope.
+    await legacy.db.transaction((tx) =>
+      applyMainMigration(tx, "0267_specialist_source_handoff"),
+    );
     await expect(
       claimEventAgentAttempt(
         legacy.db,
@@ -301,6 +305,10 @@ it("IT-CBX-01 project source review upgrade preserves legacy bytes and permits p
     await legacy.pool.query(
       "UPDATE agent_schedules SET project_source_review=$1::jsonb WHERE id='legacy-review-source'",
       [JSON.stringify(review)],
+    );
+    // Upgrade the additive writer envelope only after comparing the historical review migration bytes.
+    await legacy.db.transaction((tx) =>
+      applyMainMigration(tx, "0267_specialist_source_handoff"),
     );
     const reviewed = await claimCronAgentAttempt(
       legacy.db,

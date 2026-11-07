@@ -7,6 +7,7 @@ import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-reque
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 
+import { queuedProjectSourceHandoffPredicate } from "./project-source-handoff-query";
 import { projectCronAppointmentSchema } from "./project-source-types";
 
 import { projectTriggerBindingSnapshotSchema } from "@/lib/agents/trigger-attempt-types";
@@ -64,7 +65,7 @@ export async function loadProjectCronAppointment(
     WHERE invocation.id=${reference.attemptId} AND invocation.schedule_id=${reference.scheduleId}
       AND invocation.reserved_run_id=${reference.runId} AND invocation.company_id IS NULL
       AND invocation.trigger_source='cron' AND invocation.trigger_event_id IS NULL AND invocation.provenance='claim'
-      AND invocation.outcome IS NULL
+      AND (invocation.outcome IS NULL OR ${queuedProjectSourceHandoffPredicate()})
     FOR SHARE OF invocation,source,binding
   `)
     ).rows[0],

@@ -1,0 +1,232 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-07T18:30:46.225522+00:00",
+  "status": "qualified-local-checkpoint-T22-remains-open",
+  "baseline": "223ca9d3d",
+  "rebasedOnMaster": "f38053b3192a24738c8b0920852cfd229c56721f",
+  "scope": "Existing project trigger attempts retain native assignment input while current canonical task qualification gates coordinator execution.",
+  "red": [
+    "missing durable pointer was refused instead of queued",
+    "concurrent delivery omitted the retained admission",
+    "changed carrier source witness was accepted"
+  ],
+  "gates": {
+    "composite": {
+      "passed": 1,
+      "skipped": 48,
+      "seconds": 47.06
+    },
+    "migrations": {
+      "passed": 7,
+      "files": 2,
+      "seconds": 13.6
+    },
+    "unit": {
+      "passed": 9312,
+      "files": 891
+    },
+    "types": "passed",
+    "contracts": "passed;84 requirements;45 tasks",
+    "docs": "passed;176-table ERD",
+    "lintAndFormat": "passed",
+    "schemaDrift": "none"
+  },
+  "broaderCompatibility": {
+    "log": "owning-partial.log.gz",
+    "passed": 100,
+    "failed": 2,
+    "files": 4,
+    "seconds": 382.52,
+    "companyAgentAndFlowPassed": 95,
+    "failures": "Current ORM writer against historical partial schema omitted its additive nullable handoff column; fixtures now apply 0265 only after their historical byte assertions. Follow-up migration suite passes all seven tests."
+  },
+  "verified": [
+    "actual human assessment with tracked repository evidence",
+    "registered qualification event consumer",
+    "actual supervisor and canonical intent worker",
+    "comment/cron/event/webhook coordinators",
+    "concurrent duplicate source delivery",
+    "producer lease expiry after pointer capture",
+    "pointer immutability and forgery refusal",
+    "changed carrier private-input witness refusal",
+    "original system creator attribution and current initiating user access",
+    "missed qualification wake recovered by existing scheduler"
+  ],
+  "remaining": [
+    "pre-pointer interrupted intake reconciliation",
+    "actionable qualification inspection",
+    "exhaustive qualification/replay order and cancellation recovery",
+    "T25 and T26-T43 work",
+    "real installable stand pilot qualification",
+    "post-rebase global integration/build qualification"
+  ],
+  "effects": "Local owned Postgres/supervisor/test peer only. No remote push, production mutation or stand pilot claim.",
+  "sources": [
+    {
+      "path": ".ai-factory/plans/codex-company-brain-specialist-assignments.md",
+      "sha256": "d84b7484b953a4dc5f1c4619a5506885ba04ba06d92130b55abc6bff184805eb"
+    },
+    {
+      "path": "docs/api/external/operations.openapi.yaml",
+      "sha256": "f5810ed24c4a9bc7ababa4eadc5cceb3346b92ff0f26d0883eaee4cf31eaa97f"
+    },
+    {
+      "path": "docs/api/web.openapi.yaml",
+      "sha256": "78660896f4616abb1c876be57cc2556392993b38e93b57b1d3c08d555ac09ea7"
+    },
+    {
+      "path": "docs/db/erd.dbml",
+      "sha256": "d79e30e90990b307d8e051a80b22cc586acc265c50f9247abafd6af7b2e7bc12"
+    },
+    {
+      "path": "docs/db/specialist-assignments-domain.md",
+      "sha256": "d3e5b10f6fc00c8d01ca4dca6f0877ef7914334005d5d00db3a8547f98b0798a"
+    },
+    {
+      "path": "docs/system-analytics/specialist-assignments.md",
+      "sha256": "b0fada0df7bdf9b359787911fe174676b3d0ff6be11e9cffc0f4f236703a14cd"
+    },
+    {
+      "path": "site-docs/guides/company-specialist-webhooks.md",
+      "sha256": "4e9577557bd41e21756f1e04f32527c8201c14fb931a794db284843a6513be33"
+    },
+    {
+      "path": "site-docs/ru/guides/company-specialist-webhooks.md",
+      "sha256": "e71ab900e122313c2496f8824f668fa0d7fe3e1866fbf8ecceaf58a1a462f412"
+    },
+    {
+      "path": "web/app/api/projects/[slug]/agents/[agentId]/launch/route.ts",
+      "sha256": "89e7643b5938b3d23358cfe4bb4fbfe238787b8e4d716186bf7b77877a7eeaed"
+    },
+    {
+      "path": "web/app/api/specialist-assignments/route.ts",
+      "sha256": "b1eb91e90089b4b24ef5dbc4c86367257208e718dbf8e4c5c600691af1e5e24b"
+    },
+    {
+      "path": "web/app/api/v1/ext/specialist-assignments/route.ts",
+      "sha256": "2b300b4828930b8305fb7b34216008a6b3991344746db1d2b303f1d54a8ca043"
+    },
+    {
+      "path": "web/lib/agents/__tests__/company-agent-context.integration.test.ts",
+      "sha256": "f6d7f306b55b0fd6d4638561e569f45205b329ea01651761018e9e7111f2c726"
+    },
+    {
+      "path": "web/lib/agents/flow-launch-authority.ts",
+      "sha256": "c56d9e35c7a171be3b3ff6d85986ad59c563fe9d7c29fd9889a8a42307d8355d"
+    },
+    {
+      "path": "web/lib/agents/owned-webhook-http.ts",
+      "sha256": "43cb4a5ddb5766e0bb9244195c56718e9e335a160f230a16c440633346d05338"
+    },
+    {
+      "path": "web/lib/agents/task-trigger-reservation.ts",
+      "sha256": "7c569645f705bd82e67f0f76fde02446d1d6b7ac255e7a9a73857645c73d6aba"
+    },
+    {
+      "path": "web/lib/agents/triggers.ts",
+      "sha256": "cd438de1ed1c1755fa572ca63d53d9b8f85ef641966008d959d26f720fea9865"
+    },
+    {
+      "path": "web/lib/brain/knowledge-assignment-policy.ts",
+      "sha256": "45eaccab47723221187c782d3b5a2ec540f6bc2a9ad7eae4e419f0b9785ffbbf"
+    },
+    {
+      "path": "web/lib/db/__tests__/migration-company-brain-specialists.integration.test.ts",
+      "sha256": "e0df0e4b5b8a81422704d8ba0dbcc64945cffd22c04799e777cff68ef48da560"
+    },
+    {
+      "path": "web/lib/db/__tests__/migration-specialist-source-handoff.integration.test.ts",
+      "sha256": "3e4daeb40fc342a4ab76967f37a74256772986efccc6467546ef4f9ca7bb76b0"
+    },
+    {
+      "path": "web/lib/db/migrations/0265_specialist_source_handoff.sql",
+      "sha256": "d1c105aaa1266110a76f9eda97a3d2d502a9fbf76fe55a7389a0b1e3e8c9b253"
+    },
+    {
+      "path": "web/lib/db/migrations/meta/0265_snapshot.json",
+      "sha256": "e79f00a7ba5a751171a8b46c2c929753bba42ea09c532ff02e1bb0973159a5d9"
+    },
+    {
+      "path": "web/lib/db/migrations/meta/_journal.json",
+      "sha256": "b505caceffb2a28fa84c5c712ab128aeddb21a5a83e8081f03ca0e8189a30438"
+    },
+    {
+      "path": "web/lib/db/schema.ts",
+      "sha256": "d90f2fcd5e37eb8afed7f6a6367b70789da98d44c03e21e511693a1095a7b2b4"
+    },
+    {
+      "path": "web/lib/scheduler/handlers/auto-launch-triaged.ts",
+      "sha256": "ab3819f5aab7b21f0737381b46641ca1af9ecd7fd0dad6ecd9534072bfa80bae"
+    },
+    {
+      "path": "web/lib/specialist-assignments/context-access.ts",
+      "sha256": "32f28dfb2f49fb7fb5ca58b3045831635f62594793a343df8e243696e1fb6e81"
+    },
+    {
+      "path": "web/lib/specialist-assignments/intake-types.ts",
+      "sha256": "dde844f2ce1174dd2fd5e080e1acc4f5306e74fd8dba0415227b6309772ebe81"
+    },
+    {
+      "path": "web/lib/specialist-assignments/project-comment-appointment.ts",
+      "sha256": "6ab5cd7183e4bafa129dc1be78543ee0c6715ca802e194dc184b592669d2b238"
+    },
+    {
+      "path": "web/lib/specialist-assignments/project-cron-appointment.ts",
+      "sha256": "0292cb6e12e83c057b2b3ba1db8fbb6b8e1ce9cbee6d3b9bc5175f99487b8a09"
+    },
+    {
+      "path": "web/lib/specialist-assignments/project-event-appointment.ts",
+      "sha256": "3e8877821f0877d497e1aba2e5868f528fa9710f8b2629b31e6bc10157e263e3"
+    },
+    {
+      "path": "web/lib/specialist-assignments/project-flow-launch.ts",
+      "sha256": "a136cc9437876e87ca6b29c970f338e637c4cb570ca966a1498eb2ef4fb3c8fc"
+    },
+    {
+      "path": "web/lib/specialist-assignments/project-initiator-policy.ts",
+      "sha256": "73674714cc1e1bc4ceb41a18fbf2c9f6a7de226dd87d694e54b3e614338f3067"
+    },
+    {
+      "path": "web/lib/specialist-assignments/project-request-intake.ts",
+      "sha256": "39e6683f563a1fa74c1566e9fb36965e1e947574ece60c0a92d4b9991aeda282"
+    },
+    {
+      "path": "web/lib/specialist-assignments/project-source-handoff-query.ts",
+      "sha256": "59dea41a8be11d763c0b10fed53fc7b467faec16662a49b84145295a897bbaef"
+    },
+    {
+      "path": "web/lib/specialist-assignments/project-source-handoff-schema.ts",
+      "sha256": "e34b29bc3cd07c11ce9861d3425f6ffba997f150486b9655fedbdc3c5200a9d9"
+    },
+    {
+      "path": "web/lib/specialist-assignments/project-source-handoff.ts",
+      "sha256": "4836f75a96c275c4d7a79463da1db86062945a3d523e3d9ca33d2a9f6c94a63e"
+    },
+    {
+      "path": "web/lib/specialist-assignments/project-source-resume.ts",
+      "sha256": "d27db541fe620e0580d5570cbcd0465cd0ccab9b690c1305edd3bd53d5176447"
+    },
+    {
+      "path": "web/lib/specialist-assignments/project-source-types.ts",
+      "sha256": "b184de4844cf1695cce2f1a29b9b14f1780089acc2994fa5f0b8c1ac8ea47d60"
+    },
+    {
+      "path": "web/lib/specialist-assignments/project-task.ts",
+      "sha256": "8a122a6527762a86826bb21e8f495526c6e7a95a8e1a82d43547a8e4f3321a10"
+    }
+  ],
+  "logs": [
+    "baseline-red.log.gz",
+    "concurrent-red.log.gz",
+    "private-witness-red.log.gz",
+    "owning-partial.log.gz",
+    "composite-green.log.gz",
+    "migrations-green.log.gz",
+    "unit-green.log.gz",
+    "types-green.log.gz",
+    "contracts-green.log.gz",
+    "docs-green.log.gz",
+    "lint-green.log.gz",
+    "drift-green.log.gz"
+  ]
+}

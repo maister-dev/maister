@@ -15,6 +15,7 @@ import {
   taskLaunchIntents,
   runs,
 } from "@/lib/db/schema";
+import { hasQueuedProjectSourceHandoff } from "@/lib/specialist-assignments/project-source-handoff";
 import { launchRefusal } from "@/lib/tasks/launch-resolution";
 
 type Intent = typeof taskLaunchIntents.$inferSelect;
@@ -110,6 +111,15 @@ export async function assertTaskAgentTriggerReservation(
     owner &&
     owner.settingsSnapshot.version === 2 &&
     retryDigest(owner.settingsSnapshot.serverExecution) === retryDigest(source)
+  )
+    return;
+  if (
+    await hasQueuedProjectSourceHandoff(
+      db,
+      attempt.id,
+      source.taskId,
+      source.execution.specialistAssignment,
+    )
   )
     return;
   if (attempt.outcome !== null || attempt.dueAt.getTime() <= Date.now())

@@ -12,6 +12,7 @@ import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 
 import { sql } from "drizzle-orm";
 
+import { projectAssignmentInitiatorPolicy } from "./project-initiator-policy";
 import { authorizeAssignment } from "./access";
 
 import {
@@ -148,18 +149,35 @@ export async function authorizeAssignmentContextUpdate(
     );
   const run = (
     await tx.execute(
-      sql`SELECT created_by_user_id FROM runs WHERE id=${identity.actor.runId} AND project_id=${owner.projectId} AND company_id IS NULL FOR SHARE`,
+      sql`SELECT original.actor->>'id' AS initiating_user_id
+      FROM runs execution JOIN specialist_run_links appointment ON appointment.run_id=execution.id
+      JOIN specialist_assignments requested ON requested.id=appointment.assignment_id
+      JOIN specialist_input_revisions original ON original.assignment_id=appointment.assignment_id AND original.revision=appointment.input_revision
+      WHERE execution.id=${identity.actor.runId} AND execution.project_id=${owner.projectId} AND execution.company_id IS NULL
+        AND requested.project_id=execution.project_id AND requested.company_id IS NULL
+        AND original.actor->>'kind'='user'
+        AND (${projectAssignmentInitiatorPolicy({
+          runId: sql`execution.id`,
+          createdByUserId: sql`execution.created_by_user_id`,
+          projectId: sql`execution.project_id`,
+          taskId: sql`execution.task_id`,
+          userId: sql`original.actor->>'id'`,
+          assignmentId: sql`original.assignment_id`,
+          inputRevision: sql`original.revision`,
+          inputSha256: sql`original.digest`,
+        })})
+      FOR SHARE OF execution,appointment,requested,original`,
     )
   ).rows[0];
 
-  if (typeof run?.created_by_user_id !== "string")
+  if (typeof run?.initiating_user_id !== "string")
     throw new MaisterError(
       "UNAUTHORIZED",
       "The current initiating project principal is unavailable",
     );
   await authorizeAssignment(
     tx,
-    run.created_by_user_id,
+    run.initiating_user_id,
     owner,
     "assignments:update",
     policy,

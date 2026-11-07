@@ -84,6 +84,11 @@ import {
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { readTranscriptPage } from "@/lib/runs/transcript-page";
 import { authorizePeekRun } from "@/lib/runs/peek-read-model";
+import {
+  getHumanTaskAssessmentDraft,
+  recordHumanTaskAssessment,
+} from "@/lib/tasks/human-assessment";
+import { QUALIFICATION_DIMENSIONS } from "@/lib/tasks/qualification-types";
 import { requireActiveUserById } from "@/lib/authz";
 import { GET as companyHistoryGet } from "@/app/api/specialists/[specialistId]/runs/route";
 import { GET as streamGet } from "@/app/api/runs/[runId]/stream/route";
@@ -176,6 +181,7 @@ import {
 import { MaisterError } from "@/lib/errors";
 import { loadProjectCommentAppointment } from "@/lib/specialist-assignments/project-comment-appointment";
 import { loadProjectCronAppointment } from "@/lib/specialist-assignments/project-cron-appointment";
+import { submitProjectCommentAssignment } from "@/lib/specialist-assignments/project-comment-intake";
 import { submitProjectCronAssignment } from "@/lib/specialist-assignments/project-cron-intake";
 import { prepareCompanySpecialistAssignment } from "@/lib/specialist-assignments/company-intake";
 import { reserveCompanyCronAssignment } from "@/lib/specialist-assignments/company-cron-intake";
@@ -3926,7 +3932,115 @@ it("IT-CBA-05 resumes a repository-admitted project assignment after its actual 
 it("IT-CBA-02 submits project specialist work through its actual attachment, original input and existing agent admission", async () => {
   const db: Db = database.db;
   const repo = await initRepo(join(root, "project-manual-repo"));
+
+  await writeFile(
+    join(repo, "README.md"),
+    "# Diagnostic project\nInspect the addressed component and return evidence-linked findings.\n",
+  );
+  await git(repo, "add", "README.md");
+  await git(
+    repo,
+    "commit",
+    "-q",
+    "-m",
+    "Record diagnostic qualification evidence",
+  );
   const project = await seedProjectRow(database.db, { repoPath: repo });
+  const qualifyCoordinatorTask = async (
+    taskId: string,
+    assessorId: string,
+  ): Promise<void> => {
+    const qualificationScope = {
+      projectId: project.id,
+      taskId,
+      userId: assessorId,
+    };
+    const qualificationDraft = await getHumanTaskAssessmentDraft(
+      db,
+      qualificationScope,
+      { repository: true },
+    );
+
+    expect(qualificationDraft.repository).not.toBeNull();
+    await recordHumanTaskAssessment(db, qualificationScope, {
+      requestKey: randomUUID(),
+      contextToken: qualificationDraft.contextToken,
+      expectedInputRevision: qualificationDraft.expectedInputRevision,
+      expectedQualificationRevision:
+        qualificationDraft.expectedQualificationRevision,
+      repositoryToken: qualificationDraft.repository!.token,
+      requestType: "feature",
+      decision: "ready",
+      checks: QUALIFICATION_DIMENSIONS.map((dimension) => ({
+        dimension,
+        state: dimension === "bug_evidence" ? "not_applicable" : "pass",
+        rationale:
+          dimension === "bug_evidence"
+            ? "This is a diagnostic feature request."
+            : "Reviewed the retained original specialist input, source reservation and evidence-linked result requirement.",
+        evidenceIndexes: [0],
+      })),
+      evidence: [{ kind: "file", path: "README.md" }],
+      nextActions: [],
+    });
+  };
+  const drainProjectTriggerEvents = async (): Promise<void> => {
+    const watermark = (
+      await database.pool.query<{ id: string }>(
+        "SELECT coalesce(max(id),0)::text AS id FROM domain_events",
+      )
+    ).rows[0].id;
+
+    for (let batch = 0; batch < 20; batch++) {
+      expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+      const cursor = (
+        await database.pool.query<{ complete: boolean }>(
+          "SELECT cursor_event_id >= $1::bigint AS complete FROM domain_event_consumers WHERE consumer_id='agent_triggers'",
+          [watermark],
+        )
+      ).rows[0];
+
+      if (cursor?.complete) return;
+    }
+    throw new Error(
+      "Registered trigger consumer did not drain its bounded qualification fixture batch",
+    );
+  };
+  const qualifyQueuedCoordinators = async (): Promise<void> => {
+    await drainProjectTriggerEvents();
+    const queued = (
+      await database.pool.query<{ task_id: string }>(
+        `SELECT head.project_task_id AS task_id FROM specialist_assignments head
+       JOIN specialist_input_revisions input ON input.assignment_id=head.id AND input.revision=head.input_revision
+       WHERE head.project_id=$1 AND head.status='queued' AND head.project_task_id IS NOT NULL
+         AND input.standing_definition->'schemaVersion'='2'::jsonb
+         AND NOT EXISTS(SELECT 1 FROM task_launch_intents intent WHERE intent.task_id=head.project_task_id)`,
+        [project.id],
+      )
+    ).rows;
+
+    for (const work of queued)
+      await qualifyCoordinatorTask(work.task_id, administratorId);
+    await drainProjectTriggerEvents();
+  };
+  const driveCoordinatorAssignment = async (
+    assignmentId: string,
+  ): Promise<void> => {
+    const intents = (
+      await database.pool.query<{ id: string }>(
+        `SELECT intent.id FROM task_launch_intents intent JOIN specialist_assignments head
+       ON head.project_task_id=intent.task_id WHERE head.id=$1`,
+        [assignmentId],
+      )
+    ).rows;
+
+    expect(intents).toHaveLength(1);
+    const { prepareTaskLaunchIntent, dispatchTaskLaunchIntent } =
+      await import("@/lib/tasks/launch-dispatch");
+
+    await prepareTaskLaunchIntent(db, intents[0].id);
+    await dispatchTaskLaunchIntent(db, intents[0].id);
+  };
 
   await database.pool.query(
     "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'member')",
@@ -4919,6 +5033,165 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
         throw rollbackAppointmentProbe;
       }),
     ).rejects.toBe(rollbackAppointmentProbe);
+    const concurrentCommentClaim = await claimEventAgentAttempt(
+      db,
+      coordinatorSource.id,
+      new Date(),
+      Number(coordinatorEvent.id),
+    );
+
+    expect(concurrentCommentClaim).not.toBeNull();
+    assertProjectAgentTriggerClaim(concurrentCommentClaim!);
+    const concurrentCommentReceipts = await Promise.all([
+      submitProjectCommentAssignment(db, concurrentCommentClaim!),
+      submitProjectCommentAssignment(db, concurrentCommentClaim!),
+    ]);
+
+    expect(
+      new Set(concurrentCommentReceipts.map((receipt) => receipt.assignment.id))
+        .size,
+    ).toBe(1);
+    expect(
+      concurrentCommentReceipts.map(
+        (receipt) => receipt.projectAdmission?.kind,
+      ),
+    ).toEqual(["qualification_wait", "qualification_wait"]);
+    await database.pool.query(
+      "UPDATE agent_trigger_attempts SET due_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+      [concurrentCommentClaim!.id],
+    );
+    expect(await reconcileAgentTriggerAttempts(db, new Date())).toEqual({
+      adopted: 0,
+      unknown: 0,
+    });
+    expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+    const waitingComment = (
+      await database.pool.query<{
+        task_id: string;
+        assignment_id: string;
+        outcome: string;
+        run_id: string | null;
+        handoff: unknown;
+      }>(
+        `SELECT assignment.project_task_id AS task_id,assignment.id AS assignment_id,
+          invocation.outcome,invocation.run_id,to_jsonb(invocation)->'specialist_assignment' AS handoff
+         FROM specialist_assignments assignment
+         JOIN agent_trigger_attempts invocation ON invocation.trigger_event_id=$3
+           AND invocation.schedule_id=$4
+         WHERE assignment.project_id=$1 AND assignment.origin->>'commentId'=$2`,
+        [
+          project.id,
+          coordinatorComment.comment.id,
+          coordinatorEvent.id,
+          coordinatorSource.id,
+        ],
+      )
+    ).rows;
+
+    expect(waitingComment).toHaveLength(1);
+    expect(waitingComment[0]).toMatchObject({
+      outcome: "queued",
+      run_id: null,
+      handoff: {
+        schemaVersion: 1,
+        assignment: { id: waitingComment[0].assignment_id, inputRevision: 1 },
+        source: { kind: "task_comment", eventId: Number(coordinatorEvent.id) },
+      },
+    });
+    const commentReservation = (
+      await database.pool.query<{ id: string }>(
+        "SELECT id FROM agent_trigger_attempts WHERE trigger_event_id=$1 AND schedule_id=$2",
+        [coordinatorEvent.id, coordinatorSource.id],
+      )
+    ).rows[0];
+
+    await expect(
+      database.pool.query(
+        "UPDATE agent_trigger_attempts SET specialist_assignment=jsonb_set(specialist_assignment,'{assignment,inputSha256}',to_jsonb($2::text)) WHERE id=$1",
+        [commentReservation.id, "f".repeat(64)],
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "project_source_handoff_immutable",
+    });
+    await database.pool.query(
+      "UPDATE project_members SET role='viewer' WHERE project_id=$1 AND user_id=$2",
+      [project.id, userId],
+    );
+    try {
+      const { resumeQualifiedProjectAssignments } =
+        await import("@/lib/specialist-assignments/project-source-resume");
+
+      expect(
+        await resumeQualifiedProjectAssignments(
+          db,
+          project.id,
+          waitingComment[0].task_id,
+        ),
+      ).toBe(0);
+      expect(
+        (
+          await database.pool.query(
+            "SELECT id FROM task_launch_intents WHERE task_id=$1",
+            [waitingComment[0].task_id],
+          )
+        ).rows,
+      ).toEqual([]);
+    } finally {
+      await database.pool.query(
+        "UPDATE project_members SET role='member' WHERE project_id=$1 AND user_id=$2",
+        [project.id, userId],
+      );
+    }
+    const { reserveProjectAssignmentTask } =
+      await import("@/lib/specialist-assignments/project-task");
+    const retainedCommentInput = await getSpecialistAssignmentInput(
+      db,
+      userId,
+      waitingComment[0].assignment_id,
+      1,
+    );
+    const retainedCommentHead = await getSpecialistAssignment(
+      db,
+      userId,
+      waitingComment[0].assignment_id,
+    );
+
+    await database.pool.query(
+      "UPDATE tasks SET qualification_source_version='changed-private-input-witness' WHERE id=$1",
+      [waitingComment[0].task_id],
+    );
+    try {
+      await expect(
+        reserveProjectAssignmentTask(
+          db,
+          project.id,
+          {
+            assignmentId: retainedCommentHead.id,
+            inputRevision: 1,
+            expectedRevision: retainedCommentHead.revision,
+            userId,
+          },
+          async () => {
+            throw new Error(
+              "The existing carrier must never allocate a replacement",
+            );
+          },
+        ),
+      ).rejects.toMatchObject({
+        code: "CONFLICT",
+        details: { reason: "project_assignment_input_changed" },
+      });
+    } finally {
+      await database.pool.query(
+        "UPDATE tasks SET qualification_source_version=$2 WHERE id=$1",
+        [
+          waitingComment[0].task_id,
+          `specialist-assignment:v1:${retainedCommentHead.id}:1:${retainedCommentInput.digest}`,
+        ],
+      );
+    }
+    await qualifyCoordinatorTask(waitingComment[0].task_id, userId);
     expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
     const coordinatorCommentWork = (
       await database.pool.query<{
@@ -5164,8 +5437,16 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
     const resumedCoordinatorResponse = await submit(deferredFlowRequest);
 
     expect(resumedCoordinatorResponse.status).toBe(200);
-    const resumedCoordinator = specialistAssignmentSchema.parse(
+    const resumedCoordinatorReceipt = specialistAssignmentSchema.parse(
       await resumedCoordinatorResponse.json(),
+    );
+
+    expect(resumedCoordinatorReceipt.runIds).toEqual([]);
+    await driveCoordinatorAssignment(resumedCoordinatorReceipt.id);
+    const resumedCoordinator = await getSpecialistAssignment(
+      db,
+      userId,
+      resumedCoordinatorReceipt.id,
     );
 
     expect(resumedCoordinator.id).toBe(deferredCoordinator[0].id);
@@ -5664,6 +5945,7 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
     ).rows[0]!;
 
     await fireCron(flowCronSource.id);
+    await qualifyQueuedCoordinators();
     const flowCron = (
       await database.pool.query<{
         id: string;
@@ -5743,6 +6025,7 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
       await database.pool.query("DELETE FROM execution_host_pressure");
     }
     await fireCron(flowCronSource.id);
+    await qualifyQueuedCoordinators();
     await vi.waitFor(
       async () => {
         expect(
@@ -5972,6 +6255,7 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
       { timeout: 30000, interval: 25 },
     );
     expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+    await qualifyQueuedCoordinators();
     const receiverWork = (
       await database.pool.query<{
         run_id: string;
@@ -6096,8 +6380,16 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
     });
 
     expect(privateProducerResponse.status).toBe(201);
-    const privateProducer = specialistAssignmentSchema.parse(
+    const privateProducerReceipt = specialistAssignmentSchema.parse(
       await privateProducerResponse.json(),
+    );
+
+    expect(privateProducerReceipt.runIds).toEqual([]);
+    await driveCoordinatorAssignment(privateProducerReceipt.id);
+    const privateProducer = await getSpecialistAssignment(
+      db,
+      administratorId,
+      privateProducerReceipt.id,
     );
     const privateProducerId = privateProducer.runIds[0]!;
 
@@ -6572,8 +6864,27 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
     );
 
     expect(flowWebhook.status).toBe(201);
-    const flowWebhookWork = specialistAssignmentSchema.parse(
+    const flowWebhookQueued = specialistAssignmentSchema.parse(
       await flowWebhook.json(),
+    );
+
+    expect(flowWebhookQueued.runIds).toEqual([]);
+    const webhookCarrier = (
+      await database.pool.query<{ project_task_id: string }>(
+        "SELECT project_task_id FROM specialist_assignments WHERE id=$1",
+        [flowWebhookQueued.id],
+      )
+    ).rows[0];
+
+    await qualifyCoordinatorTask(webhookCarrier.project_task_id, userId);
+    const { runAutoLaunchTriagedJob } =
+      await import("@/lib/scheduler/handlers/auto-launch-triaged");
+
+    await runAutoLaunchTriagedJob({ db });
+    const flowWebhookWork = await getSpecialistAssignment(
+      db,
+      userId,
+      flowWebhookQueued.id,
     );
 
     await vi.waitFor(

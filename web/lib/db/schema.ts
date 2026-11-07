@@ -1,3 +1,4 @@
+import type { ProjectSourceHandoff } from "@/lib/specialist-assignments/project-source-types";
 import type { CoordinatorChildLaunchContext } from "@/lib/orchestrator/child-launch-context";
 import type { AssignmentResultWitness } from "@/lib/specialist-assignments/delivery-types";
 import type { AssignmentContextSnapshot } from "@/lib/specialist-assignments/context-types";
@@ -146,6 +147,7 @@ import {
 import { agentRetryRecipeScopeShape } from "@/lib/agents/retry-scope-schema";
 import { triggerBindingScopeShape } from "@/lib/agents/trigger-scope-schema";
 import { projectSourceReviewShape } from "@/lib/agents/project-source-review-schema";
+import { projectSourceHandoffShape } from "@/lib/specialist-assignments/project-source-handoff-schema";
 import { scheduledRequestShape } from "@/lib/agents/scheduled-request-schema";
 import { TASK_LAUNCH_STATES } from "@/lib/tasks/launch-types";
 import {
@@ -1452,6 +1454,9 @@ export const agentTriggerAttempts = pgTable(
     bindingSnapshot: jsonb("binding_snapshot")
       .$type<AgentTriggerBindingSnapshot>()
       .notNull(),
+    specialistAssignment: jsonb(
+      "specialist_assignment",
+    ).$type<ProjectSourceHandoff>(),
     scheduledRequestSnapshot: jsonb(
       "scheduled_request_snapshot",
     ).$type<ScheduledAgentRequestSnapshot>(),
@@ -1498,6 +1503,13 @@ export const agentTriggerAttempts = pgTable(
       .where(
         sql`${t.companyId} IS NOT NULL AND (${t.outcome} IS NULL OR ${t.outcome}='unknown')`,
       ),
+    specialistAssignmentLookup: index("agent_trigger_attempt_assignment_idx")
+      .on(sql`(${t.specialistAssignment}->'assignment'->>'id')`)
+      .where(sql`${t.specialistAssignment} IS NOT NULL`),
+    specialistAssignment: check(
+      "agent_trigger_attempts_specialist_assignment_shape",
+      projectSourceHandoffShape(t.specialistAssignment),
+    ),
     requestShape: check(
       "agent_trigger_attempts_scheduled_request_shape",
       sql`${scheduledRequestShape(t.scheduledRequestSnapshot)} AND (${t.scheduledRequestSnapshot} IS NULL OR (${t.triggerSource} = 'cron' AND ${t.scheduledRequestSnapshot}->>'scheduleId' = ${t.scheduleId} AND ${t.scheduledRequestSnapshot}->>'triggerAttemptId' = ${t.id})) IS TRUE`,

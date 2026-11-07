@@ -260,32 +260,33 @@ export async function submitProjectUserRequest(
       },
       "project request work entering existing admission",
     );
+    const launchInput: LaunchAgentRunInput = {
+      db,
+      projectId: request.owner.projectId,
+      agentId,
+      trigger: invocation.trigger,
+      taskId: invocation.taskId,
+      runId: invocation.source?.runId,
+      agentScheduleId: invocation.source?.scheduleId,
+      scheduledRequestSnapshot: invocation.scheduledRequest,
+      ...(invocation.source?.kind === "cron"
+        ? {
+            agentTriggerReservation: {
+              attemptId: invocation.source.attemptId,
+              runId: invocation.source.runId,
+            },
+          }
+        : {}),
+      specialistAssignment: {
+        assignmentId: receipt.assignment.id,
+        inputRevision: receipt.inputRevision,
+        expectedRevision: receipt.assignment.revision,
+        userId,
+        ...(invocation.source ? { source: invocation.source } : {}),
+      },
+    };
+
     try {
-      const launchInput: LaunchAgentRunInput = {
-        db,
-        projectId: request.owner.projectId,
-        agentId,
-        trigger: invocation.trigger,
-        taskId: invocation.taskId,
-        runId: invocation.source?.runId,
-        agentScheduleId: invocation.source?.scheduleId,
-        scheduledRequestSnapshot: invocation.scheduledRequest,
-        ...(invocation.source?.kind === "cron"
-          ? {
-              agentTriggerReservation: {
-                attemptId: invocation.source.attemptId,
-                runId: invocation.source.runId,
-              },
-            }
-          : {}),
-        specialistAssignment: {
-          assignmentId: receipt.assignment.id,
-          inputRevision: receipt.inputRevision,
-          expectedRevision: receipt.assignment.revision,
-          userId,
-          ...(invocation.source ? { source: invocation.source } : {}),
-        },
-      };
       const retainedInput = await getSpecialistAssignmentInput(
         db,
         userId,
@@ -294,7 +295,7 @@ export async function submitProjectUserRequest(
       );
 
       if (retainedInput.snapshot.standingDefinition.schemaVersion === 2) {
-        await acceptProjectCoordinatorAssignmentLaunch(
+        const projectAdmission = await acceptProjectCoordinatorAssignmentLaunch(
           db,
           launchInput,
           retainedInput.snapshot.standingDefinition.coordinatorFlow,
@@ -303,6 +304,7 @@ export async function submitProjectUserRequest(
 
         return {
           ...receipt,
+          projectAdmission,
           assignment: await getSpecialistAssignment(
             db,
             userId,
@@ -347,6 +349,39 @@ export async function submitProjectUserRequest(
 
       const adopted = { ...receipt, assignment: winner };
 
+      if (winner.runIds.length === 0) {
+        const input = await getSpecialistAssignmentInput(
+          db,
+          userId,
+          winner.id,
+          receipt.inputRevision,
+        );
+
+        if (input.snapshot.standingDefinition.schemaVersion === 2) {
+          const projectAdmission =
+            await acceptProjectCoordinatorAssignmentLaunch(
+              db,
+              {
+                ...launchInput,
+                specialistAssignment: {
+                  assignmentId: winner.id,
+                  inputRevision: receipt.inputRevision,
+                  expectedRevision: winner.revision,
+                  userId,
+                  ...(invocation.source ? { source: invocation.source } : {}),
+                },
+              },
+              input.snapshot.standingDefinition.coordinatorFlow,
+              invocation.launchPrincipal,
+            );
+
+          return {
+            ...adopted,
+            projectAdmission,
+            assignment: await getSpecialistAssignment(db, userId, winner.id),
+          };
+        }
+      }
       await wakePendingSpecialistAssignment(db, adopted);
 
       return adopted;

@@ -272,6 +272,7 @@ table agent_trigger_attempts {
   source_agent_id text [not null]
   schedule_id text [not null]
   binding_snapshot jsonb [not null]
+  specialist_assignment jsonb
   scheduled_request_snapshot jsonb
   fence integer [not null]
   delivery_key text [not null]
@@ -293,6 +294,8 @@ table agent_trigger_attempts {
     (company_id, source_agent_id, claimed_at, id) [name: 'agent_trigger_attempt_company_history_idx']
     (due_at, id) [name: 'agent_trigger_attempt_project_due_idx']
     (company_id, due_at, id) [name: 'agent_trigger_attempt_company_due_idx']
+    specialist_assignment [name: 'agent_trigger_attempt_assignment_idx']
+
 
     (schedule_id, delivery_key) [name: 'agent_trigger_attempt_delivery_uq', unique]
     (schedule_id, fence) [name: 'agent_trigger_attempt_fence_uq', unique]

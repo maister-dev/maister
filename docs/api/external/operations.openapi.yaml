@@ -6040,8 +6040,10 @@ paths:
         A project coordinator instead enters the existing durable task-launch intent. A bearer request
         has no interactive session authority: its automatic root requires a current accepted positive
         qualification for the carrier's exact private-input source version. Missing/stale qualification
-        returns PRECONDITION/409 while preserving the queued assignment and carrier; no assessment or
-        manual authority is fabricated. Accepted work may remain queued before a Run exists.
+        returns the durable queued assignment with no Run link (201 for new work, 200 for exact replay),
+        preserving its original input and carrier without inventing assessment or manual authority.
+        The registered qualification consumer and existing automatic-launch job resume current canonical
+        admission after assessment. Accepted intents may also remain queued before a Run exists.
         Project/agent/librarian tokens cannot impersonate a requesting user; governed agent delegation is
         a separate adapter. Token scope alone grants no company or project authority. Exact replay requires
         current read, submit and source access; changed payload conflicts without repeating work. CONFIG,

@@ -11,6 +11,8 @@ import type { ProjectSourceReview } from "@/lib/agents/project-source-review-typ
 import { and, eq, gt, inArray, lte, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { resumeQualifiedProjectAssignments } from "@/lib/specialist-assignments/project-source-resume";
+import { dispatchTaskLaunchIntent } from "@/lib/tasks/launch-dispatch";
 import { isProjectDomainEvent } from "@/lib/domain-events/scope";
 import {
   claimCronAgentAttempt,
@@ -273,6 +275,15 @@ export async function dispatchDueAgentSchedules(
       ) {
         const native = await submitProjectCronAssignment(_db, fence);
 
+        if (native.projectAdmission) {
+          if (native.projectAdmission.kind === "accepted")
+            await dispatchTaskLaunchIntent(
+              _db,
+              native.projectAdmission.receipt.intentId,
+            );
+          summary.queued++;
+          continue;
+        }
         if (!native.assignment.runIds.includes(fence.reservedRunId))
           throw new MaisterError(
             "CONFLICT",
@@ -545,6 +556,15 @@ async function summonMentionedAgents(input: {
           continue;
         }
         const native = await submitProjectCommentAssignment(_db, fence);
+
+        if (native.projectAdmission) {
+          if (native.projectAdmission.kind === "accepted")
+            await dispatchTaskLaunchIntent(
+              _db,
+              native.projectAdmission.receipt.intentId,
+            );
+          continue;
+        }
         const runId = native.assignment.runIds[0];
 
         if (typeof runId !== "string")
@@ -743,6 +763,14 @@ export function buildAgentTriggersConsumer(
       const launch = opts.launch ?? launchAgentRun;
 
       for (const event of events) {
+        if (event.kind === "task.qualification_changed" && event.taskId) {
+          await resumeQualifiedProjectAssignments(
+            _db,
+            event.projectId,
+            event.taskId,
+          );
+          continue;
+        }
         if (!isAgentTriggerEventKind(event.kind)) continue;
         if (isGraphOnlyCutoverFailure(event)) {
           log.debug(
@@ -1057,6 +1085,15 @@ export function buildAgentTriggersConsumer(
                   continue;
                 }
                 const receipt = await submitProjectEventAssignment(_db, fence);
+
+                if (receipt.projectAdmission) {
+                  if (receipt.projectAdmission.kind === "accepted")
+                    await dispatchTaskLaunchIntent(
+                      _db,
+                      receipt.projectAdmission.receipt.intentId,
+                    );
+                  continue;
+                }
                 const [execution] = await _db
                   .select({ status: runs.status })
                   .from(runs)

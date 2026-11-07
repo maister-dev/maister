@@ -95,6 +95,9 @@ export async function POST(
         await interactiveTaskLaunchPrincipal(),
       );
 
+      if (receipt.projectAdmission?.kind === "accepted")
+        wakeAcceptedTaskLaunch(db, receipt.projectAdmission.receipt);
+
       return knowledgeJson(receipt.assignment, receipt.duplicate ? 200 : 201);
     }
 

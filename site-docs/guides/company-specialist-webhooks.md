@@ -70,6 +70,14 @@ and use its current trusted project package pin. Your account needs current
 project read/launch authority; company grants do not substitute for it. A project
 coordinator additionally needs its enabled, configured result-only Flow.
 
+A project coordinator webhook is an automatic request. Its carrier task needs a
+current accepted ready assessment bound to the original private assignment input.
+Until then, `201` (new) or `200` (replay) returns queued work with an empty Run
+list. An authorized user records the assessment through the existing task
+qualification controls. Qualification events and the existing scheduler resume
+the same assignment; preserve the original delivery key. A personal API token
+does not grant one-shot interactive launch authority.
+
 Original input is retained before repository/workspace admission. If readiness
 refuses execution, repair the named prerequisite and repeat the same body/key to
 admit that queued input. An exact retained delivery is inspected under current

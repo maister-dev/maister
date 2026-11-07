@@ -20907,6 +20907,11 @@ paths:
         manual task-launch basis. Project coordinator input freezes its exact configured Flow witness
         and reuses one initial project task whose shared prompt contains only the role identity.
         Its existing qualification source version binds the exact private assignment input digest.
+        Changing that witness refuses admission rather than reinterpreting private input.
+        Automatic comment, cron, event and personal-token webhook coordinators retain queued work
+        until the carrier has a current accepted ready assessment. Exact source reservations persist
+        on the existing trigger attempt; qualification events and the existing automatic-launch job
+        resume canonical admission. A queued source acknowledgement is neither a Run nor manual authority.
         The existing durable task-launch intent commits before repository/session allocation and may
         remain queued without a Run; the returned assignment then has no fabricated Run link.
         Current project/source access, provider and repository/workspace rules still apply.
