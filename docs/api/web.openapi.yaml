@@ -20826,12 +20826,15 @@ paths:
     post:
       operationId: specialistAssignmentCreate
       summary: Designed — Submit scoped specialist work
-      description: Company-owned session submission is implemented; project-owned submission remains Designed
-        and currently returns 400. New company reservation requires current assignments:read, assignments:submit
+      description: Company-owned session submission and project standalone operational-specialist submission are
+        implemented. Project coordinator admission remains Designed and currently returns 409. Project ownership
+        resolves the exact current agent attachment and retains existing repository/workspace admission. The
+        original request remains queued if repository/runner admission fails; retrying the same identity reuses it.
+        New company reservation requires current assignments:read, assignments:submit
         and assignments:update; exact replay requires current read, submit and source access without resolving
         mutable provider settings. Receipt, assignment, frozen input and the existing Pending Run commit atomically;
         the existing scheduler is signaled after commit and may leave the Run queued under its capacity/host fence.
-        The full company/project operation remains Designed until project admission is qualified. URL identifiers are
+        The complete invocation surface remains Designed until project coordinator admission is qualified. URL identifiers are
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
         compare canonical payload digest and expected revision; exact replay returns the original currently

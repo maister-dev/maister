@@ -19,12 +19,13 @@ import { sql } from "drizzle-orm";
 import { z } from "zod";
 import pino from "pino";
 
-import { specialistIntakeRequestSchema } from "./intake-types";
+import { manualSpecialistAssignmentRequestSchema } from "./intake-types";
 import {
   intakeSpecialistAssignmentInTransaction,
   inspectSpecialistIntakeReplayInTransaction,
 } from "./intake";
 import { getSpecialistAssignmentInTransaction } from "./store";
+import { wakePendingSpecialistAssignment } from "./admission-wake";
 
 import {
   decodeCompanyBindingHead,
@@ -45,16 +46,12 @@ import { redactQueryError } from "@/lib/db/pg-error";
 import { contentDigest } from "@/lib/evaluations/digest";
 import { MaisterError } from "@/lib/errors";
 import { createExecutionHosts, localHost } from "@/lib/execution-host";
-import { knowledgeDeliveryKeySchema } from "@/lib/brain/knowledge-types";
 import { resolveFlowExportContract } from "@/lib/run-results/flow-export";
-import { promoteNextPending } from "@/lib/scheduler";
 
 export const companyManualAssignmentRequestSchema =
-  specialistIntakeRequestSchema
+  manualSpecialistAssignmentRequestSchema
     .extend({
       owner: ownerSchema.options[0],
-      input: specialistIntakeRequestSchema.shape.input.default(""),
-      idempotencyKey: knowledgeDeliveryKeySchema,
     })
     .strict();
 type CompanyManualAssignmentRequest = z.infer<
@@ -387,28 +384,7 @@ export async function submitCompanyManualAssignment(
 ): Promise<SpecialistIntakeReceipt> {
   const receipt = await reserveCompanyManualAssignment(db, userId, value);
 
-  if (receipt.assignment.status === "active") {
-    const row = (
-      await db.execute(
-        sql`SELECT execution.run_kind,execution.status
-            FROM specialist_run_links link JOIN runs execution ON execution.id=link.run_id
-            WHERE link.assignment_id=${receipt.assignment.id} AND link.input_revision=${receipt.inputRevision}
-              AND link.role IN ('coordinator','specialist')
-            ORDER BY link.linked_at,link.run_id LIMIT 1`,
-      )
-    ).rows[0];
-
-    if (!row || (row.run_kind !== "agent" && row.run_kind !== "flow"))
-      throw new MaisterError(
-        "CONFIG",
-        "The reserved specialist assignment has no valid initial execution",
-      );
-    if (row.status === "Pending")
-      await promoteNextPending({
-        db,
-        pool: row.run_kind === "agent" ? "agent" : "flow",
-      });
-  }
+  await wakePendingSpecialistAssignment(db, receipt);
 
   return receipt;
 }

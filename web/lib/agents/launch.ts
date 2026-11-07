@@ -19,6 +19,7 @@ import type { ConsensusDraftAdmission } from "@/lib/flows/graph/consensus/admiss
 import type { TasklessAgentFlowCarrierAdmission } from "./carrier-launch-authority";
 import type { TaskLaunchReceipt } from "@/lib/tasks/launch-types";
 import type { TaskLaunchAuditContext } from "@/lib/tasks/launch-intent";
+import type { ProjectAssignmentAdmission } from "@/lib/specialist-assignments/project-admission";
 import type { NativeDelegationInput } from "@/lib/orchestrator/native-input-types";
 
 import { randomUUID } from "node:crypto";
@@ -88,6 +89,12 @@ import {
   taskLaunchInputForRun,
   taskLaunchClarificationsForRun,
 } from "@/lib/tasks/launch-execution-input";
+import { activateInitialSpecialistAssignmentRunInTransaction } from "@/lib/specialist-assignments/store";
+import {
+  prepareProjectAssignmentAdmission,
+  loadProjectAssignmentExecutionInput,
+  projectAssignmentInputPrompt,
+} from "@/lib/specialist-assignments/project-admission";
 import { resolveScheduledRequestFlowRevision } from "@/lib/agents/scheduled-request-flow";
 import { loadAgentBudgetRestartRequest } from "@/lib/agents/scheduled-request-lineage";
 import { assertScheduledRequestMatches } from "@/lib/agents/scheduled-request-store";
@@ -245,6 +252,7 @@ import {
 } from "@/lib/flows/delegatable-flow";
 import {
   assertNativeRunKnowledgeInputs,
+  assertNativeRunKnowledgeInputsInTransaction,
   recordNativeRunSources,
 } from "@/lib/brain/knowledge-execution-access";
 import {
@@ -385,6 +393,7 @@ export type AgentTriggerSource =
 export type LaunchAgentRunInput = {
   agentId: string;
   nativeInput?: NativeDelegationInput;
+  specialistAssignment?: ProjectAssignmentAdmission;
   projectId: string;
   taskId?: string | null;
   launchOverrideRunnerId?: string | null;
@@ -1420,6 +1429,17 @@ async function launchAgentRunWithAdmission(
     agentId: input.agentId,
   });
 
+  if (
+    input.specialistAssignment &&
+    (input.parentRunId ||
+      nativeInput ||
+      currentContext.effective.parsed.flow !== null)
+  )
+    throw new MaisterError(
+      "CONFIG",
+      "Project assignment admission requires its explicit standalone entry; delegation and coordinator Flows use their own bounded admission",
+    );
+
   if (input.workspaceMode === "shared")
     await assertLegacySharedWorkspace(_db, {
       projectId: input.projectId,
@@ -2092,6 +2112,9 @@ async function launchAgentRunWithAdmission(
         : {}),
       taskQualificationSnapshot,
       projectId: input.projectId,
+      ...(input.specialistAssignment
+        ? { createdByUserId: input.specialistAssignment.userId }
+        : {}),
       flowId: null,
       // M42 (ADR-114): runner identity lives on `run_sessions` (inserted below).
       status: "Pending" as const,
@@ -2143,6 +2166,21 @@ async function launchAgentRunWithAdmission(
     try {
       const inserted = await _db.transaction(async (tx: Db) => {
         if (acceptedExecution) await acceptedExecution.beginBinding(tx);
+        const assignmentCapture = input.specialistAssignment
+          ? await prepareProjectAssignmentAdmission(
+              tx,
+              input.specialistAssignment,
+              {
+                projectId: input.projectId,
+                bindingId: ctx.link.id,
+                effective: ctx.effective,
+                configuration: agentConfig,
+                executionPolicy,
+                resultContract: runRow.resultContract,
+              },
+            )
+          : null;
+
         if (input.retryClaim) await assertAgentRetryClaim(tx, input.retryClaim);
         if (taskQualificationSnapshot?.role === "qualifier" && input.taskId) {
           await tx
@@ -2203,16 +2241,14 @@ async function launchAgentRunWithAdmission(
           .values({
             ...runRow,
             agentScheduleId,
-            knowledgeAccess: await nativeKnowledgeCaptureAtLaunch(
-              tx,
-              runRow.resultContract,
-              {
+            knowledgeAccess:
+              assignmentCapture ??
+              (await nativeKnowledgeCaptureAtLaunch(tx, runRow.resultContract, {
                 parentRunId: input.parentRunId ?? null,
                 sourceRestrictions: [
                   { kind: "project_context", projectId: input.projectId },
                 ],
-              },
-            ),
+              })),
           })
           .onConflictDoNothing()
           .returning({ id: runs.id });
@@ -2266,6 +2302,20 @@ async function launchAgentRunWithAdmission(
             .onConflictDoNothing({ target: workspaces.worktreePath });
         }
 
+        if (input.specialistAssignment) {
+          await activateInitialSpecialistAssignmentRunInTransaction(
+            tx,
+            input.specialistAssignment.userId,
+            input.specialistAssignment.assignmentId,
+            {
+              runId,
+              inputRevision: input.specialistAssignment.inputRevision,
+              expectedRevision: input.specialistAssignment.expectedRevision,
+              role: "specialist",
+            },
+          );
+          await assertNativeRunKnowledgeInputsInTransaction(tx, runId);
+        }
         if (input.retryClaim)
           await recordAgentRetrySuccessor(tx, input.retryClaim, runId);
         if (input.taskId) {
@@ -2944,6 +2994,10 @@ export async function buildAgentPrompt(
   const scopeBlock = await projectScopeBlock(_db, run);
   const configBlock = configContextBlock(parsed, run);
   const taskBlock = await taskContextBlock(_db, run);
+  const assignmentInput = await loadProjectAssignmentExecutionInput(_db, run);
+
+  if (assignmentInput)
+    sections.push(projectAssignmentInputPrompt(assignmentInput));
   const commentTriggerBlock = await taskCommentTriggerContextBlock(_db, run);
 
   // The project-scope block (the slug the MAIster MCP tools require) lands right

@@ -172,7 +172,7 @@ export type AgentCapabilityProfile = z.infer<typeof capabilityProfileSchema>;
 // Per-agent runner-policy recommendation (ADR-106): seeds the per-project
 // instance. `autoApply` maps to the B1/B2 axes, `onBudgetBreach` is the new
 // budget terminal-handling axis; both resolved + enforced in Phase 5.
-const recommendedExecutionPolicySchema = z
+export const recommendedExecutionPolicySchema = z
   .object({
     autoApply: z.enum(["off", "permissions", "full"]).optional(),
     onBudgetBreach: z

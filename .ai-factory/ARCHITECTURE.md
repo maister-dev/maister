@@ -241,8 +241,10 @@ web/lib/supervisor-client ──HTTP──► supervisor/src/http-api  ──►
   dependency. Company manual intake composes the existing native reservation
   transaction bodies, then wakes the existing pool scheduler after commit.
   Session API handlers only parse bounded input and return currently authorized
-  DTOs. Project manual admission and verified assignment acceptance remain later
-  slices; native company agent/coordinator execution is implemented.
+  DTOs. Project standalone intake preserves the original queued request before
+  existing repository admission and links the assignment inside the existing Run
+  transaction. Project coordinator intake and verified assignment acceptance remain
+  later slices; native company agent/coordinator execution is implemented.
 - ✅ Server Action (`app/.../actions.ts`) imports from `lib/*`.
 - ✅ `lib/supervisor-client.ts` imports the wire error taxonomy plus a small set
   of client-safe pure modules (the execution-host lag predicate and default,

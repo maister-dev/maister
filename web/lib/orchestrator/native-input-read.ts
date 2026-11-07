@@ -21,14 +21,15 @@ import { unavailableKnowledgeReference } from "@/lib/brain/knowledge-restriction
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { redactQueryError } from "@/lib/db/pg-error";
 import { getSpecialistAssignmentInputInTransaction } from "@/lib/specialist-assignments/store";
+import { knowledgeAccessCaptureSchema } from "@/lib/company/types";
 
-export type CompanyAssignmentInputInspection = Readonly<{
+export type AssignmentInputInspection = Readonly<{
   kind: "assignment_input";
   input: AssignmentInputRevision;
 }>;
 
 export type NativeInputInspection =
-  | CompanyAssignmentInputInspection
+  | AssignmentInputInspection
   | Readonly<{
       title: string;
       prompt: string;
@@ -41,7 +42,7 @@ export async function loadCompanyAssignmentInputForUser(
   db: SqlDatabase,
   userId: string,
   runId: string,
-): Promise<CompanyAssignmentInputInspection | null> {
+): Promise<AssignmentInputInspection | null> {
   try {
     const inspection = await db.transaction(async (tx) => {
       await assertCompanyRunReadAccessInTransaction(tx, userId, runId);
@@ -86,7 +87,7 @@ export async function loadCompanyAssignmentInputForUser(
   }
 }
 
-/** Inspect original delegated input without adding it to shared task/run DTOs. */
+/** Inspect exact assignment or delegated input without adding it to shared task/run DTOs. */
 export async function loadNativeInputForUser(
   db: SqlDatabase,
   userId: string,
@@ -117,7 +118,44 @@ export async function loadNativeInputForUser(
       ).rows[0];
 
       if (!row) throw unavailableKnowledgeReference();
-      if (row.native_input === null) return null;
+      if (row.native_input === null) {
+        if (row.knowledge_access === null) return null;
+        const capture = knowledgeAccessCaptureSchema.safeParse(
+          row.knowledge_access,
+        );
+
+        if (!capture.success || capture.data.state !== "complete")
+          throw unavailableKnowledgeReference();
+        const references = capture.data.restrictions.filter(
+          (item) => item.kind === "assignment_input",
+        );
+
+        if (references.length === 0) return null;
+        if (references.length !== 1) throw unavailableKnowledgeReference();
+        const reference = references[0]!;
+        const appointment = (
+          await tx.execute(sql`
+          SELECT link.assignment_id FROM specialist_run_links link
+          JOIN specialist_assignments assignment ON assignment.id=link.assignment_id
+          WHERE link.run_id=${runId} AND assignment.project_id=${projectId}
+            AND link.assignment_id=${reference.assignmentId} AND link.input_revision=${reference.inputRevision}
+          FOR SHARE OF link,assignment
+        `)
+        ).rows[0];
+
+        if (!appointment) throw unavailableKnowledgeReference();
+        const input = await getSpecialistAssignmentInputInTransaction(
+          tx,
+          userId,
+          reference.assignmentId,
+          reference.inputRevision,
+        );
+
+        if (input.digest !== reference.inputSha256)
+          throw unavailableKnowledgeReference();
+
+        return { kind: "assignment_input" as const, input };
+      }
       const agentId =
         row.run_kind === "agent" ? row.agent_id : row.source_agent_id;
       const target =

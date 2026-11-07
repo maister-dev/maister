@@ -83,7 +83,7 @@ import {
   platformAcpRunners,
   platformRuntimeSettings,
 } from "@/lib/db/schema";
-import { createExecutionHosts } from "@/lib/execution-host";
+import { createExecutionHosts, localHost } from "@/lib/execution-host";
 import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
 import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
 import { startProjectionWorker } from "@/lib/execution-host/events/projection-worker";
@@ -148,7 +148,10 @@ import {
 import {
   installPackageRevision,
   trustPackageRevision,
+  attachPackage,
 } from "@/lib/packages/attach";
+import { loadNativeInputForUser } from "@/lib/orchestrator/native-input-read";
+import { attachAgent } from "@/lib/agents/project-links";
 import { startMainAndBrainPostgresTestDb } from "@/test-support/pg-container";
 import { seedProjectRow } from "@/test-support/execution-host-seed";
 import { git, initRepo } from "@/test-support/git-fixture";
@@ -698,6 +701,279 @@ it("CBS-02 completes company manual HTTP intake through the existing scheduler, 
     restoreUrl();
     resetRegistrarStateForTests();
     resetResolverForTests();
+    setDefaultTransportForTests(null);
+  }
+}, 90000);
+
+it("IT-CBA-02 submits project specialist work through its actual attachment, original input and existing agent admission", async () => {
+  const db: Db = database.db;
+  const repo = await initRepo(join(root, "project-manual-repo"));
+  const project = await seedProjectRow(database.db, { repoPath: repo });
+
+  await database.pool.query(
+    "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'member')",
+    [randomUUID(), project.id, userId],
+  );
+  await attachPackage({
+    projectId: project.id,
+    projectSlug: project.slug,
+    packageInstallId: assignmentInput.standingDefinition.packageInstallId,
+    db,
+  });
+  const runnerId = randomUUID();
+
+  await db.insert(platformAcpRunners).values({
+    id: runnerId,
+    adapter: "claude",
+    capabilityAgent: "claude",
+    model: "project-manual-fixture",
+    provider: { kind: "anthropic" },
+    readinessStatus: "Ready",
+  });
+  await db
+    .insert(platformRuntimeSettings)
+    .values({ id: "singleton", defaultRunnerId: runnerId })
+    .onConflictDoUpdate({
+      target: platformRuntimeSettings.id,
+      set: { defaultRunnerId: runnerId },
+    });
+  const link = await attachAgent(
+    {
+      projectId: project.id,
+      agentId: "rah:wire-observer",
+      runnerOverrideId: runnerId,
+    },
+    db,
+  );
+  const supervisor = await startRealSupervisor({
+    runtimeRoot: join(root, "project-manual-host"),
+    workspaceRoots: [join(root, "worktrees"), repo],
+    fixtureArgs: ["--hang"],
+  });
+  const restoreUrl = useRealSupervisorUrl(supervisor.url);
+  const worker = startProjectionWorker({ db, projectors: canonicalProjectors });
+
+  setDefaultTransportForTests(null);
+  resetResolverForTests();
+  resetRegistrarStateForTests();
+  try {
+    browserSession.user = await requireActiveUserById(userId);
+    const { expectedResult: _expectedResult, ...objective } =
+      assignmentInput.objectiveInput;
+    const value = {
+      ...objective,
+      owner: { kind: "project", projectId: project.id },
+      specialistBindingId: link.linkId,
+      input:
+        "Project assignment literal input must survive the original launch.",
+      idempotencyKey: randomUUID(),
+    };
+    const submit = (request: unknown = value): Promise<Response> =>
+      assignmentPost(
+        new NextRequest("http://localhost/api/specialist-assignments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(request),
+        }),
+      );
+
+    await localHost({ db, transport: createLocalDirectTransport() });
+    await database.pool.query(
+      "INSERT INTO execution_host_pressure(execution_host_id,pressured_since) SELECT id,now() FROM execution_hosts WHERE kind='local_direct' AND retired_at IS NULL ON CONFLICT DO NOTHING",
+    );
+    const responses = await Promise.all([submit(), submit()]);
+
+    expect(responses.map((item) => item.status).sort()).toEqual([200, 201]);
+    const response = responses.find((item) => item.status === 201)!;
+
+    expect({
+      status: response.status,
+      body: await response.clone().json(),
+    }).toMatchObject({ status: 201 });
+    const assignment = specialistAssignmentSchema.parse(await response.json());
+
+    expect(assignment.owner).toEqual(value.owner);
+    expect(assignment.runIds).toHaveLength(1);
+    const runId = assignment.runIds[0]!;
+
+    expect(
+      (
+        await database.pool.query("SELECT status FROM runs WHERE id=$1", [
+          runId,
+        ])
+      ).rows,
+    ).toEqual([{ status: "Pending" }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt')",
+          [runId],
+        )
+      ).rows,
+    ).toEqual([{ count: 0 }]);
+    await database.pool.query("DELETE FROM execution_host_pressure");
+    const resumedPending = await submit();
+
+    expect(resumedPending.status).toBe(200);
+    expect(
+      specialistAssignmentSchema.parse(await resumedPending.json()).runIds,
+    ).toEqual([runId]);
+    await vi.waitFor(
+      async () => {
+        const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+
+        expect(run).toMatchObject({
+          status: "Done",
+          projectId: project.id,
+          companyId: null,
+          operationalCleanup: { state: "released" },
+        });
+      },
+      { timeout: 30000, interval: 25 },
+    );
+    const input = await database.pool.query(
+      "SELECT objective_input,actor FROM specialist_input_revisions WHERE assignment_id=$1 AND revision=1",
+      [assignment.id],
+    );
+
+    expect(input.rows).toMatchObject([
+      {
+        objective_input: { input: value.input },
+        actor: { kind: "user", id: userId },
+      },
+    ]);
+    expect(
+      JSON.stringify(
+        (await readTranscriptPage(userId, runId, { limit: "20" })).messages,
+      ),
+    ).toContain(value.input);
+    expect(
+      await loadNativeInputForUser(database.db, userId, runId),
+    ).toMatchObject({
+      kind: "assignment_input",
+      input: {
+        assignmentId: assignment.id,
+        revision: 1,
+        snapshot: { objectiveInput: { input: value.input } },
+      },
+    });
+    const replay = await submit();
+
+    expect(replay.status).toBe(200);
+    expect(
+      specialistAssignmentSchema.parse(await replay.json()).runIds,
+    ).toEqual([runId]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT kind,count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt') GROUP BY kind ORDER BY kind",
+          [runId],
+        )
+      ).rows,
+    ).toEqual([
+      { kind: "session.create", count: 1 },
+      { kind: "session.prompt", count: 1 },
+    ]);
+    const countsBeforeRefusals = (
+      await database.pool.query(
+        "SELECT (SELECT count(*) FROM specialist_assignments) AS assignments,(SELECT count(*) FROM specialist_intake_receipts) AS receipts,(SELECT count(*) FROM runs) AS runs",
+      )
+    ).rows;
+
+    await database.pool.query(
+      "UPDATE project_members SET role='viewer' WHERE project_id=$1 AND user_id=$2",
+      [project.id, userId],
+    );
+    try {
+      expect((await submit()).status).toBe(403);
+    } finally {
+      await database.pool.query(
+        "UPDATE project_members SET role='member' WHERE project_id=$1 AND user_id=$2",
+        [project.id, userId],
+      );
+    }
+    await database.pool.query(
+      "UPDATE agent_project_links SET enabled=false WHERE id=$1",
+      [link.linkId],
+    );
+    try {
+      expect((await submit()).status).toBe(200);
+    } finally {
+      await database.pool.query(
+        "UPDATE agent_project_links SET enabled=true WHERE id=$1",
+        [link.linkId],
+      );
+    }
+    expect(
+      (
+        await database.pool.query(
+          "SELECT (SELECT count(*) FROM specialist_assignments) AS assignments,(SELECT count(*) FROM specialist_intake_receipts) AS receipts,(SELECT count(*) FROM runs) AS runs",
+        )
+      ).rows,
+    ).toEqual(countsBeforeRefusals);
+    const queuedRequest = {
+      ...value,
+      idempotencyKey: randomUUID(),
+      objective:
+        "Preserve independent work while its selected runner is unavailable",
+    };
+
+    await database.pool.query(
+      "UPDATE platform_acp_runners SET enabled=false WHERE id=$1",
+      [runnerId],
+    );
+    try {
+      expect((await submit(queuedRequest)).status).toBe(503);
+    } finally {
+      await database.pool.query(
+        "UPDATE platform_acp_runners SET enabled=true WHERE id=$1",
+        [runnerId],
+      );
+    }
+    const queued = (
+      await database.pool.query<{
+        id: string;
+        status: string;
+        run_count: number;
+      }>(
+        "SELECT assignment.id,assignment.status,(SELECT count(*)::int FROM specialist_run_links link WHERE link.assignment_id=assignment.id) AS run_count FROM specialist_assignments assignment JOIN specialist_input_revisions input ON input.assignment_id=assignment.id AND input.revision=1 WHERE assignment.project_id=$1 AND input.objective_input->>'objective'=$2",
+        [project.id, queuedRequest.objective],
+      )
+    ).rows;
+
+    expect(queued).toMatchObject([{ status: "queued", run_count: 0 }]);
+    expect(queued).toHaveLength(1);
+    const resumed = await submit(queuedRequest);
+
+    expect(resumed.status).toBe(200);
+    const retained = specialistAssignmentSchema.parse(await resumed.json());
+
+    expect(retained.id).toBe(queued[0]!.id);
+    expect(retained.id).not.toBe(assignment.id);
+    expect(retained.inputRevision).toBe(1);
+    expect(retained.runIds).toHaveLength(1);
+    await vi.waitFor(
+      async () => {
+        const [completed] = await db
+          .select()
+          .from(runs)
+          .where(eq(runs.id, retained.runIds[0]!));
+
+        expect(completed).toMatchObject({
+          status: "Done",
+          operationalCleanup: { state: "released" },
+        });
+      },
+      { timeout: 30000, interval: 25 },
+    );
+  } finally {
+    browserSession.user = null;
+    await worker.stop();
+    await stopRuntimeEventConsumers();
+    await supervisor.stop();
+    restoreUrl();
+    resetResolverForTests();
+    resetRegistrarStateForTests();
     setDefaultTransportForTests(null);
   }
 }, 90000);

@@ -1,0 +1,95 @@
+{
+  "task": "T22",
+  "slice": "Project standalone manual intake, existing admission and exact input consumption",
+  "date": "2026-11-07",
+  "baseCommit": "6f0606bba",
+  "status": "Project operational standalone and company manual checkpoints qualified; T22 full invocation adapters remain open",
+  "red": [
+    {
+      "case": "The real project HTTP request had no owned intake branch",
+      "testsFailed": 1,
+      "testsPassed": 36,
+      "observedStatus": 400,
+      "expectedStatus": 201
+    },
+    {
+      "case": "The original project assignment input could not be inspected",
+      "testsFailed": 1,
+      "testsPassed": 36,
+      "observed": "null",
+      "expected": "exact assignment input revision"
+    }
+  ],
+  "fixtureCorrection": "The intermediate project membership fixture used developer, which is not a repository ProjectRole. The correct member role is used; production authority checks were not relaxed.",
+  "gates": {
+    "nativeIntakeIntegration": {
+      "tests": 95,
+      "files": 3,
+      "durationSeconds": 58.41,
+      "exitCode": 0
+    },
+    "repositorySnapshotAndReadRegression": {
+      "tests": 78,
+      "files": 4,
+      "durationSeconds": 35.18,
+      "exitCode": 0
+    },
+    "unit": {
+      "tests": 9318,
+      "files": 889,
+      "durationSeconds": 25.42,
+      "exitCode": 0
+    },
+    "types": {
+      "exitCode": 0
+    },
+    "lint": {
+      "exitCode": 0
+    },
+    "format": {
+      "exitCode": 0
+    },
+    "contracts": {
+      "exitCode": 0
+    },
+    "docs": {
+      "exitCode": 0
+    }
+  },
+  "qualified": [
+    "Actual project registration/attachment/current membership and trusted fixture package, session HTTP route, existing launcher/scheduler, owned supervisor and controlled ACP process",
+    "Concurrent identical deliveries return one 201 and one 200 with one reserved Run, session.create and session.prompt",
+    "Stored host pressure defers Pending work with no ACP effects; exact replay after pressure removal signals the retained Run through the existing pool",
+    "Original literal assignment input is retained, appears in the actual prompt transcript and is inspectable through the existing original-input reader",
+    "The exact appointment/source witness limits role access without enabling general Brain reads or confirmation",
+    "Current project membership downgrade refuses replay; disabling execution attachment preserves authorized completed history",
+    "A disabled explicitly selected runner returns 503 with one queued assignment and no Run; retry after repair preserves assignment ID/input revision and completes once",
+    "Existing repository/worktree and historical launch snapshots/evidence readers remain green"
+  ],
+  "limits": [
+    "Only project standalone operational specialists are admitted by this new branch; project coordinator admission remains Designed/refused",
+    "Existing legacy manual launch, mention/event/webhook/schedule and native agent-delegation adapters remain their open T22/T22.1/T27 slices",
+    "Assignment context/HITL/origin delivery/business acceptance and the stand pilot are not complete",
+    "The full owning T21 integration gate continues on the corrected primary checkout; this is isolated next-phase preparation",
+    "The 78-test repository regression preceded extraction of the shared scheduler-wake helper; subsequent 95-test native/intake integration and current full unit/types/lint/format cover that extraction",
+    "Contract and documentation gates passed for these API/model descriptions; no contract payload shape changed in the later wake extraction"
+  ],
+  "sourceSha256": {
+    "web/lib/specialist-assignments/admission-wake.ts": "c2c607cacbdcaebe37c593a832255e13b1571a2fe94ea27915c27d33b0ead5ab",
+    "web/lib/specialist-assignments/project-admission.ts": "41f120743c8415a0d11a438d691e44d3cc931c94467363d3e368c55ad89a0d7f",
+    "web/lib/specialist-assignments/project-manual-intake.ts": "1fbbdaeaea53a5c6bbbfc9d0b311d3f24ecd13ccdb98acdc8bc5d3dba1e3375e",
+    "web/lib/specialist-assignments/company-manual-intake.ts": "528c6fc6154786f0e38d3437f85eef7fbbca273b1add34126bf0b785bf77dfea",
+    "web/lib/specialist-assignments/intake-types.ts": "c5a1e141568dddcba1cbdbae7acff48e5f46a4c7b62fdf7d9e0139dcaee27af1",
+    "web/app/api/specialist-assignments/route.ts": "e285b603e1d83e0ccfaa5fae152429750b1d507fe43612688bcd6bcd4879f374",
+    "web/lib/agents/launch.ts": "f4bcb1cbfbd7fcc0bfc7747541178471e28d0222790e7f83e650cde8756f1ad1",
+    "web/lib/agents/definition.ts": "85c3794d022f98bc58d8e95b446c2cd1dabc07daa7de6ff2c7d83c8556f87360",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "34ea15dc60447ec8068c53beb003de48b4df726241a3ab8b07e606400ef1da46",
+    "web/lib/brain/knowledge-assignment-policy.ts": "6c562f47457e96c748f8aa99f1f573e8a11cfbdea2b71bfe8dc643b0d6a1b4f0",
+    "web/lib/orchestrator/native-input-read.ts": "60f1423ad75f2e80692088e36819b908eab66fd032717e68380fbb67042bb115",
+    "docs/api/web.openapi.yaml": "40c684ece0ce63d7aa31011431a3ead620a8f3bd2737f39bc075d48eeb27c092",
+    "docs/system-analytics/specialist-assignments.md": "989649cbf4da32f88d360c637d596da2b57bb2edcf9f0be30c790c7985dabdfd",
+    "AGENTS.md": "96ec4e7a22825330920d0d8dcef5f53d584f770babf6ac5279301a0b0b43caf7",
+    ".ai-factory/ARCHITECTURE.md": "dd021b895ced9f967ee29e8193f6ac07a74055e59503dfdf262eb7cdf628c5d3",
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "7aa1924c45f9aa429fbefe8f1a7f4faad963f30a1e9e75f1b038a974ec8181f2"
+  }
+}
