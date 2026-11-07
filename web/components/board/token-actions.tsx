@@ -298,6 +298,10 @@ function scopeText(labels: TokenLabels, scope: UserTokenScope): string {
       return labels.scopeRunsSync;
     case "runs:recover":
       return labels.scopeRunsRecover;
+    case "assignments:read":
+      return labels.scopeAssignmentsRead;
+    case "assignments:submit":
+      return labels.scopeAssignmentsSubmit;
     case "knowledge:read":
       return labels.scopeKnowledgeRead;
     case "knowledge:propose":

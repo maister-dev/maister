@@ -239,7 +239,7 @@ existing pool scheduler after the reservation commits. Host pressure/capacity ca
 leave execution Pending. A replay can signal interrupted pending admission without
 allocating another execution. `GET /api/specialist-assignments/{id}` supports
 currently authorized company/project inspection; both responses are private and
-no-store. External bearer and source-specific adapters remain Designed. Fresh company standalone submission is qualified through the actual
+no-store. Personal user-token `POST /api/v1/ext/specialist-assignments` and exact GET reuse the same intake/reader and immutable manual identity, so switching between browser and API does not repeat work. Both require the corresponding token scope and current owner/source authority; project/agent/librarian tokens cannot impersonate the user. The existing token audit records authenticated success/refusal, CONFIG/JSON validation uses external 422, and responses remain private/no-store. Source-specific and governed agent-principal adapters remain Designed. Fresh company standalone submission is qualified through the actual
 session route, default scheduler dispatch, real supervisor/ACP process, validated
 operational result and physical cleanup. Completed HTTP replay issues no second
 create/prompt command. Coordinator intake is qualified through queued HTTP

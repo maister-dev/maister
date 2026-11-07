@@ -66,6 +66,9 @@ export const TOKEN_SCOPES = [
   "knowledge:review",
   "knowledge:confirm",
   "knowledge:manage",
+  // Human manual assignment clients use current owner/source authority; machine delegation is separate.
+  "assignments:read",
+  "assignments:submit",
   // ADR-152 (agent memory): the agent's OWN per-attachment memory.md. A SEPARATE
   // store from Project Brain — reusing `memory:write` would make one grant open
   // two stores, re-coupling exactly the axes ADR-152 separates. Access is

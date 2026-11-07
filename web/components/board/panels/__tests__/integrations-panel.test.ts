@@ -123,6 +123,8 @@ const labels: TokenLabels = {
   scopeKnowledgeReview: "Review knowledge proposals",
   scopeKnowledgeConfirm: "Confirm knowledge with evidence",
   scopeKnowledgeManage: "Manage knowledge authority",
+  scopeAssignmentsRead: "Read specialist assignments",
+  scopeAssignmentsSubmit: "Submit specialist assignments",
   scopeMemoryRead: "Read project memory",
   scopeMemoryWrite: "Write project memory",
   scopeAgentMemoryWrite: "Write agent memory",

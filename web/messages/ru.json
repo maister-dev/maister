@@ -3601,6 +3601,8 @@
         "copy": "Не удалось скопировать токен."
       },
       "scopeLabels": {
+        "assignmentsRead": "Чтение заданий специалистов",
+        "assignmentsSubmit": "Постановка заданий специалистам",
         "all": "Полный API-доступ",
         "tasksCreate": "Создание задач",
         "tasksRead": "Чтение задач",
@@ -4381,6 +4383,8 @@
     "scopeKnowledgeReview": "Рассмотрение предложений знаний",
     "scopeKnowledgeConfirm": "Подтверждение знаний по доказательствам",
     "scopeKnowledgeManage": "Управление доступом к знаниям",
+    "scopeAssignmentsRead": "Чтение заданий специалистов",
+    "scopeAssignmentsSubmit": "Постановка заданий специалистам",
     "scopeMemoryRead": "Чтение памяти проекта",
     "scopeMemoryWrite": "Запись в память проекта",
     "scopeAgentMemoryWrite": "Запись памяти агента",

@@ -6032,15 +6032,16 @@ paths:
             default: 20
     post:
       operationId: extSpecialistAssignmentCreate
-      summary: Designed — Submit scoped specialist work
-      description: Designed; no implementation is implied. Requires current assignments:submit. URL identifiers are
-        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
-        target endpoint and execution ownership are derived from authenticated context/server state. Writes
-        compare canonical payload digest and expected revision; exact replay returns the original currently
-        accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
-        422; PRECONDITION/CONFLICT remain 409. Scope authorization plus required transactional token audit
-        apply.
-      x-implementation-status: Designed
+      summary: Submit scoped specialist manual work
+      description: Implemented for personal user tokens with current owner/source authority. Uses the same strict
+        company/project manual request and canonical idempotency identity as the session endpoint. Company
+        specialists and project operational specialists/coordinators reuse the existing native Run admission.
+        Project/agent/librarian tokens cannot impersonate a requesting user; governed agent delegation is
+        a separate adapter. Token scope alone grants no company or project authority. Exact replay requires
+        current read, submit and source access; changed payload conflicts without repeating work. CONFIG,
+        JSON and schema failures return 422; PRECONDITION/CONFLICT remain 409. Every authenticated
+        request uses the existing required token audit. Responses are private and no-store.
+      x-implementation-status: Implemented
       x-required-scope: assignments:submit
       requestBody:
         required: true
@@ -6081,15 +6082,13 @@ paths:
   /api/v1/ext/specialist-assignments/{assignmentId}:
     get:
       operationId: extSpecialistAssignmentGet
-      summary: Designed — Inspect durable responsibility and progress
-      description: Designed; no implementation is implied. Requires current assignments:read. URL identifiers are
-        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
-        target endpoint and execution ownership are derived from authenticated context/server state. Writes
-        compare canonical payload digest and expected revision; exact replay returns the original currently
-        accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
-        422; PRECONDITION/CONFLICT remain 409. Scope authorization plus required transactional token audit
-        apply.
-      x-implementation-status: Designed
+      summary: Inspect durable responsibility and progress
+      description: Implemented for personal user tokens with assignments:read and current owner/source authority.
+        Project/agent/librarian tokens cannot impersonate a human reader. URL identities are untrusted
+        selectors; the shared assignment reader checks current membership or explicit company grants and
+        inherited source access. Missing references return 404, validation returns 422, and responses are
+        private and no-store. The existing required token audit records authenticated reads/refusals.
+      x-implementation-status: Implemented
       x-required-scope: assignments:read
       responses:
         "200":

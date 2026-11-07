@@ -1,0 +1,77 @@
+{
+  "task": "T22",
+  "slice": "Personal-token manual assignment API",
+  "date": "2026-11-07",
+  "baseCommit": "4b7107e81",
+  "status": "Personal HTTP adapter qualified; T22 source-specific invocation remains open",
+  "red": {
+    "case": "The external submission and exact inspection handlers do not exist",
+    "filesFailed": 1,
+    "executedTests": 0,
+    "exitCode": 1
+  },
+  "gates": {
+    "nativeIntakeAndTokenIntegration": {
+      "tests": 71,
+      "files": 3,
+      "durationSeconds": 48.8,
+      "exitCode": 0
+    },
+    "webUnit": {
+      "tests": 9318,
+      "files": 889,
+      "durationSeconds": 27.19,
+      "exitCode": 0
+    },
+    "types": {
+      "exitCode": 0
+    },
+    "lint": {
+      "exitCode": 0
+    },
+    "format": {
+      "exitCode": 0
+    },
+    "contracts": {
+      "exitCode": 0
+    },
+    "docs": {
+      "exitCode": 0
+    }
+  },
+  "qualified": [
+    "Fresh company assignment submitted through an actual personal bearer token reaches the existing scheduler/supervisor/controlled ACP and valid result without a repository.",
+    "Browser and personal token share the unchanged canonical user/original-request identity; concurrent project deliveries return one 201 and one 200 with one Run.",
+    "Server requester comes from the verified token, never request content. Project tokens cannot impersonate manual submitters or readers.",
+    "Missing authentication returns 401; missing scope 403; extra requester/attribution input 422; changed-key payload 409; inaccessible current project authority 403; revoked token 401.",
+    "Exact GET returns the retained assignment under current authority/source policy, missing IDs return 404, and responses are private/no-store.",
+    "The existing required token audit records authenticated successes and refusals. No new audit/execution ledger.",
+    "Human token read/submit scopes have explicit project action mappings and EN/RU board/personal-picker labels; agent/librarian/cross-project grant sets are unchanged."
+  ],
+  "limits": [
+    "Agent-principal delegation is governed by T27, not implemented by impersonating an initiating user.",
+    "Legacy manual launcher and source-specific mention/schedule/event/webhook adapters remain open; T22 is not complete.",
+    "Actual runtime here uses a controlled ACP fixture, not stand pilot or a new companion-package readiness claim.",
+    "The initial typecheck identified one owning TokenLabels fixture missing the two new required fields; it was updated without weakening the type.",
+    "The primary T21 complete gate is running on its committed retry timing correction; isolated intake work is not yet integrated."
+  ],
+  "sourceSha256": {
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "2d396020a4a677ff8142b09e1d38773c311ec78b14e904ac6536d7946954cb96",
+    "AGENTS.md": "d90ddf179511fb4a1b4f70ad483e87c356df2e785157cc9eeffe163e3c20949e",
+    "docs/api/external/operations.openapi.yaml": "0f44f4cce7fefdd8195a78772e574f20b1fd0ee8aabee288999cb6980d5f1a2f",
+    "docs/system-analytics/specialist-assignments.md": "a81887e5bbca4ffd355d86908fab90df899242372c843ef7a5cd1cf1325d8b16",
+    "web/app/api/specialist-assignments/route.ts": "81ac0e6cb602af866ae394c0edefbc619781a62e171d7b802318be31f4290c8b",
+    "web/app/api/v1/ext/specialist-assignments/[assignmentId]/route.ts": "3bb208a7b55dedfb003fba396399984af7583d7a208fcebc4179719ea12d8d7d",
+    "web/app/api/v1/ext/specialist-assignments/route.ts": "dfe67b8164285479c76cc8a758cecf41675d1e7de86faf28cca159776f1b9ab3",
+    "web/components/board/panels/__tests__/integrations-panel.test.ts": "f2f53ba7dab894dc08af1b930b2faab776221e8b54158282a30ff8a00b53adcf",
+    "web/components/board/panels/integrations-panel.tsx": "902cb793d93133f87ee7c3daa7eb69bfde79ee0af9a8794d4bf91ef639879c52",
+    "web/components/board/token-actions.tsx": "77d73837803860f459aa78ffe10fc470436ef349fb932240ff16ddc341a14dff",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "0149fa02c70f232baefbfa764aad4dfa5a0579fe75d1a781726b3d7c025055e3",
+    "web/lib/specialist-assignments/external.ts": "7ec8882108fd46ae58e2e882df7f049de77c5a4e8bc2e34d5243733e66c58569",
+    "web/lib/specialist-assignments/manual-intake.ts": "66cc9286412cb0c3e1473b8a093f1bdc097ea85e94bcf6553b75da9af68b95ee",
+    "web/lib/tokens/ext-handler.ts": "2f8058bf6f6ed6a573c8b5b5ef17fff42669f7d18cc665ae64ef62d3c2cf2c9d",
+    "web/messages/en.json": "057f9aa6051daa0703935b6628f11be37ea9b541c9c44e14b1b93ec7037c7476",
+    "web/messages/ru.json": "1eb0fafbb96e5f4f674a3009f453d2a6d17e73c06a40b56e28a55687c6a7f850",
+    "web/types/token-scopes.ts": "cc7bec8603a87ada8b0fc283ee8ba2be0522896202868a6bba697bbc11fbbe7c"
+  }
+}

@@ -9,28 +9,17 @@ import {
   knowledgeJson,
   readKnowledgeJson,
 } from "@/lib/brain/knowledge-http";
-import { submitProjectManualAssignment } from "@/lib/specialist-assignments/project-manual-intake";
-import { manualSpecialistAssignmentRequestSchema } from "@/lib/specialist-assignments/intake-types";
-import { MaisterError } from "@/lib/errors";
-import { submitCompanyManualAssignment } from "@/lib/specialist-assignments/company-manual-intake";
+import { submitManualSpecialistAssignment } from "@/lib/specialist-assignments/manual-intake";
 import { getSpecialistAssignment } from "@/lib/specialist-assignments/store";
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     const user = await requireActiveSession();
-    const parsed = manualSpecialistAssignmentRequestSchema.safeParse(
+    const receipt = await submitManualSpecialistAssignment(
+      getDb(),
+      user.id,
       await readKnowledgeJson(request),
     );
-
-    if (!parsed.success)
-      throw new MaisterError(
-        "CONFIG",
-        "Specialist submission requires an explicit owner, bounded original request and idempotency key",
-      );
-    const receipt =
-      parsed.data.owner.kind === "project"
-        ? await submitProjectManualAssignment(getDb(), user.id, parsed.data)
-        : await submitCompanyManualAssignment(getDb(), user.id, parsed.data);
     const assignment = await getSpecialistAssignment(
       getDb(),
       user.id,

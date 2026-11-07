@@ -125,6 +125,9 @@ import { handleAssignmentAction } from "@/app/api/assignments/[assignmentId]/_sh
 import { POST as acknowledgeOperationalPost } from "@/app/api/runs/[runId]/operational/acknowledge/route";
 import { POST as retryOperationalPost } from "@/app/api/runs/[runId]/operational/cleanup/retry/route";
 import { POST as assignmentPost } from "@/app/api/specialist-assignments/route";
+import { POST as externalAssignmentPost } from "@/app/api/v1/ext/specialist-assignments/route";
+import { GET as externalAssignmentGet } from "@/app/api/v1/ext/specialist-assignments/[assignmentId]/route";
+import { issueUserAccessToken, issueToken } from "@/lib/tokens/issue";
 import { specialistAssignmentSchema } from "@/lib/specialist-assignments/types";
 import { POST as stopRunPost } from "@/app/api/runs/[runId]/stop/route";
 import { POST as respondHitlPost } from "@/app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route";
@@ -174,6 +177,33 @@ let request: {
 const administratorId = randomUUID();
 const userId = randomUUID();
 const agentId = "rah:evidence-researcher";
+
+const submitExternal = (
+  value: unknown,
+  secret: string | null,
+): Promise<Response> =>
+  externalAssignmentPost(
+    new NextRequest("http://localhost/api/v1/ext/specialist-assignments", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(secret ? { Authorization: `Bearer ${secret}` } : {}),
+      },
+      body: JSON.stringify(value),
+    }),
+  );
+
+const inspectExternal = (
+  assignmentId: string,
+  secret: string,
+): Promise<Response> =>
+  externalAssignmentGet(
+    new NextRequest(
+      `http://localhost/api/v1/ext/specialist-assignments/${assignmentId}`,
+      { headers: { Authorization: `Bearer ${secret}` } },
+    ),
+    { params: Promise.resolve({ assignmentId }) },
+  );
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => database.db }));
 vi.mock("@/lib/authz", async (original) => ({
@@ -630,12 +660,93 @@ it("CBS-02 completes company manual HTTP intake through the existing scheduler, 
           body: JSON.stringify(manualRequest),
         }),
       );
-    const response = await submit();
+    const personalToken = await issueUserAccessToken(
+      {
+        ownerUserId: userId,
+        name: "company-assignment-intake",
+        scopes: ["assignments:read", "assignments:submit"],
+      },
+      db,
+    );
+    const readOnlyToken = await issueUserAccessToken(
+      {
+        ownerUserId: userId,
+        name: "company-assignment-read",
+        scopes: ["assignments:read"],
+      },
+      db,
+    );
+
+    expect((await submitExternal({ invalid: true }, null)).status).toBe(401);
+    expect(
+      (await submitExternal(manualRequest, readOnlyToken.secret)).status,
+    ).toBe(403);
+    expect(
+      (
+        await submitExternal(
+          {
+            ...manualRequest,
+            requester: { kind: "user", id: administratorId },
+          },
+          personalToken.secret,
+        )
+      ).status,
+    ).toBe(422);
+    const response = await submitExternal(manualRequest, personalToken.secret);
 
     expect(response.status).toBe(201);
     const assignment = specialistAssignmentSchema.parse(await response.json());
 
     expect(assignment.runIds).toHaveLength(1);
+    const externalInspection = await inspectExternal(
+      assignment.id,
+      readOnlyToken.secret,
+    );
+
+    expect(externalInspection.status).toBe(200);
+    expect(externalInspection.headers.get("cache-control")).toBe(
+      "private, no-store",
+    );
+    expect(await externalInspection.json()).toMatchObject({
+      id: assignment.id,
+      requester: { kind: "user", id: userId },
+    });
+    expect(
+      (await inspectExternal(randomUUID(), readOnlyToken.secret)).status,
+    ).toBe(404);
+    await database.pool.query(
+      "UPDATE project_tokens SET revoked_at=now() WHERE id=$1",
+      [readOnlyToken.tokenId],
+    );
+    expect(
+      (await inspectExternal(assignment.id, readOnlyToken.secret)).status,
+    ).toBe(401);
+    const externalReplay = await submitExternal(
+      manualRequest,
+      personalToken.secret,
+    );
+
+    expect(externalReplay.status).toBe(200);
+    expect(await externalReplay.json()).toMatchObject({
+      id: assignment.id,
+      runIds: assignment.runIds,
+    });
+    expect(
+      (
+        await submitExternal(
+          { ...manualRequest, input: "changed request" },
+          personalToken.secret,
+        )
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM token_audit_log WHERE token_id=$1 AND endpoint LIKE '%specialist-assignments%'",
+          [personalToken.tokenId],
+        )
+      ).rows[0].count,
+    ).toBeGreaterThanOrEqual(4);
     const receipt = { runId: assignment.runIds[0]! };
 
     await vi.waitFor(
@@ -828,7 +939,29 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
     await database.pool.query(
       "INSERT INTO execution_host_pressure(execution_host_id,pressured_since) SELECT id,now() FROM execution_hosts WHERE kind='local_direct' AND retired_at IS NULL ON CONFLICT DO NOTHING",
     );
-    const responses = await Promise.all([submit(), submit()]);
+    const personalProjectToken = await issueUserAccessToken(
+      {
+        ownerUserId: userId,
+        name: "project-specialist-manual",
+        scopes: ["assignments:read", "assignments:submit"],
+      },
+      db,
+    );
+    const projectToken = await issueToken(
+      {
+        projectId: project.id,
+        name: "project-specialist-no-human",
+        scopes: ["assignments:read", "assignments:submit"],
+        createdByUserId: userId,
+      },
+      db,
+    );
+
+    expect((await submitExternal(value, projectToken.secret)).status).toBe(403);
+    const responses = await Promise.all([
+      submit(),
+      submitExternal(value, personalProjectToken.secret),
+    ]);
 
     expect(responses.map((item) => item.status).sort()).toEqual([200, 201]);
     const response = responses.find((item) => item.status === 201)!;
@@ -838,6 +971,14 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
       body: await response.clone().json(),
     }).toMatchObject({ status: 201 });
     const assignment = specialistAssignmentSchema.parse(await response.json());
+
+    expect(
+      (await inspectExternal(assignment.id, projectToken.secret)).status,
+    ).toBe(403);
+    expect(
+      (await inspectExternal(assignment.id, personalProjectToken.secret))
+        .status,
+    ).toBe(200);
 
     expect(assignment.owner).toEqual(value.owner);
     expect(assignment.runIds).toHaveLength(1);
@@ -933,6 +1074,9 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
     );
     try {
       expect((await submit()).status).toBe(403);
+      expect(
+        (await submitExternal(value, personalProjectToken.secret)).status,
+      ).toBe(403);
     } finally {
       await database.pool.query(
         "UPDATE project_members SET role='member' WHERE project_id=$1 AND user_id=$2",
