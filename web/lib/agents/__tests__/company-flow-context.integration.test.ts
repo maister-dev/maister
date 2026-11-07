@@ -75,6 +75,11 @@ import { recoverPendingAgentQuestions } from "@/lib/services/agent-question";
 import { computeDecisionsQueue } from "@/lib/queries/decisions";
 import { getInboxItems, getUnreadInboxCount } from "@/lib/queries/inbox";
 import { runWebhookDeliveryJob } from "@/lib/scheduler/handlers/webhook-delivery";
+import {
+  getSpecialistAssignmentDelivery,
+  replaySpecialistAssignmentDelivery,
+} from "@/lib/specialist-assignments/delivery-read";
+import { markInboxItemRead } from "@/lib/social/inbox";
 import { GET as inboxContextGet } from "@/app/api/runs/[runId]/inbox-context/route";
 import { readPromptRequest } from "@/lib/execution-host/command-request";
 import { createOrActivateAssignmentQuestion } from "@/lib/services/assignment-question";
@@ -2478,6 +2483,99 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
         ).rows,
       ).toEqual([{ count: 1 }]);
       expect(await counts()).toEqual(allocationBeforeDelivery);
+      const inspection = await getSpecialistAssignmentDelivery(
+        database.db,
+        requesterId,
+        assignment.id,
+        { runId: receipt.runId },
+      );
+
+      expect(inspection).toMatchObject({
+        assignmentId: assignment.id,
+        deliveryId: retainedDelivery[0].id,
+        transport: { state: "delivered", lastAttemptNo: 1 },
+      });
+      if (inspection.transport.stateSha256 === null)
+        throw new Error(
+          "Delivered company result is missing its transport state witness",
+        );
+      const replayInput = {
+        schemaVersion: 1 as const,
+        expectedStateSha256: inspection.transport.stateSha256,
+      };
+
+      await expect(
+        getSpecialistAssignmentDelivery(
+          database.db,
+          administratorId,
+          assignment.id,
+          { runId: receipt.runId },
+        ),
+      ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+      await expect(
+        replaySpecialistAssignmentDelivery(
+          database.db,
+          requesterId,
+          assignment.id,
+          inspection.deliveryId,
+          replayInput,
+        ),
+      ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+      const recovery = await createCompanyGrants(database.db, administratorId, {
+        principalKind: "user",
+        principalId: requesterId,
+        actions: ["assignments:recover"],
+        idempotencyKey: randomUUID(),
+      });
+
+      try {
+        expect(
+          await markInboxItemRead(
+            { itemId: inspection.deliveryId, userId: requesterId },
+            database.db,
+          ),
+        ).toBe(true);
+        expect(
+          await replaySpecialistAssignmentDelivery(
+            database.db,
+            requesterId,
+            assignment.id,
+            inspection.deliveryId,
+            replayInput,
+          ),
+        ).toMatchObject({
+          transport: { state: "pending", attemptCount: 0, lastAttemptNo: 1 },
+        });
+        expect(await runWebhookDeliveryJob({ db: database.db })).toMatchObject({
+          delivered: 1,
+          dead: 0,
+        });
+        expect(await getUnreadInboxCount(requesterId, "member")).toBe(0);
+        expect(
+          (
+            await getInboxItems(requesterId, "member", { includeRead: true })
+          ).filter((item) => item.id === inspection.deliveryId),
+        ).toHaveLength(1);
+        expect(await counts()).toEqual(allocationBeforeDelivery);
+        expect(
+          await getSpecialistAssignmentDelivery(
+            database.db,
+            requesterId,
+            assignment.id,
+            { runId: receipt.runId },
+          ),
+        ).toMatchObject({
+          transport: { state: "delivered", lastAttemptNo: 2 },
+        });
+      } finally {
+        const grant = recovery.page.items[0]!;
+
+        await revokeCompanyGrant(database.db, administratorId, grant.id, {
+          expectedRevision: grant.revision,
+          reason: "Finish company delivery recovery qualification",
+          idempotencyKey: randomUUID(),
+        });
+      }
     } finally {
       if (deliverySettings)
         await database.pool.query(

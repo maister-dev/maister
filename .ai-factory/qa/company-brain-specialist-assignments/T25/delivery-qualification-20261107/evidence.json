@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-07T19:44:33.129863+00:00",
+  "baseline": "5d812f17add6a2645fee55830859b5512c337d08",
+  "status": "T25-platform-result-availability-complete-local",
+  "red": "Actual acknowledgement failure logs a raw Drizzle query/parameters instead of safe structured SQLSTATE diagnostics. Initial stdout observer limitation is retained separately.",
+  "gates": {
+    "integrationRuns": [
+      {
+        "passed": 58,
+        "files": 3,
+        "seconds": 57.58,
+        "scope": "company Flow, populated upgrade, then-current native delivery"
+      },
+      {
+        "passed": 17,
+        "files": 2,
+        "seconds": 34.36,
+        "scope": "final native delivery and scheduler"
+      },
+      {
+        "passed": 21,
+        "files": 2,
+        "seconds": 5.18,
+        "scope": "legacy HTTP delivery and replay"
+      }
+    ],
+    "integrationDistinct": {
+      "passed": 85,
+      "files": 6,
+      "note": "Overlapping native cases across runs counted once; not a single global integration invocation."
+    },
+    "unit": {
+      "passed": 9312,
+      "files": 891,
+      "seconds": 26.22
+    },
+    "types": "passed",
+    "lintAndFormat": "passed",
+    "contracts": "passed;84 requirements;45 tasks",
+    "docs": "passed;176 tables"
+  },
+  "verified": [
+    "Internal effect and acknowledgement atomicity under actual database faults",
+    "No attempt/effect survives failed acknowledgement",
+    "Committed lease remains recoverable; expired reclaim rechecks current recipient",
+    "Explicit replay after restored authority creates one Inbox/task effect",
+    "Structured safe warning fields without query parameters or private driver message",
+    "Actual corrected input and superseded result refuse stale replay",
+    "Disabled outbound destination refuses replay and effect after queueing",
+    "Stable external peer idempotency key through recovery",
+    "Actual controlled company Flow result delivery and current explicit recovery grants without project/task allocation",
+    "Populated upgrade preserves legacy Run/subscription/outbox/delivery/attempt/Inbox/domain-event values and unknown enrollment",
+    "Forged transport/Inbox references and missing target rejected"
+  ],
+  "remaining": [
+    "T22 actionable qualification diagnostics and exhaustive order/cancellation checks",
+    "T26 full Phase 5 exit qualification",
+    "T27-T43 governed cooperation, stand connector and actual installed-package pilot",
+    "Accepted outcome and quiet incident policy are T28/T39, not T25 result availability"
+  ],
+  "effects": "Owned local databases, supervisor/controlled ACP and fixture HTTP peer only; no production action, publication or push.",
+  "sources": [
+    {
+      "path": ".ai-factory/plans/codex-company-brain-specialist-assignments.md",
+      "sha256": "1dd6f72116cc609afeb9cfd100a8879bdb1eea09fabfd8dad33e387156b627b8"
+    },
+    {
+      "path": "docs/system-analytics/specialist-assignments.md",
+      "sha256": "2614d58559eb345bcd9198d5b22ec49126447b1cd3d5b71407698c67eee4d22c"
+    },
+    {
+      "path": "web/lib/agents/__tests__/company-flow-context.integration.test.ts",
+      "sha256": "e13a92527a26f75d756ccb7efb138dd3d2fe5171105b403d3e96b34245a75737"
+    },
+    {
+      "path": "web/lib/db/__tests__/migration-specialist-delivery.integration.test.ts",
+      "sha256": "e894af94e72834f0a5fd014f3ecfe8f74f721027ddd39f1ad6deeb0e6be38a79"
+    },
+    {
+      "path": "web/lib/db/migrations/0263_specialist_result_delivery.sql",
+      "sha256": "34f96e303bd95e88bcb86aca94f183b2150f7a4e148e17b44053d305f1c2f42a"
+    },
+    {
+      "path": "web/lib/db/migrations/0264_specialist_delivery_targets.sql",
+      "sha256": "284ee53a25952b75d901ef3c83dd030e7fabe642cd054f1e660015a71fde2aa2"
+    },
+    {
+      "path": "web/lib/scheduler/handlers/webhook-delivery.ts",
+      "sha256": "078a3c3eaf151c9098a84bfe924635f48a4ee9016ad2c812dc552221bfe3a304"
+    },
+    {
+      "path": "web/lib/specialist-assignments/__tests__/delivery.integration.test.ts",
+      "sha256": "3df8f6375709463a9f37abdd8537f850f336064b9e88843b9c5118584eaa3db9"
+    }
+  ],
+  "logs": [
+    "ack-observer-initial.log.gz",
+    "ack-logging-red.log.gz",
+    "ack-green.log.gz",
+    "company-upgrade-native-green.log.gz",
+    "native-scheduler-green.log.gz",
+    "legacy-transport-green.log.gz",
+    "unit-green.log.gz",
+    "types-green.log.gz",
+    "contracts-green.log.gz",
+    "docs-green.log.gz",
+    "lint-green.log.gz"
+  ]
+}

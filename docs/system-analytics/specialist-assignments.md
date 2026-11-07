@@ -816,7 +816,7 @@ Crash before intake commit leaves no assignment orphan; after commit reuses sour
 - [Human assignments](assignments.md), [HITL](hitl.md), [scheduled requests](scheduled-agent-requests.md), [web API](../api/web.openapi.yaml), [error taxonomy](../error-taxonomy.md).
 - Implementation: `web/lib/specialist-assignments/` (base store implemented), existing agent-question, prompt-owner, result and outbox services; invocation/cooperation remain designed.
 
-### Native delivery inspection and replay (Implemented — T25 qualification partial)
+### Native delivery inspection and replay (Implemented — locally qualified)
 
 The native surface selects delivery for a known assignment Run, rather than
 adding another unbounded history feed. Session and global personal-token clients
@@ -869,6 +869,15 @@ identity. No assignment, Run, operation, result publication or knowledge
 confirmation is repeated. Queueing returns the updated private/no-store view;
 the existing delivery worker owns subsequent effects and rechecks current
 recipient/source access. No new execution, scheduler or attempt ledger is added.
+
+An unexpected storage failure between an internal Inbox/task-comment effect and
+transport acknowledgement rolls back the effect and attempt together. The prior
+committed transport lease remains pending; expiry permits the existing worker to
+reclaim it under fresh recipient/source checks. Database warnings expose delivery
+identity, error type, SQLSTATE and constraint only, excluding query text,
+parameters, driver messages and raw causes. A revoked recipient cannot receive a
+reclaimed effect; an authorized operator can inspect the resulting dead cycle and
+explicitly replay it after authority is restored.
 
 Qualification uses actual stored receipts and real internal/loopback delivery:
 missing/foreign references and actor/target forgery; current caller recovery

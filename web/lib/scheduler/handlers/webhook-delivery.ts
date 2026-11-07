@@ -6,6 +6,7 @@ import { eq, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
+import { queryErrorDiagnostics } from "@/lib/db/pg-error";
 import { platformRuntimeSettings } from "@/lib/db/schema";
 import { assignmentDestinationSchema } from "@/lib/specialist-assignments/types";
 import { assignmentResultWitnessSchema } from "@/lib/specialist-assignments/delivery-types";
@@ -607,7 +608,7 @@ async function runDrainPass(
             log.warn(
               {
                 deliveryId: next.id,
-                error: err instanceof Error ? err.message : String(err),
+                ...queryErrorDiagnostics(err),
               },
               "[scheduler.webhook_delivery] delivery aborted unexpectedly",
             );

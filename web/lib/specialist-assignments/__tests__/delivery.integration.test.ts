@@ -1,3 +1,4 @@
+import type { Logger } from "pino";
 import type { KnowledgeAccessCapture } from "@/lib/company/types";
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 import type {
@@ -25,6 +26,8 @@ import {
   getSpecialistAssignmentInput,
   getSpecialistAssignment,
   cancelSpecialistAssignment,
+  recoverSpecialistAssignment,
+  appendSpecialistAssignmentInput,
 } from "../store";
 import { specialistAssignmentDeliveryConsumer } from "../delivery-capture";
 import { assignmentDeliveryViewSchema } from "../delivery-read-types";
@@ -60,7 +63,10 @@ import { publishRunResult } from "@/lib/run-results/ledger";
 import { runWebhookDeliveryJob } from "@/lib/scheduler/handlers/webhook-delivery";
 import { markInboxItemRead } from "@/lib/social/inbox";
 import { replayDelivery } from "@/lib/webhooks/replay";
-import { createSubscription } from "@/lib/webhooks/subscriptions";
+import {
+  createSubscription,
+  updateSubscription,
+} from "@/lib/webhooks/subscriptions";
 import { startMainAndBrainPostgresTestDb } from "@/test-support/pg-container";
 import { seedProjectRow } from "@/test-support/execution-host-seed";
 
@@ -96,6 +102,33 @@ const output = {
   selection: [],
 };
 
+const deliveryLogObserver = vi.hoisted(() => ({
+  records: [] as { fields: unknown; message: unknown }[],
+}));
+
+vi.mock("pino", async (original) => {
+  const actual = await original<typeof import("pino")>();
+
+  return {
+    ...actual,
+    default: new Proxy(actual.default, {
+      apply(target, receiver, args: unknown[]) {
+        const logger = Reflect.apply(target, receiver, args) as Logger;
+        const warn = logger.warn;
+
+        vi.spyOn(logger, "warn").mockImplementation((...values: unknown[]) => {
+          deliveryLogObserver.records.push({
+            fields: values[0],
+            message: values[1],
+          });
+          Reflect.apply(warn, logger, values);
+        });
+
+        return logger;
+      },
+    }),
+  };
+});
 const deliverySession = vi.hoisted(() => ({ userId: null as string | null }));
 
 vi.mock("@/lib/authz", async (original) => {
@@ -1232,4 +1265,347 @@ it("IT-CBA-06 selects retained result revisions and refuses replay after actual 
     code: "PRECONDITION",
     details: { reason: "assignment_delivery_result_unavailable" },
   });
+});
+
+it.each(["inbox", "task_comment"] as const)(
+  "IT-CBA-06 rolls back the %s effect with a failed acknowledgement and rechecks the recipient before reclaimed delivery",
+  async (kind) => {
+    await runWebhookDeliveryJob({ db: database.db });
+    const target = await recipient();
+    const destination: AssignmentDestination =
+      kind === "inbox"
+        ? { kind, userId: target.userId }
+        : {
+            kind,
+            projectId: target.projectId,
+            taskId: target.taskId,
+            threadCommentId: target.commentId,
+          };
+    const work = await readyResult(target, destination);
+
+    await database.pool.query(
+      "CREATE TABLE test_native_delivery_ack_fault(id text PRIMARY KEY)",
+    );
+    await database.pool.query(
+      "INSERT INTO test_native_delivery_ack_fault(id) VALUES($1)",
+      [work.deliveryId],
+    );
+    await database.pool
+      .query(`CREATE FUNCTION test_fail_native_delivery_ack() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.status='delivered' AND EXISTS(SELECT 1 FROM test_native_delivery_ack_fault WHERE id=NEW.specialist_delivery_id) THEN
+        RAISE EXCEPTION 'PRIVATE_DELIVERY_ACK_FAULT' USING ERRCODE='P0001';
+      END IF;
+      RETURN NEW;
+    END $$`);
+    await database.pool.query(
+      "CREATE TRIGGER test_native_ack_failure BEFORE UPDATE ON webhook_deliveries FOR EACH ROW EXECUTE FUNCTION test_fail_native_delivery_ack()",
+    );
+    const priorWarnings = deliveryLogObserver.records.length;
+
+    try {
+      expect(await runWebhookDeliveryJob({ db: database.db })).toMatchObject({
+        delivered: 0,
+        dead: 0,
+      });
+      const warnings = deliveryLogObserver.records
+        .slice(priorWarnings)
+        .filter(
+          (record) =>
+            record.message ===
+            "[scheduler.webhook_delivery] delivery aborted unexpectedly",
+        );
+
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]!.fields).toMatchObject({
+        deliveryId: expect.any(String),
+        sqlState: "P0001",
+      });
+      expect(JSON.stringify(warnings)).not.toContain("Failed query:");
+      expect(JSON.stringify(warnings)).not.toContain(
+        "PRIVATE_DELIVERY_ACK_FAULT",
+      );
+      expect(
+        (
+          await database.pool.query(
+            "SELECT status,attempt_count,lease_expires_at IS NOT NULL AS leased FROM webhook_deliveries WHERE specialist_delivery_id=$1",
+            [work.deliveryId],
+          )
+        ).rows,
+      ).toEqual([{ status: "pending", attempt_count: 0, leased: true }]);
+      expect(
+        (
+          await database.pool.query(
+            "SELECT count(*)::int AS count FROM webhook_delivery_attempts attempt JOIN webhook_deliveries delivery ON delivery.id=attempt.delivery_id WHERE delivery.specialist_delivery_id=$1",
+            [work.deliveryId],
+          )
+        ).rows,
+      ).toEqual([{ count: 0 }]);
+      expect(
+        (
+          await database.pool.query(
+            "SELECT (SELECT count(*)::int FROM inbox_items WHERE assignment_delivery_id=$1) AS inbox,(SELECT count(*)::int FROM task_comments WHERE via_operation_id=$1) AS comments",
+            [work.deliveryId],
+          )
+        ).rows,
+      ).toEqual([{ inbox: 0, comments: 0 }]);
+      await database.pool.query("DELETE FROM test_native_delivery_ack_fault");
+      await database.pool.query(
+        "DELETE FROM project_members WHERE project_id=$1 AND user_id=$2",
+        [target.projectId, target.userId],
+      );
+      await database.pool.query(
+        "UPDATE webhook_deliveries SET lease_expires_at=now()-interval '1 second' WHERE specialist_delivery_id=$1",
+        [work.deliveryId],
+      );
+      expect(await runWebhookDeliveryJob({ db: database.db })).toMatchObject({
+        delivered: 0,
+        dead: 1,
+      });
+      expect(
+        (
+          await database.pool.query(
+            "SELECT (SELECT count(*)::int FROM inbox_items WHERE assignment_delivery_id=$1) AS inbox,(SELECT count(*)::int FROM task_comments WHERE via_operation_id=$1) AS comments",
+            [work.deliveryId],
+          )
+        ).rows,
+      ).toEqual([{ inbox: 0, comments: 0 }]);
+      const dead = await getSpecialistAssignmentDelivery(
+        database.db,
+        administratorId,
+        work.assignmentId,
+        { runId: work.runId },
+      );
+
+      expect(dead.transport).toMatchObject({ state: "dead", lastAttemptNo: 1 });
+      await database.pool.query(
+        "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'member')",
+        [randomUUID(), target.projectId, target.userId],
+      );
+      await replaySpecialistAssignmentDelivery(
+        database.db,
+        administratorId,
+        work.assignmentId,
+        work.deliveryId,
+        {
+          schemaVersion: 1,
+          expectedStateSha256: z.string().parse(dead.transport.stateSha256),
+        },
+      );
+      expect(await runWebhookDeliveryJob({ db: database.db })).toMatchObject({
+        delivered: 1,
+        dead: 0,
+      });
+      expect(
+        (
+          await database.pool.query(
+            "SELECT (SELECT count(*)::int FROM inbox_items WHERE assignment_delivery_id=$1) AS inbox,(SELECT count(*)::int FROM task_comments WHERE via_operation_id=$1) AS comments",
+            [work.deliveryId],
+          )
+        ).rows,
+      ).toEqual([
+        {
+          inbox: kind === "inbox" ? 1 : 0,
+          comments: kind === "task_comment" ? 1 : 0,
+        },
+      ]);
+    } finally {
+      await database.pool.query(
+        "DROP TRIGGER test_native_ack_failure ON webhook_deliveries",
+      );
+      await database.pool.query(
+        "DROP FUNCTION test_fail_native_delivery_ack()",
+      );
+      await database.pool.query("DROP TABLE test_native_delivery_ack_fault");
+    }
+  },
+);
+
+it("IT-CBA-06 retains delivery history after an attributed input update and refuses the superseded result cycle", async () => {
+  await runWebhookDeliveryJob({ db: database.db });
+  const target = await recipient();
+  const work = await readyResult(target, {
+    kind: "inbox",
+    userId: target.userId,
+  });
+
+  await runWebhookDeliveryJob({ db: database.db });
+  const retained = await getSpecialistAssignmentDelivery(
+    database.db,
+    administratorId,
+    work.assignmentId,
+    { runId: work.runId },
+  );
+
+  await database.pool.query("UPDATE runs SET status='Done' WHERE id=$1", [
+    work.runId,
+  ]);
+  const current = await getSpecialistAssignment(
+    database.db,
+    administratorId,
+    work.assignmentId,
+  );
+  const cancelled = await cancelSpecialistAssignment(
+    database.db,
+    administratorId,
+    work.assignmentId,
+    current.revision,
+    "Revise the requested work",
+  );
+  const reopened = await recoverSpecialistAssignment(
+    database.db,
+    administratorId,
+    work.assignmentId,
+    cancelled.revision,
+  );
+  const changed = await appendSpecialistAssignmentInput(
+    database.db,
+    administratorId,
+    work.assignmentId,
+    {
+      expectedRevision: reopened.revision,
+      input: "Use the corrected target observation",
+      references: [],
+    },
+  );
+
+  expect(changed).toMatchObject({
+    inputRevision: 2,
+    status: "queued",
+    runIds: [work.runId],
+  });
+  expect(
+    await getSpecialistAssignmentDelivery(
+      database.db,
+      administratorId,
+      work.assignmentId,
+      { runId: work.runId },
+    ),
+  ).toEqual(retained);
+  await expect(
+    replaySpecialistAssignmentDelivery(
+      database.db,
+      administratorId,
+      work.assignmentId,
+      work.deliveryId,
+      {
+        schemaVersion: 1,
+        expectedStateSha256: z.string().parse(retained.transport.stateSha256),
+      },
+    ),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "assignment_delivery_superseded" },
+  });
+  expect(
+    (
+      await getSpecialistAssignmentInput(
+        database.db,
+        administratorId,
+        work.assignmentId,
+        2,
+      )
+    ).actor,
+  ).toMatchObject({ kind: "user", id: administratorId });
+});
+
+it("IT-CBA-06 keeps outbound history visible while disabled target authority refuses replay and queued sends", async () => {
+  await runWebhookDeliveryJob({ db: database.db });
+  const target = await recipient();
+  const scope = { projectId: null, ownerUserId: target.userId };
+  const subscription = await createSubscription(
+    scope,
+    {
+      name: "Guarded reply",
+      url: `${endpoint}/guarded-replay`,
+      event_types: ["assignment.result_available"],
+      signing_secret_ref: "env:ASSIGNMENT_DELIVERY_TEST_SECRET",
+    },
+    database.db,
+  );
+  const work = await readyResult(target, {
+    kind: "outbound_subscription",
+    subscriptionId: subscription.id,
+    correlationId: randomUUID(),
+  });
+
+  await runWebhookDeliveryJob({ db: database.db });
+  const inspect = () =>
+    getSpecialistAssignmentDelivery(
+      database.db,
+      administratorId,
+      work.assignmentId,
+      { runId: work.runId },
+    );
+  const original = await inspect();
+  const replay = (expectedStateSha256: string) =>
+    replaySpecialistAssignmentDelivery(
+      database.db,
+      administratorId,
+      work.assignmentId,
+      work.deliveryId,
+      { schemaVersion: 1, expectedStateSha256 },
+    );
+  const received = requests.filter(
+    (request) => request.path === "/guarded-replay",
+  ).length;
+
+  expect(received).toBe(1);
+  await updateSubscription(
+    scope,
+    subscription.id,
+    { enabled: false },
+    database.db,
+  );
+  expect(await inspect()).toEqual(original);
+  await expect(
+    replay(z.string().parse(original.transport.stateSha256)),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "assignment_destination_unavailable" },
+  });
+  await updateSubscription(
+    scope,
+    subscription.id,
+    { enabled: true },
+    database.db,
+  );
+  await replay(z.string().parse(original.transport.stateSha256));
+  await updateSubscription(
+    scope,
+    subscription.id,
+    { enabled: false },
+    database.db,
+  );
+  expect(await runWebhookDeliveryJob({ db: database.db })).toMatchObject({
+    delivered: 0,
+    dead: 1,
+  });
+  expect(
+    requests.filter((request) => request.path === "/guarded-replay"),
+  ).toHaveLength(received);
+  const dead = await inspect();
+
+  expect(dead.transport).toMatchObject({
+    state: "dead",
+    lastErrorKind: "config",
+    lastAttemptNo: 2,
+  });
+  await updateSubscription(
+    scope,
+    subscription.id,
+    { enabled: true },
+    database.db,
+  );
+  await replay(z.string().parse(dead.transport.stateSha256));
+  expect(await runWebhookDeliveryJob({ db: database.db })).toMatchObject({
+    delivered: 1,
+    dead: 0,
+  });
+  const responses = requests.filter(
+    (request) => request.path === "/guarded-replay",
+  );
+
+  expect(responses).toHaveLength(received + 1);
+  expect(responses[0]!.key).toBe(responses[1]!.key);
 });
