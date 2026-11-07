@@ -66,9 +66,10 @@ export const TOKEN_SCOPES = [
   "knowledge:review",
   "knowledge:confirm",
   "knowledge:manage",
-  // Human manual assignment clients use current owner/source authority; machine delegation is separate.
+  // Assignment clients use current owner/source authority; context mutation requires read and update.
   "assignments:read",
   "assignments:submit",
+  "assignments:update",
   // ADR-152 (agent memory): the agent's OWN per-attachment memory.md. A SEPARATE
   // store from Project Brain — reusing `memory:write` would make one grant open
   // two stores, re-coupling exactly the axes ADR-152 separates. Access is
@@ -136,6 +137,10 @@ export const AGENT_TOKEN_SCOPES = [
   // Read/propose only. Work acceptance never grants factual confirmation authority.
   "knowledge:read",
   "knowledge:propose",
+  // Context reads require an exact native assignment/input appointment and complete source capture.
+  // This scope alone grants no assignment browsing, Brain read or cross-project reach.
+  "assignments:read",
+  "assignments:update",
   // ADR-152: in the fixed agent-token set; the per-link memory_enabled axis
   // still gates the actual write.
   "agent_memory:write",

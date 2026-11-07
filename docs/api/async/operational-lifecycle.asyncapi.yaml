@@ -196,7 +196,7 @@ components:
               - retired
     SpecialistAssignmentChanged:
       name: specialist.assignment_changed
-      summary: Designed — durable responsibility/context/continuation invalidation
+      summary: Implemented — durable assignment and context invalidation
       payload:
         type: object
         additionalProperties: false
@@ -208,6 +208,21 @@ components:
           - previousStatus
           - status
         properties:
+          originExecution:
+            type: object
+            additionalProperties: false
+            description: Server-recorded execution origin when known; omitted for historical or human-origin facts. Does not change lifecycle ownership.
+            required: [runId, nodeAttemptId]
+            properties:
+              runId:
+                type: string
+                minLength: 1
+                maxLength: 128
+              nodeAttemptId:
+                type: string
+                minLength: 1
+                maxLength: 128
+                nullable: true
           owner:
             oneOf:
               - type: object

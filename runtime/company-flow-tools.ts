@@ -10,6 +10,7 @@ export const COMPANY_FLOW_TOOL_CONTRACT = [
   { name: "knowledge_capture_source", scope: "knowledge:propose" },
   { name: "knowledge_propose", scope: "knowledge:propose" },
   { name: "assignment_context_get", scope: "assignments:read" },
+  { name: "assignment_context_update", scope: "assignments:update" },
 ] as const;
 export const COMPANY_FLOW_TOKEN_SCOPES = [
   ...new Set(COMPANY_FLOW_TOOL_CONTRACT.map((tool) => tool.scope)),

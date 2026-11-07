@@ -130,7 +130,7 @@ All assignments require nonblank objective (<=8000 characters), expected outcome
 
 Business transitions append the existing transactional `specialist.assignment_changed`
 outbox fact with business revision, previous/current state, safe cause and server
-actor in the same transaction as the assignment head. Reopening cannot erase a
+actor in the same transaction as the assignment head. Agent-authored context facts also retain the actual Run/node in an optional content-free `originExecution` payload pointer; lifecycle ownership metadata remains unchanged and no model-provided origin is accepted. Historical facts acquire no invented origin. Reopening cannot erase a
 prior failed/cancelled fact. Facts contain no objective, input, source excerpt or
 free-text terminal reason and are not agent triggers. Input/context/result
 contents remain in their current-access-controlled owning stores; this is not an
@@ -512,7 +512,7 @@ Context changes lock the stable assignment, check expected context revision/epoc
 
 ### Versioned context persistence and attribution
 
-**Implemented: retained history, session-user read/update and scoped execution-bound context reads; T23 agent writes/runtime integration remains in progress.**
+**Implemented: retained history, session-user and scoped execution read/update; T23 result-lineage/runtime integration remains in progress.**
 
 Context has its own CAS revision and an exact assignment input revision. An update
 must name both the expected context revision and expected input revision; an
@@ -557,7 +557,9 @@ cannot erase inherited restrictions. Same actor/key/payload returns its original
 currently accessible revision; changed payload conflicts. Concurrent distinct
 patches against one base have one winner and one actionable conflict.
 
-The native facade exposes `assignment_context_get` with the same closed assignment/revision selector as HTTP. The external route authenticates and audits the real token, then resolves its current native principal without requiring a knowledge token scope. Company credentials include `assignments:read` only when the reviewed role permits it. A machine reads through its exact Run/node appointment and frozen input, never through the initiating user's identity; arbitrary foreign assignment selectors are withheld. Context source closure is recorded on the existing Run capture before returning content, so omitted citations do not remove downstream restrictions. Human authorization preserves its existing current company/project policy. Agent context writes, result lineage and automatic runtime prompt projection remain unqualified.
+The native facade exposes `assignment_context_get` with the same closed assignment/revision selector as HTTP. The external route authenticates and audits the real token, then resolves its current native principal without requiring a knowledge token scope. Company credentials include `assignments:read` only when the reviewed role permits it. A machine reads through its exact Run/node appointment and frozen input, never through the initiating user's identity; arbitrary foreign assignment selectors are withheld. Context source closure is recorded on the existing Run capture before returning content, so omitted citations do not remove downstream restrictions. Human authorization preserves its existing current company/project policy. Agent writes use the current professional authority described below. Result lineage and automatic runtime prompt projection remain unqualified.
+
+Executing-agent context updates require a current credential carrying both context read and update scopes, an active Run (queued/reviewed executions refuse), exact assignment/input appointment and current source access. A company role additionally needs its reviewed `assignments:update` limit, an explicit current professional update grant and current initiating-user update authority. Project appointments retain current initiating membership/launch authority independently from Brain flags. The author is always the server-resolved Run/node role. Every new snapshot inherits the consuming Run's complete source closure, including sources omitted from submitted citations. Replay and response disclosure retain current access checks. Ownership epoch remains NULL until the business owner-claim writer is introduced in T29; a host epoch is not substituted. T29 must add current business-fence checks at this same persistence boundary before owner recovery is qualified.
 
 ### Delivery and cancellation windows
 

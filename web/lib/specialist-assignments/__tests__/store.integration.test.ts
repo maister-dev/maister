@@ -31,6 +31,8 @@ import {
   GET as contextGet,
   PATCH as contextPatch,
 } from "@/app/api/specialist-assignments/[assignmentId]/context/route";
+import { issueUserAccessToken } from "@/lib/tokens/issue";
+import { PATCH as externalContextPatch } from "@/app/api/v1/ext/specialist-assignments/[assignmentId]/context/route";
 import { seedProjectRow } from "@/test-support/execution-host-seed";
 import { MaisterError } from "@/lib/errors";
 import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
@@ -575,6 +577,50 @@ it("IT-CBA-04 retains source restrictions after supersession and gates current, 
     requesterId,
     prepared,
   );
+
+  await expect(
+    appendSpecialistAssignmentContext(database.db, requesterId, assignment.id, {
+      expectedRevision: 0,
+      expectedInputRevision: 1,
+      idempotencyKey: randomUUID(),
+      updates: [
+        {
+          id: "unavailable-correction",
+          kind: "finding",
+          text: "A correction must name an accessible exact record revision",
+          state: "open",
+          references: [],
+          findings: {
+            schemaVersion: 1,
+            findings: [],
+            selection: [],
+            knowledgeProposals: [
+              {
+                change: "correct",
+                recordId,
+                expectedRevision: 2,
+                title: "Proposed correction",
+                kind: "observation",
+                assertion: "A proposed corrected observation",
+                basis: "inferred",
+                evidence: [],
+                missingEvidence: [
+                  {
+                    state: "missing",
+                    reason: "The target revision is unavailable",
+                  },
+                ],
+                limitations: [],
+              },
+            ],
+          },
+        },
+      ],
+    }),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "knowledge_reference_unavailable" },
+  });
   const first = {
     expectedRevision: 0,
     expectedInputRevision: 1,
@@ -809,6 +855,79 @@ it("IT-CBA-04 exposes bounded private session context and refuses anonymous, for
     expect(assignmentContextSchema.parse(await historical.json())).toEqual(
       retained,
     );
+    const updateOnly = await issueUserAccessToken(
+      {
+        ownerUserId: requesterId,
+        name: "context-update-only",
+        scopes: ["assignments:update"],
+      },
+      database.db,
+    );
+    const full = await issueUserAccessToken(
+      {
+        ownerUserId: requesterId,
+        name: "context-read-update",
+        scopes: ["assignments:read", "assignments:update"],
+      },
+      database.db,
+    );
+    const externalValue = {
+      expectedRevision: 1,
+      expectedInputRevision: 1,
+      idempotencyKey: randomUUID(),
+      updates: [
+        {
+          id: "external-personal-note",
+          kind: "question",
+          text: "Which health observation is missing?",
+          state: "open",
+          references: [],
+        },
+      ],
+    };
+    const externalPatch = (secret: string) =>
+      externalContextPatch(
+        new NextRequest(
+          `http://localhost/api/v1/ext/specialist-assignments/${assignment.id}/context`,
+          {
+            method: "PATCH",
+            headers: {
+              Authorization: `Bearer ${secret}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(externalValue),
+          },
+        ),
+        params,
+      );
+
+    try {
+      expect((await externalPatch(updateOnly.secret)).status).toBe(403);
+      const externalResponse = await externalPatch(full.secret);
+
+      expect(externalResponse.status).toBe(200);
+      expect(await externalResponse.json()).toMatchObject({
+        revision: 2,
+        entries: expect.arrayContaining([
+          {
+            entry: expect.objectContaining({ id: "external-personal-note" }),
+            actor: {
+              kind: "user",
+              id: requesterId,
+              runId: null,
+              attemptId: null,
+            },
+            introducedRevision: 2,
+            ownerEpoch: null,
+          },
+        ]),
+      });
+    } finally {
+      await database.pool.query(
+        "UPDATE project_tokens SET revoked_at=now() WHERE id=ANY($1::text[])",
+        [[updateOnly.tokenId, full.tokenId]],
+      );
+    }
   } finally {
     contextSession.userId = null;
   }

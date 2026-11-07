@@ -6345,15 +6345,19 @@ paths:
             maximum: 2147483647
     patch:
       operationId: extSpecialistContextUpdate
-      summary: Designed — Append context under exact revision CAS
-      description: Designed; no implementation is implied. Requires current assignments:update. URL identifiers are
-        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
-        target endpoint and execution ownership are derived from authenticated context/server state. Writes
-        compare canonical payload digest and expected revision; exact replay returns the original currently
-        accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
-        422; PRECONDITION/CONFLICT remain 409. Scope authorization plus required transactional token audit
-        apply.
-      x-implementation-status: Designed
+      summary: Append context under exact revision CAS
+      description: Implemented context append for global personal users and current appointed executions.
+        Both assignments:read and assignments:update credential scopes are required, plus current owner/source
+        authority. Company agents additionally need the reviewed update limit, explicit current professional
+        update grant and current initiating-user update authority. Project agents retain their actual current
+        project appointment and initiating membership; Brain flags confer no context permission. Queued,
+        reviewed and terminal executions cannot write. The streamed body is bounded to 32 KiB; exact context
+        and input CAS, explicit supersession and content-guarded replay apply. Authorship comes from the actual
+        Run/node or personal user. New context inherits the complete consuming Run source capture even when
+        citations are omitted. Model actor/epoch fields and work acceptance refuse. Current business-owner
+        fencing is a subsequent recovery integration; ownership epoch remains null. Required token audit,
+        private no-store responses and external CONFIG/JSON failures as 422 apply.
+      x-implementation-status: Implemented
       x-required-scope: assignments:update
       requestBody:
         required: true

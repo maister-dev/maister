@@ -59,6 +59,7 @@ describe("TOOL_SPECS registry", () => {
         "agent_memory_write",
         "ask_human",
         "assignment_context_get",
+        "assignment_context_update",
         "clarification_cancel",
         "clarification_list",
         "clarification_request",

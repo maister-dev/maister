@@ -133,3 +133,14 @@ specialist whose reviewed role allows that scope can use `assignment_context_get
 to read its own appointed context through its current Run credential. Other
 assignments and unavailable sources are withheld. This read scope does not grant
 Brain access or context editing.
+
+To edit context through the external API, use `PATCH` on that external URL with
+both `assignments:read` and `assignments:update` token scopes and the same
+revisioned body. A personal client retains your user identity. An active
+specialist can use `assignment_context_update`; company roles also need a
+reviewed update limit and explicit current professional update authority, while
+your initiating account must retain its update authority. Project specialists
+keep their current project appointment and initiating membership. Queued and
+reviewed Runs cannot write context. The server records the actual Run/node author
+and carries forward all sources the Run consumed, including omitted citations.
+Read access and working notes never accept work or confirm a Brain assertion.

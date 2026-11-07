@@ -58,6 +58,7 @@ export async function emitSpecialistAssignmentChange(
       | "state"
       | "recovered";
     actor: DomainEventActor;
+    originExecution?: Readonly<{ runId: string; nodeAttemptId: string | null }>;
   }>,
 ): Promise<void> {
   const payload = {
@@ -67,6 +68,9 @@ export async function emitSpecialistAssignmentChange(
     previousStatus: input.previousStatus,
     status: input.status,
     cause: input.cause,
+    ...(input.originExecution === undefined
+      ? {}
+      : { originExecution: input.originExecution }),
   };
 
   await input.db.execute(

@@ -177,6 +177,7 @@ export const PROJECT_ACTION_BY_SCOPE: Partial<Record<string, ProjectAction>> = {
   "tasks:create": "createTask",
   "assignments:read": "readBoard",
   "assignments:submit": "launchRun",
+  "assignments:update": "launchRun",
   "tasks:read": "readBoard",
   "tasks:update": "editTask",
   "tasks:complete": "editTask",

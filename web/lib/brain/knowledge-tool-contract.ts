@@ -16,7 +16,10 @@ import {
 import { knowledgeRevisionSchema } from "./knowledge-types";
 
 import { postgresTextSchema } from "@/lib/text-schema";
-import { assignmentContextReadSchema } from "@/lib/specialist-assignments/context-types";
+import {
+  assignmentContextReadSchema,
+  assignmentContextUpdateSchema,
+} from "@/lib/specialist-assignments/context-types";
 
 const record = z
   .object({
@@ -29,6 +32,9 @@ const record = z
 export const knowledgeToolInputSchemas = {
   // The native facade shares validation; assignment context remains a separate durable store.
   assignment_context_get: assignmentContextReadSchema,
+  assignment_context_update: assignmentContextUpdateSchema.safeExtend({
+    assignmentId: assignmentContextReadSchema.shape.assignmentId,
+  }),
   knowledge_search: knowledgeSearchSchema,
   knowledge_get: record,
   knowledge_evidence: record.extend(knowledgePageInputSchema.shape).strict(),

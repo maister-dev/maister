@@ -1,3 +1,4 @@
+import type { SqlTransaction } from "@/lib/db/sql-types";
 import type { CompanyAction } from "@/lib/company/types";
 import type { SessionUser } from "@/lib/authz";
 import type { AgentScheduleInput } from "@/lib/agents/project-links";
@@ -43,6 +44,8 @@ import {
 } from "../activity-snapshot";
 import {
   issueCompanyAgentRunToken,
+  issueAgentRunToken,
+  revokeAgentRunToken,
   revokeAgentRunTokensForRun,
 } from "../tokens";
 import { buildOperationalContract } from "../launch-contract";
@@ -115,7 +118,10 @@ import { operationalSuccessFixture } from "@/test-support/operational-agent";
 import { getKnowledgeRecord } from "@/lib/brain/knowledge-records";
 import { resolveKnowledgePrincipal } from "@/lib/brain/knowledge-access";
 import { appendSpecialistAssignmentContext } from "@/lib/specialist-assignments/context";
-import { GET as externalContextGet } from "@/app/api/v1/ext/specialist-assignments/[assignmentId]/context/route";
+import {
+  GET as externalContextGet,
+  PATCH as externalContextPatch,
+} from "@/app/api/v1/ext/specialist-assignments/[assignmentId]/context/route";
 import {
   knowledgeSourceReadPolicy,
   knowledgeReadPolicyCte,
@@ -184,6 +190,7 @@ import {
   createSpecialistAssignmentInTransaction,
   cancelSpecialistAssignment,
   linkSpecialistAssignmentRunInTransaction,
+  activateInitialSpecialistAssignmentRunInTransaction,
 } from "@/lib/specialist-assignments/store";
 import {
   installPackageRevision,
@@ -359,6 +366,10 @@ beforeAll(async () => {
   );
   await writeFile(
     join(source, "maister-agents/context-source-observer.md"),
+    primarySource,
+  );
+  await writeFile(
+    join(source, "maister-agents/context-writer.md"),
     primarySource,
   );
   await writeFile(
@@ -2216,6 +2227,97 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
         ])
       ).rows,
     ).toEqual([{ status: "Pending" }]);
+    const contextCredential = await issueAgentRunToken({
+      db,
+      projectId: project.id,
+      agentId: "rah:wire-observer",
+      runId,
+    });
+
+    await updateAgentLink(
+      {
+        projectId: project.id,
+        agentId: "rah:wire-observer",
+        patch: { canReadBrain: false, canWriteBrain: false },
+      },
+      db,
+    );
+    try {
+      const readContext = () =>
+        externalContextGet(
+          new NextRequest(
+            `http://localhost/api/v1/ext/specialist-assignments/${assignment.id}/context?revision=0`,
+            {
+              headers: { Authorization: `Bearer ${contextCredential.secret}` },
+            },
+          ),
+          { params: Promise.resolve({ assignmentId: assignment.id }) },
+        );
+      const contextResponse = await readContext();
+
+      expect(contextResponse.status).toBe(200);
+      expect(await contextResponse.json()).toMatchObject({
+        assignmentId: assignment.id,
+        revision: 0,
+        recording: "unrecorded",
+        objective: value.objective,
+        digest: null,
+        createdAt: null,
+      });
+      const queuedWrite = await externalContextPatch(
+        new NextRequest(
+          `http://localhost/api/v1/ext/specialist-assignments/${assignment.id}/context`,
+          {
+            method: "PATCH",
+            headers: {
+              Authorization: `Bearer ${contextCredential.secret}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              expectedRevision: 0,
+              expectedInputRevision: 1,
+              idempotencyKey: randomUUID(),
+              updates: [
+                {
+                  id: "queued-write",
+                  kind: "decision",
+                  text: "A queued agent cannot write as an active execution",
+                  state: "open",
+                  references: [],
+                },
+              ],
+            }),
+          },
+        ),
+        { params: Promise.resolve({ assignmentId: assignment.id }) },
+      );
+
+      expect(queuedWrite.status).toBe(403);
+      expect(await queuedWrite.json()).toMatchObject({
+        code: "UNAUTHORIZED",
+        message: expect.stringContaining("current active execution"),
+      });
+      await database.pool.query(
+        "UPDATE project_members SET role='viewer' WHERE project_id=$1 AND user_id=$2",
+        [project.id, userId],
+      );
+      expect((await readContext()).status).toBe(404);
+    } finally {
+      await database.pool.query(
+        "UPDATE project_members SET role='member' WHERE project_id=$1 AND user_id=$2",
+        [project.id, userId],
+      );
+      await updateAgentLink(
+        {
+          projectId: project.id,
+          agentId: "rah:wire-observer",
+          patch: { canReadBrain: true, canWriteBrain: true },
+        },
+        db,
+      );
+      await revokeAgentRunToken(contextCredential.tokenId, db);
+    }
+
     expect(
       (
         await database.pool.query(
@@ -6224,6 +6326,21 @@ async function assertWebPostResponseContract(
   expect(validate(body), JSON.stringify(validate.errors)).toBe(true);
 }
 
+async function retainCompanyFixtureRun(
+  tx: SqlTransaction,
+  context: Awaited<ReturnType<typeof prepareCompanyAgentContext>>,
+  runId: string,
+): Promise<CompanyAgentExecutionSnapshot> {
+  const roleId = context.effective.parsed.id;
+  const snapshot = captureCompanyAgentExecution(context);
+  const result = buildOperationalContract(context.effective);
+
+  await tx.execute(sql`INSERT INTO runs(id,run_kind,company_id,company_execution_snapshot,agent_id,source_agent_id,agent_kind,agent_workspace,flow_version,flow_revision,status,result_contract,created_by_user_id,launched_at,activity_sort_at,activity_timestamp_provenance,agent_config,execution_policy,agent_activity_snapshot)
+    VALUES(${runId},'agent',${context.owner.companyId},${JSON.stringify(snapshot)}::jsonb,${roleId},${roleId},'operational','none','agent','manual','Pending',${JSON.stringify(result)}::jsonb,${userId},now(),now(),'launch',${JSON.stringify(context.binding.snapshot.effectiveConfiguration)}::jsonb,${JSON.stringify(context.binding.snapshot.executionPolicy)}::jsonb,${JSON.stringify(buildAgentActivitySnapshot(roleId, context.effective))}::jsonb)`);
+
+  return snapshot;
+}
+
 async function reserveCompanyFixtureRun(
   input: PreparedSpecialistAssignment = assignmentInput,
 ): Promise<
@@ -6245,11 +6362,8 @@ async function reserveCompanyFixtureRun(
       assignmentId: assignment.id,
       bindingId: input.specialistBindingId,
     });
-    const snapshot = captureCompanyAgentExecution(context);
-    const result = buildOperationalContract(context.effective);
+    const snapshot = await retainCompanyFixtureRun(tx, context, runId);
 
-    await tx.execute(sql`INSERT INTO runs(id,run_kind,company_id,company_execution_snapshot,agent_id,source_agent_id,agent_kind,agent_workspace,flow_version,flow_revision,status,result_contract,created_by_user_id,launched_at,activity_sort_at,activity_timestamp_provenance,agent_config,execution_policy,agent_activity_snapshot)
-      VALUES(${runId},'agent',${request.companyId},${JSON.stringify(snapshot)}::jsonb,${input.responsibleAgentId},${input.responsibleAgentId},'operational','none','agent','manual','Pending',${JSON.stringify(result)}::jsonb,${userId},now(),now(),'launch',${JSON.stringify(context.binding.snapshot.effectiveConfiguration)}::jsonb,${JSON.stringify(context.binding.snapshot.executionPolicy)}::jsonb,${JSON.stringify(buildAgentActivitySnapshot(input.responsibleAgentId, context.effective))}::jsonb)`);
     await linkSpecialistAssignmentRunInTransaction(tx, userId, assignment.id, {
       expectedRevision: 1,
       inputRevision: 1,
@@ -6916,7 +7030,30 @@ async function reserveContextFixture(
       definitionSha256: agentDefinitionSha256(effective.parsed),
     },
   };
-  const appointment = await reserveCompanyFixtureRun(input);
+  const assignment = await createSpecialistAssignment(
+    database.db,
+    userId,
+    input,
+  );
+  const runId = randomUUID();
+  const snapshot = await database.db.transaction(async (tx) => {
+    const context = await prepareCompanyAgentContext(tx, userId, {
+      ...request,
+      assignmentId: assignment.id,
+      bindingId: input.specialistBindingId,
+    });
+    const snapshot = await retainCompanyFixtureRun(tx, context, runId);
+
+    await activateInitialSpecialistAssignmentRunInTransaction(
+      tx,
+      userId,
+      assignment.id,
+      { runId, inputRevision: 1, expectedRevision: 1, role: "specialist" },
+    );
+
+    return snapshot;
+  });
+  const appointment = { runId, assignmentId: assignment.id, snapshot };
 
   await database.pool.query(
     "UPDATE runs SET status='Running',knowledge_access=$2::jsonb WHERE id=$1",
@@ -7163,6 +7300,250 @@ it("IT-CBE-06 captures context sources before disclosure and retains revocation 
       reason: "Release owned context qualification authority",
       idempotencyKey: randomUUID(),
     });
+  }
+});
+
+it("IT-CBA-04 attributes agent context edits to the current execution and refuses races, forged authorship and revoked mutation authority", async () => {
+  const appointment = await reserveContextFixture("rah:context-writer", [
+    "assignments:read",
+    "assignments:update",
+    "knowledge:read",
+  ]);
+  const grant = await createCompanyGrants(database.db, administratorId, {
+    principalKind: "agent",
+    principalId: "rah:context-writer",
+    actions: ["assignments:update"],
+    idempotencyKey: randomUUID(),
+  });
+  const sourceUserGrant = await createCompanyGrants(
+    database.db,
+    administratorId,
+    {
+      principalKind: "user",
+      principalId: userId,
+      actions: ["knowledge:read"],
+      idempotencyKey: randomUUID(),
+    },
+  );
+  const sourceAgentGrant = await createCompanyGrants(
+    database.db,
+    administratorId,
+    {
+      principalKind: "agent",
+      principalId: "rah:context-writer",
+      actions: ["knowledge:read"],
+      idempotencyKey: randomUUID(),
+    },
+  );
+  const recordId = randomUUID();
+  let credential = appointment.credential;
+  const url = `http://localhost/api/v1/ext/specialist-assignments/${appointment.assignmentId}/context`;
+  const patch = (body: unknown) =>
+    externalContextPatch(
+      new NextRequest(url, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${credential.secret}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      }),
+      { params: Promise.resolve({ assignmentId: appointment.assignmentId }) },
+    );
+  const value = {
+    expectedRevision: 0,
+    expectedInputRevision: 1,
+    idempotencyKey: randomUUID(),
+    updates: [
+      {
+        id: "initial-diagnosis",
+        kind: "hypothesis",
+        text: "Inspection still needs an independent health observation",
+        state: "open",
+        references: [],
+      },
+    ],
+  };
+
+  try {
+    await database.pool.query(
+      "INSERT INTO brain_items(id,company_id,kind,title,content,confidence,content_hash) VALUES($1,$2,'observation','Private learned source','A source read before the uncited working note',0.9,$3)",
+      [recordId, request.companyId, randomUUID()],
+    );
+    await getKnowledgeRecord(
+      database.db,
+      { kind: "token", tokenId: appointment.credential.tokenId },
+      { recordId, revision: 1 },
+    );
+    const response = await patch(value);
+
+    expect(response.status).toBe(200);
+    const first = await response.json();
+
+    expect(first).toMatchObject({
+      revision: 1,
+      entries: [
+        {
+          actor: {
+            kind: "agent",
+            id: "rah:context-writer",
+            runId: appointment.runId,
+            attemptId: null,
+          },
+          introducedRevision: 1,
+          ownerEpoch: null,
+        },
+      ],
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT actor_type,actor_id,run_id,payload->'originExecution' AS origin_execution FROM domain_events WHERE kind='specialist.assignment_changed' AND payload->>'assignmentId'=$1 AND payload->>'cause'='context' ORDER BY id",
+          [appointment.assignmentId],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        actor_type: "agent",
+        actor_id: "rah:context-writer",
+        run_id: null,
+        origin_execution: { runId: appointment.runId, nodeAttemptId: null },
+      },
+    ]);
+    const eventContract = parse(
+      await readFile(
+        resolve("../docs/api/async/operational-lifecycle.asyncapi.yaml"),
+        "utf8",
+      ),
+    ) as {
+      components: {
+        messages: { SpecialistAssignmentChanged: { payload: object } };
+      };
+    };
+    const validateEvent = new Ajv({
+      strict: false,
+      validateFormats: false,
+    }).compile(
+      eventContract.components.messages.SpecialistAssignmentChanged.payload,
+    );
+    const eventPayload = (
+      await database.pool.query<{ payload: unknown }>(
+        "SELECT payload FROM domain_events WHERE kind='specialist.assignment_changed' AND payload->>'assignmentId'=$1 AND payload->>'cause'='context' ORDER BY id",
+        [appointment.assignmentId],
+      )
+    ).rows[0]!.payload;
+
+    expect(
+      validateEvent(eventPayload),
+      JSON.stringify(validateEvent.errors),
+    ).toBe(true);
+    const restrictions = (
+      await database.pool.query<{ source_restrictions: unknown[] }>(
+        "SELECT source_restrictions FROM specialist_context_revisions WHERE assignment_id=$1 AND revision=1",
+        [appointment.assignmentId],
+      )
+    ).rows[0]!.source_restrictions;
+
+    expect(restrictions).toEqual(
+      expect.arrayContaining([{ kind: "record", recordId }]),
+    );
+    credential = await issueCompanyAgentRunToken({
+      db: database.db,
+      runId: appointment.runId,
+    });
+    const repeated = await patch(value);
+
+    expect(repeated.status).toBe(200);
+    expect(await repeated.json()).toEqual(first);
+    expect(
+      (
+        await patch({
+          ...value,
+          updates: [{ ...value.updates[0]!, text: "Different bytes" }],
+        })
+      ).status,
+    ).toBe(409);
+    expect(
+      (await patch({ ...value, actor: { kind: "user", id: userId } })).status,
+    ).toBe(422);
+    const racers = await Promise.all(
+      ["left", "right"].map((id) =>
+        patch({
+          expectedRevision: 1,
+          expectedInputRevision: 1,
+          idempotencyKey: randomUUID(),
+          updates: [
+            {
+              id,
+              kind: "question",
+              text: "Which observation follows?",
+              state: "open",
+              references: [],
+            },
+          ],
+        }),
+      ),
+    );
+
+    expect(racers.map((response) => response.status).sort()).toEqual([
+      200, 409,
+    ]);
+    const authority = grant.page.items.find(
+      (item) => item.action === "assignments:update",
+    )!;
+
+    await revokeCompanyGrant(database.db, administratorId, authority.id, {
+      expectedRevision: authority.revision,
+      reason: "Withdraw context mutation authority",
+      idempotencyKey: randomUUID(),
+    });
+    expect(
+      (
+        await patch({
+          expectedRevision: 2,
+          expectedInputRevision: 1,
+          idempotencyKey: randomUUID(),
+          updates: [
+            {
+              id: "stale-authority",
+              kind: "decision",
+              text: "Cannot persist this decision",
+              state: "open",
+              references: [],
+            },
+          ],
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM specialist_context_revisions WHERE assignment_id=$1",
+          [appointment.assignmentId],
+        )
+      ).rows,
+    ).toEqual([{ count: 2 }]);
+    const visible = await externalContextGet(
+      new NextRequest(url, {
+        headers: { Authorization: `Bearer ${credential.secret}` },
+      }),
+      { params: Promise.resolve({ assignmentId: appointment.assignmentId }) },
+    );
+
+    expect(visible.status).toBe(200);
+  } finally {
+    await revokeAgentRunTokensForRun(appointment.runId, database.db);
+    for (const receipt of [sourceUserGrant, sourceAgentGrant]) {
+      const sourceGrant = receipt.page.items.find(
+        (item) => item.action === "knowledge:read",
+      )!;
+
+      await revokeCompanyGrant(database.db, administratorId, sourceGrant.id, {
+        expectedRevision: sourceGrant.revision,
+        reason: "Release owned writer source authority",
+        idempotencyKey: randomUUID(),
+      });
+    }
   }
 });
 

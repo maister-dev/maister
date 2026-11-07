@@ -537,6 +537,61 @@ describe("MCP stdio wire contract", () => {
     }
   });
 
+  it("sends exact revisioned context edits through the built company facade without accepting authority fields", async () => {
+    const company = await connectClient({
+      token: "mai_context_write",
+      toolset: "company",
+    });
+
+    try {
+      const listed = await company.listTools();
+
+      expect(
+        listed.tools.find((tool) => tool.name === "assignment_context_update")
+          ?.annotations?.readOnlyHint,
+      ).toBe(false);
+      const input = {
+        assignmentId: "assignment/exact",
+        expectedRevision: 0,
+        expectedInputRevision: 1,
+        idempotencyKey: "context-wire-write",
+        updates: [
+          {
+            id: "open-question",
+            kind: "question",
+            text: "Which independent check is missing?",
+            state: "open",
+            references: [],
+          },
+        ],
+      };
+      const result = await company.callTool({
+        name: "assignment_context_update",
+        arguments: input,
+      });
+
+      expect(result.isError).not.toBe(true);
+      const { assignmentId: _assignmentId, ...body } = input;
+
+      expect(requests.at(-1)).toEqual({
+        method: "PATCH",
+        url: "/api/v1/ext/specialist-assignments/assignment%2Fexact/context",
+        authorization: "Bearer mai_context_write",
+        body,
+      });
+      const before = requests.length;
+      const refused = await company.callTool({
+        name: "assignment_context_update",
+        arguments: { ...input, ownerEpoch: 1 },
+      });
+
+      expect(refused.isError).toBe(true);
+      expect(requests).toHaveLength(before);
+    } finally {
+      await company.close();
+    }
+  });
+
   it.each([true, false])(
     "forwards enqueue=%s and nullable metadata without changing their types",
     async (enqueue) => {
@@ -737,6 +792,7 @@ describe("MCP stdio wire contract", () => {
           "knowledge_capture_source",
           "knowledge_propose",
           "assignment_context_get",
+          "assignment_context_update",
         ].sort(),
       );
       const inspected = await company.callTool({

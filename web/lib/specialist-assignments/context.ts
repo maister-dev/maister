@@ -6,7 +6,8 @@ import type {
   AssignmentContextSnapshot,
   AssignmentContextEntry,
 } from "./context-types";
-import type { AssignmentInputRevision } from "./types";
+import type { AssignmentInputRevision, SpecialistAssignment } from "./types";
+import type { AssignmentContextPrincipal } from "./context-access";
 import type { KnowledgePrincipal } from "@/lib/brain/knowledge-types";
 import type { KnowledgeAccessWalk } from "@/lib/brain/knowledge-restrictions";
 
@@ -19,19 +20,19 @@ import {
   assignmentContextSnapshotSchema,
   assignmentContextUpdateSchema,
 } from "./context-types";
-import { authorizeAssignment } from "./access";
+import {
+  resolveAssignmentContextPrincipal,
+  authorizeAssignmentContextUpdate,
+} from "./context-access";
+import { SPECIALIST_ASSIGNMENT_STATUSES } from "./types";
 import { decodeAssignmentInput } from "./input-snapshot";
 import {
   beginAssignmentTransaction,
   getSpecialistAssignmentInTransaction,
-  getSpecialistAssignmentInputInTransaction,
 } from "./store";
 
-import { resolveNativeTokenPrincipal } from "@/lib/brain/knowledge-access";
-import {
-  lockKnowledgeReadConsumer,
-  recordKnowledgeDisclosure,
-} from "@/lib/brain/knowledge-disclosure";
+import { knowledgeOwner } from "@/lib/brain/knowledge-access";
+import { recordKnowledgeDisclosure } from "@/lib/brain/knowledge-disclosure";
 import {
   authorizeSourceRestrictions,
   restrictionsForKnowledgeAccess,
@@ -263,7 +264,7 @@ export async function getSpecialistAssignmentContext(
 /** Notes may express missing evidence; an asserted reference must resolve without inventing a witness. */
 async function inspectEntrySources(
   tx: SqlTransaction,
-  userId: string,
+  principal: KnowledgePrincipal,
   entry: AssignmentContextEntry,
   initial: KnowledgeAccessWalk,
 ): Promise<KnowledgeAccessWalk> {
@@ -290,12 +291,23 @@ async function inspectEntrySources(
       ...entry.findings.knowledgeProposals.flatMap((proposal) =>
         proposal.evidence.map((item) => item.reference),
       ),
+      ...entry.findings.knowledgeProposals.flatMap((proposal) =>
+        proposal.change === "correct"
+          ? [
+              {
+                kind: "knowledge" as const,
+                id: proposal.recordId,
+                revision: proposal.expectedRevision,
+              },
+            ]
+          : [],
+      ),
     );
   }
   for (const reference of references)
     access = await inspectKnowledgeEvidenceReference(
       tx,
-      { kind: "user", userId },
+      principal,
       reference,
       access,
     );
@@ -303,10 +315,29 @@ async function inspectEntrySources(
   return access;
 }
 
-/** Human working edits retain no fabricated execution epoch; agent appointment/fencing is integrated separately. */
+/** Human edits retain their actual current identity and no invented execution ownership epoch. */
 export async function appendSpecialistAssignmentContext(
   db: SqlDatabase,
   userId: string,
+  assignmentId: string,
+  value: unknown,
+): Promise<AssignmentContext> {
+  return appendContext(db, { kind: "user", userId }, assignmentId, value);
+}
+
+/** Token edits retain the actual current professional Run/node author rather than impersonating a user. */
+export async function appendSpecialistAssignmentTokenContext(
+  db: SqlDatabase,
+  tokenId: string,
+  assignmentId: string,
+  value: unknown,
+): Promise<AssignmentContext> {
+  return appendContext(db, { kind: "token", tokenId }, assignmentId, value);
+}
+
+async function appendContext(
+  db: SqlDatabase,
+  subject: AssignmentContextPrincipal,
   assignmentId: string,
   value: unknown,
 ): Promise<AssignmentContext> {
@@ -326,28 +357,76 @@ export async function appendSpecialistAssignmentContext(
   try {
     return await db.transaction(async (tx) => {
       await beginAssignmentTransaction(tx);
+      const principal = await resolveAssignmentContextPrincipal(
+        tx,
+        subject,
+        "assignments:update",
+      );
+
       await tx.execute(
         sql`SELECT id FROM specialist_assignments WHERE id=${assignmentId} FOR UPDATE`,
       );
-      const assignment = await getSpecialistAssignmentInTransaction(
+      const head = (
+        await tx.execute(
+          sql`SELECT * FROM specialist_assignments WHERE id=${assignmentId} FOR SHARE`,
+        )
+      ).rows[0];
+
+      if (!head)
+        throw new MaisterError(
+          "PRECONDITION",
+          "The assignment context is unavailable",
+          { details: { reason: "assignment_context_unavailable" } },
+        );
+      const parsedHead = z
+        .object({
+          revision: z.number().int().positive().max(2147483647),
+          inputRevision: z.number().int().positive().max(2147483647),
+          contextRevision: retainedRevision,
+          status: z.enum(SPECIALIST_ASSIGNMENT_STATUSES),
+        })
+        .safeParse({
+          revision: head.revision,
+          inputRevision: head.input_revision,
+          contextRevision: head.context_revision,
+          status: head.status,
+        });
+
+      if (!parsedHead.success)
+        throw new MaisterError(
+          "CONFIG",
+          "Stored assignment context heads are invalid",
+        );
+      const assignment: Pick<
+        SpecialistAssignment,
+        "revision" | "inputRevision" | "contextRevision" | "status" | "owner"
+      > = { ...parsedHead.data, owner: knowledgeOwner(head) };
+
+      if (principal.source.kind === "user")
+        await getSpecialistAssignmentInTransaction(
+          tx,
+          principal.source.userId,
+          assignmentId,
+        );
+      const currentInput = await readContextInput(
         tx,
-        userId,
-        assignmentId,
-      );
-      const currentInput = await getSpecialistAssignmentInputInTransaction(
-        tx,
-        userId,
+        principal.source,
         assignmentId,
         assignment.inputRevision,
       );
-      const authority = await authorizeAssignment(
+
+      if (principal.identity.kind !== "user" && assignment.status === "queued")
+        throw new MaisterError(
+          "UNAUTHORIZED",
+          "An executing context author requires an admitted assignment",
+        );
+      const actor = await authorizeAssignmentContextUpdate(
         tx,
-        userId,
+        principal,
         assignment.owner,
-        "assignments:update",
         currentInput.snapshot.authoritySnapshot.executionPolicy,
       );
-      const principalKey = contentDigest(authority.actor);
+      const principalKey = contentDigest(actor);
       const requestDigest = contentDigest(update);
       const previous = (
         await tx.execute(
@@ -366,14 +445,20 @@ export async function appendSpecialistAssignmentContext(
           "working context replay adopted its retained revision",
         );
 
-        return (
-          await readContextInTransaction(
-            tx,
-            { kind: "user", userId },
-            assignmentId,
-            Number(previous.revision),
-          )
-        ).value;
+        const replay = await readContextInTransaction(
+          tx,
+          principal.source,
+          assignmentId,
+          Number(previous.revision),
+        );
+
+        await recordKnowledgeDisclosure(
+          tx,
+          principal.consumer,
+          restrictionsForKnowledgeAccess(replay.access),
+        );
+
+        return replay.value;
       }
       if (["completed", "failed", "cancelled"].includes(assignment.status))
         throw new MaisterError(
@@ -391,7 +476,7 @@ export async function appendSpecialistAssignmentContext(
         );
       const current = await readContextInTransaction(
         tx,
-        { kind: "user", userId },
+        principal.source,
         assignmentId,
         assignment.contextRevision,
       );
@@ -416,9 +501,10 @@ export async function appendSpecialistAssignmentContext(
       }
       let access = await authorizeSourceRestrictions(
         tx,
-        { kind: "user", userId },
+        principal.source,
         [
           ...currentInput.snapshot.sourceRestrictions,
+          ...(principal.consumer?.capture.restrictions ?? []),
           {
             kind: "assignment_input",
             assignmentId,
@@ -430,7 +516,7 @@ export async function appendSpecialistAssignmentContext(
       );
 
       for (const entry of update.updates)
-        access = await inspectEntrySources(tx, userId, entry, access);
+        access = await inspectEntrySources(tx, principal.source, entry, access);
       const nextRevision = assignment.contextRevision + 1;
       const snapshot = assignmentContextSnapshotSchema.safeParse({
         schemaVersion: 1,
@@ -442,7 +528,7 @@ export async function appendSpecialistAssignmentContext(
           ),
           ...update.updates.map((entry) => ({
             entry,
-            actor: authority.actor,
+            actor,
             introducedRevision: nextRevision,
             ownerEpoch: null,
           })),
@@ -474,7 +560,7 @@ export async function appendSpecialistAssignmentContext(
       const restrictions = restrictionsForKnowledgeAccess(access);
 
       await tx.execute(sql`INSERT INTO specialist_context_revisions(assignment_id,revision,base_revision,input_revision,context,source_restrictions,actor,owner_epoch,principal_key,request_key,request_digest,content_digest)
-        VALUES(${assignmentId},${nextRevision},${assignment.contextRevision},${currentInput.revision},${JSON.stringify(snapshot.data)}::jsonb,${JSON.stringify(restrictions)}::jsonb,${JSON.stringify(authority.actor)}::jsonb,NULL,${principalKey},${update.idempotencyKey},${requestDigest},${contentDigest(snapshot.data)})`);
+        VALUES(${assignmentId},${nextRevision},${assignment.contextRevision},${currentInput.revision},${JSON.stringify(snapshot.data)}::jsonb,${JSON.stringify(restrictions)}::jsonb,${JSON.stringify(actor)}::jsonb,NULL,${principalKey},${update.idempotencyKey},${requestDigest},${contentDigest(snapshot.data)})`);
       await tx.execute(
         sql`UPDATE specialist_assignments SET context_revision=${nextRevision},revision=revision+1,updated_at=clock_timestamp() WHERE id=${assignmentId}`,
       );
@@ -486,7 +572,15 @@ export async function appendSpecialistAssignmentContext(
         previousStatus: assignment.status,
         status: assignment.status,
         cause: "context",
-        actor: { type: "user", id: userId },
+        actor: { type: actor.kind, id: actor.id },
+        ...(actor.runId === null
+          ? {}
+          : {
+              originExecution: {
+                runId: actor.runId,
+                nodeAttemptId: actor.attemptId,
+              },
+            }),
       });
       log.info(
         {
@@ -495,19 +589,25 @@ export async function appendSpecialistAssignmentContext(
           inputRevision: currentInput.revision,
           entryCount: snapshot.data.entries.length,
           sourceCount: restrictions.length,
-          actorKind: authority.actor.kind,
+          actorKind: actor.kind,
         },
         "working context revision retained",
       );
 
-      return (
-        await readContextInTransaction(
-          tx,
-          { kind: "user", userId },
-          assignmentId,
-          nextRevision,
-        )
-      ).value;
+      const result = await readContextInTransaction(
+        tx,
+        principal.source,
+        assignmentId,
+        nextRevision,
+      );
+
+      await recordKnowledgeDisclosure(
+        tx,
+        principal.consumer,
+        restrictionsForKnowledgeAccess(result.access),
+      );
+
+      return result.value;
     });
   } catch (error) {
     log.warn(
@@ -535,54 +635,29 @@ export async function getSpecialistAssignmentTokenContext(
   try {
     return await db.transaction(async (tx) => {
       await beginAssignmentTransaction(tx);
-      const consumer = await lockKnowledgeReadConsumer(tx, {
-        kind: "token",
-        tokenId,
-      });
-      const identity = await resolveNativeTokenPrincipal(
+      const principal = await resolveAssignmentContextPrincipal(
         tx,
-        tokenId,
+        { kind: "token", tokenId },
         "assignments:read",
       );
-      let principal: KnowledgePrincipal;
-
-      if (identity.kind === "user") {
-        if (identity.boundProjectId !== null)
-          throw new MaisterError(
-            "UNAUTHORIZED",
-            "Context user clients require a global personal credential",
-          );
-        principal = { kind: "user", userId: identity.user.id };
-      } else {
-        if (identity.actor.runId === null)
-          throw new MaisterError(
-            "UNAUTHORIZED",
-            "Context requires its exact executing Run",
-          );
-        principal = {
-          kind: "execution",
-          runId: identity.actor.runId,
-          nodeAttemptId: identity.actor.attemptId,
-        };
-      }
       const result = await readContextInTransaction(
         tx,
-        principal,
+        principal.source,
         assignmentId,
         revision,
       );
 
       await recordKnowledgeDisclosure(
         tx,
-        consumer,
+        principal.consumer,
         restrictionsForKnowledgeAccess(result.access),
       );
       log.debug(
         {
           assignmentId,
           contextRevision: result.value.revision,
-          actorKind: identity.actor.kind,
-          runId: identity.actor.runId,
+          actorKind: principal.identity.actor.kind,
+          runId: principal.identity.actor.runId,
         },
         "authorized working context disclosed with its inherited sources",
       );

@@ -129,6 +129,8 @@ New entries are bound to the server actor and introduced revision; unchanged ent
 
 Generated main `0260_specialist_context_credentials` extends the existing company credential CHECK with `assignments:read`. It preserves the current Flow-node/standalone owner shape, immutable token binding, exact role limit and original credential bytes. Issuers add the scope only under the current reviewed binding; the external context service checks current assignment/input appointment and source access separately. No general Brain permission, table or execution ledger is added.
 
+Generated main `0261_specialist_context_mutation_credentials` adds only `assignments:update` to the company credential CHECK, preserving `0245` read scope and every prior owner/node/immutability predicate. Context service writes bind the server Run/node actor, current update authority and full consuming-Run source closure. Existing credential rows are not widened or rewritten; rotation selects current reviewed limits. This unit adds no table or Brain dependency.
+
 ## Exact persistence contract
 
 All new entity IDs are server-generated; timestamps UTC. Versioned closed JSON contains typed fields specified in the owning API/native schemas. Absence/null/legacy variants are explicit, not generic empty objects.
