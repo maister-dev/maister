@@ -164,8 +164,8 @@ reservation in the same outer transaction. There is no external mutation inside
 that transaction and no additional execution scheduler or attempt ledger. Receipt
 storage and manual admission are qualified independently of source dispatch.
 Native company cron/event creation and registered dispatch plus authenticated
-company webhook intake are qualified. Clarification continuation (T24) and native
-agent delegation (T27). A matching source identity alone never authorizes an
+company/project webhook intake are qualified. Correlated clarification and updates
+retain their context/HITL tasks (T23–T26); native agent delegation retains T27. A matching source identity alone never authorizes an
 adapter to act as another principal.
 
 ### Company manual reservation
@@ -210,6 +210,41 @@ with explicit current recipient sharing authority. Company webhook input is
 server-attributed and content-guarded across personal token rotation through the
 existing agent-event entry point. Legacy invocation adapters and assignment
 clarification remain open. See the [runtime contract](specialist-runtime.md#native-company-cron-intake-checkpoint).
+
+### Native project webhook intake
+
+**Implemented native platform intake; installable stand qualification remains separate.**
+
+`POST /api/agents/{agentId}/event` negotiates native project assignments with
+`X-Maister-Owner-Kind:project`. The branch requires a verified global personal user
+and both `agents:trigger` and `assignments:submit` token scopes. Project/agent/
+librarian credentials cannot impersonate a human requester. The closed version-one
+body is `{schemaVersion:1,assignment:<project specialist request>}`; ownership and
+binding remain explicit validated references. The current user's project authority
+and exact addressed attachment must agree before new work. The server supplies
+attribution, expected result, Inbox destination, standing/policy snapshots and
+native invocation origin. Raw body and caller-declared actors are not launch authority.
+
+`Idempotency-Key` identifies the delivery. Endpoint identity includes the actual
+user, project and addressed specialist, independent of personal token rotation.
+Exact replay checks current read/submit/source access before adopting the retained
+receipt; it does not resolve a disabled or changed provider again. Changed content
+under a used delivery conflicts. Different deliveries queue separate assignments.
+The existing project request intake retains original input before repository/Run
+admission and rechecks current permissions, pin, configuration and result contract.
+An unavailable runner preserves queued input for exact retry after repair.
+
+Native transport requires JSON, bounded to 32 KiB while reading, and rejects invalid
+UTF-8/JSON, unsupported versions, extra fields, missing delivery identity and
+`X-Maister-Trigger-Event-Id`. Domain-event identity is never accepted as webhook
+delivery authority. The source payload retains validated delivery metadata only;
+private objective/input remains in the original assignment input. A valid request
+returns the assignment with 201, exact replay 200; safe refusal uses existing
+no-store error/audit behavior. The branch shares bounded transport and verified
+personal identity with the company webhook path. Omitting owner negotiation retains
+the existing project-token legacy payload/202 contract. No scheduler, migration or
+execution ledger is added. Technical completion remains separate from acceptance
+and result delivery.
 
 ### Existing project launch entry — Implemented (T22)
 

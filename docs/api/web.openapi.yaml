@@ -3322,7 +3322,7 @@ paths:
       tags: [agents]
       summary: (M34 — Implemented) Inbound webhook trigger for an agent
       description: |
-        Authenticated by a **bearer project token** carrying the
+        With no owner-kind header, authenticated by a **bearer project token** carrying the
         `agents:trigger` scope (the only token-authenticated route outside
         `/api/v1/ext`). The project is derived from the token
         (auth-context) and validated against the agent's enabled
@@ -3342,6 +3342,19 @@ paths:
         identity is refused on this branch. The server records requester/origin and
         uses the requesting user's Inbox destination. Company responses are private,
         no-store; the 32 KiB bound is enforced on streamed UTF-8 bytes.
+        With `X-Maister-Owner-Kind: project`, use the same verified global personal
+        user scopes and `CBProjectWebhookEnvelope`. The current user's project
+        read/submit/update authority and exact addressed attachment are checked for
+        new work. Original input commits before existing repository/Run admission;
+        a readiness failure preserves queued input for exact retry. Endpoint identity
+        includes the user/project/professional and survives token rotation. Exact
+        replay adopts retained work without provider resolution; changed payload
+        conflicts. Native project trigger payload contains validated delivery metadata,
+        while private objective/input stays in its separate immutable assignment input.
+        Both native branches reject numeric domain-event identity, stream-bound UTF-8
+        JSON to 32 KiB, use private/no-store responses and the actual user's Inbox.
+      x-project-request-schema:
+        $ref: "#/components/schemas/CBProjectWebhookEnvelope"
       x-company-request-schema:
         $ref: "#/components/schemas/CBCompanyWebhookEnvelope"
       operationId: postAgentEvent
@@ -3354,12 +3367,12 @@ paths:
         - name: X-Maister-Owner-Kind
           in: header
           required: false
-          description: Set company to select company-owned specialist intake; omission retains the legacy project webhook contract.
-          schema: { type: string, enum: [company] }
+          description: Set company or project to select native assignment intake; omission retains the legacy project-token webhook contract.
+          schema: { type: string, enum: [company, project] }
         - name: Idempotency-Key
           in: header
           required: false
-          description: Required for the company branch. Same company, authenticated user, addressed professional and key identify one delivery, including across token rotation.
+          description: Required for either native branch. Same owner, authenticated user, addressed professional and key identify one delivery across token rotation.
           schema:
             type: string
             minLength: 8
@@ -3368,7 +3381,7 @@ paths:
         - name: X-Maister-Trigger-Event-Id
           in: header
           required: false
-          description: Project branch only; refused for company intake. Optional positive integer idempotency key. When present, redelivery converges through the run claim key `(agent_id, trigger_event_id)`.
+          description: Legacy project-token branch only; refused for native company/project assignments. Optional positive integer idempotency key. When present, redelivery converges through the run claim key `(agent_id, trigger_event_id)`.
           schema: { type: integer, minimum: 1 }
       requestBody:
         required: true
@@ -3376,15 +3389,15 @@ paths:
           application/json:
             schema:
               type: object
-              description: Legacy project payload is free-form. With the company owner header, the body must match CBCompanyWebhookEnvelope; the version-one envelope is closed and cannot supply actor, origin, authority or result contract. At most 32 KiB.
+              description: Legacy project payload is free-form. Native company/project headers require CBCompanyWebhookEnvelope or CBProjectWebhookEnvelope respectively; the version-one envelope is closed and cannot supply actor, origin, authority or result contract. At most 32 KiB.
       responses:
         "200":
-          description: Exact company delivery replay; original authorized assignment and Run, no repeated execution.
+          description: Exact native delivery replay; original authorized assignment and Run, no repeated execution.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CBAssignment" }
         "201":
-          description: Company assignment and existing native Run reserved atomically; business verification and acceptance remain separate.
+          description: Native assignment and retained existing Run. Company reservation is atomic; project input persists before repository admission. Business verification and acceptance remain separate.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CBAssignment" }
@@ -3399,7 +3412,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "403":
-          description: Missing required scope, invalid principal kind for company intake, or current company authority refused.
+          description: Missing required scope, invalid principal kind for native intake, or current company/project authority refused.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -39576,4 +39589,152 @@ components:
         - schemaVersion
         - assignment
         - idempotencyKey
+      additionalProperties: false
+    CBProjectWebhookEnvelope:
+      type: object
+      properties:
+        schemaVersion:
+          type: number
+          enum:
+            - 1
+        assignment:
+          type: object
+          properties:
+            objective:
+              type: string
+              minLength: 1
+              maxLength: 8000
+              allOf:
+                - type: string
+                  pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                - type: string
+                  pattern: \S
+            expectedOutcome:
+              type: string
+              minLength: 1
+              maxLength: 4000
+              allOf:
+                - type: string
+                  pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                - type: string
+                  pattern: \S
+            input:
+              type: string
+              maxLength: 8000
+              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+            targetIds:
+              maxItems: 32
+              type: array
+              items:
+                type: string
+                minLength: 1
+                maxLength: 128
+                pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+            inputRefs:
+              maxItems: 64
+              type: array
+              items:
+                type: object
+                properties:
+                  kind:
+                    type: string
+                    enum:
+                      - knowledge
+                      - witness
+                      - result
+                      - operation
+                      - verification
+                  id:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                  revision:
+                    type: integer
+                    minimum: 1
+                    maximum: 2147483647
+                  version:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                  sha256:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                required:
+                  - kind
+                  - id
+                additionalProperties: false
+            constraints:
+              maxItems: 32
+              type: array
+              items:
+                type: string
+                minLength: 1
+                maxLength: 2000
+                allOf:
+                  - type: string
+                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                  - type: string
+                    pattern: \S
+            verification:
+              maxItems: 16
+              type: array
+              items:
+                type: object
+                properties:
+                  kind:
+                    type: string
+                    enum:
+                      - result
+                      - effect
+                      - health
+                  referenceId:
+                    nullable: true
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                  required:
+                    type: boolean
+                required:
+                  - kind
+                  - referenceId
+                  - required
+                additionalProperties: false
+            owner:
+              type: object
+              properties:
+                kind:
+                  type: string
+                  enum:
+                    - project
+                projectId:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+              required:
+                - kind
+                - projectId
+              additionalProperties: false
+            specialistBindingId:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+          required:
+            - objective
+            - expectedOutcome
+            - input
+            - targetIds
+            - inputRefs
+            - constraints
+            - verification
+            - owner
+            - specialistBindingId
+          additionalProperties: false
+      required:
+        - schemaVersion
+        - assignment
       additionalProperties: false

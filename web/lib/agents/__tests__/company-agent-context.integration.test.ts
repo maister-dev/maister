@@ -188,7 +188,7 @@ import {
   attachPackage,
 } from "@/lib/packages/attach";
 import { loadNativeInputForUser } from "@/lib/orchestrator/native-input-read";
-import { attachAgent } from "@/lib/agents/project-links";
+import { attachAgent, updateAgentLink } from "@/lib/agents/project-links";
 import { enableRevision } from "@/lib/flows/lifecycle";
 import { startMainAndBrainPostgresTestDb } from "@/test-support/pg-container";
 import { seedProjectRow } from "@/test-support/execution-host-seed";
@@ -336,7 +336,11 @@ beforeAll(async () => {
         "kind: operational\ncompletion: {contract: operational_v1}\n",
         "",
       )
-      .replace("workspace: none", "flow: rah-control\nworkspace: none"),
+      .replace("workspace: none", "flow: rah-control\nworkspace: none")
+      .replace(
+        "triggers: [manual, cron, domain_event]",
+        "triggers: [manual, cron, domain_event, webhook]",
+      ),
   );
   await writeFile(
     join(source, "maister-agents/disabled-observer.md"),
@@ -4048,6 +4052,424 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
       },
       { timeout: 30000, interval: 25 },
     );
+
+    const webhookLink = await attachAgent(
+      {
+        projectId: project.id,
+        agentId: "rah:webhook-observer",
+        runnerOverrideId: runnerId,
+      },
+      db,
+    );
+    const webhookTokens = await Promise.all(
+      ["first", "rotated"].map((name) =>
+        issueUserAccessToken(
+          {
+            ownerUserId: userId,
+            name: `project-webhook-${name}`,
+            scopes: ["agents:trigger", "assignments:submit"],
+          },
+          db,
+        ),
+      ),
+    );
+    const webhookDelivery = randomUUID();
+    const webhookRequest = {
+      schemaVersion: 1,
+      assignment: {
+        ...objective,
+        owner: { kind: "project", projectId: project.id },
+        specialistBindingId: webhookLink.linkId,
+        input:
+          "Retain this exact project webhook request independently of payload metadata.",
+      },
+    };
+    const webhookContract: { components: { schemas: Record<string, object> } } =
+      parse(await readFile(resolve("../docs/api/web.openapi.yaml"), "utf8"));
+    const validateProjectWebhook = new Ajv({
+      strict: false,
+      validateFormats: false,
+    }).compile({
+      components: webhookContract.components,
+      ...webhookContract.components.schemas.CBProjectWebhookEnvelope,
+    });
+
+    expect(
+      validateProjectWebhook(webhookRequest),
+      JSON.stringify(validateProjectWebhook.errors),
+    ).toBe(true);
+    expect(
+      validateProjectWebhook({
+        ...webhookRequest,
+        actor: { kind: "user", id: administratorId },
+      }),
+    ).toBe(false);
+    const submitProjectWebhook = (
+      roleId: string,
+      body: unknown,
+      key: string | null,
+      secret: string,
+      extraHeaders: Record<string, string> = {},
+    ): Promise<Response> =>
+      inboundAgentEventPost(
+        new NextRequest(`http://localhost/api/agents/${roleId}/event`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${secret}`,
+            "X-Maister-Owner-Kind": "project",
+            ...(key === null ? {} : { "Idempotency-Key": key }),
+            ...extraHeaders,
+          },
+          body: JSON.stringify(body),
+        }),
+        { params: Promise.resolve({ agentId: roleId }) },
+      );
+
+    await database.pool.query(
+      "INSERT INTO execution_host_pressure(execution_host_id,pressured_since) SELECT id,now() FROM execution_hosts WHERE kind='local_direct' AND retired_at IS NULL ON CONFLICT DO NOTHING",
+    );
+    let webhookRunId: string;
+    let independentWebhookRunId: string;
+
+    try {
+      const deliveries = await Promise.all(
+        webhookTokens.map((token) =>
+          submitProjectWebhook(
+            "rah:webhook-observer",
+            webhookRequest,
+            webhookDelivery,
+            token.secret,
+          ),
+        ),
+      );
+
+      expect(deliveries.map((response) => response.status).sort()).toEqual([
+        200, 201,
+      ]);
+      const work = await Promise.all(
+        deliveries.map(async (response) =>
+          specialistAssignmentSchema.parse(await response.json()),
+        ),
+      );
+
+      expect(work[0].requester).toEqual({
+        kind: "user",
+        id: userId,
+        runId: null,
+        attemptId: null,
+      });
+      expect(work[0].destination).toEqual({ kind: "inbox", userId });
+      expect(work[0].id).toBe(work[1].id);
+      expect(work[0].origin).toMatchObject({
+        kind: "webhook",
+        deliveryId: webhookDelivery,
+      });
+      webhookRunId = work[0].runIds[0]!;
+      expect(
+        (
+          await database.pool.query(
+            "SELECT status,trigger_source,scheduled_request_snapshot FROM runs WHERE id=$1",
+            [webhookRunId],
+          )
+        ).rows,
+      ).toEqual([
+        {
+          status: "Pending",
+          trigger_source: "webhook",
+          scheduled_request_snapshot: null,
+        },
+      ]);
+      expect(
+        (
+          await database.pool.query(
+            "SELECT count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt')",
+            [webhookRunId],
+          )
+        ).rows,
+      ).toEqual([{ count: 0 }]);
+      const independent = await submitProjectWebhook(
+        "rah:webhook-observer",
+        webhookRequest,
+        randomUUID(),
+        webhookTokens[0].secret,
+      );
+
+      expect(independent.status).toBe(201);
+      const independentWork = specialistAssignmentSchema.parse(
+        await independent.json(),
+      );
+
+      expect(independentWork.id).not.toBe(work[0].id);
+      independentWebhookRunId = independentWork.runIds[0]!;
+      await database.pool.query(
+        "UPDATE project_members SET role='viewer' WHERE project_id=$1 AND user_id=$2",
+        [project.id, userId],
+      );
+      try {
+        expect(
+          (
+            await submitProjectWebhook(
+              "rah:webhook-observer",
+              webhookRequest,
+              webhookDelivery,
+              webhookTokens[1].secret,
+            )
+          ).status,
+        ).toBe(403);
+      } finally {
+        await database.pool.query(
+          "UPDATE project_members SET role='member' WHERE project_id=$1 AND user_id=$2",
+          [project.id, userId],
+        );
+      }
+    } finally {
+      await database.pool.query("DELETE FROM execution_host_pressure");
+    }
+    expect(
+      (
+        await submitProjectWebhook(
+          "rah:webhook-observer",
+          webhookRequest,
+          webhookDelivery,
+          webhookTokens[1].secret,
+        )
+      ).status,
+    ).toBe(200);
+    await vi.waitFor(
+      async () => {
+        expect(
+          (
+            await database.pool.query("SELECT status FROM runs WHERE id=$1", [
+              webhookRunId,
+            ])
+          ).rows,
+        ).toEqual([{ status: "Done" }]);
+      },
+      { timeout: 30000, interval: 25 },
+    );
+    expect(
+      (
+        await database.pool.query(
+          "SELECT kind,count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt') GROUP BY kind ORDER BY kind",
+          [webhookRunId],
+        )
+      ).rows,
+    ).toEqual([
+      { kind: "session.create", count: 1 },
+      { kind: "session.prompt", count: 1 },
+    ]);
+    expect(
+      (
+        await submitProjectWebhook(
+          "rah:webhook-observer",
+          {
+            ...webhookRequest,
+            assignment: {
+              ...webhookRequest.assignment,
+              input: "Changed under a used delivery",
+            },
+          },
+          webhookDelivery,
+          webhookTokens[0].secret,
+        )
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await submitProjectWebhook(
+          "rah:webhook-observer",
+          webhookRequest,
+          null,
+          webhookTokens[0].secret,
+        )
+      ).status,
+    ).toBe(422);
+    expect(
+      (
+        await submitProjectWebhook(
+          "rah:webhook-observer",
+          { ...webhookRequest, schemaVersion: 2 },
+          randomUUID(),
+          webhookTokens[0].secret,
+        )
+      ).status,
+    ).toBe(422);
+    expect(
+      (
+        await submitProjectWebhook(
+          "rah:webhook-observer",
+          { ...webhookRequest, actor: { kind: "user", id: administratorId } },
+          randomUUID(),
+          webhookTokens[0].secret,
+        )
+      ).status,
+    ).toBe(422);
+    expect(
+      (
+        await submitProjectWebhook(
+          "rah:webhook-observer",
+          webhookRequest,
+          randomUUID(),
+          webhookTokens[0].secret,
+          { "X-Maister-Trigger-Event-Id": "1" },
+        )
+      ).status,
+    ).toBe(422);
+    const confinedWebhookToken = await issueToken(
+      {
+        projectId: project.id,
+        name: "project-webhook-cannot-impersonate",
+        scopes: ["agents:trigger", "assignments:submit"],
+        createdByUserId: userId,
+      },
+      db,
+    );
+
+    expect(
+      (
+        await submitProjectWebhook(
+          "rah:webhook-observer",
+          webhookRequest,
+          randomUUID(),
+          confinedWebhookToken.secret,
+        )
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await submitProjectWebhook(
+          "rah:webhook-observer",
+          webhookRequest,
+          randomUUID(),
+          personalProjectToken.secret,
+        )
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await submitProjectWebhook(
+          "rah:webhook-observer",
+          {
+            ...webhookRequest,
+            assignment: {
+              ...webhookRequest.assignment,
+              owner: assignmentInput.owner,
+            },
+          },
+          randomUUID(),
+          webhookTokens[0].secret,
+        )
+      ).status,
+    ).toBe(422);
+    expect(
+      (
+        await submitProjectWebhook(
+          "rah:webhook-observer",
+          {
+            ...webhookRequest,
+            assignment: {
+              ...webhookRequest.assignment,
+              specialistBindingId: coordinator.linkId,
+            },
+          },
+          randomUUID(),
+          webhookTokens[0].secret,
+        )
+      ).status,
+    ).toBe(409);
+    await vi.waitFor(
+      async () => {
+        expect(
+          (
+            await database.pool.query("SELECT status FROM runs WHERE id=$1", [
+              independentWebhookRunId,
+            ])
+          ).rows,
+        ).toEqual([{ status: "Done" }]);
+      },
+      { timeout: 30000, interval: 25 },
+    );
+    await updateAgentLink(
+      {
+        projectId: project.id,
+        agentId: "rah:webhook-observer",
+        actorUserId: administratorId,
+        patch: { enabled: false },
+      },
+      db,
+    );
+    expect(
+      (
+        await submitProjectWebhook(
+          "rah:webhook-observer",
+          webhookRequest,
+          webhookDelivery,
+          webhookTokens[1].secret,
+        )
+      ).status,
+    ).toBe(200);
+    await updateAgentLink(
+      {
+        projectId: project.id,
+        agentId: "rah:webhook-observer",
+        actorUserId: administratorId,
+        patch: { enabled: true },
+      },
+      db,
+    );
+    const flowWebhook = await submitProjectWebhook(
+      "rah:flow-coordinator",
+      {
+        schemaVersion: 1,
+        assignment: {
+          ...objective,
+          owner: { kind: "project", projectId: project.id },
+          specialistBindingId: flowRequest.specialistBindingId,
+          input: "Coordinate the exact project webhook evidence.",
+        },
+      },
+      randomUUID(),
+      webhookTokens[0].secret,
+    );
+
+    expect(flowWebhook.status).toBe(201);
+    const flowWebhookWork = specialistAssignmentSchema.parse(
+      await flowWebhook.json(),
+    );
+
+    await vi.waitFor(
+      async () => {
+        expect(
+          (
+            await database.pool.query(
+              "SELECT status,run_kind FROM runs WHERE id=$1",
+              [flowWebhookWork.runIds[0]!],
+            )
+          ).rows,
+        ).toEqual([{ status: "Done", run_kind: "flow" }]);
+      },
+      { timeout: 30000, interval: 25 },
+    );
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM specialist_assignments WHERE project_id=$1 AND origin->>'kind'='webhook'",
+          [project.id],
+        )
+      ).rows,
+    ).toEqual([{ count: 3 }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT kind,count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt') GROUP BY kind ORDER BY kind",
+          [webhookRunId],
+        )
+      ).rows,
+    ).toEqual([
+      { kind: "session.create", count: 1 },
+      { kind: "session.prompt", count: 1 },
+    ]);
   } finally {
     await database.pool.query(
       "UPDATE agent_schedules SET enabled=false WHERE project_id=$1",

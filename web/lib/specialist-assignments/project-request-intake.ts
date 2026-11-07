@@ -45,6 +45,7 @@ export type ProjectRequestInvocation = Readonly<{
   scheduledRequest: PreparedSpecialistAssignment["scheduledRequest"];
   taskId: string | null;
   source?: ProjectSourceAppointment;
+  addressedAgentId?: string;
   sourceRestrictions?: readonly KnowledgeAccessRestriction[];
 }>;
 const log = pino({
@@ -76,6 +77,15 @@ async function prepareProjectSpecialistAssignment(
     throw new MaisterError(
       "PRECONDITION",
       "The selected project specialist attachment is unavailable",
+    );
+  if (
+    invocation.addressedAgentId !== undefined &&
+    link.agent_id !== invocation.addressedAgentId
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "The request does not address this exact project specialist attachment",
+      { details: { reason: "project_webhook_binding_mismatch" } },
     );
   const context = await loadAgentContext(tx, {
     projectId: request.owner.projectId,
