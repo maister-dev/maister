@@ -1,0 +1,169 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-07T21:01:26.728820+00:00",
+  "baseline": "fdfad22cfa5fc2a67377e96e0806ae3ee6651e15",
+  "master": "f38053b3192a24738c8b0920852cfd229c56721f",
+  "status": "T26-and-Phase5-platform-complete-local",
+  "red": [
+    {
+      "run": "initial-phase5-red.log.gz",
+      "passed": 219,
+      "failed": 2,
+      "causes": [
+        "Legacy full-row migration assertion omits additive NULL project_source_review",
+        "Actual company cron Flow crashes during findings capture lock upgrade"
+      ]
+    },
+    {
+      "run": "findings-deadlock-red.log.gz",
+      "cause": "Real event FK KEY SHARE plus pending Run UPDATE conflicts with guarded Flow NO KEY UPDATE upgraded by findings validation",
+      "sqlState": "40P01"
+    },
+    {
+      "run": "lock-owning-token-red.log.gz",
+      "passed": 104,
+      "failed": 1,
+      "cause": "Native ordinary-node token receives delegation-only rotation reason",
+      "sqlState": "23514",
+      "constraint": "project_tokens_rotation_origin_check"
+    }
+  ],
+  "gates": {
+    "fullPhase5Integration": {
+      "passed": 274,
+      "files": 13,
+      "seconds": 433.51
+    },
+    "tokenAndFindingsIntegration": {
+      "passed": 53,
+      "files": 2,
+      "seconds": 17.69
+    },
+    "reductionAndDriverIntegration": "Owning files passed in the intermediate 105-test run; that overall run remained RED on the separately reproduced token constraint before its fix. No final global integration claim.",
+    "webUnit": {
+      "passed": 9312,
+      "files": 891,
+      "seconds": 39.96
+    },
+    "webBuild": "passed with DB_URL pointing to unreachable offline address",
+    "types": "passed separately before token retirement fix; final build includes final TypeScript check",
+    "lintAndFormat": "passed",
+    "contracts": "passed;84 requirements;45 tasks",
+    "docs": "passed;176 tables"
+  },
+  "verified": [
+    "Original source/input identity survives duplicate and independent intake, qualification waits, injected carrier/pointer failures, cancellation and reordered qualification events",
+    "Company-only inputs, assignments, questions, context and result availability use no dummy repository",
+    "Context CAS and current source/role authority survive concurrent edits and revocation",
+    "Repeated native clarification resumes one assignment and retains exact input lineage; stale, changed and terminal answers refuse",
+    "Internal delivery rollback, current recipient access, terminal CAS replay and lost external ACK retry delivery only",
+    "Event writer and guarded findings validation both commit without capture-lock deadlock",
+    "Native ordinary replacement and ordinary-to-coordinator replacement revoke old credentials; delegation rotation preserves existing exact-child semantics while all retired bearer requests refuse",
+    "Legacy scheduled requests, triggers, retries and human questions retain their contracts",
+    "No migration or historical authorship/authority/result bytes are rewritten; only additive migration assertion is reconciled",
+    "Brain remains separate from project deletion"
+  ],
+  "remaining": [
+    "T27 governed logical work/delegation",
+    "T28 acceptance and T28.1 operational evidence",
+    "T29 ownership and bounded recovery including finite project recovery-page progress",
+    "T30-T43 connector, UI, real immutable installed-package pilot, global/release qualification"
+  ],
+  "effects": "Owned local Postgres, Git and real-supervisor/controlled-ACP fixtures only. No remote publication, production target action or push.",
+  "sources": [
+    {
+      "path": ".ai-factory/plans/codex-company-brain-specialist-assignments.md",
+      "sha256": "d50f175047fb49241d136b5b83eda6ab41660c7990e3f289186664ffcd9b7ec3"
+    },
+    {
+      "path": "docs/db/specialist-assignments-domain.md",
+      "sha256": "0bcf21f6a008bed6b22a59db0330bffaeb06bd81f808814fa04b4952d6146921"
+    },
+    {
+      "path": "docs/system-analytics/company-brain-specialists-traceability.md",
+      "sha256": "311596b469a68b0e50469ef6da5ff9ab7320457382c9e5a8cd7aeb7efab4db0d"
+    },
+    {
+      "path": "docs/system-analytics/evidence-findings.md",
+      "sha256": "d039bd17c1453fa589736ffe619eadb3c230132ad52d99c71d76987ea39ce890"
+    },
+    {
+      "path": "docs/system-analytics/specialist-assignments.md",
+      "sha256": "b4253b50e636cd7d7935adcc0b6cc523be4a8530f29ff6388c3b7daa132f6e08"
+    },
+    {
+      "path": "web/lib/agents/tokens.ts",
+      "sha256": "3b2eae347d25d48bf2710920ac0f4b32d4fb5c2873c367f08bb9c9065660725b"
+    },
+    {
+      "path": "web/lib/db/__tests__/migration-scheduled-agent-requests.integration.test.ts",
+      "sha256": "b14f756a8f14f3018e5238580d925ac29c7e61bb822e8d0bc2de3cf11d5aa438"
+    },
+    {
+      "path": "web/lib/flows/graph/runner-graph.ts",
+      "sha256": "5c1a78ef62c2640f1f8c2865e27346eff0fbb3585d561ab9b67881ad448d5c42"
+    },
+    {
+      "path": "web/lib/run-results/__tests__/findings.integration.test.ts",
+      "sha256": "447d6315a2ad66b795c02e1356a1a416bb9466d75dc8764be65ba69d599f7e98"
+    },
+    {
+      "path": "web/lib/run-results/findings-references.ts",
+      "sha256": "2e3c259efa6f7f09f820a0ce76f52d5cd9a810b517789e43bb62c387ac568c90"
+    }
+  ],
+  "logs": [
+    {
+      "path": "initial-phase5-red.log.gz",
+      "sourceSha256": "60fbf7a8a8240529564b2c46203d8b6fa0870d0bff08f2d7ddc5318299347cb3"
+    },
+    {
+      "path": "findings-deadlock-red.log.gz",
+      "sourceSha256": "430f6acaef90a851fcab0765455bfd27002a7c682eb6caa8b3833f3491578719"
+    },
+    {
+      "path": "lock-owning-token-red.log.gz",
+      "sourceSha256": "07423a2a6097a9381f421a333b3c3ad7ff1a62eb2b8de3a9734a58be692cb2ce"
+    },
+    {
+      "path": "token-findings-green.log.gz",
+      "sourceSha256": "f00e5de2a5aae5ed0b7f532d93b6d93028829bb43a916e7861ec7e1f0d4f6ad8"
+    },
+    {
+      "path": "phase5-green.log.gz",
+      "sourceSha256": "2db276aa402c58897c20907022c4f55545d09fca9ffd2d78e7cabd93a019726f"
+    },
+    {
+      "path": "unit-green.log.gz",
+      "sourceSha256": "c8db6c1c615995940fbb60d49ce2e569db6a03357f0ae957501349097727c651"
+    },
+    {
+      "path": "build-green.log.gz",
+      "sourceSha256": "4ac3874a35e9df4c84c2b97bf70001a90cdcf277d565c24f09cd16c4300caf36"
+    },
+    {
+      "path": "types-green.log.gz",
+      "sourceSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "path": "contracts-green.log.gz",
+      "sourceSha256": "0457dd8bccb26b431516d60746f9a69104de6c7fa85d9ef5fe88dc6384d7fe1c"
+    },
+    {
+      "path": "docs-green.log.gz",
+      "sourceSha256": "b7d85eb3a90e624079e888e6f0cef3c24d05917da18691ae924f1f4547e02be5"
+    },
+    {
+      "path": "lint-green.log.gz",
+      "sourceSha256": "17aa973d3f004560237d9a95171210b0671deff23d61628eecf7322ff5938f20"
+    },
+    {
+      "path": "final-contracts-green.log.gz",
+      "sourceSha256": "f7db1acae334420fa461b96e8c1da8c520984c576c3afc08d9c971302e6a538f"
+    },
+    {
+      "path": "final-docs-green.log.gz",
+      "sourceSha256": "0e032765cfcc6a99332b0cd97db89d967ff4773bffcb49aba3b371248547b8b3"
+    }
+  ]
+}

@@ -722,9 +722,9 @@ writers; finishing the foundation alone does not qualify accepted cooperation.
 This ordering removes the T23-to-T28 dependency cycle without removing any result,
 evidence-preservation or acceptance requirement.
 
-### Durable origin-delivery contract (Implemented transport; recovery qualification pending — T25)
+### Durable origin-delivery contract (Implemented platform — locally qualified)
 
-**Implemented destination admission, exact-result capture and channel transport. Native inspection/recovery and complete qualification remain pending.**
+**Destination admission, exact-result capture, channel transport and native inspection/recovery are locally qualified. Installed-package delivery and product controls remain separate qualification gates.**
 The shared assignment store validates the destination under the same transaction
 as current requester/owner authority and before creating any assignment, input or
 event. Inbox delivery is private to the actual requester. Task/thread selectors
@@ -781,9 +781,10 @@ introduced, and logical evidence references do not block project deletion.
 Qualification starts at destination admission (real Postgres creation/rollback),
 then exact-result event capture, internal duplicate/concurrent dispatch, current
 read revocation, native Inbox count/list/read, real local HTTP lost-ACK retry,
-changed recipient and bounded failure/recovery. Actual installed-package delivery
-remains T40. The platform task cannot be marked complete before these adapters
-and their current-authority/recovery paths pass.
+changed recipient and bounded failure/recovery. These platform scenarios are
+locally qualified, including actual effect/ack rollback, expired leases, explicit
+replay and source/input/result supersession. Actual installed-package delivery
+remains T40; accepted-outcome publication remains T28.
 
 ### Delivery and cancellation windows
 
@@ -1043,9 +1044,12 @@ access. The actual project intake composite qualifies comment, cron, event and w
 coordinators through human assessment, registered consumers and the real supervisor.
 Concurrent source deliveries adopt one queued admission, expired producer leases
 do not relabel retained work unknown, and a changed private-input witness refuses
-before allocation. Recovery before the initial source-pointer commit, exhaustive
-qualification/replay ordering and the remaining interruption cases remain unqualified;
-T22 stays open. Fixtures cannot establish stand-pilot readiness.
+before allocation. Injected failures before carrier insertion and source capture preserve the original
+input/receipt through expired-claim reconciliation. Cancellation before or after
+assessment cannot revive work. Qualification before handoff, delayed assessment
+events and a real repository change preserve current canonical qualification and
+one reserved execution. T22's project-source admission is locally qualified;
+installed-package and stand-pilot readiness remain separate gates.
 
 Automatic project coordinator Runs retain system creation attribution
 (`created_by_user_id=NULL`). Original requester authority comes from the exact
@@ -1057,7 +1061,7 @@ The initiating account, current project membership, attachment and package gates
 still apply. An arbitrary system Run, source selector or model-supplied user ID
 cannot satisfy this binding; no historical creator is invented.
 
-#### Interrupted intake recovery (Partial — T22 qualification)
+#### Interrupted intake recovery (Implemented — locally qualified)
 
 Main `0268_project_source_recovery` extends only the existing once-only
 handoff guard. An expired open claim or `unknown` invocation can acquire its
@@ -1098,5 +1102,8 @@ without a Run, closes that exact admission incident and reuses the actual intake
 adapter. Concurrent replay and actual qualification then produce one original
 reserved Run and one create/prompt pair. The populated migration test separately
 preserves the unknown row and rejects both a forged assignment and an existing
-reserved Run. Remaining cancellation/order/diagnostic qualification keeps T22
-open. No stand-pilot readiness is implied.
+reserved Run. Cancellation and qualification ordering additionally pass through
+actual source delivery, human assessment, registered consumers and the existing
+worker. The full Phase 5 integration probe qualifies the surrounding intake,
+context, clarification, delivery and legacy behavior. No installed-package or
+stand-pilot readiness is implied.

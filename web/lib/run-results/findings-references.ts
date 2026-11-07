@@ -142,7 +142,9 @@ export async function validateFindingsReferences(
   try {
     const row = (
       await tx.execute(
-        sql`SELECT knowledge_access FROM runs WHERE id=${runId} FOR UPDATE`,
+        // Match the driver's lock: capture writes never change the referenced Run key.
+        // Upgrading to FOR UPDATE deadlocks with event FK checks before lifecycle updates.
+        sql`SELECT knowledge_access FROM runs WHERE id=${runId} FOR NO KEY UPDATE`,
       )
     ).rows[0];
 

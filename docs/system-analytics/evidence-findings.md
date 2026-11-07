@@ -189,6 +189,25 @@ attempts, disabled bindings and revoked source grants still refuse inspection.
 Recording a completed result therefore remains distinct from publishing or
 confirming a Brain assertion.
 
+Replacing a native ordinary-node credential retires it with explicit `revoked`
+metadata, including when its successor is a coordinator credential. Only an old
+credential that actually held `runs:delegate` (or `*`) receives the existing
+`rotation` marker used to finish already-accepted child obligations. Replacement
+never supplies delegation authority to an old ordinary-node credential; every
+retired credential remains unusable as a presented bearer. The existing database
+rotation constraint and immutable Run-family binding remain unchanged.
+
+Findings validation holds the Run with `FOR NO KEY UPDATE` before inspecting
+or extending its source capture, matching the existing Flow driver's lock.
+The capture update never changes the referenced Run identity. Concurrent event
+inserts can retain their foreign-key `KEY SHARE` lock and later serialize their
+lifecycle update behind publication. Validation must not upgrade this lock to
+`FOR UPDATE`: that creates a cycle between publication and the event writer.
+The integration regression retains the actual event foreign-key lock, observes
+the competing Run lock wait, and requires both transactions to commit without
+losing the result or event. Storage failures retain safe SQLSTATE diagnostics
+without logging SQL or bound private inputs.
+
 ### Native value and limits
 
 The authoritative OpenAPI components prefixed `CB` describe each closed shape; [synthetic examples](../api/company-brain-examples.yaml) distinguish valid explicit missing evidence from forged authority/unsupported fields. Package FormSchema exposes the same named fields; native semantic validation supplies closure/identity/limit checks beyond the generic field grammar. New capability minimum is designed engine 3.11.0; existing historical profiles keep their frozen schema/digest and meaning.

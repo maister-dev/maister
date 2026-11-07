@@ -433,7 +433,11 @@ async function issueNodeRunToken(
     await lockMintingRun(tx, binding);
     await tx
       .update(projectTokens)
-      .set({ revoked_at: new Date(), revocation_reason: "rotation" })
+      .set({
+        revoked_at: new Date(),
+        // Only an actual delegation credential can retain accepted child obligations.
+        revocation_reason: sql`CASE WHEN ${projectTokens.scopes} ? 'runs:delegate' OR ${projectTokens.scopes} ? '*' THEN 'rotation' ELSE 'revoked' END`,
+      })
       .where(and(runFamily(binding), isNull(projectTokens.revoked_at)));
     // Legacy names can identify a private credential for retirement, never for a grant.
     await tx

@@ -10,6 +10,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
 import {
@@ -35,6 +36,17 @@ import { assertNativeRunKnowledgeInputs } from "@/lib/brain/knowledge-execution-
 import { createKnowledgeProposal } from "@/lib/brain/knowledge-proposals";
 import { getKnowledgeRecord } from "@/lib/brain/knowledge-records";
 import { nativeKnowledgeCaptureAtLaunch } from "@/lib/brain/knowledge-launch-capture";
+import { validateFindingsReferences } from "@/lib/run-results/findings-references";
+import {
+  claimFlowDriver,
+  releaseFlowDriverClaim,
+} from "@/lib/flows/graph/driver-claim";
+import { flowDriverDatabase } from "@/lib/flows/graph/driver-db";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
+import { pgErrorOf } from "@/lib/db/pg-error";
+import { verifyToken } from "@/lib/tokens/verify";
+import { resetResolverForTests } from "@/lib/execution-host/resolver";
+import { setDefaultTransportForTests } from "@/lib/execution-host/default-transport";
 
 let database: StartedPostgresTestDb;
 let finalizeAgentRun: typeof import("@/lib/agents/launch").finalizeAgentRun;
@@ -125,6 +137,111 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await database?.stop();
+});
+
+it("IT-CBE-04 validates findings while an event writer retains the Run foreign-key lock", async () => {
+  const project = await seedProjectRow(database.db);
+  const runId = await seedRun(database.db, {
+    projectId: project.id,
+    runKind: "flow",
+    status: "Running",
+    agentWorkspace: "none",
+  });
+
+  await database.pool.query(
+    "UPDATE runs SET result_contract=$2::jsonb,knowledge_access=$3::jsonb WHERE id=$1",
+    [
+      runId,
+      JSON.stringify(nativeFlowContract),
+      JSON.stringify({
+        schemaVersion: 1,
+        state: "complete",
+        generation: 1,
+        restrictions: [],
+      }),
+    ],
+  );
+  const { assignment } = await fakeExecutionHosts(database.db, { runId });
+
+  if (!assignment) throw new Error("Expected native Flow placement");
+  const claim = await claimFlowDriver(database.db, {
+    runId,
+    assignmentId: assignment.id,
+  });
+
+  if (!claim) throw new Error("Expected native Flow driver claim");
+  const writer = await database.pool.connect();
+  let eventUpdate: Promise<unknown> | undefined;
+
+  try {
+    await writer.query("BEGIN");
+    // Prefer the validation transaction as the deterministic deadlock victim in RED.
+    await writer.query("SET LOCAL deadlock_timeout='5s'");
+    const writerPid = (
+      await writer.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")
+    ).rows[0]!.pid;
+    const decision = await flowDriverDatabase(database.db, claim)
+      .transaction(async (tx) => {
+        await tx.execute(sql`SET LOCAL deadlock_timeout='100ms'`);
+        await writer.query(
+          "INSERT INTO execution_events(id,source,source_key,run_id,event_type,payload_schema,occurred_at,ingest_disposition) VALUES($1,'manager',$1,$2,'session.exited','session.exited.v1',now(),'accepted')",
+          [randomUUID(), runId],
+        );
+        eventUpdate = writer.query(
+          "SELECT id FROM runs WHERE id=$1 FOR UPDATE",
+          [runId],
+        );
+        // Attach the rejection handler immediately while the other transaction is blocked.
+        void eventUpdate.catch(() => undefined);
+        await vi.waitFor(async () => {
+          const waiting = await database.pool.query<{ waiting: boolean }>(
+            "SELECT cardinality(pg_blocking_pids($1))>0 AS waiting",
+            [writerPid],
+          );
+
+          expect(waiting.rows[0]?.waiting).toBe(true);
+        });
+
+        return validateFindingsReferences(tx, runId, nativeFlowContract, {
+          kind: "valid",
+          value: missingEvidenceFindings,
+          valueBytes: Buffer.byteLength(
+            JSON.stringify(missingEvidenceFindings),
+            "utf8",
+          ),
+        });
+      })
+      .catch((error: unknown) => ({
+        kind: "database_error",
+        sqlState: pgErrorOf(error)?.code,
+      }));
+
+    expect(decision).toEqual({
+      kind: "valid",
+      value: missingEvidenceFindings,
+      valueBytes: Buffer.byteLength(
+        JSON.stringify(missingEvidenceFindings),
+        "utf8",
+      ),
+    });
+    await eventUpdate;
+    await writer.query("COMMIT");
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM execution_events WHERE run_id=$1",
+          [runId],
+        )
+      ).rows,
+    ).toEqual([{ count: 1 }]);
+  } finally {
+    await writer.query("ROLLBACK");
+    writer.release();
+    await eventUpdate?.catch(() => undefined);
+    await releaseFlowDriverClaim(database.db, claim);
+    setDefaultTransportForTests(null);
+    resetResolverForTests();
+  }
 });
 
 const cases: readonly Readonly<{
@@ -849,13 +966,49 @@ it("IT-CBE-04 binds native coordinator knowledge authority to its executed role 
 
     expect(nodeScopes).toContain("knowledge:read");
     expect(nodeScopes).not.toContain("runs:delegate");
+    const replacementNodeToken = await issueNativeNodeRunToken({
+      projectId: execution.projectId,
+      runId: execution.runId,
+      nodeAttemptId: attemptId,
+      db: database.db,
+    });
+
+    expect(
+      (
+        await database.pool.query(
+          "SELECT revocation_reason FROM project_tokens WHERE id=$1",
+          [nodeToken.tokenId],
+        )
+      ).rows,
+    ).toEqual([{ revocation_reason: "revoked" }]);
+    await expect(
+      verifyToken(nodeToken.secret, database.db),
+    ).rejects.toMatchObject({ kind: "revoked" });
     await expect(
       getKnowledgeRecord(
         database.db,
-        { kind: "token", tokenId: nodeToken.tokenId },
+        { kind: "token", tokenId: replacementNodeToken.tokenId },
         { recordId: execution.recordId },
       ),
     ).resolves.toMatchObject({ id: execution.recordId });
+    const firstCoordinatorToken = await issueOrchestratorRunToken({
+      projectId: execution.projectId,
+      runId: execution.runId,
+      nodeAttemptId: attemptId,
+      db: database.db,
+    });
+
+    expect(
+      (
+        await database.pool.query(
+          "SELECT revocation_reason FROM project_tokens WHERE id=$1",
+          [replacementNodeToken.tokenId],
+        )
+      ).rows,
+    ).toEqual([{ revocation_reason: "revoked" }]);
+    await expect(
+      verifyToken(replacementNodeToken.secret, database.db),
+    ).rejects.toMatchObject({ kind: "revoked" });
     const token = await issueOrchestratorRunToken({
       projectId: execution.projectId,
       runId: execution.runId,
@@ -863,6 +1016,17 @@ it("IT-CBE-04 binds native coordinator knowledge authority to its executed role 
       db: database.db,
     });
 
+    expect(
+      (
+        await database.pool.query(
+          "SELECT revocation_reason FROM project_tokens WHERE id=$1",
+          [firstCoordinatorToken.tokenId],
+        )
+      ).rows,
+    ).toEqual([{ revocation_reason: "rotation" }]);
+    await expect(
+      verifyToken(firstCoordinatorToken.secret, database.db),
+    ).rejects.toMatchObject({ kind: "revoked" });
     expect(
       (
         await database.pool.query(
