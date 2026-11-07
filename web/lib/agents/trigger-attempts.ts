@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { SQL } from "drizzle-orm";
 import type { Db } from "@/lib/execution-host/db";
 import type { AgentTriggerAttemptOutcome } from "@/lib/agents/trigger-attempt-types";
 
@@ -226,18 +227,64 @@ export async function claimEventAgentAttempt(
   });
 }
 
+type TriggerSettlement = {
+  outcome: AgentTriggerAttemptOutcome;
+  runId: string | null;
+  reasonCode: string | null;
+  now: Date;
+};
+
 export async function settleAgentTriggerAttempt(
   db: Db,
   attempt: AgentTriggerClaim,
-  input: {
-    outcome: AgentTriggerAttemptOutcome;
-    runId: string | null;
-    reasonCode: string | null;
-    now: Date;
-  },
+  input: TriggerSettlement,
 ): Promise<void> {
   assertProjectAgentTriggerClaim(attempt);
 
+  return settleScopedAgentTriggerAttempt(db, attempt, input);
+}
+
+/** Company settlement cannot enter the project incident/actor namespace. */
+export function assertCompanyAgentTriggerClaim(
+  attempt: AgentTriggerClaim,
+): void {
+  if (
+    attempt.projectId !== null ||
+    typeof attempt.companyId !== "string" ||
+    attempt.bindingSnapshot.version !== 2
+  )
+    throw new MaisterError(
+      "CONFIG",
+      "Company trigger settlement requires its explicit owned invocation snapshot",
+    );
+}
+
+export async function settleCompanyAgentTriggerAttempt(
+  db: Db,
+  attempt: AgentTriggerClaim,
+  input: TriggerSettlement,
+): Promise<void> {
+  assertCompanyAgentTriggerClaim(attempt);
+
+  return settleScopedAgentTriggerAttempt(db, attempt, input);
+}
+
+function triggerRunOwner(attempt: AgentTriggerClaim): SQL {
+  if (typeof attempt.projectId === "string" && attempt.companyId === null)
+    return sql`${runs.projectId}=${attempt.projectId} AND ${runs.companyId} IS NULL`;
+  if (typeof attempt.companyId === "string" && attempt.projectId === null)
+    return sql`${runs.companyId}=${attempt.companyId} AND ${runs.projectId} IS NULL`;
+  throw new MaisterError(
+    "CONFIG",
+    "Trigger receipt lookup requires one explicit company or project owner",
+  );
+}
+
+async function settleScopedAgentTriggerAttempt(
+  db: Db,
+  attempt: AgentTriggerClaim,
+  input: TriggerSettlement,
+): Promise<void> {
   await db.transaction(async (tx) => {
     // A run receipt is read before the attempt lock, matching source-run -> agent lock order.
     const [run] = await tx
@@ -250,7 +297,7 @@ export async function settleAgentTriggerAttempt(
       .where(
         and(
           eq(runs.id, input.runId ?? attempt.reservedRunId),
-          eq(runs.projectId, attempt.projectId),
+          triggerRunOwner(attempt),
           sql`COALESCE(${runs.sourceAgentId}, ${runs.agentId}) = ${attempt.sourceAgentId}`,
         ),
       )
@@ -327,7 +374,7 @@ export async function settleAgentTriggerAttempt(
           eq(agentSchedules.lastAttemptFence, attempt.fence),
         ),
       );
-    if (run)
+    if (run && attempt.projectId !== null)
       await resolveAgentAdmissionIncident(
         tx,
         attempt.projectId,
@@ -336,9 +383,10 @@ export async function settleAgentTriggerAttempt(
         settlement.now,
       );
     if (
-      settlement.outcome === "refused" ||
-      settlement.outcome === "failed" ||
-      settlement.outcome === "unknown"
+      attempt.projectId !== null &&
+      (settlement.outcome === "refused" ||
+        settlement.outcome === "failed" ||
+        settlement.outcome === "unknown")
     ) {
       const reasonCode =
         settlement.outcome === "unknown"
@@ -366,16 +414,17 @@ export async function settleAgentTriggerAttempt(
         observedAt: settlement.now,
       });
     }
-    await emitDomainEvent({
-      db: tx,
-      kind: "agent.activity_changed",
-      projectId: attempt.projectId,
-      payload: {
+    if (attempt.projectId !== null)
+      await emitDomainEvent({
+        db: tx,
+        kind: "agent.activity_changed",
         projectId: attempt.projectId,
-        agentId: attempt.sourceAgentId,
-        revision: attempt.fence,
-      },
-    });
+        payload: {
+          projectId: attempt.projectId,
+          agentId: attempt.sourceAgentId,
+          revision: attempt.fence,
+        },
+      });
     log.info(
       {
         attemptId: attempt.id,
@@ -399,7 +448,6 @@ export async function reconcileAgentTriggerAttempts(
     .from(agentTriggerAttempts)
     .where(
       and(
-        sql`${agentTriggerAttempts.projectId} IS NOT NULL`,
         lte(agentTriggerAttempts.dueAt, now),
         or(
           isNull(agentTriggerAttempts.outcome),
@@ -412,17 +460,22 @@ export async function reconcileAgentTriggerAttempts(
   const result = { adopted: 0, unknown: 0 };
 
   for (const attempt of due) {
-    assertProjectAgentTriggerClaim(attempt);
+    if (attempt.companyId === null) assertProjectAgentTriggerClaim(attempt);
+    else assertCompanyAgentTriggerClaim(attempt);
+    const settle =
+      attempt.companyId === null
+        ? settleAgentTriggerAttempt
+        : settleCompanyAgentTriggerAttempt;
     const [run] = await db
       .select({ id: runs.id, status: runs.status })
       .from(runs)
       .where(
         and(
-          eq(runs.projectId, attempt.projectId),
+          triggerRunOwner(attempt),
           sql`COALESCE(${runs.sourceAgentId}, ${runs.agentId}) = ${attempt.sourceAgentId}`,
           or(
             eq(runs.id, attempt.reservedRunId),
-            attempt.triggerEventId === null
+            attempt.companyId !== null || attempt.triggerEventId === null
               ? sql`false`
               : and(
                   eq(runs.agentId, attempt.sourceAgentId),
@@ -434,7 +487,7 @@ export async function reconcileAgentTriggerAttempts(
       .limit(1);
 
     if (run) {
-      await settleAgentTriggerAttempt(db, attempt, {
+      await settle(db, attempt, {
         outcome: run.status === "Pending" ? "queued" : "launched",
         runId: run.id,
         reasonCode: null,
@@ -442,7 +495,7 @@ export async function reconcileAgentTriggerAttempts(
       });
       result.adopted++;
     } else if (attempt.outcome === null) {
-      await settleAgentTriggerAttempt(db, attempt, {
+      await settle(db, attempt, {
         outcome: "unknown",
         runId: null,
         reasonCode: "agent_trigger_outcome_unknown",

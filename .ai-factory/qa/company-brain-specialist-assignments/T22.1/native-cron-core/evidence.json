@@ -1,0 +1,95 @@
+{
+  "task": "T22.1",
+  "slice": "Registered native company cron core and owner-aware trigger recovery",
+  "date": "2026-11-07",
+  "baseCommit": "9b8d41748",
+  "status": "Internal cron core qualified; public source enablement and full T22.1 remain gated",
+  "red": {
+    "case": "Actual registered concurrent scheduler ticks do not claim company cron rows",
+    "testsFailed": 1,
+    "testsPassed": 36,
+    "observedInvocations": 0,
+    "expectedInvocations": 1,
+    "durationSeconds": 27.16,
+    "exitCode": 1
+  },
+  "gates": {
+    "nativeAndProjectTriggerIntegration": {
+      "tests": 81,
+      "files": 3,
+      "durationSeconds": 51.74,
+      "exitCode": 0
+    },
+    "existingCompanyGraphLifecycle": {
+      "tests": 45,
+      "files": 1,
+      "durationSeconds": 31.81,
+      "exitCode": 0
+    },
+    "webUnit": {
+      "tests": 9318,
+      "files": 889,
+      "durationSeconds": 27.89,
+      "exitCode": 0
+    },
+    "types": {
+      "exitCode": 0
+    },
+    "lint": {
+      "exitCode": 0
+    },
+    "format": {
+      "exitCode": 0
+    },
+    "contracts": {
+      "exitCode": 0
+    },
+    "docs": {
+      "exitCode": 0
+    }
+  },
+  "qualified": [
+    "The existing registered agent_tick.dispatcher composes bounded 25-row project and company source selections without a new timer/scheduler.",
+    "An immutable company source retains the actual server creator; current read/submit/update authority and exact current reviewed provider/configuration are rechecked.",
+    "Existing claim fence, v2 configuration refs, reserved Run ID and v1 scheduled request are preserved; assignment/input and native Run commit together.",
+    "The exact appointment validates the source owner/current configuration, creating user, role/coordinator digest/revision, scheduled input/origin and reserved Run identity.",
+    "The owned prospective source drives one real supervisor/controlled ACP create/prompt, valid operational result and no project or task. Business acceptance stays separate.",
+    "Same invocation replay creates no work. Independent fire creates a separate assignment. A Run committed before lost settlement is adopted by shared reconciliation; an absent receipt becomes unknown and cannot be blindly redispatched.",
+    "Project trigger dispatch and existing manual native coordinator/permission/cancellation/result/recovery behavior remain green.",
+    "Company errors use existing source telemetry; company settlement cannot emit project incidents or facts. Configuration capture refusal has a five-minute CAS retry deadline so a poison source cannot occupy the due head indefinitely."
+  ],
+  "corrections": [
+    "The prior storage test expected company rows to be excluded from recovery. The new explicit owner-aware implementation correctly produces unknown without creating a Run; the obsolete expectation was updated.",
+    "Post-commit pool wake sits after reservation settlement, so a wake error cannot be logged as an admission refusal."
+  ],
+  "limits": [
+    "Public company cron source creation/enablement still refuses company_scheduler_contract_unavailable. Positive enablement is explicit owned prospective fixture setup.",
+    "Actual coordinator-cron, capacity/revocation/poison-row qualification and event/webhook invocation remain open in T22.1.",
+    "A missing recurring request currently refuses before assignment admission; T24 owns clarification and retained business continuation.",
+    "Company incident grouping and quiet delivery remain T39; existing source last-error telemetry is retained now.",
+    "Current native constructor invocation metadata is an internal optional appointment; enforce missing/mismatched cron appointment refusal in the next qualification slice before public enablement.",
+    "The scheduled objective is an invocation label; the original Unicode request remains complete in the unchanged v1 scheduled plane.",
+    "No new migration or ledger; no real model, companion package, stand mutation or pilot-readiness claim.",
+    "T21 full integration is running on the frozen primary a48a002b2; isolated source work has not been integrated."
+  ],
+  "sourceSha256": {
+    ".ai-factory/ARCHITECTURE.md": "c99b7ffd136c7fc3d660ed57d975a7c4f2a5352ea31ef8f52102db0e313e3c1c",
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "ea83bf4b23979b05d76de534b7e3187442655611a22788ee981bca614b5266fc",
+    "AGENTS.md": "cc60319cf8cdcf45ea77486fb6d535d7c11fc50ba945d78c87d84e5d4502a165",
+    "docs/system-analytics/specialist-assignments.md": "cb5f1b390e91dc17da6e185c21579285e4c838b918b4b8a0c3aad9f2132c7ae4",
+    "docs/system-analytics/specialist-runtime.md": "04801fa93dae84c103f655a36de361135f7377b1179678f0e3c690a7cd9eed53",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "0f3ce9ba088099883f78b9e2a95bd6949ad0b5903b1a43ef000e8e80a972cc1e",
+    "web/lib/agents/__tests__/company-flow-bindings.integration.test.ts": "0a09890a191f845bf19bd3475d8d4b91bc0639c35a9298ad1cd7b9e26a20353d",
+    "web/lib/agents/company-agent-launch.ts": "1c361f983c34cd62a88a521d304f34bc3976b1af9e92ed84786fe48c381d486d",
+    "web/lib/agents/company-cron-dispatch.ts": "df26261bf51ff7a713ba302dc6e17db15de91019c80bab04af6878a5262f6a99",
+    "web/lib/agents/company-flow-launch.ts": "9e5c4c54d1a3537d203175a18e2b9f2865c5959d4a73c85549d3c9a7c4dee277",
+    "web/lib/agents/company-schedules.ts": "f9ae12e80dca2cdb16023c075ce911e3e2082fc32881e1cd935bc4e61dfdb938",
+    "web/lib/agents/company-trigger-reservation.ts": "83c1b5269f6a530565dcc3da50d6e6965920d9adc592ab8d1d262b68e35f2951",
+    "web/lib/agents/trigger-attempts.ts": "a6655a20bfa76511d37d75bbbb7622c6e6b55951295733fdbc55be7ed9080a8f",
+    "web/lib/scheduler/tick-service.ts": "60c5a0280bc6ef6584cacbe8d81b9afa9d25dca7d296f6419a0e83cf4e9b80b5",
+    "web/lib/specialist-assignments/company-cron-intake.ts": "a8baa7a00a0942618a1c35133df1ca5cf506c403e71d441b4c23d8614df5c470",
+    "web/lib/specialist-assignments/company-intake.ts": "ff083540776b44bb01a68147490edcdfe559416211a8ef2623e7ccfd9226ec95",
+    "web/lib/specialist-assignments/company-manual-intake.ts": "81e8456e821e6291f52f505e2193ec1fc87f8e3bb0d1e4dcf5776203d1d61084",
+    "web/lib/specialist-assignments/company-reservation.ts": "1ed26d4f44768aa5e5e69271f0921fa7c99a131de1bf800da379b6b8d7a0c044"
+  }
+}

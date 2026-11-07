@@ -243,8 +243,13 @@ web/lib/supervisor-client ──HTTP──► supervisor/src/http-api  ──►
   Session API handlers only parse bounded input and return currently authorized
   DTOs. Project standalone intake preserves the original queued request before
   existing repository admission and links the assignment inside the existing Run
-  transaction. Project coordinator intake and verified assignment acceptance remain
-  later slices; native company agent/coordinator execution is implemented.
+  transaction. Project coordinator intake freezes the exact provider and initial
+  existing task while keeping private assignment input out of the shared task.
+  Browser and personal-token handlers reuse the same canonical intake/reader.
+  Registered company cron dispatch extends the existing agent tick and trigger
+  claim/reconciliation ledger; no new scheduler or attempt store is introduced.
+  Public cron enablement and verified assignment acceptance retain their gates;
+  native company agent/coordinator execution is implemented.
 - ✅ Server Action (`app/.../actions.ts`) imports from `lib/*`.
 - ✅ `lib/supervisor-client.ts` imports the wire error taxonomy plus a small set
   of client-safe pure modules (the execution-host lag predicate and default,

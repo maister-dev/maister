@@ -714,7 +714,7 @@ it("retains company cron sources and one existing invocation reservation per fir
         database.db,
         new Date(now.getTime() + 600000),
       ),
-    ).toEqual({ adopted: 0, unknown: 0 });
+    ).toEqual({ adopted: 0, unknown: 1 });
     const rejectedAttemptId = randomUUID();
     const forgedBinding = {
       ...claimed.bindingSnapshot,

@@ -128,6 +128,14 @@ import { POST as assignmentPost } from "@/app/api/specialist-assignments/route";
 import { POST as externalAssignmentPost } from "@/app/api/v1/ext/specialist-assignments/route";
 import { GET as externalAssignmentGet } from "@/app/api/v1/ext/specialist-assignments/[assignmentId]/route";
 import { issueUserAccessToken, issueToken } from "@/lib/tokens/issue";
+import { createCompanyCronSchedule } from "@/lib/agents/company-schedules";
+import { runSchedulerTick } from "@/lib/scheduler/tick-service";
+import {
+  claimCronAgentAttempt,
+  reconcileAgentTriggerAttempts,
+} from "@/lib/agents/trigger-attempts";
+import { reserveCompanyCronAssignment } from "@/lib/specialist-assignments/company-cron-intake";
+import { wakePendingSpecialistAssignment } from "@/lib/specialist-assignments/admission-wake";
 import { specialistAssignmentSchema } from "@/lib/specialist-assignments/types";
 import { POST as stopRunPost } from "@/app/api/runs/[runId]/stop/route";
 import { POST as respondHitlPost } from "@/app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route";
@@ -574,7 +582,7 @@ it("CBS-02 adopts the server-resolved company directory through the real supervi
   }
 }, 120000);
 
-it("CBS-02 completes company manual HTTP intake through the existing scheduler, real supervisor and ACP process with physical quiescence", async () => {
+it("IT-CBS-04 completes company HTTP and registered cron intake through the existing scheduler, real supervisor and ACP process with physical quiescence", async () => {
   const db: Db = database.db;
   const supervisor = await startRealSupervisor({
     runtimeRoot: join(root, "company-driver-host"),
@@ -847,6 +855,208 @@ it("CBS-02 completes company manual HTTP intake through the existing scheduler, 
     );
 
     expect(terminalStop.status).toBe(409);
+    const cron = await createCompanyCronSchedule(db, userId, {
+      owner: { kind: "company", companyId: request.companyId },
+      specialistBindingId: binding.specialist.bindingId,
+      cronExpr: "*/5 * * * *",
+      timezone: "UTC",
+      requestAtLaunch:
+        "Inspect this configured company target on the recurring schedule.",
+      enabled: false,
+      idempotencyKey: randomUUID(),
+    });
+
+    // Prospective runtime qualification retains the public enablement gate until
+    // the registered dispatcher, exact receipt and recovery contract are green.
+    await database.pool.query(
+      "UPDATE agent_schedules SET enabled=true,company_config_revision=company_config_revision+1,next_fire_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+      [cron.scheduleId],
+    );
+    const cronTicks = await Promise.all([
+      runSchedulerTick({ jobKind: "agent_tick" }),
+      runSchedulerTick({ jobKind: "agent_tick" }),
+    ]);
+
+    expect(
+      cronTicks.reduce((total, tick) => total + tick.succeededCount, 0),
+    ).toBe(1);
+    const attempts = (
+      await database.pool.query(
+        "SELECT id,reserved_run_id,run_id,outcome,scheduled_request_snapshot FROM agent_trigger_attempts WHERE schedule_id=$1",
+        [cron.scheduleId],
+      )
+    ).rows;
+
+    expect(attempts).toHaveLength(1);
+    const attempt = attempts[0];
+
+    expect(attempt).toMatchObject({
+      outcome: "queued",
+      run_id: attempt.reserved_run_id,
+      scheduled_request_snapshot: {
+        version: 1,
+        scheduleId: cron.scheduleId,
+        triggerAttemptId: attempt.id,
+        requestAtLaunch:
+          "Inspect this configured company target on the recurring schedule.",
+      },
+    });
+    await vi.waitFor(
+      async () => {
+        const [scheduled] = await db
+          .select()
+          .from(runs)
+          .where(eq(runs.id, attempt.reserved_run_id));
+
+        expect(scheduled).toMatchObject({
+          status: "Done",
+          projectId: null,
+          taskId: null,
+          companyId: request.companyId,
+          agentScheduleId: cron.scheduleId,
+          scheduledRequestSnapshot: attempt.scheduled_request_snapshot,
+        });
+      },
+      { timeout: 30000, interval: 25 },
+    );
+    expect(
+      (
+        await database.pool.query(
+          "SELECT assignment.origin,assignment.status,input.scheduled_request FROM specialist_assignments assignment JOIN specialist_run_links link ON link.assignment_id=assignment.id JOIN specialist_input_revisions input ON input.assignment_id=assignment.id AND input.revision=link.input_revision WHERE link.run_id=$1",
+          [attempt.reserved_run_id],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        origin: {
+          kind: "schedule",
+          scheduleId: cron.scheduleId,
+          triggerAttemptId: attempt.id,
+        },
+        status: "active",
+        scheduled_request: attempt.scheduled_request_snapshot,
+      },
+    ]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT kind,count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt') GROUP BY kind ORDER BY kind",
+          [attempt.reserved_run_id],
+        )
+      ).rows,
+    ).toEqual([
+      { kind: "session.create", count: 1 },
+      { kind: "session.prompt", count: 1 },
+    ]);
+
+    const cronReplay = await reserveCompanyCronAssignment(db, {
+      attemptId: attempt.id,
+      runId: attempt.reserved_run_id,
+    });
+
+    expect(cronReplay).toMatchObject({
+      duplicate: true,
+      assignment: { runIds: [attempt.reserved_run_id] },
+    });
+    await database.pool.query(
+      "UPDATE agent_schedules SET next_fire_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+      [cron.scheduleId],
+    );
+    const recoveryNow = new Date();
+    const interrupted = await claimCronAgentAttempt(
+      db,
+      cron.scheduleId,
+      recoveryNow,
+      new Date(recoveryNow.getTime() + 300000),
+    );
+
+    expect(interrupted).not.toBeNull();
+    const retainedCron = await reserveCompanyCronAssignment(db, {
+      attemptId: interrupted!.id,
+      runId: interrupted!.reservedRunId,
+    });
+
+    expect(retainedCron.duplicate).toBe(false);
+    expect(retainedCron.assignment.id).not.toBe(cronReplay.assignment.id);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT outcome FROM agent_trigger_attempts WHERE id=$1",
+          [interrupted!.id],
+        )
+      ).rows,
+    ).toEqual([{ outcome: null }]);
+    await database.pool.query(
+      "UPDATE agent_trigger_attempts SET due_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+      [interrupted!.id],
+    );
+    expect(await reconcileAgentTriggerAttempts(db, new Date())).toEqual({
+      adopted: 1,
+      unknown: 0,
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT run_id,outcome FROM agent_trigger_attempts WHERE id=$1",
+          [interrupted!.id],
+        )
+      ).rows,
+    ).toEqual([{ run_id: interrupted!.reservedRunId, outcome: "queued" }]);
+    await wakePendingSpecialistAssignment(db, retainedCron);
+    await vi.waitFor(
+      async () => {
+        const [recovered] = await db
+          .select()
+          .from(runs)
+          .where(eq(runs.id, interrupted!.reservedRunId));
+
+        expect(recovered.status).toBe("Done");
+      },
+      { timeout: 30000, interval: 25 },
+    );
+    await database.pool.query(
+      "UPDATE agent_schedules SET next_fire_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+      [cron.scheduleId],
+    );
+    const uncertain = await claimCronAgentAttempt(
+      db,
+      cron.scheduleId,
+      new Date(),
+      new Date(Date.now() + 300000),
+    );
+
+    expect(uncertain).not.toBeNull();
+    await database.pool.query(
+      "UPDATE agent_trigger_attempts SET due_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+      [uncertain!.id],
+    );
+    expect(await reconcileAgentTriggerAttempts(db, new Date())).toEqual({
+      adopted: 0,
+      unknown: 1,
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT run_id,outcome,reason_code FROM agent_trigger_attempts WHERE id=$1",
+          [uncertain!.id],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        run_id: null,
+        outcome: "unknown",
+        reason_code: "agent_trigger_outcome_unknown",
+      },
+    ]);
+    await expect(
+      reserveCompanyCronAssignment(db, {
+        attemptId: uncertain!.id,
+        runId: uncertain!.reservedRunId,
+      }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "company_trigger_already_settled" },
+    });
     browserSession.user = null;
   } finally {
     browserSession.user = null;

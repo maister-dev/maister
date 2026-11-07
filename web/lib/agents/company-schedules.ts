@@ -35,7 +35,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-/** Retain a reviewed source on the existing schedule table; company dispatch must be implemented before enablement. */
+/** Retain a reviewed source; public enablement remains gated until native dispatcher qualification completes. */
 export async function createCompanyCronSchedule(
   db: SqlDatabase,
   userId: string,
@@ -175,7 +175,7 @@ export async function createCompanyCronSchedule(
     if (input.enabled)
       throw new MaisterError(
         "PRECONDITION",
-        "Company cron dispatch is not supported by this build; retain the source disabled",
+        "Company cron enablement requires completed native dispatcher qualification; retain the source disabled",
         {
           details: {
             reason: "company_scheduler_contract_unavailable",

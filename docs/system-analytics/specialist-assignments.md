@@ -194,6 +194,16 @@ Actual source/API adapters wake existing dispatch after commit and never repeat
 reservation for an exact duplicate. Project repository admission remains its own
 existing project boundary.
 
+### Native recurring intake checkpoint
+
+The registered company cron path uses the same canonical receipt and native
+reservation as manual work, with its existing source claim/fence and reserved Run
+identity. Its complete scheduled request stays in the existing v1 input plane.
+Current source/configuration/creator authority is checked before reservation;
+replay preserves the original assignment/input. Shared recovery adopts a committed
+exact Run or records unknown without blind redispatch. Public enablement remains
+gated while T22.1 qualification continues. See the [runtime contract](specialist-runtime.md#native-company-cron-intake-checkpoint).
+
 ### Project manual admission
 
 Project manual work resolves `specialistBindingId` through the current project

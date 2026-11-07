@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { CompanyTriggerReservation } from "./company-trigger-reservation";
 import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionHost } from "@/lib/db/schema";
 import type { CompanyRunReservation } from "./company-execution-types";
@@ -12,6 +13,7 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { assertCompanyTriggerReservation } from "./company-trigger-reservation";
 import {
   captureCompanyFlowExecution,
   companyFlowContextInputSchema,
@@ -107,6 +109,7 @@ export async function reserveCompanyFlowRunInTransaction(
   input: CompanyFlowContextInput,
   hosts: ExecutionHosts,
   host: ExecutionHost,
+  invocation?: CompanyTriggerReservation,
 ): Promise<CompanyRunReservation> {
   assertUpgradeMaintenanceAllows("run_admission");
   const executionDataPlaneMode = executionDataPlaneModeForHost(host);
@@ -173,11 +176,21 @@ export async function reserveCompanyFlowRunInTransaction(
       workspace: "none",
     });
   }
-  const runId = randomUUID();
+  const triggerReservation = invocation
+    ? await assertCompanyTriggerReservation(
+        tx,
+        userId,
+        context,
+        invocation,
+        context.coordinator,
+      )
+    : null;
+  const runId = triggerReservation?.runId ?? randomUUID();
   const definition = context.effective.parsed;
 
   await tx.insert(runs).values({
     id: runId,
+    agentScheduleId: triggerReservation?.scheduleId ?? null,
     runKind: "flow",
     companyId: context.owner.companyId,
     companyExecutionSnapshot: captureCompanyFlowExecution(context),
