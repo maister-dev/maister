@@ -1761,6 +1761,9 @@ table hitl_requests {
   schema jsonb
   prompt text [not null]
   task_id text
+  specialist_assignment_id text
+  specialist_input_revision integer
+  specialist_answer_input_revision integer
   activation_state text
   retrigger_mode text
   superseded_at "timestamp with time zone"
@@ -1782,6 +1785,11 @@ table hitl_requests {
 
   indexes {
     run_id [name: 'hitl_requests_run_idx']
+
+
+
+    (specialist_assignment_id, schema) [name: 'hitl_specialist_question_request_uq', unique]
+    (specialist_assignment_id, created_at, id) [name: 'hitl_specialist_question_history_idx']
     (run_id, source_artifact_id, decision_id) [name: 'hitl_requests_decision_request_uq', unique]
     (parent_hitl_request_id, responded_at, created_at) [name: 'hitl_requests_pending_decision_idx']
 
@@ -4510,9 +4518,15 @@ ref hitl_requests_run_id_runs_id_fk: hitl_requests.run_id > runs.id [delete: cas
 
 ref hitl_requests_task_id_tasks_id_fk: hitl_requests.task_id > tasks.id [delete: cascade, update: no action]
 
+ref hitl_requests_specialist_assignment_id_specialist_assignments_id_fk: hitl_requests.specialist_assignment_id > specialist_assignments.id [delete: restrict, update: no action]
+
 ref hitl_requests_parent_hitl_request_id_hitl_requests_id_fk: hitl_requests.parent_hitl_request_id > hitl_requests.id [delete: cascade, update: no action]
 
 ref hitl_requests_source_artifact_id_artifact_instances_id_fk: hitl_requests.source_artifact_id > artifact_instances.id [delete: cascade, update: no action]
+
+ref hitl_specialist_input_fk: hitl_requests.(specialist_assignment_id, specialist_input_revision) > specialist_input_revisions.(assignment_id, revision) [delete: restrict, update: no action]
+
+ref hitl_specialist_answer_input_fk: hitl_requests.(specialist_assignment_id, specialist_answer_input_revision) > specialist_input_revisions.(assignment_id, revision) [delete: restrict, update: no action]
 
 ref inbox_items_project_id_projects_id_fk: inbox_items.project_id > projects.id [delete: cascade, update: no action]
 

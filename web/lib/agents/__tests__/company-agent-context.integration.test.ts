@@ -1,3 +1,4 @@
+import type { AssignmentContextPrincipal } from "@/lib/specialist-assignments/context-access";
 import type { SqlTransaction } from "@/lib/db/sql-types";
 import type { CompanyAction } from "@/lib/company/types";
 import type { SessionUser } from "@/lib/authz";
@@ -425,6 +426,9 @@ beforeAll(async () => {
     "projection-reader",
     "projection-disabled",
     "projection-denied",
+    "question-observer",
+    "question-recovery-observer",
+    "question-agent-observer",
   ])
     await cp(
       join(source, "maister-agents/wire-observer.md"),
@@ -1181,6 +1185,9 @@ it("IT-CBS-04 completes company HTTP and registered cron intake through the exis
         inspection: { atCap: true, reason: "company_event_chain_unclassified" },
       },
     });
+    await database.pool.query(
+      "INSERT INTO execution_host_pressure(execution_host_id,pressured_since) SELECT id,now() FROM execution_hosts WHERE kind='local_direct' AND retired_at IS NULL ON CONFLICT DO NOTHING",
+    );
     expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
     expect(
       (
@@ -1200,6 +1207,80 @@ it("IT-CBS-04 completes company HTTP and registered cron intake through the exis
     ).rows;
 
     expect(eventAttempts).toHaveLength(2);
+    await appendSpecialistAssignmentContext(db, userId, assignment.id, {
+      expectedRevision: 0,
+      expectedInputRevision: 1,
+      idempotencyKey: randomUUID(),
+      updates: [
+        {
+          id: "producer-later-context",
+          kind: "hypothesis",
+          text: "A later working note is not shared merely by quoting the producer input",
+          state: "open",
+          references: [],
+        },
+      ],
+    });
+    await database.pool.query("DELETE FROM execution_host_pressure");
+    expect(
+      await tryStartRun(eventAttempts[0]!.reserved_run_id, { db }),
+    ).toMatchObject({ started: true });
+    const eventContextCredential = await issueCompanyAgentRunToken({
+      db,
+      runId: eventAttempts[0]!.reserved_run_id,
+    });
+
+    try {
+      const ownAppointment = (
+        await database.pool.query<{ assignment_id: string }>(
+          "SELECT assignment_id FROM specialist_run_links WHERE run_id=$1",
+          [eventAttempts[0]!.reserved_run_id],
+        )
+      ).rows[0]!;
+
+      expect(
+        (
+          await externalContextGet(
+            new NextRequest(
+              `http://localhost/api/v1/ext/specialist-assignments/${ownAppointment.assignment_id}/context`,
+              {
+                headers: {
+                  Authorization: `Bearer ${eventContextCredential.secret}`,
+                },
+              },
+            ),
+            {
+              params: Promise.resolve({
+                assignmentId: ownAppointment.assignment_id,
+              }),
+            },
+          )
+        ).status,
+      ).toBe(200);
+      expect(
+        (
+          await externalContextGet(
+            new NextRequest(
+              `http://localhost/api/v1/ext/specialist-assignments/${assignment.id}/context`,
+              {
+                headers: {
+                  Authorization: `Bearer ${eventContextCredential.secret}`,
+                },
+              },
+            ),
+            { params: Promise.resolve({ assignmentId: assignment.id }) },
+          )
+        ).status,
+      ).toBe(404);
+    } finally {
+      await revokeAgentRunToken(eventContextCredential.tokenId, db);
+      await database.pool.query("DELETE FROM execution_host_pressure");
+      await startAgentSession(eventAttempts[0]!.reserved_run_id, {
+        db,
+        executionHosts: hosts,
+      });
+      await promoteNextPending({ db, pool: "agent" });
+    }
     for (const eventAttempt of eventAttempts) {
       expect(eventAttempt).toMatchObject({
         outcome: "queued",
@@ -2268,6 +2349,362 @@ it.each([
     }
   },
   45000,
+);
+
+it.each(["normal", "activation-recovery", "agent"] as const)(
+  "IT-CBA-05 persists and activates a company assignment clarification through its real owned checkpoint without a task (%s)",
+  async (mode) => {
+    const db: Db = database.db;
+    const supervisor = await startRealSupervisor({
+      runtimeRoot: join(root, `assignment-question-${mode}-host`),
+      workspaceRoots: [join(root, "worktrees")],
+      fixtureArgs: ["--hang", "--controlled-prompt", "--supports-resume"],
+    });
+    const restoreUrl = useRealSupervisorUrl(supervisor.url);
+    const worker = startProjectionWorker({
+      db,
+      projectors: canonicalProjectors,
+    });
+    const abort = new AbortController();
+    let driver: Promise<unknown> | undefined;
+    let runId: string | undefined;
+
+    setDefaultTransportForTests(null);
+    resetResolverForTests();
+    resetRegistrarStateForTests();
+    try {
+      const roleIds = {
+        normal: "rah:question-observer",
+        "activation-recovery": "rah:question-recovery-observer",
+        agent: "rah:question-agent-observer",
+      } as const;
+      const roleId = roleIds[mode];
+      const effective = await resolveInstalledAgentDefinition(db, {
+        agentId: roleId,
+        packageInstallId: assignmentInput.standingDefinition.packageInstallId,
+      });
+      const runnerId = randomUUID();
+
+      await db.insert(platformAcpRunners).values({
+        id: runnerId,
+        adapter: "claude",
+        capabilityAgent: "claude",
+        model: "assignment-question-fixture",
+        provider: { kind: "anthropic" },
+        readinessStatus: "Ready",
+      });
+      const binding = await createCompanySpecialistBinding(db, userId, roleId, {
+        owner: { kind: "company", companyId: request.companyId },
+        packageInstallId: effective.packageInstallId,
+        packageRevision: effective.resolvedRevision!,
+        definitionSha256: agentDefinitionSha256(effective.parsed),
+        enabled: true,
+        configuration: {},
+        grantActions: ["assignments:read", "assignments:update"],
+        runnerId,
+        idempotencyKey: randomUUID(),
+      });
+      const assignment = await createSpecialistAssignment(db, userId, {
+        ...assignmentInput,
+        specialistBindingId: binding.specialist.bindingId,
+        responsibleAgentId: roleId,
+        standingDefinition: {
+          ...assignmentInput.standingDefinition,
+          agentId: roleId,
+          definition: effective.parsed,
+          definitionSha256: agentDefinitionSha256(effective.parsed),
+        },
+      });
+      const hosts = createExecutionHosts({
+        db,
+        transport: createLocalDirectTransport(),
+      });
+      const receipt = await reserveCompanyAgentRun(
+        db,
+        userId,
+        {
+          ...request,
+          assignmentId: assignment.id,
+          bindingId: binding.specialist.bindingId,
+        },
+        hosts,
+      );
+
+      runId = receipt.runId;
+      expect(await tryStartRun(runId, { db })).toMatchObject({ started: true });
+      driver = startAgentSession(runId, {
+        db,
+        executionHosts: hosts,
+        signal: abort.signal,
+      }).catch((error: unknown) => error);
+      await vi.waitFor(
+        async () => {
+          const turns = (
+            await database.pool.query(
+              "SELECT id FROM agent_turns WHERE run_id=$1 AND state='dispatched' AND command_id IS NOT NULL",
+              [runId],
+            )
+          ).rows;
+
+          expect(turns).toHaveLength(1);
+        },
+        { timeout: 30000, interval: 25 },
+      );
+      const body = {
+        expectedRevision: receipt.assignmentRevision,
+        inputRevision: 1,
+        question: "Which configured component should be inspected?",
+        schema: {
+          schemaVersion: 1 as const,
+          fields: [
+            {
+              name: "component",
+              type: "string" as const,
+              required: true,
+              label: "Component",
+              options: ["web", "supervisor"],
+            },
+          ],
+        },
+        reTriggerMode: "agent" as const,
+        idempotencyKey: randomUUID(),
+      };
+      const { createOrActivateAssignmentQuestion } =
+        await import("@/lib/services/assignment-question");
+
+      let questionPrincipal: AssignmentContextPrincipal = {
+        kind: "user",
+        userId,
+      };
+
+      if (mode === "agent") {
+        const credential = await issueCompanyAgentRunToken({ db, runId });
+
+        questionPrincipal = { kind: "token", tokenId: credential.tokenId };
+        await expect(
+          createOrActivateAssignmentQuestion(
+            db,
+            questionPrincipal,
+            assignment.id,
+            body,
+            { executionHosts: hosts },
+          ),
+        ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+        await createCompanyGrants(db, administratorId, {
+          principalKind: "agent",
+          principalId: roleId,
+          actions: ["assignments:update"],
+          idempotencyKey: randomUUID(),
+        });
+      }
+      if (mode === "activation-recovery") {
+        await expect(
+          createOrActivateAssignmentQuestion(
+            db,
+            { kind: "user", userId },
+            assignment.id,
+            body,
+            {
+              executionHosts: hosts,
+              recordSuccessAudit: async () => {
+                throw new MaisterError(
+                  "CRASH",
+                  "Injected activation persistence failure",
+                );
+              },
+            },
+          ),
+        ).rejects.toMatchObject({ code: "CRASH" });
+        expect(
+          (
+            await database.pool.query(
+              "SELECT activation_state FROM hitl_requests WHERE specialist_assignment_id=$1",
+              [assignment.id],
+            )
+          ).rows,
+        ).toEqual([{ activation_state: "pending_termination" }]);
+        expect(
+          (
+            await database.pool.query(
+              "SELECT count(*)::int AS count FROM assignments WHERE hitl_request_id IN (SELECT id FROM hitl_requests WHERE specialist_assignment_id=$1)",
+              [assignment.id],
+            )
+          ).rows,
+        ).toEqual([{ count: 0 }]);
+        expect(
+          (
+            await database.pool.query("SELECT status FROM runs WHERE id=$1", [
+              runId,
+            ])
+          ).rows,
+        ).toEqual([{ status: "NeedsInputIdle" }]);
+        const { recoverPendingAgentQuestions } =
+          await import("@/lib/services/agent-question");
+
+        expect(
+          await recoverPendingAgentQuestions({
+            db,
+            sessions: [],
+            executionHosts: hosts,
+          }),
+        ).toBe(1);
+        expect(
+          (
+            await database.pool.query(
+              "SELECT count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind='session.checkpoint'",
+              [runId],
+            )
+          ).rows,
+        ).toEqual([{ count: 1 }]);
+      }
+      const first = await createOrActivateAssignmentQuestion(
+        db,
+        questionPrincipal,
+        assignment.id,
+        body,
+        { executionHosts: hosts },
+      );
+
+      expect(first).toMatchObject({
+        assignmentId: assignment.id,
+        sourceRunId: runId,
+        inputRevision: 1,
+        activationState: "active",
+        created: mode !== "activation-recovery",
+      });
+      expect(
+        (
+          await database.pool.query(
+            "SELECT task_id,specialist_assignment_id,specialist_input_revision,activation_state,schema->'assignmentQuestion'->'actor' AS actor FROM hitl_requests WHERE id=$1",
+            [first.hitlRequestId],
+          )
+        ).rows,
+      ).toEqual([
+        {
+          task_id: null,
+          specialist_assignment_id: assignment.id,
+          specialist_input_revision: 1,
+          activation_state: "active",
+          actor:
+            mode === "agent"
+              ? { kind: "agent", id: roleId, runId, attemptId: null }
+              : { kind: "user", id: userId, runId: null, attemptId: null },
+        },
+      ]);
+      expect(
+        (
+          await database.pool.query(
+            "SELECT project_id,company_id,task_id FROM assignments WHERE hitl_request_id=$1",
+            [first.hitlRequestId],
+          )
+        ).rows,
+      ).toEqual([
+        { project_id: null, company_id: request.companyId, task_id: null },
+      ]);
+      expect(
+        (
+          await database.pool.query("SELECT status FROM runs WHERE id=$1", [
+            runId,
+          ])
+        ).rows,
+      ).toEqual([{ status: "NeedsInputIdle" }]);
+      expect(
+        (
+          await database.pool.query(
+            "SELECT status,input_revision FROM specialist_assignments WHERE id=$1",
+            [assignment.id],
+          )
+        ).rows,
+      ).toEqual([{ status: "waiting_input", input_revision: 1 }]);
+      if (mode === "agent") {
+        await expect(
+          createOrActivateAssignmentQuestion(
+            db,
+            questionPrincipal,
+            assignment.id,
+            body,
+            { executionHosts: hosts },
+          ),
+        ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+        const rotated = await issueCompanyAgentRunToken({ db, runId });
+
+        questionPrincipal = { kind: "token", tokenId: rotated.tokenId };
+      }
+      expect(
+        await createOrActivateAssignmentQuestion(
+          db,
+          questionPrincipal,
+          assignment.id,
+          body,
+          { executionHosts: hosts },
+        ),
+      ).toMatchObject({ hitlRequestId: first.hitlRequestId, created: false });
+      await expect(
+        createOrActivateAssignmentQuestion(
+          db,
+          questionPrincipal,
+          assignment.id,
+          {
+            ...body,
+            question:
+              "A changed delivery must not replace the original question",
+          },
+          { executionHosts: hosts },
+        ),
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+      for (const mutation of [
+        "UPDATE hitl_requests SET prompt='A forged question replaces the original' WHERE id=$1",
+        "UPDATE hitl_requests SET schema=jsonb_set(schema,'{assignmentQuestion,actor,id}',to_jsonb('forged-author'::text)) WHERE id=$1",
+        "DELETE FROM hitl_requests WHERE id=$1",
+      ])
+        await expect(
+          database.pool.query(mutation, [first.hitlRequestId]),
+        ).rejects.toMatchObject({
+          code: "23514",
+          constraint: "hitl_specialist_question_immutable",
+        });
+      expect(
+        (
+          await database.pool.query(
+            "SELECT count(*)::int AS count FROM hitl_requests WHERE specialist_assignment_id=$1",
+            [assignment.id],
+          )
+        ).rows,
+      ).toEqual([{ count: 1 }]);
+    } finally {
+      browserSession.user = await requireActiveUserById(userId);
+      if (runId) {
+        const retainedRunId = runId;
+
+        await expect
+          .poll(
+            async () =>
+              (
+                await stopRunPost(
+                  new Request(
+                    `http://localhost/api/runs/${retainedRunId}/stop`,
+                    { method: "POST" },
+                  ),
+                  { params: Promise.resolve({ runId: retainedRunId }) },
+                )
+              ).status,
+            { timeout: 10000, interval: 25 },
+          )
+          .toBe(200);
+      }
+      abort.abort();
+      await supervisor.stop();
+      await driver;
+      await worker.stop();
+      await stopRuntimeEventConsumers();
+      restoreUrl();
+      browserSession.user = null;
+      resetResolverForTests();
+      resetRegistrarStateForTests();
+      setDefaultTransportForTests(null);
+    }
+  },
+  60000,
 );
 
 it("IT-CBA-02 submits project specialist work through its actual attachment, original input and existing agent admission", async () => {

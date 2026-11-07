@@ -27,6 +27,9 @@ import {
 import { revokeAgentRunTokensForRun } from "@/lib/agents/tokens";
 import { captureAgentPauseSource } from "@/lib/execution-host/agent-pause-source";
 import { markCheckpointed } from "@/lib/runs/state-transitions";
+import { waitForAgentExecutionQuiescence } from "@/lib/agents/execution-quiescence";
+import { humanWorkOwner } from "@/lib/assignments/company-ownership";
+import { assertPendingAssignmentQuestion } from "@/lib/specialist-assignments/question-authority";
 
 const { hitlRequests, runs, taskClarifications, tasks } = schema;
 
@@ -78,7 +81,7 @@ export type AgentQuestionResult = {
   created: boolean;
 };
 
-type ActivationDeps = {
+export type AgentQuestionActivationDeps = {
   db?: Db;
   // ADR-166: the source session is torn down through the client bound to
   // the source run's assignment (a teardown kind — released incarnations bind).
@@ -91,9 +94,11 @@ type SourceSessionTeardown = {
   hosts: ExecutionHosts;
 };
 
-type PendingQuestion = {
+export type PendingQuestion = {
   id: string;
-  taskId: string;
+  taskId: string | null;
+  specialistAssignmentId?: string;
+
   runId: string;
   activationState: "pending_termination" | "active" | "failed";
   created: boolean;
@@ -365,7 +370,11 @@ async function terminateSourceSession(
   );
 
   const [source] = await db
-    .select({ agentKind: runs.agentKind })
+    .select({
+      agentKind: runs.agentKind,
+      status: runs.status,
+      executionAssignmentId: runs.executionAssignmentId,
+    })
     .from(runs)
     .where(eq(runs.id, sourceRunId));
 
@@ -373,9 +382,42 @@ async function terminateSourceSession(
     const sessionId = live?.sessionId ?? activeSession.hostSessionId;
 
     if (!sessionId) return "pending";
+    if (source.status === "NeedsInputIdle") {
+      const retained = await db.execute(sql`
+        SELECT checkpoint.id FROM execution_commands checkpoint
+        JOIN execution_assignments fence ON fence.id=checkpoint.execution_assignment_id
+        WHERE checkpoint.run_id=${sourceRunId} AND checkpoint.kind='session.checkpoint' AND checkpoint.state='succeeded'
+          AND checkpoint.target_session_id=${sessionId} AND checkpoint.execution_assignment_id=${activeSession.executionAssignmentId}
+          AND fence.run_id=${sourceRunId} AND fence.state='released' AND fence.released_reason='checkpointed'
+          AND fence.epoch=checkpoint.assignment_epoch
+        LIMIT 1
+      `);
+
+      if (retained.rows.length !== 1)
+        throw new MaisterError(
+          "PRECONDITION",
+          "The parked question source has no exact successful checkpoint receipt; reconcile the original session",
+          { details: { reason: "agent_question_checkpoint_unproven" } },
+        );
+      log.debug(
+        { sourceRunId, sessionId, checkpointCommandId: retained.rows[0].id },
+        "question activation adopted its retained successful checkpoint",
+      );
+
+      return "terminated";
+    }
     const client = await deps.hosts.forRun(sourceRunId, { teardown: true });
 
     await client.checkpoint(sessionId);
+    if (!source.executionAssignmentId)
+      throw new MaisterError(
+        "PRECONDITION",
+        "The question checkpoint lost its exact execution assignment",
+      );
+    await waitForAgentExecutionQuiescence(db, {
+      id: sourceRunId,
+      executionAssignmentId: source.executionAssignmentId,
+    });
     await markCheckpointed(sourceRunId, { db });
 
     return "terminated";
@@ -417,7 +459,7 @@ async function markActivationFailed(
 async function activatePendingQuestion(
   pending: PendingQuestion,
   db: Db,
-  recordSuccessAudit: ActivationDeps["recordSuccessAudit"],
+  recordSuccessAudit: AgentQuestionActivationDeps["recordSuccessAudit"],
   statusCode: number,
 ): Promise<"active" | "replayed" | "pending"> {
   return await inTransaction(db, async (tx) => {
@@ -425,6 +467,7 @@ async function activatePendingQuestion(
       .select({
         id: runs.id,
         projectId: runs.projectId,
+        companyId: runs.companyId,
         taskId: runs.taskId,
         status: runs.status,
         runKind: runs.runKind,
@@ -435,11 +478,12 @@ async function activatePendingQuestion(
       .for("update");
     const source = sourceRows[0];
 
-    await tx
-      .select({ id: tasks.id })
-      .from(tasks)
-      .where(eq(tasks.id, pending.taskId))
-      .for("update");
+    if (pending.taskId !== null)
+      await tx
+        .select({ id: tasks.id })
+        .from(tasks)
+        .where(eq(tasks.id, pending.taskId))
+        .for("update");
     const rows = await tx
       .select()
       .from(hitlRequests)
@@ -464,14 +508,21 @@ async function activatePendingQuestion(
     if (
       !source ||
       source.runKind !== "agent" ||
-      source.projectId === null ||
-      source.taskId !== pending.taskId
+      (pending.specialistAssignmentId === undefined &&
+        (source.projectId === null || source.taskId !== pending.taskId))
     ) {
       throw new MaisterError(
         "PRECONDITION",
         "source run cannot activate human ask",
       );
     }
+
+    if (pending.specialistAssignmentId !== undefined)
+      await assertPendingAssignmentQuestion(
+        tx,
+        question,
+        pending.specialistAssignmentId,
+      );
 
     if (source.agentKind === "operational") {
       if (source.status !== "NeedsInputIdle") return "pending";
@@ -501,7 +552,7 @@ async function activatePendingQuestion(
       );
     await createHitlAssignment({
       db: tx,
-      projectId: source.projectId,
+      ...humanWorkOwner(source),
       runId: pending.runId,
       taskId: pending.taskId,
       stepId: "agent",
@@ -528,10 +579,21 @@ async function activatePendingQuestion(
 
 export async function createOrActivateAgentQuestion(
   input: CreateAgentQuestionInput,
-  deps: ActivationDeps = {},
+  deps: AgentQuestionActivationDeps = {},
 ): Promise<AgentQuestionResult> {
   const db = resolveDb(deps.db);
   const pending = await persistPendingQuestion(input, db);
+  const result = await activatePersistedAgentQuestion(pending, { ...deps, db });
+
+  return { ...result, taskId: input.taskId };
+}
+
+/** Both task and assignment subjects use the same source checkpoint, durable activation and scheduler wake. */
+export async function activatePersistedAgentQuestion(
+  pending: PendingQuestion,
+  deps: AgentQuestionActivationDeps,
+): Promise<Omit<AgentQuestionResult, "taskId"> & { taskId: string | null }> {
+  const db = resolveDb(deps.db);
 
   if (pending.activationState === "active") {
     return {
@@ -722,6 +784,7 @@ export async function recoverPendingAgentQuestions(args: {
     .select({
       id: hitlRequests.id,
       taskId: hitlRequests.taskId,
+      specialistAssignmentId: hitlRequests.specialistAssignmentId,
       runId: hitlRequests.runId,
     })
     .from(hitlRequests)
@@ -737,10 +800,13 @@ export async function recoverPendingAgentQuestions(args: {
   let activated = 0;
 
   for (const row of rows) {
-    if (!row.taskId) continue;
+    if (!row.taskId && !row.specialistAssignmentId) continue;
     const pending: PendingQuestion = {
       id: row.id,
       taskId: row.taskId,
+      ...(row.specialistAssignmentId
+        ? { specialistAssignmentId: row.specialistAssignmentId }
+        : {}),
       runId: row.runId,
       activationState: "pending_termination",
       created: false,

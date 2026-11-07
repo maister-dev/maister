@@ -1,0 +1,165 @@
+{
+  "task": "T24",
+  "date": "2026-11-07",
+  "slice": "Assignment-owned human question intent, exact checkpoint activation/recovery and root context authority",
+  "baseCommit": "56f3fdabc",
+  "status": "Internal native question checkpoint foundation qualified; T24 remains open",
+  "red": [
+    {
+      "case": "Actual owned ACP prompt has no assignment-aware question service",
+      "log": "cb-question-native-red.log.gz",
+      "exitCode": 1
+    },
+    {
+      "case": "Retained native question prompt can be overwritten",
+      "log": "cb-question-recovery-guards-red.log.gz",
+      "exitCode": 1
+    },
+    {
+      "case": "Activation persistence failure repeats an already successful checkpoint",
+      "log": "cb-question-recovery-guards-red.log.gz",
+      "exitCode": 1
+    },
+    {
+      "case": "Authorized producer input permits foreign later working context (200 instead of 404)",
+      "log": "cb-context-event-boundary-red3.log.gz",
+      "exitCode": 1
+    },
+    {
+      "case": "Checkpoint release precedes canonical exit; cancellation cannot prove quiescence",
+      "log": "cb-question-guards-green3.log.gz",
+      "exitCode": 1
+    },
+    {
+      "case": "Native answer guard mistakes terminal unanswered closure for a human answer",
+      "log": "cb-question-guards-green4.log.gz",
+      "exitCode": 1
+    }
+  ],
+  "gates": {
+    "focusedAuthorityIntegration": {
+      "tests": 26,
+      "files": 2,
+      "durationSeconds": 23.6,
+      "exitCode": 0
+    },
+    "owningIntegration": {
+      "tests": 231,
+      "files": 10,
+      "durationSeconds": 85.01,
+      "exitCode": 0
+    },
+    "webUnit": {
+      "tests": 9322,
+      "files": 889,
+      "durationSeconds": 41.73,
+      "exitCode": 0
+    },
+    "types": {
+      "exitCode": 0
+    },
+    "lintAndFormat": {
+      "exitCode": 0
+    },
+    "contractsAndCoverage": {
+      "requirements": 84,
+      "exitCode": 0
+    },
+    "docsAndErd": {
+      "tables": 173,
+      "exitCode": 0
+    },
+    "migrationDrift": {
+      "newMigration": false,
+      "exitCode": 0
+    }
+  },
+  "migration": {
+    "main": "0247_specialist_question_subject",
+    "brain": "0011_proposal_source_access",
+    "newTables": 0,
+    "additiveHitlColumns": [
+      "specialist_assignment_id",
+      "specialist_input_revision",
+      "specialist_answer_input_revision"
+    ],
+    "noBrainForeignKey": true,
+    "legacyQuestionProvenanceInvented": false
+  },
+  "qualified": [
+    "Real company operational prompt opens one retained assignment question and Inbox work without a Task or project",
+    "Human and actual executing-professional authorship is server recorded",
+    "Agent creation requires current explicit professional update grant; revoked credentials refuse and a new credential adopts the same actor/request receipt",
+    "Immutable subject/form/prompt/attribution and committed answer bindings are database guarded",
+    "Input/context witnesses, root appointment, full consumed sources and exact original prompt/incarnation/fence bind native insertion",
+    "Checkpoint waits for canonical physical quiescence before releasing the existing execution assignment",
+    "Activation persistence failure leaves one durable pending question and recoverable ownership; successful receipt adoption issues no second checkpoint",
+    "Existing terminal lifecycle close with NULL response creates no answer/input witness",
+    "Current event input sharing cannot disclose another assignment working context; established unavailable-reference responses are preserved",
+    "Populated main-only upgrade preserves legacy task decisions exactly, adds NULL native metadata and permits their ordinary project cascade without Brain tables"
+  ],
+  "corrections": [
+    "Initial source lookup assumed an absent head pointer; current execution is resolved from actual immutable root Run links and ambiguity refuses",
+    "Database helpers use the existing typed Db/transaction boundary rather than a narrowed execute-only interface",
+    "Nested PostgreSQL JSON containment/subtraction operands are explicit; no failed guard is relaxed",
+    "The context appointment guard retains the prior machine-readable unavailable-reference reason",
+    "Offline replay qualification now awaits the exact webhook Run operational cleanup receipt before stopping the supervisor and taking its business baseline"
+  ],
+  "limitations": [
+    "No native session/bearer HTTP or facade question endpoint is enabled in this checkpoint",
+    "Answer input receipts, own-assignment metadata inspection, human answer delivery and same-assignment continuation remain T24",
+    "Project and graph clarification qualification remain T24",
+    "Business-owner fencing remains T29; existing historical data gains no invented epoch",
+    "No complete Phase 5/full global integration or new production-build claim",
+    "Public EN/RU content is unchanged from the qualified T23 build; no new public feature readiness is asserted",
+    "Controlled ACP tests do not qualify the stand specialist package or connector",
+    "No remote push, deployment or external stand effect"
+  ],
+  "logs": [
+    "cb-question-native-red.log.gz",
+    "cb-question-native-green1.log.gz",
+    "cb-question-native-green2.log.gz",
+    "cb-question-native-green3.log.gz",
+    "cb-question-recovery-guards-red.log.gz",
+    "cb-question-guards-green1.log.gz",
+    "cb-question-guards-green2.log.gz",
+    "cb-question-guards-green3.log.gz",
+    "cb-question-guards-green4.log.gz",
+    "cb-question-guards-green5.log.gz",
+    "cb-context-event-boundary-red.log.gz",
+    "cb-context-event-boundary-red2.log.gz",
+    "cb-context-event-boundary-red3.log.gz",
+    "cb-question-native-authority-green.log.gz",
+    "cb-question-types1.log.gz",
+    "cb-question-types2.log.gz",
+    "cb-question-foundation-integration.log.gz",
+    "cb-question-foundation-integration-final.log.gz",
+    "cb-question-foundation-integration-release.log.gz",
+    "cb-question-foundation-unit-final.log.gz",
+    "cb-question-foundation-types-release.log.gz",
+    "cb-question-foundation-lint-release.log.gz",
+    "cb-question-foundation-contracts-release.log.gz",
+    "cb-question-foundation-docs-release.log.gz",
+    "cb-question-foundation-drift.log.gz",
+    "cb-question-migration-generate.log.gz",
+    "cb-question-erd.log.gz"
+  ],
+  "sourceSha256": {
+    "docs/database-schema.md": "a9b912cebcdf55b7e3d3e19f5985cd522e5c8b9e301ba22bf5ba9c097ea6f199",
+    "docs/db/erd.dbml": "402a9336188a13d35f29f2f7d80578f0ff08b71573ddd9bae6c0bfc3c0e71142",
+    "docs/db/specialist-assignments-domain.md": "a3e5a56ebdb7a45ae2ee098403cc04d41d6bbe0c91ac55f87c60261396848ab1",
+    "docs/system-analytics/specialist-assignments.md": "2004eccf9546eb68d590a7a9ce93ef6cde548f0d7e917840242c9cfc0666883f",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "0e2d5a39e661e364cf19bd0d01617d9305e67775312085248bfef2ac59ebf696",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "eff233d7d7668ca4013f52beef473095ebf599ca2c07893cdaa25bfa343a8d33",
+    "web/lib/db/__tests__/migration-company-brain-specialists.integration.test.ts": "26cb2e34c58b59a603e1d9a9624e47ca1a8a903fc802b7fbc8fce10b802861d0",
+    "web/lib/db/migrations/0247_specialist_question_subject.sql": "24ecad87677ed8a91f49a9b08fd96a65decc239225be1a02ef7cc50b393ecb54",
+    "web/lib/db/migrations/meta/0247_snapshot.json": "7a4bb42e4d02bb2553c007ede994129410f20907e72b92dea06af3ca22536789",
+    "web/lib/db/migrations/meta/_journal.json": "f47c2933d8e5f0316e70c94b643532a119509f7d08bf7626a4772a002a02425c",
+    "web/lib/db/schema.ts": "5c2f9a66c3e1c2b53c8b926e7525095acac59c9aa65990bb8401ca051d735785",
+    "web/lib/services/agent-question.ts": "d0e20f15ff8217a822b2137af5bc5059d9e998d4d64ee2cb565178de63aeca43",
+    "web/lib/services/assignment-question.ts": "9a198e35ed115bb39cbb1a07944e32d24f4f9dc8d323a6fb81666e1d76655384",
+    "web/lib/specialist-assignments/context.ts": "3f444e65c3600dc4dd314638d6c0913f8e61f9093f358fdb855e47494cc8c7a1",
+    "web/lib/specialist-assignments/question-authority.ts": "9d219ea33336583e5442fe24d23706c3e803710eba4a3f7b95f8cb2a1e4e2808",
+    "web/lib/specialist-assignments/question-types.ts": "40327f66903616ad9d5ab3fb68a97be5de230d7c99805da246185e2f3aa6d7cf"
+  }
+}

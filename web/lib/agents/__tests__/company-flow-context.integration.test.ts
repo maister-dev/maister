@@ -3005,6 +3005,19 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
         )
       ).rows,
     ).toEqual([{ count: 0 }, { count: 0 }]);
+    await vi.waitFor(
+      async () => {
+        expect(
+          (
+            await database.pool.query(
+              "SELECT operational_cleanup->>'state' AS state FROM runs WHERE id=$1",
+              [webhookWork.runIds[0]],
+            )
+          ).rows,
+        ).toEqual([{ state: "released" }]);
+      },
+      { timeout: 30000, interval: 25 },
+    );
     await stopRuntimeEventConsumers();
     await supervisor.stop();
     resetResolverForTests();

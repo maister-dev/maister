@@ -506,6 +506,27 @@ admission and its existing driver. Project coordinator intake uses the actual at
 
 Existing agent-question/HITL services gain an assignment subject without a task requirement. Human `assignments` retains claim/answer ownership; company actor scope and role mapping come from the company Flow binding. A question stores assignment, expected input revision, coordinator epoch, prompt/turn and source principal. Same answer replay is inert; changed/late/wrong-assignment/terminal answer returns 409. Persist answer intent before delivery and mark delivered only after ACK. Failed DB/delivery handling explicitly cancels/releases the supervisor's owned permission deferred; no hidden promise waits.
 
+The assignment subject extends the existing `hitl_requests` row with nullable
+`specialistAssignmentId`, `specialistInputRevision` and `specialistAnswerInputRevision`.
+Existing task questions keep their exact data and NULL native fields. New native
+questions retain a closed server `assignmentQuestion` snapshot beside the existing
+FormSchema and `agentPrompt` checkpoint proof: exact input ID/revision/SHA, context
+revision, requesting business revision, actual user/Run author, stable principal
+and delivery digests, and complete consumed source restrictions. Native subject,
+form, prompt, authorship and committed answer cannot be overwritten or deleted.
+Question creation uses the current root appointment; multiple unsettled roots
+refuse explicitly until the governed business-owner claim exists (T29).
+
+Checkpoint ACK is followed by the existing canonical quiescence wait before
+releasing the execution assignment, so late exit evidence is not discarded as a
+stale epoch. If activation persistence fails, the question remains pending, its
+process is already stopped, and recovery adopts the exact successful checkpoint
+receipt instead of issuing another checkpoint. An answer requires its exact new
+input revision; terminal lifecycle closure with NULL response is a distinct
+unanswered closure and creates no invented answer or input revision. Public
+question routes, assignment answer/continuation and graph subjects remain Designed
+until their owning T24 runtime checks pass.
+
 The response body carries `response` as a bounded object validated against the exact stored native question FormSchema, not a replacement free-text-only grammar or caller-supplied schema. Required string answers are nonblank; human question suggestions permit custom text as the existing contract specifies, while permission/transition enums stay closed. Work `clarify` decisions may omit resultRevision when no result exists; accept/reject/rework of a result require the exact ready result revision at the service boundary. Context entry IDs are assignment/revision-local logical keys, not caller-authoritative global database row IDs.
 
 Context changes lock the stable assignment, check expected context revision/epoch and current source grants, then append one immutable revision and attributed decision. A losing patch returns 409 and must be explicitly rebased; no automatic last-writer merge. Accepted findings refer to exact child result revisions. Server-derived source restrictions propagate through summaries and context even if a model omits citations. Current permission is rechecked at read/share/accept/action; snapshots are history, not grants.
@@ -566,6 +587,8 @@ Executing-agent context updates require a current credential carrying both conte
 **Implemented: authorized context projection through the existing agent and Flow prompt paths.**
 
 A native execution resolves its own immutable assignment link from server state.
+Every execution context read/update requires that same root appointment; an event's
+authorized producer-input reference does not grant the producer's later working context.
 No link means no assignment context is injected or fabricated. A company role
 without its reviewed context-read limit retains the existing assigned-input
 prompt and receives no additional context bytes. This is an explicit enrollment

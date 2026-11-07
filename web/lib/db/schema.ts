@@ -7275,6 +7275,12 @@ export const hitlRequests = pgTable(
     taskId: text("task_id").references(() => tasks.id, {
       onDelete: "cascade",
     }),
+    specialistAssignmentId: text("specialist_assignment_id").references(
+      () => specialistAssignments.id,
+      { onDelete: "restrict" },
+    ),
+    specialistInputRevision: integer("specialist_input_revision"),
+    specialistAnswerInputRevision: integer("specialist_answer_input_revision"),
     activationState: text("activation_state", {
       enum: ["pending_termination", "active", "failed"],
     }),
@@ -7328,6 +7334,36 @@ export const hitlRequests = pgTable(
   },
   (t) => ({
     idxRun: index("hitl_requests_run_idx").on(t.runId),
+    specialistInput: foreignKey({
+      name: "hitl_specialist_input_fk",
+      columns: [t.specialistAssignmentId, t.specialistInputRevision],
+      foreignColumns: [
+        specialistInputRevisions.assignmentId,
+        specialistInputRevisions.revision,
+      ],
+    }).onDelete("restrict"),
+    specialistAnswerInput: foreignKey({
+      name: "hitl_specialist_answer_input_fk",
+      columns: [t.specialistAssignmentId, t.specialistAnswerInputRevision],
+      foreignColumns: [
+        specialistInputRevisions.assignmentId,
+        specialistInputRevisions.revision,
+      ],
+    }).onDelete("restrict"),
+    specialistSubject: check(
+      "hitl_specialist_subject_check",
+      sql`((${t.specialistAssignmentId} IS NULL AND ${t.specialistInputRevision} IS NULL AND ${t.specialistAnswerInputRevision} IS NULL) OR (${t.specialistAssignmentId} IS NOT NULL AND ${t.specialistInputRevision}>0 AND ${t.kind}='agent_question' AND ${t.taskId} IS NULL AND (${t.specialistAnswerInputRevision} IS NULL OR (${t.specialistAnswerInputRevision}>${t.specialistInputRevision} AND ${t.respondedAt} IS NOT NULL)))) IS TRUE`,
+    ),
+    specialistRequest: uniqueIndex("hitl_specialist_question_request_uq")
+      .on(
+        t.specialistAssignmentId,
+        sql`(${t.schema}->'assignmentQuestion'->>'principalKey')`,
+        sql`(${t.schema}->'assignmentQuestion'->>'requestKey')`,
+      )
+      .where(sql`${t.specialistAssignmentId} IS NOT NULL`),
+    specialistHistory: index("hitl_specialist_question_history_idx")
+      .on(t.specialistAssignmentId, t.createdAt, t.id)
+      .where(sql`${t.specialistAssignmentId} IS NOT NULL`),
     uniqDecisionRequest: uniqueIndex("hitl_requests_decision_request_uq")
       .on(t.runId, t.sourceArtifactId, t.decisionId)
       .where(sql`${t.kind} = 'decision_request'`),
@@ -7358,7 +7394,7 @@ export const hitlRequests = pgTable(
       "hitl_requests_agent_question_shape_check",
       sql`(
         ${t.kind} = 'agent_question'
-        AND ${t.taskId} IS NOT NULL
+        AND ((${t.taskId} IS NOT NULL AND ${t.specialistAssignmentId} IS NULL) OR (${t.taskId} IS NULL AND ${t.specialistAssignmentId} IS NOT NULL))
         AND ${t.activationState} IS NOT NULL
         AND ${t.reTriggerMode} IS NOT NULL
         AND ${t.schema} IS NOT NULL

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -772,6 +773,108 @@ it("IT-CBX-01 company grant receipt migration preserves existing policy without 
         )
       ).rows,
     ).toEqual([{ revision: 1, revoked_by: null, revocation_key: null }]);
+  } finally {
+    await legacy.stop();
+  }
+}, 180000);
+
+it("IT-CBX-01 assignment-question migration preserves legacy task decisions without inventing assignment or answer provenance", async () => {
+  const legacy = await startMainPostgresTestDbUpTo(
+    { databaseName: "specialist_question_upgrade" },
+    "0261_specialist_context_mutation_credentials",
+  );
+
+  try {
+    const project = await seedProjectRow(legacy.db);
+    const taskId = randomUUID();
+    const runId = randomUUID();
+    const questionId = randomUUID();
+    const form = {
+      schemaVersion: 1,
+      fields: [{ name: "component", type: "string", required: true }],
+    };
+
+    await legacy.pool.query(
+      "INSERT INTO tasks(id,project_id,number,title,prompt) VALUES($1,$2,1,'Existing clarification','Preserve the historical task question')",
+      [taskId, project.id],
+    );
+    await legacy.pool.query(
+      "INSERT INTO runs(id,project_id,task_id,flow_version,status) VALUES($1,$2,$3,'legacy-question','Done')",
+      [runId, project.id, taskId],
+    );
+    await legacy.pool.query(
+      "INSERT INTO hitl_requests(id,run_id,step_id,kind,task_id,activation_state,retrigger_mode,schema,prompt) VALUES($1,$2,'agent','agent_question',$3,'active','agent',$4::jsonb,'Which configured component?')",
+      [questionId, runId, taskId, JSON.stringify(form)],
+    );
+    const before = (
+      await legacy.pool.query(
+        "SELECT to_jsonb(question) AS value FROM hitl_requests question WHERE id=$1",
+        [questionId],
+      )
+    ).rows[0]!.value;
+
+    await legacy.db.transaction(async (tx) => {
+      await applyMainMigration(tx, "0262_specialist_question_subject");
+    });
+    expect(
+      (
+        await legacy.pool.query(
+          "SELECT to_jsonb(question) AS value FROM hitl_requests question WHERE id=$1",
+          [questionId],
+        )
+      ).rows[0]!.value,
+    ).toEqual({
+      ...before,
+      specialist_assignment_id: null,
+      specialist_input_revision: null,
+      specialist_answer_input_revision: null,
+    });
+    expect(
+      (
+        await legacy.pool.query(
+          "SELECT to_regclass('public.brain_items')::text AS brain",
+        )
+      ).rows,
+    ).toEqual([{ brain: null }]);
+    await expect(
+      legacy.pool.query(
+        "INSERT INTO hitl_requests(id,run_id,step_id,kind,activation_state,retrigger_mode,schema,prompt,specialist_assignment_id,specialist_input_revision) VALUES($1,$2,'agent','agent_question','pending_termination','agent',$3::jsonb,'A caller cannot invent an assignment subject',$4,1)",
+        [randomUUID(), runId, JSON.stringify(form), randomUUID()],
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "hitl_specialist_question_reference",
+    });
+    await legacy.pool.query(
+      "UPDATE hitl_requests SET response=$2::jsonb,responded_at=now() WHERE id=$1",
+      [
+        questionId,
+        JSON.stringify({ component: "another configured component" }),
+      ],
+    );
+    expect(
+      (
+        await legacy.pool.query(
+          "SELECT response,specialist_assignment_id,specialist_answer_input_revision FROM hitl_requests WHERE id=$1",
+          [questionId],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        response: { component: "another configured component" },
+        specialist_assignment_id: null,
+        specialist_answer_input_revision: null,
+      },
+    ]);
+    await legacy.pool.query("DELETE FROM projects WHERE id=$1", [project.id]);
+    expect(
+      (
+        await legacy.pool.query(
+          "SELECT count(*)::int AS count FROM hitl_requests WHERE id=$1",
+          [questionId],
+        )
+      ).rows,
+    ).toEqual([{ count: 0 }]);
   } finally {
     await legacy.stop();
   }

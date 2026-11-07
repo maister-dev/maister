@@ -4,7 +4,7 @@
 
 ## Migration reservations
 
-Main `0232_company_grant_requests` and `0233_native_knowledge_execution` are implemented. Implemented base unit `0234_specialist_assignments` contains assignment heads, immutable inputs, existing-run links and state facts. Specialist bindings use `0236_company_specialist_bindings`; reviewed company Flow bindings use `0237_company_flow_bindings`. Trigger scope uses `0238_company_trigger_scope` on existing scheduler tables. Retry scope uses `0239_company_retry_scope` on the existing retry ledger. Native run ownership and internal credentials use `0240_company_agent_execution` and `0241_company_agent_credentials`. Context history uses `0259_specialist_context_revisions`. Questions/delivery, cooperation/acceptance/ownership and stand operations follow as generated logical units in their owning tasks. Allocate each numeric prefix from the then-current journal; later tables are not precreated as a prerequisite for the base store. Existing head/input/run-link rows survive each additive migration. The main migration units never FK a new Brain table; knowledge pointers store typed record/revision/witness/digest values and the owning service validates them after both lineages are ready. `runs.flow_revision_id` and existing immutable installed revision schema remain runtime truth.
+Main `0232_company_grant_requests` and `0233_native_knowledge_execution` are implemented. Implemented base unit `0234_specialist_assignments` contains assignment heads, immutable inputs, existing-run links and state facts. Specialist bindings use `0236_company_specialist_bindings`; reviewed company Flow bindings use `0237_company_flow_bindings`. Trigger scope uses `0238_company_trigger_scope` on existing scheduler tables. Retry scope uses `0239_company_retry_scope` on the existing retry ledger. Native run ownership and internal credentials use `0240_company_agent_execution` and `0241_company_agent_credentials`. Context history uses `0259_specialist_context_revisions`. Assignment clarification subjects extend existing HITL storage through `0262_specialist_question_subject`; public answer/continuation and graph qualification remain pending. Delivery, cooperation/acceptance/ownership and stand operations follow as generated logical units in their owning tasks. Allocate each numeric prefix from the then-current journal; later tables are not precreated as a prerequisite for the base store. Existing head/input/run-link rows survive each additive migration. The main migration units never FK a new Brain table; knowledge pointers store typed record/revision/witness/digest values and the owning service validates them after both lineages are ready. `runs.flow_revision_id` and existing immutable installed revision schema remain runtime truth.
 
 The base business structures link existing execution records rather than duplicating attempts. Work, acceptance, delivery and claim entities in this diagram remain designed until their owning slices land; context history and specialist/Flow binding configuration are implemented.
 
@@ -202,3 +202,22 @@ human-work ledger.
 **Company graph resource witness (T20.1, 0235; graph driver/terminal cleanup remain Designed):** the existing `runs.operational_integrity_baseline` CHECK admits an explicit company-owned v2 workspace-none graph with required Flow export, retaining its existing operational-agent branch. No field/table/backfill is added. The same company/run opaque paths, baseline version/generation and integrity inspection are used; current resource-owner validation checks retained company, Run and managed paths. Internal workspace adoption carries an explicit agent/Flow discriminator derived from the validated Run; the host wire remains the existing company-owned directory contract. Populated v1 baseline and Run/token values remain unchanged, and project deletion stays independent of Brain. This is a resource witness, not an operational completion contract or proof of an external effect.
 
 **Native company graph lifecycle (T20.1, 0236; controlled ACP qualification):** the existing graph loader retains an explicit company context and null Task/project-Flow/workspace records. Actual dispatch, node attempts, prompts, results, sessions, driver claims and host commands use the existing ledgers. The resource cleanup CHECK and due index include the exact finite workspace-none v2 Flow branch. The company event reference guard admits that retained owner for terminal, wait, escalation and cleanup facts while retaining the v1 operational-agent branch. Company graph results remain `flow_export`; `operational_terminal` remains NULL. No table, project, Brain FK, scheduler or attempt ledger is added. Main-only populated upgrade preserves prior Run/token values and permits project deletion without Brain tables. Native graph form/human response delivery now reuses the exact company input/actor owner and existing node-attempt vars; captures do not advance during graph input. Engine 3.12.0 supports this native lifecycle, including controlled-ACP permission/idle/restart and retained-result recovery. Full phase compatibility and actual companion/stand qualification remain separate gates.
+
+
+## Native clarification subjects on existing HITL
+
+Main `0262_specialist_question_subject` adds nullable specialist assignment, exact
+source input revision and exact answered input revision to `hitl_requests`, with
+composite FKs into retained assignment inputs and native request/history indexes.
+It creates no question, execution or attempt ledger and no Brain FK. Legacy task
+questions retain their schema, response, times and NULL native metadata; no
+historical attribution, assignment or answer input is inferred.
+
+A native question requires its closed server subject, matching company/project
+owner, unambiguous current root appointment, exact input/context heads, complete
+Run source capture and actual dispatched prompt/incarnation/fence. Subject,
+FormSchema, prompt and attribution are immutable. A committed human answer requires
+its exact retained input revision; the existing terminal close with NULL response
+keeps the question unanswered. Recovery uses the existing pending-termination
+state and successful checkpoint receipt. Public question submission, answer and
+continuation remain Designed until their runtime qualification is complete.
