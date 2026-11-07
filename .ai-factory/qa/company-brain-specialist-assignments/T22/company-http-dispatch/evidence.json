@@ -1,0 +1,40 @@
+{
+  "task": "T22",
+  "slice": "Fresh company manual HTTP to default scheduler to real runtime qualification",
+  "baseCommit": "840f3a55b",
+  "date": "2026-11-07",
+  "status": "Company standalone public dispatch qualified; project/source adapters and T22.1 pending",
+  "gates": {
+    "integration": {
+      "tests": 36,
+      "files": 1,
+      "durationSeconds": 24.0,
+      "exitCode": 0
+    },
+    "types": {
+      "exitCode": 0
+    },
+    "lint": {
+      "exitCode": 0
+    }
+  },
+  "runtimeWitness": {
+    "assignmentId": "4b9df04c-13d0-46d2-a368-53c88bb7d840",
+    "runId": "0429d08d-2315-49b6-8d3f-7eb1340665bf",
+    "intakeReceiptId": "92c493c7-d3ca-48cb-8b00-0e3beda660c9"
+  },
+  "qualified": [
+    "No Pending agent work before the actual fresh HTTP request",
+    "Actual POST prepares the standalone contract and reserves one assignment/input/receipt/Run",
+    "Default pool scheduler promotes the reserved Run and invokes the existing owned agent driver without an explicit test start",
+    "Owned supervisor and real controlled ACP process produce a valid operational result",
+    "Physical quiescence, released workspace, closed execution assignment and revoked execution credentials are asserted",
+    "Completed exact HTTP replay returns the same Run and command ledger contains one session.create and session.prompt"
+  ],
+  "qualificationBoundary": "Controlled session identity and pinned fixture Git package; this is a real route/scheduler/runtime composition, not an actual installable stand pilot package qualification. Existing T22 RED evidence belongs to service/HTTP implementation; this qualification replaces explicit test admission in the existing runtime case and does not alter production code.",
+  "sourceSha256": {
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "72136b29c0c0293e1226b51524e6ce361ce8d45f3ccd314dd82549d14726b4b0",
+    "docs/system-analytics/specialist-assignments.md": "ba8d0748d669f0f090a61db30cb7a4ad49f76b5887ba1aef3f76026b2497fe05",
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "0ce013a19cf7612bb00ae6ebc1fdca437701c50f1c58d182daa854e536368f73"
+  }
+}

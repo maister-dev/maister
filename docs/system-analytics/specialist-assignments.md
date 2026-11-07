@@ -216,8 +216,11 @@ leave execution Pending. A replay can signal interrupted pending admission witho
 allocating another execution. `GET /api/specialist-assignments/{id}` supports
 currently authorized company/project inspection; both responses are private and
 no-store. The create operation's project branch and external bearer adapters remain
-Designed; this checkpoint does not qualify a fresh public request's full dispatch
-or the stand pilot.
+Designed. Fresh company standalone submission is qualified through the actual
+session route, default scheduler dispatch, real supervisor/ACP process, validated
+operational result and physical cleanup. Completed HTTP replay issues no second
+create/prompt command. Coordinator intake is qualified through queued HTTP
+admission and its existing driver; the stand pilot remains unqualified.
 
 ## Expectations
 

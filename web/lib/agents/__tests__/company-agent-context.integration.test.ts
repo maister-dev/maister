@@ -124,6 +124,8 @@ import { verifyToken, actorUserIdForToken } from "@/lib/tokens/verify";
 import { handleAssignmentAction } from "@/app/api/assignments/[assignmentId]/_shared";
 import { POST as acknowledgeOperationalPost } from "@/app/api/runs/[runId]/operational/acknowledge/route";
 import { POST as retryOperationalPost } from "@/app/api/runs/[runId]/operational/cleanup/retry/route";
+import { POST as assignmentPost } from "@/app/api/specialist-assignments/route";
+import { specialistAssignmentSchema } from "@/lib/specialist-assignments/types";
 import { POST as stopRunPost } from "@/app/api/runs/[runId]/stop/route";
 import { POST as respondHitlPost } from "@/app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route";
 import { POST as claimHumanAssignmentPost } from "@/app/api/assignments/[assignmentId]/claim/route";
@@ -492,7 +494,7 @@ it("CBS-02 adopts the server-resolved company directory through the real supervi
   }
 }, 120000);
 
-it("CBS-02 completes a company assignment Run through the real supervisor and ACP process with physical quiescence", async () => {
+it("CBS-02 completes company manual HTTP intake through the existing scheduler, real supervisor and ACP process with physical quiescence", async () => {
   const db: Db = database.db;
   const supervisor = await startRealSupervisor({
     runtimeRoot: join(root, "company-driver-host"),
@@ -534,27 +536,14 @@ it("CBS-02 completes a company assignment Run through the real supervisor and AC
       runnerId,
       idempotencyKey: randomUUID(),
     });
-    const contract = buildOperationalContract(effective);
-    const assignment = await createSpecialistAssignment(db, userId, {
-      ...assignmentInput,
+    const { expectedResult: _expectedResult, ...objective } =
+      assignmentInput.objectiveInput;
+    const manualRequest = {
+      ...objective,
+      owner: assignmentInput.owner,
       specialistBindingId: binding.specialist.bindingId,
-      responsibleAgentId: roleId,
-      standingDefinition: {
-        ...assignmentInput.standingDefinition,
-        agentId: roleId,
-        definition: effective.parsed,
-        definitionSha256: agentDefinitionSha256(effective.parsed),
-      },
-      objectiveInput: {
-        ...assignmentInput.objectiveInput,
-        expectedResult: {
-          schemaRef: contract.schemaRef,
-          schemaVersion: contract.schemaVersion,
-          sha256: contract.sha256,
-          required: true,
-        },
-      },
-    });
+      idempotencyKey: randomUUID(),
+    };
     const hosts = createExecutionHosts({
       db,
       transport: createLocalDirectTransport(),
@@ -575,22 +564,50 @@ it("CBS-02 completes a company assignment Run through the real supervisor and AC
         )
       ).rows[0],
     ).toEqual(beforeUnconfigured);
-    const receipt = await reserveCompanyAgentRun(
-      db,
-      userId,
-      {
-        ...request,
-        assignmentId: assignment.id,
-        bindingId: binding.specialist.bindingId,
-      },
-      hosts,
-    );
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM runs WHERE run_kind='agent' AND status='Pending'",
+        )
+      ).rows,
+    ).toEqual([{ count: 0 }]);
+    browserSession.user = await requireActiveUserById(userId);
+    const submit = (): Promise<Response> =>
+      assignmentPost(
+        new NextRequest("http://localhost/api/specialist-assignments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(manualRequest),
+        }),
+      );
+    const response = await submit();
 
-    expect(await tryStartRun(receipt.runId, { db })).toMatchObject({
-      started: true,
-    });
-    await startAgentSession(receipt.runId, { db, executionHosts: hosts });
-    await startAgentSession(receipt.runId, { db, executionHosts: hosts });
+    expect(response.status).toBe(201);
+    const assignment = specialistAssignmentSchema.parse(await response.json());
+
+    expect(assignment.runIds).toHaveLength(1);
+    const receipt = { runId: assignment.runIds[0]! };
+
+    await vi.waitFor(
+      async () => {
+        const [completed] = await db
+          .select()
+          .from(runs)
+          .where(eq(runs.id, receipt.runId));
+
+        expect(completed).toMatchObject({
+          status: "Done",
+          operationalCleanup: { state: "released" },
+        });
+      },
+      { timeout: 30000, interval: 25 },
+    );
+    const replay = await submit();
+
+    expect(replay.status).toBe(200);
+    expect(
+      specialistAssignmentSchema.parse(await replay.json()).runIds,
+    ).toEqual([receipt.runId]);
     const [run] = await db
       .select()
       .from(runs)
