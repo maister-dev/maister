@@ -98,6 +98,8 @@ import { MaisterError } from "@/lib/errors";
 import { requireActiveUserById } from "@/lib/authz";
 import { GET as assignmentGet } from "@/app/api/specialist-assignments/[assignmentId]/route";
 import { POST as assignmentPost } from "@/app/api/specialist-assignments/route";
+import { POST as inboundAgentEventPost } from "@/app/api/agents/[agentId]/event/route";
+import { issueUserAccessToken } from "@/lib/tokens/issue";
 import { specialistAssignmentSchema } from "@/lib/specialist-assignments/types";
 import { POST as stopRunPost } from "@/app/api/runs/[runId]/stop/route";
 import { POST as respondHitlPost } from "@/app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route";
@@ -364,7 +366,7 @@ beforeAll(async () => {
   await writeFile(
     rolePath,
     (await readFile(rolePath, "utf8"))
-      .replace("  - flow", "  - flow\n  - cron\n  - domain_event")
+      .replace("  - flow", "  - flow\n  - cron\n  - domain_event\n  - webhook")
       .replace(
         "workspace: none",
         "specialist:\n  responsibilities: [Coordinate authorized diagnosis]\n  targetClasses: [stand]\nflow: rah-control\nworkspace: none",
@@ -2914,6 +2916,74 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
         )
       ).rows,
     ).toEqual([{ count: 1 }]);
+    const webhookToken = await issueUserAccessToken(
+      {
+        ownerUserId: requesterId,
+        name: "company-coordinator-webhook",
+        scopes: ["agents:trigger", "assignments:submit"],
+      },
+      database.db,
+    );
+    const webhookResponse = await inboundAgentEventPost(
+      new NextRequest(
+        "http://localhost/api/agents/rah:event-coordinator/event",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Maister-Owner-Kind": "company",
+            Authorization: `Bearer ${webhookToken.secret}`,
+            "Idempotency-Key": randomUUID(),
+          },
+          body: JSON.stringify({
+            schemaVersion: 1,
+            assignment: {
+              ...objective,
+              input: "Diagnose only the authorized webhook target.",
+              owner: eventRole.specialist.owner,
+              specialistBindingId: eventRole.specialist.bindingId,
+            },
+          }),
+        },
+      ),
+      { params: Promise.resolve({ agentId: "rah:event-coordinator" }) },
+    );
+
+    expect(webhookResponse.status).toBe(201);
+    const webhookWork = specialistAssignmentSchema.parse(
+      await webhookResponse.json(),
+    );
+
+    expect(webhookWork.runIds).toHaveLength(1);
+    await vi.waitFor(
+      async () => {
+        expect(
+          (
+            await database.pool.query(
+              "SELECT status,trigger_source,run_kind,project_id,task_id FROM runs WHERE id=$1",
+              [webhookWork.runIds[0]],
+            )
+          ).rows,
+        ).toEqual([
+          {
+            status: "Done",
+            trigger_source: "webhook",
+            run_kind: "flow",
+            project_id: null,
+            task_id: null,
+          },
+        ]);
+      },
+      { timeout: 30000, interval: 25 },
+    );
+    expect(
+      (
+        await database.pool.query(
+          "SELECT validity,value FROM run_results WHERE run_id=$1",
+          [webhookWork.runIds[0]],
+        )
+      ).rows,
+    ).toEqual([{ validity: "valid", value: output }]);
     expect(
       (
         await database.pool.query(

@@ -129,6 +129,7 @@ import { POST as acknowledgeOperationalPost } from "@/app/api/runs/[runId]/opera
 import { POST as retryOperationalPost } from "@/app/api/runs/[runId]/operational/cleanup/retry/route";
 import { POST as assignmentPost } from "@/app/api/specialist-assignments/route";
 import { POST as externalAssignmentPost } from "@/app/api/v1/ext/specialist-assignments/route";
+import { POST as inboundAgentEventPost } from "@/app/api/agents/[agentId]/event/route";
 import { GET as externalAssignmentGet } from "@/app/api/v1/ext/specialist-assignments/[assignmentId]/route";
 import { issueUserAccessToken, issueToken } from "@/lib/tokens/issue";
 import { createCompanyCronSchedule } from "@/lib/agents/company-schedules";
@@ -336,6 +337,15 @@ beforeAll(async () => {
   await cp(
     join(source, "maister-agents/wire-observer.md"),
     join(source, "maister-agents/event-observer.md"),
+  );
+  await writeFile(
+    join(source, "maister-agents/webhook-observer.md"),
+    (
+      await readFile(join(source, "maister-agents/wire-observer.md"), "utf8")
+    ).replace(
+      "triggers: [manual, cron, domain_event]",
+      "triggers: [manual, webhook]",
+    ),
   );
   for (const delivery of ["live", "checkpointed", "cancelled"] as const) {
     await writeFile(
@@ -1649,6 +1659,318 @@ it("IT-CBS-04 completes company HTTP and registered cron intake through the exis
     browserSession.user = null;
   } finally {
     browserSession.user = null;
+    if (previousCap === undefined)
+      delete process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+    else process.env.MAISTER_MAX_CONCURRENT_AGENTS = previousCap;
+    await worker.stop();
+    await stopRuntimeEventConsumers();
+    await supervisor.stop();
+    restoreUrl();
+    resetRegistrarStateForTests();
+    resetResolverForTests();
+    setDefaultTransportForTests(null);
+  }
+}, 90000);
+
+it("IT-CBS-04 admits company webhook deliveries through the actual authenticated entry point and retains one native effect across token rotation", async () => {
+  const db: Db = database.db;
+  const supervisor = await startRealSupervisor({
+    runtimeRoot: join(root, "company-webhook-host"),
+    workspaceRoots: [join(root, "worktrees")],
+    fixtureArgs: ["--hang"],
+  });
+  const restoreUrl = useRealSupervisorUrl(supervisor.url);
+  const worker = startProjectionWorker({ db, projectors: canonicalProjectors });
+  const previousCap = process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+
+  setDefaultTransportForTests(null);
+  resetResolverForTests();
+  resetRegistrarStateForTests();
+  vi.stubEnv("MAISTER_MAX_CONCURRENT_AGENTS", "100");
+  try {
+    const agentId = "rah:webhook-observer";
+    const effective = await resolveInstalledAgentDefinition(db, {
+      agentId,
+      packageInstallId: assignmentInput.standingDefinition.packageInstallId,
+    });
+    const runnerId = randomUUID();
+
+    await db.insert(platformAcpRunners).values({
+      id: runnerId,
+      adapter: "claude",
+      capabilityAgent: "claude",
+      model: "company-webhook-fixture",
+      provider: { kind: "anthropic" },
+      readinessStatus: "Ready",
+    });
+    const binding = await createCompanySpecialistBinding(db, userId, agentId, {
+      owner: { kind: "company", companyId: request.companyId },
+      packageInstallId: effective.packageInstallId,
+      packageRevision: effective.resolvedRevision!,
+      definitionSha256: agentDefinitionSha256(effective.parsed),
+      enabled: true,
+      configuration: {},
+      grantActions: ["knowledge:read", "knowledge:propose"],
+      runnerId,
+      idempotencyKey: randomUUID(),
+    });
+    const { expectedResult: _expectedResult, ...objective } =
+      assignmentInput.objectiveInput;
+    const body = {
+      schemaVersion: 1,
+      assignment: {
+        ...objective,
+        owner: binding.specialist.owner,
+        specialistBindingId: binding.specialist.bindingId,
+        input: "Inspect the webhook's authorized configured target.",
+      },
+    };
+    const contract: { components: { schemas: Record<string, object> } } = parse(
+      await readFile(resolve("../docs/api/web.openapi.yaml"), "utf8"),
+    );
+    const validateWebhook = new Ajv({
+      strict: false,
+      validateFormats: false,
+    }).compile({
+      components: contract.components,
+      ...contract.components.schemas.CBCompanyWebhookEnvelope,
+    });
+
+    expect(validateWebhook(body), JSON.stringify(validateWebhook.errors)).toBe(
+      true,
+    );
+    expect(validateWebhook({ ...body, requester: userId })).toBe(false);
+    const token = await issueUserAccessToken(
+      {
+        ownerUserId: userId,
+        name: "company-webhook",
+        scopes: ["agents:trigger", "assignments:submit"],
+      },
+      db,
+    );
+    const rotated = await issueUserAccessToken(
+      {
+        ownerUserId: userId,
+        name: "company-webhook-rotated",
+        scopes: ["agents:trigger", "assignments:submit"],
+      },
+      db,
+    );
+    const key = randomUUID();
+    const submit = (
+      secret: string | null,
+      value: unknown = body,
+      deliveryId: string | null = key,
+    ): Promise<Response> =>
+      inboundAgentEventPost(
+        new NextRequest(
+          "http://localhost/api/agents/rah:webhook-observer/event",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Maister-Owner-Kind": "company",
+              ...(secret === null ? {} : { Authorization: `Bearer ${secret}` }),
+              ...(deliveryId === null ? {} : { "Idempotency-Key": deliveryId }),
+            },
+            body: JSON.stringify(value),
+          },
+        ),
+        { params: Promise.resolve({ agentId }) },
+      );
+
+    expect((await submit(null)).status).toBe(401);
+    const responses = await Promise.all([
+      submit(token.secret),
+      submit(rotated.secret),
+    ]);
+
+    expect(responses.map((response) => response.status).sort()).toEqual([
+      200, 201,
+    ]);
+    const assignments = await Promise.all(
+      responses.map(async (response) => {
+        expect(response.headers.get("cache-control")).toBe("private, no-store");
+
+        return specialistAssignmentSchema.parse(await response.json());
+      }),
+    );
+
+    expect(assignments[0].id).toBe(assignments[1].id);
+    expect(assignments[0].runIds).toHaveLength(1);
+    const runId = assignments[0].runIds[0]!;
+
+    await vi.waitFor(
+      async () => {
+        expect(
+          (
+            await database.pool.query(
+              "SELECT status,trigger_source,project_id,task_id,company_id FROM runs WHERE id=$1",
+              [runId],
+            )
+          ).rows,
+        ).toEqual([
+          {
+            status: "Done",
+            trigger_source: "webhook",
+            project_id: null,
+            task_id: null,
+            company_id: request.companyId,
+          },
+        ]);
+      },
+      { timeout: 30000, interval: 25 },
+    );
+    expect(
+      (
+        await database.pool.query(
+          "SELECT kind,count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt') GROUP BY kind ORDER BY kind",
+          [runId],
+        )
+      ).rows,
+    ).toEqual([
+      { kind: "session.create", count: 1 },
+      { kind: "session.prompt", count: 1 },
+    ]);
+    expect(assignments[0]).toMatchObject({
+      requester: { kind: "user", id: userId },
+      origin: { kind: "webhook", deliveryId: key },
+      destination: { kind: "inbox", userId },
+    });
+    expect((await submit(rotated.secret)).status).toBe(200);
+    expect((await submit(token.secret, body, null)).status).toBe(422);
+    expect(
+      (await submit(token.secret, { ...body, requester: userId })).status,
+    ).toBe(422);
+    expect(
+      (
+        await submit(token.secret, {
+          ...body,
+          assignment: { ...body.assignment, input: "Changed delivery" },
+        })
+      ).status,
+    ).toBe(409);
+    const noTrigger = await issueUserAccessToken(
+      {
+        ownerUserId: userId,
+        name: "company-webhook-no-trigger",
+        scopes: ["assignments:submit"],
+      },
+      db,
+    );
+
+    expect((await submit(noTrigger.secret)).status).toBe(403);
+    const noSubmit = await issueUserAccessToken(
+      {
+        ownerUserId: userId,
+        name: "company-webhook-no-submit",
+        scopes: ["agents:trigger"],
+      },
+      db,
+    );
+
+    expect((await submit(noSubmit.secret)).status).toBe(403);
+    expect(
+      (
+        await submit(
+          rotated.secret,
+          {
+            ...body,
+            assignment: {
+              ...body.assignment,
+              specialistBindingId: randomUUID(),
+            },
+          },
+          randomUUID(),
+        )
+      ).status,
+    ).toBe(404);
+    const oversized = { ...body, padding: "x".repeat(32769) };
+
+    expect((await submit(token.secret, oversized)).status).toBe(413);
+    await database.pool.query(
+      "UPDATE project_tokens SET revoked_at=now() WHERE id=$1",
+      [token.tokenId],
+    );
+    expect((await submit(token.secret)).status).toBe(401);
+    expect((await submit(rotated.secret)).status).toBe(200);
+    await database.pool.query(
+      "INSERT INTO execution_host_pressure(execution_host_id,pressured_since) SELECT id,now() FROM execution_hosts WHERE kind='local_direct' AND retired_at IS NULL ON CONFLICT DO NOTHING",
+    );
+    const independentKey = randomUUID();
+    const independentResponse = await submit(
+      rotated.secret,
+      body,
+      independentKey,
+    );
+
+    expect(independentResponse.status).toBe(201);
+    const independent = specialistAssignmentSchema.parse(
+      await independentResponse.json(),
+    );
+
+    expect(independent.id).not.toBe(assignments[0].id);
+    expect(independent.runIds).toHaveLength(1);
+    const independentRun = independent.runIds[0]!;
+
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status,(SELECT count(*)::int FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt')) AS effects FROM runs WHERE id=$1",
+          [independentRun],
+        )
+      ).rows,
+    ).toEqual([{ status: "Pending", effects: 0 }]);
+    await database.pool.query(
+      "DELETE FROM execution_host_pressure WHERE execution_host_id IN (SELECT id FROM execution_hosts WHERE kind='local_direct' AND retired_at IS NULL)",
+    );
+    expect((await submit(rotated.secret, body, independentKey)).status).toBe(
+      200,
+    );
+    await vi.waitFor(
+      async () => {
+        expect(
+          (
+            await database.pool.query("SELECT status FROM runs WHERE id=$1", [
+              independentRun,
+            ])
+          ).rows,
+        ).toEqual([{ status: "Done" }]);
+      },
+      { timeout: 30000, interval: 25 },
+    );
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM token_audit_log WHERE token_id=$1 AND endpoint='POST /api/agents/[agentId]/event'",
+          [rotated.tokenId],
+        )
+      ).rows[0].count,
+    ).toBeGreaterThanOrEqual(3);
+    const currentRead = (
+      await database.pool.query<{ id: string; revision: number }>(
+        "SELECT id,revision FROM company_grants WHERE principal_type='user' AND principal_id=$1 AND company_id=$2 AND action='assignments:read' AND revoked_at IS NULL",
+        [userId, request.companyId],
+      )
+    ).rows;
+
+    expect(currentRead).toHaveLength(1);
+    await revokeCompanyGrant(db, administratorId, currentRead[0].id, {
+      expectedRevision: currentRead[0].revision,
+      reason: "Withdraw webhook requester access before replay",
+      idempotencyKey: randomUUID(),
+    });
+    try {
+      expect((await submit(rotated.secret)).status).toBe(403);
+    } finally {
+      await createCompanyGrants(db, administratorId, {
+        principalKind: "user",
+        principalId: userId,
+        actions: ["assignments:read"],
+        idempotencyKey: randomUUID(),
+      });
+    }
+  } finally {
     if (previousCap === undefined)
       delete process.env.MAISTER_MAX_CONCURRENT_AGENTS;
     else process.env.MAISTER_MAX_CONCURRENT_AGENTS = previousCap;

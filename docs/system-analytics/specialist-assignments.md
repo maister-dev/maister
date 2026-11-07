@@ -163,8 +163,8 @@ Adapters prepare new work only after the receipt lookup and persist any Run
 reservation in the same outer transaction. There is no external mutation inside
 that transaction and no additional execution scheduler or attempt ledger. Receipt
 storage and manual admission are qualified independently of source dispatch.
-Native company cron/event creation and registered dispatch are qualified; webhook
-intake (T22.1), clarification continuation (T24) and native
+Native company cron/event creation and registered dispatch plus authenticated
+company webhook intake are qualified. Clarification continuation (T24) and native
 agent delegation (T27). A matching source identity alone never authorizes an
 adapter to act as another principal.
 
@@ -206,7 +206,9 @@ exact Run or records unknown without blind redispatch. Native source creation ca
 enable qualified cron work only with current creator authority, declared cron
 trigger, enabled reviewed bindings and a nonempty recurring request. Native event
 source creation and registered standalone/coordinator dispatch are also qualified,
-with explicit current recipient sharing authority. Webhook adapters and assignment
+with explicit current recipient sharing authority. Company webhook input is
+server-attributed and content-guarded across personal token rotation through the
+existing agent-event entry point. Legacy invocation adapters and assignment
 clarification remain open. See the [runtime contract](specialist-runtime.md#native-company-cron-intake-checkpoint).
 
 ### Project manual admission

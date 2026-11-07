@@ -8,6 +8,7 @@ import {
   launchAgentRun,
   publicAgentLaunchMessage,
 } from "@/lib/agents/launch";
+import { handleCompanyAgentWebhook } from "@/lib/agents/company-webhook-http";
 import { isMaisterError } from "@/lib/errors";
 import { decodeRouteParam } from "@/lib/route-params";
 import { handleExt } from "@/lib/tokens/ext-handler";
@@ -71,6 +72,9 @@ export async function POST(
 ): Promise<NextResponse> {
   const { agentId: rawAgentId } = await params;
 
+  if (req.headers.get("x-maister-owner-kind") === "company")
+    return handleCompanyAgentWebhook(req, rawAgentId);
+
   return handleExt(
     req,
     {
@@ -79,6 +83,15 @@ export async function POST(
       method: "POST",
     },
     async (ctx) => {
+      if (req.headers.has("x-maister-owner-kind"))
+        return NextResponse.json(
+          {
+            code: "CONFIG",
+            message:
+              "Unsupported X-Maister-Owner-Kind; use company or omit the header",
+          },
+          { status: 422 },
+        );
       let agentId: string;
 
       try {

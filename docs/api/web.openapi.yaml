@@ -3338,6 +3338,20 @@ paths:
         (≤ 32 KB) is stored verbatim as `runs.trigger_payload` and appended
         to the agent's prompt context. Refusals mirror the manual launch
         (`webhook` must be in the agent's `triggers`).
+
+        With `X-Maister-Owner-Kind: company`, use a global personal user bearer
+        token carrying both `agents:trigger` and `assignments:submit`. The body
+        must match `CBCompanyWebhookEnvelope` and `Idempotency-Key` is required.
+        Current company assignment read/submit/update authority and the addressed
+        reviewed role/coordinator are validated. No project is created. The
+        server-user/company/professional endpoint identity survives token rotation;
+        same delivery/content returns its original assignment and Run (200), new
+        work is 201, and changed content under one key is 409. Numeric domain-event
+        identity is refused on this branch. The server records requester/origin and
+        uses the requesting user's Inbox destination. Company responses are private,
+        no-store; the 32 KiB bound is enforced on streamed UTF-8 bytes.
+      x-company-request-schema:
+        $ref: "#/components/schemas/CBCompanyWebhookEnvelope"
       operationId: postAgentEvent
       parameters:
         - name: agentId
@@ -3345,10 +3359,24 @@ paths:
           required: true
           schema:
             { type: string, pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$" }
+        - name: X-Maister-Owner-Kind
+          in: header
+          required: false
+          description: Set company to select company-owned specialist intake; omission retains the legacy project webhook contract.
+          schema: { type: string, enum: [company] }
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Required for the company branch. Same company, authenticated user, addressed professional and key identify one delivery, including across token rotation.
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+            pattern: ^[A-Za-z0-9._:-]+$
         - name: X-Maister-Trigger-Event-Id
           in: header
           required: false
-          description: Optional positive integer idempotency key. When present, redelivery converges through the run claim key `(agent_id, trigger_event_id)`.
+          description: Project branch only; refused for company intake. Optional positive integer idempotency key. When present, redelivery converges through the run claim key `(agent_id, trigger_event_id)`.
           schema: { type: integer, minimum: 1 }
       requestBody:
         required: true
@@ -3356,8 +3384,18 @@ paths:
           application/json:
             schema:
               type: object
-              description: Free-form JSON payload, ≤ 32 KB serialized.
+              description: Legacy project payload is free-form. With the company owner header, the body must match CBCompanyWebhookEnvelope; the version-one envelope is closed and cannot supply actor, origin, authority or result contract. At most 32 KiB.
       responses:
+        "200":
+          description: Exact company delivery replay; original authorized assignment and Run, no repeated execution.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CBAssignment" }
+        "201":
+          description: Company assignment and existing native Run reserved atomically; business verification and acceptance remain separate.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CBAssignment" }
         "202":
           description: Agent run created (`Running` or queued `Pending`).
           content:
@@ -3369,12 +3407,12 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "403":
-          description: Token lacks `agents:trigger`.
+          description: Missing required scope, invalid principal kind for company intake, or current company authority refused.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "404":
-          description: Agent unknown or not attached to the token's project.
+          description: Agent unknown, unavailable owned company binding, or agent not attached to the token's project.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -39133,3 +39171,151 @@ components:
         No raw event payload, recurring request, requester or permissions are accepted.
         Public source configuration routes remain Designed.
       x-implementation-status: Designed
+    CBCompanyWebhookEnvelope:
+      type: object
+      properties:
+        schemaVersion:
+          type: number
+          enum:
+            - 1
+        assignment:
+          type: object
+          properties:
+            objective:
+              type: string
+              minLength: 1
+              maxLength: 8000
+              allOf:
+                - type: string
+                  pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                - type: string
+                  pattern: \S
+            expectedOutcome:
+              type: string
+              minLength: 1
+              maxLength: 4000
+              allOf:
+                - type: string
+                  pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                - type: string
+                  pattern: \S
+            input:
+              type: string
+              maxLength: 8000
+              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+            targetIds:
+              maxItems: 32
+              type: array
+              items:
+                type: string
+                minLength: 1
+                maxLength: 128
+                pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+            inputRefs:
+              maxItems: 64
+              type: array
+              items:
+                type: object
+                properties:
+                  kind:
+                    type: string
+                    enum:
+                      - knowledge
+                      - witness
+                      - result
+                      - operation
+                      - verification
+                  id:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                  revision:
+                    type: integer
+                    minimum: 1
+                    maximum: 2147483647
+                  version:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                  sha256:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                required:
+                  - kind
+                  - id
+                additionalProperties: false
+            constraints:
+              maxItems: 32
+              type: array
+              items:
+                type: string
+                minLength: 1
+                maxLength: 2000
+                allOf:
+                  - type: string
+                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                  - type: string
+                    pattern: \S
+            verification:
+              maxItems: 16
+              type: array
+              items:
+                type: object
+                properties:
+                  kind:
+                    type: string
+                    enum:
+                      - result
+                      - effect
+                      - health
+                  referenceId:
+                    nullable: true
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                  required:
+                    type: boolean
+                required:
+                  - kind
+                  - referenceId
+                  - required
+                additionalProperties: false
+            owner:
+              type: object
+              properties:
+                kind:
+                  type: string
+                  enum:
+                    - company
+                companyId:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+              required:
+                - kind
+                - companyId
+              additionalProperties: false
+            specialistBindingId:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+          required:
+            - objective
+            - expectedOutcome
+            - input
+            - targetIds
+            - inputRefs
+            - constraints
+            - verification
+            - owner
+            - specialistBindingId
+          additionalProperties: false
+      required:
+        - schemaVersion
+        - assignment
+      additionalProperties: false

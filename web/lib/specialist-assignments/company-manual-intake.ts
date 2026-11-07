@@ -5,33 +5,19 @@ import type { ExecutionHosts } from "@/lib/execution-host";
 import type { SpecialistIntakeReceipt } from "./intake-types";
 import type { AssignmentOrigin } from "./types";
 
-import pino from "pino";
-
 import { manualSpecialistAssignmentRequestSchema } from "./intake-types";
-import {
-  intakeSpecialistAssignmentInTransaction,
-  inspectSpecialistIntakeReplayInTransaction,
-} from "./intake";
-import { getSpecialistAssignmentInTransaction } from "./store";
-import { prepareCompanySpecialistAssignment } from "./company-intake";
-import { reserveCompanyAssignmentRunInTransaction } from "./company-reservation";
+import { reserveCompanyUserRequest } from "./company-request-intake";
 import { wakePendingSpecialistAssignment } from "./admission-wake";
 
-import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import { ownerSchema } from "@/lib/company/types";
-import { redactQueryError } from "@/lib/db/pg-error";
 import { contentDigest } from "@/lib/evaluations/digest";
 import { MaisterError } from "@/lib/errors";
-import { createExecutionHosts, localHost } from "@/lib/execution-host";
+import { createExecutionHosts } from "@/lib/execution-host";
 
 export const companyManualAssignmentRequestSchema =
   manualSpecialistAssignmentRequestSchema
     .extend({ owner: ownerSchema.options[0] })
     .strict();
-const log = pino({
-  name: "company-manual-intake",
-  level: process.env.LOG_LEVEL ?? "info",
-});
 
 /** Reserve company manual work through canonical intake and the existing native launchers. */
 export async function reserveCompanyManualAssignment(
@@ -59,76 +45,14 @@ export async function reserveCompanyManualAssignment(
   };
   const { idempotencyKey: _key, ...originalRequest } = request;
 
-  try {
-    const replay = await db.transaction(async (tx) => {
-      for (const action of ["assignments:read", "assignments:submit"] as const)
-        await authorizeCompanyUserAction(
-          tx,
-          userId,
-          request.owner.companyId,
-          action,
-        );
-
-      return inspectSpecialistIntakeReplayInTransaction(
-        tx,
-        userId,
-        origin,
-        originalRequest,
-      );
-    });
-
-    if (replay) return replay;
-    const host = await localHost({ db, transport: hosts.transport });
-
-    return await db.transaction(async (tx) => {
-      const receipt = await intakeSpecialistAssignmentInTransaction(
-        tx,
-        userId,
-        origin,
-        originalRequest,
-        (sourceTx) =>
-          prepareCompanySpecialistAssignment(
-            sourceTx,
-            userId,
-            originalRequest,
-            {
-              origin,
-              destination: { kind: "inbox", userId },
-              scheduledRequest: null,
-            },
-          ),
-      );
-
-      if (receipt.duplicate) return receipt;
-      const reservation = await reserveCompanyAssignmentRunInTransaction(
-        tx,
-        userId,
-        receipt,
-        "manual",
-        hosts,
-        host,
-      );
-      const assignment = await getSpecialistAssignmentInTransaction(
-        tx,
-        userId,
-        receipt.assignment.id,
-      );
-
-      log.info(
-        {
-          receiptId: receipt.receiptId,
-          assignmentId: assignment.id,
-          runId: reservation.runId,
-          companyId: request.owner.companyId,
-        },
-        "company manual work and existing Run reserved atomically",
-      );
-
-      return { ...receipt, assignment };
-    });
-  } catch (error) {
-    throw redactQueryError(error);
-  }
+  return reserveCompanyUserRequest(
+    db,
+    userId,
+    originalRequest,
+    origin,
+    "manual",
+    hosts,
+  );
 }
 
 /** Wake the existing scheduler after durable intake, including a replay of interrupted admission. */

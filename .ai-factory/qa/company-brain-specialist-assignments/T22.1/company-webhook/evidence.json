@@ -1,0 +1,88 @@
+{
+  "task": "T22.1",
+  "date": "2026-11-07",
+  "slice": "Authenticated native company webhook intake and completion of company source dispatch",
+  "baseCommit": "b3e10e2a8",
+  "status": "T22.1 complete; remaining legacy invocation routing is T22; governed cooperation and stand qualification remain open",
+  "red": {
+    "case": "Actual authenticated company deliveries received project-bound-token 403 instead of original/replayed native assignment receipts",
+    "expectedStatuses": [
+      200,
+      201
+    ],
+    "actualStatuses": [
+      403,
+      403
+    ],
+    "exitCode": 1
+  },
+  "gates": {
+    "integration": {
+      "tests": 169,
+      "files": 8,
+      "durationSeconds": 65.31,
+      "exitCode": 0
+    },
+    "webUnit": {
+      "tests": 9318,
+      "files": 889,
+      "durationSeconds": 27.22,
+      "exitCode": 0
+    },
+    "types": {
+      "exitCode": 0
+    },
+    "lint": {
+      "exitCode": 0
+    },
+    "format": {
+      "exitCode": 0
+    },
+    "contractsAndCoverage": {
+      "requirements": 84,
+      "exitCode": 0
+    },
+    "docsAndErd": {
+      "tables": 172,
+      "exitCode": 0
+    },
+    "publicEnRuBuild": {
+      "exitCode": 0
+    },
+    "publicLinks": {
+      "exitCode": 0
+    }
+  },
+  "qualified": [
+    "The actual existing /api/agents/{agentId}/event entry point negotiates company ownership explicitly while preserving project webhook status/payload behavior.",
+    "Only a verified global personal user with agents:trigger and assignments:submit may use this branch; current user company read/submit/update authority remains authoritative. Project/librarian/agent tokens cannot impersonate a user.",
+    "The exact closed version-one company envelope is generated from the real Zod input schema into OpenAPI and checked on the actual owning HTTP request. A streaming 32 KiB bound precedes UTF-8 JSON parsing.",
+    "Server-user/company/professional endpoint identity survives token rotation; canonical same-key locking and digest guarding create one assignment/Run for concurrent deliveries and refuse changed content.",
+    "Manual and webhook intake now share the existing atomic canonical receipt, native Run/session/placement/link transaction and pooled host activation. Original manual identity and input bytes are unchanged.",
+    "Actual standalone and result-only coordinator webhook paths use default native drivers, real supervisor and controlled ACP processes and finish with required valid results without project or task records.",
+    "An independent key creates separate Pending work under real host pressure with no ACP effects, then replay admits that same Run after release. One original delivery has exactly one create/prompt pair.",
+    "Missing scopes, malformed key/envelope, caller attribution, unavailable owned binding, oversized streamed body, revoked token and revoked current user read authority explicitly refuse.",
+    "Unknown owner negotiation refuses before legacy project launch; project tokens cannot opt into company user intake. Existing project event/cron/Flow and populated migration/deletion regression remains green.",
+    "English and Russian public integration guides document prerequisites, exact input, delivery identity and failure handling; both navigation/build and link/anchor checks pass."
+  ],
+  "limits": [
+    "T22 remains open for legacy manual/task-comment and project invocation adaptation. Actual agent-principal delegation is governed by T27, not personal-token impersonation.",
+    "Company source settings/routes remain T37. Origin destination is frozen as the requesting user Inbox, while actual durable result delivery is T25.",
+    "Controlled ACP platform qualification does not establish real-model, installable stand specialist, target restart, independent health verification, pilot or production readiness.",
+    "No new migration, execution engine, scheduler, attempt ledger, remote commit, push or deployment was introduced.",
+    "The legacy project webhook fixture still uses its existing controlled host seam; real native standalone/coordinator paths are separately qualified in this same gate."
+  ],
+  "sourceSha256": {
+    "web/app/api/agents/[agentId]/event/route.ts": "47be7398fc71a1b6d4fdb9d43ad5b4be6210cb8a7fa40a4c2b6c600d86eaf789",
+    "web/lib/agents/company-webhook-http.ts": "3f26af6cdd4700dd0f35d1899da4123e90086c88aa460860fbd8fac68c9e85f0",
+    "web/lib/specialist-assignments/company-webhook-intake.ts": "6c69dfb6427ecb5f2c1444beafabc6195d2a89191556758b53d0f8dece2b0e21",
+    "web/lib/specialist-assignments/company-webhook-types.ts": "453034287f899cd49c9aa9c41f02c28429073089dd7c5b4f39ae7414a591f7a6",
+    "web/lib/specialist-assignments/company-request-intake.ts": "307d361a466b1ba4f7379a1b3399ae09827b7bf2322f87b4e632fc5c4fbe9d90",
+    "web/lib/specialist-assignments/company-manual-intake.ts": "50c6463fb662018df186fc1451dbfb448cea8ba84430a76b7059ba6c525dcea3",
+    "web/lib/specialist-assignments/external.ts": "24b5eae778c2446fbbf1c9126f7212b750ce3da5b3b34d9c18b67b5149c63ffa",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "ce271457e0e2d8898796db097ccaea2aa6e385d7deb7df8f8c158c16c30b1f62",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "2bc2a740ac2033b1af74b7c1e7c94d2df716ba2492e24819ed3788e92fd833bb",
+    "web/app/api/agents/[agentId]/event/__tests__/route.integration.test.ts": "5f0436eaeea4f06c72a6af0505caf253623d02fb48b278ab84919d2a9f063da5",
+    "docs/api/web.openapi.yaml": "c0116b9e41e7ed7f349c4bbb23dfa4f63102688247fbcf9e69424964e80eb51e"
+  }
+}

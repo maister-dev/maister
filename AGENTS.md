@@ -182,6 +182,7 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | `web/lib/specialist-assignments/store.ts` | Durable company/project assignment heads, frozen input history, current authority, CAS and existing-run links |
 | `web/lib/agents/company-cron-dispatch.ts` | Bounded company lane in the existing registered agent tick; exact native source/Run receipts, current-authority cron enablement and owner-aware recovery |
 | `web/lib/agents/company-event-dispatch.ts` | Native company event adapter in the registered consumer; reviewed source creation, exact receipts, source-sharing grants and inherited event-chain bounds |
+| `web/lib/agents/company-webhook-http.ts` | Authenticated company branch of the existing inbound agent event route; versioned bounded envelope and canonical delivery receipt |
 | `web/lib/specialist-assignments/company-trigger-intake.ts` | Shared transactional cron/event intake and native reservation; source adapters validate original identity and inherited restrictions |
 | `web/lib/run-results/operational-projection.ts` | Shared operational diagnostic projection for run details, collect and automation history |
 | `web/lib/gc/operational-disposition.ts` | Durable operational cleanup through existing workspace lifecycle claims |

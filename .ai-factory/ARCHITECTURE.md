@@ -253,8 +253,11 @@ web/lib/supervisor-client ──HTTP──► supervisor/src/http-api  ──►
   The registered event consumer composes its existing project adapter with native
   company event intake. Native cron/event creation shares source receipts, current
   authority and reviewed binding validation. Event enablement additionally requires
-  the receiving agent's current assignment-read grant and reviewed limit. Webhook
-  qualification remains open; no parallel clock or attempt ledger is introduced.
+  the receiving agent's current assignment-read grant and reviewed limit. The
+  existing inbound event route negotiates a bounded company webhook envelope;
+  actual personal-user attribution and canonical receipt identity survive token
+  rotation, using the same native transaction as manual work. No parallel clock
+  or attempt ledger is introduced.
   Verified assignment acceptance retains its gate; native company execution is implemented.
 - ✅ Server Action (`app/.../actions.ts`) imports from `lib/*`.
 - ✅ `lib/supervisor-client.ts` imports the wire error taxonomy plus a small set

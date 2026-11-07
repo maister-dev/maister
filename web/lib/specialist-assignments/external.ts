@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { AssignmentAction } from "./access";
+import type { TokenActor } from "@/lib/tokens/verify";
 
 import { NextResponse } from "next/server";
 
@@ -22,18 +23,7 @@ export async function handlePersonalAssignmentExt(
     request,
     { scopeLabel, endpoint, method: request.method },
     async ({ actor }) => {
-      if (
-        actor.tokenKind !== "user" ||
-        actor.ownerUserId === null ||
-        actor.projectId !== null
-      )
-        throw new MaisterError(
-          "UNAUTHORIZED",
-          "Specialist manual requests require a personal user token",
-          { details: { reason: "personal_assignment_token_required" } },
-        );
-
-      return work(actor.ownerUserId);
+      return work(requirePersonalAssignmentUser(actor));
     },
     (error) => {
       const response = knowledgeErrorResponse(error, endpoint);
@@ -46,4 +36,22 @@ export async function handlePersonalAssignmentExt(
         : response;
     },
   );
+}
+
+/** A bearer may act as a user only when its verified kind and owner actually identify that user. */
+export function requirePersonalAssignmentUser(actor: TokenActor): string {
+  if (
+    actor.tokenKind !== "user" ||
+    actor.ownerUserId === null ||
+    actor.projectId !== null
+  )
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "Specialist user requests require a global personal user token",
+      {
+        details: { reason: "personal_assignment_token_required" },
+      },
+    );
+
+  return actor.ownerUserId;
 }

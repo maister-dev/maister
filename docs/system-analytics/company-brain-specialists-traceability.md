@@ -33,11 +33,11 @@
 | CBS-01 | [specialist-runtime](./specialist-runtime.md) | T19,T19.1 | `IT-CBS-01` — `web/lib/agents/__tests__/effective.integration.test.ts` (web integration) | Planned |
 | CBS-02 | [specialist-runtime](./specialist-runtime.md) | T19,T20,T21 | `IT-CBS-02` — `web/lib/agents/__tests__/company-runtime.integration.test.ts` (web integration) | Planned |
 | CBS-03 | [specialist-runtime](./specialist-runtime.md) | T19.1,T20.1 | `IT-CBS-03` — `web/lib/flows/graph/__tests__/company-runtime.integration.test.ts` (web integration) | Planned |
-| CBS-04 | [specialist-runtime](./specialist-runtime.md) | T19.1,T22.1 | `IT-CBS-04` — `web/lib/scheduler/__tests__/company-agent-tick.integration.test.ts` (web integration) | Planned |
+| CBS-04 | [specialist-runtime](./specialist-runtime.md) | T19.1,T22.1 | `IT-CBS-04` — `web/lib/agents/__tests__/company-agent-context.integration.test.ts` (web integration) | Implemented |
 | CBS-05 | [specialist-runtime](./specialist-runtime.md) | T20,T20.1,T27 | `IT-CBS-05` — `web/lib/services/__tests__/company-scope-admission.integration.test.ts` (web integration) | Planned |
 | EDGE-CBS-01 | [specialist-runtime](./specialist-runtime.md) | T19,T20,T21 | `IT-CBS-02` — `web/lib/agents/__tests__/company-runtime.integration.test.ts` (web integration) | Planned |
 | EDGE-CBS-02 | [specialist-runtime](./specialist-runtime.md) | T19.1,T20.1 | `IT-CBS-03` — `web/lib/flows/graph/__tests__/company-runtime.integration.test.ts` (web integration) | Planned |
-| EDGE-CBS-03 | [specialist-runtime](./specialist-runtime.md) | T19.1,T22.1 | `IT-CBS-04` — `web/lib/scheduler/__tests__/company-agent-tick.integration.test.ts` (web integration) | Planned |
+| EDGE-CBS-03 | [specialist-runtime](./specialist-runtime.md) | T19.1,T22.1 | `IT-CBS-04` — `web/lib/agents/__tests__/company-agent-context.integration.test.ts` (web integration) | Implemented |
 | EDGE-CBS-04 | [specialist-runtime](./specialist-runtime.md) | T20,T20.1,T27 | `IT-CBS-05` — `web/lib/services/__tests__/company-scope-admission.integration.test.ts` (web integration) | Planned |
 | CBA-01 | [specialist-assignments](./specialist-assignments.md) | T18,T22 | `IT-CBA-01` — `web/lib/specialist-assignments/__tests__/store.integration.test.ts` (web integration) | Planned |
 | CBA-02 | [specialist-assignments](./specialist-assignments.md) | T22,T22.1,T26 | `IT-CBA-02` — `web/lib/specialist-assignments/__tests__/intake.integration.test.ts` (web integration) | Planned |
