@@ -132,6 +132,7 @@ import { POST as externalAssignmentPost } from "@/app/api/v1/ext/specialist-assi
 import { GET as externalAssignmentGet } from "@/app/api/v1/ext/specialist-assignments/[assignmentId]/route";
 import { issueUserAccessToken, issueToken } from "@/lib/tokens/issue";
 import { createCompanyCronSchedule } from "@/lib/agents/company-schedules";
+import { createCompanyEventSchedule } from "@/lib/agents/company-event-schedules";
 import { resolveCompanyEventChainDepth } from "@/lib/agents/chain-depth";
 import { runSchedulerTick } from "@/lib/scheduler/tick-service";
 import {
@@ -674,6 +675,108 @@ it("IT-CBS-04 completes company HTTP and registered cron intake through the exis
       },
     );
 
+    const eventSourceRequest = {
+      owner: { kind: "company", companyId: request.companyId } as const,
+      specialistBindingId: eventBinding.specialist.bindingId,
+      eventKinds: ["run.done"] as ["run.done"],
+      enabled: true,
+      idempotencyKey: randomUUID(),
+    };
+    const eventContract: { components: { schemas: Record<string, object> } } =
+      parse(await readFile(resolve("../docs/api/web.openapi.yaml"), "utf8"));
+    const validateEventSource = new Ajv({
+      strict: false,
+      validateFormats: false,
+    }).compile({
+      components: eventContract.components,
+      ...eventContract.components.schemas.CBCompanyEventScheduleInput,
+    });
+
+    expect(
+      validateEventSource(eventSourceRequest),
+      JSON.stringify(validateEventSource.errors),
+    ).toBe(true);
+    for (const invalid of [
+      { ...eventSourceRequest, eventKinds: [] },
+      { ...eventSourceRequest, eventKinds: ["run.done", "run.done"] },
+      { ...eventSourceRequest, eventKinds: ["task.created"] },
+      { ...eventSourceRequest, eventKinds: ["agent.activity_changed"] },
+      { ...eventSourceRequest, requestAtLaunch: "untrusted recurring input" },
+      { ...eventSourceRequest, permissions: ["assignments:read"] },
+    ]) {
+      expect(validateEventSource(invalid)).toBe(false);
+      await expect(
+        createCompanyEventSchedule(db, userId, invalid),
+      ).rejects.toMatchObject({ code: "CONFIG" });
+    }
+    await expect(
+      createCompanyEventSchedule(db, userId, eventSourceRequest),
+    ).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+      details: { reason: "company_event_source_sharing_required" },
+    });
+    await createCompanyGrants(db, administratorId, {
+      principalKind: "agent",
+      principalId: roleId,
+      actions: ["assignments:read"],
+      idempotencyKey: randomUUID(),
+    });
+    await expect(
+      createCompanyEventSchedule(db, userId, {
+        ...eventSourceRequest,
+        specialistBindingId: binding.specialist.bindingId,
+        idempotencyKey: randomUUID(),
+      }),
+    ).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+      details: { reason: "company_event_source_sharing_required" },
+    });
+    const draftRequest = {
+      ...eventSourceRequest,
+      enabled: false,
+      eventKinds: ["run.failed", "run.done"] as ["run.failed", "run.done"],
+      idempotencyKey: randomUUID(),
+    };
+    const draft = await createCompanyEventSchedule(db, userId, draftRequest);
+    const draftReplay = await createCompanyEventSchedule(db, userId, {
+      ...draftRequest,
+      eventKinds: ["run.done", "run.failed"],
+    });
+
+    expect(draftReplay).toEqual({ ...draft, duplicate: true });
+    expect(draftRequest.eventKinds).toEqual(["run.failed", "run.done"]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT event_match,request_at_launch,cron_expr,timezone,next_fire_at,enabled FROM agent_schedules WHERE id=$1",
+          [draft.scheduleId],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        event_match: { kinds: ["run.done", "run.failed"] },
+        request_at_launch: null,
+        cron_expr: null,
+        timezone: null,
+        next_fire_at: null,
+        enabled: false,
+      },
+    ]);
+    await expect(
+      createCompanyEventSchedule(db, userId, {
+        ...draftRequest,
+        eventKinds: ["run.done"],
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(
+      createCompanyCronSchedule(db, userId, {
+        owner: draftRequest.owner,
+        specialistBindingId: draftRequest.specialistBindingId,
+        cronExpr: "*/5 * * * *",
+        timezone: "UTC",
+        idempotencyKey: draftRequest.idempotencyKey,
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
     await createCompanyGrants(db, administratorId, {
       principalKind: "agent",
       principalId: "rah:event-observer",
@@ -684,27 +787,40 @@ it("IT-CBS-04 completes company HTTP and registered cron intake through the exis
 
     let malformedEventSource = "";
 
-    for (let subscriber = 0; subscriber < 3; subscriber++) {
-      const draft = await createCompanyCronSchedule(db, userId, {
-        owner: { kind: "company", companyId: request.companyId },
-        specialistBindingId: eventBinding.specialist.bindingId,
-        cronExpr: "*/5 * * * *",
-        timezone: "UTC",
-        enabled: false,
+    for (let subscriber = 0; subscriber < 2; subscriber++) {
+      const sourceRequest = {
+        ...eventSourceRequest,
         idempotencyKey: randomUUID(),
-      });
+      };
+      const receipts = await Promise.all([
+        createCompanyEventSchedule(db, userId, sourceRequest),
+        createCompanyEventSchedule(db, userId, sourceRequest),
+      ]);
 
-      // Prospective event qualification uses only the existing owned source table.
-      await database.pool.query(
-        "UPDATE agent_schedules SET trigger_type='event',cron_expr=NULL,timezone=NULL,next_fire_at=NULL,event_match=$2::jsonb,enabled=true,company_config_revision=company_config_revision+1 WHERE id=$1",
-        [
-          draft.scheduleId,
-          JSON.stringify({ kinds: subscriber === 2 ? 7 : ["run.done"] }),
-        ],
+      expect(new Set(receipts.map((receipt) => receipt.scheduleId)).size).toBe(
+        1,
       );
-      if (subscriber === 2) malformedEventSource = draft.scheduleId;
-      else eventSources.push(draft.scheduleId);
+      expect(receipts.map((receipt) => receipt.duplicate).sort()).toEqual([
+        false,
+        true,
+      ]);
+      eventSources.push(receipts[0].scheduleId);
     }
+    const malformedDraft = await createCompanyCronSchedule(db, userId, {
+      owner: { kind: "company", companyId: request.companyId },
+      specialistBindingId: eventBinding.specialist.bindingId,
+      cronExpr: "*/5 * * * *",
+      timezone: "UTC",
+      enabled: false,
+      idempotencyKey: randomUUID(),
+    });
+
+    // Only corruption qualification writes malformed owned source metadata directly.
+    await database.pool.query(
+      "UPDATE agent_schedules SET trigger_type='event',cron_expr=NULL,timezone=NULL,next_fire_at=NULL,event_match=$2::jsonb,enabled=true,company_config_revision=company_config_revision+1 WHERE id=$1",
+      [malformedDraft.scheduleId, JSON.stringify({ kinds: 7 })],
+    );
+    malformedEventSource = malformedDraft.scheduleId;
     await ensureConsumerRows(db, DOMAIN_EVENT_CONSUMERS);
     const hosts = createExecutionHosts({
       db,

@@ -39076,3 +39076,60 @@ components:
         for the server-recorded creator. Each invocation rechecks current authority.
         Source configuration cannot mint execution permissions.
       x-implementation-status: Designed
+    CBCompanyEventScheduleInput:
+      type: object
+      additionalProperties: false
+      required:
+        - owner
+        - specialistBindingId
+        - eventKinds
+        - idempotencyKey
+      properties:
+        owner:
+          $ref: "#/components/schemas/CBCompanyOwner"
+        specialistBindingId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        coordinatorFlowBindingId:
+          type: string
+          nullable: true
+          default: null
+          minLength: 1
+          maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        eventKinds:
+          type: array
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+          items:
+            type: string
+            enum:
+              - run.done
+              - run.failed
+              - run.crashed
+              - run.abandoned
+              - run.needs_input
+              - run.escalated
+              - run.operational_attention_acknowledged
+              - run.operational_cleanup_changed
+        enabled:
+          type: boolean
+          default: false
+        idempotencyKey:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+      description:
+        Reviewed native company event source on the existing schedule table.
+        Event kinds form a distinct unordered set, normalized before receipt digesting.
+        Source creation and dispatch recheck current authority. Enablement requires
+        a declared domain_event trigger, enabled reviewed specialist/coordinator,
+        current creator management/read and assignment read/submit/update authority,
+        and the responsible agent's current assignments:read grant plus reviewed limit.
+        No raw event payload, recurring request, requester or permissions are accepted.
+        Public source configuration routes remain Designed.
+      x-implementation-status: Designed

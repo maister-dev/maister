@@ -1,0 +1,81 @@
+{
+  "task": "T22.1",
+  "date": "2026-11-07",
+  "slice": "Native reviewed company event source creation and actual coordinator event dispatch",
+  "baseCommit": "389c84e69",
+  "status": "Native event creation and registered standalone/coordinator dispatch qualified; webhook intake and full T22/T22.1 remain open",
+  "red": {
+    "case": "Actual native event source creation refused behind its explicit unqualified gate",
+    "testsPassed": 36,
+    "testsFailed": 1,
+    "exitCode": 1
+  },
+  "gates": {
+    "combinedIntegration": {
+      "tests": 160,
+      "files": 7,
+      "durationSeconds": 57.31,
+      "exitCode": 0
+    },
+    "finalCoordinatorReplay": {
+      "tests": 45,
+      "files": 1,
+      "durationSeconds": 35.05,
+      "exitCode": 0,
+      "note": "Additional actual cursor rewind, inherited input and exact command assertions after the combined gate; production source unchanged"
+    },
+    "webUnit": {
+      "tests": 9318,
+      "files": 889,
+      "durationSeconds": 24.06,
+      "exitCode": 0
+    },
+    "types": {
+      "exitCode": 0
+    },
+    "lint": {
+      "exitCode": 0
+    },
+    "format": {
+      "exitCode": 0
+    },
+    "contracts": {
+      "exitCode": 0
+    },
+    "docsAndErd": {
+      "exitCode": 0,
+      "tables": 172
+    }
+  },
+  "qualified": [
+    "Closed native event source grammar and matching OpenAPI reject unsupported/internal/project event kinds, duplicates, empty kinds, recurring text and permission overrides.",
+    "Shared source creation retains the original cron key-lock namespace, immutable receipt, exact digest bytes and current creator/binding/provider authority checks; no parallel scheduler or ledger.",
+    "Direct event insertion retains null recurring/cron/next-fire fields. Disabled drafts need no receiving grant; enabled work requires current agent assignments:read and the reviewed action limit independently.",
+    "Concurrent exact creation returns one source with one duplicate. Copied sorted kinds preserve caller input; reordered sets replay, changed configuration and cross-kind key reuse conflict.",
+    "Positive standalone source fixtures now use actual enabled native creation before registered event delivery, rather than prospective SQL setup. Only malformed owned corruption setup uses direct SQL.",
+    "A real native coordinator cron producer emits run.done; a distinct explicitly configured coordinator event recipient uses the default Flow driver, real supervisor and controlled ACP process, reaches Done with required valid findings, exact event origin/input, inherited restrictions and chain depth one.",
+    "Actual consumer cursor rewind redelivers the producing event; original Run/attempt is retained and exactly one session.create and one session.prompt exist.",
+    "Current populated upgrade, historical project trigger, main-only Brain-independent project deletion and native assignment/lifecycle regressions remain green. No migration changes were required."
+  ],
+  "corrections": [
+    "The new coordinator fixture initially omitted its reviewed runner and correctly received EXECUTOR_UNAVAILABLE; it now explicitly selects the existing qualified runner, without changing runtime refusal.",
+    "A selected owning test required a previously created host directory. The fixture capability writer now creates its own directory before writing.",
+    "The first sandboxed unit/contract attempts could not open required loopback/tsx sockets. The existing complete gates passed with authorized local fixture access; no runtime assertion was relaxed."
+  ],
+  "limits": [
+    "Public company source settings/routes remain T37.",
+    "Webhook adapters, legacy manual/mention adapters, clarification and governed agent-principal delegation remain open under their plan tasks.",
+    "Controlled ACP platform qualification is separate from real-model and actual installable stand-package qualification. No stand restart, pilot, deployment or remote mutation is claimed.",
+    "Full global integration last completed in T21; this source checkpoint has full web unit plus its combined owning integration and final strengthened coordinator replay gate."
+  ],
+  "sourceSha256": {
+    "web/lib/agents/company-event-schedules.ts": "9d59bd1eb900a8c134f798dfa9c7ef21cf77a864844e1bfcecdfb465866c1944",
+    "web/lib/agents/company-source-creation.ts": "a4929369b19a3024002a7990055083e73111d6b8317a673eb8f47ac78b59edb7",
+    "web/lib/agents/company-schedules.ts": "9d6e2e1f7681868aae6ea75a2ace8153d22c7cc8457025a82f5ec1a20b805a47",
+    "web/lib/agents/company-schedule-types.ts": "4cb2cddbdb203df7139308deab49495bc640e2effe33bf24ad1b3c0d9e918c2a",
+    "web/lib/domain-events/taxonomy.ts": "ce0795856fc1807cbed25b3db2599f25ee3e7ff926f0f821ab334554e3528584",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "6c79246c3383fededa14f7312d623d54539ebcb8529efd3d398414bea47e85f5",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "9ad2eb25a4451751c577ac8188813eb97ceb9b62df6ea1fc0d42fd905d81a9bb",
+    "docs/api/web.openapi.yaml": "38519c395d0d04706ee217d1029c79e296a69950ef491023a8890fb8804c0ff3"
+  }
+}

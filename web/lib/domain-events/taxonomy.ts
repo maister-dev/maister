@@ -61,6 +61,18 @@ export const DOMAIN_EVENT_KINDS = [
 
 export type DomainEventKind = (typeof DOMAIN_EVENT_KINDS)[number];
 
+/** Native company subscriptions accept only Run facts supported by the company event owner CHECK. */
+export const COMPANY_AGENT_EVENT_KINDS = [
+  "run.done",
+  "run.failed",
+  "run.crashed",
+  "run.abandoned",
+  "run.needs_input",
+  "run.escalated",
+  "run.operational_attention_acknowledged",
+  "run.operational_cleanup_changed",
+] as const satisfies readonly DomainEventKind[];
+
 export function isDomainEventKind(value: string): value is DomainEventKind {
   return (DOMAIN_EVENT_KINDS as readonly string[]).includes(value);
 }

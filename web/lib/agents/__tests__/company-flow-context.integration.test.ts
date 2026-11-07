@@ -104,6 +104,12 @@ import { POST as respondHitlPost } from "@/app/api/runs/[runId]/hitl/[hitlReques
 import { GET as retainedResultGet } from "@/app/api/runs/[runId]/results/[revision]/route";
 import { loadRetainedResultForUser } from "@/lib/run-results/retained-result";
 import { createCompanyCronSchedule } from "@/lib/agents/company-schedules";
+import { createCompanyEventSchedule } from "@/lib/agents/company-event-schedules";
+import {
+  ensureConsumerRows,
+  dispatchDomainEvents,
+} from "@/lib/domain-events/dispatch";
+import { DOMAIN_EVENT_CONSUMERS } from "@/lib/domain-events/consumers";
 import { runSchedulerTick } from "@/lib/scheduler/tick-service";
 import { reserveCompanyManualAssignment } from "@/lib/specialist-assignments/company-manual-intake";
 import { loadNativeInputForUser } from "@/lib/orchestrator/native-input-read";
@@ -126,6 +132,7 @@ import {
 } from "@/test-support/real-supervisor";
 import {
   runs,
+  domainEvents,
   runSessions,
   platformAcpRunners,
   platformRuntimeSettings,
@@ -254,6 +261,8 @@ const dialogueManifest = {
 async function writeCompanyCapabilityCache(hostRoot: string): Promise<void> {
   const checkedAt = new Date().toISOString();
 
+  await mkdir(hostRoot, { recursive: true });
+
   await writeFile(
     join(hostRoot, "adapter-smoke-cache.json"),
     JSON.stringify({
@@ -355,7 +364,7 @@ beforeAll(async () => {
   await writeFile(
     rolePath,
     (await readFile(rolePath, "utf8"))
-      .replace("  - flow", "  - flow\n  - cron")
+      .replace("  - flow", "  - flow\n  - cron\n  - domain_event")
       .replace(
         "workspace: none",
         "specialist:\n  responsibilities: [Coordinate authorized diagnosis]\n  targetClasses: [stand]\nflow: rah-control\nworkspace: none",
@@ -405,13 +414,53 @@ beforeAll(async () => {
       "flow: rah-company-dialogue",
     ),
   );
+  const eventFlowPath = join(source, "flows/rah-company-event");
+
+  await cp(join(source, "flows/rah-control"), eventFlowPath, {
+    recursive: true,
+  });
+  await writeFile(
+    join(eventFlowPath, "flow.yaml"),
+    stringify({
+      ...manifest,
+      name: "rah-company-event",
+      nodes: [
+        {
+          ...manifest.nodes[0],
+          action: {
+            prompt:
+              "Inspect the authorized native event {{ assignment.input }}.\nfixture-output:" +
+              JSON.stringify({
+                bytes: 0,
+                text:
+                  "```json maister:output\n" +
+                  JSON.stringify({
+                    schemaVersion: 1,
+                    findings: [],
+                    knowledgeProposals: [],
+                    selection: [],
+                  }) +
+                  "\n```",
+              }),
+          },
+        },
+      ],
+    }),
+  );
+  await writeFile(
+    join(source, "maister-agents/event-coordinator.md"),
+    (await readFile(rolePath, "utf8")).replace(
+      "flow: rah-control",
+      "flow: rah-company-event",
+    ),
+  );
   const packagePath = join(source, "maister-package.yaml");
 
   await writeFile(
     packagePath,
     (await readFile(packagePath, "utf8")).replace(
       "flows:\n",
-      "flows:\n  - id: rah-company-dialogue\n    path: flows/rah-company-dialogue\n",
+      "flows:\n  - id: rah-company-dialogue\n    path: flows/rah-company-dialogue\n  - id: rah-company-event\n    path: flows/rah-company-event\n",
     ),
   );
   await initRepo(source);
@@ -2614,6 +2663,78 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
         )
       ).rows,
     ).toEqual([{ count: 0 }]);
+    const producingCoordinator = await getCompanyFlowBinding(
+      database.db,
+      requesterId,
+      request.coordinatorBindingId,
+    );
+    const eventDefinition = await resolveInstalledAgentDefinition(database.db, {
+      agentId: "rah:event-coordinator",
+      packageInstallId: preparedAssignment.standingDefinition.packageInstallId,
+    });
+    const eventFlow = (
+      await database.pool.query<{ id: string; manifest_digest: string }>(
+        "SELECT id,manifest_digest FROM flow_revisions WHERE flow_ref_id='rah-company-event' AND resolved_revision=$1",
+        [preparedAssignment.standingDefinition.packageRevision],
+      )
+    ).rows[0]!;
+    const eventRole = await createCompanySpecialistBinding(
+      database.db,
+      requesterId,
+      "rah:event-coordinator",
+      {
+        owner: { kind: "company", companyId: request.companyId },
+        packageInstallId: eventDefinition.packageInstallId,
+        packageRevision: eventDefinition.resolvedRevision!,
+        definitionSha256: agentDefinitionSha256(eventDefinition.parsed),
+        coordinatorFlowRevisionId: eventFlow.id,
+        runnerId: producingCoordinator.configuration.specialist.runnerId,
+        enabled: true,
+        configuration: {},
+        grantActions: [
+          "knowledge:read",
+          "knowledge:propose",
+          "assignments:read",
+        ],
+        idempotencyKey: randomUUID(),
+      },
+    );
+    const eventCoordinator = await createCompanyFlowBinding(
+      database.db,
+      requesterId,
+      {
+        owner: eventRole.specialist.owner,
+        specialistBindingId: eventRole.specialist.bindingId,
+        specialistRevision: eventRole.specialist.configRevision,
+        flowRevisionId: eventFlow.id,
+        manifestSha256: eventFlow.manifest_digest,
+        execution: { workspace: "none", completion: "result" },
+        enabled: true,
+        roleMappings: {},
+        idempotencyKey: randomUUID(),
+      },
+    );
+
+    await createCompanyGrants(database.db, administratorId, {
+      principalKind: "agent",
+      principalId: "rah:event-coordinator",
+      actions: ["assignments:read", "knowledge:read", "knowledge:propose"],
+      idempotencyKey: randomUUID(),
+    });
+    const eventSource = await createCompanyEventSchedule(
+      database.db,
+      requesterId,
+      {
+        owner: { kind: "company", companyId: request.companyId },
+        specialistBindingId: eventRole.specialist.bindingId,
+        coordinatorFlowBindingId: eventCoordinator.binding.id,
+        eventKinds: ["run.done"],
+        enabled: true,
+        idempotencyKey: randomUUID(),
+      },
+    );
+
+    await ensureConsumerRows(database.db, DOMAIN_EVENT_CONSUMERS);
     const cronRequest =
       "Inspect the configured target through its pinned native coordinator.\nfixture-output:" +
       JSON.stringify({
@@ -2689,6 +2810,110 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
         )
       ).rows,
     ).toEqual([{ validity: "valid", value: output }]);
+    const [graphEvent] = await database.db
+      .select()
+      .from(domainEvents)
+      .where(
+        sql`${domainEvents.runId}=${graphAttempt[0].reserved_run_id} AND ${domainEvents.kind}='run.done'`,
+      );
+
+    expect(graphEvent).toBeDefined();
+    expect(await dispatchDomainEvents({ db: database.db })).toMatchObject({
+      failures: 0,
+    });
+    const eventAttempt = (
+      await database.pool.query(
+        "SELECT id,reserved_run_id,run_id,outcome FROM agent_trigger_attempts WHERE schedule_id=$1 AND trigger_event_id=$2",
+        [eventSource.scheduleId, graphEvent!.id],
+      )
+    ).rows;
+
+    expect(eventAttempt).toHaveLength(1);
+    expect(eventAttempt[0]).toMatchObject({
+      run_id: eventAttempt[0].reserved_run_id,
+      outcome: "queued",
+    });
+    await vi.waitFor(
+      async () => {
+        expect(
+          (
+            await database.pool.query(
+              "SELECT status,run_kind,project_id,task_id,flow_id,company_id,agent_chain_depth,scheduled_request_snapshot FROM runs WHERE id=$1",
+              [eventAttempt[0].reserved_run_id],
+            )
+          ).rows,
+        ).toEqual([
+          {
+            status: "Done",
+            run_kind: "flow",
+            project_id: null,
+            task_id: null,
+            flow_id: null,
+            company_id: request.companyId,
+            agent_chain_depth: 1,
+            scheduled_request_snapshot: null,
+          },
+        ]);
+      },
+      { timeout: 30000, interval: 25 },
+    );
+    expect(
+      (
+        await database.pool.query(
+          "SELECT validity,value FROM run_results WHERE run_id=$1",
+          [eventAttempt[0].reserved_run_id],
+        )
+      ).rows,
+    ).toEqual([{ validity: "valid", value: output }]);
+    const eventInput = (
+      await database.pool.query(
+        "SELECT assignment.origin,input.objective_input,input.source_restrictions,(SELECT knowledge_access->'restrictions' FROM runs WHERE id=$2) AS original_restrictions FROM specialist_run_links link JOIN specialist_assignments assignment ON assignment.id=link.assignment_id JOIN specialist_input_revisions input ON input.assignment_id=link.assignment_id AND input.revision=link.input_revision WHERE link.run_id=$1",
+        [eventAttempt[0].reserved_run_id, graphAttempt[0].reserved_run_id],
+      )
+    ).rows[0]!;
+
+    expect(eventInput.origin).toEqual({
+      kind: "event",
+      eventId: String(graphEvent!.id),
+      subscriptionId: eventSource.scheduleId,
+    });
+    expect(eventInput.source_restrictions).toEqual(
+      eventInput.original_restrictions,
+    );
+    expect(JSON.parse(eventInput.objective_input.input)).toEqual({
+      schemaVersion: 1,
+      event: {
+        id: String(graphEvent!.id),
+        kind: "run.done",
+        runId: graphAttempt[0].reserved_run_id,
+      },
+    });
+    await database.pool.query(
+      "UPDATE domain_event_consumers SET cursor_event_id=$1::bigint-1 WHERE consumer_id='agent_triggers'",
+      [graphEvent!.id],
+    );
+    expect(await dispatchDomainEvents({ db: database.db })).toMatchObject({
+      failures: 0,
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT kind,count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt') GROUP BY kind ORDER BY kind",
+          [eventAttempt[0].reserved_run_id],
+        )
+      ).rows,
+    ).toEqual([
+      { kind: "session.create", count: 1 },
+      { kind: "session.prompt", count: 1 },
+    ]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM agent_trigger_attempts WHERE schedule_id=$1 AND trigger_event_id=$2",
+          [eventSource.scheduleId, graphEvent!.id],
+        )
+      ).rows,
+    ).toEqual([{ count: 1 }]);
     expect(
       (
         await database.pool.query(
