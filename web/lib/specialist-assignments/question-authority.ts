@@ -19,6 +19,7 @@ import {
   resolveAssignmentContextPrincipal,
 } from "./context-access";
 
+import { nodePermissionSourceSchema } from "@/lib/execution-host/flow-permission-source";
 import { lockKnowledgeReadConsumer } from "@/lib/brain/knowledge-disclosure";
 import { authorizeSourceRestrictions } from "@/lib/brain/knowledge-restrictions";
 import { resolveKnowledgeRunIdentity } from "@/lib/brain/knowledge-run-identity";
@@ -107,6 +108,27 @@ export async function assertPendingAssignmentQuestion(
       "The question no longer names the waiting assignment and exact input",
       { details: { reason: "assignment_question_stale" } },
     );
+  const sourceRun = (
+    await tx.execute(
+      sql`SELECT run_kind FROM runs WHERE id=${question.runId} FOR SHARE`,
+    )
+  ).rows[0];
+  let nodeAttemptId: string | null = null;
+
+  if (sourceRun?.run_kind === "flow") {
+    const proof = nodePermissionSourceSchema.safeParse(
+      (question.schema as Readonly<{ flowQuestion?: unknown }> | null)
+        ?.flowQuestion,
+    );
+
+    if (!proof.success)
+      throw new MaisterError(
+        "CONFIG",
+        "Retained Flow clarification source is invalid",
+      );
+    nodeAttemptId = proof.data.nodeAttemptId;
+  }
+  await resolveKnowledgeRunIdentity(tx, question.runId, nodeAttemptId);
   let principal: ResolvedAssignmentContextPrincipal;
 
   if (subject.actor.kind === "user") {
@@ -119,19 +141,19 @@ export async function assertPendingAssignmentQuestion(
     const source: KnowledgePrincipal = {
       kind: "execution",
       runId: question.runId,
-      nodeAttemptId: null,
+      nodeAttemptId,
     };
     const consumer = await lockKnowledgeReadConsumer(tx, source);
     const resolved = await resolveKnowledgeRunIdentity(
       tx,
       question.runId,
-      null,
+      nodeAttemptId,
     );
 
-    if (resolved.runKind !== "agent")
+    if (resolved.runKind !== "agent" && resolved.runKind !== "flow")
       throw new MaisterError(
         "UNAUTHORIZED",
-        "The clarification source must retain its actual standalone appointment",
+        "The clarification source must retain its actual execution appointment",
       );
     principal = { identity: resolved.identity, source, consumer };
   }

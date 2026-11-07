@@ -9079,7 +9079,7 @@ paths:
           `runFlow`. `responded_at` is set only for the winning human answer;
           same-answer replay returns 200 with `idempotent:true` and the current
           source status. Stale/conflicting answers return 409.
-          Native standalone assignment subjects require no task. Their Inbox body
+          Native standalone and Flow-node assignment subjects require no task. Their Inbox body
           contains only `response`; the retained question supplies exact assignment,
           source input, business revision and stable delivery identity. Current human
           assignments:answer and complete source access remain required. The atomic
@@ -9089,7 +9089,10 @@ paths:
           current-authorized replay. Changed, stale, terminal or cancelled answers
           return 409; raw unsafe/deep/invalid required fields return 422, request
           bounds return 400 and oversized combined retained input returns 409.
-          No native question POST/facade or graph-subject readiness is implied.
+          Flow subjects preserve the existing node attempt, checkpoint source and typed
+          clarification resume. The ordinary scheduler claims a new epoch before
+          the exact answered input reaches the retained prompt owner. No native
+          question POST/facade or actual-package readiness is implied.
         - **hook_trip** (ADR-108): a guardrail-trip resume-or-abort, like
           `infra_recovery` / `budget_breach`. Human-actor-only (a machine/agent
           token is rejected 403 at the shared chokepoint — it can never dismiss

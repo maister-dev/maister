@@ -54,10 +54,7 @@ export { classifyRecover };
 export type { NodeKind, RecoverPlan } from "@/lib/runs/recover-classify";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { projects, runs, workspaces } = schemaModule as unknown as Record<
-  string,
-  any
->;
+const { runs, workspaces } = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -444,16 +441,13 @@ export async function driveResume(
       runKind: runs.runKind,
       currentStepId: runs.currentStepId,
       resumeTargetStepId: runs.resumeTargetStepId,
+      resumeStartedAt: runs.resumeStartedAt,
       projectId: runs.projectId,
       flowId: runs.flowId,
       flowRevisionId: runs.flowRevisionId,
       executionAssignmentId: runs.executionAssignmentId,
-      worktreePath: workspaces.worktreePath,
-      projectSlug: projects.slug,
     })
     .from(runs)
-    .innerJoin(workspaces, eq(workspaces.runId, runs.id))
-    .innerJoin(projects, eq(projects.id, runs.projectId))
     .where(eq(runs.id, runId));
   const run = rows[0];
 
@@ -474,6 +468,22 @@ export async function driveResume(
     );
 
     return { state: "unresumable" };
+  }
+
+  // An answered idle claim already authorized the parked graph visit. A crash
+  // recovery carries its separate resumeStartedAt intent and classification below.
+  if (run.status === "NeedsInput" && run.resumeStartedAt === null) {
+    try {
+      await runFlowFn(runId, { db, executionHosts: hosts });
+      log.info(
+        { runId, assignmentId: run.executionAssignmentId },
+        "answered idle Flow continued through its existing graph owner",
+      );
+
+      return { state: "resumed" };
+    } catch (error) {
+      return handleRecoverDispatchError(db, runId, error);
+    }
   }
 
   // Phase-1 set current_step_id to the recover target; fall back to the retained

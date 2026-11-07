@@ -60,6 +60,7 @@ import {
   type FlowPermissionOwner,
 } from "./graph/prompt-permission";
 
+import { appendAssignmentQuestionAnswerPrompt } from "@/lib/specialist-assignments/flow-question";
 import { appendSpecialistAssignmentContextPrompt } from "@/lib/specialist-assignments/projection";
 import {
   isResultProducerNode,
@@ -1454,9 +1455,20 @@ async function dispatchAgentStep(
         actionPrompt,
       )
     : actionPrompt;
+  const clarifiedPrompt =
+    ctx.nodeAttemptId &&
+    ctx.promptOwner?.variant === "node" &&
+    ctx.promptOwner.promptOrdinal > 0
+      ? await appendAssignmentQuestionAnswerPrompt(
+          ctx.db ?? getDb(),
+          ctx.runId,
+          ctx.nodeAttemptId,
+          contextualPrompt,
+        )
+      : contextualPrompt;
   const resolvedPrompt = ctx.resumeSessionId
-    ? RESUME_READONLY_LIFT + contextualPrompt
-    : contextualPrompt;
+    ? RESUME_READONLY_LIFT + clarifiedPrompt
+    : clarifiedPrompt;
 
   log.info(
     {

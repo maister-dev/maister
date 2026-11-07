@@ -847,6 +847,24 @@ it("IT-CBX-01 assignment-question migration preserves legacy task decisions with
         )
       ).rows[0]!.value,
     ).toEqual({ ...subjectUpgrade, specialist_answer: null });
+    const answerUpgrade = (
+      await legacy.pool.query(
+        "SELECT to_jsonb(question) AS value FROM hitl_requests question WHERE id=$1",
+        [questionId],
+      )
+    ).rows[0]!.value;
+
+    await legacy.db.transaction(async (tx) => {
+      await applyMainMigration(tx, "0264_specialist_flow_question");
+    });
+    expect(
+      (
+        await legacy.pool.query(
+          "SELECT to_jsonb(question) AS value FROM hitl_requests question WHERE id=$1",
+          [questionId],
+        )
+      ).rows[0]!.value,
+    ).toEqual(answerUpgrade);
     await expect(
       legacy.pool.query(
         "UPDATE hitl_requests SET specialist_answer='{}'::jsonb WHERE id=$1",

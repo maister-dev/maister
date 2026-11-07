@@ -71,6 +71,9 @@ import {
   captureOperationalGeneration,
 } from "../operational-integrity";
 
+import { recoverPendingAgentQuestions } from "@/lib/services/agent-question";
+import { readPromptRequest } from "@/lib/execution-host/command-request";
+import { createOrActivateAssignmentQuestion } from "@/lib/services/assignment-question";
 import { resolveKnowledgePrincipal } from "@/lib/brain/knowledge-access";
 import { generateToken } from "@/lib/tokens/secret";
 import { verifyToken } from "@/lib/tokens/verify";
@@ -118,7 +121,7 @@ import { loadNativeInputForUser } from "@/lib/orchestrator/native-input-read";
 import { NativeInputInspectionPanel } from "@/components/runs/native-input-inspection";
 import enMessages from "@/messages/en.json";
 import ruMessages from "@/messages/ru.json";
-import { tryStartRun } from "@/lib/scheduler";
+import { promoteNextPending, tryStartRun } from "@/lib/scheduler";
 import { disposeOperationalRun } from "@/lib/gc/operational-disposition";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { resumeRun } from "@/lib/runs/resume";
@@ -134,6 +137,8 @@ import {
 } from "@/test-support/real-supervisor";
 import {
   runs,
+  executionCommands,
+  executionHosts,
   domainEvents,
   runSessions,
   platformAcpRunners,
@@ -3059,6 +3064,451 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
     setDefaultTransportForTests(null);
   }
 }, 120000);
+
+it("IT-CBA-05 parks and resumes the same native company Flow node after an assignment clarification without losing its input or prompt owner", async () => {
+  const db: Db = database.db;
+  const hostRoot = join(root, "reservation-host");
+  const previousRuntimeRoot = process.env.MAISTER_RUNTIME_ROOT;
+  const previousSettings = (await db.select().from(platformRuntimeSettings))[0];
+  const runnerId = randomUUID();
+  const operatorId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+    [operatorId, `${operatorId}@example.test`],
+  );
+  const grants = await createCompanyGrants(db, administratorId, {
+    principalKind: "user",
+    principalId: operatorId,
+    actions: [
+      "assignments:read",
+      "assignments:update",
+      "assignments:answer",
+      "assignments:cancel",
+    ],
+    idempotencyKey: randomUUID(),
+  });
+
+  await db.insert(platformAcpRunners).values({
+    id: runnerId,
+    adapter: "claude",
+    capabilityAgent: "claude",
+    model: "flow-question-fixture",
+    provider: { kind: "anthropic" },
+    readinessStatus: "Ready",
+  });
+  await db
+    .insert(platformRuntimeSettings)
+    .values({ id: "singleton", defaultRunnerId: runnerId })
+    .onConflictDoUpdate({
+      target: platformRuntimeSettings.id,
+      set: { defaultRunnerId: runnerId },
+    });
+  vi.stubEnv("MAISTER_RUNTIME_ROOT", hostRoot);
+  await writeCompanyCapabilityCache(hostRoot);
+  const supervisor = await startRealSupervisor({
+    runtimeRoot: hostRoot,
+    workspaceRoots: [join(root, "worktrees")],
+    fixtureArgs: ["--hang", "--controlled-prompt", "--supports-resume"],
+    env: {
+      MAISTER_ADAPTER_SMOKE_CACHE_PATH: join(
+        hostRoot,
+        "adapter-smoke-cache.json",
+      ),
+    },
+  });
+  const restoreUrl = useRealSupervisorUrl(supervisor.url);
+  const worker = startProjectionWorker({ db, projectors: canonicalProjectors });
+  let runId: string | undefined;
+  let driver: Promise<unknown> | undefined;
+  let continuation: ReturnType<typeof startFlowContinuationWorker> | undefined;
+
+  setDefaultTransportForTests(null);
+  resetResolverForTests();
+  resetRegistrarStateForTests();
+  try {
+    const input = await createFreshCompanyFlowRequest();
+    const hosts = createExecutionHosts({
+      db,
+      transport: createLocalDirectTransport(),
+    });
+    const receipt = await reserveCompanyFlowRun(db, requesterId, input, hosts);
+
+    runId = receipt.runId;
+    expect(await tryStartRun(runId, { db })).toMatchObject({ started: true });
+    driver = runFlow(runId, {
+      db,
+      executionHosts: hosts,
+      runtimeRoot: hostRoot,
+    }).catch((error: unknown) => error);
+    await expect
+      .poll(
+        async () =>
+          (
+            await database.pool.query(
+              "SELECT count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind='session.prompt' AND owner_kind='flow_node_attempt' AND state='accepted'",
+              [runId],
+            )
+          ).rows[0].count,
+        { timeout: 30000, interval: 25 },
+      )
+      .toBe(1);
+    const original = (
+      await database.pool.query(
+        "SELECT id,node_id,attempt,action_prompt_ordinal,execution_assignment_id FROM node_attempts WHERE run_id=$1 AND status='Running'",
+        [runId],
+      )
+    ).rows[0];
+    const assignment = (
+      await database.pool.query(
+        "SELECT revision FROM specialist_assignments WHERE id=$1",
+        [input.assignmentId],
+      )
+    ).rows[0];
+    const questionBody = {
+      expectedRevision: assignment.revision,
+      inputRevision: 1,
+      question:
+        "Which configured component should this diagnostic node inspect?",
+      schema: {
+        schemaVersion: 1,
+        fields: [{ name: "component", type: "string", required: true }],
+      },
+      reTriggerMode: "agent",
+      idempotencyKey: randomUUID(),
+    };
+    const ask = () =>
+      createOrActivateAssignmentQuestion(
+        db,
+        { kind: "user", userId: operatorId },
+        input.assignmentId,
+        questionBody,
+        { executionHosts: hosts },
+      );
+    const question = await ask();
+
+    expect(question).toMatchObject({
+      sourceRunId: runId,
+      inputRevision: 1,
+      activationState: "active",
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT schema->'flowQuestion'->>'nodeAttemptId' AS node_attempt_id,task_id FROM hitl_requests WHERE id=$1",
+          [question.hitlRequestId],
+        )
+      ).rows,
+    ).toEqual([{ node_attempt_id: original.id, task_id: null }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status,action_prompt_ordinal,action_resume->>'kind' AS resume_kind FROM node_attempts WHERE id=$1",
+          [original.id],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        status: "NeedsInput",
+        action_prompt_ordinal: original.action_prompt_ordinal + 1,
+        resume_kind: "clarification",
+      },
+    ]);
+    expect(await ask()).toMatchObject({
+      hitlRequestId: question.hitlRequestId,
+      activationState: "active",
+      created: false,
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind='session.checkpoint'",
+          [runId],
+        )
+      ).rows,
+    ).toEqual([{ count: 1 }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT step_id FROM assignments WHERE hitl_request_id=$1",
+          [question.hitlRequestId],
+        )
+      ).rows,
+    ).toEqual([{ step_id: original.node_id }]);
+    await driver;
+    browserUserId = operatorId;
+    const answer = await respondHitlPost(
+      new NextRequest(
+        `http://localhost/api/runs/${runId}/hitl/${question.hitlRequestId}/respond`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ response: { component: "configured-web" } }),
+        },
+      ),
+      {
+        params: Promise.resolve({
+          runId: receipt.runId,
+          hitlRequestId: question.hitlRequestId,
+        }),
+      },
+    );
+
+    expect(answer.status, JSON.stringify(await answer.clone().json())).toBe(
+      202,
+    );
+    const answered = await getSpecialistAssignmentInput(
+      db,
+      operatorId,
+      input.assignmentId,
+      2,
+    );
+
+    expect(answered.actor).toMatchObject({ kind: "user", id: operatorId });
+    expect(answered.snapshot.objectiveInput.input).toContain("configured-web");
+    expect(await promoteNextPending({ db, pool: "flow" })).toEqual({
+      promotedRunId: runId,
+    });
+    continuation = startFlowContinuationWorker({
+      db,
+      executionHosts: hosts,
+      runtimeRoot: hostRoot,
+    });
+    await expect
+      .poll(
+        async () =>
+          (
+            await database.pool.query(
+              "SELECT count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind='session.prompt' AND owner_kind='flow_node_attempt'",
+              [runId],
+            )
+          ).rows[0].count,
+        { timeout: 30000, interval: 25 },
+      )
+      .toBe(2);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT id,attempt,status FROM node_attempts WHERE run_id=$1",
+          [runId],
+        )
+      ).rows,
+    ).toEqual([
+      { id: original.id, attempt: original.attempt, status: "Running" },
+    ]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT company_execution_snapshot->'assignment'->'inputRevision' AS original_input FROM runs WHERE id=$1",
+          [runId],
+        )
+      ).rows,
+    ).toEqual([{ original_input: 1 }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM specialist_run_links WHERE assignment_id=$1",
+          [input.assignmentId],
+        )
+      ).rows,
+    ).toEqual([{ count: 1 }]);
+    await expect
+      .poll(
+        async () =>
+          (
+            await database.pool.query(
+              "SELECT count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind='session.prompt' AND owner_ref->'promptOrdinal'='1'::jsonb AND state='accepted'",
+              [runId],
+            )
+          ).rows[0].count,
+        { timeout: 30000, interval: 25 },
+      )
+      .toBe(1);
+    const [resumedCommand] = await db
+      .select()
+      .from(executionCommands)
+      .where(
+        sql`${executionCommands.runId}=${runId} AND ${executionCommands.kind}='session.prompt' AND ${executionCommands.ownerRef}->'promptOrdinal'='1'::jsonb`,
+      );
+    const [resumedHost] = await db
+      .select()
+      .from(executionHosts)
+      .where(eq(executionHosts.id, resumedCommand.executionHostId));
+    const resumedPrompt = readPromptRequest(resumedCommand, resumedHost.hostKey)
+      .payload.prompt;
+
+    expect(resumedPrompt).toContain(`"questionId":"${question.hitlRequestId}"`);
+    expect(resumedPrompt).toContain('"inputRevision":2');
+    expect(resumedPrompt).toContain("configured-web");
+    expect(resumedPrompt).toContain(operatorId);
+    await expect(
+      database.pool.query(
+        "UPDATE node_attempts SET action_resume=jsonb_set(action_resume,'{questionId}',to_jsonb('foreign-question'::text)) WHERE id=$1",
+        [original.id],
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "specialist_flow_question_resume",
+    });
+    const nextBody = {
+      ...questionBody,
+      expectedRevision: assignment.revision + 2,
+      inputRevision: 2,
+      question:
+        "Which health observation should follow this diagnostic result?",
+      idempotencyKey: randomUUID(),
+    };
+
+    await expect(
+      createOrActivateAssignmentQuestion(
+        db,
+        { kind: "user", userId: operatorId },
+        input.assignmentId,
+        nextBody,
+        {
+          executionHosts: hosts,
+          recordSuccessAudit: async () => {
+            throw new MaisterError(
+              "CRASH",
+              "Injected Flow question activation persistence failure",
+            );
+          },
+        },
+      ),
+    ).rejects.toMatchObject({ code: "CRASH" });
+    const pending = (
+      await database.pool.query(
+        "SELECT id,activation_state FROM hitl_requests WHERE specialist_assignment_id=$1 AND responded_at IS NULL",
+        [input.assignmentId],
+      )
+    ).rows;
+
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toMatchObject({
+      activation_state: "pending_termination",
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT action_prompt_ordinal,action_resume->>'questionId' AS question_id FROM node_attempts WHERE id=$1",
+          [original.id],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        action_prompt_ordinal: original.action_prompt_ordinal + 1,
+        question_id: question.hitlRequestId,
+      },
+    ]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM assignments WHERE hitl_request_id=$1",
+          [pending[0].id],
+        )
+      ).rows,
+    ).toEqual([{ count: 0 }]);
+    expect(
+      await recoverPendingAgentQuestions({
+        db,
+        sessions: [],
+        executionHosts: hosts,
+      }),
+    ).toBe(1);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind='session.checkpoint'",
+          [runId],
+        )
+      ).rows,
+    ).toEqual([{ count: 2 }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT id,attempt,status,action_prompt_ordinal,action_resume->>'questionId' AS question_id FROM node_attempts WHERE run_id=$1",
+          [runId],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        id: original.id,
+        attempt: original.attempt,
+        status: "NeedsInput",
+        action_prompt_ordinal: original.action_prompt_ordinal + 2,
+        question_id: pending[0].id,
+      },
+    ]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT specialist_answer_input_revision FROM hitl_requests WHERE id=$1",
+          [question.hitlRequestId],
+        )
+      ).rows,
+    ).toEqual([{ specialist_answer_input_revision: 2 }]);
+  } finally {
+    browserUserId = operatorId;
+    if (runId) {
+      const retainedRunId = runId;
+
+      await expect
+        .poll(
+          async () =>
+            (
+              await stopRunPost(
+                new Request(`http://localhost/api/runs/${retainedRunId}/stop`, {
+                  method: "POST",
+                }),
+                { params: Promise.resolve({ runId: retainedRunId }) },
+              )
+            ).status,
+          { timeout: 15000, interval: 25 },
+        )
+        .toBe(200);
+      await expect
+        .poll(
+          async () =>
+            (
+              await database.pool.query(
+                "SELECT flow_driver_token FROM runs WHERE id=$1",
+                [retainedRunId],
+              )
+            ).rows[0].flow_driver_token,
+          { timeout: 15000, interval: 25 },
+        )
+        .toBeNull();
+    }
+    await continuation?.stop();
+    await supervisor.stop();
+    await driver;
+    await worker.stop();
+    await stopRuntimeEventConsumers();
+    restoreUrl();
+    browserUserId = requesterId;
+    if (previousSettings)
+      await db
+        .update(platformRuntimeSettings)
+        .set({ defaultRunnerId: previousSettings.defaultRunnerId })
+        .where(eq(platformRuntimeSettings.id, "singleton"));
+    else
+      await db
+        .delete(platformRuntimeSettings)
+        .where(eq(platformRuntimeSettings.id, "singleton"));
+    for (const grant of grants.page.items)
+      await revokeCompanyGrant(db, administratorId, grant.id, {
+        expectedRevision: grant.revision,
+        reason: "Release this Flow clarification fixture's exact authority",
+        idempotencyKey: randomUUID(),
+      });
+    if (previousRuntimeRoot === undefined)
+      delete process.env.MAISTER_RUNTIME_ROOT;
+    else process.env.MAISTER_RUNTIME_ROOT = previousRuntimeRoot;
+    resetResolverForTests();
+    resetRegistrarStateForTests();
+    setDefaultTransportForTests(null);
+  }
+}, 60000);
 
 it("CBS-03 cancels live native graph work once without allowing its completed output to win the stop intent", async () => {
   const hostRoot = join(root, "reservation-host");

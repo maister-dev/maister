@@ -510,7 +510,7 @@ The assignment subject extends the existing `hitl_requests` row with nullable
 `specialistAssignmentId`, `specialistInputRevision` and `specialistAnswerInputRevision`.
 Existing task questions keep their exact data and NULL native fields. New native
 questions retain a closed server `assignmentQuestion` snapshot beside the existing
-FormSchema and `agentPrompt` checkpoint proof: exact input ID/revision/SHA, context
+FormSchema and exact `agentPrompt` or `flowQuestion` checkpoint proof: exact input ID/revision/SHA, context
 revision, requesting business revision, actual user/Run author, stable principal
 and delivery digests, and complete consumed source restrictions. Native subject,
 form, prompt, authorship and committed answer cannot be overwritten or deleted.
@@ -524,8 +524,8 @@ process is already stopped, and recovery adopts the exact successful checkpoint
 receipt instead of issuing another checkpoint. An answer requires its exact new
 input revision; terminal lifecycle closure with NULL response is a distinct
 unanswered closure and creates no invented answer or input revision. Public
-question routes and graph subjects remain Designed until their owning
-T24 runtime checks pass. Native standalone company/project Inbox answer and same-Run continuation
+question routes remain Designed until their owning T24 runtime checks pass.
+Native standalone company/project Inbox answer and same-Run continuation
 are implemented through the existing human-work, immutable-input and continuation
 services. The answer transaction retains exact user authority and response/input
 witnesses, completes the human work item, advances the assignment input and queues
@@ -551,6 +551,36 @@ its own current credential even with general Brain permissions disabled.
 The response body carries `response` as a bounded object validated against the exact stored native question FormSchema, not a replacement free-text-only grammar or caller-supplied schema. Required string answers are nonblank; human question suggestions permit custom text as the existing contract specifies, while permission/transition enums stay closed. Work `clarify` decisions may omit resultRevision when no result exists; accept/reject/rework of a result require the exact ready result revision at the service boundary. Context entry IDs are assignment/revision-local logical keys, not caller-authoritative global database row IDs.
 
 Context changes lock the stable assignment, check expected context revision/epoch and current source grants, then append one immutable revision and attributed decision. A losing patch returns 409 and must be explicitly rebased; no automatic last-writer merge. Accepted findings refer to exact child result revisions. Server-derived source restrictions propagate through summaries and context even if a model omits citations. Current permission is rechecked at read/share/accept/action; snapshots are history, not grants.
+
+### Flow-node clarification contract (native platform checkpoint — T24)
+
+A native graph question uses the same assignment subject and HITL row, with
+an immutable `flowQuestion` source envelope: exact node attempt, owned prompt
+command/ordinal, execution assignment, incarnation and host session. The current
+node is selected from server state; caller node/owner/author fields are refused.
+The common assignment subject keeps its independently witnessed current input and
+historical context revision. Human callers retain their own authority; a node
+caller must retain its current professional read/update authority and source access.
+
+Persistence pauses that existing node attempt while retaining its original prompt
+ordinal. Only after the existing checkpoint acknowledgement and canonical
+quiescence does activation park a typed `clarification` action resume with the next
+prompt ordinal. Advancing earlier would misclassify late source lifecycle evidence
+as a superseded prompt. Activation and Inbox recovery reuse the existing path. It does not create another
+execution/attempt ledger or relabel clarification as operator permission. The
+answer receipt and next input remain the existing native answer transaction.
+The ordinary Flow idle claim must verify the exact answered question, retained
+input, checkpoint/source prompt, current appointment and host before rebinding
+the parked node to its newly minted epoch. The resumed prompt includes the exact
+human answer with its question/input witnesses through that existing prompt owner.
+Completed nodes, original root input/link and earlier evidence remain intact.
+Capacity deferral and interruption retain this same durable handoff. The company
+Flow scenario qualifies real controlled ACP checkpointing, duplicate question
+adoption, native Inbox answer, registered scheduler dispatch, same-node continuation
+and exact wire answer delivery. Injected post-checkpoint activation failure recovers
+without another checkpoint. Existing permission, interrupt and crash resumes remain
+compatible. Current node-credential question intake and public question adapters
+remain unqualified; this checkpoint is not package or pilot readiness.
 
 ### Versioned context persistence and attribution
 

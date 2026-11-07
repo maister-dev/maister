@@ -55,6 +55,11 @@ import { contentDigest } from "@/lib/evaluations/digest";
 import { emitSpecialistAssignmentChange } from "@/lib/domain-events/outbox";
 import { createHitlRequest } from "@/lib/runs/hitl-create";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
+import {
+  captureFlowQuestionSource,
+  selectCurrentFlowQuestionNode,
+} from "@/lib/execution-host/flow-question-source";
+import { pauseAssignmentQuestionNode } from "@/lib/specialist-assignments/flow-question";
 import { captureAgentPauseSource } from "@/lib/execution-host/agent-pause-source";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { queryErrorDiagnostics, redactQueryError } from "@/lib/db/pg-error";
@@ -139,15 +144,28 @@ async function persistAssignmentQuestion(
     !source ||
     !head ||
     (await selectAssignmentQuestionRun(tx, assignmentId)) !== runId ||
-    source.run_kind !== "agent" ||
-    source.agent_kind !== "operational"
+    !(
+      source.run_kind === "flow" ||
+      (source.run_kind === "agent" && source.agent_kind === "operational")
+    )
   )
     throw new MaisterError(
       "PRECONDITION",
-      "Assignment clarification requires its current standalone operational prompt",
+      "Assignment clarification requires its current owned operational or Flow-node prompt",
       { details: { reason: "assignment_question_source_unavailable" } },
     );
-  await resolveKnowledgeRunIdentity(tx, runId, null);
+  const flowNodeAttemptId =
+    source.run_kind === "flow"
+      ? await selectCurrentFlowQuestionNode(tx, runId)
+      : null;
+
+  if (
+    flowNodeAttemptId !== null &&
+    resolved.identity.kind !== "user" &&
+    resolved.identity.actor.attemptId !== flowNodeAttemptId
+  )
+    throw unavailableAssignment();
+  await resolveKnowledgeRunIdentity(tx, runId, flowNodeAttemptId);
   const context = await readSpecialistAssignmentContextInTransaction(
     tx,
     resolved.source,
@@ -235,6 +253,10 @@ async function persistAssignmentQuestion(
       "CONFLICT",
       "The execution already has an unanswered human decision",
     );
+  const flowSource =
+    source.run_kind === "flow"
+      ? await captureFlowQuestionSource(tx, runId)
+      : null;
   const capture = knowledgeAccessCaptureSchema.safeParse(
     source.knowledge_access,
   );
@@ -264,27 +286,33 @@ async function persistAssignmentQuestion(
     runId,
     nodeAttemptId: null,
   });
-  const session = await loadActiveRunSession(tx, runId);
+  const pause =
+    flowSource ??
+    (await (async () => {
+      const session = await loadActiveRunSession(tx, runId);
 
-  if (
-    typeof source.execution_assignment_id !== "string" ||
-    !session?.hostSessionId
-  )
-    throw new MaisterError(
-      "PRECONDITION",
-      "Clarification requires the current owned session",
-    );
-  const pause = await captureAgentPauseSource(tx, {
-    runId,
-    assignmentId: source.execution_assignment_id,
-    sessionId: session.hostSessionId,
-  });
+      if (
+        typeof source.execution_assignment_id !== "string" ||
+        !session?.hostSessionId
+      )
+        throw new MaisterError(
+          "PRECONDITION",
+          "Clarification requires the current owned session",
+        );
+      const captured = await captureAgentPauseSource(tx, {
+        runId,
+        assignmentId: source.execution_assignment_id,
+        sessionId: session.hostSessionId,
+      });
 
-  if (!pause)
-    throw new MaisterError(
-      "PRECONDITION",
-      "Clarification requires the current dispatched prompt owner",
-    );
+      if (!captured)
+        throw new MaisterError(
+          "PRECONDITION",
+          "Clarification requires the current dispatched prompt owner",
+        );
+
+      return captured;
+    })());
   const subject = assignmentQuestionSnapshotSchema.parse({
     schemaVersion: 1,
     assignmentId,
@@ -304,7 +332,7 @@ async function persistAssignmentQuestion(
   await createHitlRequest(tx, {
     id,
     runId,
-    stepId: "agent",
+    stepId: flowSource === null ? "agent" : String(source.current_step_id),
     kind: "agent_question",
     taskId: null,
     specialistAssignmentId: assignmentId,
@@ -319,6 +347,7 @@ async function persistAssignmentQuestion(
     },
     prompt: input.question,
   });
+  if (flowSource !== null) await pauseAssignmentQuestionNode(tx, flowSource);
   await tx.execute(
     sql`UPDATE runs SET status='NeedsInput' WHERE id=${runId} AND status='Running'`,
   );

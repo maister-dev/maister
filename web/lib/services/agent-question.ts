@@ -17,6 +17,9 @@ import {
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { nodePermissionSourceSchema } from "@/lib/execution-host/flow-permission-source";
+import { parkAssignmentQuestionNode } from "@/lib/specialist-assignments/flow-question";
+import { loadFlowQuestionSession } from "@/lib/execution-host/flow-question-source";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { promoteNextPending } from "@/lib/scheduler";
 import {
@@ -357,7 +360,37 @@ async function terminateSourceSession(
   db: Db,
   deps: SourceSessionTeardown,
 ): Promise<"terminated" | "gone" | "pending"> {
-  const activeSession = await loadActiveRunSession(db, sourceRunId);
+  const [source] = await db
+    .select({
+      agentKind: runs.agentKind,
+      runKind: runs.runKind,
+      status: runs.status,
+      executionAssignmentId: runs.executionAssignmentId,
+    })
+    .from(runs)
+    .where(eq(runs.id, sourceRunId));
+
+  const nativeFlowQuestion =
+    source?.runKind === "flow" &&
+    (
+      await db
+        .select({ id: hitlRequests.id })
+        .from(hitlRequests)
+        .where(
+          and(
+            eq(hitlRequests.runId, sourceRunId),
+            eq(hitlRequests.kind, "agent_question"),
+            isNull(hitlRequests.respondedAt),
+            isNull(hitlRequests.supersededAt),
+            sql`${hitlRequests.specialistAssignmentId} IS NOT NULL`,
+            sql`${hitlRequests.schema}->'flowQuestion' IS NOT NULL`,
+          ),
+        )
+    ).length === 1;
+
+  const activeSession = nativeFlowQuestion
+    ? await loadFlowQuestionSession(db, sourceRunId)
+    : await loadActiveRunSession(db, sourceRunId);
 
   if (!activeSession?.acpSessionId) return "pending";
 
@@ -369,16 +402,7 @@ async function terminateSourceSession(
     (session) => session.acpSessionId === activeSession.acpSessionId,
   );
 
-  const [source] = await db
-    .select({
-      agentKind: runs.agentKind,
-      status: runs.status,
-      executionAssignmentId: runs.executionAssignmentId,
-    })
-    .from(runs)
-    .where(eq(runs.id, sourceRunId));
-
-  if (source?.agentKind === "operational") {
+  if (source?.agentKind === "operational" || nativeFlowQuestion) {
     const sessionId = live?.sessionId ?? activeSession.hostSessionId;
 
     if (!sessionId) return "pending";
@@ -507,7 +531,11 @@ async function activatePendingQuestion(
 
     if (
       !source ||
-      source.runKind !== "agent" ||
+      !(
+        source.runKind === "agent" ||
+        (source.runKind === "flow" &&
+          pending.specialistAssignmentId !== undefined)
+      ) ||
       (pending.specialistAssignmentId === undefined &&
         (source.projectId === null || source.taskId !== pending.taskId))
     ) {
@@ -524,7 +552,7 @@ async function activatePendingQuestion(
         pending.specialistAssignmentId,
       );
 
-    if (source.agentKind === "operational") {
+    if (source.agentKind === "operational" || source.runKind === "flow") {
       if (source.status !== "NeedsInputIdle") return "pending";
     } else if (SOURCE_STATUS_FINALIZED_BY_HUMAN_ASK_SET.has(source.status)) {
       await tx
@@ -538,6 +566,25 @@ async function activatePendingQuestion(
         );
     } else if (!TERMINAL_SOURCE_STATUSES.has(source.status)) {
       return "pending";
+    }
+    if (source.runKind === "flow") {
+      const envelope = question.schema as Readonly<{
+        flowQuestion?: unknown;
+        supervisorSessionId?: unknown;
+      }> | null;
+      const proof = nodePermissionSourceSchema.safeParse(
+        envelope?.flowQuestion,
+      );
+
+      if (!proof.success || typeof envelope?.supervisorSessionId !== "string")
+        throw new MaisterError(
+          "CONFIG",
+          "The retained Flow clarification checkpoint source is invalid",
+        );
+      await parkAssignmentQuestionNode(tx, question.id, {
+        flowQuestion: proof.data,
+        supervisorSessionId: envelope.supervisorSessionId,
+      });
     }
     await revokeAgentRunTokensForRun(pending.runId, tx);
 
@@ -555,7 +602,7 @@ async function activatePendingQuestion(
       ...humanWorkOwner(source),
       runId: pending.runId,
       taskId: pending.taskId,
-      stepId: "agent",
+      stepId: question.stepId,
       hitlRequestId: pending.id,
       actionKind: "agent_question",
       title: "Agent clarification required",
@@ -666,7 +713,20 @@ export async function activatePersistedAgentQuestion(
   }
 
   if (activation === "active") {
-    await promoteNextPending({ db, pool: "agent" });
+    const [source] = await db
+      .select({ kind: runs.runKind })
+      .from(runs)
+      .where(eq(runs.id, pending.runId));
+
+    if (source?.kind !== "flow" && source?.kind !== "agent")
+      throw new MaisterError(
+        "CONFLICT",
+        "The activated question lost its execution kind",
+      );
+    await promoteNextPending({
+      db,
+      pool: source.kind === "flow" ? "flow" : "agent",
+    });
   }
 
   return {

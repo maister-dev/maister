@@ -9,6 +9,7 @@ import pino from "pino";
 
 import { assertAgentQuestionResponse } from "./agent-question-response";
 
+import { assertParkedAssignmentQuestionNode } from "@/lib/specialist-assignments/flow-question";
 import {
   isPlainObject,
   validateStructuredOutput,
@@ -225,14 +226,18 @@ export async function answerAssignmentQuestion(
         question.supersededAt !== null ||
         question.response !== null ||
         run?.status !== "NeedsInputIdle" ||
-        run.run_kind !== "agent" ||
-        run.agent_kind !== "operational" ||
+        !(
+          run.run_kind === "flow" ||
+          (run.run_kind === "agent" && run.agent_kind === "operational")
+        ) ||
         (await selectAssignmentQuestionRun(tx, assignmentId)) !== question.runId
       )
         throw new MaisterError(
           "CONFLICT",
           "Clarification requires its active exact waiting assignment, input and checkpointed execution",
         );
+      if (run.run_kind === "flow")
+        await assertParkedAssignmentQuestionNode(tx, question);
       const original = await getSpecialistAssignmentInputInTransaction(
         tx,
         userId,

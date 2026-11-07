@@ -52,7 +52,22 @@ export type FlowInterruptResume = ActionResumeIdentity &
     cause: "operator" | "host_pressure";
   }>;
 
+/** An assignment question parks this same attempt; its exact human/input/checkpoint receipt is bound by the ordinary idle claim. */
+export type FlowClarificationResume = ActionResumeIdentity &
+  Readonly<{
+    kind: "clarification";
+    questionId: string;
+    sourceIncarnationId: string;
+    answer: Readonly<{
+      inputRevision: number;
+      inputSha256: string;
+      receiptSha256: string;
+      checkpointCommandId: string;
+    }> | null;
+  }>;
+
 export type FlowActionResume =
+  | FlowClarificationResume
   | FlowPermissionResultResume
   | FlowPermissionContinueResume
   | FlowInterruptResume
