@@ -116,6 +116,22 @@ Saving settings never starts retries: inspect the preview and confirm separately
 Large histories are processed in successive batches. If a response is lost,
 recover that batch before starting another; accepted items are not duplicated.
 
+## Review project automation input
+
+When an authorized project settings operator saves a professional's cron or event
+configuration, MAIster records that operator's review of the selector and recurring
+request. The project agent API exposes this read-only witness as `assignmentReview`.
+It identifies the reviewer and review time; it does not claim who originally wrote
+an old schedule or grant permanent execution authority. Historical schedules have
+no review until an operator saves them. Mention sources use the comment author's
+current authority instead. An internal source replacement without an identified
+reviewer clears the review; unrelated attachment settings preserve it.
+
+This review foundation does not yet qualify native project cron/event assignment
+dispatch. Company automation and native manual/comment intake have their separate
+documented execution paths. Future native project dispatch must recheck current
+permissions and retain its own invocation evidence.
+
 ## Address a professional in a task comment
 
 Enable the professional's **Mention summon** invocation in its project attachment, then

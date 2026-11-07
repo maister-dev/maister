@@ -691,6 +691,19 @@ beforeAll(async () => {
       "SELECT to_jsonb(r)-'company_cancellation_intent' AS value FROM runs r ORDER BY id",
     )
   ).rows;
+  // Retain the exact historical comparison above, then qualify runtime against the current schema.
+  const journal = JSON.parse(
+    await readFile("./lib/db/migrations/meta/_journal.json", "utf8"),
+  ) as { entries: { tag: string }[] };
+  const runtimeBaseline = journal.entries.findIndex(
+    (entry) => entry.tag === "0254_specialist_project_flow_input",
+  );
+
+  if (runtimeBaseline < 0)
+    throw new Error("The native Flow runtime migration baseline is missing");
+  for (const entry of journal.entries.slice(runtimeBaseline + 1))
+    await applyMainMigration(database.db, entry.tag);
+
   await database.pool.query("DELETE FROM projects WHERE id=$1", [project.id]);
   baselineCounts = await counts();
 }, 180000);

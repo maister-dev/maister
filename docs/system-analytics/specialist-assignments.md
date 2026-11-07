@@ -240,6 +240,39 @@ Current project permission loss refuses routed replay, while an encoded role ID
 and disabled current attachment preserve authorized completed-history replay.
 Existing legacy workspace/runner launch overrides retain their original contract.
 
+### Project automation review
+
+**Implemented source review storage/API; native cron/event dispatch qualification remains T22.**
+
+Historical project schedules have no recorded human authority. Migration leaves
+their new `assignmentReview` null, without changing `createdBy`, original request
+bytes or prior invocation snapshots. An explicit schedule-collection save by an
+authenticated operator records a review only for cron/event sources whose
+effective installed project definition declares a specialist. The server checks
+the current active operator's project settings authority inside the save
+transaction. Ordinary sources and mentions retain null review metadata.
+
+The read-only version-one review contains `reviewerUserId`, UTC `reviewedAt`, the
+accepted collection `sourceRevision` and `sourceSha256`. The digest covers the
+normalized selector and literal recurring request, with sorted event kinds;
+enabled state, runtime counters and next-fire time are separate eligibility data.
+Review records authorization now, not original authorship, a permission grant,
+or knowledge confirmation. Request bodies cannot supply review metadata.
+Explicit source replacement without an identified reviewer clears the witness;
+unrelated attachment changes preserve it. Schedule revision CAS still governs
+the complete save, including review SET/CLEAR, so concurrent editors cannot
+combine one user's authority with another user's request.
+The existing API requires repository-input visibility for this projection. The
+project server component withholds both literal request and review metadata from
+readers without that visibility; a content digest cannot bypass that boundary.
+
+Native dispatch must validate a reviewed source and current initiating authority,
+capture that review in a new versioned project invocation snapshot, preserve the
+existing version-one recurring request, and bind the existing claim/reserved Run
+to canonical intake. Unreviewed history cannot silently become authorized native
+work. Dispatch implementation and real registered-consumer qualification follow
+this storage/API checkpoint; it does not establish native automation readiness.
+
 ### Native task-comment intake
 
 **Implemented native platform intake; correlated clarification and result delivery remain their explicit later contracts.**

@@ -34,6 +34,11 @@ column-level narrative.
 > pre-migration-honest seeds (no reach / no mounts), so neither needs a backfill.
 > The matching Run-side launch snapshots `runs.agent_chain_depth` and
 > `runs.context_mounts` are drawn in [`runs-domain.md`](runs-domain.md).
+>
+> Main `0241` adds nullable `agent_schedules.project_source_review` for a
+> server-recorded native cron/event review. Legacy rows remain unknown, and no
+> Brain/user FK is added. The [review contract](../system-analytics/specialist-assignments.md#project-automation-review)
+> defines authority and digest semantics; dispatch qualification remains T22.
 
 ```mermaid
 erDiagram

@@ -2326,7 +2326,22 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             schedulesRevision: mentionRevision,
-            schedules: [{ triggerType: "mention", enabled: true }],
+            schedules: [
+              { triggerType: "mention", enabled: true },
+              {
+                triggerType: "cron",
+                cronExpr: "* * * * *",
+                timezone: "UTC",
+                requestAtLaunch:
+                  "Inspect the explicitly reviewed project target",
+                enabled: false,
+              },
+              {
+                triggerType: "event",
+                eventKinds: ["run.done"],
+                enabled: false,
+              },
+            ],
           }),
         },
       ),
@@ -2339,6 +2354,63 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
     );
 
     expect(mentionConfiguration.status).toBe(200);
+    const reviewedSources = (
+      await database.pool.query<{
+        trigger_type: string;
+        project_source_review: {
+          reviewerUserId: string;
+          sourceRevision: number;
+        } | null;
+      }>(
+        "SELECT trigger_type,project_source_review FROM agent_schedules WHERE project_id=$1 AND agent_id='rah:wire-observer' ORDER BY trigger_type",
+        [project.id],
+      )
+    ).rows;
+
+    expect(reviewedSources).toEqual([
+      {
+        trigger_type: "cron",
+        project_source_review: expect.objectContaining({
+          reviewerUserId: administratorId,
+          sourceRevision: mentionRevision + 1,
+        }),
+      },
+      {
+        trigger_type: "event",
+        project_source_review: expect.objectContaining({
+          reviewerUserId: administratorId,
+          sourceRevision: mentionRevision + 1,
+        }),
+      },
+      { trigger_type: "mention", project_source_review: null },
+    ]);
+    const forgedReview = await projectAgentPatch(
+      new NextRequest(
+        `http://localhost/api/projects/${project.slug}/agents/rah:wire-observer`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            schedulesRevision: mentionRevision + 1,
+            schedules: [
+              {
+                triggerType: "event",
+                eventKinds: ["run.done"],
+                assignmentReview: reviewedSources[1]!.project_source_review,
+              },
+            ],
+          }),
+        },
+      ),
+      {
+        params: Promise.resolve({
+          slug: project.slug,
+          agentId: "rah:wire-observer",
+        }),
+      },
+    );
+
+    expect(forgedReview.status).toBe(422);
     browserSession.user = await requireActiveUserById(userId);
     const commentTaskId = randomUUID();
 

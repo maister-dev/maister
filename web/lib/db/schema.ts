@@ -112,6 +112,7 @@ import type {
   AgentRetryAllocation,
 } from "@/lib/agents/retry-types";
 import type { JsonValue } from "@/lib/hitl-response-contract";
+import type { ProjectSourceReview } from "@/lib/agents/project-source-review-types";
 
 import { sql } from "drizzle-orm";
 import {
@@ -141,6 +142,7 @@ import {
 } from "@/lib/agents/company-agent-scope-schema";
 import { agentRetryRecipeScopeShape } from "@/lib/agents/retry-scope-schema";
 import { triggerBindingScopeShape } from "@/lib/agents/trigger-scope-schema";
+import { projectSourceReviewShape } from "@/lib/agents/project-source-review-schema";
 import { scheduledRequestShape } from "@/lib/agents/scheduled-request-schema";
 import { TASK_LAUNCH_STATES } from "@/lib/tasks/launch-types";
 import {
@@ -1312,6 +1314,9 @@ export const agentSchedules = pgTable(
     createdBy: text("created_by"),
     creationKey: text("creation_key"),
     creationDigest: text("creation_digest"),
+    projectSourceReview: jsonb(
+      "project_source_review",
+    ).$type<ProjectSourceReview>(),
     // ADR-151: `mention` rows carry no cron and no event_match — both shape
     // CHECKs are `<>`-guarded, and the column itself has no value CHECK, so
     // the third value needed no migration.
@@ -1382,6 +1387,10 @@ export const agentSchedules = pgTable(
     owner: check(
       "agent_schedules_owner_check",
       sql`((${t.projectId} IS NOT NULL AND ${t.companyId} IS NULL AND ${t.companySpecialistBindingId} IS NULL AND ${t.companyFlowBindingId} IS NULL AND ${t.companyConfigRevision} IS NULL AND ${t.createdBy} IS NULL AND ${t.creationKey} IS NULL AND ${t.creationDigest} IS NULL) OR (${t.projectId} IS NULL AND ${t.companyId} IS NOT NULL AND ${t.companySpecialistBindingId} IS NOT NULL AND ${t.companyConfigRevision}>0 AND char_length(${t.createdBy}) BETWEEN 1 AND 192 AND ${t.creationKey} ~ '^[A-Za-z0-9._:-]{8,128}$' AND ${t.creationDigest} ~ '^[a-f0-9]{64}$' AND ${t.triggerType} IN ('cron','event'))) IS TRUE`,
+    ),
+    projectSourceReviewShape: check(
+      "agent_schedules_project_review_check",
+      sql`(${t.projectSourceReview} IS NULL OR (${t.projectId} IS NOT NULL AND ${t.companyId} IS NULL AND ${t.triggerType} IN ('cron','event') AND ${projectSourceReviewShape(sql`${t.projectSourceReview}`)})) IS TRUE`,
     ),
     companyCreation: uniqueIndex("agent_schedules_company_creation_uq")
       .on(t.companyId, t.createdBy, t.creationKey)

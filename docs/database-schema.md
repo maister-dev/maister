@@ -5616,6 +5616,18 @@ The [owning input contract](system-analytics/scheduled-agent-requests.md) define
 
 No historical input is inferred. Snapshot origin IDs are non-FK retained audit values. Existing schedule navigation FK remains SET NULL; key-share existence resolution makes deletion after claim harmless to launch. Guards permit unrelated settlement/lifecycle updates. CHECKs distinguish SQL NULL, JSON null and missing keys; schema, generated SQL, journal and matching snapshot must agree. No new table/index is introduced.
 
+Main `0256_project_source_review` adds nullable `agent_schedules.project_source_review`.
+Its closed version-one object records an actual settings review of native project
+cron/event input; historical rows remain SQL NULL and `created_by` remains NULL.
+The object is project-only, excludes mention sources and has bounded reviewer,
+UTC timestamp, positive collection revision and SHA-256 fields. It has no user
+or Brain FK: retained reviewer identity must not invent authorship, rewrite on
+user deletion or block project deletion. The current source head can be
+replaced/cleared under the existing collection revision CAS. This does not
+rewrite existing v1/v2 invocation snapshots or enable native dispatch by itself.
+See [project automation review](system-analytics/specialist-assignments.md#project-automation-review)
+for review authority, digest and invocation boundaries.
+
 The additive input fields have no independent lifecycle or cascade.
 
 ```mermaid

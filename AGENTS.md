@@ -182,6 +182,7 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | `web/lib/specialist-assignments/store.ts` | Durable company/project assignment heads, frozen input history, current authority, CAS and existing-run links |
 | `web/lib/specialist-assignments/project-routed-manual-intake.ts` | Versioned existing project launch entry; server-resolved owner/attachment and shared manual delivery identity |
 | `web/lib/specialist-assignments/project-comment-intake.ts` | Native human task mentions; independent canonical work, current author/source authority and exact source appointments in existing Run admission |
+| `web/lib/agents/project-source-review.ts` | Native project cron/event review authority and exact content digest; server-only metadata under existing source collection CAS |
 | `web/lib/agents/company-cron-dispatch.ts` | Bounded company lane in the existing registered agent tick; exact native source/Run receipts, current-authority cron enablement and owner-aware recovery |
 | `web/lib/agents/company-event-dispatch.ts` | Native company event adapter in the registered consumer; reviewed source creation, exact receipts, source-sharing grants and inherited event-chain bounds |
 | `web/lib/agents/company-webhook-http.ts` | Authenticated company branch of the existing inbound agent event route; versioned bounded envelope and canonical delivery receipt |

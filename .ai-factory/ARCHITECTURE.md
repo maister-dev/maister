@@ -248,6 +248,10 @@ web/lib/supervisor-client ──HTTP──► supervisor/src/http-api  ──►
   Browser, personal-token and versioned existing project launch handlers reuse
   the same canonical intake/reader. Project route owner/attachment identity is
   server-resolved; late atomic receipt adoption cannot re-enter completed admission.
+  Native project cron/event review metadata belongs to the existing schedule head
+  and collection CAS; `lib/agents/project-source-review.ts` validates current
+  settings authority and hashes the reviewed input. Null legacy history remains
+  unknown, and this source review alone does not enable native dispatch.
   Human task mentions of actual pinned professionals use that same project request
   service before the legacy busy check. A versioned internal source appointment
   revalidates the stored author/comment, existing claim/selector and reserved Run

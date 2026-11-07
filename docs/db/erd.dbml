@@ -228,6 +228,7 @@ table agent_schedules {
   created_by text
   creation_key text
   creation_digest text
+  project_source_review jsonb
   trigger_type text [not null]
   request_at_launch text
   cron_expr text
@@ -246,6 +247,7 @@ table agent_schedules {
   updated_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
+
 
 
 

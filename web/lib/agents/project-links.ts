@@ -3,6 +3,8 @@ import "server-only";
 import type { Db as ActivityDb } from "@/lib/execution-host/db";
 import type { ContextRepoDecl } from "@/lib/context-mounts/types";
 import type { AgentExecutionPolicyRecommendation } from "@/lib/db/schema";
+import type { ProjectSourceReview } from "@/lib/agents/project-source-review-types";
+import type { ProjectSourceContent } from "@/lib/agents/project-source-review";
 
 import { and, eq, isNull } from "drizzle-orm";
 import pino from "pino";
@@ -28,6 +30,11 @@ import {
   validateTimezone,
 } from "@/lib/run-schedules/cron";
 import { assertAgentQualificationPolicy } from "@/lib/agents/qualification-policy";
+import { parseProjectSourceReview } from "@/lib/agents/project-source-review-types";
+import {
+  authorizeProjectSourceReview,
+  projectSourceContentDigest,
+} from "@/lib/agents/project-source-review";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const {
@@ -90,6 +97,7 @@ export type AttachedAgentView = {
     eventKinds?: string[];
     enabled: boolean;
     requestAtLaunch: string | null;
+    assignmentReview: ProjectSourceReview | null;
   }>;
 };
 
@@ -120,7 +128,7 @@ async function validateRunnerOverride(
 function normalizeSchedule(
   input: AgentScheduleInput,
   now: Date,
-): Record<string, unknown> {
+): ProjectSourceContent & { nextFireAt: Date | null; enabled: boolean } {
   const requestAtLaunch =
     input.requestAtLaunch === undefined
       ? undefined
@@ -208,9 +216,13 @@ function scheduleToView(row: Record<string, any>): {
   eventKinds?: string[];
   enabled: boolean;
   requestAtLaunch: string | null;
+  assignmentReview: ProjectSourceReview | null;
 } {
+  const assignmentReview = parseProjectSourceReview(row.projectSourceReview);
+
   if (row.triggerType === "mention") {
     return {
+      assignmentReview,
       id: row.id as string,
       requestAtLaunch: (row.requestAtLaunch as string | null) ?? null,
       triggerType: "mention",
@@ -220,6 +232,7 @@ function scheduleToView(row: Record<string, any>): {
 
   if (row.triggerType === "cron") {
     return {
+      assignmentReview,
       id: row.id as string,
       requestAtLaunch: (row.requestAtLaunch as string | null) ?? null,
       triggerType: "cron",
@@ -230,6 +243,7 @@ function scheduleToView(row: Record<string, any>): {
   }
 
   return {
+    assignmentReview,
     id: row.id as string,
     requestAtLaunch: null,
     triggerType: "event",
@@ -583,6 +597,15 @@ export async function updateAgentLink(
     id: schedule.id,
     values: normalizeSchedule(schedule, now),
   }));
+  const reviewsNativeSources =
+    normalizedSchedules !== undefined && input.actorUserId != null
+      ? (
+          await resolveEffectiveAgentDefinition(
+            { projectId: input.projectId, agentId: input.agentId },
+            _db,
+          )
+        ).parsed.specialist != null
+      : false;
 
   if (
     normalizedSchedules?.some(({ values }) => Boolean(values.requestAtLaunch))
@@ -629,6 +652,13 @@ export async function updateAgentLink(
   }
 
   await (_db as any).transaction(async (tx: any) => {
+    if (reviewsNativeSources && input.actorUserId != null) {
+      await authorizeProjectSourceReview(
+        tx,
+        input.actorUserId,
+        input.projectId,
+      );
+    }
     const set: Record<string, unknown> = { updatedAt: now };
 
     if (input.patch.enabled !== undefined) set.enabled = input.patch.enabled;
@@ -785,15 +815,30 @@ export async function updateAgentLink(
       }
 
       for (const schedule of normalizedSchedules) {
-        if (schedule.id) {
-          const previous = existingSchedules.find(
-            (row: { id: string }) => row.id === schedule.id,
-          );
-          const requestAtLaunch =
-            schedule.values.requestAtLaunch === undefined
-              ? (previous.requestAtLaunch ?? null)
-              : schedule.values.requestAtLaunch;
+        const previous = existingSchedules.find(
+          (row: { id: string }) => row.id === schedule.id,
+        );
+        const requestAtLaunch =
+          schedule.values.requestAtLaunch === undefined
+            ? (previous?.requestAtLaunch ?? null)
+            : schedule.values.requestAtLaunch;
+        const projectSourceReview: ProjectSourceReview | null =
+          reviewsNativeSources &&
+          input.actorUserId != null &&
+          schedule.values.triggerType !== "mention"
+            ? {
+                schemaVersion: 1,
+                reviewerUserId: input.actorUserId,
+                reviewedAt: now.toISOString(),
+                sourceRevision: (linkRows[0].schedulesRevision as number) + 1,
+                sourceSha256: projectSourceContentDigest({
+                  ...schedule.values,
+                  requestAtLaunch,
+                }),
+              }
+            : null;
 
+        if (schedule.id) {
           if (
             schedule.values.triggerType !== "cron" &&
             requestAtLaunch !== null
@@ -815,6 +860,7 @@ export async function updateAgentLink(
             .set({
               ...values,
               requestAtLaunch,
+              projectSourceReview,
               ...(unchangedTiming ? {} : { nextFireAt: next }),
               updatedAt: now,
             })
@@ -824,6 +870,8 @@ export async function updateAgentLink(
             agentId: input.agentId,
             projectId: input.projectId,
             ...schedule.values,
+            requestAtLaunch,
+            projectSourceReview,
           });
         }
       }
@@ -873,6 +921,10 @@ export async function updateAgentLink(
       agentId: input.agentId,
       projectId: input.projectId,
       schedules: normalizedSchedules?.length,
+      nativeReviewRecorded: reviewsNativeSources,
+      reviewedSourceRevision: reviewsNativeSources
+        ? (linkRows[0].schedulesRevision as number) + 1
+        : null,
     },
     "agent link updated",
   );
