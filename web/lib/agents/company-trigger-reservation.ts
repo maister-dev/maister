@@ -13,6 +13,7 @@ import { z } from "zod";
 import { companyTriggerBindingSnapshotSchema } from "./trigger-attempt-types";
 import { parseScheduledRequestSnapshot } from "./scheduled-request";
 import { assertScheduledRequestMatches } from "./scheduled-request-store";
+import { resolveCompanyEventChainDepth } from "./chain-depth";
 
 import { MaisterError } from "@/lib/errors";
 import { contentDigest } from "@/lib/evaluations/digest";
@@ -22,21 +23,21 @@ export type CompanyTriggerReservation = Readonly<{
   runId: string;
 }>;
 
-/** Cron admission must retain its durable source appointment before allocating execution. */
+/** Automated source admission must retain its durable appointment before allocating execution. */
 export function assertCompanyTriggerAppointment(
   triggerSource: CompanyAgentContextInput["triggerSource"],
   invocation: CompanyTriggerReservation | undefined,
 ): void {
-  if (triggerSource === "cron" && !invocation)
+  if (["cron", "domain_event"].includes(triggerSource) && !invocation)
     throw new MaisterError(
       "CONFIG",
-      "Company cron admission requires its existing source reservation",
+      "Company source admission requires its existing reservation",
       { details: { reason: "company_trigger_reservation_required" } },
     );
-  if (triggerSource !== "cron" && invocation)
+  if (!["cron", "domain_event"].includes(triggerSource) && invocation)
     throw new MaisterError(
       "CONFIG",
-      "A company cron reservation cannot authorize another invocation trigger",
+      "A company source reservation cannot authorize another invocation trigger",
       { details: { reason: "company_trigger_reservation_trigger_mismatch" } },
     );
 }
@@ -49,23 +50,32 @@ const attemptSchema = z.object({
   schedule_id: identity,
   binding_snapshot: companyTriggerBindingSnapshotSchema,
   reserved_run_id: identity,
-  trigger_source: z.literal("cron"),
+  trigger_source: z.enum(["cron", "domain_event"]),
+  trigger_event_id: z.coerce.number().int().positive().safe().nullable(),
   outcome: z.null(),
   scheduled_request_snapshot: z.unknown(),
 });
 
-/** A source adapter may use only the existing immutable cron reservation, never a caller-chosen Run ID. */
+/** A source adapter may use only the existing immutable invocation reservation, never a caller-chosen Run ID. */
 export async function assertCompanyTriggerReservation(
   tx: SqlTransaction,
   userId: string,
   context: CompanySpecialistContext,
   invocation: CompanyTriggerReservation,
   coordinator: CompanyFlowBindingRevision | null,
-): Promise<Readonly<{ runId: string; scheduleId: string }>> {
+  triggerSource: CompanyAgentContextInput["triggerSource"],
+): Promise<
+  Readonly<{
+    runId: string;
+    scheduleId: string;
+    triggerEventId: number | null;
+    agentChainDepth: number;
+  }>
+> {
   const parsed = attemptSchema.safeParse(
     (
       await tx.execute(sql`
-    SELECT id,company_id,project_id,source_agent_id,schedule_id,binding_snapshot,reserved_run_id,trigger_source,outcome,scheduled_request_snapshot
+    SELECT id,company_id,project_id,source_agent_id,schedule_id,binding_snapshot,reserved_run_id,trigger_source,trigger_event_id,outcome,scheduled_request_snapshot
     FROM agent_trigger_attempts WHERE id=${invocation.attemptId} FOR SHARE
   `)
     ).rows[0],
@@ -74,19 +84,29 @@ export async function assertCompanyTriggerReservation(
   if (!parsed.success)
     throw new MaisterError(
       "CONFLICT",
-      "The unsettled company cron invocation is unavailable",
+      "The unsettled company source invocation is unavailable",
       { details: { reason: "company_trigger_reservation_unavailable" } },
     );
   const attempt = parsed.data;
   const source = (
     await tx.execute(sql`
     SELECT id FROM agent_schedules WHERE id=${attempt.schedule_id} AND company_id=${context.owner.companyId} AND project_id IS NULL
-      AND created_by=${userId} AND enabled AND trigger_type='cron' AND agent_id=${context.effective.parsed.id}
+      AND created_by=${userId} AND enabled AND trigger_type=${attempt.binding_snapshot.triggerType} AND agent_id=${context.effective.parsed.id}
       AND company_config_revision=${attempt.binding_snapshot.sourceRevision}
       AND company_specialist_binding_id=${context.binding.bindingId} FOR SHARE
   `)
   ).rows[0];
   const origin = context.assignment.origin;
+  const originMatches =
+    attempt.trigger_source === "cron"
+      ? origin.kind === "schedule" &&
+        origin.scheduleId === attempt.schedule_id &&
+        origin.triggerAttemptId === attempt.id &&
+        attempt.trigger_event_id === null
+      : origin.kind === "event" &&
+        origin.subscriptionId === attempt.schedule_id &&
+        origin.eventId === String(attempt.trigger_event_id) &&
+        attempt.trigger_event_id !== null;
   const role = attempt.binding_snapshot.specialistBinding;
   const expectedCoordinator =
     coordinator === null
@@ -102,9 +122,10 @@ export async function assertCompanyTriggerReservation(
     attempt.company_id !== context.owner.companyId ||
     attempt.source_agent_id !== context.effective.parsed.id ||
     attempt.reserved_run_id !== invocation.runId ||
-    origin.kind !== "schedule" ||
-    origin.scheduleId !== attempt.schedule_id ||
-    origin.triggerAttemptId !== attempt.id ||
+    !originMatches ||
+    attempt.trigger_source !== triggerSource ||
+    (attempt.trigger_source === "cron") !==
+      (attempt.binding_snapshot.triggerType === "cron") ||
     role.id !== context.binding.bindingId ||
     role.revision !== context.binding.revision ||
     role.snapshotSha256 !== context.binding.snapshotDigest ||
@@ -121,5 +142,24 @@ export async function assertCompanyTriggerReservation(
     parseScheduledRequestSnapshot(attempt.scheduled_request_snapshot),
   );
 
-  return { runId: attempt.reserved_run_id, scheduleId: attempt.schedule_id };
+  const chain: Awaited<ReturnType<typeof resolveCompanyEventChainDepth>> =
+    attempt.trigger_event_id === null
+      ? { depth: 0, atCap: false }
+      : await resolveCompanyEventChainDepth(tx, attempt.trigger_event_id);
+
+  if (chain.atCap)
+    throw new MaisterError(
+      "PRECONDITION",
+      "The producing company event has exhausted its agent chain budget",
+      {
+        details: { reason: chain.reason ?? "chain_depth_exhausted" },
+      },
+    );
+
+  return {
+    runId: attempt.reserved_run_id,
+    scheduleId: attempt.schedule_id,
+    triggerEventId: attempt.trigger_event_id,
+    agentChainDepth: chain.depth,
+  };
 }

@@ -250,8 +250,10 @@ web/lib/supervisor-client ──HTTP──► supervisor/src/http-api  ──►
   claim/reconciliation ledger; no new scheduler or attempt store is introduced.
   Native cron source enablement requires declared triggers, current creator
   authority, enabled reviewed bindings and a nonempty recurring request.
-  Event/webhook adapters and verified assignment acceptance retain their gates;
-  native company agent/coordinator execution is implemented.
+  The registered event consumer composes its existing project adapter with native
+  company event intake. Source-specific creation and webhook qualification remain
+  open; event receipts and source-sharing limits use existing ledgers and grants.
+  Verified assignment acceptance retains its gate; native company execution is implemented.
 - ✅ Server Action (`app/.../actions.ts`) imports from `lib/*`.
 - ✅ `lib/supervisor-client.ts` imports the wire error taxonomy plus a small set
   of client-safe pure modules (the execution-host lag predicate and default,

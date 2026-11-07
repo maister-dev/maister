@@ -696,11 +696,14 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
   **(Implemented, migration 0060, ADR-099)** one persistent child per
   `addressable_key` within a run-tree; backs star-routed messaging address
   resolution.
-- `runs_agent_trigger_event_unique` partial UNIQUE on
-  `(agent_id, trigger_event_id) WHERE trigger_event_id IS NOT NULL` —
+- `runs_agent_trigger_event_uq` partial UNIQUE on
+  `(agent_id, trigger_event_id) WHERE trigger_event_id IS NOT NULL AND company_id IS NULL` —
   **(Implemented)** the outbox→spawn no-dup claim: at-least-once event
   redelivery converges to exactly one agent run (ADR-089). See
-  [agents-domain.md](agents-domain.md).
+  [agents-domain.md](agents-domain.md). Company events use
+  `runs_company_trigger_event_uq` on company/professional/subscription/event;
+  [native source guards](specialist-assignments-domain.md#canonical-intake-receipts)
+  bind the exact existing invocation and preserve historical null triggers (0240).
 - `scratch_runs_project_status_idx` on `(project_id, dialog_status)` — active
   scratch workspace lists. **(migration 0057)** made **partial**
   (`WHERE project_id IS NOT NULL`) so the project-less local-package assistant

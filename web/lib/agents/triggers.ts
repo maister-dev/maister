@@ -18,6 +18,7 @@ import {
   settleAgentTriggerAttempt,
 } from "@/lib/agents/trigger-attempts";
 import { resolveAgentChainDepth } from "@/lib/agents/chain-depth";
+import { dispatchCompanyAgentEvents } from "@/lib/agents/company-event-dispatch";
 import { launchAgentRun, type LaunchAgentRunResult } from "@/lib/agents/launch";
 import { MENTION_SUPPRESSION_STATUSES } from "@/lib/agents/summonability";
 import { getDb } from "@/lib/db/client";
@@ -865,4 +866,18 @@ export function buildAgentTriggersConsumer(
   };
 }
 
-export const agentTriggersConsumer = buildAgentTriggersConsumer();
+const projectAgentTriggersConsumer = buildAgentTriggersConsumer();
+
+/** The registered consumer composes owner-specific adapters without widening the legacy project injection seam. */
+export const agentTriggersConsumer: DomainEventConsumer = {
+  ...projectAgentTriggersConsumer,
+  async handle(events): Promise<void> {
+    await projectAgentTriggersConsumer.handle(events);
+    if (
+      events.some(
+        (event) => event.companyId !== null && event.projectId === null,
+      )
+    )
+      await dispatchCompanyAgentEvents(getDb(), events);
+  },
+};

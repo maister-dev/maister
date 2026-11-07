@@ -112,6 +112,8 @@ Generated main `0253_specialist_intake_receipts` adds one immutable source-deliv
 Generated main `0254_specialist_project_flow_input` permits an explicit standing snapshot v2 only for newly retained project coordinator inputs. Its closed Flow witness names the project provider/ref, exact installed revision and resolved revision, plus the manifest SHA-256; v1 input bytes and existing assignment fields remain unchanged. A nullable `specialist_assignments.project_task_id` references the initial existing project task, with an owner CHECK, same-project reference guard, immutable non-null link and partial index. Its first CAS write and ordinary task creation commit together. No legacy task identity is invented; company assignments retain NULL. Existing input/history guards and the existing Run/node-attempt ledgers remain authoritative. No Brain FK or new execution ledger is introduced.
 
 
+Generated main `0255_company_event_admission` leaves project event claims unique on agent/event and scopes company claims to company/professional/subscription/event. A source insertion/reference guard requires its exact existing reserved invocation, owned event and immutable assignment origin. Historical null/unknown triggers, original Run/input bytes and cron v1 snapshots remain unchanged; existing owner CHECKs remain in force. Event source references and inherited restrictions use existing assignment inputs; no Brain FK, clock or execution ledger is added.
+
 ## Exact persistence contract
 
 All new entity IDs are server-generated; timestamps UTC. Versioned closed JSON contains typed fields specified in the owning API/native schemas. Absence/null/legacy variants are explicit, not generic empty objects.

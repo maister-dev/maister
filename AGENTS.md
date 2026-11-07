@@ -174,13 +174,15 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | `web/lib/agents/company-flow-launch.ts` | Atomic native company graph reservation on existing Run/session/placement ledgers; dispatch remains gated |
 | `web/lib/agents/company-flow-session-context.ts` | Restore exact company graph input, current authority, pinned export and frozen runners without repository records |
 | `web/lib/agents/company-flow-persona.ts` | Resolve current reviewed company node professionals through the shared Flow persona/attestation path |
-| `web/lib/agents/company-flow-enforcement.ts` | Current attested role/limits to shared native MCP-only tool policy; graph application remains gated |
+| `web/lib/agents/company-flow-enforcement.ts` | Current attested role/limits enforce shared native MCP-only tool policy on company graph dispatch |
 | `web/lib/agents/company-flow-materialization.ts` | Current company/frozen-session policy through shared capability evidence, file ownership and materialization contracts |
 | `web/lib/agents/company-flow-workspace.ts` | Empty native source baseline, current integrity and existing lease-owned platform generations |
 | `web/lib/run-results/company-flow-terminal.ts` | Required result, current driver/result witnesses and physical quiescence before native company graph settlement/disposition |
 | `web/app/api/specialist-assignments/` | Company/project specialist and coordinator manual submission, personal-token API, current authority and exact input inspection |
 | `web/lib/specialist-assignments/store.ts` | Durable company/project assignment heads, frozen input history, current authority, CAS and existing-run links |
 | `web/lib/agents/company-cron-dispatch.ts` | Bounded company lane in the existing registered agent tick; exact native source/Run receipts, current-authority cron enablement and owner-aware recovery |
+| `web/lib/agents/company-event-dispatch.ts` | Internal company adapter in the registered event consumer; exact source receipts, source-sharing grants and inherited event-chain bounds; event source creation pending |
+| `web/lib/specialist-assignments/company-trigger-intake.ts` | Shared transactional cron/event intake and native reservation; source adapters validate original identity and inherited restrictions |
 | `web/lib/run-results/operational-projection.ts` | Shared operational diagnostic projection for run details, collect and automation history |
 | `web/lib/gc/operational-disposition.ts` | Durable operational cleanup through existing workspace lifecycle claims |
 | `web/lib/execution-host/events/projection-runtime.ts` | Autonomous canonical projection registry and worker activation |

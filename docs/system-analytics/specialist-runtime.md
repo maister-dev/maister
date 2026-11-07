@@ -61,7 +61,7 @@ Existing `agent_schedules` and `agent_trigger_attempts` now support explicit exc
 
 ### Company agent admission preflight
 
-**Implemented native standalone preflight, reservation and controlled-ACP lifecycle qualification (T20); final full phase compatibility remains T21.** The server-internal company agent preflight receives company/assignment/binding IDs, exact positive 32-bit business/input/binding revisions and a declared trigger (`manual`, `cron`, `domain_event` or `webhook`). The authenticated initiating user is a separate server argument. No request-supplied role, attribution, authority snapshot, package, runner, workspace or confirmation is accepted by this grammar.
+**Implemented native standalone preflight, reservation and controlled-ACP lifecycle qualification (T20); full Phase 4 compatibility is qualified in T21.** The server-internal company agent preflight receives company/assignment/binding IDs, exact positive 32-bit business/input/binding revisions and a declared trigger (`manual`, `cron`, `domain_event` or `webhook`). The authenticated initiating user is a separate server argument. No request-supplied role, attribution, authority snapshot, package, runner, workspace or confirmation is accepted by this grammar.
 
 Before reading assignment content it checks current `assignments:read` and `assignments:update` for the selected company and active user. The preflight locks the assignment before the specialist binding, checks its company owner and queued state, business/input revision, responsible binding/role and retained source access. It requires a current enabled, non-retired specialist configuration and enabled, non-quarantined catalog identity. It resolves the actual immutable trusted installed package, compares the retained definition/package witness and effective configuration to the assignment's frozen standing input, and validates the selected trigger. A first standalone company operational session requires `workspace:none`, no repository qualification, no coordinator Flow and the exact required operational result descriptor captured by the assignment. Coordinator Flow admission is the distinct T20.1 path; this preflight never substitutes a standalone session for a declared Flow.
 
@@ -71,7 +71,7 @@ The result contains typed current binding, effective definition/configuration/ex
 
 The internal `reserveCompanyAgentRun` service admits one exact queued assignment through the existing `runs`, default `run_sessions`, execution-host placement and `specialist_run_links`. It rechecks current preflight under the assignment lock, freezes the reviewed configuration, policy, result and scheduled request, and classifies the exact assignment input before commit. Its assignment becomes `active` while the Run waits in the existing `Pending` queue; no process or credential is created by reservation. Competing admissions using the same business revision yield one committed Run and a conflict. Source denial rolls back the Run, session, placement, link, assignment transition and transactional outbox changes together.
 
-Company runner selection uses the shared standalone resolver: exact binding runner, declared agent default, then platform default. There is no project tier. An explicit binding/agent runner does not require a configured platform-default row; when every tier is absent, admission refuses without allocating a Run/session/link. A selected missing, disabled, unready or read-only-incompatible runner refuses admission; it never silently chooses a different configured runner. Required read-only diagnostics come from the selected execution-host boundary. Assignment and reviewed execution policies must have equal normalized axes; changing requested authority requires explicit review. Native input references are re-inspected under current initiating-user and executing-specialist authority, including exact available version witnesses. Declared private project memory or project MCP bindings are refused until their actual project admission is provided. Native standalone dispatch uses the shared owned-session path below. Native permission continuation and parked-host restart are qualified below; final full phase compatibility remains T21 and company graphs use their separate explicit context below.
+Company runner selection uses the shared standalone resolver: exact binding runner, declared agent default, then platform default. There is no project tier. An explicit binding/agent runner does not require a configured platform-default row; when every tier is absent, admission refuses without allocating a Run/session/link. A selected missing, disabled, unready or read-only-incompatible runner refuses admission; it never silently chooses a different configured runner. Required read-only diagnostics come from the selected execution-host boundary. Assignment and reviewed execution policies must have equal normalized axes; changing requested authority requires explicit review. Native input references are re-inspected under current initiating-user and executing-specialist authority, including exact available version witnesses. Declared private project memory or project MCP bindings are refused until their actual project admission is provided. Native standalone dispatch uses the shared owned-session path below. Native permission continuation and parked-host restart are qualified below; full Phase 4 compatibility is qualified in T21 and company graphs use their separate explicit context below.
 
 ### Company Flow node knowledge authority
 
@@ -137,9 +137,67 @@ witnesses; source creation grants no execution permission. Native create/dispatc
 is qualified through the registered scheduler. Public source settings/routes and
 event/webhook adapters retain their respective T37/T22.1 work.
 
+### Company event intake — internal consumer; source creation Designed (T22.1)
+
+Company event subscriptions reuse `agent_schedules` with `trigger_type=event`,
+an explicit company owner, reviewed specialist/coordinator bindings and a nonempty
+set of supported agent-trigger event kinds. Internal projection/invalidation facts
+cannot invoke agents. Event sources carry no recurring request text; their event
+input and standing instructions stay separate. Existing project event behavior and
+cron v1 request snapshots remain unchanged.
+
+The registered `agent_triggers` consumer processes authorized company events
+through the existing event claim/fence/reserved Run and canonical assignment
+receipt. Its source identity is `{kind:event,eventId,subscriptionId}`. Distinct
+subscriptions are independent work even for the same professional; redelivery of
+one subscription/event adopts its original receipt. Company event uniqueness must
+include the subscription identity without weakening the historical project event
+uniqueness constraint. No additional invocation ledger or clock is introduced.
+
+The adapter validates the actual company event and current source configuration,
+creator authority, exact provider/role witnesses and declared `domain_event`
+trigger. A Run-producing event requires current source-Run access; its inherited
+source restrictions propagate into the assignment/input and new Run. The recipient
+must also have current access before dispatch. Missing/unknown source access
+refuses rather than dropping restrictions. Input contains only the validated event
+identity, kind and producing Run reference; raw event payload is not copied into
+the assignment or logs. Findings still require their own evidence and may explicitly
+report missing evidence.
+
+Sharing an inherited assignment input additionally requires `assignments:read`
+in the receiving reviewed action limits and a current agent grant. The native
+event appointment authorizes only references already present in its actual
+producing Run's complete source capture, including that capture's inherited
+closure. It never grants general access to another assignment, project, private
+agent memory or personal librarian memory. Current source checks still apply at
+dispatch and later disclosure. The ordinary exact-own-input rule is unchanged.
+
+Processing uses keyset batches of 25 source IDs and the existing bounded event
+dispatcher. Only sources created before the event are eligible. A source refusal
+settles that source's existing claim without poisoning other subscriptions or
+fabricating a claim from malformed event-kind metadata. Malformed kinds receive
+CONFIG source telemetry under the configuration CAS while valid subscriptions
+continue. Self-authored events and exhausted event
+chains do not create work; producing native coordinator events retain the actual
+chain budget. Missing historical trigger provenance or an unqualified inherited
+event chain is explicitly refused as `company_event_chain_unclassified`; a default
+zero counter alone never establishes a known chain root. After reservation, existing current-authority dispatch, capacity,
+quiescence and unknown-outcome reconciliation apply. Qualification must drive the
+registered consumer, distinct subscriptions, replay and inherited-access refusal
+before enabled event creation is exposed.
+
+Generated main `0255_company_event_admission` preserves historical null trigger
+values and project event uniqueness. Company event uniqueness includes company,
+professional, source subscription and event. Its insertion/reference
+guard binds the Run to the existing immutable invocation's reserved identity,
+actual owned event and exact assignment origin; source identity is immutable
+after insertion. Existing owner CHECKs remain unchanged; unclassified historical
+event provenance does not acquire invented identifiers or block lifecycle updates. No existing Run/input bytes are backfilled and no Brain table
+is referenced by the migration.
+
 ### Company agent credentials
 
-**Implemented native credential/session lifecycle (T20); final full phase compatibility remains T21.** Company standalone sessions use the existing ephemeral `agent` token kind and existing deterministic `agent-run:<runId>` terminal revocation. New `project_tokens.company_id/company_run_id` identify the exact company execution; `project_id` is null. A current assigned run, source role, initiating user and immutable launch capture are resolved by the server. Only an active operational company run may receive a credential. The initiating account must remain active, hold current `assignments:read/update`, and match the retained server actor; the current role/configuration/provider and exact assignment input/link must remain available. Minting locks the run, revokes any previous live token for that run and stores only the normal secret hash. One live company credential per run is enforced by a partial unique index. The credential cannot be retargeted, have its scopes widened in place or be reactivated after revocation.
+**Implemented native credential/session lifecycle (T20); full Phase 4 compatibility is qualified in T21.** Company standalone sessions use the existing ephemeral `agent` token kind and existing deterministic `agent-run:<runId>` terminal revocation. New `project_tokens.company_id/company_run_id` identify the exact company execution; `project_id` is null. A current assigned run, source role, initiating user and immutable launch capture are resolved by the server. Only an active operational company run may receive a credential. The initiating account must remain active, hold current `assignments:read/update`, and match the retained server actor; the current role/configuration/provider and exact assignment input/link must remain available. Minting locks the run, revokes any previous live token for that run and stores only the normal secret hash. One live company credential per run is enforced by a partial unique index. The credential cannot be retargeted, have its scopes widened in place or be reactivated after revocation.
 
 Initial company agent token scopes are the explicitly configured intersection of `knowledge:read/propose` with the reviewed role action limits. No wildcard, repository mutation, human confirmation or management scope is inferred. The domain still checks current agent/user knowledge and source grants for each operation; possession of a scope is insufficient. Later assignment/delegation/target tools add their exact scopes in the owning slices. Verification additionally rechecks current run/company/assignment/configuration/provider/account and `assignments:read`, so a Pending or terminal run, disabled/retired/retargeted role, revoked content grant or removed account cannot use a retained credential. Action-specific mutation authority remains separate. Legacy project/user/librarian token shapes and the personal-user actor rules remain unchanged.
 
@@ -260,7 +318,7 @@ probing source bytes. Company runs have no repository reference history.
 Legacy project baseline owner JSON remains unchanged. The shared disposition
 uses the resolved runtime path and refuses repository allocation for a company
 owner. Native company terminal result/token/outbox application and clean directory
-release and native session/host recovery are qualified separately below; final full phase compatibility remains T21.
+release and native session/host recovery are qualified separately below; full Phase 4 compatibility is qualified in T21.
 
 
 Company operational finalization uses the existing Run result ledger, terminal
@@ -297,7 +355,7 @@ queue promotion and queued resume emit project `run.started` webhooks only
 when an actual project owner exists. The native company cap qualification
 covers admission/queue/terminal release with a bounded dispatch seam; real
 company ACP sessions, permission idle-resume and retained-host restart are
-qualified below. Final full lifecycle compatibility remains T21.
+qualified below. Full Phase 4 lifecycle compatibility is qualified in T21.
 
 
 Assignment prompt-source contract (T20 source resolution and native launch
@@ -371,7 +429,7 @@ integrity refusal without reopening execution or reclassifying the Flow as an
 operational agent. Source-integrity failure does not erase its retained technical
 result or complete the business assignment.
 
-Qualification currently uses real PostgreSQL migrations, the actual package loader with a pinned fixture Git package, an owned real supervisor and controlled ACP. Concurrent native driver invocations produce one create/prompt, a valid retained export, physical quiescence and released directory; the business assignment remains active. A changed reviewed coordinator refuses queued dispatch with zero ACP effects. The engine compatibility predicate is the actual 3.12.0 implementation; capability-cache receipts remain controlled fixture inputs, not real adapter/model smoke or companion/stand qualification. Native form and human-review waits are additionally qualified through the actual response route and both graph resumes below. The engine is 3.12.0. Full final full phase compatibility remains T21; actual company companion/cooperation and stand qualification remain separate later gates.
+Qualification currently uses real PostgreSQL migrations, the actual package loader with a pinned fixture Git package, an owned real supervisor and controlled ACP. Concurrent native driver invocations produce one create/prompt, a valid retained export, physical quiescence and released directory; the business assignment remains active. A changed reviewed coordinator refuses queued dispatch with zero ACP effects. The engine compatibility predicate is the actual 3.12.0 implementation; capability-cache receipts remain controlled fixture inputs, not real adapter/model smoke or companion/stand qualification. Native form and human-review waits are additionally qualified through the actual response route and both graph resumes below. The engine is 3.12.0. Full Phase 4 compatibility is qualified in T21; actual company companion/cooperation and stand qualification remain separate later gates.
 
 Native completion qualification also covers missing and malformed required node
 output: the existing default mismatch policy fails the node and Run with `CONFIG`,
@@ -483,7 +541,7 @@ a managed-path or replay-owner conflict. See the authoritative
 ### Company standalone session driver
 
 **Implemented and qualified native standalone dispatch, permission continuation
-and parked-host restart; final full phase compatibility remains T21.** `driveAgentSession` distinguishes a company owner before project
+and parked-host restart; full Phase 4 compatibility is qualified in T21.** `driveAgentSession` distinguishes a company owner before project
 resolution. It uses the existing generation turn, default session, host command
 ledger, opaque workspace adoption, canonical prompt owner and operational
 finalization. It supplies no synthetic project, repository, attachment or private

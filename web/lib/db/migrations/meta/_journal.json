@@ -1758,6 +1758,13 @@
       "when": 1794606477957,
       "tag": "0254_specialist_project_flow_input",
       "breakpoints": true
+    },
+    {
+      "idx": 255,
+      "version": "7",
+      "when": 1794606477958,
+      "tag": "0255_company_event_admission",
+      "breakpoints": true
     }
   ]
 }

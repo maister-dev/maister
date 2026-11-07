@@ -2735,7 +2735,12 @@ export const runs = pgTable(
     // M34 (ADR-089): outbox→spawn no-dup claim under at-least-once redelivery.
     uniqAgentTriggerEvent: uniqueIndex("runs_agent_trigger_event_uq")
       .on(t.agentId, t.triggerEventId)
-      .where(sql`${t.triggerEventId} IS NOT NULL`),
+      .where(sql`${t.triggerEventId} IS NOT NULL AND ${t.companyId} IS NULL`),
+    uniqCompanyTriggerEvent: uniqueIndex("runs_company_trigger_event_uq")
+      .on(t.companyId, t.sourceAgentId, t.agentScheduleId, t.triggerEventId)
+      .where(
+        sql`${t.companyId} IS NOT NULL AND ${t.triggerEventId} IS NOT NULL`,
+      ),
     uniqScheduledLaunch: unique("runs_scheduled_launch_id_unique").on(
       t.scheduledLaunchId,
     ),

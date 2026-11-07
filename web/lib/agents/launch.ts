@@ -920,7 +920,11 @@ async function convergeToTriggerWinner(
       .select({ id: runs.id, status: runs.status })
       .from(runs)
       .where(
-        and(eq(runs.agentId, agentId), eq(runs.triggerEventId, triggerEventId)),
+        and(
+          eq(runs.agentId, agentId),
+          eq(runs.triggerEventId, triggerEventId),
+          isNull(runs.companyId),
+        ),
       );
 
     if (winner[0]) {
@@ -1515,6 +1519,7 @@ async function launchAgentRunWithAdmission(
         and(
           eq(runs.agentId, input.agentId),
           eq(runs.triggerEventId, input.trigger.eventId),
+          isNull(runs.companyId),
         ),
       );
 

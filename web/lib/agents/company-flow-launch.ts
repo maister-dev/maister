@@ -187,6 +187,7 @@ export async function reserveCompanyFlowRunInTransaction(
         context,
         invocation,
         context.coordinator,
+        request.triggerSource,
       )
     : null;
   const runId = triggerReservation?.runId ?? randomUUID();
@@ -195,6 +196,8 @@ export async function reserveCompanyFlowRunInTransaction(
   await tx.insert(runs).values({
     id: runId,
     agentScheduleId: triggerReservation?.scheduleId ?? null,
+    triggerEventId: triggerReservation?.triggerEventId ?? null,
+    agentChainDepth: triggerReservation?.agentChainDepth ?? 0,
     runKind: "flow",
     companyId: context.owner.companyId,
     companyExecutionSnapshot: captureCompanyFlowExecution(context),

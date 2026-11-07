@@ -32,6 +32,14 @@ it("IT-CBX-01 company migration preserves existing project data and identity acr
   const run = await seedRun(database.db, { projectId: project.id });
 
   await database.pool.query(
+    "INSERT INTO agents(id,package_name,version_label,origin,name,description,workspace,mode,triggers,risk_tier,source_path) VALUES('legacy:event-agent','legacy','v1','git','Legacy event role','Retained catalog identity','none','session','[\"manual\"]'::jsonb,'read_only','/tmp/legacy-event.md')",
+  );
+  await database.pool.query(
+    "UPDATE runs SET agent_id='legacy:event-agent',trigger_event_id=42 WHERE id=$1",
+    [run],
+  );
+
+  await database.pool.query(
     "INSERT INTO node_attempts(id,run_id,node_id,node_type,status,vars) VALUES('legacy-native-actor-attempt',$1,'coordinator','orchestrator','Succeeded','{\"legacyFinding\":\"preserve exact value\"}')",
     [run],
   );
@@ -228,6 +236,15 @@ it("IT-CBX-01 company migration preserves existing project data and identity acr
   expect((await database.pool.query("SELECT id FROM companies")).rows).toEqual(
     company.rows,
   );
+  await expect(
+    database.pool.query(
+      "INSERT INTO runs SELECT (jsonb_populate_record(NULL::runs,to_jsonb(original)||jsonb_build_object('id','duplicate-legacy-event'))).* FROM runs original WHERE original.id=$1",
+      [run],
+    ),
+  ).rejects.toMatchObject({
+    code: "23505",
+    constraint: "runs_agent_trigger_event_uq",
+  });
 });
 
 it("IT-CBX-01 populated Brain upgrade preserves honest legacy provenance and pending proposals", async () => {

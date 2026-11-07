@@ -2931,6 +2931,7 @@ table runs {
     promoted_head_sha [name: 'runs_promoted_head_sha_idx']
     merge_commit_sha [name: 'runs_merge_commit_sha_idx']
     (agent_id, trigger_event_id) [name: 'runs_agent_trigger_event_uq', unique]
+    (company_id, source_agent_id, agent_schedule_id, trigger_event_id) [name: 'runs_company_trigger_event_uq', unique]
     scheduled_launch_id [name: 'runs_scheduled_launch_id_unique', unique]
     evaluation_batch_item_id [name: 'runs_evaluation_batch_item_uq', unique]
     agent_schedule_id [name: 'runs_agent_schedule_idx']

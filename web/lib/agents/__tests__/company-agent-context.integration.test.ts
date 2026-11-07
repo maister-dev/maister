@@ -132,7 +132,13 @@ import { POST as externalAssignmentPost } from "@/app/api/v1/ext/specialist-assi
 import { GET as externalAssignmentGet } from "@/app/api/v1/ext/specialist-assignments/[assignmentId]/route";
 import { issueUserAccessToken, issueToken } from "@/lib/tokens/issue";
 import { createCompanyCronSchedule } from "@/lib/agents/company-schedules";
+import { resolveCompanyEventChainDepth } from "@/lib/agents/chain-depth";
 import { runSchedulerTick } from "@/lib/scheduler/tick-service";
+import {
+  dispatchDomainEvents,
+  ensureConsumerRows,
+} from "@/lib/domain-events/dispatch";
+import { DOMAIN_EVENT_CONSUMERS } from "@/lib/domain-events/consumers";
 import {
   claimCronAgentAttempt,
   reconcileAgentTriggerAttempts,
@@ -278,7 +284,7 @@ beforeAll(async () => {
   });
   await writeFile(
     join(source, "maister-agents/evidence-researcher.md"),
-    "---\nname: Operations observer\ndescription: Diagnose authorized stand state\nkind: operational\ncompletion: {contract: operational_v1}\nspecialist:\n  responsibilities: [Inspect authorized stand state]\n  targetClasses: [stand]\nmode: session\nworkspace: none\ntriggers: [manual, cron]\nrisk_tier: read_only\nconfig:\n  - key: label\n    type: string\n    default: base\n---\nInspect the authorized target. Preserve missing evidence.\n",
+    "---\nname: Operations observer\ndescription: Diagnose authorized stand state\nkind: operational\ncompletion: {contract: operational_v1}\nspecialist:\n  responsibilities: [Inspect authorized stand state]\n  targetClasses: [stand]\nmode: session\nworkspace: none\ntriggers: [manual, cron, domain_event]\nrisk_tier: read_only\nconfig:\n  - key: label\n    type: string\n    default: base\n---\nInspect the authorized target. Preserve missing evidence.\n",
   );
   const primarySource = await readFile(
     join(source, "maister-agents/evidence-researcher.md"),
@@ -325,6 +331,10 @@ beforeAll(async () => {
           "\n```",
       }) +
       "\n",
+  );
+  await cp(
+    join(source, "maister-agents/wire-observer.md"),
+    join(source, "maister-agents/event-observer.md"),
   );
   for (const delivery of ["live", "checkpointed", "cancelled"] as const) {
     await writeFile(
@@ -639,6 +649,63 @@ it("IT-CBS-04 completes company HTTP and registered cron intake through the exis
       specialistBindingId: binding.specialist.bindingId,
       idempotencyKey: randomUUID(),
     };
+    const eventDefinition = await resolveInstalledAgentDefinition(db, {
+      agentId: "rah:event-observer",
+      packageInstallId: effective.packageInstallId,
+    });
+    const eventBinding = await createCompanySpecialistBinding(
+      db,
+      userId,
+      "rah:event-observer",
+      {
+        owner: { kind: "company", companyId: request.companyId },
+        packageInstallId: eventDefinition.packageInstallId,
+        packageRevision: eventDefinition.resolvedRevision!,
+        definitionSha256: agentDefinitionSha256(eventDefinition.parsed),
+        enabled: true,
+        configuration: {},
+        grantActions: [
+          "knowledge:read",
+          "knowledge:propose",
+          "assignments:read",
+        ],
+        runnerId,
+        idempotencyKey: randomUUID(),
+      },
+    );
+
+    await createCompanyGrants(db, administratorId, {
+      principalKind: "agent",
+      principalId: "rah:event-observer",
+      actions: ["assignments:read", "knowledge:read"],
+      idempotencyKey: randomUUID(),
+    });
+    const eventSources: string[] = [];
+
+    let malformedEventSource = "";
+
+    for (let subscriber = 0; subscriber < 3; subscriber++) {
+      const draft = await createCompanyCronSchedule(db, userId, {
+        owner: { kind: "company", companyId: request.companyId },
+        specialistBindingId: eventBinding.specialist.bindingId,
+        cronExpr: "*/5 * * * *",
+        timezone: "UTC",
+        enabled: false,
+        idempotencyKey: randomUUID(),
+      });
+
+      // Prospective event qualification uses only the existing owned source table.
+      await database.pool.query(
+        "UPDATE agent_schedules SET trigger_type='event',cron_expr=NULL,timezone=NULL,next_fire_at=NULL,event_match=$2::jsonb,enabled=true,company_config_revision=company_config_revision+1 WHERE id=$1",
+        [
+          draft.scheduleId,
+          JSON.stringify({ kinds: subscriber === 2 ? 7 : ["run.done"] }),
+        ],
+      );
+      if (subscriber === 2) malformedEventSource = draft.scheduleId;
+      else eventSources.push(draft.scheduleId);
+    }
+    await ensureConsumerRows(db, DOMAIN_EVENT_CONSUMERS);
     const hosts = createExecutionHosts({
       db,
       transport: createLocalDirectTransport(),
@@ -862,6 +929,133 @@ it("IT-CBS-04 completes company HTTP and registered cron intake through the exis
     );
 
     expect(terminalStop.status).toBe(409);
+    const originatingEvent = (
+      await database.pool.query<{ id: string }>(
+        "SELECT id FROM domain_events WHERE run_id=$1 AND kind='run.done'",
+        [receipt.runId],
+      )
+    ).rows[0]!;
+
+    await expect(
+      db.transaction(async (tx) => {
+        await tx.execute(
+          sql`UPDATE runs SET trigger_source=NULL WHERE id=${receipt.runId}`,
+        );
+        const inspection = await resolveCompanyEventChainDepth(
+          tx,
+          Number(originatingEvent.id),
+        );
+
+        // Keep the legacy provenance probe isolated even when its assertion is RED.
+        throw new MaisterError(
+          "CONFLICT",
+          "Roll back the historical source classification probe",
+          {
+            details: { reason: "legacy_event_probe", inspection },
+          },
+        );
+      }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: {
+        reason: "legacy_event_probe",
+        inspection: { atCap: true, reason: "company_event_chain_unclassified" },
+      },
+    });
+    expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT last_outcome,last_error_code,(SELECT count(*)::int FROM agent_trigger_attempts WHERE schedule_id=$1) AS claims FROM agent_schedules WHERE id=$1",
+          [malformedEventSource],
+        )
+      ).rows,
+    ).toEqual([
+      { last_outcome: "refused", last_error_code: "CONFIG", claims: 0 },
+    ]);
+    const eventAttempts = (
+      await database.pool.query(
+        "SELECT id,schedule_id,reserved_run_id,run_id,outcome,scheduled_request_snapshot FROM agent_trigger_attempts WHERE schedule_id=ANY($1::text[]) AND trigger_event_id=$2 ORDER BY schedule_id",
+        [eventSources, originatingEvent.id],
+      )
+    ).rows;
+
+    expect(eventAttempts).toHaveLength(2);
+    for (const eventAttempt of eventAttempts) {
+      expect(eventAttempt).toMatchObject({
+        outcome: "queued",
+        run_id: eventAttempt.reserved_run_id,
+        scheduled_request_snapshot: null,
+      });
+      await vi.waitFor(
+        async () => {
+          expect(
+            (
+              await database.pool.query(
+                "SELECT status,trigger_source,trigger_event_id,agent_schedule_id,agent_chain_depth,project_id,task_id FROM runs WHERE id=$1",
+                [eventAttempt.reserved_run_id],
+              )
+            ).rows,
+          ).toEqual([
+            {
+              status: "Done",
+              trigger_source: "domain_event",
+              trigger_event_id: originatingEvent.id,
+              agent_schedule_id: eventAttempt.schedule_id,
+              agent_chain_depth: 1,
+              project_id: null,
+              task_id: null,
+            },
+          ]);
+        },
+        { timeout: 30000, interval: 25 },
+      );
+      const retainedEventInput = (
+        await database.pool.query(
+          "SELECT assignment.origin,input.objective_input,input.source_restrictions,(SELECT knowledge_access->'restrictions' FROM runs WHERE id=$2) AS original_restrictions FROM specialist_run_links link JOIN specialist_assignments assignment ON assignment.id=link.assignment_id JOIN specialist_input_revisions input ON input.assignment_id=link.assignment_id AND input.revision=link.input_revision WHERE link.run_id=$1",
+          [eventAttempt.reserved_run_id, receipt.runId],
+        )
+      ).rows[0]!;
+
+      expect(retainedEventInput.origin).toEqual({
+        kind: "event",
+        eventId: originatingEvent.id,
+        subscriptionId: eventAttempt.schedule_id,
+      });
+      expect(retainedEventInput.source_restrictions).toEqual(
+        retainedEventInput.original_restrictions,
+      );
+      expect(JSON.parse(retainedEventInput.objective_input.input)).toEqual({
+        schemaVersion: 1,
+        event: {
+          id: originatingEvent.id,
+          kind: "run.done",
+          runId: receipt.runId,
+        },
+      });
+    }
+    await expect(
+      database.pool.query("UPDATE runs SET agent_schedule_id=$2 WHERE id=$1", [
+        eventAttempts[0]!.reserved_run_id,
+        eventAttempts[1]!.schedule_id,
+      ]),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "runs_company_event_source_immutable",
+    });
+    await database.pool.query(
+      "UPDATE domain_event_consumers SET cursor_event_id=$1::bigint-1 WHERE consumer_id='agent_triggers'",
+      [originatingEvent.id],
+    );
+    expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM agent_trigger_attempts WHERE schedule_id=ANY($1::text[]) AND trigger_event_id=$2",
+          [eventSources, originatingEvent.id],
+        )
+      ).rows,
+    ).toEqual([{ count: 2 }]);
     await expect(
       createCompanyCronSchedule(db, userId, {
         owner: { kind: "company", companyId: request.companyId },
@@ -985,6 +1179,62 @@ it("IT-CBS-04 completes company HTTP and registered cron intake through the exis
       },
       { timeout: 30000, interval: 25 },
     );
+    const nextEvent = (
+      await database.pool.query<{ id: string }>(
+        "SELECT id FROM domain_events WHERE run_id=$1 AND kind='run.done'",
+        [attempt.reserved_run_id],
+      )
+    ).rows[0]!;
+    const recipientGrant = (
+      await database.pool.query<{ id: string; revision: number }>(
+        "SELECT id,revision FROM company_grants WHERE principal_type='agent' AND principal_id='rah:event-observer' AND action='assignments:read' AND revoked_at IS NULL",
+      )
+    ).rows[0]!;
+
+    await revokeCompanyGrant(db, administratorId, recipientGrant.id, {
+      expectedRevision: recipientGrant.revision,
+      reason: "Qualify revoked event-recipient source sharing",
+      idempotencyKey: randomUUID(),
+    });
+    try {
+      expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+      expect(
+        (
+          await database.pool.query(
+            "SELECT outcome,reason_code,run_id,(SELECT count(*)::int FROM execution_commands command WHERE command.run_id=invocation.reserved_run_id AND command.kind IN ('session.create','session.prompt')) AS dispatches FROM agent_trigger_attempts invocation WHERE schedule_id=ANY($1::text[]) AND trigger_event_id=$2 ORDER BY schedule_id",
+            [eventSources, nextEvent.id],
+          )
+        ).rows,
+      ).toEqual([
+        {
+          outcome: "refused",
+          reason_code: "PRECONDITION",
+          run_id: null,
+          dispatches: 0,
+        },
+        {
+          outcome: "refused",
+          reason_code: "PRECONDITION",
+          run_id: null,
+          dispatches: 0,
+        },
+      ]);
+      expect(
+        (
+          await database.pool.query(
+            "SELECT count(*)::int AS count FROM specialist_assignments WHERE origin->>'kind'='event' AND origin->>'eventId'=$1",
+            [nextEvent.id],
+          )
+        ).rows,
+      ).toEqual([{ count: 0 }]);
+    } finally {
+      await createCompanyGrants(db, administratorId, {
+        principalKind: "agent",
+        principalId: "rah:event-observer",
+        actions: ["assignments:read"],
+        idempotencyKey: randomUUID(),
+      });
+    }
     expect(
       (
         await database.pool.query(
@@ -1135,6 +1385,41 @@ it("IT-CBS-04 completes company HTTP and registered cron intake through the exis
       },
       { timeout: 30000, interval: 25 },
     );
+    const boundedEvent = (
+      await database.pool.query<{ id: string }>(
+        "SELECT id FROM domain_events WHERE run_id=$1 AND kind='run.done'",
+        [interrupted!.reservedRunId],
+      )
+    ).rows[0]!;
+    const previousChainCap = process.env.MAISTER_MAX_AGENT_CHAIN_DEPTH;
+
+    vi.stubEnv("MAISTER_MAX_AGENT_CHAIN_DEPTH", "0");
+    try {
+      expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+      expect(
+        (
+          await database.pool.query(
+            "SELECT outcome,reason_code,run_id FROM agent_trigger_attempts WHERE schedule_id=ANY($1::text[]) AND trigger_event_id=$2 ORDER BY schedule_id",
+            [eventSources, boundedEvent.id],
+          )
+        ).rows,
+      ).toEqual([
+        {
+          outcome: "suppressed",
+          reason_code: "chain_depth_exhausted",
+          run_id: null,
+        },
+        {
+          outcome: "suppressed",
+          reason_code: "chain_depth_exhausted",
+          run_id: null,
+        },
+      ]);
+    } finally {
+      if (previousChainCap === undefined)
+        delete process.env.MAISTER_MAX_AGENT_CHAIN_DEPTH;
+      else process.env.MAISTER_MAX_AGENT_CHAIN_DEPTH = previousChainCap;
+    }
     await database.pool.query(
       "UPDATE agent_schedules SET next_fire_at=clock_timestamp()-interval '1 second' WHERE id=$1",
       [cron.scheduleId],

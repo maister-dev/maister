@@ -12,20 +12,12 @@ import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-reque
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 
-import { prepareCompanySpecialistAssignment } from "./company-intake";
-import { reserveCompanyAssignmentRunInTransaction } from "./company-reservation";
-import {
-  inspectSpecialistIntakeReplayInTransaction,
-  intakeSpecialistAssignmentInTransaction,
-} from "./intake";
-import { getSpecialistAssignmentInTransaction } from "./store";
+import { reserveCompanyTriggerAssignment } from "./company-trigger-intake";
 
 import { companyTriggerBindingSnapshotSchema } from "@/lib/agents/trigger-attempt-types";
 import { scheduledRequestSnapshotSchema } from "@/lib/agents/scheduled-request";
-import { authorizeCompanyUserAction } from "@/lib/company/authority";
-import { createExecutionHosts, localHost } from "@/lib/execution-host";
+import { createExecutionHosts } from "@/lib/execution-host";
 import { MaisterError } from "@/lib/errors";
-import { redactQueryError } from "@/lib/db/pg-error";
 
 const identity = z.string().min(1).max(128);
 const invocationSchema = z.object({
@@ -113,78 +105,23 @@ export async function reserveCompanyCronAssignment(
   invocation: CompanyTriggerReservation,
   hosts: ExecutionHosts = createExecutionHosts({ db }),
 ): Promise<SpecialistIntakeReceipt> {
-  try {
-    const retained = await db.transaction(async (tx) => {
-      const source = await loadCompanyCronInvocation(tx, invocation);
-
-      for (const action of ["assignments:read", "assignments:submit"] as const)
-        await authorizeCompanyUserAction(
-          tx,
-          source.attempt.created_by,
-          source.attempt.company_id,
-          action,
-        );
-      const replay = await inspectSpecialistIntakeReplayInTransaction(
-        tx,
-        source.attempt.created_by,
-        source.origin,
-        source.request,
-      );
-
-      return { source, replay };
-    });
-
-    if (retained.replay) return retained.replay;
-    if (retained.source.attempt.outcome !== null)
-      throw new MaisterError(
-        "CONFLICT",
-        "A settled company invocation cannot be dispatched again",
-        { details: { reason: "company_trigger_already_settled" } },
-      );
-    const host = await localHost({ db, transport: hosts.transport });
-
-    return await db.transaction(async (tx) => {
-      const { attempt, request, origin, scheduled } =
-        await loadCompanyCronInvocation(tx, invocation);
-      const receipt = await intakeSpecialistAssignmentInTransaction(
-        tx,
-        attempt.created_by,
-        origin,
-        request,
-        (sourceTx) =>
-          prepareCompanySpecialistAssignment(
-            sourceTx,
-            attempt.created_by,
-            request,
-            {
-              origin,
-              scheduledRequest: scheduled,
-              destination: { kind: "inbox", userId: attempt.created_by },
-            },
-          ),
-      );
-
-      if (receipt.duplicate) return receipt;
-      await reserveCompanyAssignmentRunInTransaction(
-        tx,
-        attempt.created_by,
-        receipt,
-        "cron",
-        hosts,
-        host,
-        invocation,
-      );
+  return reserveCompanyTriggerAssignment(
+    db,
+    invocation,
+    async (tx, reservation) => {
+      const source = await loadCompanyCronInvocation(tx, reservation);
 
       return {
-        ...receipt,
-        assignment: await getSpecialistAssignmentInTransaction(
-          tx,
-          attempt.created_by,
-          receipt.assignment.id,
-        ),
+        userId: source.attempt.created_by,
+        companyId: source.attempt.company_id,
+        outcome: source.attempt.outcome,
+        request: source.request,
+        origin: source.origin,
+        scheduledRequest: source.scheduled,
+        sourceRestrictions: [],
+        triggerSource: "cron",
       };
-    });
-  } catch (error) {
-    throw redactQueryError(error);
-  }
+    },
+    hosts,
+  );
 }

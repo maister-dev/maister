@@ -1,6 +1,8 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
+import type { SqlTransaction } from "@/lib/db/sql-types";
+
+import { eq, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -25,7 +27,59 @@ export type ChainDepth = {
   // consumer's idempotent contract means a throw redelivers the whole window
   // forever.
   atCap: boolean;
+  reason?: "company_event_chain_unclassified";
 };
+
+/** Native coordinator terminal facts are system-authored but still spend their producing Run's event-chain budget. */
+export async function resolveCompanyEventChainDepth(
+  db: SqlTransaction,
+  eventId: number,
+): Promise<ChainDepth> {
+  const row = (
+    await db.execute(sql`
+    SELECT event.actor_type,producing.agent_chain_depth,
+      (producing.trigger_source IN ('manual','cron','webhook') OR (producing.trigger_source='domain_event' AND EXISTS (
+        SELECT 1 FROM agent_trigger_attempts invocation WHERE invocation.reserved_run_id=producing.id
+          AND invocation.company_id=producing.company_id AND invocation.project_id IS NULL
+          AND invocation.trigger_source='domain_event' AND invocation.trigger_event_id=producing.trigger_event_id
+          AND invocation.schedule_id=producing.agent_schedule_id
+      ))) AS chain_classified
+    FROM domain_events event JOIN runs producing ON producing.id=event.run_id
+      AND producing.company_id=event.company_id AND producing.project_id IS NULL
+      AND producing.company_execution_snapshot IS NOT NULL
+    WHERE event.id=${eventId} AND event.company_id IS NOT NULL AND event.project_id IS NULL
+    FOR SHARE OF event,producing
+  `)
+  ).rows[0];
+
+  if (row?.actor_type === "user")
+    return resolveAgentChainDepth({
+      db,
+      trigger: { source: "domain_event", eventId },
+    });
+  const cap = maxAgentChainDepth();
+
+  if (
+    row?.chain_classified !== true ||
+    typeof row.agent_chain_depth !== "number" ||
+    !Number.isSafeInteger(row.agent_chain_depth) ||
+    row.agent_chain_depth < 0
+  ) {
+    log.warn(
+      { eventId, reason: "company_event_chain_unclassified" },
+      "company event has no classified producing chain; admission refused",
+    );
+
+    return {
+      depth: cap,
+      atCap: true,
+      reason: "company_event_chain_unclassified",
+    };
+  }
+  const depth = row.agent_chain_depth + 1;
+
+  return { depth, atCap: depth > cap };
+}
 
 // ADR-156: `boundRunId` is parsed from the run-bound token NAME, so it is
 // server-derived but NOT guaranteed to reference a live `runs` row — a token can

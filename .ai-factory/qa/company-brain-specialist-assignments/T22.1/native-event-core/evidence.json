@@ -1,0 +1,114 @@
+{
+  "task": "T22.1",
+  "date": "2026-11-07",
+  "slice": "Registered native company event consumer and source-governed intake",
+  "baseCommit": "da03b2029",
+  "status": "Internal event consumer qualified; event source creation/enablement and full T22.1 remain open",
+  "red": [
+    {
+      "case": "Actual registered event consumer ignored company events",
+      "testsPassed": 36,
+      "testsFailed": 1,
+      "durationSeconds": 27.99,
+      "exitCode": 1
+    },
+    {
+      "case": "Distinct subscriptions collided under the old global agent/event Run index",
+      "sqlState": "23505",
+      "constraint": "runs_agent_trigger_event_uq",
+      "testsFailed": 1,
+      "exitCode": 1
+    },
+    {
+      "case": "Unknown producing trigger provenance was treated as a known zero-based chain",
+      "testsPassed": 36,
+      "testsFailed": 1,
+      "exitCode": 1
+    },
+    {
+      "case": "Malformed source kinds threw before capture and held the registered consumer cursor",
+      "observedError": "includes is not a function",
+      "testsPassed": 36,
+      "testsFailed": 1,
+      "exitCode": 1
+    }
+  ],
+  "gates": {
+    "owningIntegration": {
+      "tests": 160,
+      "files": 7,
+      "durationSeconds": 60.84,
+      "exitCode": 0
+    },
+    "webUnit": {
+      "tests": 9318,
+      "files": 889,
+      "durationSeconds": 27.79,
+      "exitCode": 0
+    },
+    "types": {
+      "exitCode": 0
+    },
+    "lint": {
+      "exitCode": 0
+    },
+    "format": {
+      "exitCode": 0
+    },
+    "contracts": {
+      "exitCode": 0
+    },
+    "docsAndErd": {
+      "tables": 172,
+      "exitCode": 0
+    },
+    "schemaDrift": {
+      "result": "No schema changes",
+      "exitCode": 0
+    }
+  },
+  "qualified": [
+    "The actual registered agent_triggers consumer composes existing project behavior with a company-specific adapter; project injection seams are unchanged.",
+    "Source-ID keyset batches of 25 do not truncate fanout. Sources created after the persisted event are excluded using database timestamps without JavaScript precision truncation.",
+    "Existing event claim/fence/reserved Run and canonical intake receipt retain event/subscription identity; two subscriptions produce separate work and replay adopts original receipts. No new clock or attempt ledger.",
+    "Original input contains only validated event ID/kind/producing Run ID, and preserves the complete inherited source restrictions with server requester/origin attribution. Raw event payload is not copied.",
+    "An explicit current receiving agent assignments:read grant and reviewed action limit share only the actual producing Runs classified source closure; ordinary exact-own-input and private-memory rules remain unchanged. Revocation refuses with no ACP effects or retained unauthorized assignment.",
+    "Native constructors validate the exact source trigger, owner, source configuration, role/coordinator/provider witnesses, actual event and reserved Run; company event source identity is immutable.",
+    "Existing event-chain bounds include native system-authored coordinator producers. Unclassified historical provenance fails closed with a named reason, self-events are suppressed, and zero cap prevents new event work. Classification is lazy for actual non-self claims.",
+    "Malformed event kinds receive CONFIG telemetry under source configuration CAS without inventing a claim or blocking valid subscriptions.",
+    "Generated main 0240 preserves project agent/event uniqueness while company uniqueness includes the source subscription. Main-only populated upgrade, repeated boot, legacy value preservation and independent Brain/project deletion checks pass."
+  ],
+  "corrections": [
+    "PostgreSQL bigint values from raw SQL needed safe integer decoding; the first admission probe refused before that correction.",
+    "The initial declarative shape CHECK rejected historical null trigger metadata. The final migration retains existing owner CHECKs and uses insertion/reference plus immutable-source guards for new event work, preserving unclassified historical rows without invented IDs.",
+    "The migration regression now seeds its real referenced catalog identity before setting the retained legacy Run agent ID.",
+    "The unknown-provenance probe rolls back even when RED, preserving the real source Run.",
+    "Canonical docs were reconciled with the completed T21 phase instead of retaining stale pending compatibility claims."
+  ],
+  "limits": [
+    "Positive event sources still use explicit owned prospective table setup; native event creation service/schema and public settings are not yet exposed.",
+    "Coordinator event-recipient/producer live qualification and enabled event source creation remain before event readiness. Existing coordinator/cron regression is green.",
+    "Webhook adapters, legacy manual/mention adapters, governed agent-principal delegation and full T22/T22.1 remain open.",
+    "No real model, installable stand specialist, external stand mutation, pilot or production rollout is claimed.",
+    "T21 completed on a48a002b2 before local integration; this checkpoint has its own full unit and owning integration receipts."
+  ],
+  "sourceSha256": {
+    "web/lib/agents/company-event-dispatch.ts": "37f947cbda7d83d16b51c42484b006792e7d540e38eed66844b61d96956bd470",
+    "web/lib/agents/company-trigger-reservation.ts": "c3a5aace044e8c2e0081d21e23f9e97a9fff2d69c1e5bc375ace87981caab372",
+    "web/lib/agents/company-agent-launch.ts": "c92c188272a487234a7b9a6985c0316e5629eaef98735221c51974af4a00b641",
+    "web/lib/agents/company-flow-launch.ts": "96e4273f451a067a5982d9822fede2b71b1a747e00b27e6f8834e2d0ab84587e",
+    "web/lib/agents/chain-depth.ts": "aff6bc7abec2e01291e11075429807afadc2640091a62ea4d193420425ed76a8",
+    "web/lib/agents/launch.ts": "7eb962dd953f603e5f6d0e7273d5a066286abfa255df85851b03352781e73ce2",
+    "web/lib/agents/triggers.ts": "82a5f68b6d4e201ec3c399228bf7fa2043daac355fd2cdc4c880588bf23a4f54",
+    "web/lib/brain/knowledge-assignment-policy.ts": "eb00747d55994cafbcda1fdecbaf0a9acbb7026a9bf0eb52fc0ead717600b610",
+    "web/lib/specialist-assignments/company-trigger-intake.ts": "53baff10b265681bd8ba3b24dcd5e4995ebcaaddb8afe848261dd5a7bad099bc",
+    "web/lib/specialist-assignments/company-event-intake.ts": "98382eaa50f1a31ced8c919b10abd5168746b897b8bd375e95d5140bca8c6795",
+    "web/lib/specialist-assignments/company-cron-intake.ts": "95e03c2525d8c64307c066187f562c2000c3de25c0cdd782ee7a3acb0a5f5c60",
+    "web/lib/db/schema.ts": "ea79b8273e5c7409b95fd256e43cee558eb2ad7669a8a4b0b4cb83bf0f7c3548",
+    "web/lib/db/migrations/0240_company_event_admission.sql": "6e917cddd49d0821a9400ab0589836dca851da53c12c304bcaf715d5b9256d71",
+    "web/lib/db/migrations/meta/0240_snapshot.json": "982b0cd38d84e1b9f209f1e31161cf677152691818a9f14deb0ff35b76cf3d87",
+    "web/lib/db/migrations/meta/_journal.json": "bb276f83472d6d631c2a0cb2785eea6847406900e55d44f88e10386588f75755",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "79883265819b0181dcc16ec580ad0bbeda6ab8feaac6fb97fa2737c400f45ea1",
+    "web/lib/db/__tests__/migration-company-brain-specialists.integration.test.ts": "7b8b7c64a36eb3b6b2a8179962d0682cdc41579154f86396fd4c3863536728dd"
+  }
+}
