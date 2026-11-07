@@ -15,8 +15,10 @@ import {
 import pino from "pino";
 
 import { httpAuthContext, type AuthContext } from "./auth";
+import { isLaunchAdmissionTool } from "./task-launch-tools";
 import {
   dispatchTool,
+  isDelegationAdmissionTool,
   isToolInToolset,
   TOOL_SPECS,
   toolNamesForToolset,
@@ -118,7 +120,10 @@ function buildServer(transportType: "stdio" | "http"): Server {
           {
             type: "text" as const,
             text:
-              (toolName === "hitl_respond" || toolName === "ask_human") &&
+              (toolName === "hitl_respond" ||
+                toolName === "ask_human" ||
+                isLaunchAdmissionTool(toolName) ||
+                isDelegationAdmissionTool(toolName)) &&
               result.publicBody
                 ? JSON.stringify(result.publicBody)
                 : (result.message ?? `Error ${result.status}`),

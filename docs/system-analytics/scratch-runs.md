@@ -197,6 +197,35 @@ that turn's own prompt owner, inside the command application transaction (see
 so the next message is admitted exactly when the previous result is durable and
 a dead web process cannot strand the dialog in `Running`.
 
+Session creation has its own pre-incarnation owner. Project scratch and package
+assistant launches persist the exact create request and private first-turn
+continuation before contacting the host. If host inventory is unconfirmed, the
+accepted Run remains `Running` with dialog `Starting`; this is not a ready
+session or a crashed launch. The existing continuation worker can rediscover it
+without a session incarnation and reuses the original command and assignment.
+The acknowledged create hands off the frozen prompt to the normal prompt owner,
+or moves an empty launch to `WaitingForUser` without sending a prompt.
+
+Recover and idle resume freeze their source message and attachment references
+before creating the replacement session, and retain that recovery assignment
+while inventory is pending. Package continuations also retain their
+structured-action identity and original edit-lock generation. A changed,
+expired, or transferred lock fences delayed creation and prompt dispatch;
+recovery never rebuilds its accepted context from current package files. These
+private continuation bytes are not part of public Run DTOs or owner logs.
+The recovery continuation also freezes the locked pre-claim Run status, current
+step and queued-resume timestamp. A definitive create refusal restores that
+snapshot and releases only its own assignment; an initial-create refusal uses
+the existing crashed-launch path. Readiness deferral does neither. A stopped
+Run or a newer assignment fences both handoff and failure handling.
+If session creation was acknowledged but freezing the first-turn intent fails
+with an uncertain database error, the live session and its assignment remain
+owned. The dialog stays `Starting`; no model prompt or cleanup is issued. The
+same worker replays the original acknowledgement and completes the handoff
+after repair. Diagnostics distinguish this `scratch_create_handoff` stage from
+create admission and retain safe SQLSTATE, constraint and cause identities
+without SQL text, parameters, prompt contents or runner environment values.
+
 ## Process flows
 
 ### Start scratch run (Implemented)

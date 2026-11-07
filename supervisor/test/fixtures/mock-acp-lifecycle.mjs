@@ -1,7 +1,14 @@
 #!/usr/bin/env node
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { appendFile, open, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  open,
+  readFile,
+  realpath,
+  writeFile,
+} from "node:fs/promises";
+import path from "node:path";
 import { Readable, Writable } from "node:stream";
 
 import * as acp from "@agentclientprotocol/sdk/unstable";
@@ -26,6 +33,7 @@ let emitUsage = false;
 let supportsResume = false;
 let invocationLog;
 let controlledPrompt = false;
+let completionOnCheckpoint;
 let controlledTerminal = false;
 let releasePrompt;
 // ADR-182 steering fixture: advertise `_meta.steering.supported`, register the
@@ -83,6 +91,22 @@ for (let i = 0; i < args.length; i += 1) {
   } else if (arg === "--invocation-log") {
     invocationLog = args[++i];
     if (!invocationLog) throw new Error("--invocation-log requires a path");
+  } else if (arg === "--complete-on-checkpoint") {
+    completionOnCheckpoint = args[++i];
+    if (
+      ![
+        "end_turn",
+        "max_tokens",
+        "max_turn_requests",
+        "refusal",
+        "cancelled",
+      ].includes(completionOnCheckpoint)
+    )
+      throw new Error(
+        "--complete-on-checkpoint requires an ACP response stop reason",
+      );
+    controlledPrompt = true;
+    hang = true;
   } else if (arg === "--controlled-prompt") {
     controlledPrompt = true;
   } else if (arg === "--controlled-terminal") {
@@ -153,6 +177,61 @@ function fixtureOutputLine(params) {
   const text = params.prompt.find((block) => block.type === "text")?.text;
 
   return text?.split("\n").find((line) => line.startsWith("fixture-output:"));
+}
+
+async function consensusSynthesisSpec(params, declaredSpec) {
+  if (
+    declaredSpec.consensusSynthesisResponseFile === undefined ||
+    !steerText(params.prompt)
+      .split("\n")
+      .includes("Synthesize the final consensus answer.")
+  )
+    return declaredSpec;
+  const fixtureRoot = process.env.MAISTER_RUNTIME_ROOT;
+
+  if (
+    !fixtureRoot ||
+    typeof declaredSpec.consensusSynthesisResponseFile !== "string"
+  )
+    throw new Error(
+      "Consensus synthesis fixture requires an owned response file",
+    );
+  const root = await realpath(fixtureRoot);
+  const file = await realpath(declaredSpec.consensusSynthesisResponseFile);
+  const relative = path.relative(root, file);
+
+  if (
+    !relative ||
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  )
+    throw new Error(
+      "Consensus synthesis response must belong to the fixture root",
+    );
+  const bytes = await readFile(file);
+
+  if (bytes.length > 4096)
+    throw new Error("Consensus synthesis response exceeds 4 KiB");
+  const response = JSON.parse(bytes.toString("utf8"));
+
+  if (
+    !response ||
+    typeof response !== "object" ||
+    Array.isArray(response) ||
+    Object.keys(response).sort().join(",") !== "stopReason,text" ||
+    typeof response.text !== "string" ||
+    !["end_turn", "max_tokens"].includes(response.stopReason)
+  )
+    throw new Error(
+      "Consensus synthesis response requires only text and a supported stopReason",
+    );
+
+  return {
+    ...declaredSpec,
+    text: response.text,
+    stopReason: response.stopReason,
+  };
 }
 
 class LifecycleAgent {
@@ -286,6 +365,7 @@ class LifecycleAgent {
   }
 
   async newSession() {
+    await logInvocation({ method: "session/new", at: Date.now() });
     if (hangNewSession) return never();
 
     return { sessionId: `mock-${randomUUID()}` };
@@ -445,7 +525,10 @@ class LifecycleAgent {
     const fixtureLine = fixtureOutputLine(params);
     if (fixtureLine) {
       // Flow nodes may surround the fixture line with resume and run context.
-      const spec = JSON.parse(fixtureLine.slice("fixture-output:".length));
+      const spec = await consensusSynthesisSpec(
+        params,
+        JSON.parse(fixtureLine.slice("fixture-output:".length)),
+      );
       if (spec.failMessage)
         throw new acp.RequestError(-32603, spec.failMessage);
       if (spec.usageTokens) {
@@ -536,10 +619,17 @@ class LifecycleAgent {
         return { stopReason: "end_turn" };
       }
       const glyph = spec.multibyte ? "é" : "x";
+      let responseText = spec.text ?? "";
+      if (spec.textFile) {
+        const responseBytes = await readFile(spec.textFile);
+        if (responseBytes.length > 65536)
+          throw new Error("Fixture response exceeds 64 KiB");
+        responseText = responseBytes.toString("utf8");
+      }
       const text =
         glyph.repeat(Math.floor(spec.bytes / Buffer.byteLength(glyph))) +
         "x".repeat(spec.bytes % Buffer.byteLength(glyph)) +
-        (spec.text ?? "");
+        responseText;
       const chunks =
         spec.chunkSize && !spec.tool
           ? Array.from(
@@ -690,7 +780,7 @@ class LifecycleAgent {
       setTimeout(() => process.exit(exitCode), 10);
     }
 
-    return { stopReason: "end_turn" };
+    return { stopReason: completionOnCheckpoint ?? "end_turn" };
   }
 
   async holdTerminal(params, terminalBarrier, held) {
@@ -729,7 +819,15 @@ serveAgent((connToAgent) => new LifecycleAgent(connToAgent), stream);
 
 // --exit-delay-ms: hold the process open after SIGTERM so a test can prove an
 // eviction is awaited (nothing spawns beside a dying lower-epoch session).
-process.on("SIGTERM", () => setTimeout(() => process.exit(143), exitDelayMs));
+process.on("SIGTERM", () => {
+  if (completionOnCheckpoint && releasePrompt) {
+    releasePrompt("complete");
+    // Flush the actual ACP response queued by the released turn before exiting.
+    setImmediate(() => process.stdout.write("", () => process.exit(0)));
+    return;
+  }
+  setTimeout(() => process.exit(143), exitDelayMs);
+});
 process.on("SIGINT", () => process.exit(130));
 // Lifecycle tests release this barrier only after prompt receipt completion.
 if (controlledExit) process.on("SIGUSR2", () => process.exit(exitCode));

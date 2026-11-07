@@ -5,10 +5,13 @@ import pino from "pino";
 import { z } from "zod";
 
 import { requireActiveSession } from "@/lib/authz";
+import { queryErrorDiagnostics } from "@/lib/db/pg-error";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { publicHitlRespondError } from "@/lib/hitl-response-error";
 import { respondToHitl } from "@/lib/services/hitl";
+import { interactiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
+import { assertInteractiveLaunchOrigin } from "@/lib/tasks/launch-http";
 
 const log = pino({
   name: "api-hitl",
@@ -61,9 +64,10 @@ function errorResponse(
 
     return NextResponse.json(body, { status });
   }
-  const message = err instanceof Error ? err.message : String(err);
-
-  log.error({ ...ctx, err: message }, "respond unhandled error");
+  log.error(
+    { ...ctx, ...queryErrorDiagnostics(err) },
+    "respond unhandled error",
+  );
 
   return NextResponse.json(
     { code: "CRASH", message: "internal error" },
@@ -142,11 +146,19 @@ export async function POST(
     // FIXME(any): narrow the HITL service injection seam to its operations.
     const db = getDb() as any;
     const label = sessionUser.name ?? sessionUser.email ?? sessionUser.id;
+    const isRestart = body.optionId === "restart";
+
+    if (isRestart) assertInteractiveLaunchOrigin(req);
 
     return await respondToHitl(
       { runId, hitlRequestId, body, bodyKeys },
       { kind: "user", userId: sessionUser.id, label },
-      { db },
+      {
+        db,
+        ...(isRestart
+          ? { restartPrincipal: await interactiveTaskLaunchPrincipal() }
+          : {}),
+      },
     );
   } catch (err) {
     return errorResponse(err, { runId, hitlRequestId });

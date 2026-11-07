@@ -40,6 +40,8 @@
 
 import type { CreateSessionResult } from "@/lib/supervisor-client";
 import type { ExecutionHosts } from "@/lib/execution-host";
+import type { Db } from "@/lib/execution-host/db";
+import type { FlowDriverClaim } from "@/lib/flows/graph/driver-claim";
 
 import { randomUUID } from "node:crypto";
 
@@ -67,6 +69,11 @@ import {
   type RunFlowResumeOpts,
 } from "@/lib/runs/recover";
 import { promoteNextPending } from "@/lib/scheduler";
+import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-worker";
+import {
+  claimFlowDriver,
+  releaseFlowDriverClaim,
+} from "@/lib/flows/graph/driver-claim";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -76,6 +83,12 @@ import {
   fakeExecutionHosts,
 } from "@/test-support/fake-execution-host";
 import { executionCommands } from "@/lib/db/schema";
+
+const workerRunFlow = vi.hoisted(() =>
+  vi.fn<(runId: string, options?: RunFlowResumeOpts) => Promise<void>>(),
+);
+
+vi.mock("@/lib/flows/runner", () => ({ runFlow: workerRunFlow }));
 
 const schema = schemaModule as unknown as Record<string, any>;
 const { flowRevisions, flows, projects, runs, tasks, users, workspaces } =
@@ -226,6 +239,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  workerRunFlow.mockReset();
   await db.delete(workspaces);
   // Command evidence protects its run from deletion (D6): discharge it
   // explicitly instead of relying on the FK cascade.
@@ -551,7 +565,7 @@ describe("resumeCrashedRun — cap full → queued (Codex F2)", () => {
 });
 
 describe("resumeCrashedRun — queued resume via scheduler (Codex F2)", () => {
-  it("a queued Pending+acpSessionId run is RESUMED via driveResume (createSession), NOT fresh runFlow, when a slot frees", async () => {
+  it("D4: capped Recover, scheduler promotion and driveResume compete with the worker through one actual driver claim", async () => {
     process.env.MAISTER_MAX_CONCURRENT_RUNS = "1";
 
     const live = await seedRun({ status: "Running", acpSessionId: "acp-live" });
@@ -569,9 +583,13 @@ describe("resumeCrashedRun — queued resume via scheduler (Codex F2)", () => {
     });
 
     expect(queuedResult).toEqual({ state: "queued" });
+    const queuedAssignmentId = (await readRun(crashed))
+      .executionAssignmentId as string;
 
-    // Free the slot, then run the scheduler. The promoted Pending+acpSessionId
-    // run must be resumed (createSession), not fresh-launched (runFlow).
+    expect(queuedAssignmentId).toBeTypeOf("string");
+
+    // Free the slot. Promotion must keep the original recovery authority and
+    // enter driveResume before either dispatcher can claim the Flow driver.
     await db
       .update(runs)
       .set({ status: "Done", endedAt: new Date() })
@@ -579,32 +597,117 @@ describe("resumeCrashedRun — queued resume via scheduler (Codex F2)", () => {
 
     const createSession = installCreateSession(async () => sessionResult());
     const freshLaunch = vi.fn((_id: string) => {});
-    const resumeDispatch = vi.fn(
-      async (_id: string, _opts?: RunFlowResumeOpts) => {},
+    const release = Promise.withResolvers<void>();
+    const arrivals = new Set<"worker" | "scheduler">();
+    const completed = new Set<"worker" | "scheduler">();
+    const claims: FlowDriverClaim[] = [];
+    const enter = async (
+      source: "worker" | "scheduler",
+      id: string,
+      options?: RunFlowResumeOpts,
+    ): Promise<void> => {
+      expect(id).toBe(crashed);
+      expect(options).toMatchObject({
+        crashResume: { targetStepId: "implement" },
+      });
+      expect((await readRun(id)).executionAssignmentId).toBe(
+        queuedAssignmentId,
+      );
+      arrivals.add(source);
+      await release.promise;
+      const claim = await claimFlowDriver(db as unknown as Db, {
+        runId: id,
+        assignmentId: queuedAssignmentId,
+      });
+
+      if (claim) claims.push(claim);
+      completed.add(source);
+    };
+    const resumeDispatch = vi.fn((id: string, options?: RunFlowResumeOpts) =>
+      enter("scheduler", id, options),
     );
 
-    await promoteNextPending({
-      db,
-      runFlow: (id: string) => void freshLaunch(id),
-      resumeRun: (id: string) =>
-        void driveResume(id, {
-          db,
-          executionHosts: hosts,
-          runFlow: resumeDispatch,
+    workerRunFlow.mockImplementation((id, options) =>
+      enter("worker", id, options),
+    );
+    const scopedProbe = vi.spyOn(hosts.local(), "listSessionsForRun");
+    let worker: ReturnType<typeof startFlowContinuationWorker> | undefined;
+    let scheduledResume: ReturnType<typeof driveResume> | undefined;
+    const previousGrace = process.env.MAISTER_RECONCILE_GRACE_SECONDS;
+
+    process.env.MAISTER_RECONCILE_GRACE_SECONDS = "1";
+
+    try {
+      const promotion = await promoteNextPending({
+        db,
+        runFlow: (id: string) => void freshLaunch(id),
+        resumeRun: (id: string) => {
+          scheduledResume = driveResume(id, {
+            db,
+            executionHosts: hosts,
+            runFlow: resumeDispatch,
+          });
+
+          return scheduledResume.then(() => undefined);
+        },
+      });
+
+      expect(promotion.promotedRunId).toBe(crashed);
+      await expect
+        .poll(() => arrivals.has("scheduler"), { timeout: 15_000 })
+        .toBe(true);
+      // Observe the real promotion's marker age; do not manufacture an older
+      // timestamp or wait an arbitrary delay to make the worker eligible.
+      await expect
+        .poll(
+          async () => {
+            const row = await readRun(crashed);
+
+            return Date.now() - (row.resumeStartedAt as Date).getTime();
+          },
+          { timeout: 15_000 },
+        )
+        .toBeGreaterThanOrEqual(1_000);
+      worker = startFlowContinuationWorker({
+        db: db as unknown as Db,
+        executionHosts: hosts,
+      });
+      await expect
+        .poll(() => [...arrivals].sort(), { timeout: 15_000 })
+        .toEqual(["scheduler", "worker"]);
+      expect(scopedProbe).toHaveBeenCalledWith(crashed);
+      expect(scopedProbe.mock.calls.every(([id]) => id === crashed)).toBe(true);
+      expect((await readRun(crashed)).status).toBe("Running");
+      expect(createSession).not.toHaveBeenCalled();
+      expect(freshLaunch).not.toHaveBeenCalled();
+      expect(resumeDispatch).toHaveBeenCalledWith(
+        crashed,
+        expect.objectContaining({
+          crashResume: { targetStepId: "implement" },
         }),
-    });
-
-    // queueMicrotask in promoteNextPending dispatches the resume — let it run.
-    await new Promise((r) => setTimeout(r, 50));
-
-    expect((await readRun(crashed)).status).toBe("Running");
-    // ADR-175: the cap-full path takes the SAME graph door as the direct one.
-    expect(createSession).not.toHaveBeenCalled();
-    expect(freshLaunch).not.toHaveBeenCalledWith(crashed);
-    expect(resumeDispatch).toHaveBeenCalledWith(
-      crashed,
-      expect.objectContaining({ crashResume: { targetStepId: "implement" } }),
-    );
+      );
+      release.resolve();
+      await expect
+        .poll(() => [...completed].sort(), { timeout: 15_000 })
+        .toEqual(["scheduler", "worker"]);
+      await worker.stop();
+      expect(await scheduledResume).toMatchObject({ state: "resumed" });
+      expect(claims).toHaveLength(1);
+      expect((await readRun(crashed)).flowDriverToken).toBe(claims[0]!.token);
+    } finally {
+      release.resolve();
+      try {
+        await worker?.stop();
+        await scheduledResume;
+        for (const claim of claims)
+          await releaseFlowDriverClaim(db as unknown as Db, claim);
+      } finally {
+        scopedProbe.mockRestore();
+        if (previousGrace === undefined)
+          delete process.env.MAISTER_RECONCILE_GRACE_SECONDS;
+        else process.env.MAISTER_RECONCILE_GRACE_SECONDS = previousGrace;
+      }
+    }
   }, 60_000);
 });
 

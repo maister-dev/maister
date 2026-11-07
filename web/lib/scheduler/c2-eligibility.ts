@@ -32,7 +32,7 @@ import { getOpenRelationBlockers } from "@/lib/social/relations";
 import { priorityWeightSql } from "@/lib/tasks/admission-selector";
 import { countOpenBlockingClarifications } from "@/lib/tasks/clarification-gate";
 import { type TaskPriority } from "@/lib/tasks/criticality";
-import { taskQualificationAdmittedPredicate } from "@/lib/tasks/qualification-predicates";
+import { automaticTaskQualificationAdmittedPredicate } from "@/lib/tasks/qualification-predicates";
 
 const log = pino({
   name: "c2-eligibility",
@@ -89,7 +89,8 @@ export async function loadC2CandidateRows(db: Db): Promise<C2CandidateRow[]> {
     .from(tasks)
     .where(
       and(
-        taskQualificationAdmittedPredicate(),
+        automaticTaskQualificationAdmittedPredicate(),
+        sql`NOT EXISTS(SELECT 1 FROM task_launch_intents intent WHERE intent.task_id=${tasks.id} AND intent.state IN ('queued','preparing','run_bound','held'))`,
         eq(tasks.triageStatus, "triaged"),
         eq(tasks.launchMode, "auto"),
         // The persisted intent is authoritative even if an old or racing
@@ -219,29 +220,31 @@ export async function countFailedFlowRuns(
 // (tasks.queue_claimed_at NOT NULL) — counting in-flight claims keeps the per-project
 // cap honored during the worktree window. A manual / scratch / ADR-119
 // force-relaunch run carries no queue_admitted_at and is correctly excluded.
+/** The automatic footprint shared by counters and pre-LIMIT scheduler eligibility. */
+export function automaticProjectFootprintSql(projectId: string | SQL): SQL {
+  const terminal = sql.join(
+    TERMINAL_RUN_STATUSES.map((status) => sql`${status}`),
+    sql`, `,
+  );
+
+  return sql`((SELECT count(*) FROM runs auto_run WHERE auto_run.project_id=${projectId}
+    AND auto_run.run_kind='flow' AND auto_run.queue_admitted_at IS NOT NULL AND auto_run.status NOT IN (${terminal})
+    AND (auto_run.task_launch_intent_id IS NULL OR EXISTS(SELECT 1 FROM task_launch_intents linked
+      WHERE linked.id=auto_run.task_launch_intent_id AND (linked.state IN ('preparing','run_bound') OR linked.dispatch_committed_at IS NOT NULL))))
+    +(SELECT count(*) FROM tasks claimed WHERE claimed.project_id=${projectId} AND claimed.queue_claimed_at IS NOT NULL)
+    +(SELECT count(*) FROM task_launch_intents preparing WHERE preparing.project_id=${projectId}
+      AND preparing.basis->>'kind'='automatic' AND NOT preparing.settings_snapshot ? 'serverExecution' AND preparing.state='preparing' AND preparing.run_id IS NULL AND preparing.preparation_identity IS NOT NULL))`;
+}
+
 export async function countLiveAutoFlowRuns(
   db: Db,
   projectId: string,
 ): Promise<number> {
-  const admittedRows = await db
-    .select({ n: count() })
-    .from(runs)
-    .where(
-      and(
-        eq(runs.projectId, projectId),
-        eq(runs.runKind, "flow"),
-        isNotNull(runs.queueAdmittedAt),
-        notInArray(runs.status, [...TERMINAL_RUN_STATUSES]),
-      ),
-    );
-  const claimRows = await db
-    .select({ n: count() })
-    .from(tasks)
-    .where(
-      and(eq(tasks.projectId, projectId), isNotNull(tasks.queueClaimedAt)),
-    );
+  const result = await db.execute(
+    sql`SELECT ${automaticProjectFootprintSql(projectId)}::integer AS n`,
+  );
 
-  return Number(admittedRows[0]?.n ?? 0) + Number(claimRows[0]?.n ?? 0);
+  return Number(result.rows[0]?.n ?? 0);
 }
 
 // True when a failed candidate is still inside its exponentially-growing backoff
@@ -358,6 +361,14 @@ export async function evaluateC2Candidate(
 // or CONFIG (structurally unlaunchable revision). EXECUTOR_UNAVAILABLE is transient
 // and CONFLICT is an idempotency race — both stay 'auto'/re-eligible for retry.
 export function isTerminalLaunchRefusal(err: unknown): boolean {
+  if (
+    isMaisterError(err) &&
+    typeof err.details?.reason === "string" &&
+    (err.details.reason.startsWith("qualification_") ||
+      err.details.reason === "launch_automation_not_armed")
+  )
+    return false;
+
   return (
     isMaisterError(err) &&
     (err.code === "PRECONDITION" || err.code === "CONFIG")
@@ -427,6 +438,8 @@ export async function giveUpC2TaskInTransaction(
     .set({
       launchMode: null,
       triageStatus: "flagged",
+      triageFlagOrigin: "dispatch_failure",
+      revision: sql`${tasks.revision}+1`,
       updatedAt: new Date(),
     })
     .where(

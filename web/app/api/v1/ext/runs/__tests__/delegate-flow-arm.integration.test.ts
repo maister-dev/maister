@@ -1,7 +1,7 @@
 import type { DomainEventRow } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -19,6 +19,11 @@ import {
   vi,
 } from "vitest";
 
+import { awaitTokenAuditWrites } from "@/test-support/token-audit-quiescence";
+import {
+  bindQueuedDelegationResponse,
+  commitDelegatedDispatchForRunChecks,
+} from "@/test-support/queued-delegation";
 import {
   countRows,
   delegateRequest,
@@ -109,8 +114,15 @@ beforeAll(async () => {
   await fakeExecutionHosts(db, { fake });
 
   ({ issueOrchestratorRunToken } = await import("@/lib/agents/tokens"));
-  ({ POST: delegatePost } =
-    await import("@/app/api/v1/ext/runs/delegate/route"));
+  const delegatePostEndpoint = (
+    await import("@/app/api/v1/ext/runs/delegate/route")
+  ).POST;
+
+  delegatePost = async (request, context) =>
+    bindQueuedDelegationResponse(
+      db as unknown as import("@/lib/execution-host/db").Db,
+      await delegatePostEndpoint(request, context),
+    );
   ({ POST: reworkPost } = await import("@/app/api/v1/ext/runs/rework/route"));
   ({ POST: cancelPost } = await import("@/app/api/v1/ext/runs/cancel/route"));
   ({ POST: collectPost } = await import("@/app/api/v1/ext/runs/collect/route"));
@@ -119,7 +131,11 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await testDatabase?.stop();
+  try {
+    await awaitTokenAuditWrites();
+  } finally {
+    await testDatabase?.stop();
+  }
 });
 
 let orchestratorTaskId: string;
@@ -186,19 +202,161 @@ async function childRun(runId: string) {
 }
 
 describe("run_delegate flow arm (ADR-163 REQ-07..REQ-13)", () => {
+  it("refuses agent session options for a Flow facade and preserves its governed source on ordinary launch", async () => {
+    const facadeAgentId = await seedAgent(ctx, { id: "facade" });
+
+    await writeFile(
+      path.join(agentsRoot, "maister-agents", "facade.md"),
+      "---\nname: Facade\ndescription: governed Flow facade\nkind: code_delivery\nworkspace: worktree\nmode: session\ntriggers: [manual]\nrisk_tier: read_only\nflow: facade-flow\n---\nFollow the exact delegated task.\n",
+      "utf8",
+    );
+    await pool.query("UPDATE agents SET workspace = 'worktree' WHERE id = $1", [
+      facadeAgentId,
+    ]);
+    await pool.query(
+      `UPDATE agent_project_links SET execution_policy_override = '{"autoApply":"permissions"}', branch_base = 'main' WHERE agent_id = $1 AND project_id = $2`,
+      [facadeAgentId, ctx.projectId],
+    );
+    const packageInstallId = (
+      await pool.query(
+        "SELECT id FROM package_installs WHERE name = 'test-pkg'",
+      )
+    ).rows[0].id as string;
+    const facadeFlow = await seedFlow(ctx, {
+      flowRefId: "facade-flow",
+      installedPath: agentsRoot,
+      resolvedRevision: "rev-pkg-1",
+    });
+    const rawEndpoint = (await import("@/app/api/v1/ext/runs/delegate/route"))
+      .POST;
+    const request = {
+      target: { agentId: facadeAgentId },
+      mode: "task",
+      prompt: "Use the pinned governed Flow",
+    };
+    const taskless = await rawEndpoint(
+      delegateRequest(secret, { ...request, mode: "run" }),
+      {},
+    );
+
+    expect(taskless.status).toBe(422);
+    expect(await taskless.json()).toMatchObject({
+      code: "CONFIG",
+      details: { reason: "delegation_facade_requires_task" },
+    });
+    const refused = await rawEndpoint(
+      delegateRequest(secret, {
+        ...request,
+        persistent: true,
+        addressableKey: "session",
+      }),
+      {},
+    );
+
+    expect(refused.status).toBe(422);
+    expect(await refused.json()).toMatchObject({
+      code: "CONFIG",
+      message: expect.stringContaining("persistent"),
+    });
+    expect(await countRows(ctx, "tasks")).toBe(1);
+    expect(
+      (await pool.query("SELECT count(*)::int AS n FROM task_launch_intents"))
+        .rows[0].n,
+    ).toBe(0);
+
+    const response = await rawEndpoint(delegateRequest(secret, request), {});
+
+    expect(response.status).toBe(202);
+    const receipt = await response.json();
+
+    expect(receipt).toMatchObject({
+      accepted: true,
+      runId: null,
+      childRunId: null,
+    });
+    const intent = (
+      await pool.query(
+        "SELECT settings_snapshot, basis FROM task_launch_intents WHERE id = $1",
+        [receipt.intentId],
+      )
+    ).rows[0];
+
+    expect(intent.basis).toMatchObject({
+      kind: "execution_child",
+      parent: { parentRunId },
+    });
+    expect(intent.settings_snapshot).toMatchObject({
+      kind: "flow",
+      flowId: facadeFlow.flowId,
+      baseBranch: "main",
+      serverExecution: {
+        kind: "delegated_child",
+        branchBase: "main",
+        execution: {
+          agentId: facadeAgentId,
+          agentActivity: { agentId: facadeAgentId },
+          agentPolicyOverlay: { autoApply: "permissions" },
+          packagePin: { packageInstallId },
+          parentRunId,
+        },
+      },
+    });
+    const { prepareTaskLaunchIntent } =
+      await import("@/lib/tasks/launch-dispatch");
+    const prepared = await prepareTaskLaunchIntent(
+      db as unknown as import("@/lib/execution-host/db").Db,
+      receipt.intentId,
+    );
+
+    if (!prepared.runId)
+      throw new Error(`Facade child did not bind: ${prepared.reason}`);
+    const bound = (
+      await pool.query(
+        "SELECT flow_id, flow_revision_id, parent_run_id, agent_activity_snapshot, execution_policy FROM runs WHERE id = $1",
+        [prepared.runId],
+      )
+    ).rows[0];
+
+    expect(bound).toMatchObject({
+      flow_id: facadeFlow.flowId,
+      flow_revision_id: facadeFlow.revisionId,
+      parent_run_id: parentRunId,
+      agent_activity_snapshot: { agentId: facadeAgentId },
+      execution_policy: {
+        preset: "supervised",
+        overrides: { permissions: "auto_approve", humanGate: "stop" },
+      },
+    });
+  });
+
   it.each(["task", "run"] as const)(
     "mode:%s → a carrier task, a parent_of edge, and a governed flow child",
     async (mode) => {
-      const res = await delegatePost(
+      const rawEndpoint = (await import("@/app/api/v1/ext/runs/delegate/route"))
+        .POST;
+      const res = await rawEndpoint(
         delegateRequest(secret, flowDelegation({ mode, title: "Fix collect" })),
         {},
       );
 
       expect(res.status).toBe(202);
       const json = (await res.json()) as {
-        childRunId: string;
+        childRunId: string | null;
         childTaskId?: string;
+        intentId: string;
+        accepted: boolean;
       };
+
+      expect(json).toMatchObject({ accepted: true, childRunId: null });
+      const { prepareTaskLaunchIntent } =
+        await import("@/lib/tasks/launch-dispatch");
+      const prepared = await prepareTaskLaunchIntent(
+        db as unknown as import("@/lib/execution-host/db").Db,
+        json.intentId,
+      );
+
+      if (!prepared.runId)
+        throw new Error(`Child intent did not bind: ${prepared.reason}`);
 
       // D1: BOTH modes mint and link a carrier task, and `childTaskId` is
       // always returned for a flow target — `mode` is not a board switch here.
@@ -231,7 +389,7 @@ describe("run_delegate flow arm (ADR-163 REQ-07..REQ-13)", () => {
       expect(rel[0].kind).toBe("parent_of");
       expect(rel[0].to_task_id).toBe(json.childTaskId);
 
-      const child = await childRun(json.childRunId);
+      const child = await childRun(prepared.runId);
 
       expect(child.run_kind).toBe("flow");
       expect(child.task_id).toBe(json.childTaskId);
@@ -367,79 +525,48 @@ describe("run_delegate flow arm — failure and crash windows (ADR-163 REQ-21)",
   // W6: the orchestrator terminalized between the pre-flight check and the
   // committed child. Its own cascade already ran, so nothing else would ever
   // reach this child.
-  it("W6: a parent that terminalizes during the launch leaves the child Abandoned, tears down its live session, and returns PRECONDITION", async () => {
-    const { POST: realDelegatePost } =
+  it("W6: terminalizing the parent after queued acceptance prevents child binding and model execution", async () => {
+    const { POST: endpoint } =
       await import("@/app/api/v1/ext/runs/delegate/route");
-    const runsModule = await import("@/lib/services/runs");
-    const realLaunch = runsModule.launchRun;
-    // ADR-163 review S6: the cascade flips rows only. The newborn child may
-    // already hold a live supervisor session, which must be torn down or the
-    // agent keeps spending under a terminal tree.
-    const supervisor = await import("@/lib/supervisor-client");
+    const { prepareTaskLaunchIntent } =
+      await import("@/lib/tasks/launch-dispatch");
+    const response = await endpoint(
+      delegateRequest(secret, flowDelegation()),
+      {},
+    );
+    const accepted = await response.json();
 
-    vi.mocked(supervisor.listSessions).mockImplementation(async () =>
-      (
-        await pool.query(`SELECT "id" FROM "runs" WHERE "parent_run_id" = $1`, [
-          parentRunId,
-        ])
-      ).rows.map((row: { id: string }) => ({
-        sessionId: `sess-${row.id}`,
-        runId: row.id,
-        projectSlug: "p",
-        stepId: "work",
-        status: "live" as const,
-        pid: 1,
-        startedAt: new Date().toISOString(),
-        logPath: "/dev/null",
-        monotonicId: 1,
-      })),
+    expect(response.status).toBe(202);
+    expect(accepted).toMatchObject({
+      accepted: true,
+      childRunId: null,
+      runId: null,
+    });
+    await pool.query(`UPDATE "runs" SET "status"='Abandoned' WHERE "id"=$1`, [
+      parentRunId,
+    ]);
+    const held = await prepareTaskLaunchIntent(
+      db as unknown as import("@/lib/execution-host/db").Db,
+      accepted.intentId,
     );
 
-    // Terminalize the parent INSIDE the launch, i.e. exactly in the window the
-    // post-commit re-read exists to cover.
-    const spy = vi
-      .spyOn(runsModule, "launchRun")
-      .mockImplementation(async (input, launchCtx, injectedDb) => {
-        const out = await realLaunch(input, launchCtx, injectedDb);
-
-        await pool.query(
-          `UPDATE "runs" SET "status" = 'Abandoned' WHERE "id" = $1`,
-          [parentRunId],
-        );
-
-        return out;
-      });
-
-    try {
-      const res = await realDelegatePost(
-        delegateRequest(secret, flowDelegation()),
-        {},
-      );
-
-      expect(res.status).toBe(409);
-      expect(((await res.json()) as { code: string }).code).toBe(
-        "PRECONDITION",
-      );
-
-      const child = (
-        await pool.query(
-          `SELECT "status" FROM "runs" WHERE "parent_run_id" = $1`,
-          [parentRunId],
-        )
-      ).rows[0];
-
-      expect(child.status).toBe("Abandoned");
-
-      const childId = (
-        await pool.query(`SELECT "id" FROM "runs" WHERE "parent_run_id" = $1`, [
+    expect(held.state).toBe("held");
+    expect(held.runId).toBeNull();
+    expect(
+      (
+        await pool.query("SELECT id FROM runs WHERE parent_run_id=$1", [
           parentRunId,
         ])
-      ).rows[0].id;
-
-      expect(deleteSessionSpy).toHaveBeenCalledWith(`sess-${childId}`);
-    } finally {
-      spy.mockRestore();
-    }
+      ).rows,
+    ).toEqual([]);
+    expect(
+      (
+        await pool.query(
+          "SELECT count(*)::int n FROM execution_commands WHERE run_id=(SELECT preparation_identity->>'runId' FROM task_launch_intents WHERE id=$1)",
+          [accepted.intentId],
+        )
+      ).rows[0].n,
+    ).toBe(0);
   });
 
   // W3: process death BETWEEN the carrier transaction and the run transaction.
@@ -531,6 +658,10 @@ describe("run_delegate flow arm — failure and crash windows (ADR-163 REQ-21)",
     );
     const { childRunId } = (await res.json()) as { childRunId: string };
 
+    await commitDelegatedDispatchForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
+      childRunId,
+    );
     await pool.query(
       `UPDATE "runs" SET "status" = 'Running', "started_at" = now() - interval '1 hour' WHERE "id" = $1`,
       [childRunId],
@@ -994,6 +1125,10 @@ describe("tool support by child kind (ADR-163 D2 / REQ-14)", () => {
     );
     const { childRunId } = (await res.json()) as { childRunId: string };
 
+    await commitDelegatedDispatchForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
+      childRunId,
+    );
     await pool.query(`UPDATE "runs" SET "status" = 'Running' WHERE "id" = $1`, [
       childRunId,
     ]);
@@ -1102,4 +1237,106 @@ it("IT-UX-19 refuses a parent that requires qualification before creating a dele
       ])
     ).rows,
   ).toEqual([]);
+});
+
+it("queues one immutable delegated intent for competing same-key requests, replays after target drift and refuses changed payloads", async () => {
+  const { POST: endpoint } =
+    await import("@/app/api/v1/ext/runs/delegate/route");
+  const body = flowDelegation();
+  const key = randomUUID();
+  const before = await countRows(ctx, "tasks");
+  const responses = await Promise.all([
+    endpoint(delegateRequest(secret, body, key), {}),
+    endpoint(delegateRequest(secret, body, key), {}),
+  ]);
+  const receipts = await Promise.all(
+    responses.map((response) => response.json()),
+  );
+
+  expect(responses.map((response) => response.status)).toEqual([202, 202]);
+  expect(receipts[0]).toMatchObject({
+    accepted: true,
+    runId: null,
+    childRunId: null,
+    status: "Queued",
+  });
+  expect(receipts[1].intentId).toBe(receipts[0].intentId);
+  expect(await countRows(ctx, "tasks")).toBe(before + 1);
+  const [intent] = (
+    await pool.query(
+      "SELECT basis,launch_source,settings_snapshot FROM task_launch_intents WHERE id=$1",
+      [receipts[0].intentId],
+    )
+  ).rows;
+
+  expect(intent).toMatchObject({
+    basis: { kind: "execution_child", parent: { parentRunId } },
+    launch_source: "execution_child",
+    settings_snapshot: { serverExecution: { kind: "delegated_child" } },
+  });
+  const conflict = await endpoint(
+    delegateRequest(secret, { ...body, prompt: "A different request" }, key),
+    {},
+  );
+
+  expect(conflict.status).toBe(409);
+  expect(await conflict.json()).toMatchObject({
+    details: { reason: "delegation_launch_key_conflict" },
+  });
+  await pool.query("UPDATE flows SET enablement_state='Disabled' WHERE id=$1", [
+    flowId,
+  ]);
+  const replay = await endpoint(delegateRequest(secret, body, key), {});
+
+  expect(replay.status).toBe(202);
+  expect(await replay.json()).toEqual(receipts[0]);
+  expect(await countRows(ctx, "tasks")).toBe(before + 1);
+  expect(
+    (
+      await pool.query(
+        "SELECT count(*)::int n FROM runs WHERE parent_run_id=$1",
+        [parentRunId],
+      )
+    ).rows[0].n,
+  ).toBe(0);
+});
+
+it("rolls back delegated intent admission when its required token audit fails", async () => {
+  const { POST: endpoint } =
+    await import("@/app/api/v1/ext/runs/delegate/route");
+
+  await pool.query(
+    "CREATE FUNCTION reject_delegation_accept_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.endpoint='POST /api/v1/ext/runs/delegate' AND NEW.result='ok' THEN RAISE EXCEPTION 'fixture required audit failure'; END IF; RETURN NEW; END $$",
+  );
+  await pool.query(
+    "CREATE TRIGGER reject_delegation_accept_audit BEFORE INSERT ON token_audit_log FOR EACH ROW EXECUTE FUNCTION reject_delegation_accept_audit()",
+  );
+  try {
+    await expect(
+      endpoint(delegateRequest(secret, flowDelegation()), {}),
+    ).rejects.toMatchObject({
+      cause: { message: "fixture required audit failure" },
+    });
+    expect(
+      (
+        await pool.query(
+          "SELECT count(*)::int n FROM task_launch_intents WHERE project_id=$1",
+          [ctx.projectId],
+        )
+      ).rows[0].n,
+    ).toBe(0);
+    expect(
+      (
+        await pool.query(
+          "SELECT count(*)::int n FROM runs WHERE parent_run_id=$1",
+          [parentRunId],
+        )
+      ).rows[0].n,
+    ).toBe(0);
+  } finally {
+    await pool.query(
+      "DROP TRIGGER reject_delegation_accept_audit ON token_audit_log",
+    );
+    await pool.query("DROP FUNCTION reject_delegation_accept_audit()");
+  }
 });

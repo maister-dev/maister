@@ -1,10 +1,9 @@
 // M34 (ADR-089) e2e (b): flow-bound agent. The seeded graph flow's ai_coding
 // node declares `settings.agent: e2e-helper` (engine floor 1.5.0); launching
 // the bound task from the board goes through the full launch pipeline —
-// settings-enforcement gate, runner resolution, worktree add — and queues
-// behind the e2e suite's permanently saturated flow pool (the seeded
-// fixtures hold >cap live runs by design), exactly the Pending+queue
-// product behavior. The session-level prompt substitution itself (agent .md
+// admission and runner resolution. Capacity may leave an accepted intent
+// queued without a Run; binding is checked only when it actually happens.
+// The session-level prompt substitution itself (agent .md
 // body + "## Task" + node prompt) is asserted deterministically at the
 // runner layer in lib/flows/__tests__/runner-agent.test.ts ("catalog-agent
 // binding substitution"), where a spawn slot is not subject to the shared
@@ -14,12 +13,49 @@ import { test, expect } from "@playwright/test";
 
 import { singleValue } from "./_seed/db";
 import { loadFixtures } from "./_seed/fixtures";
-import { readLaunchResult } from "./_seed/launch-stream";
+import { readTaskLaunchReceipt } from "./_seed/task-launch";
 
-test("flow-bound agent task launches through the gate and queues on the flow pool", async ({
+test("flow-bound agent launch records its selected Flow settings and any actual Run binding", async ({
+  browser,
+  baseURL,
   page,
 }) => {
   const fx = loadFixtures().byKey.platformAgents;
+  const launchRequests: string[] = [];
+
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      new URL(request.url()).pathname === "/api/task-launch-intents"
+    )
+      launchRequests.push(request.url());
+  });
+  const serverContext = await browser.newContext({
+    baseURL,
+    storageState: await page.context().storageState(),
+    javaScriptEnabled: false,
+  });
+
+  try {
+    const serverPage = await serverContext.newPage();
+
+    await serverPage.goto(`/projects/${fx.projectSlug}`);
+    // Next streams the serialized card into a hidden boundary until its inline
+    // reveal script runs. Inspect native markup here; visible use follows below.
+    const serverOpener = serverPage
+      .locator("article")
+      .filter({ hasText: "Bound-agent flow target" })
+      .getByRole("button", {
+        name: "Launch",
+        exact: true,
+        includeHidden: true,
+      });
+
+    await expect(serverOpener).toHaveCount(1);
+    await expect(serverOpener).toBeDisabled();
+  } finally {
+    await serverContext.close();
+  }
 
   await page.goto(`/projects/${fx.projectSlug}`);
   await expect(page.getByText("Bound-agent flow target")).toBeVisible();
@@ -32,6 +68,16 @@ test("flow-bound agent task launches through the gate and queues on the flow poo
   // /api/runs/launch-options; the POST fires from its confirm button. The
   // seeded task has never run, so its card button reads "Launch" — "Run again"
   // appears only once `runCount > 0` (components/board/board.tsx).
+  const optionsResponse = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+
+    return (
+      url.pathname === "/api/runs/launch-options" &&
+      url.searchParams.get("taskId") === fx.boundTaskId &&
+      response.request().method() === "GET"
+    );
+  });
+
   await card.getByRole("button", { name: "Launch", exact: true }).click();
 
   const dialog = page.getByTestId("task-launch-dialog");
@@ -39,15 +85,21 @@ test("flow-bound agent task launches through the gate and queues on the flow poo
   await expect(dialog).toBeVisible();
 
   const createRun = dialog.getByRole("button", {
-    name: "Create run",
+    name: "Launch",
     exact: true,
   });
 
   await expect(createRun).toBeEnabled();
+  const options = await optionsResponse;
+  const preview: { selectedRunnerId: string } = await options.json();
+
+  expect(options.status()).toBe(200);
+  expect(preview.selectedRunnerId).toBeTruthy();
+  expect(launchRequests).toEqual([]);
 
   const launchResponse = page.waitForResponse(
     (response) =>
-      response.url().endsWith("/api/runs") &&
+      new URL(response.url()).pathname === "/api/task-launch-intents" &&
       response.request().method() === "POST",
   );
 
@@ -55,34 +107,59 @@ test("flow-bound agent task launches through the gate and queues on the flow poo
 
   const response = await launchResponse;
 
-  // The launch passed every gate (graph compile with the agent:<id> node,
-  // enforcement, runner resolution, worktree preconditions). The dialog POSTs
-  // with `Accept: text/event-stream`, so success is 200 + the staged progress
-  // stream whose terminal frame carries the run (the JSON 202 shape is the
-  // non-stream path only).
-  expect(response.status()).toBe(200);
-
-  const { runId } = await readLaunchResult(response);
-
-  // The run rides the FLOW pool with the bound flow attached; the seeded
-  // suite saturates the global cap, so it queues Pending (the agent budget
-  // is a separate pool and stays unaffected).
-  const runFlowId = await singleValue<string>(
-    `SELECT flow_id AS value FROM runs WHERE id = $1`,
-    [runId],
-  );
+  const receipt = await readTaskLaunchReceipt(response);
   const taskFlowId = await singleValue<string>(
     `SELECT flow_id AS value FROM tasks WHERE id = $1`,
     [fx.boundTaskId],
   );
 
-  expect(runFlowId).toBeTruthy();
-  expect(runFlowId).toBe(taskFlowId);
-
-  const status = await singleValue<string>(
-    `SELECT status AS value FROM runs WHERE id = $1`,
-    [runId],
+  expect(receipt.taskId).toBe(fx.boundTaskId);
+  expect(receipt.snapshot.kind).toBe("flow");
+  expect(receipt.snapshot.flowId).toBe(taskFlowId);
+  expect(receipt.snapshot.runnerIds).toContain(preview.selectedRunnerId);
+  const intent = await singleValue<{
+    id: string;
+    taskId: string;
+    state: string;
+    runId: string | null;
+    kind: string;
+    flowId: string;
+    settingsDigest: string;
+    runTaskId: string | null;
+    runIntentId: string | null;
+    runFlowId: string | null;
+    runStatus: string | null;
+  }>(
+    `SELECT json_build_object(
+       'id', i.id, 'taskId', i.task_id, 'state', i.state, 'runId', i.run_id,
+       'kind', i.settings_snapshot->>'kind', 'flowId', i.settings_snapshot->>'flowId',
+       'settingsDigest', i.settings_digest, 'runTaskId', r.task_id,
+       'runIntentId', r.task_launch_intent_id, 'runFlowId', r.flow_id, 'runStatus', r.status
+     ) AS value FROM task_launch_intents i LEFT JOIN runs r ON r.id=i.run_id WHERE i.id=$1`,
+    [receipt.intentId],
   );
 
-  expect(["Pending", "Running"]).toContain(status);
+  expect(intent).toMatchObject({
+    id: receipt.intentId,
+    taskId: fx.boundTaskId,
+    kind: "flow",
+    flowId: taskFlowId,
+    settingsDigest: receipt.settingsDigest,
+  });
+  if (!intent) throw new Error("Accepted Flow intent was not persisted");
+  expect(["queued", "preparing", "run_bound"]).toContain(intent.state);
+  if (intent.runId) {
+    expect(intent.runTaskId).toBe(fx.boundTaskId);
+    expect(intent.runIntentId).toBe(receipt.intentId);
+    expect(intent.runFlowId).toBe(taskFlowId);
+    expect(["Pending", "Running"]).toContain(intent.runStatus);
+  } else {
+    expect(["queued", "preparing"]).toContain(intent.state);
+    expect(
+      await singleValue<number>(
+        "SELECT count(*)::int AS value FROM runs WHERE task_launch_intent_id=$1",
+        [receipt.intentId],
+      ),
+    ).toBe(0);
+  }
 });

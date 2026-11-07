@@ -32,7 +32,6 @@ export default defineConfig({
   workers: 1,
   reporter: "list",
   globalSetup: "./e2e/execution-ab-global-setup.ts",
-  globalTeardown: "./e2e/global-teardown.ts",
   use: {
     baseURL: BASE_URL,
     trace: "on-first-retry",

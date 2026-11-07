@@ -7,6 +7,7 @@ const logger = vi.hoisted(() => ({
   info: vi.fn(),
   debug: vi.fn(),
   error: vi.fn(),
+  child: vi.fn().mockReturnThis(),
 }));
 const currentCoordinator = vi.hoisted(() => vi.fn());
 const wakeParkedCoordinator = vi.hoisted(() => vi.fn());

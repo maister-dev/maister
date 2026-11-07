@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { InteractiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
+import type { TaskLaunchReceipt } from "@/lib/tasks/launch-types";
 import type { Db } from "@/lib/execution-host/db";
 import type { AgentRetryClaim } from "@/lib/agents/retry-types";
 import type { AgentRetryOptions } from "@/lib/agents/retry-preparation";
@@ -12,7 +14,20 @@ import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 import { z } from "zod";
 
-import { agentRetryIntents, runs, runSessions, tasks } from "@/lib/db/schema";
+import {
+  createAgentTaskRetryLaunchSource,
+  previewAgentTaskRetry,
+  taskRetryDecisionRequired,
+} from "./task-retry-authority";
+
+import { manualTriageHoldPredicate } from "@/lib/tasks/triage-flag-origin";
+import {
+  agentRetryIntents,
+  runs,
+  runSessions,
+  tasks,
+  taskLaunchIntents,
+} from "@/lib/db/schema";
 import {
   prepareAgentRetry,
   retryRecipeFor,
@@ -35,6 +50,10 @@ import { readWorktreeProvenanceMetadata } from "@/lib/worktree-provenance";
 import { preserveWorktree } from "@/lib/gc/preserve";
 import { removeOwnedWorktree, listWorktrees } from "@/lib/worktree";
 import { worktreesRoot } from "@/lib/instance-config";
+import { taskLaunchBodySchema } from "@/lib/tasks/launch-schema";
+import { assertInteractiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
+import { acceptInteractiveAgentTaskRetry } from "@/lib/tasks/launch-intent";
+import { taskLaunchReceipt } from "@/lib/tasks/launch-receipt";
 
 const log = pino({
   name: "agent-retry",
@@ -46,6 +65,7 @@ const requestSchema = z
     requestKey: z.string().uuid(),
     previewFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     strategy: z.enum(["pre_work_retry", "fresh_qualification"]).optional(),
+    launchRequest: taskLaunchBodySchema.optional(),
   })
   .strict();
 
@@ -69,6 +89,7 @@ export async function getAgentRetryOptions(
   db: Db,
   runId: string,
   userId: string,
+  runnerId?: string,
 ): Promise<AgentRetryOptions> {
   const existingIntent = async (): Promise<string | null> => {
     const [existing] = await db
@@ -82,11 +103,44 @@ export async function getAgentRetryOptions(
       )
       .limit(1);
 
-    return existing?.id ?? null;
+    if (existing) return existing.id;
+    const [canonical] = await db
+      .select({ id: taskLaunchIntents.id })
+      .from(taskLaunchIntents)
+      .where(
+        and(
+          eq(taskLaunchIntents.sourceRunId, runId),
+          eq(taskLaunchIntents.operation, "retry"),
+          sql`${taskLaunchIntents.settingsSnapshot}->'serverExecution'->>'kind'='agent_retry'`,
+          sql`${taskLaunchIntents.state} IN ('queued','preparing','run_bound','settled')`,
+        ),
+      )
+      .limit(1);
+
+    return canonical?.id ?? null;
   };
 
   try {
-    const options = (await prepareAgentRetry(db, runId, userId)).options;
+    const prepared = await prepareAgentRetry(db, runId, userId);
+    let options = prepared.options;
+
+    if (
+      prepared.source.taskId &&
+      prepared.source.agentKind === "code_delivery" &&
+      options.eligible
+    ) {
+      const selected = runnerId ?? options.selectedRunnerId;
+
+      if (!selected) throw retryRefusal("retry_runner_unavailable");
+      const preview = await previewAgentTaskRetry(db, prepared, selected);
+
+      options = {
+        ...options,
+        selectedRunnerId: selected,
+        launchRequest: preview.request,
+        launchPreview: { title: preview.title, prompt: preview.prompt },
+      };
+    }
     const existing = await existingIntent();
 
     return existing
@@ -100,7 +154,15 @@ export async function getAgentRetryOptions(
   } catch (error) {
     if (
       !isMaisterError(error) ||
-      !["PRECONDITION", "CONFIG"].includes(error.code) ||
+      (!["PRECONDITION", "CONFIG"].includes(error.code) &&
+        !(
+          error.code === "CONFLICT" &&
+          [
+            "retry_task_changed",
+            "retry_context_changed",
+            "retry_runner_unavailable",
+          ].includes(String(error.details?.reason))
+        )) ||
       error.details?.reason === "retry_source_unavailable"
     )
       throw error;
@@ -184,10 +246,52 @@ export async function getAgentRetryReceipt(
       ),
     );
 
-  if (!intent) throw retryRefusal("retry_intent_unavailable");
+  if (!intent) {
+    const [canonical] = await db
+      .select()
+      .from(taskLaunchIntents)
+      .where(
+        and(
+          eq(taskLaunchIntents.id, intentId),
+          eq(taskLaunchIntents.sourceRunId, runId),
+          eq(taskLaunchIntents.operation, "retry"),
+          sql`${taskLaunchIntents.settingsSnapshot}->'serverExecution'->>'kind'='agent_retry'`,
+        ),
+      );
+
+    if (!canonical) throw retryRefusal("retry_intent_unavailable");
+    await assertRetryAuthority(db, canonical.projectId, userId);
+
+    return taskRetryReceipt(db, taskLaunchReceipt(canonical), runId);
+  }
   await assertRetryAuthority(db, intent.projectId, userId);
 
   return receiptFor(db, intent);
+}
+
+async function taskRetryReceipt(
+  db: Db,
+  receipt: TaskLaunchReceipt,
+  runId: string,
+): Promise<AgentRetryReceipt> {
+  const [run] = receipt.runId
+    ? await db
+        .select({ status: runs.status })
+        .from(runs)
+        .where(eq(runs.id, receipt.runId))
+    : [];
+  const refused = ["held", "failed", "cancelled"].includes(receipt.state);
+
+  return {
+    retryIntentId: receipt.intentId,
+    sourceRunId: runId,
+    runId: receipt.runId,
+    intentState: refused ? "refused" : receipt.runId ? "launched" : "accepted",
+    runStatus: run?.status ?? null,
+    queueReason: receipt.queueReason ?? null,
+    refusalReason: refused ? receipt.reason : null,
+    cleanup: null,
+  };
 }
 
 /** Acceptance is durable; the existing sweep, rather than the HTTP connection, owns eventual admission. */
@@ -196,6 +300,7 @@ export async function acceptAgentRetry(
   runId: string,
   userId: string,
   body: unknown,
+  principal?: InteractiveTaskLaunchPrincipal,
 ): Promise<AgentRetryReceipt> {
   const parsed = requestSchema.safeParse(body);
 
@@ -225,6 +330,79 @@ export async function acceptAgentRetry(
 
     return receiptFor(db, replayed);
   }
+  const [source] = await db.select().from(runs).where(eq(runs.id, runId));
+
+  if (source?.taskId && source.agentKind === "code_delivery") {
+    if (
+      !request.launchRequest ||
+      request.launchRequest.relaunchOfRunId !== runId ||
+      request.launchRequest.runnerId !== request.runnerId
+    )
+      throw taskRetryDecisionRequired();
+    if (!principal)
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "A fresh authenticated task retry decision is required",
+        { details: { reason: "launch_manual_authority_required" } },
+      );
+    assertInteractiveTaskLaunchPrincipal(principal);
+    if (principal.userId !== userId)
+      throw retryRefusal("retry_authority_revoked");
+    const authority = await createAgentTaskRetryLaunchSource(
+      db,
+      request.launchRequest,
+    );
+    const [existing] = await db
+      .select({ id: taskLaunchIntents.id })
+      .from(taskLaunchIntents)
+      .where(
+        and(
+          eq(taskLaunchIntents.principalKind, "session_user"),
+          eq(taskLaunchIntents.principalId, userId),
+          eq(taskLaunchIntents.projectId, source.projectId!),
+          eq(taskLaunchIntents.operation, "retry"),
+          eq(taskLaunchIntents.requestKey, request.requestKey),
+        ),
+      );
+
+    if (!existing) {
+      const current = await prepareAgentRetry(db, runId, userId);
+
+      if (!current.options.eligible)
+        throw retryRefusal(current.options.reason!);
+      if ((request.strategy ?? "pre_work_retry") !== current.options.strategy)
+        throw retryRefusal("retry_strategy_changed");
+      if (current.options.previewFingerprint !== request.previewFingerprint)
+        throw retryRefusal("retry_preview_stale");
+      const preview = await previewAgentTaskRetry(
+        db,
+        current,
+        request.runnerId,
+      );
+
+      if (retryDigest(preview.request) !== retryDigest(request.launchRequest))
+        throw retryRefusal("retry_preview_stale");
+    }
+    const accepted = await acceptInteractiveAgentTaskRetry(
+      db,
+      principal,
+      authority,
+      request.launchRequest,
+      request.requestKey,
+    );
+
+    log.info(
+      {
+        sourceRunId: runId,
+        intentId: accepted.intentId,
+        runnerId: request.runnerId,
+      },
+      "[FIX:LA08] fresh task agent retry accepted",
+    );
+
+    return taskRetryReceipt(db, accepted, runId);
+  }
+  if (request.launchRequest) throw retryRefusal("retry_request_invalid");
   assertUpgradeMaintenanceAllows("run_admission");
   const prepared = await prepareAgentRetry(db, runId, userId);
 
@@ -277,7 +455,8 @@ export async function acceptAgentRetry(
             .set({
               qualificationMode: "required",
               qualificationChildProof: null,
-              triageStatus: null,
+              triageStatus: sql`CASE WHEN ${manualTriageHoldPredicate()} THEN 'flagged' ELSE NULL END`,
+              triageFlagOrigin: sql`CASE WHEN ${manualTriageHoldPredicate()} THEN ${tasks.triageFlagOrigin} ELSE NULL END`,
               launchMode: null,
               launchArmedAt: null,
               queueClaimedAt: null,
@@ -486,6 +665,8 @@ async function deliverClaim(db: Db, claim: AgentRetryClaim): Promise<void> {
     intent.id,
   );
 
+  if (current.source.taskId && current.source.agentKind === "code_delivery")
+    throw taskRetryDecisionRequired();
   if (!current.options.eligible) throw retryRefusal(current.options.reason!);
   if (
     (intent.recipe.version === 1
@@ -515,7 +696,8 @@ async function deliverClaim(db: Db, claim: AgentRetryClaim): Promise<void> {
     scheduledRequestSnapshot: intent.recipe.scheduledRequestSnapshot ?? null,
   });
 
-  if ("deduped" in outcome) throw retryRefusal("retry_successor_mismatch");
+  if ("deduped" in outcome || "queued" in outcome)
+    throw retryRefusal("retry_successor_mismatch");
   log.info(
     {
       retryIntentId: intent.id,

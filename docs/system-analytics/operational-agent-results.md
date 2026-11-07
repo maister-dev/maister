@@ -1,5 +1,7 @@
 # Operational agent results
 
+**Current preparation boundary:** [agent workspace preparation](agent-preparation.md) owns the implemented durable preparation claim, baseline, first-command handoff and shared physical disposal fence. The execution/result contracts below continue after that boundary. Local validation does not establish deployed or live-provider qualification.
+
 ## Purpose
 
 **Implemented.** Own operational_v1 validation, reported versus effective outcome,
@@ -49,7 +51,22 @@ sequenceDiagram
 ### Value schema and semantics
 
 ```json
-{"schemaVersion":1,"outcome":"success","summary":"Complete scan; no new work.","coverage":{"state":"complete","remainingKnown":0},"counts":{"scanned":0,"attempted":0,"completed":0,"failed":0,"skipped":0,"created":0},"references":[],"diagnostics":[]}
+{
+  "schemaVersion": 1,
+  "outcome": "success",
+  "summary": "Complete scan; no new work.",
+  "coverage": { "state": "complete", "remainingKnown": 0 },
+  "counts": {
+    "scanned": 0,
+    "attempted": 0,
+    "completed": 0,
+    "failed": 0,
+    "skipped": 0,
+    "created": 0
+  },
+  "references": [],
+  "diagnostics": []
+}
 ```
 
 The exact wire fields are specified in the web OpenAPI operational components.

@@ -3,7 +3,11 @@ import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { test, expect } from "@playwright/test";
 
-import { e2eClaudeRunnerSnapshot, seedDefaultRunSession } from "./_seed/db";
+import {
+  createE2EDbPool,
+  e2eClaudeRunnerSnapshot,
+  seedDefaultRunSession,
+} from "./_seed/db";
 import { loadFixtures } from "./_seed/fixtures";
 
 import { resolvePostgresDbUrl } from "@/lib/db/postgres-url";
@@ -44,7 +48,7 @@ type SeededAssignmentFixture = {
 };
 
 async function withDb<T>(fn: (pool: Pool) => Promise<T>): Promise<T> {
-  const pool = new Pool({ connectionString: resolvePostgresDbUrl() });
+  const pool = createE2EDbPool(resolvePostgresDbUrl());
 
   try {
     return await fn(pool);

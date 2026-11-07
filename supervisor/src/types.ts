@@ -1,4 +1,7 @@
 import type { ProgressState } from "./guardrail-progress";
+import type { SessionCreateQuiescence } from "../../runtime/session-create-quiescence";
+import type { SessionCreateFailure } from "../../runtime/session-create-failure";
+import type { HostProcessContext } from "./session-process-context";
 import type { SessionContentReference } from "./runtime-events";
 
 import { z } from "zod";
@@ -730,6 +733,10 @@ export const REASON_TOKENS = [
   "runtime_output_frame_too_large",
   "required_output_incomplete",
   "session_delete_exit_unconfirmed",
+  "session_create_exit_unconfirmed",
+  "session_eviction_exit_unconfirmed",
+  "process_identity_unavailable",
+  "session_process_owner_unconfirmed",
   // S4.3 (D9): the operator-only historical import path. Admission is enabled
   // out of band at boot and revoked for good; nothing here is reachable from an
   // ordinary session or an active assignment.
@@ -804,7 +811,10 @@ export type SupervisorErrorDetails = {
   sessionId?: string;
   stage?: "process_exit" | "terminal_output";
   killGraceMs?: number;
+  sessionCreateQuiescence?: SessionCreateQuiescence;
+  sessionCreateFailure?: SessionCreateFailure;
   commandEpoch?: number;
+  processGroup?: number;
   hostEpoch?: number;
   // ADR-182: every steer refusal names the parent prompt it targeted.
   parentCommandId?: string;
@@ -903,7 +913,8 @@ export const CommandReceiptSchema = z
     receivedAt: z.string().datetime({ offset: true }),
     completedAt: z.string().datetime({ offset: true }).nullable().optional(),
     eventId: z.string().guid().nullable(),
-    // `accepted` + `inflight:false` = the host restarted mid-turn (turn_lost).
+    // Missing in-memory execution is not process retirement proof. A create
+    // with unconfirmed durable ownership remains accepted across restart.
     inflight: z.boolean(),
   })
   .strict();
@@ -1277,6 +1288,10 @@ export type SessionCapabilities = {
 
 export type SessionRecord = {
   sessionId: string;
+  processGroup?: number;
+  adapterPid?: number;
+  processContext?: HostProcessContext;
+  drainSessionOutput?: () => void;
   adapter: ExecutorAgent;
   runId: string;
   projectSlug: string;
@@ -1418,6 +1433,8 @@ export type SessionListEntry = Pick<
   | "sessionName"
   | "status"
   | "pid"
+  | "processGroup"
+  | "adapterPid"
   | "startedAt"
   | "exitedAt"
   | "exitCode"
@@ -1445,6 +1462,8 @@ export function toSessionListEntry(record: SessionRecord): SessionListEntry {
     sessionName: record.sessionName,
     status: record.status,
     pid: record.pid,
+    ...(record.processGroup ? { processGroup: record.processGroup } : {}),
+    ...(record.adapterPid ? { adapterPid: record.adapterPid } : {}),
     startedAt: record.startedAt,
     exitedAt: record.exitedAt,
     exitCode: record.exitCode,

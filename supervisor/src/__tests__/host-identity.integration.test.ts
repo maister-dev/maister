@@ -1,4 +1,5 @@
 // ADR-166 T2.1 — host identity + state store (H1–H9).
+import { randomUUID } from "node:crypto";
 import { mkdtemp, chmod, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,9 +14,11 @@ import {
   HOST_STATE_FILE,
   HOST_STATE_SCHEMA_VERSION,
   openHostState,
+  type CommandReceiptRow,
 } from "../host-state";
 import { bootExecutionHost } from "../main";
 import { DEFAULT_RUNTIME_LIMITS } from "../runtime-limits";
+import { readHostProcessContext } from "../session-process-context";
 
 import {
   bootHost,
@@ -26,6 +29,24 @@ import {
 
 const booted: BootedHost[] = [];
 const roots: string[] = [];
+
+function processReceipt(): CommandReceiptRow {
+  return {
+    commandId: randomUUID(),
+    runId: randomUUID(),
+    kind: "session.create",
+    assignmentId: randomUUID(),
+    epoch: 1,
+    hostSessionId: null,
+    requestDigest: "process-obligation-fixture",
+    eventId: null,
+    phase: "accepted",
+    httpStatus: 202,
+    body: {},
+    receivedAt: "2026-11-03T12:00:00.000Z",
+    completedAt: null,
+  };
+}
 
 afterEach(async () => {
   for (const host of booted.splice(0)) await host.stop();
@@ -367,3 +388,526 @@ CREATE TABLE command_receipts (
 );
 CREATE INDEX command_receipts_received_idx ON command_receipts (received_at);
 `;
+
+describe("durable session process obligations", () => {
+  it.each([
+    "retained",
+    "ack-pruned-and-compacted",
+    "closed-missing-receipt",
+  ] as const)(
+    "holds a legacy restart-closed producer without rewriting %s history",
+    async (history) => {
+      const stateDir = await tempRoot();
+      let clock = Date.parse("2026-11-03T12:00:00.000Z");
+      let state = openHostState({ stateDir, now: () => new Date(clock) });
+      const receipt = processReceipt();
+      const sessionId = randomUUID();
+
+      state.reserveProducerReceipt(receipt, 0);
+      state.bindProducerSession(receipt.commandId, sessionId);
+      state.putReceipt({
+        ...receipt,
+        phase: "completed",
+        httpStatus: 201,
+        body: { sessionId, pid: 54321, acpSessionId: "old-owned-adapter" },
+        completedAt: new Date(clock).toISOString(),
+      });
+      const terminal = state.appendRuntimeEvent({
+        terminal: true,
+        funding: { partition: "control", walletId: receipt.commandId },
+        draft: {
+          runId: receipt.runId,
+          assignmentId: receipt.assignmentId!,
+          assignmentEpoch: receipt.epoch,
+          hostSessionId: sessionId,
+          eventType: "session.crashed",
+          occurredAt: new Date(clock).toISOString(),
+          payload: { exitCode: null, signal: null, reason: "host_restart" },
+        },
+      });
+
+      expect(state.producerWalletOpen(receipt.commandId)).toBe(false);
+      if (history !== "retained") {
+        state.ackRuntimeEvents(terminal.streamId, terminal.sequence);
+        clock += 120_000;
+        expect(
+          state.pruneAcknowledgedRuntimeEvents(new Date(clock), {
+            mode: "retained_pressure",
+          }),
+        ).toBe(1);
+        expect(
+          state.retireReceipt(receipt.commandId, {
+            expectedRequestSha256: receipt.requestDigest,
+            expectedPhase: "completed",
+            assignmentEpoch: 1,
+          }).outcome,
+        ).toBe("retired");
+      }
+      state.close();
+      const legacy = new DatabaseSync(join(stateDir, HOST_STATE_FILE));
+
+      if (history === "closed-missing-receipt")
+        legacy
+          .prepare("DELETE FROM command_receipts WHERE command_id=?")
+          .run(receipt.commandId);
+      const receiptBefore = legacy
+        .prepare("SELECT * FROM command_receipts WHERE command_id=?")
+        .get(receipt.commandId);
+      const eventsBefore = legacy
+        .prepare(
+          "SELECT * FROM runtime_event_outbox ORDER BY sequence_sort_key",
+        )
+        .all();
+
+      legacy.exec(
+        "DROP TABLE session_process_obligations; PRAGMA user_version=15;",
+      );
+      legacy.close();
+      state = openHostState({ stateDir, now: () => new Date(clock) });
+      try {
+        expect(state.sessionProcessesForRun(receipt.runId)).toEqual([
+          expect.objectContaining({
+            commandId: receipt.commandId,
+            hostSessionId: sessionId,
+            phase: "unproven",
+            processGroup: null,
+            retiredAt: null,
+            registeredAt: new Date(clock).toISOString(),
+          }),
+        ]);
+        expect(state.releaseSessionProcessesFromPriorBoot()).toBe(0);
+        expect(state.recoverAcceptedPromptReceipts()).toBe(0);
+        const inspected = new DatabaseSync(join(stateDir, HOST_STATE_FILE));
+
+        try {
+          expect(
+            inspected
+              .prepare("SELECT * FROM command_receipts WHERE command_id=?")
+              .get(receipt.commandId),
+          ).toEqual(receiptBefore);
+          expect(
+            inspected
+              .prepare(
+                "SELECT * FROM runtime_event_outbox ORDER BY sequence_sort_key",
+              )
+              .all(),
+          ).toEqual(eventsBefore);
+        } finally {
+          inspected.close();
+        }
+      } finally {
+        state.close();
+      }
+    },
+  );
+
+  it("recovers only one released create and its prompt while another accepted producer remains live", () => {
+    const state = openHostState({ inMemory: true });
+    const retired = processReceipt();
+    const live = processReceipt();
+    const retiredSession = randomUUID();
+    const liveSession = randomUUID();
+
+    try {
+      for (const [receipt, hostSessionId, processGroup] of [
+        [retired, retiredSession, 54321],
+        [live, liveSession, 54322],
+      ] as const) {
+        state.setFence(receipt.runId, receipt.assignmentId!, receipt.epoch);
+        state.reserveProducerReceipt(receipt, 0);
+        state.registerSessionProcess({
+          commandId: receipt.commandId,
+          runId: receipt.runId,
+          assignmentId: receipt.assignmentId!,
+          epoch: receipt.epoch,
+          hostSessionId,
+          processGroup,
+        });
+        state.bindProducerSession(receipt.commandId, hostSessionId);
+      }
+      const prompt = {
+        ...retired,
+        commandId: randomUUID(),
+        kind: "session.prompt",
+        hostSessionId: retiredSession,
+      };
+      const livePrompt = {
+        ...live,
+        commandId: randomUUID(),
+        kind: "session.prompt",
+        hostSessionId: liveSession,
+      };
+
+      state.putReceipt(prompt, { kind: "new_work" });
+      state.putReceipt(livePrompt, { kind: "new_work" });
+      const liveReceiptBefore = state.getReceipt(live.commandId);
+      const livePromptBefore = state.getReceipt(livePrompt.commandId);
+
+      expect(state.recoverReleasedSessionProcess(retired.commandId)).toBe(0);
+      state.releaseSessionProcess(retired.commandId, new Date().toISOString());
+      expect(state.recoverReleasedSessionProcess(retired.commandId)).toBe(2);
+      expect(state.getReceipt(retired.commandId)).toMatchObject({
+        phase: "rejected",
+        body: {
+          details: {
+            sessionCreateQuiescence: { version: 1, process: "terminated" },
+          },
+        },
+      });
+      expect(state.getReceipt(prompt.commandId)?.phase).toBe("rejected");
+      expect(state.producerWalletOpen(retired.commandId)).toBe(false);
+      expect(state.getReceipt(live.commandId)).toEqual(liveReceiptBefore);
+      expect(state.getReceipt(livePrompt.commandId)).toEqual(livePromptBefore);
+      expect(state.producerWalletOpen(live.commandId)).toBe(true);
+      expect(state.recoverReleasedSessionProcess(retired.commandId)).toBe(0);
+      expect(
+        state.runtimeEventsAfter(state.getRuntimeEventStreamId(), null),
+      ).toHaveLength(3);
+    } finally {
+      state.close();
+    }
+  });
+
+  it("seeds a missing current-schema owner on every boot and releases only positively different OS boots", async () => {
+    const stateDir = await tempRoot();
+    const context = readHostProcessContext();
+    let state = openHostState({ stateDir });
+    const [priorBoot, otherNamespace, unknownBoot] = [
+      processReceipt(),
+      processReceipt(),
+      processReceipt(),
+    ];
+
+    for (const receipt of [priorBoot, otherNamespace, unknownBoot])
+      state.reserveProducerReceipt(receipt, 0);
+    state.close();
+    state = openHostState({ stateDir });
+    expect(state.pendingSessionProcesses()).toHaveLength(3);
+    state.close();
+    const historical = new DatabaseSync(join(stateDir, HOST_STATE_FILE));
+    const oldBoot =
+      context.osBootIdentity === "00000000-0000-0000-0000-000000000001"
+        ? "00000000-0000-0000-0000-000000000002"
+        : "00000000-0000-0000-0000-000000000001";
+
+    historical
+      .prepare(
+        "UPDATE session_process_obligations SET os_boot_identity=? WHERE command_id=?",
+      )
+      .run(oldBoot, priorBoot.commandId);
+    historical
+      .prepare(
+        "UPDATE session_process_obligations SET pid_namespace='historical-other-namespace' WHERE command_id=?",
+      )
+      .run(otherNamespace.commandId);
+    historical
+      .prepare(
+        "UPDATE session_process_obligations SET os_boot_identity=NULL WHERE command_id=?",
+      )
+      .run(unknownBoot.commandId);
+    historical.close();
+    state = openHostState({ stateDir });
+    try {
+      expect(state.releaseSessionProcessesFromPriorBoot()).toBe(1);
+      expect(state.releaseSessionProcessesFromPriorBoot()).toBe(0);
+      expect(state.sessionProcessesForRun(priorBoot.runId)).toEqual([
+        expect.objectContaining({
+          phase: "released",
+          processGroup: null,
+          osBootIdentity: oldBoot,
+          retiredOsBootIdentity: context.osBootIdentity,
+          retiredAt: expect.any(String),
+        }),
+      ]);
+      expect(
+        state
+          .pendingSessionProcesses()
+          .map((owner) => owner.commandId)
+          .sort(),
+      ).toEqual([otherNamespace.commandId, unknownBoot.commandId].sort());
+      expect(state.recoverAcceptedPromptReceipts()).toBe(1);
+      expect(state.getReceipt(priorBoot.commandId)).toMatchObject({
+        phase: "rejected",
+        body: {
+          details: {
+            sessionCreateQuiescence: { version: 1, process: "terminated" },
+          },
+        },
+      });
+      expect(state.getReceipt(otherNamespace.commandId)?.phase).toBe(
+        "accepted",
+      );
+      expect(state.getReceipt(unknownBoot.commandId)?.phase).toBe("accepted");
+    } finally {
+      state.close();
+    }
+  });
+
+  it("fails the legacy migration when an open producer has lost its create receipt", async () => {
+    const stateDir = await tempRoot();
+    const state = openHostState({ stateDir });
+    const receipt = processReceipt();
+
+    state.reserveProducerReceipt(receipt, 0);
+    state.close();
+    const legacy = new DatabaseSync(join(stateDir, HOST_STATE_FILE));
+
+    legacy.exec(
+      "DROP TABLE session_process_obligations; DELETE FROM command_receipts; PRAGMA user_version=15;",
+    );
+    legacy.close();
+    expect(() => openHostState({ stateDir })).toThrow(HostStateUnwritableError);
+    const inspected = new DatabaseSync(join(stateDir, HOST_STATE_FILE));
+
+    try {
+      expect(inspected.prepare("PRAGMA user_version").get()).toEqual({
+        user_version: 15,
+      });
+      expect(
+        inspected
+          .prepare(
+            "SELECT count(*) count FROM runtime_event_wallets WHERE closed=0",
+          )
+          .get(),
+      ).toEqual({ count: 1 });
+    } finally {
+      inspected.close();
+    }
+  });
+
+  it("registers only the current accepted producer, keeps pending ownership through restart, and releases without rewriting its identity", async () => {
+    const stateDir = await tempRoot();
+    const clock = new Date("2026-11-03T12:00:00.000Z");
+    let state = openHostState({ stateDir, now: () => clock });
+    const receipt = processReceipt();
+    const process = {
+      commandId: receipt.commandId,
+      runId: receipt.runId,
+      assignmentId: receipt.assignmentId!,
+      epoch: receipt.epoch,
+      hostSessionId: randomUUID(),
+      processGroup: 54321,
+    };
+
+    try {
+      expect(() => state.registerSessionProcess(process)).toThrow();
+      state.setFence(receipt.runId, receipt.assignmentId!, receipt.epoch);
+      state.reserveProducerReceipt(receipt, 0);
+      state.registerSessionProcess(process);
+      state.registerSessionProcess(process);
+      state.bindProducerSession(receipt.commandId, process.hostSessionId);
+      const failure = {
+        version: 1,
+        stage: "acp_handshake",
+        causeChain: [{ name: "Error", code: "ETIMEDOUT" }],
+      };
+
+      state.putReceipt(
+        {
+          ...receipt,
+          httpStatus: 503,
+          body: { details: { sessionCreateFailure: failure } },
+        },
+        { kind: "producer", outputBindingCount: 0 },
+      );
+      expect(state.pendingSessionProcesses()).toEqual([
+        {
+          ...process,
+          ...readHostProcessContext(),
+          retiredOsBootIdentity: null,
+          phase: "registered",
+          registeredAt: clock.toISOString(),
+          retiredAt: null,
+        },
+      ]);
+      expect(() =>
+        state.registerSessionProcess({ ...process, processGroup: 54322 }),
+      ).toThrow();
+      expect(() =>
+        state.registerSessionProcess({
+          ...process,
+          hostSessionId: randomUUID(),
+        }),
+      ).toThrow();
+      state.close();
+      state = openHostState({ stateDir, now: () => clock });
+      expect(state.recoverAcceptedPromptReceipts()).toBe(0);
+      expect(state.getReceipt(receipt.commandId)).toMatchObject({
+        phase: "accepted",
+        completedAt: null,
+        body: { details: { reason: "session_create_exit_unconfirmed" } },
+      });
+      expect(state.producerWalletOpen(receipt.commandId)).toBe(true);
+      state.setFence(receipt.runId, randomUUID(), 2);
+      expect(() => state.registerSessionProcess(process)).toThrow();
+      const retiredAt = "2026-11-03T12:01:00.000Z";
+
+      state.releaseSessionProcess(receipt.commandId, retiredAt);
+      state.releaseSessionProcess(
+        receipt.commandId,
+        "2026-11-03T12:02:00.000Z",
+      );
+      expect(state.pendingSessionProcesses()).toEqual([]);
+      expect(state.sessionProcessesForRun(receipt.runId)).toEqual([
+        {
+          ...process,
+          ...readHostProcessContext(),
+          retiredOsBootIdentity: null,
+          phase: "released",
+          registeredAt: clock.toISOString(),
+          retiredAt,
+        },
+      ]);
+      expect(state.recoverAcceptedPromptReceipts()).toBe(1);
+      expect(state.getReceipt(receipt.commandId)).toMatchObject({
+        phase: "rejected",
+        body: {
+          details: {
+            sessionCreateFailure: failure,
+            sessionCreateQuiescence: { version: 1, process: "terminated" },
+          },
+        },
+      });
+    } finally {
+      state.close();
+    }
+  });
+
+  it("migrates legacy open wallets as unproven without inventing retirement or changing terminal receipts", async () => {
+    const stateDir = await tempRoot();
+    let state = openHostState({ stateDir });
+    const accepted = processReceipt();
+    const completed = processReceipt();
+    const closed = processReceipt();
+    const contradicted = processReceipt();
+    const completedBody = {
+      sessionId: randomUUID(),
+      pid: 12345,
+      acpSessionId: "legacy-acp",
+    };
+
+    for (const receipt of [accepted, completed, contradicted]) {
+      state.reserveProducerReceipt(receipt, 0);
+      state.bindProducerSession(receipt.commandId, randomUUID());
+    }
+    state.putReceipt({
+      ...completed,
+      phase: "completed",
+      httpStatus: 201,
+      body: completedBody,
+      completedAt: "2026-11-03T12:01:00.000Z",
+    });
+    state.reserveProducerReceipt(closed, 0);
+    state.putReceipt({
+      ...closed,
+      phase: "rejected",
+      httpStatus: 503,
+      body: {
+        details: {
+          sessionCreateQuiescence: { version: 1, process: "not_started" },
+        },
+      },
+      completedAt: "2026-11-03T12:01:00.000Z",
+    });
+    state.putReceipt({
+      ...contradicted,
+      phase: "rejected",
+      httpStatus: 503,
+      body: {
+        details: {
+          sessionCreateQuiescence: { version: 1, process: "not_started" },
+        },
+      },
+      completedAt: "2026-11-03T12:01:00.000Z",
+    });
+    state.closeProducerWallet(contradicted.commandId);
+    state.close();
+    const legacy = new DatabaseSync(join(stateDir, HOST_STATE_FILE));
+
+    legacy.exec(
+      "DROP TABLE session_process_obligations; PRAGMA user_version=15;",
+    );
+    legacy.close();
+    state = openHostState({ stateDir });
+    try {
+      expect(state.pendingSessionProcesses()).toHaveLength(3);
+      expect(state.sessionProcessesForRun(closed.runId)).toEqual([]);
+      expect(state.sessionProcessesForRun(contradicted.runId)).toEqual([
+        expect.objectContaining({ phase: "unproven" }),
+      ]);
+      expect(state.sessionProcessesForRun(accepted.runId)).toEqual([
+        expect.objectContaining({
+          commandId: accepted.commandId,
+          processGroup: null,
+          phase: "unproven",
+          retiredAt: null,
+        }),
+      ]);
+      expect(() =>
+        state.releaseSessionProcess(
+          accepted.commandId,
+          new Date().toISOString(),
+        ),
+      ).toThrow();
+      expect(state.recoverAcceptedPromptReceipts()).toBe(0);
+      expect(state.getReceipt(accepted.commandId)).toMatchObject({
+        phase: "accepted",
+        body: { details: { reason: "session_create_exit_unconfirmed" } },
+      });
+      expect(state.getReceipt(completed.commandId)).toMatchObject({
+        phase: "completed",
+        body: completedBody,
+      });
+      expect(state.producerWalletOpen(accepted.commandId)).toBe(true);
+      expect(state.producerWalletOpen(completed.commandId)).toBe(true);
+      state.close();
+      state = openHostState({ stateDir });
+      expect(state.pendingSessionProcesses()).toHaveLength(3);
+      expect(state.recoverAcceptedPromptReceipts()).toBe(0);
+    } finally {
+      state.close();
+    }
+  });
+
+  it("does not compact a terminal create while its registered process still owns retirement", () => {
+    const state = openHostState({ inMemory: true });
+    const receipt = processReceipt();
+
+    try {
+      state.setFence(receipt.runId, receipt.assignmentId!, receipt.epoch);
+      state.reserveProducerReceipt(receipt, 0);
+      state.registerSessionProcess({
+        commandId: receipt.commandId,
+        runId: receipt.runId,
+        assignmentId: receipt.assignmentId!,
+        epoch: 1,
+        hostSessionId: randomUUID(),
+        processGroup: 54321,
+      });
+      state.putReceipt({
+        ...receipt,
+        phase: "completed",
+        completedAt: "2026-11-03T12:01:00.000Z",
+      });
+      state.closeProducerWallet(receipt.commandId);
+      const proof = {
+        expectedRequestSha256: receipt.requestDigest,
+        expectedPhase: "completed" as const,
+        assignmentEpoch: 1,
+      };
+
+      expect(state.retireReceipt(receipt.commandId, proof)).toEqual({
+        outcome: "producer_open",
+      });
+      expect(state.sessionProcessesForRun(receipt.runId)[0].phase).toBe(
+        "registered",
+      );
+      state.releaseSessionProcess(receipt.commandId, new Date().toISOString());
+      expect(state.retireReceipt(receipt.commandId, proof).outcome).toBe(
+        "retired",
+      );
+    } finally {
+      state.close();
+    }
+  });
+});

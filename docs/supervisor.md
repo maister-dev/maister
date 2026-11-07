@@ -558,8 +558,12 @@ other transcript location exists to purge.
 Returns the host's durable receipt for a command id —
 `{ commandId, runId, kind, assignmentEpoch, phase: accepted | completed |
 rejected, httpStatus, body, receivedAt, completedAt?, inflight }` — or 404
-(`inflight` is process memory: `accepted` + `inflight: false` is the
-restart-mid-turn signature). Read by
+for the legacy v1 representation. Its `inflight` field is process memory;
+`accepted` + `inflight: false` observes a missing in-memory request after restart;
+it does not prove that its adapter process stopped.
+Receipt v2 has no process-liveness field or legacy completion timestamp: accepted
+v2 evidence remains pending and cannot authorize replacement. The canonical wire
+shapes are in [the supervisor API contract](api/supervisor.openapi.yaml). Read by
 the web tier exactly once after an unknown-outcome transport failure on an
 accepted prompt and during startup recovery of `delivering` / `accepted`
 ledger rows.
@@ -613,10 +617,15 @@ stored response verbatim with `X-Maister-Command-Replayed: true` — replay wins
 over the liveness and handle guards, which are judged inside the
 receipt-guarded execution (a duplicate prompt id replays after the session
 exited; a duplicate create id replays after its handle was released); a
-duplicate while the original is in flight (any kind) **joins** it; an
-`accepted` receipt with no in-flight promise (restart mid-turn) → `409
-PRECONDITION turn_lost`, except `runtime_object.reserve` / `runtime_object.delete`,
-which re-run against the durable object row (uploads restart from byte zero); a
+duplicate while the original is in flight (any kind) **joins** it; a
+legacy `accepted` prompt receipt with no in-flight promise (restart
+mid-turn) may settle as `409 PRECONDITION turn_lost`, which describes logical
+turn loss and does not prove physical retirement. An unresolved create retains
+its original command and returns actionable 503 without starting another process;
+neither `inflight: false` nor a historical `turn_lost` rejection authorizes a
+replacement create. `runtime_object.reserve` and
+`runtime_object.delete` instead re-run against the durable object row (uploads
+restart from byte zero). A
 receipt write failure → `500 ACP_PROTOCOL` (the
 effect may have happened — the web reconcile catches an orphan session). At
 boot, before any route exists, the host finishes `deleting` tombstones, discards
@@ -628,6 +637,30 @@ Prompt admission and completion emit durable `session.command` events
 (`phase: accepted`, then `phase: completed` with `status` + `result` / `error`)
 to the host outbox. The manager assigns canonical run order during ingestion;
 no lifecycle consumer reads a per-run event file.
+
+**Rejected-create retirement proof.** A terminal create rejection can carry
+`details.sessionCreateQuiescence = {version: 1, process: "not_started" | "terminated"}`.
+The host alone produces this strict witness from a proven pre-spawn refusal or
+confirmed process retirement and terminal publication. Handshake teardown shares DELETE's
+TERM → bounded wait → KILL → bounded wait path. Sending a signal alone never
+removes the retained registry entry or proves that its workspace is unused.
+
+Unconfirmed exit/publication returns actionable 503, retains the session and the
+same accepted create receipt, and preserves that unresolved outcome on replay.
+Confirmed heartbeat exit or owned DELETE settles that original receipt using its
+exact stored command/Run/assignment/epoch/session identity; no timer, replacement
+command or synthetic timestamp is introduced. Host restart does not infer
+retirement from missing inventory, logical turn loss or a changed boot identifier.
+
+The manager requires the stamped receipt, validated private create intent, exact
+current agent owner/assignment and fresh host inventory before treating a rejected
+create without an incarnation as quiescent. Unknown, applied, mismatched and
+historical unstamped receipts remain unproven. Driver re-entry and generic recovery
+keep accepted v1 and v2 create evidence pending until the host supplies a proven
+outcome. Pre-work retry uses the same proof. Existing terminal receipts are never
+rewritten to add it. The witness is additive JSON in existing receipt storage;
+it creates no retrospective authorization. Real host lifetime,
+manager finalization/recovery and historical retry controls enforce this boundary.
 
 **Failed-prompt cause order (Implemented — ADR-177, 2026-09-30).** If the ACP
 transport closes unintentionally while its prompt response is pending, the
@@ -730,6 +763,26 @@ connection's `initialize` advertisement (Implemented — ADR-182). Used by
 carries `executionWorkspaceId`, `assignmentId`, `assignmentEpoch`, and
 `createdByCommandId`; host-private paths (`logPath`, `worktreePath`,
 `repoPath`, `confineRoot`, `contextMounts`) never leave the host.
+For gated adapters, `pid` and optional `processGroup` identify the managed gate;
+optional `adapterPid` identifies the native adapter started after authorization.
+
+`GET /sessions?runId=<id>` returns only that run and first reconciles its durable
+process obligations. It returns `503 EXECUTOR_UNAVAILABLE` while an unregistered
+or unconfirmed owner may still use the run's resources. Other runs remain
+available. A successful scoped response includes
+`X-Maister-Session-Ownership-Version: 1`; the manager requires that attestation
+before using absence to authorize teardown, recovery or workspace mutation.
+The unscoped aggregate remains useful for positive liveness and admin display.
+
+The same scoped check precedes every actual create POST, after its durable
+command is queued. An older host or temporarily unavailable ownership proof
+defers that original command before transmission. The private manager deferral
+keeps claim counters monotonic, preserves prior wire uncertainty and the primary
+error, and records current readiness in `lastError.details.managerReadiness`.
+Compensating its attempt ceiling leaves the remaining wire-delivery budget
+unchanged. Each probe is bounded and yields to existing recovery scheduling;
+there is no internal retry loop, new command or fresh launch authorization.
+Authentication, configuration and malformed-protocol refusals remain errors.
 
 ### `POST /sessions/:id/checkpoint` _(Implemented)_
 
@@ -1069,8 +1122,9 @@ to retained events and transactional `runtime_event_budget` counters,
 The additive migration charges every existing event to the regular partition
 without rewriting its envelope. Producer wallets persist across restart;
 parser reservations expire with their owning process. Startup repairs accepted
-producer commands and records lost sessions using their original reserved
-credits. Accepted receipts cannot expire before that repair. Full command and
+producer commands using their original reserved credits; a lost request alone
+does not authorize physical session retirement. Accepted receipts cannot expire
+before that repair. Full command and
 receipt retention eligibility remains S2.
 Version 8 stores new ACK timestamps as compact contiguous ranges; the stream
 watermark and partition counters commit with each range. Legacy per-row ACK
@@ -1110,7 +1164,43 @@ The [object read contract](system-analytics/execution-runtime-objects.md#host-de
 requires a distinct producer seal, a full descriptor hash and a bounded response
 spool before successful content delivery; missing/corrupt state commits with its
 outbox event. Existing version-12 seals acquire identity through verified copying.
-The file carries a `PRAGMA user_version` (currently 14)
+Version 16 adds `session_process_obligations`, keyed by original create command,
+with immutable run/assignment/epoch/session identity, registered process group,
+OS boot identity and PID namespace,
+phase (`registered`, `unproven`, `released`) and registration/retirement times.
+The host records a gated process group before permitting adapter execution.
+Recovery observes that group without treating its numeric ID as authority to
+signal another process. An active group or unavailable observation keeps the
+original create unresolved; confirmed group retirement within the recorded PID
+namespace permits exact-command settlement. A changed namespace alone proves
+nothing about the old group. Scoped session reads attest this contract through
+`X-Maister-Session-Ownership-Version: 1`; an older host's empty inventory is
+insufficient proof.
+
+The additive v15→v16 migration inventories legacy producer wallets, including
+closed wallets whose old restart, compacted or pruned history cannot prove
+physical retirement. Missing proof becomes `unproven`, retaining a null session
+identity where it was never known. Only strict, uncontradicted `not_started`
+evidence for an unbound create excludes that hold. The migration does
+not invent a process group, completed preparation or safe retirement, and does
+not rewrite historical terminal receipts. Every later startup also inventories
+wallets missing a process obligation, covering death before registration and
+unsafe legacy closure. Closed wallets with missing receipts retain independent
+ownership evidence at the observation time; that timestamp is not an invented
+process start. An open wallet with missing or inconsistent admission evidence
+remains a corrupt-store refusal.
+Such ownership holds are scoped to their run. An unknown legacy process can be
+retired after a verified execution-host **OS reboot following identity capture**;
+restarting only the Supervisor or changing its boot identifier is insufficient.
+The host reads Linux's kernel boot ID or Darwin's kernel boot-session UUID itself;
+no client flag or manual assessment can assert that proof. Unavailable identity
+fails closed. Pending obligations prevent
+receipt compaction; released obligations retain compact identity alongside the
+existing permanent command tombstone and cannot reactivate that command. The
+existing private state directory and Node 24 runtime provide storage and gating;
+no new service, mount, environment variable or port is required.
+
+The file carries a `PRAGMA user_version` (currently 16)
 that gates in-place migrations at open: a version-0 store (inline
 `UNIQUE (run_id, real_path)`, which blocked re-adoption after a release) is
 rebuilt under the partial index with every row kept; a fresh store starts at
@@ -1120,7 +1210,9 @@ is no in-memory fallback. Two fatal boot errors:
 differs from the stored key — remediation: unset the pin, or deliberately
 wipe the state dir) and `execution-host-state-unwritable`. The web tier
 never reads this directory. What survives a restart: the key, fences,
-receipts, event replay/ACK watermark, object metadata, and handles. What does not: live sessions (unchanged). If the directory
+receipts, event replay/ACK watermark, object metadata, handles and process
+obligations. The in-memory session registry does not survive; an adapter process
+may survive an unexpected Supervisor death. If the directory
 is lost, the host mints a new key (unless pinned) — the web registrar then
 retires the idle old row or refuses registration while the old row still owns
 non-terminal runs; fences restart at the first command; handles are

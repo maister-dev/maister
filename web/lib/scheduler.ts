@@ -20,13 +20,17 @@ import {
 } from "drizzle-orm";
 import pino from "pino";
 
+import { taskLaunchIntents } from "@/lib/db/schema";
+import { claimTaskLaunchIntent } from "@/lib/tasks/launch-dispatch-claim";
+import { prepareTaskLaunchFirstDispatch } from "@/lib/tasks/launch-first-dispatch";
+import { countTaskLaunchPreparationSlots } from "@/lib/tasks/launch-capacity";
 import { getDb } from "@/lib/db/client";
 import { librarianConfig } from "@/lib/librarian/config";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { resolveNodeRecoverInfo } from "@/lib/flows/graph/current-node-kind";
 import { resolveNodeResumeSessionId } from "@/lib/runs/node-resume-session";
 import * as schemaModule from "@/lib/db/schema";
-import { MaisterError } from "@/lib/errors";
+import { MaisterError, isMaisterError } from "@/lib/errors";
 import {
   assertUpgradeMaintenanceAllows,
   upgradeMaintenanceEngaged,
@@ -44,6 +48,7 @@ import {
 import { CRASH_RECOVER_BUDGET_RESET } from "@/lib/runs/crash-recover";
 import { SLOT_HOLDING_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import {
+  automaticProjectFootprintSql,
   clearC2Claim,
   countLiveAutoFlowRuns,
   countOutstandingC2Claims,
@@ -236,7 +241,12 @@ export async function countLiveRuns(
       ),
     );
 
-  return Number(liveRows[0]?.count ?? 0);
+  return (
+    Number(liveRows[0]?.count ?? 0) +
+    (pool === "flow" || pool === "agent"
+      ? await countTaskLaunchPreparationSlots(dbOrTx, pool)
+      : 0)
+  );
 }
 
 // M37 Phase 10 (ADR-099): one active WRITER per shared worktree. A shared-mode
@@ -394,7 +404,9 @@ export async function assertScratchCapacityAvailableInTransaction(
       ),
     );
 
-  const liveCount = Number(liveRows[0]?.count ?? 0);
+  const liveCount =
+    Number(liveRows[0]?.count ?? 0) +
+    (await countTaskLaunchPreparationSlots(tx, "flow"));
   const decision = scratchCapacityDecision(liveCount, cap);
 
   log.debug(
@@ -474,6 +486,8 @@ export async function tryStartRun(
   opts: { db?: Db } = {},
 ): Promise<TryStartRunResult> {
   const db = opts.db ?? getDb();
+
+  const acceptedDispatch = await prepareTaskLaunchFirstDispatch(db, runId);
 
   return db.transaction(async (tx: Db) => {
     await takeSchedulerLock(tx);
@@ -565,8 +579,34 @@ export async function tryStartRun(
       { runId, pool, liveCount, cap, sharedBlocked, activeChildrenBlocked },
       "tryStartRun cap-check",
     );
+    let automaticAllowed = true;
 
-    if (!sharedBlocked && !activeChildrenBlocked && liveCount < cap) {
+    if (acceptedDispatch?.automaticDrain === true) {
+      const [project] = await tx
+        .select({ taskQueueSettings: projects.taskQueueSettings })
+        .from(projects)
+        .where(eq(projects.id, acceptedDispatch.projectId));
+      const ownReservation = acceptedDispatch.ownsCapacity ? 1 : 0;
+
+      automaticAllowed =
+        reserveAllowsC2(
+          liveCount - ownReservation + (await countOutstandingC2Claims(tx)),
+          cap,
+          resolveAutoReserve(),
+        ) &&
+        projectShareAllowsC2(
+          (await countLiveAutoFlowRuns(tx, acceptedDispatch.projectId)) - 1,
+          resolveMaxInFlightAuto(project ?? {}),
+        );
+    }
+
+    if (
+      automaticAllowed &&
+      !sharedBlocked &&
+      !activeChildrenBlocked &&
+      liveCount - (acceptedDispatch?.ownsCapacity ? 1 : 0) < cap
+    ) {
+      await acceptedDispatch?.apply(tx);
       const startedRows: Array<{ projectId: string }> = await tx
         .update(runs)
         .set({ status: "Running", startedAt: new Date() })
@@ -583,10 +623,19 @@ export async function tryStartRun(
         });
       }
 
+      if (startedRows.length === 0)
+        throw new MaisterError(
+          "CONFLICT",
+          "Run state changed before dispatch",
+          { details: { reason: "run_state_changed", runId } },
+        );
+
       log.info({ runId, pool, liveCount, cap }, "tryStartRun → started");
 
       return { started: true } satisfies TryStartRunResult;
     }
+
+    await acceptedDispatch?.releaseCapacity(tx);
 
     const targetStartedAt = targetRows[0]?.startedAt ?? new Date();
 
@@ -716,7 +765,40 @@ export async function releaseSlotOnIdle(
     .where(eq(runs.id, opts.runId));
   const pool = poolForRunKind(rows[0]?.runKind ?? "flow");
 
-  return promoteNextPending({ db: opts.db, runFlow: opts.runFlow, pool });
+  const { promotedRunId } = await promoteNextPending({
+    db: opts.db,
+    runFlow: opts.runFlow,
+    pool,
+  });
+
+  return { promotedRunId };
+}
+
+/** Version/lease churn is not progress if the same accepted request remains immediately eligible. */
+async function taskLaunchPromotionOutcome(
+  db: Db,
+  intentId: string,
+): Promise<{ promotedRunId: string | null; taskLaunchProgress: boolean }> {
+  const [current]: Array<{ runId: string | null; progressed: boolean }> =
+    await db
+      .select({
+        runId: taskLaunchIntents.runId,
+        progressed: sql<boolean>`coalesce(
+        ${taskLaunchIntents.dispatchCommittedAt} IS NOT NULL
+        OR ${taskLaunchIntents.state} NOT IN ('queued','preparing','run_bound')
+        OR ${taskLaunchIntents.state} IN ('queued','run_bound') AND ${taskLaunchIntents.dueAt}>clock_timestamp()
+        OR ${taskLaunchIntents.state}='preparing' AND ${taskLaunchIntents.leaseExpiresAt}>clock_timestamp()
+        OR ${taskLaunchIntents.state}='run_bound' AND ${taskLaunchIntents.settingsSnapshot}->>'kind'='agent'
+          AND EXISTS(SELECT 1 FROM runs preparing_agent WHERE preparing_agent.id=${taskLaunchIntents.runId}
+            AND preparing_agent.status='Running'), false)`,
+      })
+      .from(taskLaunchIntents)
+      .where(eq(taskLaunchIntents.id, intentId));
+
+  return {
+    promotedRunId: current?.runId ?? null,
+    taskLaunchProgress: !current || current.progressed,
+  };
 }
 
 // ADR-121 §4.4: the unified priority-ordered admission gate (a.k.a.
@@ -736,7 +818,7 @@ export async function releaseSlotOnIdle(
 // needs no new event wiring).
 export async function promoteNextPending(
   opts: PromoteNextPendingOptions = {},
-): Promise<{ promotedRunId: string | null }> {
+): Promise<{ promotedRunId: string | null; taskLaunchProgress?: boolean }> {
   const db = opts.db ?? getDb();
 
   const pool: SchedulerPool = opts.pool ?? "flow";
@@ -808,17 +890,7 @@ export async function promoteNextPending(
   // ADR-121 (T13, C2): the heavy fresh-Backlog-task launcher, dispatched OUTSIDE
   // the lock. Default uses the real launchRun via dynamic import (services/runs
   // imports this module — a static import would cycle).
-  const launchC2Fn =
-    opts.launchRun ??
-    (async (taskId: string) => {
-      const m = await import("@/lib/services/runs");
-
-      return m.launchRun(
-        { taskId, queueAdmitted: true },
-        { authorize: async () => {}, actorUserId: null },
-        db,
-      );
-    });
+  const launchC2Fn = opts.launchRun;
 
   const decision = await db.transaction(async (tx: Db) => {
     await takeSchedulerLock(tx);
@@ -844,14 +916,12 @@ export async function promoteNextPending(
         { pool, liveCount, cap },
         "promoteNextPending → cap reached, leaving work queued",
       );
-
-      return null;
     }
 
     // C1 — Pending runs in the pool. LEFT JOIN tasks for the LIVE priority (a run
     // with no task → normal weight). workspace_mode + root_run_id feed the
-    // one-writer-per-shared-tree skip (ADR-099). FOR UPDATE OF runs SKIP LOCKED so
-    // the tasks join does not lock task rows.
+    // one-writer-per-shared-tree skip (ADR-099). Scan without row locks; historical
+    // continuations claim one Run below, while new intents keep reservation order.
     const c1rows: Array<{
       id: string;
       runKind: string;
@@ -877,6 +947,7 @@ export async function promoteNextPending(
       .where(
         and(
           eq(runs.status, "Pending"),
+          sql`(${runs.taskLaunchIntentId} IS NULL OR EXISTS (SELECT 1 FROM task_launch_intents continuation WHERE continuation.id=${runs.taskLaunchIntentId} AND continuation.dispatch_committed_at IS NOT NULL))`,
           inArray(runs.runKind, POOL_RUN_KINDS[pool]),
           queuedRunHasAvailableSlots(),
         ),
@@ -885,8 +956,7 @@ export async function promoteNextPending(
         sql`${priorityWeightSql(tasks.priority)} desc`,
         asc(runs.startedAt),
       )
-      .limit(cap)
-      .for("update", { of: runs, skipLocked: true } as never);
+      .limit(Math.max(1, cap));
 
     // C3 — answered-idle resumables: NeedsInputIdle + resume_requested_at set, the
     // backing task NOT paused (INV-10). The FIFO key is resume_requested_at.
@@ -923,8 +993,48 @@ export async function promoteNextPending(
         sql`${priorityWeightSql(tasks.priority)} desc`,
         asc(runs.resumeRequestedAt),
       )
-      .limit(cap)
-      .for("update", { of: runs, skipLocked: true } as never);
+      .limit(Math.max(1, cap));
+
+    // Accepted task requests join C1 at their original acceptance time. Ownership
+    // is claimed only for the selected candidate; Git remains outside this transaction.
+    const reservedC2 = await countOutstandingC2Claims(tx);
+    const selfPreparation = sql`CASE WHEN ${taskLaunchIntents.state} IN ('preparing','run_bound') AND ${taskLaunchIntents.preparationIdentity} IS NOT NULL THEN 1 ELSE 0 END`;
+    const acceptedRows: Array<{
+      id: string;
+      priority: string | null;
+      acceptedAt: Date;
+    }> = await tx
+      .select({
+        id: taskLaunchIntents.id,
+        priority: tasks.priority,
+        acceptedAt: taskLaunchIntents.acceptedAt,
+      })
+      .from(taskLaunchIntents)
+      .innerJoin(tasks, eq(tasks.id, taskLaunchIntents.taskId))
+      .innerJoin(projects, eq(projects.id, taskLaunchIntents.projectId))
+      .where(
+        sql`(
+      ${taskLaunchIntents.state}='queued' AND ${taskLaunchIntents.dueAt}<=clock_timestamp()
+      OR ${taskLaunchIntents.state}='preparing' AND ${taskLaunchIntents.leaseExpiresAt}<=clock_timestamp()
+      OR ${taskLaunchIntents.state}='run_bound' AND ${taskLaunchIntents.dispatchCommittedAt} IS NULL AND ${taskLaunchIntents.dueAt}<=clock_timestamp()
+    ) AND ${taskLaunchIntents.settingsSnapshot}->>'kind'=${pool}
+      AND NOT (${taskLaunchIntents.settingsSnapshot}->>'kind'='agent'
+        AND ${taskLaunchIntents.state}='run_bound' AND EXISTS (
+          SELECT 1 FROM runs preparing_agent WHERE preparing_agent.id=${taskLaunchIntents.runId}
+            AND preparing_agent.status='Running'))
+      AND (${selfPreparation}>0 OR (${liveCount + reservedC2}-${selfPreparation}<${cap}
+      AND (${taskLaunchIntents.basis}->>'kind'<>'automatic' OR ${taskLaunchIntents.settingsSnapshot}->>'kind'='agent' OR ${taskLaunchIntents.settingsSnapshot} ? 'serverExecution' OR (
+        ${liveCount + reservedC2}-${selfPreparation}<${cap - resolveAutoReserve()}
+        AND (${projects.taskQueueSettings}->>'maxInFlightAuto' IS NULL OR
+          ${automaticProjectFootprintSql(sql`${taskLaunchIntents.projectId}`)}-${selfPreparation}<(${projects.taskQueueSettings}->>'maxInFlightAuto')::integer)
+      ))))`,
+      )
+      .orderBy(
+        sql`${priorityWeightSql(tasks.priority)} desc`,
+        asc(taskLaunchIntents.acceptedAt),
+        asc(taskLaunchIntents.id),
+      )
+      .limit(100);
 
     // C2 — eligible fresh Backlog tasks, FLOW pool only. Cheap candidate rows are
     // fetched up front (ordered by weight); per-candidate eligibility + capacity
@@ -935,11 +1045,22 @@ export async function promoteNextPending(
         ? (await loadC2CandidateRows(tx)).slice(0, GATE_C2_SCAN_LIMIT)
         : [];
 
-    if (c1rows.length === 0 && c3rows.length === 0 && c2rows.length === 0) {
+    if (
+      c1rows.length === 0 &&
+      c3rows.length === 0 &&
+      c2rows.length === 0 &&
+      acceptedRows.length === 0
+    ) {
       return null;
     }
 
     const candidates: AdmissionCandidate[] = [
+      ...acceptedRows.map((r) => ({
+        cls: "C1" as const,
+        priority: r.priority as TaskPriority | null,
+        fifoMs: r.acceptedAt.getTime(),
+        ref: { intentId: r.id },
+      })),
       ...c1rows.map((r) => ({
         cls: "C1" as const,
         priority: r.priority as TaskPriority | null,
@@ -1005,9 +1126,49 @@ export async function promoteNextPending(
     for (const cand of ordered) {
       const ref = cand.ref as Record<string, unknown>;
 
+      if (typeof ref.intentId === "string") {
+        const [intent] = await tx
+          .select()
+          .from(taskLaunchIntents)
+          .where(eq(taskLaunchIntents.id, ref.intentId));
+
+        if (intent?.state === "run_bound")
+          return {
+            kind: "task_bound" as const,
+            intentId: intent.id,
+          };
+        try {
+          const claim = await claimTaskLaunchIntent(tx, ref.intentId);
+
+          if (claim) return { kind: "task_intent" as const, claim };
+        } catch (error) {
+          if (!isMaisterError(error)) throw error;
+          const { holdQueuedTaskLaunchIntent } =
+            await import("@/lib/tasks/launch-dispatch");
+
+          await holdQueuedTaskLaunchIntent(tx, ref.intentId, error);
+        }
+        continue;
+      }
+      if (liveCount >= cap) continue;
+
       if (cand.cls === "C1" || cand.cls === "C3") {
         const runId = ref.runId as string;
         const runKind = ref.runKind as string;
+        // These are historical/already-committed continuations, not first-dispatch
+        // intents. Claim each row here so a locked candidate never stalls the sweep.
+        const [claimedRun] = await tx
+          .select({ id: runs.id })
+          .from(runs)
+          .where(
+            and(
+              eq(runs.id, runId),
+              eq(runs.status, cand.cls === "C1" ? "Pending" : "NeedsInputIdle"),
+            ),
+          )
+          .for("update", { skipLocked: true });
+
+        if (!claimedRun) continue;
 
         // One writer per shared tree (ADR-099): skip a shared-mode candidate while
         // a writer sibling is active — applies to both queued and resuming runs.
@@ -1309,8 +1470,63 @@ export async function promoteNextPending(
     return { promotedRunId: null };
   }
 
+  if (decision.kind === "task_intent") {
+    const { driveClaimedTaskLaunchIntent } =
+      await import("@/lib/tasks/launch-dispatch");
+
+    await driveClaimedTaskLaunchIntent(db, decision.claim);
+
+    return taskLaunchPromotionOutcome(db, decision.claim.intentId);
+  }
+  if (decision.kind === "task_bound") {
+    const { dispatchBoundTaskLaunchIntent } =
+      await import("@/lib/tasks/launch-dispatch");
+
+    await dispatchBoundTaskLaunchIntent(db, decision.intentId);
+
+    return taskLaunchPromotionOutcome(db, decision.intentId);
+  }
+
   if (decision.kind === "c2") {
     const candidate = decision.candidate;
+
+    if (!launchC2Fn) {
+      try {
+        const { enqueueQualifiedAutomaticTaskLaunch } =
+          await import("@/lib/tasks/launch-automatic-enqueue");
+        const intent = await enqueueQualifiedAutomaticTaskLaunch(
+          db,
+          candidate.taskId,
+        );
+
+        log.info(
+          {
+            taskId: candidate.taskId,
+            intentId: intent?.intentId ?? null,
+            basis: intent?.basis ?? null,
+            state: intent?.state ?? null,
+          },
+          "automatic task acceptance reconciled",
+        );
+      } catch (error) {
+        log.warn(
+          {
+            taskId: candidate.taskId,
+            code: isMaisterError(error) ? error.code : "UNKNOWN",
+            reason: isMaisterError(error)
+              ? error.details?.reason
+              : "automatic_acceptance_failed",
+          },
+          "automatic task acceptance deferred",
+        );
+        await clearC2Claim(db, candidate.taskId);
+
+        return { promotedRunId: null };
+      }
+      await clearC2Claim(db, candidate.taskId);
+
+      return promoteNextPending({ ...opts, db });
+    }
     const doLaunch = async (): Promise<string | null> => {
       try {
         const res = await launchC2Fn(candidate.taskId);
@@ -1344,20 +1560,9 @@ export async function promoteNextPending(
       }
     };
 
-    // Injected launcher (tests / controlled callers) → await for determinism;
-    // the default fire-and-forgets so a request-path freed-slot caller is not
-    // blocked on a git/worktree launch.
-    if (opts.launchRun) {
-      const runId = await doLaunch();
+    const runId = await doLaunch();
 
-      return { promotedRunId: runId };
-    }
-
-    queueMicrotask(() => {
-      void doLaunch();
-    });
-
-    return { promotedRunId: null };
+    return { promotedRunId: runId };
   }
 
   // The dispatch is fire-and-forget by design — a freed slot must not block on

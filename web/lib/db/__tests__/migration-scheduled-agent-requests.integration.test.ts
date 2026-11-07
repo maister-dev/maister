@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { parseScheduledRequestSnapshot } from "@/lib/agents/scheduled-request";
 import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
 import {
+  declareCurrentTestDatabaseWriter,
   startMainPostgresTestDbUpTo,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
@@ -85,6 +86,7 @@ beforeAll(async () => {
     ],
   );
   await migrate(database.db, { migrationsFolder: "./lib/db/migrations" });
+  await declareCurrentTestDatabaseWriter(database);
 }, 180_000);
 
 afterAll(async () => {

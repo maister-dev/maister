@@ -4,6 +4,8 @@ import type { Db } from "./db";
 import type { ExecutionCommand } from "@/lib/db/schema";
 import type { CreateSessionPayload } from "./contracts";
 import type { CommandEnvelope } from "./types";
+import type { OwnedCreateContinuation } from "./create-continuation";
+import type { SessionCreateOwner } from "./create-owner-contract";
 
 import { createHash } from "node:crypto";
 
@@ -12,6 +14,8 @@ import { z } from "zod";
 
 import { canonicalCommandJson } from "../../../runtime/command-json";
 
+import { OwnedCreateContinuationSchema } from "./create-continuation";
+import { SessionCreateOwnerSchema } from "./create-owner-contract";
 import { lockCurrentSessionAssignment } from "./session-binding";
 import { redactPayload } from "./redact";
 import {
@@ -19,6 +23,11 @@ import {
   assertAgentResumeCreateRequest,
 } from "./agent-permission-handoff";
 
+import { lockScratchCreateOwner } from "@/lib/scratch-runs/create-owner";
+import { lockGateChatCreateOwner } from "@/lib/services/gate-chat-create-owner";
+import { lockSyncCreateOwner } from "@/lib/runs/sync-create-owner";
+import { lockResumeCreateOwner } from "@/lib/runs/resume-create-owner";
+import { lockConsensusCreateOwner } from "@/lib/flows/graph/consensus/create-owner";
 import {
   executionCommands,
   gateResults,
@@ -34,54 +43,22 @@ import {
   assertGatePermissionContinuation,
 } from "@/lib/execution-host/permission-handoff-source";
 
+export {
+  FlowCreateOwnerSchema,
+  SessionCreateOwnerSchema,
+} from "./create-owner-contract";
+export type {
+  FlowCreateOwner,
+  SessionCreateOwner,
+  ConsensusCreateOwner,
+  ScratchCreateOwner,
+  GateChatCreateOwner,
+  SyncCreateOwner,
+  ResumeCreateOwner,
+} from "./create-owner-contract";
+
 const id = z.string().min(1).max(128);
 
-export const FlowCreateOwnerSchema = z.discriminatedUnion("variant", [
-  z
-    .object({
-      variant: z.literal("node"),
-      nodeAttemptId: id,
-      promptOrdinal: z.number().int().nonnegative(),
-    })
-    .strict(),
-  z
-    .object({
-      variant: z.literal("gate_ai"),
-      nodeAttemptId: id,
-      gateId: id,
-      evaluationId: id,
-    })
-    .strict(),
-  z
-    .object({
-      variant: z.literal("gate_skill"),
-      nodeAttemptId: id,
-      gateId: id,
-      evaluationId: id,
-    })
-    .strict(),
-]);
-export type FlowCreateOwner = z.infer<typeof FlowCreateOwnerSchema>;
-const SessionCreateOwnerSchema = z.discriminatedUnion("variant", [
-  ...FlowCreateOwnerSchema.options,
-  z
-    .object({
-      variant: z.literal("agent"),
-      turnId: id,
-      promptOrdinal: z.number().int().nonnegative(),
-    })
-    .strict(),
-  // ADR-185: a librarian turn opens its own session on the conversation run.
-  z
-    .object({
-      variant: z.literal("librarian"),
-      turnId: id,
-      promptOrdinal: z.number().int().nonnegative(),
-    })
-    .strict(),
-]);
-
-export type SessionCreateOwner = z.infer<typeof SessionCreateOwnerSchema>;
 const CreateIntentSchema = z
   .object({
     version: z.literal(1),
@@ -92,8 +69,28 @@ const CreateIntentSchema = z
     sessionFallback: z.boolean(),
     requestCanonicalJson: z.string().min(1),
     requestSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    continuation: OwnedCreateContinuationSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((intent, ctx) => {
+    const variant = intent.owner.variant;
+    const kind = intent.continuation?.kind;
+    const valid =
+      variant === "scratch"
+        ? kind === "initial" || kind === "recovery"
+        : variant === "package_scratch"
+          ? kind === "package_initial" || kind === "package_recovery"
+          : variant === "sync_resolver"
+            ? kind === "sync_resolver"
+            : intent.continuation === undefined;
+
+    if (!valid)
+      ctx.addIssue({
+        code: "custom",
+        message: "create continuation does not match its owner",
+        path: ["continuation"],
+      });
+  });
 
 export type SessionCreateIntent = z.infer<typeof CreateIntentSchema>;
 
@@ -108,6 +105,17 @@ export function createIntentError(invariant: string): MaisterError {
 }
 
 export function createOperationKey(owner: SessionCreateOwner): string {
+  if (owner.variant === "consensus_verifier")
+    return `consensus-create:verifier:${owner.verdictId}`;
+  if (owner.variant === "consensus_synthesis")
+    return `consensus-create:synthesis:${owner.synthesisId}`;
+  if (owner.variant === "scratch" || owner.variant === "package_scratch")
+    return `${owner.variant}-create:${owner.turnId}:${owner.promptOrdinal}`;
+  if (owner.variant === "gate_chat") return `gate-chat-create:${owner.turnId}`;
+  if (owner.variant === "sync_resolver")
+    return `sync-resolver-create:${owner.syncAttemptId}:${owner.promptOrdinal}`;
+  if (owner.variant === "flow_resume" || owner.variant === "scratch_resume")
+    return `${owner.variant}-create:${owner.sourceIncarnationId}`;
   if (owner.variant === "agent")
     return `agent-create:${owner.turnId}:${owner.promptOrdinal}`;
   if (owner.variant === "librarian")
@@ -124,6 +132,7 @@ export function storeCreateIntent(input: {
   supersedesCommandId: string | null;
   sessionFallback: boolean;
   envelope: CommandEnvelope<CreateSessionPayload>;
+  continuation?: OwnedCreateContinuation;
 }): SessionCreateIntent {
   // The typed caller constructs the private payload before transport. JSON
   // wire normalization removes optional undefined fields only once.
@@ -141,6 +150,7 @@ export function storeCreateIntent(input: {
     requestSha256: createHash("sha256")
       .update(requestCanonicalJson)
       .digest("hex"),
+    ...(input.continuation ? { continuation: input.continuation } : {}),
   });
 
   if (!parsed.success) throw createIntentError("create_intent_shape");
@@ -254,6 +264,33 @@ export async function lockCreateOwner(
 
   if (!assignment) return false;
   const [run] = await tx.select().from(runs).where(eq(runs.id, input.runId));
+
+  if (
+    input.owner.variant === "scratch" ||
+    input.owner.variant === "package_scratch"
+  )
+    return lockScratchCreateOwner(tx, { ...input, owner: input.owner }, check);
+  if (input.owner.variant === "gate_chat")
+    return lockGateChatCreateOwner(tx, {
+      runId: input.runId,
+      owner: input.owner,
+    });
+  if (input.owner.variant === "sync_resolver")
+    return lockSyncCreateOwner(tx, { runId: input.runId, owner: input.owner });
+  if (
+    input.owner.variant === "flow_resume" ||
+    input.owner.variant === "scratch_resume"
+  )
+    return lockResumeCreateOwner(tx, { ...input, owner: input.owner }, check);
+  if (
+    input.owner.variant === "consensus_verifier" ||
+    input.owner.variant === "consensus_synthesis"
+  )
+    return lockConsensusCreateOwner(
+      tx,
+      { ...input, owner: input.owner },
+      check,
+    );
 
   if (input.owner.variant === "librarian") {
     // A librarian run never pauses holding a session: it runs a turn or it is

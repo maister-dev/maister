@@ -298,7 +298,7 @@ jobs:
           if-no-files-found: error
 
   execution-isolation-complete:
-    name: A/B isolation complete (macOS Intel, 7 suites / 50 cases)
+    name: A/B isolation complete (macOS Intel, 7 suites / 51 cases)
     needs: [execution-isolation]
     if: always()
     runs-on: ubuntu-latest

@@ -29,6 +29,12 @@ a run is created.
 
 ## Roles & capabilities
 
+An accepted execution-child request can remain queued without a Run. If its
+parent is unavailable or its scope changed, the retained launch status explains
+that parent decision in EN/RU and directs the user to review, cancel or replan
+the request. It is not presented as a negative task assessment. Choosing new
+settings does not restore the old parent authority.
+
 Any authenticated user can open the dialog. Whether a launch can proceed is
 gated downstream (project selection + supervisor availability); the trigger
 button is disabled while the supervisor is unavailable, and the Cmd/Ctrl+K
@@ -43,10 +49,11 @@ shortcut respects that same disabled state.
 - **Close:** Esc, a backdrop click, or the top-right **✕** — the shared
   bare-crossmark close ([popup conventions](../README.md#shared-popup--density-conventions),
   no text label).
-- **Submit:** a successful immediate launch routes to the run / scratch detail
-  page. A Flow's initial input form appears there when the runner reaches it;
-  the user does not need to find the request in Inbox. Scheduling a future run
-  keeps the current page open.
+- **Submit:** scratch launch retains its existing detail-page routing. Task
+  Launch keeps the dialog open with the accepted request receipt and an explicit
+  Run link once bound. Acceptance is not immediate execution or success; the
+  Flow may later ask for its initial form on the Run page. Scheduling a future
+  run keeps the current page open.
 
 ## Layout & regions
 
@@ -63,6 +70,9 @@ theme-aware, so the treatment holds in light and dark.
 The task-scoped run launch popover is portal-rendered above the board and left
 rail. It preloads launch options from the selected task and shows:
 
+- a visible qualification explanation: missing, stale, negative or source-failed
+  assessments block automatic launch but do not require a manual assessment
+  before an authorized manual Launch;
 - a human-readable launchability banner for states such as active run,
   relation blocker, missing Flow revision, or installed-but-not-enabled Flow;
 - Flow, runner/model, and execution preset controls are initially visible;
@@ -108,7 +118,11 @@ stateDiagram-v2
     Closed --> Open: launch button, per-project plus, or Cmd/Ctrl+K
     Closed --> TaskLaunch: task Launch or Run again
     Open --> Closed: Esc, backdrop, close button, or successful launch
-    TaskLaunch --> Closed: Esc, backdrop, close button, or successful launch
+    TaskLaunch --> Closed: Esc, backdrop, close button
+    TaskLaunch --> Receipt: explicit Launch accepted
+    Receipt --> Receipt: attention SSE / exact replay
+    Receipt --> TaskLaunch: explicit replace or new launch
+    Receipt --> Closed: close button
     TaskLaunch --> Blocked: launchability reason
     Closed --> Disabled: supervisor unavailable
     Disabled --> Closed: supervisor recovers
@@ -124,7 +138,18 @@ The shortcut never fires while focus is in an `input` / `textarea` /
 
 The `ScratchLauncher` composer owns scratch submission and routing; task-scoped
 run launch uses `GET /api/runs/launch-options?taskId=...` followed by
-`POST /api/runs` with server-validated overrides. `launch-options` returns
+`POST /api/task-launch-intents` with a stable `Idempotency-Key`, displayed task
+revision/settings token and server-validated selections. A lost response retains
+the identical key/body across close or remount. Accepted requests use scoped
+status/cancel/replace operations and existing attention SSE; no client poller is
+introduced. Normal Launch has no extra confirmation dialog. Intentional concurrent
+launch is a separate explicit session operation, not a bypass flag.
+
+Task-bound agent controls use `GET /api/task-launch-intents/options` and the
+same POST contract with their actual `agentId`; a genuine Flow facade is resolved
+by the server. See [admission](../../system-analytics/task-launch-admission.md).
+
+`launch-options` returns
 `runnerSlots` (logical sessions and consensus roles), `selectedFlowRevisionId`, and
 `canConfigureRunnerBindings`, and accepts optional `flowId`/`runnerId` selections
 for read-only preview. `consensusRunnerSlots` retains the consensus-only subset

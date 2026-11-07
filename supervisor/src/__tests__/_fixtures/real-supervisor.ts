@@ -1,5 +1,6 @@
 // The production boot as a child process: `supervisor/src/main.ts` under tsx,
-// in its own process group so a kill reaches the adapters it spawned.
+// in its own process group. Session gates own separate groups, captured before
+// an intentional supervisor kill and reclaimed through checked fixture ownership.
 //
 // The web lane has an equivalent (`web/test-support/real-supervisor.ts`) and
 // this is deliberately NOT a re-export of it: that module is compiled under
@@ -22,6 +23,18 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { captureSupervisorProcessGroups } from "../../../../web/test-support/capture-supervisor-process-groups";
+import {
+  assertInvocationGroupEmpty,
+  createInvocation,
+  fixtureProcessEnvironment,
+  invocationFromEnvironment,
+  registerProcess,
+  registerRoot,
+  releaseInvocation,
+  signalInvocationGroup,
+} from "../../../../web/test-support/process-invocation";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SUPERVISOR_DIR = path.resolve(HERE, "../../..");
@@ -141,6 +154,11 @@ export async function startRealSupervisor(
   const runtimeRoot = await realpath(
     await mkdtemp(path.join(tmpdir(), "sup-rt-")),
   );
+  const inheritedInvocation = invocationFromEnvironment();
+  const invocation =
+    inheritedInvocation ?? (await createInvocation(runtimeRoot));
+
+  await registerRoot(invocation, runtimeRoot, "supervisor");
   const port = await freePort();
   const url = `http://127.0.0.1:${port}`;
   const logFile = path.join(runtimeRoot, "supervisor.log");
@@ -169,6 +187,7 @@ export async function startRealSupervisor(
     MAISTER_SHUTDOWN_GRACE_MS: "1000",
     MAISTER_KILL_GRACE_MS: "500",
     ...options.env,
+    ...(await fixtureProcessEnvironment(invocation)),
   };
 
   delete env.MAISTER_EXECUTION_HOST_KEY;
@@ -194,15 +213,45 @@ export async function startRealSupervisor(
     child.once("exit", (code) => resolve(code));
   });
   const leaderGone = () => child.exitCode !== null || child.signalCode !== null;
+  const sessionGroups = new Set<number>();
+  let invocationReleased = false;
 
   try {
+    await registerProcess(
+      invocation,
+      {
+        role: "fixture",
+        caseName: "supervisor",
+        rootRole: "supervisor",
+        root: runtimeRoot,
+        bootId: `starting:${pid}`,
+        logFile,
+      },
+      pid,
+    );
     await waitForHealth(url, exited, 60_000);
   } catch (err) {
     if (pid > 0) signalGroup(pid, "SIGKILL");
     throw err;
   }
 
+  const captureSessionGroups = async (): Promise<void> => {
+    if (leaderGone()) return;
+    const groups = await captureSupervisorProcessGroups({
+      invocation,
+      url,
+      supervisorPid: pid,
+      runtimeRoot,
+      bootId: `supervisor:${pid}`,
+      logFile,
+      caseName: "supervisor-session",
+    });
+
+    for (const group of groups) sessionGroups.add(group);
+  };
+
   const kill = async (signal: NodeJS.Signals = "SIGKILL") => {
+    await captureSessionGroups();
     if (!leaderGone()) {
       signalGroup(pid, signal);
       await Promise.race([
@@ -224,6 +273,20 @@ export async function startRealSupervisor(
     if (survivors.length > 0) {
       signalGroup(pid, "SIGKILL");
       throw new Error(`orphans survived kill: ${survivors.join(", ")}`);
+    }
+    for (const group of sessionGroups) {
+      await signalInvocationGroup(invocation, group, "SIGKILL");
+      await assertInvocationGroupEmpty(invocation, group);
+    }
+    if (!inheritedInvocation && !invocationReleased) {
+      invocationReleased = true;
+      const failures = await releaseInvocation(
+        invocation,
+        "Supervisor fixture",
+      );
+
+      if (failures.length)
+        throw new AggregateError(failures, "Supervisor fixture cleanup failed");
     }
   };
 

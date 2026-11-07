@@ -261,6 +261,7 @@ describe("consensus role resolution", () => {
 
     const runtime = await resolveConsensusRoleRuntime({
       db: {} as never,
+      parentRunId: "parent-1",
       projectId: "project-1",
       taskId: "task-1",
       flowRevisionId: "rev-1",

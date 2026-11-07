@@ -14,15 +14,19 @@
 // CI-ONLY: requires a free :3100 (the playwright webServer). It cannot run while
 // a `next dev` holds the Next 16 single-dev lock on the same project dir.
 
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { test, expect } from "@playwright/test";
 
 import { singleValue, withE2EDb } from "./_seed/db";
 import { loadFixtures } from "./_seed/fixtures";
-import { readLaunchResult } from "./_seed/launch-stream";
+import {
+  readTaskLaunchReceipt,
+  waitForTaskLaunchRun,
+} from "./_seed/task-launch";
 import { STUB_SESSIONS_DIR } from "./_seed/stub-supervisor";
+import { readStubSessionRecords } from "./_seed/session-records";
 
 const CRON_HEADER = "X-Maister-Cron-Token";
 const CRON_TOKEN = process.env.MAISTER_CRON_TOKEN ?? "e2e-cron-token-change-me";
@@ -31,17 +35,10 @@ const CRON_TOKEN = process.env.MAISTER_CRON_TOKEN ?? "e2e-cron-token-change-me";
 // session and holds its stream until a `<sessionId>.release` marker — release
 // every pending child so the workspace=none children finalize Done.
 function releaseAllChildSessions(seenRunIds: Set<string>): string[] {
-  if (!existsSync(STUB_SESSIONS_DIR)) return [];
   const released: string[] = [];
 
-  for (const name of readdirSync(STUB_SESSIONS_DIR)) {
-    if (!name.endsWith(".json")) continue;
-    const rec = JSON.parse(
-      readFileSync(path.join(STUB_SESSIONS_DIR, name), "utf8"),
-    ) as { sessionId: string; request?: { runId?: string } };
-    const runId = rec.request?.runId;
-
-    if (!runId || !seenRunIds.has(runId)) continue;
+  for (const rec of readStubSessionRecords(STUB_SESSIONS_DIR)) {
+    if (!seenRunIds.has(rec.request.runId)) continue;
     const marker = path.join(STUB_SESSIONS_DIR, `${rec.sessionId}.release`);
 
     if (!existsSync(marker)) {
@@ -109,14 +106,14 @@ test("orchestrator loop: launch → park with child subtree → resume to termin
 
   const launchResponse = page.waitForResponse(
     (response) =>
-      response.url().includes("/api/runs") &&
+      new URL(response.url()).pathname === "/api/task-launch-intents" &&
       response.request().method() === "POST",
   );
 
   await launchControl.click();
 
   // ADR-087 launch popover: the card button only OPENS the dialog; the POST
-  // fires from its "Create run" confirm. Scope the confirm to the dialog — the
+  // fires from its "Launch" action. Scope it to the dialog — the
   // card's own "Launch" button stays in the DOM behind the portaled modal, so a
   // page-wide "Launch" locator would re-click the trigger instead.
   const dialog = page.getByTestId("task-launch-dialog");
@@ -124,7 +121,7 @@ test("orchestrator loop: launch → park with child subtree → resume to termin
   await expect(dialog).toBeVisible();
 
   const createRun = dialog.getByRole("button", {
-    name: "Create run",
+    name: "Launch",
     exact: true,
   });
 
@@ -133,12 +130,11 @@ test("orchestrator loop: launch → park with child subtree → resume to termin
 
   const response = await launchResponse;
 
-  // The dialog POSTs with `Accept: text/event-stream`, so the launch answers
-  // 200 + a staged progress stream whose terminal frame carries the run (the
-  // JSON 202 shape is the non-stream path only).
-  expect(response.status()).toBe(200);
+  // Acceptance records the decision; runtime checks follow its exact bound Run.
+  expect(response.status()).toBe(202);
 
-  const { runId } = await readLaunchResult(response);
+  const receipt = await readTaskLaunchReceipt(response);
+  const runId = await waitForTaskLaunchRun(receipt);
 
   expect(runId).toBeTruthy();
 

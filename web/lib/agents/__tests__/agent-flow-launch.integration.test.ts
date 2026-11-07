@@ -1,10 +1,10 @@
 // M39 (ADR-106) — the launch branch of optional-flow enrichment: launchAgentRun
 // branches on the flow_ref discriminant BEFORE the standalone routing. An agent
 // declaring a same-package flow drives that flow as a run_kind='flow' run
-// carrying runs.agent_id (reusing the board launch `launchRun`); a task-less
-// trigger auto-creates the board task the graph runner requires. We assert the
-// run's identity columns (set at insert); the background runFlow has no live
-// supervisor and fails harmlessly (caught by launchRun) — not observed here.
+// carrying runs.agent_id. Task-bound human decisions use the canonical intent
+// contract; a task-less trigger creates its own carrier task. The scheduler
+// keeps allocation Pending so identity and frozen policy are checked without
+// dispatching a model.
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -34,10 +34,44 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 import { expandExecutionPolicy } from "@/lib/runs/execution-policy";
+import { interactiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
+import {
+  acceptInteractiveTaskLaunch,
+  serverTaskLaunchRequest,
+  taskLaunchSettingsToken,
+} from "@/lib/tasks/launch-intent";
+import { prepareTaskLaunchIntent } from "@/lib/tasks/launch-dispatch";
+import { previewBudgetRestart } from "@/lib/tasks/launch-budget-restart";
+import { respondToHitl } from "@/lib/services/hitl";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
+import { createAgentFlowTaskLaunchSource } from "@/lib/agents/flow-launch-authority";
+import { cancelInteractiveTaskLaunch } from "@/lib/tasks/launch-cancel";
 
 const exec = promisify(execFile);
 
 const logLines = vi.hoisted(() => [] as unknown[]);
+let actorUserId: string;
+
+vi.mock("@/lib/db/client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db/client")>()),
+  getDb: () => testDatabase.db,
+}));
+vi.mock("next/server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("next/server")>()),
+  after: vi.fn(),
+}));
+vi.mock("@/lib/authz", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/authz")>();
+
+  return {
+    ...actual,
+    requireActiveSession: async () => ({ id: actorUserId, role: "admin" }),
+    requireProjectAction: (
+      projectId: string,
+      action: import("@/lib/authz").ProjectAction,
+    ) => actual.requireProjectActionForUser(actorUserId, projectId, action),
+  };
+});
 
 vi.mock("pino", () => {
   const record = (fields: unknown, message?: string): void => {
@@ -150,6 +184,24 @@ beforeEach(async () => {
   originalWorktreesRoot = process.env.MAISTER_WORKTREES_ROOT;
   process.env.MAISTER_WORKTREES_ROOT = worktreesTmp;
 
+  const activeIntents = await pool.query<{ id: string; state_version: number }>(
+    "SELECT id,state_version FROM task_launch_intents WHERE state NOT IN ('cancelled','replaced','failed','settled')",
+  );
+
+  if (activeIntents.rows.length) {
+    const principal = await interactiveTaskLaunchPrincipal();
+
+    for (const intent of activeIntents.rows)
+      await cancelInteractiveTaskLaunch(
+        testDatabase.db,
+        principal,
+        intent.id,
+        { expectedStateVersion: intent.state_version },
+        randomUUID(),
+      );
+  }
+  // Retained Run/intent lineage references are removed together only in this owned fixture database.
+  await pool.query(`TRUNCATE TABLE "projects" CASCADE`);
   await pool.query(`DELETE FROM "runs"`);
   await pool.query(`DELETE FROM "tasks"`);
   await pool.query(`DELETE FROM "agent_project_links"`);
@@ -177,6 +229,11 @@ beforeEach(async () => {
   ]);
 
   projectId = randomUUID();
+  actorUserId = randomUUID();
+  await pool.query(
+    "INSERT INTO users(id,email,role,account_status,must_change_password) VALUES($1,$2,'admin','active',false)",
+    [actorUserId, `${actorUserId}@test.local`],
+  );
   await pool.query(
     `INSERT INTO "projects" ("id", "slug", "name", "repo_path", "main_branch", "branch_prefix", "maister_yaml_path", "task_key", "next_task_number")
      VALUES ($1, $2, 'P', $3, 'main', 'maister/', '/tmp/m.yaml', $4, 1)`,
@@ -241,7 +298,7 @@ beforeEach(async () => {
 
   await pool.query(
     `INSERT INTO "flow_revisions" ("id", "flow_ref_id", "source", "version_label", "resolved_revision", "manifest_digest", "manifest", "schema_version", "installed_path", "package_status", "setup_status", "exec_trust")
-     VALUES ($1, 'bugfix', 'github.com/acme/pkg', 'v1.0.0', 'rev-bugfix-1', 'digest', $2::jsonb, 1, $3, 'Installed', 'not_required', 'trusted')`,
+     VALUES ($1, 'bugfix', 'github.com/acme/pkg', 'v1.0.0', 'rev-pkg-1', 'digest', $2::jsonb, 1, $3, 'Installed', 'not_required', 'trusted')`,
     [revisionId, JSON.stringify(manifest), agentsRoot],
   );
   await pool.query(
@@ -267,6 +324,68 @@ async function getRun(runId: string): Promise<Record<string, unknown>> {
   return rows.rows[0];
 }
 
+async function launchManualTaskFlow(
+  taskId: string,
+  relaunchOfRunId?: string,
+): Promise<{ runId: string }> {
+  const task = await pool.query(
+    "SELECT revision,flow_id FROM tasks WHERE id=$1",
+    [taskId],
+  );
+  const selection = {
+    taskId,
+    ...(relaunchOfRunId
+      ? { flowId: task.rows[0].flow_id as string, relaunchOfRunId }
+      : { agentId: "pkg:driver" }),
+  };
+  const request = relaunchOfRunId
+    ? {
+        ...selection,
+        expectedTaskRevision: task.rows[0].revision,
+        expectedSettingsToken: await taskLaunchSettingsToken(
+          testDatabase.db,
+          taskId,
+          selection,
+        ),
+      }
+    : await (async () => {
+        const preview = await serverTaskLaunchRequest(
+          testDatabase.db,
+          await createAgentFlowTaskLaunchSource(testDatabase.db, {
+            agentId: "pkg:driver",
+            projectId,
+            taskId,
+            trigger: { source: "manual" },
+          }),
+          { taskId, flowId: "bugfix" },
+        );
+
+        return {
+          taskId,
+          agentId: "pkg:driver",
+          expectedTaskRevision: preview.expectedTaskRevision,
+          expectedSettingsToken: preview.expectedSettingsToken,
+        };
+      })();
+  const receipt = await acceptInteractiveTaskLaunch(
+    testDatabase.db,
+    await interactiveTaskLaunchPrincipal(),
+    request,
+    randomUUID(),
+  );
+
+  expect(receipt.basis).toBe("manual");
+  const bound = await prepareTaskLaunchIntent(
+    testDatabase.db,
+    receipt.intentId,
+  );
+
+  if (!bound.runId)
+    throw new Error(`Manual Flow did not bind: ${bound.reason}`);
+
+  return { runId: bound.runId };
+}
+
 describe("launchAgentRun — agent drives a flow (M39, ADR-106)", () => {
   it("IT-UX-01 UX-IT01 a task-bound launch creates a run_kind='flow' run carrying agent_id + flowId on the agent's same-package flow", async () => {
     const taskRes = await pool.query(
@@ -275,13 +394,7 @@ describe("launchAgentRun — agent drives a flow (M39, ADR-106)", () => {
     );
     const taskId = taskRes.rows[0].id as string;
 
-    const result = await launchAgentRun({
-      agentId: "pkg:driver",
-      projectId,
-      taskId,
-      trigger: { source: "manual" },
-      db,
-    });
+    const result = await launchManualTaskFlow(taskId);
 
     expect("runId" in result).toBe(true);
     if (!("runId" in result)) return;
@@ -778,48 +891,119 @@ describe("scheduled request successor lineage", () => {
   it.each(["manual_relaunch", "budget_restart"] as const)(
     "retains request and driving persona through %s",
     async (kind) => {
-      const snapshot = {
-        version: 1 as const,
-        scheduleId: randomUUID(),
-        triggerAttemptId: randomUUID(),
-        requestAtLaunch: "Retain source request 😀",
-      };
+      const { claimCronAgentAttempt } =
+        await import("@/lib/agents/trigger-attempts");
+      const scheduleId = randomUUID();
+
+      await pool.query(
+        "INSERT INTO agent_schedules(id,agent_id,project_id,trigger_type,cron_expr,timezone,next_fire_at,request_at_launch) VALUES($1,'pkg:driver',$2,'cron','* * * * *','UTC',now()-interval '1 minute','Retain source request 😀')",
+        [scheduleId, projectId],
+      );
+      const claim = await claimCronAgentAttempt(
+        testDatabase.db,
+        scheduleId,
+        new Date(),
+        new Date(Date.now() + 60_000),
+      );
+
+      if (!claim) throw new Error("Scheduled source was not claimed");
+      const snapshot = claim.scheduledRequestSnapshot;
       const original = await launchAgentRun({
         agentId: "pkg:driver",
         projectId,
         trigger: { source: "cron" },
-        scheduledRequestSnapshot: snapshot,
+        agentScheduleId: scheduleId,
+        runId: claim.reservedRunId,
+        agentTriggerReservation: {
+          attemptId: claim.id,
+          runId: claim.reservedRunId,
+        },
         db,
       });
 
       if (!("runId" in original)) throw new Error("Expected source run");
-      await pool.query(
-        "UPDATE runs SET status='Failed',ended_at=now() WHERE id=$1",
-        [original.runId],
-      );
       const source = (
         await pool.query("SELECT task_id,flow_id FROM runs WHERE id=$1", [
           original.runId,
         ])
       ).rows[0];
-      const { launchRun } = await import("@/lib/services/runs");
-      const successor = await launchRun(
-        {
-          taskId: source.task_id,
-          flowId: source.flow_id,
-          ...(kind === "manual_relaunch"
-            ? { relaunchOfRunId: original.runId }
-            : {
-                triggerPayload: {
-                  kind: "budget_restart",
-                  oldRunId: original.runId,
-                  hitlRequestId: randomUUID(),
-                },
-              }),
-        },
-        { authorize: async () => {}, actorUserId: null },
-        db,
-      );
+      let successor: { runId: string };
+      let displayedBudgetPolicy: ReturnType<
+        typeof expandExecutionPolicy
+      > | null = null;
+
+      if (kind === "manual_relaunch") {
+        await pool.query(
+          "UPDATE runs SET status='Failed',ended_at=now() WHERE id=$1",
+          [original.runId],
+        );
+        successor = await launchManualTaskFlow(source.task_id, original.runId);
+      } else {
+        await pool.query("UPDATE runs SET status='NeedsInput' WHERE id=$1", [
+          original.runId,
+        ]);
+        const hitlRequestId = randomUUID();
+
+        await pool.query(
+          "INSERT INTO hitl_requests(id,run_id,step_id,kind,prompt,schema) VALUES($1,$2,'code','budget_breach','Budget requires a decision',$3::jsonb)",
+          [
+            hitlRequestId,
+            original.runId,
+            JSON.stringify({
+              kind: "budget_breach",
+              scope: "run",
+              meter: "tokens",
+              current: 120,
+              limit: 100,
+              decisions: ["raise", "abandon"],
+            }),
+          ],
+        );
+        const principal = await interactiveTaskLaunchPrincipal();
+        const preview = await previewBudgetRestart(
+          testDatabase.db,
+          principal,
+          original.runId,
+          hitlRequestId,
+        );
+
+        displayedBudgetPolicy = expandExecutionPolicy(
+          preview.settings.executionPolicy,
+        );
+        expect(displayedBudgetPolicy).toMatchObject({
+          permissions: "auto_approve",
+          humanGate: "auto_pass",
+        });
+        const { hosts } = await fakeExecutionHosts(testDatabase.db, {
+          runId: original.runId,
+        });
+        const response = await respondToHitl(
+          {
+            runId: original.runId,
+            hitlRequestId,
+            body: { optionId: "restart", restartLaunch: preview.request },
+          },
+          { kind: "user", userId: actorUserId, label: "Fixture user" },
+          {
+            db: testDatabase.db,
+            executionHosts: hosts,
+            restartPrincipal: principal,
+          },
+        );
+        const receipt: Readonly<{ state: string; intentId: string }> =
+          await response.json();
+
+        expect(response.status).toBe(202);
+        expect(receipt).toMatchObject({ state: "restart_queued" });
+        const bound = await prepareTaskLaunchIntent(
+          testDatabase.db,
+          receipt.intentId,
+        );
+
+        if (!bound.runId)
+          throw new Error(`Budget successor did not bind: ${bound.reason}`);
+        successor = { runId: bound.runId };
+      }
       const row = (
         await pool.query(
           "SELECT agent_id,source_agent_id,scheduled_request_snapshot,execution_policy FROM runs WHERE id=$1",
@@ -830,10 +1014,15 @@ describe("scheduled request successor lineage", () => {
       expect(row.scheduled_request_snapshot).toEqual(snapshot);
       expect(row.agent_id).toBe("pkg:driver");
       expect(row.source_agent_id).toBe("pkg:driver");
-      expect(expandExecutionPolicy(row.execution_policy)).toMatchObject({
-        permissions: "ask",
-        humanGate: "stop",
-      });
+      if (displayedBudgetPolicy)
+        expect(expandExecutionPolicy(row.execution_policy)).toEqual(
+          displayedBudgetPolicy,
+        );
+      else
+        expect(expandExecutionPolicy(row.execution_policy)).toMatchObject({
+          permissions: "ask",
+          humanGate: "stop",
+        });
       const { loadFlowScheduledRequestSource } =
         await import("@/lib/agents/scheduled-request-lineage");
 
@@ -855,14 +1044,10 @@ describe("scheduled request successor lineage", () => {
         [unrelatedTask, projectId, source.flow_id],
       );
       await expect(
-        launchRun(
-          { taskId: unrelatedTask, relaunchOfRunId: original.runId },
-          { authorize: async () => {}, actorUserId: null },
-          db,
-        ),
+        launchManualTaskFlow(unrelatedTask, original.runId),
       ).rejects.toMatchObject({
         code: "PRECONDITION",
-        details: { reason: "scheduled_request_source_mismatch" },
+        details: { reason: "launch_source_unavailable" },
       });
     },
   );

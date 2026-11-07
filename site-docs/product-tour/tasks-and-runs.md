@@ -9,7 +9,8 @@ revision and a resolved set of runners and capabilities.
 
 ## Prerequisites
 
-- A registered project with at least one attached, trusted, launchable Flow.
+- A registered project and an available trusted Flow or task-bound code-delivery
+  agent. A repository-less agent may use its supported `none` workspace.
 - Project `member` access to create or launch work. Viewers can inspect it.
 
 ## Read the board
@@ -46,7 +47,33 @@ The effective values are shown even when the task inherits project defaults.
 Task fields can be edited before work starts; Run snapshots do not change when a
 later project default changes.
 
-### Relations
+## Launch deliberately
+
+Selecting a Flow or runner configures the task; it does not start execution.
+Open **Launch**, check the task revision, runner/model and delivery settings, then
+press **Launch** to authorize that request. The accepted receipt stays visible
+while it waits for capacity or prepares its workspace. Open the linked Run to
+follow execution; acceptance alone does not mean the model started.
+
+Missing, outdated or negative Triager assessments and infrastructure failures
+while preparing an assessment remain visible. They prevent automatic launch, but do not require you to complete the seven-check
+assessment form before an authorized manual launch. Manual Launch records your
+one-time decision without changing the Triager result or enabling later automatic
+runs. Explicit holds, open blocking questions/relations, access checks, target
+availability, capacity, isolation and the Flow's validation gates still apply.
+
+For a task-bound agent, check its actual workspace and runner/model in the agent
+launch preview, then press its separate Launch action. An agent that drives a
+Flow uses that declared Flow; it does not become a standalone execution.
+
+If task input or selected configuration changes before dispatch, the request is
+held with a reason. Review the current settings and explicitly replace it. A
+lost response keeps the same request for recovery; do not create another launch
+to guess whether the first one was accepted. Ordinary repeated clicks identify
+existing work. Use the separately labelled concurrent action only when you intend
+another attempt alongside it.
+
+## Relations
 
 | Relation | Use it when |
 | --- | --- |
@@ -115,10 +142,13 @@ stale until the Flow executes them again.
 
 ## Queue and admission
 
-Submitting work does not guarantee immediate execution. MAIster admits Runs
-under concurrency limits and keeps excess work Pending. Flow Runs and standalone
-platform-agent Runs have separate capacity pools. Scheduled launches first
-create durable intents; the scheduler turns an eligible intent into a Run.
+Submitting work does not guarantee immediate execution. MAIster retains accepted
+work in the queue under concurrency limits. A Run that already exists may remain
+Pending; an accepted request can also wait before a Run is created. Flow Runs and
+standalone platform-agent Runs have separate capacity pools. Manual and automatic
+task launches first create durable requests; the scheduler prepares and binds an
+eligible request to a Run. Automatic task launch additionally needs a current accepted Ready assessment
+and its configured automatic intent.
 
 Check the board and Run status before treating a delay as a runner problem. A
 Pending item may be waiting for capacity, a scheduled time, an unmet relation,

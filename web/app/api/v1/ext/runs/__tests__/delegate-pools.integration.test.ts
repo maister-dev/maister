@@ -15,6 +15,7 @@ import {
   vi,
 } from "vitest";
 
+import { bindQueuedDelegationResponse } from "@/test-support/queued-delegation";
 import {
   delegateRequest,
   type DelegationSeedCtx,
@@ -82,8 +83,15 @@ beforeAll(async () => {
   await fakeExecutionHosts(db);
 
   ({ issueOrchestratorRunToken } = await import("@/lib/agents/tokens"));
-  ({ POST: delegatePost } =
-    await import("@/app/api/v1/ext/runs/delegate/route"));
+  const delegatePostEndpoint = (
+    await import("@/app/api/v1/ext/runs/delegate/route")
+  ).POST;
+
+  delegatePost = async (request, context) =>
+    bindQueuedDelegationResponse(
+      db as unknown as import("@/lib/execution-host/db").Db,
+      await delegatePostEndpoint(request, context),
+    );
 }, 180_000);
 
 afterAll(async () => {
@@ -126,10 +134,10 @@ async function statusOf(runId: string): Promise<string> {
 
 describe("delegated children draw their own pool (ADR-163 REQ-17)", () => {
   it("a saturated FLOW pool parks the child Pending; freeing a slot promotes it", async () => {
-    process.env.MAISTER_MAX_CONCURRENT_RUNS = "1";
+    process.env.MAISTER_MAX_CONCURRENT_RUNS = "2";
 
-    // One live FLOW run already holds the single flow slot. It is NOT a child of
-    // this orchestrator, so the per-orchestrator fan-out cap is not what bites.
+    // The real Flow coordinator holds one slot; an unrelated Flow occupies the
+    // second. The child's fanout limit is independent of this saturated pool.
     const hogTask = await seedTask(ctx, { title: "hog" });
     const hogRunId = await seedChildRun(ctx, {
       parentRunId,
@@ -142,6 +150,13 @@ describe("delegated children draw their own pool (ADR-163 REQ-17)", () => {
       `UPDATE "runs" SET "parent_run_id" = NULL, "root_run_id" = NULL WHERE "id" = $1`,
       [hogRunId],
     );
+    expect(
+      (
+        await pool.query(
+          "SELECT count(*)::int AS n FROM runs WHERE run_kind='flow' AND status='Running'",
+        )
+      ).rows[0].n,
+    ).toBe(2);
 
     const res = await delegatePost(
       delegateRequest(secret, {
@@ -153,15 +168,39 @@ describe("delegated children draw their own pool (ADR-163 REQ-17)", () => {
     );
 
     expect(res.status).toBe(202);
-    const { childRunId } = (await res.json()) as { childRunId: string };
+    const receipt = await res.json();
 
-    // 202 with the child queued — a full pool is backpressure, not a refusal.
-    expect(await statusOf(childRunId)).toBe("Pending");
+    expect(receipt).toMatchObject({
+      accepted: true,
+      childRunId: null,
+      runId: null,
+      status: "Queued",
+    });
+    expect(
+      (
+        await pool.query("SELECT count(*)::int n FROM runs WHERE task_id=$1", [
+          receipt.childTaskId,
+        ])
+      ).rows[0].n,
+    ).toBe(0);
 
     // Free the slot and drive the FLOW pool's queue.
     await pool.query(`UPDATE "runs" SET "status" = 'Done' WHERE "id" = $1`, [
       hogRunId,
     ]);
+
+    const { prepareTaskLaunchIntent } =
+      await import("@/lib/tasks/launch-dispatch");
+    const bound = await prepareTaskLaunchIntent(
+      db as unknown as import("@/lib/execution-host/db").Db,
+      receipt.intentId,
+    );
+
+    if (!bound.runId)
+      throw new Error(`Capacity release did not bind: ${bound.reason}`);
+    const childRunId = bound.runId;
+
+    expect(await statusOf(childRunId)).toBe("Pending");
 
     const { promoteNextPending } = await import("@/lib/scheduler");
     const promoted = await promoteNextPending({
@@ -178,18 +217,9 @@ describe("delegated children draw their own pool (ADR-163 REQ-17)", () => {
     process.env.MAISTER_MAX_CONCURRENT_RUNS = "1";
     process.env.MAISTER_MAX_CONCURRENT_AGENTS = "3";
 
-    const hogTask = await seedTask(ctx, { title: "hog" });
-    const hogRunId = await seedChildRun(ctx, {
-      parentRunId,
-      runKind: "flow",
-      status: "Running",
-      taskId: hogTask.id,
-    });
-
-    await pool.query(
-      `UPDATE "runs" SET "parent_run_id" = NULL, "root_run_id" = NULL WHERE "id" = $1`,
-      [hogRunId],
-    );
+    // The Flow parent itself fills this one-slot pool; no extra over-cap Run
+    // is needed to prove the independent agent pool can still admit its child.
+    expect(await statusOf(parentRunId)).toBe("Running");
 
     const worker = await seedAgent(ctx, { id: "worker" });
     const res = await delegatePost(

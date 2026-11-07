@@ -1,12 +1,24 @@
 import { Pool } from "pg";
 
 import { resolvePostgresDbUrl } from "@/lib/db/postgres-url";
+import {
+  EXECUTION_AB_WRITER_CAPABILITY,
+  TASK_LAUNCH_WRITER_CAPABILITY,
+  TASK_LAUNCH_WRITER_SETTING,
+  TASK_QUALIFICATION_WRITER_CAPABILITY,
+  TASK_QUALIFICATION_WRITER_SETTING,
+  WRITER_CAPABILITY_SETTING,
+} from "@/lib/db/writer-capability";
+
+export function createE2EDbPool(connectionString: string): Pool {
+  return new Pool({
+    connectionString,
+    options: `-c ${WRITER_CAPABILITY_SETTING}=${EXECUTION_AB_WRITER_CAPABILITY} -c ${TASK_QUALIFICATION_WRITER_SETTING}=${TASK_QUALIFICATION_WRITER_CAPABILITY} -c maister.agent_preparation_writer=v1 -c ${TASK_LAUNCH_WRITER_SETTING}=${TASK_LAUNCH_WRITER_CAPABILITY}`,
+  });
+}
 
 export async function withE2EDb<T>(fn: (pool: Pool) => Promise<T>): Promise<T> {
-  const pool = new Pool({
-    connectionString: resolvePostgresDbUrl(),
-    options: "-c maister.task_qualification_writer=v1",
-  });
+  const pool = createE2EDbPool(resolvePostgresDbUrl());
 
   try {
     return await fn(pool);
@@ -39,6 +51,30 @@ export async function singleValue<T>(
     const result = await pool.query<{ value: T }>(sql, [...values]);
 
     return result.rows[0]?.value ?? null;
+  });
+}
+
+/** Counts physical Flow children only after their immutable intent association exists. */
+export async function countBoundExecutionFlowChildren(
+  parentRunId: string,
+  flowRefId: string,
+): Promise<number> {
+  return withE2EDb(async (pool) => {
+    const result = await pool.query<{ value: number }>(
+      `SELECT count(*)::integer AS value
+         FROM runs r JOIN flow_revisions fr ON fr.id = r.flow_revision_id
+         JOIN task_launch_intents intent
+           ON intent.id = r.task_launch_intent_id AND intent.run_id = r.id
+        WHERE r.parent_run_id = $1 AND fr.flow_ref_id = $2
+          AND intent.basis->>'kind' = 'execution_child'
+          AND intent.basis->'parent'->>'parentRunId' = $1`,
+      [parentRunId, flowRefId],
+    );
+    const [count] = result.rows;
+
+    if (!count) throw new Error("The execution-child count returned no row");
+
+    return count.value;
   });
 }
 

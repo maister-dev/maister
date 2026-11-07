@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 
 import { expect, test } from "@playwright/test";
-import { Pool } from "pg";
 
+import { createE2EDbPool } from "./_seed/db";
 import { loadFixtures } from "./_seed/fixtures";
 
 import { resolvePostgresDbUrl } from "@/lib/db/postgres-url";
@@ -27,7 +27,7 @@ const debateArtifact = `run:${ids.attempt}:consensus-round-debate:1`;
 const fullDraft = `${"draft body ".repeat(6_000)}\nCONSENSUS-E2E-LAST-LINE`;
 const marker =
   "\n[consensus text truncated: dropped 40960 UTF-8 bytes; cap 32000 bytes]";
-const pool = new Pool({ connectionString: resolvePostgresDbUrl() });
+const pool = createE2EDbPool(resolvePostgresDbUrl());
 
 function payloadPath(runId: string, artifactId: string): string {
   return `/api/runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(artifactId)}/payload`;

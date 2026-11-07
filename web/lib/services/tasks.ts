@@ -30,6 +30,10 @@ import {
   type TaskVerdictPatch,
 } from "@/lib/services/triage";
 import { subscribe } from "@/lib/social/subscriptions";
+import {
+  lockTaskLaunchesForEdit,
+  holdChangedTaskLaunches,
+} from "@/lib/tasks/launch-edit";
 import { applyQueueWriteFields } from "@/lib/tasks/queue-fields";
 import { cancelClarificationsForAbandonedTasks } from "@/lib/tasks/clarification-requests";
 import {
@@ -338,6 +342,7 @@ export type TaskDTO = {
   // launch popover edits them pre-launch. ADR-112: `flagged` marks a confirmed
   // duplicate / triage-rejected intake (held — non-launchable until resolved).
   triageStatus: "triaged" | "flagged" | null;
+  triageFlagOrigin?: Task["triageFlagOrigin"];
   runnerId: string | null;
   baseBranch: string | null;
   targetBranch: string | null;
@@ -390,6 +395,7 @@ async function taskToDTO(
     stage: row.stage,
     flowId: row.flowId ?? null,
     triageStatus: row.triageStatus ?? null,
+    triageFlagOrigin: row.triageFlagOrigin ?? null,
     runnerId: row.runnerId ?? null,
     baseBranch: row.baseBranch ?? null,
     targetBranch: row.targetBranch ?? null,
@@ -520,6 +526,7 @@ export async function updateTask(
   const _db = db ?? getDb();
 
   return _db.transaction(async (tx: Db) => {
+    const launches = await lockTaskLaunchesForEdit(tx, projectId, taskId);
     const rows = await tx
       .select()
       .from(tasks)
@@ -556,7 +563,11 @@ export async function updateTask(
     // ADR-121 (INV-10): the pause valve works while a task is InFlight (to dequeue
     // a resume / stop an auto-relaunch); config fields stay Backlog-gated. Terminal
     // tasks accept neither.
-    if (task.status !== "Backlog" && hasBacklogGatedField(input)) {
+    if (
+      task.status !== "Backlog" &&
+      !launches.queuedEditable &&
+      hasBacklogGatedField(input)
+    ) {
       throw new MaisterError(
         "PRECONDITION",
         `task is not in Backlog (got ${task.status})`,
@@ -598,6 +609,8 @@ export async function updateTask(
       .update(tasks)
       .set(patch)
       .where(and(eq(tasks.id, taskId), eq(tasks.projectId, projectId)));
+
+    await holdChangedTaskLaunches(tx, projectId, taskId, launches);
 
     const updatedRows = await tx
       .select()

@@ -16,6 +16,11 @@ import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 import { z } from "zod";
 
+import {
+  loadScheduledTaskLaunchScope,
+  scheduledTaskLaunchSource,
+} from "./launch-authority";
+
 import { getDb } from "@/lib/db/client";
 import {
   projects,
@@ -26,10 +31,19 @@ import {
   tasks,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { pgErrorOf } from "@/lib/db/pg-error";
 import { worktreesRoot } from "@/lib/instance-config";
 import { storedDeliveryPolicySchema } from "@/lib/runs/delivery-policy";
 import { executionPolicySchema } from "@/lib/runs/execution-policy";
 import { resolveScheduledLaunchTime } from "@/lib/scheduled-launches/time";
+import {
+  acceptServerTaskLaunch,
+  serverTaskLaunchRequest,
+} from "@/lib/tasks/launch-intent";
+import { findServerTaskLaunch } from "@/lib/tasks/launch-server-source";
+import { dispatchTaskLaunchIntent } from "@/lib/tasks/launch-dispatch";
+import { prepareTaskDeliveryAdmission } from "@/lib/tasks/qualification-admission";
+import { applyPackageVersionChoices } from "@/lib/local-packages/versions";
 
 const scheduledLaunchRequestSchema = z
   .object({
@@ -1033,6 +1047,107 @@ async function finalizeScheduledLaunchRun(input: {
   });
 }
 
+async function dispatchAcceptedScheduledLaunch(
+  db: ScheduledLaunchDb,
+  input: {
+    projectId: string;
+    claimId: string;
+    claimFence: number;
+    reservation: ScheduledLaunchReservation;
+  },
+  claimed: Awaited<ReturnType<typeof loadClaimedLaunch>>,
+): Promise<{ runId: string; status: string } | null> {
+  const scope = await loadScheduledTaskLaunchScope(
+    db,
+    input.reservation.scheduledLaunchId,
+    input.reservation.id,
+  );
+  const key = input.reservation.id;
+  let receipt = await findServerTaskLaunch(db, scope.snapshot, key);
+
+  if (!receipt) {
+    const source = await scheduledTaskLaunchSource(db, {
+      scheduledLaunchId: input.reservation.scheduledLaunchId,
+      reservationId: input.reservation.id,
+      claimId: input.claimId,
+      claimFence: input.claimFence,
+    });
+    const setupChoices = Object.fromEntries(
+      Object.entries(claimed.launchRequest.packageVersions ?? {}).filter(
+        ([, choice]) => choice === "adopt" || choice === "cut_and_adopt",
+      ),
+    );
+
+    if (Object.keys(setupChoices).length) {
+      await prepareTaskDeliveryAdmission(db, {
+        projectId: input.projectId,
+        taskId: claimed.taskId,
+        baseBranch: claimed.launchRequest.baseBranch,
+        baseCommit: claimed.launchRequest.baseCommit,
+        targetBranch: claimed.launchRequest.targetBranch,
+      });
+      await assertScheduledClaimOwner({
+        db,
+        scheduledLaunchId: input.reservation.scheduledLaunchId,
+        claimId: input.claimId,
+        claimFence: input.claimFence,
+      });
+      const [project] = await db
+        .select()
+        .from(projects)
+        .where(eq(projects.id, input.projectId));
+
+      if (!project)
+        throw new MaisterError(
+          "PRECONDITION",
+          "Scheduled project is unavailable",
+        );
+      // Shared setup effects are retained if later admission refuses; a completed cut is never rolled back.
+      await applyPackageVersionChoices({
+        projectId: project.id,
+        projectSlug: project.slug,
+        workspaceRoot: project.repoPath,
+        choices: setupChoices,
+        db,
+      });
+    }
+    const packageVersions: Record<string, "keep" | "try_once"> = {};
+
+    for (const [id, choice] of Object.entries(
+      claimed.launchRequest.packageVersions ?? {},
+    ))
+      if (choice === "keep" || choice === "try_once")
+        packageVersions[id] = choice;
+    const request = await serverTaskLaunchRequest(db, source, {
+      ...claimed.launchRequest,
+      taskId: claimed.taskId,
+      packageVersions,
+    });
+
+    receipt = await acceptServerTaskLaunch(db, source, request, key);
+  }
+  await dispatchTaskLaunchIntent(db, receipt.intentId);
+  receipt = (await findServerTaskLaunch(db, scope.snapshot, key)) ?? receipt;
+  if (!receipt.runId) {
+    if (["held", "failed", "cancelled", "settled"].includes(receipt.state))
+      throw new MaisterError(
+        "PRECONDITION",
+        "Scheduled launch requires attention",
+        { details: { reason: receipt.reason ?? "launch_state_changed" } },
+      );
+
+    return null;
+  }
+  const [run] = await db
+    .select({ status: runs.status })
+    .from(runs)
+    .where(eq(runs.id, receipt.runId));
+
+  if (!run) throw new MaisterError("CONFLICT", "Scheduled Run is unavailable");
+
+  return { runId: receipt.runId, status: run.status };
+}
+
 export async function dispatchClaimedScheduledLaunch(input: {
   projectId: string;
   claimId: string;
@@ -1042,18 +1157,12 @@ export async function dispatchClaimedScheduledLaunch(input: {
   db?: ScheduledLaunchDb;
   launch?: ScheduledLaunchRunner;
 }): Promise<{
-  state: "Launched" | "RetryWaiting" | "Failed";
+  state: "Launched" | "RetryWaiting" | "Failed" | "Dispatching";
   runId?: string;
 }> {
   const db = input.db ?? (getDb() as ScheduledLaunchDb);
   const now = input.now ?? new Date();
-  const launch =
-    input.launch ??
-    (async (launchInput, context, launchDb) => {
-      const { launchRun } = await import("@/lib/services/runs");
-
-      return launchRun(launchInput, context, launchDb);
-    });
+  const launch = input.launch;
 
   let claimed: Awaited<ReturnType<typeof loadClaimedLaunch>> | null = null;
   let scheduledReservation: ScheduledLaunchReservation | null = null;
@@ -1101,38 +1210,51 @@ export async function dispatchClaimedScheduledLaunch(input: {
       return { state: "Launched", runId: existingRunId };
     }
 
-    await db
-      .update(scheduledTaskLaunchAttempts)
-      .set({ state: "Materialized", updatedAt: now })
-      .where(eq(scheduledTaskLaunchAttempts.id, scheduledReservation.id));
+    if (launch)
+      await db
+        .update(scheduledTaskLaunchAttempts)
+        .set({ state: "Materialized", updatedAt: now })
+        .where(eq(scheduledTaskLaunchAttempts.id, scheduledReservation.id));
 
-    const result = await launch(
-      {
-        ...claimed.launchRequest,
-        taskId: claimed.taskId,
-        allowConcurrent: false,
-        scheduledReservation,
-      },
-      {
-        actorUserId: null,
-        authorize: async () =>
-          assertScheduledClaimOwner({
-            db,
-            scheduledLaunchId: input.reservation.scheduledLaunchId,
+    const result = launch
+      ? await launch(
+          {
+            ...claimed.launchRequest,
+            taskId: claimed.taskId,
+            allowConcurrent: false,
+            scheduledReservation,
+          },
+          {
+            actorUserId: null,
+            authorize: async () =>
+              assertScheduledClaimOwner({
+                db,
+                scheduledLaunchId: input.reservation.scheduledLaunchId,
+                claimId: input.claimId,
+                claimFence: input.claimFence,
+              }),
+            assertLaunchOwnership: async (transactionDb) =>
+              assertScheduledClaimOwner({
+                db: transactionDb as ScheduledLaunchDb,
+                scheduledLaunchId: input.reservation.scheduledLaunchId,
+                claimId: input.claimId,
+                claimFence: input.claimFence,
+              }),
+          },
+          db,
+        )
+      : await dispatchAcceptedScheduledLaunch(
+          db,
+          {
+            projectId: input.projectId,
             claimId: input.claimId,
             claimFence: input.claimFence,
-          }),
-        assertLaunchOwnership: async (transactionDb) =>
-          assertScheduledClaimOwner({
-            db: transactionDb as ScheduledLaunchDb,
-            scheduledLaunchId: input.reservation.scheduledLaunchId,
-            claimId: input.claimId,
-            claimFence: input.claimFence,
-          }),
-      },
-      db,
-    );
+            reservation: scheduledReservation,
+          },
+          claimed,
+        );
 
+    if (!result) return { state: "Dispatching" };
     if (result.runId !== scheduledReservation.runId) {
       throw new MaisterError(
         "PRECONDITION",
@@ -1153,6 +1275,24 @@ export async function dispatchClaimedScheduledLaunch(input: {
 
     return { state: "Launched", runId: result.runId };
   } catch (error) {
+    const storageFailure = pgErrorOf(error);
+
+    if (
+      !input.launch &&
+      storageFailure &&
+      (storageFailure.code.startsWith("08") ||
+        [
+          "40001",
+          "40P01",
+          "55P03",
+          "57P01",
+          "57P02",
+          "57P03",
+          "53300",
+          "53400",
+        ].includes(storageFailure.code))
+    )
+      throw error;
     const linkedRunId = await findLinkedScheduledRunId({
       db,
       scheduledLaunchId: input.reservation.scheduledLaunchId,
@@ -1245,7 +1385,7 @@ export async function runScheduledLaunchNow(input: {
   db?: ScheduledLaunchDb;
   launch?: ScheduledLaunchRunner;
 }): Promise<{
-  state: "Launched" | "RetryWaiting" | "Failed";
+  state: "Launched" | "RetryWaiting" | "Failed" | "Dispatching";
   runId?: string;
 }> {
   const db = input.db ?? (getDb() as ScheduledLaunchDb);

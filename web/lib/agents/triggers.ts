@@ -94,6 +94,8 @@ function outcomeForLaunch(result: LaunchAgentRunResult): {
   if ("deduped" in result) {
     return { outcome: "deduplicated", runId: null };
   }
+  if ("queued" in result)
+    return { outcome: "queued", runId: result.receipt.runId };
 
   return {
     outcome: result.status === "Running" ? "launched" : "queued",
@@ -219,7 +221,7 @@ export async function dispatchDueAgentSchedules(
 
       if ("deduped" in result) {
         summary.refused += 1;
-      } else if (result.status === "Running") {
+      } else if (!("queued" in result) && result.status === "Running") {
         summary.launched += 1;
       } else {
         summary.queued += 1;
@@ -656,8 +658,13 @@ export function buildAgentTriggersConsumer(
                 {
                   eventId: event.id,
                   agentId: targetAgent.agentId,
-                  runId: result.runId,
-                  status: result.status,
+                  ...("queued" in result
+                    ? {
+                        intentId: result.receipt.intentId,
+                        state: result.receipt.state,
+                        runId: result.receipt.runId,
+                      }
+                    : { runId: result.runId, status: result.status }),
                 },
                 "clarification-answer agent run",
               );

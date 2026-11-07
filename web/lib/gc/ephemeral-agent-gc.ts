@@ -96,8 +96,14 @@ export async function runEphemeralAgentGcSweep(
       id: string;
       status: string;
       agentKind: string | null;
+      taskLaunchIntentId?: string | null;
     }> = await db
-      .select({ id: runs.id, status: runs.status, agentKind: runs.agentKind })
+      .select({
+        id: runs.id,
+        status: runs.status,
+        agentKind: runs.agentKind,
+        taskLaunchIntentId: runs.taskLaunchIntentId,
+      })
       .from(runs)
       .where(and(inArray(runs.id, runIds)));
     const liveIds = new Set(
@@ -105,6 +111,7 @@ export async function runEphemeralAgentGcSweep(
         .filter(
           (row) =>
             row.agentKind === "operational" ||
+            (row.taskLaunchIntentId && row.status === "Crashed") ||
             LIVE_AGENT_STATUSES.includes(row.status),
         )
         .map((row) => row.id),
@@ -131,13 +138,22 @@ export async function runEphemeralAgentGcSweep(
       const worktreePath = path.join(slugDir, dir);
 
       try {
-        await restore(worktreePath, runId);
-        await remove({
-          projectRepoPath: project.repoPath,
-          worktreePath,
-          force: true,
-          allowedRoot: root,
-        });
+        const clean = async (): Promise<void> => {
+          await restore(worktreePath, runId);
+          await remove({
+            projectRepoPath: project.repoPath,
+            worktreePath,
+            force: true,
+            allowedRoot: root,
+          });
+        };
+
+        if (ownerRows.find((row) => row.id === runId)?.taskLaunchIntentId) {
+          const { withAcceptedAgentCleanup } =
+            await import("@/lib/agents/accepted-cleanup");
+
+          await withAcceptedAgentCleanup(db, runId, clean);
+        } else await clean();
         removed += 1;
         log.info(
           { runId, slug: project.slug },

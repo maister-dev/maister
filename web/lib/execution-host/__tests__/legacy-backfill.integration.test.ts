@@ -4,8 +4,8 @@
 //   Y1 Running + NULL assignment → reported ONCE (`legacy-runs-unplaced`) and
 //      never minted, even when the host lists a live session for the run;
 //   Y2 Running without a session → left NULL; the reconcile sweep classifies;
-//   Y3 NeedsInputIdle → not a candidate; the next resume claim mints a normal
-//      `resume` generation (no legacy row ever exists);
+//   Y3 NeedsInputIdle → not a candidate; an unproven source refuses execution
+//      after a normal `resume` claim (no legacy placement is invented);
 //   Y5 lazy path: the keep-alive sweeper checkpointing a legacy NeedsInput run
 //      mints lazily with WARN legacy-run-assigned-lazily;
 //   Y4 reporting never contacts the host and never throws.
@@ -30,7 +30,6 @@ import {
   type ProjectionWorker,
 } from "@/lib/execution-host/events/projection-worker";
 import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
-import { MaisterError } from "@/lib/errors";
 import { createExecutionHosts } from "@/lib/execution-host/client";
 import { setDefaultTransportForTests } from "@/lib/execution-host/default-transport";
 import { buildEnvelope } from "@/lib/execution-host/ledger";
@@ -294,7 +293,7 @@ describe("legacy runs (real supervisor)", () => {
     ).toBeGreaterThanOrEqual(1);
   }, 120_000);
 
-  it("Y3: a NeedsInputIdle run is not a candidate; its next resume claim mints a normal `resume` generation", async () => {
+  it("Y3: an idle legacy run is not backfilled and an unproven resume source cannot dispatch", async () => {
     const seeded = await seedLegacyRun("y3", {
       status: "NeedsInputIdle",
       checkpointAt: new Date(),
@@ -310,24 +309,28 @@ describe("legacy runs (real supervisor)", () => {
     expect(summary.runIds).not.toContain(seeded.runId);
     expect(await assignmentsOf(seeded.runId)).toEqual([]);
 
-    // The resume path's claim mints epoch 1 `resume` — placement, not backfill.
-    // A retryable spawn failure rolls the claim back so no adapter is left
-    // behind; the generation it minted is what this test is about.
+    // The old row has no retained checkpoint incarnation. Its next claim is a
+    // normal resume placement, but invented handles cannot authorize a create.
     const wire = createLocalDirectTransport();
+    let creates = 0;
     const failing = createExecutionHosts({
       db,
       transport: {
         ...wire,
         createSession: async () => {
-          throw new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor 503", {
-            details: { httpStatus: 503 },
-          });
+          creates += 1;
+          throw new Error("An unproven resume source reached execution");
         },
       },
     });
     const r = await resumeRun(seeded.runId, { db, executionHosts: failing });
 
-    expect(r).toMatchObject({ ok: false, retryable: true });
+    expect(r).toMatchObject({
+      ok: false,
+      code: "PRECONDITION",
+      retryable: false,
+    });
+    expect(creates).toBe(0);
     expect(
       (await assignmentsOf(seeded.runId)).map((a) => [
         a.epoch,

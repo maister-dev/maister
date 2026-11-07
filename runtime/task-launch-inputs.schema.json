@@ -1,0 +1,659 @@
+{
+  "launch": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "taskId": { "type": "string", "minLength": 1, "maxLength": 256 },
+      "expectedTaskRevision": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "expectedSettingsToken": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "flowId": { "type": "string", "minLength": 1, "maxLength": 256 },
+      "agentId": { "type": "string", "minLength": 1, "maxLength": 256 },
+      "workspace": {
+        "type": "string",
+        "enum": ["none", "repo_read", "worktree"]
+      },
+      "relaunchOfRunId": { "type": "string", "minLength": 1, "maxLength": 256 },
+      "runnerId": { "type": "string", "minLength": 1, "maxLength": 256 },
+      "baseBranch": { "type": "string", "minLength": 1, "maxLength": 256 },
+      "baseCommit": {
+        "type": "string",
+        "minLength": 7,
+        "maxLength": 64,
+        "pattern": "^[a-fA-F0-9]+$"
+      },
+      "targetBranch": { "type": "string", "minLength": 1, "maxLength": 256 },
+      "deliveryPolicy": {
+        "type": "object",
+        "properties": {
+          "strategy": {
+            "type": "string",
+            "enum": ["merge", "rebase_merge", "pull_request", "ai_rebase_merge"]
+          },
+          "push": { "type": "string", "enum": ["never", "on_success"] },
+          "trigger": { "type": "string", "enum": ["manual", "auto_on_ready"] },
+          "targetBranch": {
+            "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+          }
+        },
+        "required": ["strategy", "push", "trigger", "targetBranch"],
+        "additionalProperties": false
+      },
+      "executionPolicy": {
+        "type": "object",
+        "properties": {
+          "preset": {
+            "type": "string",
+            "enum": ["supervised", "assisted", "unattended"]
+          },
+          "overrides": {
+            "type": "object",
+            "properties": {
+              "reworkExhaustion": {
+                "type": "string",
+                "enum": ["escalate", "ship_with_warning", "fail"]
+              },
+              "crashRetry": {
+                "type": "string",
+                "enum": ["fail", "ralph_loop", "auto_retry"]
+              },
+              "checks": {
+                "type": "string",
+                "enum": ["strict", "advisory", "skip"]
+              },
+              "permissions": {
+                "type": "string",
+                "enum": ["ask", "auto_approve"]
+              },
+              "humanGate": { "type": "string", "enum": ["stop", "auto_pass"] },
+              "onStuck": {
+                "type": "string",
+                "enum": ["escalate", "ship_with_warning", "notify_only"]
+              },
+              "promotion": {
+                "type": "string",
+                "enum": ["manual", "auto_on_ready"]
+              },
+              "commits": {
+                "type": "string",
+                "enum": [
+                  "keep_all",
+                  "squash_rework",
+                  "squash_on_promote",
+                  "defer"
+                ]
+              },
+              "dirtyResolve": {
+                "type": "string",
+                "enum": ["ask", "commit", "proceed"]
+              },
+              "budget": {
+                "type": "object",
+                "properties": {
+                  "run": {
+                    "type": "object",
+                    "properties": {
+                      "maxTokens": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          { "type": "null" }
+                        ]
+                      },
+                      "hardMaxTokens": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          { "type": "null" }
+                        ]
+                      },
+                      "consecutiveFailures": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          { "type": "null" }
+                        ]
+                      },
+                      "wallClockMinutes": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          { "type": "null" }
+                        ]
+                      },
+                      "warnAtPct": {
+                        "anyOf": [
+                          { "type": "integer", "minimum": 1, "maximum": 100 },
+                          { "type": "null" }
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "task": {
+                    "type": "object",
+                    "properties": {
+                      "maxTokens": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          { "type": "null" }
+                        ]
+                      },
+                      "hardMaxTokens": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          { "type": "null" }
+                        ]
+                      },
+                      "consecutiveFailures": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          { "type": "null" }
+                        ]
+                      },
+                      "wallClockMinutes": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          { "type": "null" }
+                        ]
+                      },
+                      "warnAtPct": {
+                        "anyOf": [
+                          { "type": "integer", "minimum": 1, "maximum": 100 },
+                          { "type": "null" }
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "tree": {
+                    "type": "object",
+                    "properties": {
+                      "maxTokens": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          { "type": "null" }
+                        ]
+                      },
+                      "hardMaxTokens": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          { "type": "null" }
+                        ]
+                      },
+                      "consecutiveFailures": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          { "type": "null" }
+                        ]
+                      },
+                      "wallClockMinutes": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          { "type": "null" }
+                        ]
+                      },
+                      "warnAtPct": {
+                        "anyOf": [
+                          { "type": "integer", "minimum": 1, "maximum": 100 },
+                          { "type": "null" }
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              },
+              "onBudgetBreach": {
+                "type": "string",
+                "enum": ["escalate", "terminate", "terminate_restorable"]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": ["preset"],
+        "additionalProperties": false
+      },
+      "autoPromote": { "type": "boolean" },
+      "brainContext": { "type": ["boolean", "null"] },
+      "packageVersions": {
+        "type": "object",
+        "propertyNames": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "additionalProperties": {
+          "type": "string",
+          "enum": ["keep", "try_once"]
+        },
+        "maxProperties": 64
+      }
+    },
+    "required": ["taskId", "expectedTaskRevision", "expectedSettingsToken"],
+    "additionalProperties": false,
+    "anyOf": [
+      {
+        "type": "object",
+        "properties": { "agentId": { "not": {} }, "workspace": { "not": {} } }
+      },
+      {
+        "type": "object",
+        "properties": {
+          "flowId": { "not": {} },
+          "agentId": { "type": "string" }
+        },
+        "required": ["agentId"]
+      }
+    ]
+  },
+  "cancel": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "expectedStateVersion": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991
+      }
+    },
+    "required": ["expectedStateVersion"],
+    "additionalProperties": false
+  },
+  "replace": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "taskId": { "type": "string", "minLength": 1, "maxLength": 256 },
+      "expectedTaskRevision": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "expectedSettingsToken": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "flowId": { "type": "string", "minLength": 1, "maxLength": 256 },
+      "agentId": { "type": "string", "minLength": 1, "maxLength": 256 },
+      "workspace": {
+        "type": "string",
+        "enum": ["none", "repo_read", "worktree"]
+      },
+      "relaunchOfRunId": { "type": "string", "minLength": 1, "maxLength": 256 },
+      "runnerId": { "type": "string", "minLength": 1, "maxLength": 256 },
+      "baseBranch": { "type": "string", "minLength": 1, "maxLength": 256 },
+      "baseCommit": {
+        "type": "string",
+        "minLength": 7,
+        "maxLength": 64,
+        "pattern": "^[a-fA-F0-9]+$"
+      },
+      "targetBranch": { "type": "string", "minLength": 1, "maxLength": 256 },
+      "deliveryPolicy": {
+        "type": "object",
+        "properties": {
+          "strategy": {
+            "type": "string",
+            "enum": ["merge", "rebase_merge", "pull_request", "ai_rebase_merge"]
+          },
+          "push": { "type": "string", "enum": ["never", "on_success"] },
+          "trigger": { "type": "string", "enum": ["manual", "auto_on_ready"] },
+          "targetBranch": {
+            "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+          }
+        },
+        "required": ["strategy", "push", "trigger", "targetBranch"],
+        "additionalProperties": false
+      },
+      "executionPolicy": {
+        "type": "object",
+        "properties": {
+          "preset": {
+            "type": "string",
+            "enum": ["supervised", "assisted", "unattended"]
+          },
+          "overrides": {
+            "type": "object",
+            "properties": {
+              "reworkExhaustion": {
+                "type": "string",
+                "enum": ["escalate", "ship_with_warning", "fail"]
+              },
+              "crashRetry": {
+                "type": "string",
+                "enum": ["fail", "ralph_loop", "auto_retry"]
+              },
+              "checks": {
+                "type": "string",
+                "enum": ["strict", "advisory", "skip"]
+              },
+              "permissions": {
+                "type": "string",
+                "enum": ["ask", "auto_approve"]
+              },
+              "humanGate": { "type": "string", "enum": ["stop", "auto_pass"] },
+              "onStuck": {
+                "type": "string",
+                "enum": ["escalate", "ship_with_warning", "notify_only"]
+              },
+              "promotion": {
+                "type": "string",
+                "enum": ["manual", "auto_on_ready"]
+              },
+              "commits": {
+                "type": "string",
+                "enum": [
+                  "keep_all",
+                  "squash_rework",
+                  "squash_on_promote",
+                  "defer"
+                ]
+              },
+              "dirtyResolve": {
+                "type": "string",
+                "enum": ["ask", "commit", "proceed"]
+              },
+              "budget": {
+                "type": "object",
+                "properties": {
+                  "run": {
+                    "type": "object",
+                    "properties": {
+                      "maxTokens": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          { "type": "null" }
+                        ]
+                      },
+                      "hardMaxTokens": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          { "type": "null" }
+                        ]
+                      },
+                      "consecutiveFailures": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          { "type": "null" }
+                        ]
+                      },
+                      "wallClockMinutes": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          { "type": "null" }
+                        ]
+                      },
+                      "warnAtPct": {
+                        "anyOf": [
+                          { "type": "integer", "minimum": 1, "maximum": 100 },
+                          { "type": "null" }
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "task": {
+                    "type": "object",
+                    "properties": {
+                      "maxTokens": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          { "type": "null" }
+                        ]
+                      },
+                      "hardMaxTokens": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          { "type": "null" }
+                        ]
+                      },
+                      "consecutiveFailures": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          { "type": "null" }
+                        ]
+                      },
+                      "wallClockMinutes": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          { "type": "null" }
+                        ]
+                      },
+                      "warnAtPct": {
+                        "anyOf": [
+                          { "type": "integer", "minimum": 1, "maximum": 100 },
+                          { "type": "null" }
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "tree": {
+                    "type": "object",
+                    "properties": {
+                      "maxTokens": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          { "type": "null" }
+                        ]
+                      },
+                      "hardMaxTokens": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          { "type": "null" }
+                        ]
+                      },
+                      "consecutiveFailures": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          { "type": "null" }
+                        ]
+                      },
+                      "wallClockMinutes": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          { "type": "null" }
+                        ]
+                      },
+                      "warnAtPct": {
+                        "anyOf": [
+                          { "type": "integer", "minimum": 1, "maximum": 100 },
+                          { "type": "null" }
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              },
+              "onBudgetBreach": {
+                "type": "string",
+                "enum": ["escalate", "terminate", "terminate_restorable"]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": ["preset"],
+        "additionalProperties": false
+      },
+      "autoPromote": { "type": "boolean" },
+      "brainContext": { "type": ["boolean", "null"] },
+      "packageVersions": {
+        "type": "object",
+        "propertyNames": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "additionalProperties": {
+          "type": "string",
+          "enum": ["keep", "try_once"]
+        },
+        "maxProperties": 64
+      },
+      "expectedStateVersion": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991
+      }
+    },
+    "required": [
+      "taskId",
+      "expectedTaskRevision",
+      "expectedSettingsToken",
+      "expectedStateVersion"
+    ],
+    "additionalProperties": false,
+    "anyOf": [
+      {
+        "type": "object",
+        "properties": { "agentId": { "not": {} }, "workspace": { "not": {} } }
+      },
+      {
+        "type": "object",
+        "properties": {
+          "flowId": { "not": {} },
+          "agentId": { "type": "string" }
+        },
+        "required": ["agentId"]
+      }
+    ]
+  },
+  "options": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "taskId": { "type": "string", "minLength": 1, "maxLength": 256 },
+      "flowId": { "type": "string", "minLength": 1, "maxLength": 256 },
+      "agentId": { "type": "string", "minLength": 1, "maxLength": 256 },
+      "workspace": {
+        "type": "string",
+        "enum": ["none", "repo_read", "worktree"]
+      },
+      "relaunchOfRunId": { "type": "string", "minLength": 1, "maxLength": 256 },
+      "runnerId": { "type": "string", "minLength": 1, "maxLength": 256 },
+      "packageVersions": {
+        "type": "object",
+        "propertyNames": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "additionalProperties": {
+          "type": "string",
+          "enum": ["keep", "try_once"]
+        },
+        "maxProperties": 64
+      }
+    },
+    "required": ["taskId"],
+    "additionalProperties": false,
+    "anyOf": [
+      {
+        "type": "object",
+        "properties": { "agentId": { "not": {} }, "workspace": { "not": {} } }
+      },
+      {
+        "type": "object",
+        "properties": {
+          "flowId": { "not": {} },
+          "agentId": { "type": "string" }
+        },
+        "required": ["agentId"]
+      }
+    ]
+  }
+}

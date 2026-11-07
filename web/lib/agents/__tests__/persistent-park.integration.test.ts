@@ -8,6 +8,7 @@
 import type {
   consumeAgentSession as ConsumeFn,
   parkPersistentAgent as ParkFn,
+  AgentExecution,
 } from "@/lib/agents/launch";
 import type { SupervisorEvent } from "@/lib/execution-host";
 
@@ -30,7 +31,10 @@ import {
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
-import { fakeAgentExecution } from "@/test-support/fake-execution-host";
+import {
+  fakeAgentExecution,
+  fakeExecutionHosts,
+} from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -40,7 +44,7 @@ const schema = schemaModule as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
-let db: NodePgDatabase;
+let db: NodePgDatabase<typeof schemaModule>;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 
@@ -142,10 +146,24 @@ async function seedRunningAgent(persistent: boolean): Promise<string> {
 }
 
 // A fake supervisor API that streams exactly one event then ends.
-// ADR-166: the consumer's execution seam is a DB-less fake host whose stream
-// yields `event` once.
-function fakeApi(event: SupervisorEvent) {
-  return fakeAgentExecution({ events: [event] });
+// Even a scripted observer must carry the Run's persisted current generation.
+async function fakeApi(
+  runId: string,
+  event: SupervisorEvent,
+): Promise<AgentExecution> {
+  const scripted = fakeAgentExecution({ runId, events: [event] });
+  const { hosts, assignment } = await fakeExecutionHosts(db, {
+    runId,
+    fake: scripted.fake,
+  });
+
+  if (!assignment)
+    throw new Error("Scripted agent fixture has no active assignment");
+  const execution = await hosts.executionFor(runId, {
+    assignmentId: assignment.id,
+  });
+
+  return { client: execution.client, admin: scripted.admin };
 }
 
 function cleanExit(sessionId: string): SupervisorEvent {
@@ -177,7 +195,7 @@ describe("persistent park-vs-finalize (M37 Phase 8 T8.1)", () => {
 
     await consumeAgentSession({
       db,
-      execution: fakeApi(cleanExit(`sup-${runId}`)),
+      execution: await fakeApi(runId, cleanExit(`sup-${runId}`)),
       runId,
       sessionId: `sup-${runId}`,
     });
@@ -196,7 +214,7 @@ describe("persistent park-vs-finalize (M37 Phase 8 T8.1)", () => {
 
     await consumeAgentSession({
       db,
-      execution: fakeApi(cleanExit(`sup-${runId}`)),
+      execution: await fakeApi(runId, cleanExit(`sup-${runId}`)),
       runId,
       sessionId: `sup-${runId}`,
     });
@@ -217,7 +235,7 @@ describe("persistent park-vs-finalize (M37 Phase 8 T8.1)", () => {
 
     await consumeAgentSession({
       db,
-      execution: fakeApi({
+      execution: await fakeApi(runId, {
         type: "session.exited",
         sessionId: `sup-${runId}`,
         monotonicId: 1,

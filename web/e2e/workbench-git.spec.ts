@@ -35,6 +35,7 @@ test.describe("run git panel (ADR-181)", () => {
     page,
   }) => {
     const fx = loadFixtures().byKey.workbenchGit;
+    const runShell = page.locator('[data-testid="run-shell"]:visible');
 
     // (1) D14: a Failed run is a workbench — listed in the portfolio, and its
     // Backlog card keeps the git actions while the worktree is usable.
@@ -49,8 +50,10 @@ test.describe("run git panel (ADR-181)", () => {
 
     // (2) The run's git panel, from the detail host.
     await page.goto(`/runs/${fx.runId}`);
-    await expect(page.getByTestId("run-header-status")).toContainText("Failed");
-    await page.getByTestId("workbench-git-open").click();
+    await expect(runShell.getByTestId("run-header-status")).toContainText(
+      "Failed",
+    );
+    await runShell.getByTestId("workbench-git-open").click();
     await expect(page.getByTestId("git-panel")).toBeVisible();
 
     // (3) Commit the uncommitted change.
@@ -113,9 +116,12 @@ test.describe("run git panel (ADR-181)", () => {
 
     await page.getByTestId("git-panel-pr-finalize-confirm").click();
     expect((await finalized).status()).toBe(200);
-    await expect(page.getByTestId("run-header-status")).toContainText("Done", {
-      timeout: 30_000,
-    });
+    await expect(runShell.getByTestId("run-header-status")).toContainText(
+      "Done",
+      {
+        timeout: 30_000,
+      },
+    );
 
     // The provider was asked to create exactly one PR — a finalize opens none —
     // and the finalize read the PR it declared delivered (Codex F5).

@@ -1,5 +1,7 @@
 # Execution prompt lifecycle
 
+**Current preparation boundary:** [agent workspace preparation](agent-preparation.md) owns the implemented durable preparation claim, baseline, first-command handoff and shared physical disposal fence. The execution/result contracts below continue after that boundary. Local validation does not establish deployed or live-provider qualification.
+
 **Status:** Implemented short-lived admission, private v2 request/owner storage and shared canonical-event/receipt reconciliation. Request-bound receipt/event v2 and verified immutable command-output manifests are implemented on the explicit v2 development path. Unknown-admission reconciliation, frozen-request recovery, create/ACP binding fences and the registered owner application engine are implemented. Every domain adapter is implemented (Flow node/gate, consensus, agent, scratch and local-package, gate chat, sync resolver), the prompt owner is mandatory at both the client boundary and the ledger constraint, and state-aware command/receipt retirement is implemented as a two-sided handshake (AB-05–07/10).
 
 
@@ -33,6 +35,27 @@ generation controls.
 
 ### Creation before prompt admission
 
+**Implemented — terminalization fences every Flow traversal:** a human/form-only
+Flow owns the same durable run/assignment traversal claim as a Flow with model
+or CLI work. This database ownership does not create an ACP session or require
+a Supervisor connection. A separate server-only unplaced-sessionless claim is
+allowed only when the stored graph has no owned prompt or CLI work, the current
+assignment pointer is null, and no execution-assignment history exists. It never
+mints a placement; a later pointer or history change fences it. Placed claims
+retain the exact active assignment and epoch. Each traversal transaction
+revalidates its claim and lease while holding the Run `NO KEY UPDATE` lock,
+which serializes status/pointer changes while allowing human-assignment event
+foreign-key `KEY SHARE` locks; legal abandonment
+releases that assignment under the same lock. Once abandonment commits, a
+previously started traversal must yield without appending a node attempt,
+opening a HITL, or publishing a new input notification. This applies to current
+accepted launches and retained live legacy runs. Successful form collection
+continues through the existing no-model path. A losing terminal outcome CAS
+preserves the winning terminal state and must not log an outcome it did not
+commit. No historical Run, decision, or qualification row is rewritten. Local
+database/API terminal-race controls and combined regression qualification are
+recorded in the [qualification record](../../.ai-factory/plans/codex-manual-launch-triager-reliability.md#execution-evidence).
+
 Flow node and AI/skill gate creation stores `execution_commands.create_intent`
 before transport. The private normalized envelope freezes workspace and runtime
 object handles, runner configuration, permission policy and launch inputs. Its
@@ -42,35 +65,89 @@ before running the payload factory again; a manager restart does not authorize
 another session. The Flow continuation worker discovers these creates even
 when the first prompt does not exist yet, using the same traversal lease.
 
+Pre-incarnation owner extension (approved implementation contract; validation in progress):
+all current session constructors retain the same private create intent across readiness
+waiting, manager restart and acknowledgement. The closed additional owners are:
+
+| Owner | Durable identity |
+| --- | --- |
+| `consensus_verifier` | node attempt, round, verifier, target and verdict ID |
+| `consensus_synthesis` | node attempt, round and synthesis ID |
+| `scratch`, `package_scratch` | scratch run, placement turn and prompt ordinal; package owner also freezes package, postprocess action and edit-lock generation |
+| `gate_chat` | pending turn, HITL and accepted user-message IDs |
+| `sync_resolver` | sync attempt, lifecycle operation attempt and prompt ordinal |
+| `flow_resume`, `scratch_resume` | exact logical session and retained source incarnation |
+
+These identities are server-produced from existing domain records. The shared
+engine validates both the requesting owner and the original stored owner under
+the domain locks; a client flag or another active assignment cannot authorize
+replay. A resumed source must be a real retained incarnation with the original
+resume handle, not an invented session or qualification result. Historical
+create owners retain their existing shape and meaning.
+
+`create_intent.continuation` is private execution data, separate from the owner
+identity and all public receipts and diagnostics. Scratch/package continuation
+freezes its initial or recovery prompt, source message and runtime-object
+references before creation, including an explicit null payload for an empty
+initial dialog. Sync continuation freezes its prepared `sync` prompt and runner
+tier. Gate chat uses its existing durable user transcript. Replay reads the
+original intent before invoking either payload or continuation factory. A
+readiness deferral keeps that exact command, request, owner, continuation and
+wire budget; it cannot become a crash, a negative model assessment, a lost
+prompt or a second queued create. Pre-incarnation continuation object references
+participate in the existing runtime-object retention/deletion fence.
+
+Recovery continuations also freeze the locked source dialog state needed to
+restore a definitively refused recovery; initial continuations cannot carry
+that state. The complete private intent and canonical request are inserted
+atomically. Migration `0226` refuses later owner, request or continuation
+rewrites, including attaching an intent to a historical unknown command. Only
+the existing eligible terminal-retirement compaction may clear these bytes.
+Every nonterminal Run, including `WaitingOnChildren`, retains its private
+create evidence; the existing parked-librarian exception is unchanged.
+
+A lost database COMMIT reply is not rollback evidence. The create engine keeps
+its server-allocated command identity and yields pending admission. The next
+continuation reacquires the same durable owner lock before inspecting the
+original operation key, serializing with a late commit or rollback. A failed
+initial lookup also retains the owner: its diagnostic names the operation key
+and omits an unknown command ID. Re-entry consumes the original private request
+and continuation. Private query failures are projected through
+`execution-host/private-create-failure.ts` before consumer logging or DTOs;
+safe domain codes and bounded SQL/cause diagnostics survive, while SQL,
+parameters, prompt/environment values and raw nested causes do not.
+Once the command ID is known, the same owner-retained storage guard covers
+receipt settlement, live and recovered ACK application, re-ACK and outcome
+reload. A durable201 cannot become a new create or an owner release because a
+later database read is unavailable; authoritative typed refusals remain distinct.
+
 S5.2 receipt-first retry amendment (implemented; hosted CI qualification pending): an
 attempted owned create probes its exact receipt before another POST. Confirmed
 404 permits reissue of the same stored envelope; transport uncertainty defers.
-An **accepted** receipt splits on `inflight`, and the split is the whole
-specification of this window: `inflight: true` means the live host incarnation
-still owns the turn, so the driver defers to it. `inflight: false` means the
-host restarted between writing the receipt and finishing the turn — the
-turn_lost signature. Nothing advances such a receipt: the supervisor settles it
-only when the SAME command id is re-sent, and `session.create` is not a
-restartable object kind, so a re-send answers turn_lost rather than a session.
-The driver therefore records the lost turn on the original command and
-authorizes a replacement generation from the stored bytes, the same answer the
-no-receipt window gets one step earlier. This is safe precisely because an
-accepted-but-unfinished create returned no session id to fold and a restarted
-host holds no live adapter to orphan. The replacement is bounded by the same
-generation ceiling as the definitive-refusal arms above it, so a host that keeps
-losing the turn ends in a terminal create failure rather than an unbounded
-sequence of sessions. A completed 201 with matching command/run/kind/epoch
+An **accepted** create retains its original command and defers. Legacy
+`inflight: false` describes the host's in-memory request table; it does not
+prove that an adapter stopped. Receipt v2 carries no process-liveness field.
+A Supervisor crash can leave an adapter alive, even when startup records
+`turn_lost` and the new registry is empty. Neither that rejection nor a missing
+session authorizes a replacement or workspace cleanup. A replacement requires
+positive host retirement evidence for the exact original create, assignment
+and epoch, using the [rejected-create proof contract](../supervisor.md#command-envelope-fences-and-receipts-implemented--adr-166).
+Unstamped historical evidence stays unproven; recovery must not synthesize a
+successful retirement. Safe replacements retain the stored request bytes and
+the existing generation ceiling. A completed 201 with matching command/run/kind/epoch
 and a validated create result commits command settlement and binding under the
 current owner lock, without re-sending. A rejected receipt uses the existing
-definitive-refusal policy. Receipt lookup never reconstructs launch inputs.
+definitive-refusal policy, with positive process-quiescence evidence required
+before another create. Receipt lookup never reconstructs launch inputs.
 
 The live ACK, recovered receipt and canonical `session.created` all check the
 creator command against the current node visit/evaluation and newest admitted
 create generation before binding. The host publishes `createdByCommandId` on
 created events. An unknown create outcome retains its original command and
 backs off for recovery; it cannot authorize a fresh session. The existing
-observable resume fallback requires a definitive CHECKPOINT refusal, while
-workspace readoption requires the host's explicit invalid-handle refusal.
+observable resume fallback requires a definitive CHECKPOINT refusal and
+positive failed-create quiescence, while workspace readoption requires the
+host's explicit invalid-handle refusal and the same quiescence proof.
 A replacement retains its predecessor command and increments the create
 generation without advancing the Flow prompt ordinal. The global continuation
 worker runs in the production web boot (see
@@ -534,16 +611,17 @@ which `instrumentation-node.ts` reaches only through a dynamic
 `await import()`. The composition root never lives under
 `web/lib/execution-host/`: every domain registry imports that package, so a
 registry module placed inside it closes an import cycle at module load. It
-composes exactly five registries — `flowPromptOwners`, `consensusDraftPromptOwners`,
-`scratchPromptOwners`, `syncPromptOwners`, `gateChatPromptOwners` — covering the
-five `PromptOwnerSchema` kinds `flow_node_attempt`, `agent_turn`,
-`scratch_message`, `gate_chat` and `sync_resolution`.
+composes exactly six registries — `flowPromptOwners`,
+`createConsensusDraftPromptOwners()`, `scratchPromptOwners`, `syncPromptOwners`,
+`gateChatPromptOwners` and `librarianPromptOwners` — covering the six
+`PromptOwnerSchema` kinds `flow_node_attempt`, `agent_turn`, `scratch_message`,
+`gate_chat`, `sync_resolution` and `librarian_turn`.
 
 Three boot-time refusals keep that composition honest, and each is a
 `MaisterError("CONFIG")`:
 
 - **Uniqueness.** `createPromptOwnerRegistry` throws on a duplicate kind.
-  `agent_turn` is served by `consensusDraftPromptOwners`, which routes a
+  `agent_turn` is served by `createConsensusDraftPromptOwners()`, which routes a
   `consensus_draft` variant to draft preparation and every other variant to the
   ordinary agent owner. Adding `agentPromptOwners` beside it is therefore a boot
   failure **by design**, not an oversight — `agentPromptOwners` refuses
@@ -556,11 +634,13 @@ Three boot-time refusals keep that composition honest, and each is a
   order that starts the worker before the registry module resolves fails loudly
   rather than running a worker that owns nothing.
 
-`startDurableWorkers()` and `stopDurableWorkers()` are the root's only exports
-besides the registry. Both are guarded by `isApplicationStopping()` and by three
-`Symbol.for("maister.durable-workers.*.v1")` process slots, so a double start
-returns the same three handles and a stop clears only slots this process still
-owns. A plain module-scoped variable is not sufficient: Next bundles
+`startDurableWorkers()` and `stopDurableWorkers()` own the process lifecycle.
+Start refuses during `isApplicationStopping()`; four
+`Symbol.for("maister.durable-workers.*.v1")` process slots make a double start
+return the same four handles, and stop clears only slots this process still
+owns. The fourth worker serves [accepted launches](task-launch-admission.md#durable-launch-worker-implemented);
+its local qualification is recorded with the launch contract.
+A plain module-scoped variable is not sufficient: Next bundles
 instrumentation separately from the production server entrypoint, so the health
 reader and the composition root resolve different module instances of the same
 file. `web/lib/workers/health.ts` reads those slots and imports no domain
@@ -1486,7 +1566,7 @@ Persist the reference before remote dispatch in the same transaction as the owne
 | Consensus draft agent: child run + consensus round/participant generation | Agent session consumer/consensus draft path in `agents/launch.ts:3915–3921` | Record complete draft artifact and settle the existing child/result path; output lost from stack must not become an empty successful draft. | `owner-consensus-draft` |
 | Scratch launch/message/recovery: dialog message/turn ID and generation | `scratch-runs/{service,events,recovery,dialog}.ts` | Scratch dialog Running with run/session still live is a due continuation, not a reason to skip. Persist reply and WaitingForUser once; NeedsInput and idle retain the exact owner until checkpoint/resume disposition. | `owner-scratch-initial`, `owner-scratch-message`, `owner-scratch-recovery` |
 | Local-package/Studio assistant scratch: scratch turn plus postprocess action generation | `scratch-runs/service.ts` `postProcessFlowAssistantTurn`, local-package authority | Recover dialog completion and pending postprocessing independently. Revalidate local-package lock/session authority before existing publish/apply side effect; persist action intent/result idempotently. No new package behavior. | `owner-scratch-package-initial`, `owner-scratch-package-message`, `owner-scratch-package-lock-takeover` |
-| Gate chat: thread/turn ID, lease generation, session | `services/gate-chat.ts:435,1181,1258`; `gate_chat_turns`/messages | Pending turn across lease expiry, parked/live session and NeedsInput/idle. Reconcile completed command before considering LEASE_EXPIRED. Persist the existing L3 `senseAndRestore` phase and finish it before releasing the pending-turn response fence; exact reply and completed marker then commit together under the existing HITL-first/turn lock order. | `owner-gate-chat` |
+| Gate chat: thread/turn ID, lease generation, session | `services/gate-chat.ts:435,1181,1258`; `gate_chat_turns`/messages | Pending turn across lease expiry, parked/live session and NeedsInput/idle. Reconcile completed command before considering LEASE_EXPIRED. Persist the existing L3 `senseAndRestore` phase and finish it before releasing the pending-turn response fence; exact reply and completed marker then commit together under Run → assignment → HITL → turn lock order. Expiry-only helpers acquire HITL → turn and never acquire Run afterwards. | `owner-gate-chat` |
 | Sync AI resolver: workspace lifecycle operation ID/attempt, resolver round, session | `runs/sync-resolver.ts`, sync target/lifecycle rows | Active resolver can be Running or NeedsInput; mechanical/post-ACP continuation can be parked in Review. Re-enter existing sync state machine with output and fence; Git operations remain local. | `owner-sync-resolver` |
 
 The status × mode map below is normative; owner adapters must use the actual domain enums and predicates. Required refusal arms: owner missing, wrong run/project, unsupported phase, terminal/superseded generation, mismatched assignment/session, cancellation/checkpoint in progress, already applied with differing identity. A released/stale assignment permits historical command settlement and an explicit nonapplying disposition only; it does not implicitly authorize prompt-owner mutation. A parked owner that needs an old result must obtain its normal current domain recovery claim and persist an explicit source-command-to-current-application-generation handoff, with authority/cap/status checks, before consuming that immutable result. The old event reducer cannot perform that handoff or mutate current state. A new ACP turn requires a new command; a handoff of already completed evidence must not send ACP again. This handoff is a new current-owner claim consuming historical evidence, not authority granted by a stale event. It preserves ADR-167 D4. Released-terminal recovery and superseded refusal require separate tests.
@@ -1888,7 +1968,7 @@ here rather than as new `PRM` ids.)
 - **PRM-08 (Implemented):** HITL pause, decision, checkpoint, and resume are durable/fenced and resume uses a new command and required incarnation.
 - **PRM-09 (Implemented):** Cancellation reuses the command ledger and has one terminal prompt outcome despite retry or ACK loss.
 - **PRM-10:** Fencing happens before ACP and records a durable fenced receipt/audit event without owner mutation.
-- **PRM-11 (Implemented):** `{commandId}` remains queryable through Postgres after web or supervisor process restart; `startDurableWorkers()` starts the three workers exactly once per process behind their `Symbol.for("maister.durable-workers.*.v1")` slots, `stopDurableWorkers()` is awaited inside the boot quiesce `Promise.allSettled` before the DB drain, and a claim release the worker cannot confirm MUST fail shutdown (`AggregateError: web workers could not drain`) and leave the durable claim to expire rather than be silently dropped.
+- **PRM-11 (Implemented):** `{commandId}` remains queryable through Postgres after web or supervisor process restart; `startDurableWorkers()` starts the four workers exactly once per process behind their `Symbol.for("maister.durable-workers.*.v1")` slots, `stopDurableWorkers()` is awaited inside the boot quiesce `Promise.allSettled` before the DB drain, and a claim release the worker cannot confirm MUST fail shutdown (`AggregateError: web workers could not drain`) and leave the durable claim to expire rather than be silently dropped.
 
   **Direct application shutdown:** the same obligation
   covers `applyPromptOwner` invoked by an HTTP waiter outside a worker slot.

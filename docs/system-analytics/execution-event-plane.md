@@ -603,6 +603,13 @@ Use the consumer's current `last_run_sequence`, `last_error.eventId` and
 cursor or a live claim. A successful rearm wakes durable work and logs those
 identifiers; it does not skip the event or advance the cursor.
 
+Projection-failure logs correlate the consumer, Run, event and fingerprint with
+a bounded cause chain containing safe error identities, codes, syscalls and
+signals. PostgreSQL SQLSTATE values such as a deadlock remain diagnosable
+without logging SQL statements, parameters, error messages, source contents or
+filesystem paths. The stored failure generation and its rearm contract are
+unchanged.
+
 1. Ingest commits canonical rows and contiguous promotion in Postgres. In the same transaction, seed/wake consumer rows for **every distinct run promoted**, including runs released by filling another run's stream gap. ACK follows this commit, regardless of projector success. Duplicate ingest may hint; hints carry no authority.
 2. Boot/restart performs bounded keyset backfill of missing registered consumer/run rows from canonical events. Persist the scan cursor. Cursor initialization commits separately from first application; no unbounded all-runs boot transaction.
 3. Candidate predicate: registered consumer, nonpoison state, due `next_retry_at`, no live claim, and canonical accepted events beyond cursor. Order by `last_served_at NULLS FIRST`, due/creation time and stable run/consumer key. Claim with `FOR UPDATE SKIP LOCKED`; unique token and DB-clock expiry. Claim **at processing time**, up to two simultaneous workers; do not preclaim eight items then spend their leases waiting in a local queue.
@@ -620,15 +627,21 @@ identifiers; it does not skip the event or advance the cursor.
 
 ### Durable worker boot, quiesce and health (Implemented)
 
-Three durable workers share the projection worker's lifecycle and start beside
-it: **prompt-owner recovery**, **flow continuation** and **agent continuation**.
+Four durable workers share the projection worker's lifecycle and start beside
+it: **prompt-owner recovery**, **flow continuation**, **agent continuation** and
+the [durable launch worker](task-launch-admission.md#durable-launch-worker-implemented).
+The launch worker's local restart and combined qualification are recorded with
+its owning contract. Its `taskLaunch` runtime slot serves one Flow and one Agent
+slot through shared dispatch; it grants no execution authority and does not
+independently release shared dispatch claims.
 `startDurableWorkers()` is the fifth step of the instrumentation isolated-step
 loop, immediately after `startCanonicalProjectionWorker`, reached through a
 dynamic `await import("@/lib/workers/runtime")` so a composition failure is
 logged into the same per-step try/catch and never aborts boot. Slot counts come
 from `projectionLimitsFromEnv().concurrency` for the prompt-owner and flow
-workers (2, env-capped at 2); the agent worker is a single loop. No environment
-variable gates any of the three — a half-activated owner is exactly the state the
+workers (2, env-capped at 2); the agent continuation worker is a single loop and
+the launch worker has two named pool slots. No environment
+variable gates any of the four — a half-activated owner is exactly the state the
 gate existed to prevent, so activation is all-or-nothing.
 The agent continuation worker also carries a scratch arm (Implemented): the
 same keyset scan selects a `Running` project scratch run whose dialog has been
@@ -646,11 +659,11 @@ so `web/lib/workers/runtime.ts` (the writer) and `web/lib/workers/health.ts`
 instances of the same file and cannot share a module-scoped variable. Start is
 `??=` on the slot and refuses outright while `isApplicationStopping()`; stop
 clears a slot only while this process still owns it, so a double start yields
-the same three handles and a stop with nothing started resolves quietly.
+the same four handles and a stop with nothing started resolves quietly.
 
 `stopDurableWorkers()` joins the existing boot quiesce `Promise.allSettled`
 **before** `drain` closes the database pool. The arithmetic matters: the server
-drains within 25 s, systemd allows 30 s, all three `stop()` calls run
+drains within 25 s, systemd allows 30 s, all four `stop()` calls run
 concurrently so the budget is the maximum and not the sum — and a prompt-owner
 slot mid-application holds a renewed 30 s lease, strictly longer than the drain.
 The overrun branch is therefore reachable by construction. It is also the
@@ -658,7 +671,7 @@ correct branch: a claim release the worker cannot confirm MUST fail shutdown
 (`AggregateError: web workers could not drain`) and leave the durable claim to
 expire, never be dropped as if released.
 
-`durableWorkersHealth()` in `web/lib/workers/health.ts` reads the three slots and
+`durableWorkersHealth()` in `web/lib/workers/health.ts` reads the four slots and
 reports each worker's `health()` or `{state:'stopped', reason:null}` for an empty
 one. It imports no domain module — the composition root imports the health
 module, never the reverse — which is what lets `lib/scheduler/system-sweeps.ts`

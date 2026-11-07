@@ -169,7 +169,8 @@ a plain `db:migrate` on such an installation stops at `0135` by design. See
 
 ### Scheduler clock
 
-Periodic recovery is available only while the unified scheduler clock ticks.
+Scheduler-owned periodic recovery is available only while the unified scheduler
+clock ticks.
 For the supported single-box systemd install, set this explicitly in
 `/etc/maister/maister.env`:
 
@@ -193,8 +194,18 @@ instances. Never place the token in a URL or log. A configured token proves
 only that the route is enabled; verify advancing `system_sweep.default` and
 `domain_event_dispatch.default` attempt timestamps on `/admin/scheduler`.
 Explicit false without a token is `missing_tick` and logs a WARN naming both
-configuration variables. In that state recovery, checkpoint cleanup and
-parked-parent wakes do not run.
+configuration variables. In that state scheduler recovery, checkpoint cleanup
+and the scheduler's parked-parent wake backstop do not run; boot and continuation
+workers retain their separate duties.
+
+The [durable task-launch worker](system-analytics/task-launch-admission.md#durable-launch-worker-implemented)
+is implemented to service accepted launch intents at web boot and database
+deadlines, with one Flow and one Agent service slot in the existing runtime.
+It requires no additional timer, secret or environment flag and does not depend
+on HTTP `after` callbacks or cron ticks for launch progress. Its fourth mandatory
+worker-health slot and joined shutdown are locally qualified with the owning
+launch contract. Hosted and deployed acceptance remain separate. Keep the
+60-second scheduler clock and host reconciliation backstops configured.
 
 To roll back an external scheduler to the in-process single-box clock, stop the
 external caller, set `MAISTER_SCHEDULER_TIMER_ENABLED=true`, remove
@@ -613,9 +624,15 @@ LEFT JOIN step_runs ON step_runs.run_id = terminal_legacy.id;
 Inventory logs contain counts and identifiers only. Never print manifest bodies
 or database credentials.
 
-- **Supervisor restart terminates live ACP turns explicitly.** Startup converts
-  accepted non-live prompt receipts to durable `turn_lost`; manager command and
-  run reconciliation then applies the existing checkpoint/crash policy.
+- **Supervisor restart records lost turns; it does not prove adapter exit.**
+  Startup converts accepted non-live prompt receipts to durable `turn_lost`;
+  manager command and run reconciliation applies the checkpoint/crash policy.
+  An adapter can survive supervisor process death. Replacement of an unfinished
+  create and workspace cleanup require positive host retirement proof for the
+  exact original command, run, assignment and epoch. A live or unknown process
+  group, an empty new registry and unstamped historical receipts leave the
+  original create unresolved. Follow the [supervisor receipt recovery contract](supervisor.md#command-envelope-fences-and-receipts-implemented--adr-166);
+  restarting again or deleting the checkout does not establish retirement.
 - **Single host only.** The web tier needs no supervisor runtime-data mount:
   events replay from the host outbox into canonical Postgres state and runtime
   bytes use opaque object APIs. Repository/worktree placement remains local;

@@ -93,7 +93,7 @@ export type CommandReceipt = {
   receivedAt: string;
   completedAt: string | null;
   eventId: string | null;
-  // `accepted` + `inflight:false` = the host restarted mid-turn (turn_lost).
+  // V1 request liveness only; false never proves a create process retired.
   inflight: boolean;
 };
 
@@ -268,6 +268,7 @@ export interface ExecutionHostTransport {
   ): Promise<SupervisorModelCatalog>;
   probeMcp(req: SupervisorMcpProbeRequest): Promise<SupervisorMcpProbeResult>;
   listSessions(): Promise<SupervisorSessionRecord[]>;
+  listSessionsForRun(runId: string): Promise<SupervisorSessionRecord[]>;
   streamSession(
     sessionId: string,
     opts?: { lastEventId?: number; signal?: AbortSignal },

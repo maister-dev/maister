@@ -1,4 +1,8 @@
 const refusalKeys: Readonly<Record<string, string>> = {
+  retry_launch_upgrade_required: "refusal.launchRequired",
+  launch_manual_authority_required: "permissionChanged",
+  launch_input_changed: "refusal.taskChanged",
+  launch_settings_changed: "refusal.contextChanged",
   reconciliation_required: "refusal.reconciliation",
   retry_task_changed: "refusal.taskChanged",
   retry_runner_unavailable: "refusal.runner",

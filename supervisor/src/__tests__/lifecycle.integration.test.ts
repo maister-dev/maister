@@ -1,14 +1,20 @@
-import { spawn } from "node:child_process";
+import type { RegistryEntry } from "../registry";
+
+import childProcess, { spawn } from "node:child_process";
 import { EventEmitter, once } from "node:events";
-import { createWriteStream } from "node:fs";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import fs, { createWriteStream } from "node:fs";
+import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { syncBuiltinESMExports } from "node:module";
 import { setImmediate as nextTurn } from "node:timers/promises";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { waitForChildExit } from "../execution-fence";
+import {
+  signalOwnedSessionProcess,
+  waitForChildExit,
+} from "../execution-fence";
 import { captureAcpFrames } from "../bounded-acp-stream";
 import {
   SupervisorDiagnosticsResponseSchema,
@@ -211,13 +217,21 @@ describe("supervisor lifecycle integration", () => {
     const sessionId = await createSession(host);
     const entry = host.registry.get(sessionId)!;
 
-    await stopRegisteredSessions(host.registry, silentLogger, 50);
+    // The journalled group contains gate and adapter. Keep a bounded drain
+    // budget under the full parallel suite; the adapter resists TERM for 60s.
+    await stopRegisteredSessions(host.registry, silentLogger, 250);
     expect(entry.child.signalCode).toBe("SIGKILL");
     expect(entry.record.terminalPublished).toBe(true);
     expect(entry.record.outputTerminal).toBeDefined();
     await entry.record.outputDrained;
     await entry.record.outputTerminal;
     expect(() => process.kill(entry.record.pid, 0)).toThrow();
+    const inventory = await fetch(`${host.url}/sessions?runId=${RUN_ID}`);
+
+    expect(inventory.status).toBe(200);
+    expect(inventory.headers.get("x-maister-session-ownership-version")).toBe(
+      "1",
+    );
   });
   it("keeps exit and checkpoint acknowledgment behind the captured-output barrier", async () => {
     const host = await bootFor(["--hang", "--lines", "0"]);
@@ -473,7 +487,7 @@ describe("supervisor lifecycle integration", () => {
     const entry = host.registry.get(sessionId);
 
     expect(entry).toBeDefined();
-    entry!.child.kill("SIGUSR2");
+    process.kill(entry!.record.adapterPid!, "SIGUSR2");
 
     const events = await eventPromise;
     const lines = events.filter((e) => e.event === "session.update");
@@ -501,7 +515,7 @@ describe("supervisor lifecycle integration", () => {
     const entry = host.registry.get(sessionId);
 
     expect(entry).toBeDefined();
-    entry!.child.kill("SIGUSR2");
+    process.kill(entry!.record.adapterPid!, "SIGUSR2");
 
     const events = await eventPromise;
     const crashed = events.find((e) => e.event === "session.crashed");
@@ -644,18 +658,332 @@ describe("supervisor lifecycle integration", () => {
     expect(entry.child.signalCode).toBeNull();
   });
 
+  it("holds a higher epoch and its retries before dispatch until the older real process is confirmed retired", async () => {
+    booted = await bootHost({
+      fixtureArgs: ["--exit-delay-ms", "60000"],
+      killGraceMs: 50,
+    });
+    const host = booted;
+    const previousSessionId = await createSession(host);
+    const previous = host.registry.get(previousSessionId)!;
+    const kill = process.kill.bind(process);
+    const intercepted = vi
+      .spyOn(process, "kill")
+      .mockImplementation((pid, signal) =>
+        pid === -previous.record.processGroup! && signal === "SIGKILL"
+          ? true
+          : kill(pid, signal),
+      );
+    const command = await createEnvelope(host, {
+      runId: RUN_ID,
+      assignmentEpoch: 2,
+    });
+    const competing = await createEnvelope(host, {
+      runId: RUN_ID,
+      assignmentEpoch: 2,
+    });
+
+    try {
+      for (const attempt of [command, competing]) {
+        const refused = await postJson(`${host.url}/sessions`, attempt);
+
+        expect(refused.status).toBe(503);
+        expect(refused.body).toMatchObject({
+          code: "EXECUTOR_UNAVAILABLE",
+          details: {
+            reason: "session_eviction_exit_unconfirmed",
+            sessionId: previousSessionId,
+            commandEpoch: 2,
+            stage: "process_exit",
+          },
+        });
+        expect(host.hostState.getReceipt(attempt.command.id)).toBeNull();
+        expect(host.registry.list()).toHaveLength(1);
+        expect(previous.child.exitCode).toBeNull();
+        expect(previous.child.signalCode).toBeNull();
+        expect(() => process.kill(previous.record.pid, 0)).not.toThrow();
+      }
+      expect(host.hostState.getFence(RUN_ID)?.epoch).toBe(2);
+      intercepted.mockRestore();
+      signalOwnedSessionProcess(previous, "SIGKILL");
+      expect(await waitForChildExit(previous, 2_000)).toBe(true);
+      const admitted = await postJson(`${host.url}/sessions`, command);
+
+      expect(admitted.status).toBe(201);
+      expect(host.hostState.getReceipt(command.command.id)?.phase).toBe(
+        "completed",
+      );
+      expect(
+        host.registry
+          .list()
+          .filter((record) => record.createdByCommandId === command.command.id),
+      ).toHaveLength(1);
+      expect(() => process.kill(previous.record.pid, 0)).toThrow();
+    } finally {
+      intercepted.mockRestore();
+      if (
+        previous.child.exitCode === null &&
+        previous.child.signalCode === null
+      )
+        signalOwnedSessionProcess(previous, "SIGKILL");
+      expect(await waitForChildExit(previous, 2_000)).toBe(true);
+    }
+  });
+
+  it("fences an older create held before native spawn and preserves the newer owner's process and output", async () => {
+    const host = await bootFor(["--hang"]);
+    const older = await createEnvelope(host, {
+      runId: RUN_ID,
+      assignmentEpoch: 1,
+    });
+    const newer = await createEnvelope(host, {
+      runId: RUN_ID,
+      assignmentEpoch: 2,
+    });
+    const writeStream = fs.createWriteStream.bind(fs);
+    let releaseOpen: () => void = () => {};
+    let captured = false;
+    const heldOpen = new Promise<void>((resolve) => {
+      vi.spyOn(fs, "createWriteStream").mockImplementation((...args) => {
+        const stream = writeStream(...args);
+
+        if (captured) return stream;
+        captured = true;
+        const emit = stream.emit.bind(stream);
+
+        vi.spyOn(stream, "emit").mockImplementation((event, ...values) => {
+          if (event !== "open") return emit(event, ...values);
+          releaseOpen = () => {
+            emit(event, ...values);
+          };
+          resolve();
+
+          return true;
+        });
+
+        return stream;
+      });
+    });
+    const nativeSpawn = vi.spyOn(childProcess, "spawn");
+
+    syncBuiltinESMExports();
+    const pending = postJson(`${host.url}/sessions`, older);
+
+    try {
+      await heldOpen;
+      expect(host.registry.list()).toHaveLength(0);
+      const admitted = await postJson(`${host.url}/sessions`, newer);
+
+      expect(admitted.status).toBe(201);
+      const entry = host.registry.get(admitted.body.sessionId)!;
+
+      releaseOpen();
+      const refused = await pending;
+
+      expect(refused.status).toBe(409);
+      expect(refused.body).toMatchObject({ code: "FENCED" });
+      expect(nativeSpawn).toHaveBeenCalledTimes(1);
+      expect(host.registry.list()).toHaveLength(1);
+      expect(entry.record.status).toBe("live");
+      expect(() => process.kill(entry.record.pid, 0)).not.toThrow();
+      await fs.promises.access(entry.record.logPath);
+    } finally {
+      releaseOpen();
+      vi.restoreAllMocks();
+      syncBuiltinESMExports();
+      await pending;
+    }
+  });
+
+  it("registers a native child before yielding to its spawn notification so a higher epoch can retire it", async () => {
+    const host = await bootFor(["--hang"]);
+    const older = await createEnvelope(host, {
+      runId: RUN_ID,
+      assignmentEpoch: 1,
+    });
+    const newer = await createEnvelope(host, {
+      runId: RUN_ID,
+      assignmentEpoch: 2,
+    });
+    const nativeSpawn = childProcess.spawn.bind(childProcess);
+    let releaseSpawn: () => void = () => {};
+    let captured = false;
+    const spawned = new Promise<number>((resolve) => {
+      vi.spyOn(childProcess, "spawn").mockImplementation((...args) => {
+        const child = nativeSpawn(...args);
+
+        if (captured) return child;
+        captured = true;
+        const emit = child.emit.bind(child);
+
+        vi.spyOn(child, "emit").mockImplementation((event, ...values) => {
+          if (event !== "spawn") return emit(event, ...values);
+          releaseSpawn = () => {
+            emit(event, ...values);
+          };
+          resolve(child.pid!);
+
+          return true;
+        });
+
+        return child;
+      });
+    });
+
+    syncBuiltinESMExports();
+    const pending = postJson(`${host.url}/sessions`, older);
+
+    try {
+      const previousPid = await spawned;
+
+      expect(host.registry.list()).toMatchObject([
+        { pid: previousPid, assignmentEpoch: 1 },
+      ]);
+      const admitted = await postJson(`${host.url}/sessions`, newer);
+
+      expect(admitted.status).toBe(201);
+      expect(() => process.kill(previousPid, 0)).toThrow();
+    } finally {
+      releaseSpawn();
+      vi.restoreAllMocks();
+      syncBuiltinESMExports();
+      await pending;
+    }
+  });
+
+  it.each(["late exit", "owned DELETE"] as const)(
+    "reconciles an unresolved failed handshake through %s using its original create receipt",
+    async (recovery) => {
+      vi.stubEnv("MAISTER_ACP_HANDSHAKE_TIMEOUT_MS", "100");
+      booted = await bootHost({
+        fixtureArgs: ["--hang-new-session", "--exit-delay-ms", "60000"],
+        killGraceMs: 50,
+      });
+      const host = booted;
+      const register = host.registry.register.bind(host.registry);
+      let restoreKill: () => void = () => {};
+      const registered = new Promise<RegistryEntry>((resolve) => {
+        vi.spyOn(host.registry, "register").mockImplementation((...args) => {
+          register(...args);
+          const entry = host.registry.get(args[0].sessionId)!;
+          const kill = process.kill.bind(process);
+          // The process is real. Withhold only delivery of the final signal to
+          // deterministically expose the host's unconfirmed-exit boundary.
+          const intercepted = vi
+            .spyOn(process, "kill")
+            .mockImplementation((pid, signal) =>
+              pid === -entry.record.processGroup! && signal === "SIGKILL"
+                ? true
+                : kill(pid, signal),
+            );
+
+          restoreKill = () => intercepted.mockRestore();
+          resolve(entry);
+        });
+      });
+      const command = await createEnvelope(host, { runId: RUN_ID });
+      const response = postJson(`${host.url}/sessions`, command);
+      const entry = await registered;
+
+      try {
+        const result = await response;
+        const originalFailure = result.body.details?.sessionCreateFailure;
+
+        expect(result.status).toBe(503);
+        expect(originalFailure).toMatchObject({
+          version: 1,
+          stage: "acp_handshake",
+          causeChain: [
+            { name: "SupervisorError", code: "EXECUTOR_UNAVAILABLE" },
+          ],
+        });
+        expect(entry.child.exitCode).toBeNull();
+        expect(entry.child.signalCode).toBeNull();
+        expect(() => process.kill(entry.record.pid, 0)).not.toThrow();
+        expect(host.registry.get(entry.record.sessionId)).toBe(entry);
+        expect(result.body).toMatchObject({
+          code: "EXECUTOR_UNAVAILABLE",
+          details: { reason: "session_create_exit_unconfirmed" },
+        });
+        expect(result.body).not.toHaveProperty(
+          "details.sessionCreateQuiescence",
+        );
+        const inventory = await fetch(`${host.url}/sessions`);
+
+        expect(await inventory.json()).toMatchObject([
+          { sessionId: entry.record.sessionId, status: "live" },
+        ]);
+        expect(host.hostState.getReceipt(command.command.id)).toMatchObject({
+          phase: "accepted",
+          completedAt: null,
+        });
+        const replay = await postJson(`${host.url}/sessions`, command);
+
+        expect(replay.status).toBe(503);
+        expect(host.hostState.getReceipt(command.command.id)?.phase).toBe(
+          "accepted",
+        );
+        restoreKill();
+        if (recovery === "late exit") {
+          signalOwnedSessionProcess(entry, "SIGKILL");
+          expect(await waitForChildExit(entry, 2_000)).toBe(true);
+        } else {
+          const deleted = await postJson(
+            `${host.url}/sessions/${entry.record.sessionId}`,
+            envelope("session.delete", fenceFor(host, RUN_ID), {}),
+            "DELETE",
+          );
+
+          expect(deleted.status).toBe(204);
+        }
+        const original = await fetch(
+          `${host.url}/commands/${command.command.id}`,
+        );
+
+        expect(await original.json()).toMatchObject({
+          commandId: command.command.id,
+          phase: "rejected",
+          inflight: false,
+          body: {
+            details: {
+              sessionCreateFailure: originalFailure,
+              sessionCreateQuiescence: { version: 1, process: "terminated" },
+            },
+          },
+        });
+        expect(() => process.kill(entry.record.pid, 0)).toThrow();
+      } finally {
+        restoreKill();
+        vi.restoreAllMocks();
+        vi.unstubAllEnvs();
+        signalOwnedSessionProcess(entry, "SIGKILL");
+        expect(await waitForChildExit(entry, 2_000)).toBe(true);
+        await response;
+      }
+    },
+  );
+
   it("POST /sessions returns 503 and cleans up when ACP newSession hangs", async () => {
     const previousTimeout = process.env.MAISTER_ACP_HANDSHAKE_TIMEOUT_MS;
 
     process.env.MAISTER_ACP_HANDSHAKE_TIMEOUT_MS = "500";
 
     try {
-      const host = await bootFor(["--hang-new-session"]);
+      booted = await bootHost({
+        fixtureArgs: ["--hang-new-session", "--exit-delay-ms", "60000"],
+        killGraceMs: 50,
+      });
+      const host = booted;
       const { url, registry } = host;
-      const res = await postJson(
-        `${url}/sessions`,
-        await createEnvelope(host, { runId: RUN_ID }),
-      );
+      const register = registry.register.bind(registry);
+      const registered = new Promise<RegistryEntry>((resolve) => {
+        vi.spyOn(registry, "register").mockImplementation((...args) => {
+          register(...args);
+          resolve(registry.get(args[0].sessionId)!);
+        });
+      });
+      const command = await createEnvelope(host, { runId: RUN_ID });
+      const res = await postJson(`${url}/sessions`, command);
 
       expect(res.status).toBe(503);
       const body = res.body as { code: string; message: string };
@@ -663,14 +991,140 @@ describe("supervisor lifecycle integration", () => {
       expect(body.code).toBe("EXECUTOR_UNAVAILABLE");
       expect(body.message).toContain("newSession");
       expect(body.message).toContain("timed out");
+      expect(res.body).toMatchObject({
+        details: {
+          sessionCreateQuiescence: { version: 1, process: "terminated" },
+        },
+      });
+      const entry = await registered;
+
+      expect(entry.child.signalCode).toBe("SIGKILL");
+      expect(() => process.kill(entry.record.pid, 0)).toThrow();
+      expect(entry.record.terminalPublished).toBe(true);
+      expect(host.hostState.getReceipt(command.command.id)).toMatchObject({
+        phase: "rejected",
+        body: {
+          details: {
+            sessionCreateFailure: res.body.details.sessionCreateFailure,
+            sessionCreateQuiescence: { version: 1, process: "terminated" },
+          },
+        },
+      });
       expect(registry.size()).toBe(0);
     } finally {
+      vi.restoreAllMocks();
       if (previousTimeout === undefined) {
         delete process.env.MAISTER_ACP_HANDSHAKE_TIMEOUT_MS;
       } else {
         process.env.MAISTER_ACP_HANDSHAKE_TIMEOUT_MS = previousTimeout;
       }
     }
+  });
+
+  it.each(["missing env ref", "unwritable log"] as const)(
+    "proves %s failed before any native process and preserves its cause",
+    async (failure) => {
+      const host = await bootFor(["--hang"]);
+      const runDirectory = join(
+        host.runtimeRoot,
+        ".maister",
+        "demo",
+        "runs",
+        RUN_ID,
+      );
+      const extra =
+        failure === "missing env ref"
+          ? {
+              runner: {
+                version: 1,
+                runnerId: "controlled",
+                adapter: "claude",
+                capabilityAgent: "claude",
+                model: "mock",
+                provider: {
+                  kind: "anthropic_compatible",
+                  authTokenEnv: "MAISTER_CONTROLLED_UNSET_TOKEN",
+                },
+                permissionPolicy: "default",
+              },
+            }
+          : {};
+      const command = await createEnvelope(host, { runId: RUN_ID }, extra);
+
+      vi.stubEnv("MAISTER_CONTROLLED_UNSET_TOKEN", "");
+      await mkdir(runDirectory, { recursive: true });
+      if (failure === "unwritable log") await chmod(runDirectory, 0o500);
+      try {
+        const response = await postJson(`${host.url}/sessions`, command);
+
+        expect(response.status, JSON.stringify(response.body)).toBe(503);
+        expect(response.body).toMatchObject({
+          details: {
+            sessionCreateQuiescence: { version: 1, process: "not_started" },
+            sessionCreateFailure: { version: 1, stage: "spawn" },
+          },
+        });
+        expect(
+          response.body.details.sessionCreateFailure.causeChain.some(
+            (cause: { code?: string | number }) =>
+              cause.code ===
+              (failure === "unwritable log"
+                ? "EACCES"
+                : "EXECUTOR_UNAVAILABLE"),
+          ),
+        ).toBe(true);
+        expect(host.registry.list()).toHaveLength(0);
+        expect(host.hostState.sessionProcessesForRun(RUN_ID)).toHaveLength(0);
+        expect(host.hostState.getReceipt(command.command.id)).toMatchObject({
+          phase: "rejected",
+          body: {
+            details: {
+              sessionCreateQuiescence: { version: 1, process: "not_started" },
+            },
+          },
+        });
+      } finally {
+        await chmod(runDirectory, 0o700);
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
+  it("retires the real gate after an adapter binary-not-found failure and retains its safe cause", async () => {
+    const runtimeRoot = await mkdtemp(
+      join(tmpdir(), "maister-missing-adapter-"),
+    );
+
+    booted = await bootHost({
+      runtimeRoot,
+      spawnOverrides: {
+        binary: join(runtimeRoot, "not-installed"),
+        preArgs: [],
+      },
+    });
+    const host = booted;
+    const command = await createEnvelope(host, { runId: RUN_ID });
+    const response = await postJson(`${host.url}/sessions`, command);
+
+    expect(response.status, JSON.stringify(response.body)).toBe(500);
+    expect(response.body).toMatchObject({
+      code: "SPAWN",
+      details: {
+        sessionCreateQuiescence: { version: 1, process: "terminated" },
+        sessionCreateFailure: {
+          version: 1,
+          stage: "spawn",
+          causeChain: [{ name: "Error", code: "ENOENT" }],
+        },
+      },
+    });
+    expect(host.registry.list()).toMatchObject([{ status: "exited" }]);
+    expect(host.hostState.sessionProcessesForRun(RUN_ID)).toMatchObject([
+      { phase: "released" },
+    ]);
+    expect(host.hostState.getReceipt(command.command.id)?.phase).toBe(
+      "rejected",
+    );
   });
 
   it("POST /sessions with a bare (unenveloped) body returns 409 PRECONDITION", async () => {

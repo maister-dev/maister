@@ -11,6 +11,10 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { reuseSqliteStatements } from "./sqlite-statements";
+import {
+  readHostProcessContext,
+  type HostProcessContext,
+} from "./session-process-context";
 import { commandReceiptPayloadV2 } from "./command-event";
 import {
   DEFAULT_RUNTIME_LIMITS,
@@ -120,7 +124,33 @@ export type ReceiptRetirementOutcome =
     };
 export const EXECUTION_HOST_PROTOCOL_VERSION = 1;
 // `PRAGMA user_version` of the state file; bumped with every migration below.
-export const HOST_STATE_SCHEMA_VERSION = 15;
+export const HOST_STATE_SCHEMA_VERSION = 16;
+
+/** Native retirement survives registry loss. Released identities share the receipt tombstone's permanent retention and cannot reactivate. */
+export type SessionProcessObligation = Readonly<{
+  commandId: string;
+  runId: string;
+  assignmentId: string;
+  epoch: number;
+  hostSessionId: string | null;
+  processGroup: number | null;
+  phase: "registered" | "unproven" | "released";
+  /** For unproven legacy owners this is first durable observation, not a claimed spawn time. */
+  registeredAt: string;
+  retiredAt: string | null;
+  osBootIdentity: string | null;
+  pidNamespace: string | null;
+  retiredOsBootIdentity: string | null;
+}>;
+
+export type RegisterSessionProcess = Readonly<{
+  commandId: string;
+  runId: string;
+  assignmentId: string;
+  epoch: number;
+  hostSessionId: string;
+  processGroup: number;
+}>;
 const MAX_HOST_EVENT_SEQUENCE = (1n << 63n) - 1n;
 const HOST_EVENT_SEQUENCE_SORT_WIDTH = 20;
 
@@ -401,6 +431,11 @@ export type HostState = {
   readonly stateDirReal: string | null;
   getFence(runId: string): RunFence | null;
   setFence(runId: string, assignmentId: string, epoch: number): void;
+  registerSessionProcess(input: RegisterSessionProcess): void;
+  pendingSessionProcesses(): readonly SessionProcessObligation[];
+  sessionProcessesForRun(runId: string): readonly SessionProcessObligation[];
+  releaseSessionProcess(commandId: string, retiredAt: string): void;
+  releaseSessionProcessesFromPriorBoot(): number;
   getReceipt(commandId: string): CommandReceiptRow | null;
   // ADR-183 D5: an accepted receipt names its admission; a settlement
   // (completed / rejected) admits nothing, so it names none.
@@ -423,10 +458,10 @@ export type HostState = {
   subscribeRuntimeCapacity(
     listener: (snapshot: OutboxBudgetSnapshot) => void,
   ): () => void;
-  // A fresh supervisor process has no ACP process to join. Canonical async
-  // prompt receipts retain their fence/session binding, so startup can make
-  // the loss explicit through one durable terminal receipt/event pair.
+  // Startup may settle lost turns only after their native process obligation
+  // is released. Missing in-memory sessions never prove physical retirement.
   recoverAcceptedPromptReceipts(): number;
+  recoverReleasedSessionProcess(commandId: string): number;
   retainedReceiptCount(): number;
   retireReceipt(
     commandId: string,
@@ -567,6 +602,38 @@ CREATE INDEX IF NOT EXISTS runtime_objects_corrupt_path_idx
   ON runtime_objects (private_path) WHERE state = 'corrupt';
 `;
 
+const SESSION_PROCESS_SCHEMA = `
+CREATE TABLE IF NOT EXISTS session_process_obligations (
+  command_id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  assignment_id TEXT NOT NULL,
+  epoch INTEGER NOT NULL CHECK (typeof(epoch)='integer' AND epoch > 0),
+  host_session_id TEXT UNIQUE,
+  process_group INTEGER CHECK (process_group IS NULL OR typeof(process_group)='integer' AND process_group > 0),
+  os_boot_identity TEXT,
+  pid_namespace TEXT,
+  retired_os_boot_identity TEXT,
+  phase TEXT NOT NULL CHECK (phase IN ('registered','unproven','released')),
+  registered_at TEXT NOT NULL CHECK (datetime(registered_at) IS NOT NULL),
+  retired_at TEXT CHECK (retired_at IS NULL OR datetime(retired_at) IS NOT NULL),
+  CHECK (phase='released' OR retired_os_boot_identity IS NULL),
+  CHECK ((phase = 'unproven' AND process_group IS NULL AND retired_at IS NULL)
+    OR (phase = 'registered' AND process_group IS NOT NULL AND process_group > 0 AND host_session_id IS NOT NULL AND retired_at IS NULL AND os_boot_identity IS NOT NULL AND pid_namespace IS NOT NULL)
+    OR (phase = 'released' AND retired_at IS NOT NULL AND (
+      process_group IS NOT NULL AND host_session_id IS NOT NULL
+      OR os_boot_identity IS NOT NULL AND retired_os_boot_identity IS NOT NULL AND os_boot_identity<>retired_os_boot_identity)))
+);
+CREATE INDEX IF NOT EXISTS session_process_pending_run_idx
+  ON session_process_obligations(run_id, registered_at) WHERE phase <> 'released';
+CREATE UNIQUE INDEX IF NOT EXISTS session_process_active_group_uq
+  ON session_process_obligations(process_group) WHERE phase = 'registered';
+`;
+
+const SESSION_PROCESS_COLUMNS = `command_id AS commandId, run_id AS runId,
+  assignment_id AS assignmentId, epoch, host_session_id AS hostSessionId,
+  process_group AS processGroup, phase, registered_at AS registeredAt, retired_at AS retiredAt,
+  os_boot_identity AS osBootIdentity,pid_namespace AS pidNamespace,retired_os_boot_identity AS retiredOsBootIdentity`;
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS host_identity (
   id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -604,6 +671,7 @@ CREATE TABLE IF NOT EXISTS command_receipts (
   retired_at TEXT
 );
 CREATE INDEX IF NOT EXISTS command_receipts_received_idx ON command_receipts (received_at);
+${SESSION_PROCESS_SCHEMA}
 CREATE TABLE IF NOT EXISTS runtime_objects (
   id TEXT PRIMARY KEY,
   run_id TEXT NOT NULL,
@@ -881,7 +949,69 @@ PRAGMA user_version = 15;
 COMMIT;
 `;
 
-function applySchema(db: DatabaseSync): void {
+/** Wallet closure and absent history cannot prove physical retirement; preserve unknown owners independently. */
+function seedMissingSessionProcesses(
+  db: DatabaseSync,
+  context: HostProcessContext,
+  observedAt: string,
+): void {
+  const corrupt = db
+    .prepare(
+      `SELECT 1 FROM runtime_event_wallets wallet
+      LEFT JOIN command_receipts receipt ON receipt.command_id=wallet.wallet_id
+      WHERE (wallet.closed=0 AND receipt.command_id IS NULL)
+        OR receipt.command_id IS NOT NULL AND (receipt.kind<>'session.create'
+          OR receipt.run_id IS NOT wallet.run_id OR receipt.assignment_id IS NOT wallet.assignment_id
+          OR receipt.epoch IS NOT wallet.assignment_epoch) LIMIT 1`,
+    )
+    .get();
+
+  if (corrupt)
+    throw new HostRuntimeEventError(
+      "stream_corrupt",
+      "A legacy producer wallet has missing or conflicting create identity; preserve the store for diagnosis",
+    );
+  db.prepare(
+    `INSERT INTO session_process_obligations
+      (command_id,run_id,assignment_id,epoch,host_session_id,process_group,phase,registered_at,retired_at,os_boot_identity,pid_namespace)
+      SELECT w.wallet_id,w.run_id,w.assignment_id,w.assignment_epoch,w.host_session_id,NULL,'unproven',?,NULL,?,?
+      FROM runtime_event_wallets w LEFT JOIN command_receipts r ON r.command_id=w.wallet_id
+      WHERE NOT EXISTS(SELECT 1 FROM session_process_obligations p WHERE p.command_id=w.wallet_id)
+        AND (r.phase='rejected' AND r.http_status BETWEEN 400 AND 599 AND r.completed_at IS NOT NULL
+          AND w.host_session_id IS NULL AND r.host_session_id IS NULL
+          AND json_type(r.body_json,'$.details.sessionCreateQuiescence')='object'
+          AND json_type(r.body_json,'$.details.sessionCreateQuiescence.version')='integer'
+          AND json_extract(r.body_json,'$.details.sessionCreateQuiescence.version')=1
+          AND json_extract(r.body_json,'$.details.sessionCreateQuiescence.process')='not_started'
+          AND (SELECT count(*) FROM json_each(r.body_json,'$.details.sessionCreateQuiescence'))=2
+          AND NOT EXISTS(SELECT 1 FROM runtime_event_outbox e
+            WHERE json_extract(e.envelope_json,'$.eventType')='session.created'
+              AND json_extract(e.envelope_json,'$.payload.createdByCommandId')=w.wallet_id)) IS NOT TRUE`,
+  ).run(observedAt, context.osBootIdentity, context.pidNamespace);
+}
+
+function migrateV15ToV16(
+  db: DatabaseSync,
+  context: HostProcessContext,
+  observedAt: string,
+): void {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(SESSION_PROCESS_SCHEMA);
+    seedMissingSessionProcesses(db, context, observedAt);
+    db.exec("PRAGMA user_version=16");
+    db.exec("COMMIT");
+  } catch (error) {
+    if (db.isTransaction) db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function applySchema(
+  db: DatabaseSync,
+  context: HostProcessContext,
+  observedAt: string,
+): void {
   const fresh =
     db
       .prepare(
@@ -921,6 +1051,7 @@ function applySchema(db: DatabaseSync): void {
   if (Number(user_version) < 13) db.exec(MIGRATE_V12_TO_V13);
   if (Number(user_version) < 14) migrateV13ToV14(db);
   if (Number(user_version) < 15) db.exec(MIGRATE_V14_TO_V15);
+  if (Number(user_version) < 16) migrateV15ToV16(db, context, observedAt);
 }
 
 export function openHostState(opts: OpenHostStateOptions = {}): HostState {
@@ -928,6 +1059,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
     ? validateRuntimeLimits(opts.limits)
     : runtimeLimitsFromEnv();
   const now = opts.now ?? (() => new Date());
+  const processContext = readHostProcessContext();
   const log = opts.logger?.child({ component: "host-state" });
   const stateDir = opts.inMemory ? null : path.resolve(opts.stateDir ?? "");
 
@@ -936,6 +1068,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
   }
 
   let db: DatabaseSync;
+  let openedDatabase: DatabaseSync | undefined;
   let stateDirReal: string | null = null;
 
   try {
@@ -947,6 +1080,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
     db = new DatabaseSync(
       stateDir ? path.join(stateDir, HOST_STATE_FILE) : ":memory:",
     );
+    openedDatabase = db;
     if (stateDir) {
       db.exec("PRAGMA journal_mode = WAL");
       // A command receipt and its durable event are a recovery boundary; NORMAL
@@ -954,11 +1088,20 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
       // a power loss. Stage B chooses correctness over the local write latency.
       db.exec("PRAGMA synchronous = FULL");
     }
-    applySchema(db);
+    applySchema(db, processContext, now().toISOString());
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      seedMissingSessionProcesses(db, processContext, now().toISOString());
+      db.exec("COMMIT");
+    } catch (error) {
+      if (db.isTransaction) db.exec("ROLLBACK");
+      throw error;
+    }
     db.exec(ACTIVE_FRAME_SCHEMA);
     db.exec(ACTIVE_FILE_PROGRESS_SCHEMA);
     db = reuseSqliteStatements(db, log);
   } catch (err) {
+    openedDatabase?.close();
     throw new HostStateUnwritableError(stateDir ?? ":memory:", err);
   }
 
@@ -1264,6 +1407,158 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
     );
   };
 
+  type LostReceipt = {
+    command_id: string;
+    run_id: string;
+    kind: string;
+    assignment_id: string;
+    epoch: number;
+    host_session_id: string | null;
+    request_digest: string | null;
+    request_schema: string | null;
+    request_version: 1 | 2;
+    host_key: string | null;
+    accepted_sequence: string | null;
+    received_at: string;
+  };
+  type LostWallet = {
+    wallet_id: string;
+    run_id: string;
+    assignment_id: string;
+    assignment_epoch: number;
+    host_session_id: string | null;
+  };
+  function lostWalletFor(
+    commandId: string,
+    hostSessionId: string | null,
+  ): LostWallet | undefined {
+    return db
+      .prepare(
+        `SELECT wallet_id,run_id,assignment_id,assignment_epoch,host_session_id
+      FROM runtime_event_wallets WHERE closed=0 AND (wallet_id=? OR host_session_id=?)`,
+      )
+      .get(commandId, hostSessionId) as LostWallet | undefined;
+  }
+
+  function settleLostSessionReceipt(
+    row: LostReceipt,
+    wallet: LostWallet | undefined,
+  ): void {
+    if (
+      wallet &&
+      ["session.prompt", "session.create"].includes(row.kind) &&
+      (wallet.run_id !== row.run_id ||
+        wallet.assignment_id !== row.assignment_id ||
+        wallet.assignment_epoch !== row.epoch)
+    ) {
+      throw new HostRuntimeEventError(
+        "stream_corrupt",
+        "accepted producer receipt does not match its durable wallet fence",
+      );
+    }
+    const process = db
+      .prepare(
+        `SELECT ${SESSION_PROCESS_COLUMNS} FROM session_process_obligations
+      WHERE command_id=? AND run_id=? AND assignment_id=? AND epoch=? AND phase='released'`,
+      )
+      .get(row.command_id, row.run_id, row.assignment_id, row.epoch) as
+      SessionProcessObligation | undefined;
+    const previous = state.getReceipt(row.command_id)?.body as
+      { details?: { sessionCreateFailure?: unknown } } | undefined;
+    const body = {
+      code: "PRECONDITION",
+      message: "the turn for this command id was lost in a host restart",
+      details: {
+        reason: "turn_lost",
+        runId: row.run_id,
+        ...(process && row.kind === "session.create"
+          ? {
+              sessionCreateQuiescence: {
+                version: 1,
+                process: "terminated",
+              },
+              ...(previous?.details?.sessionCreateFailure
+                ? {
+                    sessionCreateFailure: previous.details.sessionCreateFailure,
+                  }
+                : {}),
+            }
+          : {}),
+      },
+    };
+    const receipt: SettledReceiptRow = {
+      commandId: row.command_id,
+      runId: row.run_id,
+      kind: row.kind,
+      assignmentId: row.assignment_id,
+      epoch: row.epoch,
+      hostSessionId: row.host_session_id ?? wallet?.host_session_id ?? null,
+      requestDigest: row.request_digest,
+      requestSchema: row.request_schema,
+      requestVersion: row.request_version,
+      hostKey: row.host_key,
+      acceptedSequence: row.accepted_sequence,
+      eventId: null,
+      phase: "rejected",
+      httpStatus: 409,
+      body,
+      receivedAt: row.received_at,
+      completedAt: now().toISOString(),
+    };
+
+    state.putReceiptWithRuntimeEvent(receipt, {
+      terminal: true,
+      ...(wallet
+        ? {
+            funding: {
+              partition: "control" as const,
+              walletId: wallet.wallet_id,
+              commandId: row.command_id,
+            },
+          }
+        : {}),
+      draft: {
+        runId: row.run_id,
+        assignmentId: wallet?.assignment_id ?? row.assignment_id,
+        assignmentEpoch: wallet?.assignment_epoch ?? row.epoch,
+        hostSessionId: receipt.hostSessionId,
+        eventType: "session.command",
+        occurredAt: now().toISOString(),
+        payload:
+          row.request_version === 2
+            ? commandReceiptPayloadV2(receipt, state)
+            : {
+                commandId: row.command_id,
+                kind: row.kind,
+                phase: "completed",
+                status: "failed",
+                error: body,
+              },
+      },
+    });
+  }
+
+  function settleLostSessionWallet(wallet: LostWallet): void {
+    if (wallet.host_session_id === null) {
+      state.closeProducerWallet(wallet.wallet_id);
+
+      return;
+    }
+    state.appendRuntimeEvent({
+      terminal: true,
+      funding: { partition: "control", walletId: wallet.wallet_id },
+      draft: {
+        runId: wallet.run_id,
+        assignmentId: wallet.assignment_id,
+        assignmentEpoch: wallet.assignment_epoch,
+        hostSessionId: wallet.host_session_id,
+        eventType: "session.crashed",
+        occurredAt: now().toISOString(),
+        payload: { exitCode: null, signal: null, reason: "host_restart" },
+      },
+    });
+  }
+
   const state: HostState = {
     limits,
     hostKey,
@@ -1368,6 +1663,156 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
            updated_at = excluded.updated_at`,
         ).run(runId, assignmentId, epoch, now().toISOString());
       });
+    },
+    registerSessionProcess(input) {
+      return storage.write(() => {
+        db.exec("BEGIN IMMEDIATE");
+        try {
+          const admitted = db
+            .prepare(
+              `SELECT 1 FROM command_receipts receipt
+            JOIN runtime_event_wallets wallet ON wallet.wallet_id=receipt.command_id
+            JOIN run_fences fence ON fence.run_id=receipt.run_id
+            WHERE receipt.command_id=? AND receipt.kind='session.create' AND receipt.phase='accepted'
+              AND receipt.run_id=? AND receipt.assignment_id=? AND receipt.epoch=?
+              AND wallet.run_id=receipt.run_id AND wallet.assignment_id=receipt.assignment_id
+              AND wallet.assignment_epoch=receipt.epoch AND wallet.closed=0
+              AND (wallet.host_session_id IS NULL OR wallet.host_session_id=?)
+              AND (receipt.host_session_id IS NULL OR receipt.host_session_id=?)
+              AND (receipt.host_key IS NULL OR receipt.host_key=?)
+              AND fence.assignment_id=receipt.assignment_id AND fence.epoch=receipt.epoch`,
+            )
+            .get(
+              input.commandId,
+              input.runId,
+              input.assignmentId,
+              input.epoch,
+              input.hostSessionId,
+              input.hostSessionId,
+              hostKey,
+            );
+
+          if (
+            !admitted ||
+            !input.hostSessionId ||
+            !Number.isSafeInteger(input.processGroup) ||
+            input.processGroup <= 0
+          )
+            throw new HostRuntimeEventError(
+              "command_invariant_conflict",
+              "Session process registration requires its current accepted create and open producer wallet",
+            );
+          const existing = db
+            .prepare(
+              `SELECT ${SESSION_PROCESS_COLUMNS} FROM session_process_obligations WHERE command_id=?`,
+            )
+            .get(input.commandId) as SessionProcessObligation | undefined;
+
+          if (existing) {
+            if (
+              existing.runId !== input.runId ||
+              existing.assignmentId !== input.assignmentId ||
+              existing.epoch !== input.epoch ||
+              existing.hostSessionId !== input.hostSessionId ||
+              existing.processGroup !== input.processGroup ||
+              existing.osBootIdentity !== processContext.osBootIdentity ||
+              existing.pidNamespace !== processContext.pidNamespace ||
+              existing.phase !== "registered"
+            )
+              throw new HostRuntimeEventError(
+                "command_invariant_conflict",
+                "Session process identity cannot be replaced or reactivated",
+              );
+          } else {
+            db.prepare(
+              `INSERT INTO session_process_obligations
+              (command_id,run_id,assignment_id,epoch,host_session_id,process_group,phase,registered_at,retired_at,os_boot_identity,pid_namespace)
+              VALUES (?,?,?,?,?,?,'registered',?,NULL,?,?)`,
+            ).run(
+              input.commandId,
+              input.runId,
+              input.assignmentId,
+              input.epoch,
+              input.hostSessionId,
+              input.processGroup,
+              now().toISOString(),
+              processContext.osBootIdentity,
+              processContext.pidNamespace,
+            );
+          }
+          db.exec("COMMIT");
+        } catch (error) {
+          if (db.isTransaction) db.exec("ROLLBACK");
+          throw error;
+        }
+      });
+    },
+    pendingSessionProcesses() {
+      return db
+        .prepare(
+          `SELECT ${SESSION_PROCESS_COLUMNS} FROM session_process_obligations
+        WHERE phase<>'released' ORDER BY registered_at,command_id`,
+        )
+        .all() as SessionProcessObligation[];
+    },
+    sessionProcessesForRun(runId) {
+      return db
+        .prepare(
+          `SELECT ${SESSION_PROCESS_COLUMNS} FROM session_process_obligations
+        WHERE run_id=? ORDER BY registered_at,command_id`,
+        )
+        .all(runId) as SessionProcessObligation[];
+    },
+    releaseSessionProcess(commandId, retiredAt) {
+      return storage.write(() => {
+        const existing = db
+          .prepare(
+            `SELECT ${SESSION_PROCESS_COLUMNS} FROM session_process_obligations WHERE command_id=?`,
+          )
+          .get(commandId) as SessionProcessObligation | undefined;
+
+        if (
+          !existing ||
+          existing.processGroup === null ||
+          !Number.isFinite(Date.parse(retiredAt))
+        )
+          throw new HostRuntimeEventError(
+            "command_invariant_conflict",
+            "Session process retirement requires its known registered group and explicit retirement time",
+          );
+        if (existing.phase === "released") return;
+        if (
+          existing.osBootIdentity !== processContext.osBootIdentity ||
+          existing.pidNamespace !== processContext.pidNamespace
+        )
+          throw new HostRuntimeEventError(
+            "command_invariant_conflict",
+            "A different OS boot or PID namespace cannot retire a stored numeric process group",
+          );
+        db.prepare(
+          `UPDATE session_process_obligations SET phase='released',retired_at=?
+          WHERE command_id=? AND phase='registered'`,
+        ).run(retiredAt, commandId);
+      });
+    },
+    releaseSessionProcessesFromPriorBoot() {
+      const current = readHostProcessContext();
+
+      return storage.write(() =>
+        Number(
+          db
+            .prepare(
+              `UPDATE session_process_obligations
+        SET phase='released',retired_at=?,retired_os_boot_identity=?
+        WHERE phase<>'released' AND os_boot_identity IS NOT NULL AND os_boot_identity<>?`,
+            )
+            .run(
+              now().toISOString(),
+              current.osBootIdentity,
+              current.osBootIdentity,
+            ).changes,
+        ),
+      );
     },
     getReceipt(commandId) {
       const row = db
@@ -1505,33 +1950,92 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
 
       return () => capacityListeners.delete(listener);
     },
+    recoverReleasedSessionProcess(commandId) {
+      const process = db
+        .prepare(
+          `SELECT ${SESSION_PROCESS_COLUMNS} FROM session_process_obligations
+        WHERE command_id=? AND phase='released'`,
+        )
+        .get(commandId) as SessionProcessObligation | undefined;
+
+      if (!process) return 0;
+      const rows = db
+        .prepare(
+          `SELECT command_id,run_id,kind,assignment_id,epoch,host_session_id,
+        request_digest,request_schema,request_version,host_key,accepted_sequence,received_at
+        FROM command_receipts WHERE phase='accepted' AND run_id=? AND assignment_id=? AND epoch=?
+          AND (kind='session.create' AND command_id=? OR kind='session.prompt' AND host_session_id=?)
+        ORDER BY received_at,command_id`,
+        )
+        .all(
+          process.runId,
+          process.assignmentId,
+          process.epoch,
+          commandId,
+          process.hostSessionId,
+        ) as LostReceipt[];
+
+      for (const row of rows)
+        settleLostSessionReceipt(
+          row,
+          lostWalletFor(row.command_id, row.host_session_id),
+        );
+      const wallet = db
+        .prepare(
+          `SELECT wallet_id,run_id,assignment_id,assignment_epoch,host_session_id
+        FROM runtime_event_wallets WHERE wallet_id=? AND run_id=? AND assignment_id=? AND assignment_epoch=?
+          AND closed=0 AND session_ended=0`,
+        )
+        .get(commandId, process.runId, process.assignmentId, process.epoch) as
+        LostWallet | undefined;
+
+      if (wallet) settleLostSessionWallet(wallet);
+
+      return rows.length;
+    },
     recoverAcceptedPromptReceipts() {
       let recoveredCount = 0;
 
-      type LostReceipt = {
-        command_id: string;
-        run_id: string;
-        kind: string;
-        assignment_id: string;
-        epoch: number;
-        host_session_id: string | null;
-        request_digest: string | null;
-        request_schema: string | null;
-        request_version: 1 | 2;
-        host_key: string | null;
-        accepted_sequence: string | null;
-        received_at: string;
-      };
-      type LostWallet = {
-        wallet_id: string;
-        run_id: string;
-        assignment_id: string;
-        assignment_epoch: number;
-        host_session_id: string | null;
-      };
-      const walletFor =
-        db.prepare(`SELECT wallet_id, run_id, assignment_id, assignment_epoch, host_session_id
-        FROM runtime_event_wallets WHERE closed = 0 AND (wallet_id = ? OR host_session_id = ?)`);
+      // This is an unresolved outcome update, not a fabricated terminal fact.
+      // Keep the existing safe handshake cause and all producer credits open.
+      for (const process of state.pendingSessionProcesses()) {
+        const receipt = state.getReceipt(process.commandId);
+
+        if (
+          !receipt ||
+          receipt.kind !== "session.create" ||
+          receipt.phase !== "accepted"
+        )
+          continue;
+        const prior = receipt.body as {
+          details?: { sessionCreateFailure?: unknown };
+        };
+        const body = {
+          code: "EXECUTOR_UNAVAILABLE",
+          message:
+            "Session creation still owns an unconfirmed process; reconcile its physical retirement before retrying",
+          details: {
+            reason: "session_create_exit_unconfirmed",
+            runId: process.runId,
+            ...(process.hostSessionId
+              ? { sessionId: process.hostSessionId }
+              : {}),
+            stage: "process_exit",
+            ...(prior?.details?.sessionCreateFailure
+              ? { sessionCreateFailure: prior.details.sessionCreateFailure }
+              : {}),
+          },
+        };
+
+        storage.write(() =>
+          db
+            .prepare(
+              `UPDATE command_receipts SET http_status=503,body_json=?
+          WHERE command_id=? AND phase='accepted'`,
+            )
+            .run(JSON.stringify(body), process.commandId),
+        );
+      }
 
       // Each repair commits separately so both transient memory and the SQLite
       // write transaction are bounded even for an older receipt backlog.
@@ -1544,83 +2048,19 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
             (kind = 'session.prompt' AND host_session_id IS NOT NULL) OR
             EXISTS (SELECT 1 FROM runtime_event_wallets w WHERE w.closed = 0 AND
               (w.wallet_id = command_receipts.command_id OR w.host_session_id = command_receipts.host_session_id)))
+            AND NOT EXISTS (SELECT 1 FROM session_process_obligations p
+              WHERE p.phase<>'released' AND p.run_id=command_receipts.run_id
+                AND p.assignment_id=command_receipts.assignment_id AND p.epoch=command_receipts.epoch
+                AND (p.command_id=command_receipts.command_id OR p.host_session_id=command_receipts.host_session_id))
           ORDER BY received_at ASC, command_id ASC LIMIT 100`,
           )
           .all() as LostReceipt[];
 
         if (rows.length === 0) break;
         for (const row of rows) {
-          const wallet = walletFor.get(row.command_id, row.host_session_id) as
-            LostWallet | undefined;
+          const wallet = lostWalletFor(row.command_id, row.host_session_id);
 
-          if (
-            wallet &&
-            ["session.prompt", "session.create"].includes(row.kind) &&
-            (wallet.run_id !== row.run_id ||
-              wallet.assignment_id !== row.assignment_id ||
-              wallet.assignment_epoch !== row.epoch)
-          ) {
-            throw new HostRuntimeEventError(
-              "stream_corrupt",
-              "accepted producer receipt does not match its durable wallet fence",
-            );
-          }
-          const body = {
-            code: "PRECONDITION",
-            message: "the turn for this command id was lost in a host restart",
-            details: { reason: "turn_lost", runId: row.run_id },
-          };
-          const receipt: SettledReceiptRow = {
-            commandId: row.command_id,
-            runId: row.run_id,
-            kind: row.kind,
-            assignmentId: row.assignment_id,
-            epoch: row.epoch,
-            hostSessionId:
-              row.host_session_id ?? wallet?.host_session_id ?? null,
-            requestDigest: row.request_digest,
-            requestSchema: row.request_schema,
-            requestVersion: row.request_version,
-            hostKey: row.host_key,
-            acceptedSequence: row.accepted_sequence,
-            eventId: null,
-            phase: "rejected",
-            httpStatus: 409,
-            body,
-            receivedAt: row.received_at,
-            completedAt: now().toISOString(),
-          };
-
-          state.putReceiptWithRuntimeEvent(receipt, {
-            terminal: true,
-            ...(wallet
-              ? {
-                  funding: {
-                    partition: "control" as const,
-                    walletId: wallet.wallet_id,
-                    commandId: row.command_id,
-                  },
-                }
-              : {}),
-            draft: {
-              runId: row.run_id,
-              assignmentId: wallet?.assignment_id ?? row.assignment_id,
-              assignmentEpoch: wallet?.assignment_epoch ?? row.epoch,
-              hostSessionId: receipt.hostSessionId,
-              eventType: "session.command",
-              occurredAt: now().toISOString(),
-              payload:
-                row.request_version === 2
-                  ? commandReceiptPayloadV2(receipt, state)
-                  : {
-                      commandId: row.command_id,
-                      kind: row.kind,
-                      phase: "completed",
-                      status: "failed",
-                      error: body,
-                    },
-            },
-          });
+          settleLostSessionReceipt(row, wallet);
           recoveredCount += 1;
         }
       }
@@ -1632,23 +2072,15 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         .all() as LostWallet[];
 
       for (const wallet of wallets) {
-        if (wallet.host_session_id === null) {
-          state.closeProducerWallet(wallet.wallet_id);
+        if (
+          db
+            .prepare(
+              "SELECT 1 FROM session_process_obligations WHERE command_id=? AND phase<>'released'",
+            )
+            .get(wallet.wallet_id)
+        )
           continue;
-        }
-        state.appendRuntimeEvent({
-          terminal: true,
-          funding: { partition: "control", walletId: wallet.wallet_id },
-          draft: {
-            runId: wallet.run_id,
-            assignmentId: wallet.assignment_id,
-            assignmentEpoch: wallet.assignment_epoch,
-            hostSessionId: wallet.host_session_id,
-            eventType: "session.crashed",
-            occurredAt: now().toISOString(),
-            payload: { exitCode: null, signal: null, reason: "host_restart" },
-          },
-        });
+        settleLostSessionWallet(wallet);
       }
 
       return recoveredCount;
@@ -1714,7 +2146,13 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
             )
             .get(commandId);
 
-          if (openProducer) return refuse("producer_open");
+          const pendingProcess = db
+            .prepare(
+              "SELECT 1 FROM session_process_obligations WHERE command_id=? AND phase<>'released'",
+            )
+            .get(commandId);
+
+          if (openProducer || pendingProcess) return refuse("producer_open");
 
           if (row.request_version === 2) {
             if (row.terminal_sequence === null)

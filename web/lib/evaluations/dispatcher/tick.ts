@@ -28,6 +28,8 @@ import {
 } from "@/lib/evaluations/aggregation/worker";
 import { captureEvidenceForExecution } from "@/lib/evaluations/evidence/capture";
 import { frozenExecutionParticipants } from "@/lib/evaluations/frozen-participants";
+import { reconcileControlledLaunchBatches } from "@/lib/evaluations/launch-batch";
+import { defaultLaunchRunSeam } from "@/lib/evaluations/launch-seam";
 import {
   defaultJudgeSpawn,
   launchJudgePanel,
@@ -371,10 +373,9 @@ function messageOf(err: unknown): string {
 }
 
 // Stop a reaped judge attempt's agent run so it stops burning one of the
-// MAISTER_MAX_CONCURRENT_AGENTS slots. Judge runs are workspace:none — a
-// briefly-outliving agent process cannot mutate a worktree and its facade
-// tokens are revoked, so supervisor teardown is best-effort (the tick must not
-// wedge on an unreachable supervisor); the authoritative stop is
+// MAISTER_MAX_CONCURRENT_AGENTS slots. Host teardown must be confirmed before
+// terminalization, including workspace:none. An unavailable ownership probe
+// retains the run for reconciliation; the authoritative terminal application is
 // finalizeAgentRun — the SAME terminal choke point the run-stop dispatcher
 // (workbench-lifecycle stopAgentAfterAuth) uses for agent-kind runs — which
 // flips the run terminal, bulk-revokes its `agent-run:<runId>` tokens, and
@@ -386,7 +387,7 @@ async function stopReapedJudgeRun(
   hosts: ExecutionHosts,
 ): Promise<void> {
   try {
-    const live = (await hosts.local().listSessions()).filter(
+    const live = (await hosts.local().listSessionsForRun(runId)).filter(
       (session) => session.status === "live" && session.runId === runId,
     );
 
@@ -412,8 +413,10 @@ async function stopReapedJudgeRun(
     }
     log.warn(
       { runId, err: messageOf(err) },
-      "reaped judge attempt — supervisor teardown unavailable; proceeding to finalize (workspace:none, tokens revoked)",
+      "reaped judge attempt — supervisor teardown unconfirmed; retaining the run for reconciliation",
     );
+
+    return;
   }
 
   try {
@@ -719,6 +722,10 @@ export async function runEvaluationDispatchTick(
 
   summary.timedOutAttempts = await reapTimedOutAttempts(now, d, hosts);
   summary.recovered = await recoverStaleExecutions(now, d);
+  await reconcileControlledLaunchBatches(
+    defaultLaunchRunSeam({ authorize: async () => undefined }, d),
+    d,
+  );
 
   const queued: Array<{ id: string }> = await d
     .select({ id: evaluationExecutions.id })

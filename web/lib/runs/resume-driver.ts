@@ -6,6 +6,8 @@ import { eq, and, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
+import { continueResumeSessionCreate } from "@/lib/runs/resume-session-create";
+import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import * as schemaModule from "@/lib/db/schema";
 import { closedAnswerMarker } from "@/lib/hitl-closed-answer";
@@ -346,7 +348,8 @@ export async function runResumedSession(
   opts: RunResumedSessionOptions,
 ): Promise<void> {
   const db = opts.db ?? getDb();
-  const { runId, supervisorSessionId, acpSessionId, stepId } = opts;
+  const { runId, acpSessionId, stepId } = opts;
+  let supervisorSessionId = opts.supervisorSessionId;
 
   if (
     (await hasFlowPermissionResume(db, runId)) ||
@@ -362,6 +365,26 @@ export async function runResumedSession(
     await runFlow(runId, { db, executionHosts: opts.executionHosts });
 
     return;
+  }
+  if (!supervisorSessionId) {
+    try {
+      const resumed = await continueResumeSessionCreate({
+        runId,
+        assignmentId: opts.assignmentId ?? null,
+        db,
+        executionHosts: opts.executionHosts ?? createExecutionHosts({ db }),
+      });
+
+      supervisorSessionId = resumed.sessionId;
+    } catch (error) {
+      if (!(error instanceof SessionCreatePending)) throw error;
+      log.warn(
+        { runId, commandId: error.details?.commandId },
+        "resume driver awaits original create; assignment retained",
+      );
+
+      return;
+    }
   }
   if (!supervisorSessionId)
     throw new MaisterError(

@@ -12,9 +12,15 @@ import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import type { AgentTurn, Run, ExecutionAssignment } from "@/lib/db/schema";
 import type { AgentRetryClaim } from "@/lib/agents/retry-types";
 import type { TaskQualificationLaunchSnapshot } from "@/lib/tasks/qualification-types";
+import type { OperationalProbeContext } from "./operational-diagnostics";
+import type { AcceptedTaskAgentLaunchExecution } from "@/lib/tasks/launch-agent-execution";
+import type { ConsensusDraftAdmission } from "@/lib/flows/graph/consensus/admission";
+import type { TasklessAgentFlowCarrierAdmission } from "./carrier-launch-authority";
+import type { TaskLaunchReceipt } from "@/lib/tasks/launch-types";
+import type { TaskLaunchAuditContext } from "@/lib/tasks/launch-intent";
 
 import { randomUUID } from "node:crypto";
-import { mkdir, stat } from "node:fs/promises";
+import { lstat, mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
@@ -33,6 +39,7 @@ import {
 } from "./prompt-owner";
 import { applyPersistentAgentPark, afterPersistentAgentPark } from "./park";
 import { acceptAgentMessage } from "./turns";
+import { createTasklessAgentFlowCarrier } from "./carrier-launch-authority";
 import {
   acceptAgentSteer,
   steerAnswerTurn,
@@ -45,6 +52,7 @@ import {
   parkClaimedAgentTurnForHostPressure,
   settleAgentCreateFailure,
   settleUndispatchedAgentFailure,
+  settleAgentPreparationFailure,
 } from "./create-failure";
 import {
   assertAgentResumeTurn,
@@ -70,6 +78,10 @@ import {
   operationalAgentRuntimePath,
 } from "./workspace-paths";
 
+import {
+  taskLaunchInputForRun,
+  taskLaunchClarificationsForRun,
+} from "@/lib/tasks/launch-execution-input";
 import { resolveScheduledRequestFlowRevision } from "@/lib/agents/scheduled-request-flow";
 import { loadAgentBudgetRestartRequest } from "@/lib/agents/scheduled-request-lineage";
 import { assertScheduledRequestMatches } from "@/lib/agents/scheduled-request-store";
@@ -116,6 +128,35 @@ import {
   captureOperationalBaseline,
   captureOperationalGeneration,
 } from "@/lib/agents/operational-integrity";
+import { operationalFailureDiagnostic } from "@/lib/agents/operational-diagnostics";
+import {
+  openAgentPreparation,
+  recordAgentPreparationFailure,
+  releaseAgentPreparationAfterFailure,
+} from "@/lib/agents/preparation-workspace";
+import {
+  assertAcceptedTaskAgentLaunchExecution,
+  assertTaskAgentPreparationSource,
+  taskAgentPreparationWorkspace,
+} from "@/lib/tasks/launch-agent-execution";
+import {
+  frozenTaskAgentDefinition,
+  captureTaskAgentPackage,
+  releaseTaskAgentCaptureAfterFailure,
+} from "@/lib/tasks/launch-agent-definition";
+import { commitTaskAgentLaunchFirstDispatch } from "@/lib/tasks/launch-first-dispatch";
+import {
+  assertPreparedConsensusDraftAdmission,
+  assertConsensusDraftAdmission,
+} from "@/lib/flows/graph/consensus/admission";
+import { nodeAttempts } from "@/lib/db/schema";
+import { assertPreparationCommit } from "@/lib/agents/preparation-ownership";
+import { isPreparationIdentityRefusal } from "@/lib/agents/preparation-resource";
+import {
+  executeRepositoryGit,
+  withoutGitOwnership,
+} from "@/lib/project-config-persistence/git-process";
+import { operationalWorkspace } from "@/lib/agents/operational-context";
 import {
   buildOperationalContract,
   frozenOperationalDefinition,
@@ -178,10 +219,12 @@ import { runnerCatalogEntry } from "@/lib/agents/runner-catalog";
 export { runnerCatalogEntry } from "@/lib/agents/runner-catalog";
 import { issueAgentRunToken } from "@/lib/agents/tokens";
 import { type AgentMcpServer } from "@/lib/capabilities/agent-map";
-import { materializeAdapterCapabilityHome } from "@/lib/capabilities/adapter-home";
+import {
+  materializeAdapterCapabilityHome,
+  materializeOperationalAdapterCapabilityHome,
+} from "@/lib/capabilities/adapter-home";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { getTaskClarificationProjection } from "@/lib/queries/task-clarifications";
 import {
   type AgentExecutionPolicyRecommendation,
   type DelegationSnapshot,
@@ -361,10 +404,11 @@ export type LaunchAgentRunInput = {
   // in the run-insert transaction (W8).
   resultContract?: RunResultContract | null;
   retryClaim?: AgentRetryClaim;
+  taskLaunchAudit?: TaskLaunchAuditContext;
   db?: Db;
 };
 
-export type LaunchAgentRunResult =
+export type AllocatedAgentRunResult =
   | {
       runId: string;
       status: "Running" | "Pending";
@@ -372,6 +416,10 @@ export type LaunchAgentRunResult =
       queueReason?: PoolCapFence;
     }
   | { deduped: true; triggerEventId: number };
+
+export type LaunchAgentRunResult =
+  | AllocatedAgentRunResult
+  | Readonly<{ queued: true; receipt: TaskLaunchReceipt }>;
 
 export type AgentLaunchErrorKind =
   | "not_registered"
@@ -906,7 +954,7 @@ async function convergeToTriggerWinner(
   _db: Db,
   agentId: string,
   triggerEventId: number,
-): Promise<LaunchAgentRunResult> {
+): Promise<AllocatedAgentRunResult> {
   for (let attempt = 0; attempt < 20; attempt++) {
     const winner = await _db
       .select({ id: runs.id, status: runs.status })
@@ -940,7 +988,7 @@ async function launchAgentDrivenFlowRun(
   _db: Db,
   ctx: LoadedAgentContext,
   input: LaunchAgentRunInput,
-): Promise<LaunchAgentRunResult> {
+): Promise<AllocatedAgentRunResult> {
   const flowRef = ctx.effective.parsed.flow as string;
 
   // flows.flow_ref_id IS the manifest flow id, and a package install enables its
@@ -967,22 +1015,17 @@ async function launchAgentDrivenFlowRun(
     ? await resolveScheduledRequestFlowRevision(_db, flow)
     : undefined;
   let taskId = input.taskId ?? null;
+  let carrierAdmission: TasklessAgentFlowCarrierAdmission | null = null;
 
   if (!taskId) {
-    const { createTask } = await import("@/lib/services/tasks");
-    const created = await createTask(
-      {
-        title: `${ctx.effective.parsed.name} (${input.trigger.source})`,
-        prompt: ctx.effective.parsed.prompt,
-        flowId: flow.id as string,
-        // ADR-106: carry the trigger claim so a concurrent redelivery converges
-        // to ONE auto-task (createTask dedups on (agent_id, trigger_event_id)).
-        agentId: input.agentId,
-        triggerEventId: input.trigger.eventId ?? null,
-      },
-      { projectId: input.projectId, actorUserId: null },
+    const created = await createTasklessAgentFlowCarrier(
       _db,
+      ctx,
+      input,
+      flow.id as string,
     );
+
+    carrierAdmission = created.admission;
 
     taskId = created.taskId;
 
@@ -1021,31 +1064,38 @@ async function launchAgentDrivenFlowRun(
   // Only the auto-task claim WINNER (or a task-bound launch) reaches here, so the
   // run insert never contends on (agent_id, trigger_event_id) on the live path —
   // the partial unique index stays the backstop, not a hot conflict.
-  const { launchRun } = await import("@/lib/services/runs");
-  const result = await launchRun(
-    {
-      taskId,
-      flowId: flow.id as string,
-      agentId: input.agentId,
-      agentActivity: buildAgentActivitySnapshot(input.agentId, ctx.effective),
-      // Trigger provenance carries the (agent_id, trigger_event_id) dedup claim
-      // onto the flow run so an at-least-once redelivery converges to one run.
-      triggerSource: input.trigger.source,
-      triggerEventId: input.trigger.eventId ?? null,
-      triggerPayload: input.trigger.payload ?? null,
-      scheduledRequestSnapshot: input.scheduledRequestSnapshot ?? null,
-      agentTriggerReservation: input.agentTriggerReservation
-        ? {
-            ...input.agentTriggerReservation,
-            flowRevisionId: scheduledFlowRevisionId,
-          }
-        : undefined,
-      scheduledFlowRevisionId,
-      agentScheduleId: input.agentScheduleId ?? null,
-      ...(declaredBranchBase ? { baseBranch: declaredBranchBase } : {}),
-      ...(agentPolicyOverlay ? { agentPolicyOverlay } : {}),
-    },
-    { authorize: async () => {}, actorUserId: null },
+  if (!carrierAdmission)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Task-bound Flow agent requires its canonical accepted launch intent",
+      { details: { reason: "launch_source_authority_required" } },
+    );
+  const { launchTasklessAgentCarrierRun } = await import("@/lib/services/runs");
+  const flowInput: import("@/lib/services/runs").LaunchRunInput = {
+    taskId,
+    flowId: flow.id as string,
+    agentId: input.agentId,
+    agentActivity: buildAgentActivitySnapshot(input.agentId, ctx.effective),
+    // Trigger provenance carries the (agent_id, trigger_event_id) dedup claim
+    // onto the flow run so an at-least-once redelivery converges to one run.
+    triggerSource: input.trigger.source,
+    triggerEventId: input.trigger.eventId ?? null,
+    triggerPayload: input.trigger.payload ?? null,
+    scheduledRequestSnapshot: input.scheduledRequestSnapshot ?? null,
+    agentTriggerReservation: input.agentTriggerReservation
+      ? {
+          ...input.agentTriggerReservation,
+          flowRevisionId: scheduledFlowRevisionId,
+        }
+      : undefined,
+    scheduledFlowRevisionId,
+    agentScheduleId: input.agentScheduleId ?? null,
+    ...(declaredBranchBase ? { baseBranch: declaredBranchBase } : {}),
+    ...(agentPolicyOverlay ? { agentPolicyOverlay } : {}),
+  };
+  const result = await launchTasklessAgentCarrierRun(
+    flowInput,
+    carrierAdmission,
     _db,
   );
 
@@ -1086,9 +1136,230 @@ async function adoptExistingTreeOwner(
   return existing?.runId ?? fallbackRunId;
 }
 
+export function launchAgentRun(
+  input: LaunchAgentRunInput & Readonly<{ taskId?: null | undefined }>,
+): Promise<AllocatedAgentRunResult>;
+export function launchAgentRun(
+  input: LaunchAgentRunInput,
+): Promise<LaunchAgentRunResult>;
 export async function launchAgentRun(
   input: LaunchAgentRunInput,
 ): Promise<LaunchAgentRunResult> {
+  const db = input.db ?? getDb();
+
+  if (input.taskId) {
+    const context = await loadAgentContext(db, input);
+
+    if (context.effective.parsed.kind === "code_delivery") {
+      if (input.retryClaim)
+        throw new MaisterError(
+          "PRECONDITION",
+          "Task-bound retry requires a fresh current task launch decision",
+          { details: { reason: "retry_launch_upgrade_required" } },
+        );
+      const {
+        createAgentFlowTaskLaunchSource,
+        createStandaloneAgentTaskLaunchSource,
+      } = await import("./flow-launch-authority");
+      const { serverTaskLaunchRequest, acceptServerTaskLaunch } =
+        await import("@/lib/tasks/launch-intent");
+      const { findServerTaskLaunch } =
+        await import("@/lib/tasks/launch-server-source");
+      const sourceInput = { ...input, taskId: input.taskId };
+      const source = context.effective.parsed.flow
+        ? await createAgentFlowTaskLaunchSource(db, sourceInput)
+        : await createStandaloneAgentTaskLaunchSource(db, sourceInput);
+      const key = `agent_trigger:${source.snapshot.id}`;
+      const existing = await findServerTaskLaunch(db, source.snapshot, key);
+      const receipt =
+        existing ??
+        (await acceptServerTaskLaunch(
+          db,
+          source,
+          await serverTaskLaunchRequest(db, source, {
+            taskId: input.taskId,
+            agentId: input.agentId,
+            ...(source.snapshot.agentWorkspace
+              ? { workspace: source.snapshot.agentWorkspace }
+              : {}),
+            ...(input.launchOverrideRunnerId
+              ? { runnerId: input.launchOverrideRunnerId }
+              : {}),
+            ...(input.brainContext !== undefined
+              ? { brainContext: input.brainContext }
+              : {}),
+          }),
+          key,
+          input.taskLaunchAudit,
+        ));
+
+      if (existing && input.taskLaunchAudit) {
+        const audit = input.taskLaunchAudit;
+
+        await db.transaction(async (tx: ExecutionDb) => {
+          const replay = await findServerTaskLaunch(tx, source.snapshot, key);
+
+          if (!replay)
+            throw new MaisterError(
+              "CONFLICT",
+              "Accepted agent launch changed before its replay audit",
+              { details: { reason: "launch_state_changed" } },
+            );
+          await audit.recordSuccessAudit(tx, replay);
+        });
+      }
+
+      return { queued: true, receipt };
+    }
+  }
+
+  return launchAgentRunWithAdmission(input);
+}
+
+/** Only the durable accepted execution constructor can enter this allocation seam. */
+export async function launchAcceptedTaskAgentRun(
+  execution: AcceptedTaskAgentLaunchExecution,
+  db: Db,
+): Promise<void> {
+  assertAcceptedTaskAgentLaunchExecution(execution);
+  await execution.assertCurrent(db);
+  const provenance = execution.settings.serverExecution?.execution;
+  const parentRunId =
+    execution.intent.basis.kind === "execution_child"
+      ? execution.intent.basis.parent.parentRunId
+      : (provenance?.parentRunId ?? null);
+
+  if (provenance?.parentRunId && provenance.parentRunId !== parentRunId)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Accepted agent parent differs from its admitted execution scope",
+      { details: { reason: "launch_source_changed" } },
+    );
+  const [parent] = parentRunId
+    ? await db
+        .select()
+        .from(runs)
+        .where(
+          and(
+            eq(runs.id, parentRunId),
+            eq(runs.projectId, execution.intent.projectId),
+          ),
+        )
+    : [];
+
+  if (parentRunId && !parent)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Accepted agent parent is unavailable",
+      { details: { reason: "qualification_parent_unavailable" } },
+    );
+  const rootRunId = parent ? (parent.rootRunId ?? parent.id) : null;
+
+  if (provenance?.rootRunId && provenance.rootRunId !== rootRunId)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Accepted agent root differs from its admitted execution scope",
+      { details: { reason: "launch_source_changed" } },
+    );
+  const source = provenance?.triggerSource ?? "manual";
+
+  if (!["manual", "cron", "domain_event", "webhook", "flow"].includes(source))
+    throw new MaisterError(
+      "PRECONDITION",
+      "Accepted agent trigger provenance is unsupported",
+      { details: { reason: "launch_source_snapshot_incomplete" } },
+    );
+  const result = await launchAgentRunWithAdmission({
+    agentId: execution.settings.agentId,
+    projectId: execution.intent.projectId,
+    taskId: execution.intent.taskId,
+    workspace: execution.settings.workspace,
+    launchOverrideRunnerId: execution.settings.sessions[0].runnerId,
+    runId: execution.claim.identity.runId,
+    brainContext: execution.settings.brainContext,
+    parentRunId,
+    rootRunId,
+    launchMode: provenance?.launchMode,
+    resultContract: provenance?.resultContract,
+    persistent: provenance?.persistent,
+    addressableKey: provenance?.addressableKey,
+    workspaceMode: provenance?.workspaceMode,
+    trigger: {
+      source: source as AgentTriggerSource,
+      eventId: provenance?.triggerEventId ?? null,
+      payload: provenance?.triggerPayload ?? null,
+    },
+    scheduledRequestSnapshot:
+      provenance?.scheduledRequestSnapshot ??
+      execution.settings.relaunchSource?.scheduledRequestSnapshot ??
+      null,
+    agentScheduleId: provenance?.agentScheduleId ?? null,
+    db,
+    acceptedExecution: execution,
+  });
+
+  if ("deduped" in result)
+    throw new MaisterError(
+      "CONFLICT",
+      "Accepted agent allocation did not bind its run",
+      { details: { reason: "launch_worker_fenced" } },
+    );
+}
+
+/** A consensus node lends one immutable participant turn, never authority for a new root task launch. */
+export async function launchConsensusDraftAgentRun(
+  input: LaunchAgentRunInput,
+  admission: ConsensusDraftAdmission,
+  childDispatchDb: Db,
+): Promise<AllocatedAgentRunResult> {
+  assertPreparedConsensusDraftAdmission(admission);
+  if (
+    input.trigger.source !== "flow" ||
+    input.workspace !== "repo_read" ||
+    input.persistent ||
+    input.workspaceMode === "shared" ||
+    input.retryClaim ||
+    input.agentTriggerReservation ||
+    input.resultContract
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "Consensus draft launch differs from its admitted participant",
+      { details: { reason: "consensus_child_scope_changed" } },
+    );
+  const db = input.db ?? getDb();
+
+  await assertConsensusDraftAdmission(db, admission.snapshot, {
+    projectId: input.projectId,
+    taskId: input.taskId ?? null,
+    parentRunId: input.parentRunId ?? null,
+    rootRunId: input.rootRunId ?? null,
+    agentId: input.agentId,
+    triggerPayload: input.trigger.payload ?? null,
+  });
+
+  return launchAgentRunWithAdmission({
+    ...input,
+    db,
+    consensusAdmission: admission,
+    consensusDispatchDb: childDispatchDb,
+  });
+}
+
+async function launchAgentRunWithAdmission(
+  input: LaunchAgentRunInput &
+    Readonly<{
+      acceptedExecution?: AcceptedTaskAgentLaunchExecution;
+      consensusAdmission?: ConsensusDraftAdmission;
+      consensusDispatchDb?: Db;
+    }>,
+): Promise<AllocatedAgentRunResult> {
+  const acceptedExecution = input.acceptedExecution;
+
+  if (acceptedExecution)
+    assertAcceptedTaskAgentLaunchExecution(acceptedExecution);
+  if (input.consensusAdmission)
+    assertPreparedConsensusDraftAdmission(input.consensusAdmission);
   // D9 step 2: refuse before the trigger claims a run row or a worktree.
   assertUpgradeMaintenanceAllows("run_admission");
 
@@ -1158,7 +1429,8 @@ export async function launchAgentRun(
     assertScheduledRequestMatches(originalRequest, scheduledRequestSnapshot);
   }
   const launchInput = { ...input, scheduledRequestSnapshot };
-  const currentContext = await loadAgentContext(_db, input);
+  const currentContext =
+    acceptedExecution?.runtime ?? (await loadAgentContext(_db, input));
   const retryIntent = input.retryClaim
     ? await _db.transaction((tx: ExecutionDb) =>
         assertAgentRetryClaim(tx, input.retryClaim!),
@@ -1218,15 +1490,24 @@ export async function launchAgentRun(
   // routing — an agent that declares a same-package flow drives that flow
   // (run_kind='flow', persona on every ai_coding node), not a standalone session.
   if (ctx.effective.parsed.flow) {
+    if (input.consensusAdmission)
+      throw new MaisterError(
+        "PRECONDITION",
+        "Consensus drafts require a standalone agent participant",
+        { details: { reason: "consensus_participant_changed" } },
+      );
+
     return launchAgentDrivenFlowRun(_db, ctx, launchInput);
   }
 
-  const currentResolution = await resolveRunnerForAgent(
-    _db,
-    ctx,
-    input.launchOverrideRunnerId,
-    input.workspace ?? ctx.effective.parsed.workspace,
-  );
+  const currentResolution =
+    acceptedExecution?.runtime.resolution ??
+    (await resolveRunnerForAgent(
+      _db,
+      ctx,
+      input.launchOverrideRunnerId,
+      input.workspace ?? ctx.effective.parsed.workspace,
+    ));
 
   const resolution: RunnerResolution = retryIntent
     ? {
@@ -1236,13 +1517,64 @@ export async function launchAgentRun(
         runnerSnapshot: retryIntent.recipe.runner,
       }
     : currentResolution;
+
+  if (
+    input.consensusAdmission &&
+    (ctx.effective.parsed.flow ||
+      resolution.runnerId !== input.consensusAdmission.snapshot.parent.runnerId)
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "Consensus participant runner or target changed",
+      { details: { reason: "consensus_participant_changed" } },
+    );
+  const consensusAdmission = input.consensusAdmission;
   const taskAdmission =
-    input.taskId && ctx.effective.parsed.kind !== "operational"
+    acceptedExecution?.admission ??
+    (consensusAdmission
+      ? {
+          snapshot: consensusAdmission.snapshot,
+          apply: async (tx: Db) => {
+            await tx
+              .select({ id: runs.id })
+              .from(runs)
+              .where(
+                eq(runs.id, consensusAdmission.snapshot.parent.parentRunId),
+              )
+              .for("update");
+            await tx
+              .select({ id: nodeAttempts.id })
+              .from(nodeAttempts)
+              .where(
+                eq(
+                  nodeAttempts.id,
+                  consensusAdmission.snapshot.parent.nodeAttemptId,
+                ),
+              )
+              .for("update");
+            await assertConsensusDraftAdmission(
+              tx,
+              consensusAdmission.snapshot,
+              {
+                projectId: input.projectId,
+                taskId: input.taskId ?? null,
+                parentRunId: input.parentRunId ?? null,
+                rootRunId: input.rootRunId ?? null,
+                agentId: input.agentId,
+                triggerPayload: input.trigger.payload ?? null,
+              },
+            );
+
+            return consensusAdmission.snapshot;
+          },
+        }
+      : null) ??
+    (input.taskId && ctx.effective.parsed.kind !== "operational"
       ? await prepareTaskDeliveryAdmission(_db, {
           projectId: input.projectId,
           taskId: input.taskId,
         })
-      : null;
+      : null);
   let taskQualificationSnapshot: TaskQualificationLaunchSnapshot | null = null;
 
   if (ctx.effective.parsed.taskQualification) {
@@ -1277,6 +1609,8 @@ export async function launchAgentRun(
         taskId: input.taskId,
         target: qualificationInput.target,
         sha: frozenSha ?? currentSha,
+        inputRevision: qualificationInput.inputRevision,
+        inputDigest: qualificationInput.inputDigest,
       };
     } else
       taskQualificationSnapshot = {
@@ -1417,6 +1751,7 @@ export async function launchAgentRun(
   // Hold the shared worktree directory's mutex through provenance, row commit
   // and failure compensation. Keep its files outside the project checkout;
   // Git still runs before the PostgreSQL transaction.
+  let initialAssignmentId: string | null = null;
   const allocateAndPersist = async (): Promise<boolean> => {
     let worktreePath: string | null = null;
     let branch: string | null = null;
@@ -1448,7 +1783,7 @@ export async function launchAgentRun(
 
       resolvedBranchBase = declaredBranchBase ?? ctx.project.mainBranch;
 
-      if (declaredBranchBase) {
+      if (declaredBranchBase && !acceptedExecution) {
         const knownBranches = new Set(await listBranches(ctx.project.repoPath));
 
         if (!knownBranches.has(declaredBranchBase)) {
@@ -1459,7 +1794,20 @@ export async function launchAgentRun(
         }
       }
 
-      if (isShared) {
+      if (acceptedExecution && !isShared) {
+        const identity = acceptedExecution.claim.identity;
+
+        if (!identity.branch || !acceptedExecution.settings.baseCommit)
+          throw new MaisterError(
+            "PRECONDITION",
+            "Accepted agent checkout identity is incomplete",
+            { details: { reason: "launch_agent_snapshot_incomplete" } },
+          );
+        branch = identity.branch;
+        worktreePath = identity.worktreePath;
+        baseCommit = acceptedExecution.settings.baseCommit;
+        resolvedBranchBase = acceptedExecution.settings.baseBranch;
+      } else if (isShared) {
         const rootRunId = input.rootRunId as string;
         let provenanceRunId: string = runId;
 
@@ -1479,6 +1827,26 @@ export async function launchAgentRun(
           // own no row.
           reuseSharedTree = true;
           provenanceRunId = treeRow.runId;
+          if (acceptedExecution) {
+            const [sharedWorkspace] = await _db
+              .select()
+              .from(workspaces)
+              .where(eq(workspaces.id, treeRow.id));
+
+            if (
+              !sharedWorkspace ||
+              sharedWorkspace.baseCommit !==
+                acceptedExecution.settings.agentSnapshot?.sharedRoot?.baseCommit
+            )
+              throw new MaisterError(
+                "PRECONDITION",
+                "Shared agent checkout seed differs from its accepted root",
+                { details: { reason: "launch_workspace_changed" } },
+              );
+            baseCommit = sharedWorkspace.baseCommit;
+            branch = sharedWorkspace.branch;
+            resolvedBranchBase = sharedWorkspace.targetBranch;
+          }
         } else {
           // No row ⇒ THIS child owns the tree's row. Branch on whether the dir is
           // already present.
@@ -1500,17 +1868,20 @@ export async function launchAgentRun(
             );
           } else {
             // ALLOCATOR: create the worktree.
-            baseCommit = await resolveBaseCommit({
-              projectRepoPath: ctx.project.repoPath,
-              baseRef: resolvedBranchBase,
-            });
+            baseCommit =
+              acceptedExecution?.settings.agentSnapshot?.sharedRoot
+                ?.baseCommit ??
+              (await resolveBaseCommit({
+                projectRepoPath: ctx.project.repoPath,
+                baseRef: resolvedBranchBase,
+              }));
 
             try {
               await addWorktree({
                 projectRepoPath: ctx.project.repoPath,
                 worktreePath,
                 branch,
-                startPoint: resolvedBranchBase,
+                startPoint: acceptedExecution ? baseCommit : resolvedBranchBase,
                 provenance: {
                   version: 2,
                   runId,
@@ -1635,13 +2006,16 @@ export async function launchAgentRun(
     // recommendation never declares, so a project token ceiling actually binds an
     // agent run.
     const executionPolicy =
-      retryIntent?.recipe.policy ?? resolveAgentContextExecutionPolicy(ctx);
+      acceptedExecution?.settings.executionPolicy ??
+      retryIntent?.recipe.policy ??
+      resolveAgentContextExecutionPolicy(ctx);
 
     // ADR-111 (D5): resolve the effective agent config ONCE here and snapshot it
     // onto the run row. buildAgentPrompt reads THIS snapshot at spawn — never
     // re-resolving from the (mutable) definition/link. null when the agent
     // declares no config (the column stays null).
     const resolvedConfig =
+      acceptedExecution?.configuration ??
       retryIntent?.recipe.configuration ??
       resolveAgentConfig(
         ctx.effective.parsed.config,
@@ -1704,6 +2078,22 @@ export async function launchAgentRun(
       agentWorkspace: workspace,
       taskId: input.taskId ?? null,
       taskAdmissionSnapshot: taskAdmission?.snapshot ?? null,
+      taskLaunchIntentId: acceptedExecution?.intent.id ?? null,
+      ...(acceptedExecution
+        ? { deliveryPolicySnapshot: acceptedExecution.settings.deliveryPolicy }
+        : {}),
+      ...(acceptedExecution
+        ? {
+            promotionHold: acceptedExecution.settings.autoPromote
+              ? null
+              : {
+                  source: "launch" as const,
+                  reason:
+                    "Automatic promotion was disabled for this accepted launch",
+                  createdAt: new Date().toISOString(),
+                },
+          }
+        : {}),
       taskQualificationSnapshot,
       projectId: input.projectId,
       flowId: null,
@@ -1755,6 +2145,7 @@ export async function launchAgentRun(
 
     try {
       const inserted = await _db.transaction(async (tx: Db) => {
+        if (acceptedExecution) await acceptedExecution.beginBinding(tx);
         if (input.retryClaim) await assertAgentRetryClaim(tx, input.retryClaim);
         if (taskQualificationSnapshot?.role === "qualifier" && input.taskId) {
           await tx
@@ -1785,7 +2176,12 @@ export async function launchAgentRun(
         // — because all of them arrive through this single insert. No-op for a
         // top-level run (no parentRunId).
         if (input.parentRunId) {
-          await admitDelegatedChild(tx, { parentRunId: input.parentRunId });
+          await admitDelegatedChild(tx, {
+            parentRunId: input.parentRunId,
+            ...(acceptedExecution
+              ? { launchIntentId: acceptedExecution.intent.id }
+              : {}),
+          });
         }
 
         // Claim-first: the INSERT itself is the at-least-once dedup claim. The
@@ -1820,11 +2216,13 @@ export async function launchAgentRun(
         });
         // ADR-166 D3: every new run is placed on the local host at launch (epoch
         // 1, `launch`); the driver binds to this assignment when it spawns.
-        await mintPlacement(tx as unknown as ExecutionDb, {
+        const placement = await mintPlacement(tx as unknown as ExecutionDb, {
           runId,
           reason: "launch",
           host: placementHost,
         });
+
+        initialAssignmentId = placement.id;
 
         // A reused shared tree already has a workspaces row owned by its allocator
         // (worktree_path is UNIQUE), so a reusing sibling inserts none. F3
@@ -1849,7 +2247,11 @@ export async function launchAgentRun(
               parentRepoPath: ctx.project.repoPath,
               baseBranch: resolvedBranchBase,
               baseCommit,
-              targetBranch: resolvedBranchBase,
+              targetBranch:
+                acceptedExecution?.settings.targetBranch ?? resolvedBranchBase,
+              ...(acceptedExecution
+                ? { promotionMode: acceptedExecution.settings.promotionMode }
+                : {}),
             })
             .onConflictDoNothing({ target: workspaces.worktreePath });
         }
@@ -1862,6 +2264,7 @@ export async function launchAgentRun(
             supersedingRunId: runId,
           });
         }
+        if (acceptedExecution) await acceptedExecution.bindRun(tx);
 
         return true;
       });
@@ -1869,7 +2272,12 @@ export async function launchAgentRun(
       if (!inserted) {
         // Only tear down a worktree THIS launch created — never a shared tree a
         // sibling owns, nor an orphan dir we merely claimed (F3).
-        if (worktreePath && allocatedWorktree && !input.retryClaim) {
+        if (
+          worktreePath &&
+          allocatedWorktree &&
+          !input.retryClaim &&
+          !acceptedExecution
+        ) {
           await removeWorktree({
             projectRepoPath: ctx.project.repoPath,
             worktreePath,
@@ -1879,7 +2287,22 @@ export async function launchAgentRun(
         return false;
       }
     } catch (err) {
-      if (worktreePath && allocatedWorktree && !input.retryClaim) {
+      if (acceptedExecution)
+        log.error(
+          {
+            runId,
+            intentId: acceptedExecution.intent.id,
+            stage: "agent_run_binding",
+            ...queryErrorDiagnostics(err),
+          },
+          "accepted agent run binding failed",
+        );
+      if (
+        worktreePath &&
+        allocatedWorktree &&
+        !input.retryClaim &&
+        !acceptedExecution
+      ) {
         await removeWorktree({
           projectRepoPath: ctx.project.repoPath,
           worktreePath,
@@ -1921,6 +2344,8 @@ export async function launchAgentRun(
     };
   }
 
+  if (acceptedExecution) return { runId, status: "Pending" };
+
   let startResult: Awaited<ReturnType<typeof tryStartRun>>;
 
   try {
@@ -1943,6 +2368,7 @@ export async function launchAgentRun(
       _db,
       runId,
       "agent_workspace_prepare_failed",
+      { expectedAssignmentId: initialAssignmentId },
     );
     throw error;
   }
@@ -1963,7 +2389,9 @@ export async function launchAgentRun(
 
   if (startResult.started) {
     queueMicrotask(() => {
-      void startAgentSession(runId, { db: _db }).catch((err: unknown) => {
+      void startAgentSession(runId, {
+        db: input.consensusDispatchDb ?? _db,
+      }).catch((err: unknown) => {
         log.error(
           { runId, err: err instanceof Error ? err.message : String(err) },
           "startAgentSession dispatch threw",
@@ -2169,13 +2597,27 @@ async function taskContextBlock(
     .from(tasks)
     .innerJoin(projects, eq(projects.id, tasks.projectId))
     .where(eq(tasks.id, run.taskId));
-  const task = rows[0];
+  const currentTask = rows[0];
 
-  if (!task) return "";
-
-  const clarificationContext = await getTaskClarificationProjection(
+  if (!currentTask) return "";
+  const inputRun = {
+    id: run.id,
+    taskId: run.taskId,
+    projectId: run.projectId,
+    taskLaunchIntentId: run.taskLaunchIntentId ?? null,
+  };
+  const frozenInput = await taskLaunchInputForRun(_db, inputRun);
+  const task = frozenInput
+    ? {
+        ...currentTask,
+        number: frozenInput.number,
+        title: frozenInput.title,
+        prompt: frozenInput.prompt,
+      }
+    : currentTask;
+  const clarificationContext = await taskLaunchClarificationsForRun(
     _db,
-    run.taskId,
+    inputRun,
     task.prompt,
   );
 
@@ -2602,6 +3044,8 @@ async function startConsensusRunnerDraftSession(args: {
         prompt: consensusDraftPromptBlock(args.payload),
       }),
     );
+
+    await assertTaskAdmissionForDispatch(args.db, runId);
     const session = await execution.client.createOwnedSession(
       { variant: "agent", turnId: turn.id, promptOrdinal: turn.ordinal },
       async () => ({
@@ -2666,6 +3110,7 @@ async function startConsensusRunnerDraftSession(args: {
     await finalizeAgentRun(runId, "Failed", {
       db: args.db,
       reason: "consensus_draft_spawn_failed",
+      expectedAssignmentId: args.assignmentId,
     });
   }
 }
@@ -3364,12 +3809,40 @@ export async function startAgentSession(
 ): Promise<void> {
   const db = opts.db ?? getDb();
   const executionHosts = opts.executionHosts ?? createExecutionHosts({ db });
+  const [source] = await db
+    .select({ assignmentId: runs.executionAssignmentId })
+    .from(runs)
+    .where(eq(runs.id, runId));
+  const expectedAssignmentId =
+    opts.assignmentId === undefined
+      ? (source?.assignmentId ?? null)
+      : opts.assignmentId;
 
   try {
-    await driveAgentSession(runId, { ...opts, db, executionHosts });
+    await driveAgentSession(runId, {
+      ...opts,
+      assignmentId: expectedAssignmentId,
+      db,
+      executionHosts,
+    });
   } catch (err) {
+    if (isPreparationIdentityRefusal(err)) {
+      log.error(
+        { runId, reason: "operational_preparation_identity_changed" },
+        "[FIX:preparation-identity] preserve the historical workspace and start a fresh attempt after diagnosis",
+      );
+      throw err;
+    }
     if (err instanceof AgentPromptQuarantined) {
       await endQuarantinedAgentRun(db, executionHosts, err.commandId);
+
+      return;
+    }
+    if (isMaisterError(err) && err.details?.reason === "operation_busy") {
+      log.info(
+        { runId, reason: "operation_busy" },
+        "agent-preparation-deferred",
+      );
 
       return;
     }
@@ -3382,7 +3855,9 @@ export async function startAgentSession(
     )
       throw err;
     if (
-      await settleUndispatchedAgentFailure(db, runId, "agent_dispatch_failed")
+      await settleUndispatchedAgentFailure(db, runId, "agent_dispatch_failed", {
+        expectedAssignmentId,
+      })
     )
       return;
     throw err;
@@ -3471,15 +3946,24 @@ async function driveAgentSession(
   }
 
   const assignmentId =
-    opts.assignmentId ??
-    (baseRun.executionAssignmentId as string | null) ??
-    null;
+    opts.assignmentId === undefined
+      ? (baseRun.executionAssignmentId ?? null)
+      : opts.assignmentId;
+
+  if (assignmentId !== baseRun.executionAssignmentId)
+    throw new MaisterError(
+      "CONFLICT",
+      "The agent driver assignment was superseded",
+      {
+        details: { reason: "assignment_fenced", runId, assignmentId },
+      },
+    );
 
   // M42 (ADR-114): runner snapshot + resume handle come from the run's ACTIVE
   // session (run_sessions), not the dropped runs columns. Merge once so every
   // downstream `run.*` read (incl. the consensus-draft child) sees live values.
   const activeSession = await loadActiveRunSession(_db, runId);
-  const run = {
+  let run = {
     ...baseRun,
     acpSessionId: activeSession?.acpSessionId ?? null,
     runnerSnapshot: activeSession?.runnerSnapshot ?? null,
@@ -3727,6 +4211,7 @@ async function driveAgentSession(
   if (!project) {
     await finalizeAgentRun(runId, "Failed", {
       db: _db,
+      expectedAssignmentId: assignmentId,
       reason: "project row vanished before spawn",
     });
 
@@ -3753,6 +4238,7 @@ async function driveAgentSession(
 
     await finalizeAgentRun(runId, "Failed", {
       db: _db,
+      expectedAssignmentId: assignmentId,
       reason:
         "agent run has no catalog agent and is not a valid consensus runner draft",
     });
@@ -3769,6 +4255,7 @@ async function driveAgentSession(
   if (!agent) {
     await finalizeAgentRun(runId, "Failed", {
       db: _db,
+      expectedAssignmentId: assignmentId,
       reason: "agent row vanished before spawn",
     });
 
@@ -3785,6 +4272,7 @@ async function driveAgentSession(
       throw error;
     await finalizeAgentRun(runId, "Failed", {
       db: _db,
+      expectedAssignmentId: assignmentId,
       reason: "qualification_stale",
     });
 
@@ -3798,6 +4286,7 @@ async function driveAgentSession(
   try {
     effective =
       (run.retryOfRunId ? await frozenRetryDefinition(_db, run.id) : null) ??
+      (await frozenTaskAgentDefinition(_db, run)) ??
       frozenOperationalDefinition(run) ??
       (await resolveEffectiveAgentDefinition(
         { agentId: run.agentId as string, projectId: run.projectId as string },
@@ -3810,6 +4299,7 @@ async function driveAgentSession(
     );
     await finalizeAgentRun(runId, "Failed", {
       db: _db,
+      expectedAssignmentId: assignmentId,
       reason: "effective_definition_unresolved",
     });
 
@@ -3823,539 +4313,920 @@ async function driveAgentSession(
   // predate agent_workspace.
   const workspace = (run.agentWorkspace ?? effective.parsed.workspace) as
     "none" | "repo_read" | "worktree";
-  let cwd: string;
 
-  if (workspace === "repo_read" && effective.parsed.workspaceRef) {
-    // ADR-090 rework: ephemeral detached checkout at the trigger-derived ref
-    // — the user's checkout is never switched; removed at the terminal choke.
-    cwd = agentReadOnlyWorkdirPath(project.slug, runId);
+  if (
+    (run.agentKind === "operational" || run.taskLaunchIntentId) &&
+    !assignmentId
+  )
+    throw new MaisterError(
+      "CONFLICT",
+      "Operational preparation requires a current assignment",
+      { details: { reason: "assignment_fenced", runId } },
+    );
+  let preparation: Awaited<ReturnType<typeof openAgentPreparation>> | null =
+    null;
+  let preparationCommit: string | null = null;
+  const packageCapture: {
+    current: Awaited<ReturnType<typeof captureTaskAgentPackage>> | null;
+  } = { current: null };
+  let preparationWorkspace: Awaited<
+    ReturnType<typeof taskAgentPreparationWorkspace>
+  > | null = null;
+  let operationalSpawnStage = "workspace_acquisition";
+  let preparationContext: OperationalProbeContext = {
+    runId,
+    ...(assignmentId ? { assignmentId } : {}),
+  };
 
-    try {
-      if (!(
-        run.agentKind === "operational" && run.operationalIntegrityBaseline
-      )) {
-        const committish = await resolveWorkspaceRefCommittish(_db, {
-          agentId: run.agentId as string,
-          workspaceRef: effective.parsed.workspaceRef,
-          taskQualificationSnapshot: run.taskQualificationSnapshot,
-          repoPath: project.repoPath as string,
-          trigger: {
-            source: run.triggerSource as AgentTriggerSource,
-            eventId: run.triggerEventId as number | bigint | null,
-            payload: run.triggerPayload as Record<string, unknown> | null,
+  try {
+    if (
+      (run.agentKind === "operational" || run.taskLaunchIntentId) &&
+      assignmentId
+    ) {
+      const [assignment] = await _db
+        .select({ epoch: executionAssignments.epoch })
+        .from(executionAssignments)
+        .where(eq(executionAssignments.id, assignmentId));
+
+      preparationContext = {
+        ...preparationContext,
+        ...(assignment ? { assignmentEpoch: assignment.epoch } : {}),
+      };
+      preparationWorkspace = run.taskLaunchIntentId
+        ? await taskAgentPreparationWorkspace(_db, run)
+        : await operationalWorkspace(_db, run);
+      preparation = await openAgentPreparation(_db, {
+        runId,
+        assignmentId,
+        ...preparationWorkspace,
+      });
+      run = { ...run, ...preparation.run };
+      preparationCommit = preparation.operation.resolvedCommit;
+      preparationContext = {
+        ...preparationContext,
+        assignmentEpoch: preparation.operation.assignmentEpoch,
+        preparationId: preparation.operation.id,
+      };
+    }
+    operationalSpawnStage = "checkout";
+    await (preparation
+      ? preparation.runEffect(prepareAndDispatch)
+      : prepareAndDispatch());
+  } catch (originalError) {
+    const error = packageCapture.current
+      ? await releaseTaskAgentCaptureAfterFailure(
+          packageCapture.current,
+          originalError,
+          { ...preparationContext, stage: operationalSpawnStage },
+        )
+      : originalError;
+
+    packageCapture.current = null;
+    if (
+      (run.agentKind !== "operational" && !run.taskLaunchIntentId) ||
+      isFencedError(error) ||
+      isPreparationIdentityRefusal(error) ||
+      (isMaisterError(error) && error.details?.reason === "operation_busy")
+    ) {
+      await releaseAgentPreparationAfterFailure(preparation, error, {
+        ...preparationContext,
+        stage: operationalSpawnStage,
+      });
+      throw error;
+    }
+    if (preparation && !preparation.isHeld()) throw error;
+    const infrastructureFailure = operationalFailureDiagnostic(error, {
+      ...preparationContext,
+      stage: operationalSpawnStage,
+    });
+
+    await recordAgentPreparationFailure(preparation, error, {
+      ...preparationContext,
+      stage: operationalSpawnStage,
+    });
+    const ownedPreparation = preparation;
+    const settled = await withoutGitOwnership(() =>
+      ownedPreparation
+        ? settleAgentPreparationFailure(_db, runId, ownedPreparation, error, {
+            ...preparationContext,
+            stage: operationalSpawnStage,
+          })
+        : settleUndispatchedAgentFailure(
+            _db,
+            runId,
+            "agent_workspace_prepare_failed",
+            {
+              ...(assignmentId ? { expectedAssignmentId: assignmentId } : {}),
+              causeReason:
+                isMaisterError(error) &&
+                typeof error.details?.reason === "string"
+                  ? error.details.reason
+                  : "operational_preparation_failed",
+              infrastructureFailure,
+            },
+          ),
+    );
+
+    if (!settled) throw error;
+  } finally {
+    await packageCapture.current?.release();
+    await preparation?.release();
+  }
+
+  async function prepareAndDispatch(): Promise<void> {
+    if (run.taskLaunchIntentId) {
+      packageCapture.current = await captureTaskAgentPackage(_db, run);
+      effective = packageCapture.current.definition;
+    }
+    let cwd: string;
+
+    if (workspace === "repo_read" && effective.parsed.workspaceRef) {
+      // ADR-090 rework: ephemeral detached checkout at the trigger-derived ref
+      // — the user's checkout is never switched; removed at the terminal choke.
+      cwd =
+        preparationWorkspace?.cwd ??
+        agentReadOnlyWorkdirPath(project.slug, runId);
+
+      try {
+        if (!(
+          (run.agentKind === "operational" || run.taskLaunchIntentId) &&
+          run.operationalIntegrityBaseline
+        )) {
+          const committish =
+            preparation?.operation.resolvedCommit ??
+            (await resolveWorkspaceRefCommittish(_db, {
+              agentId: run.agentId as string,
+              workspaceRef: effective.parsed.workspaceRef,
+              taskQualificationSnapshot: run.taskQualificationSnapshot,
+              repoPath: project.repoPath as string,
+              trigger: {
+                source: run.triggerSource as AgentTriggerSource,
+                eventId: run.triggerEventId as number | bigint | null,
+                payload: run.triggerPayload as Record<string, unknown> | null,
+              },
+            }));
+
+          if (preparation) {
+            preparationCommit = committish;
+            let existing = false;
+
+            try {
+              await lstat(cwd);
+              existing = true;
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+                throw error;
+            }
+            if (existing && !preparation.previous?.resolvedCommit)
+              throw new MaisterError(
+                "PRECONDITION",
+                "Preserve the unowned checkout and inspect its preparation history before retrying",
+                {
+                  details: {
+                    reason: "operational_preparation_inventory_required",
+                  },
+                },
+              );
+            if (existing) {
+              const options = {
+                timeout: 30_000,
+                maxBuffer: 1024 * 1024,
+                env: { ...process.env, LC_ALL: "C", GIT_OPTIONAL_LOCKS: "0" },
+              };
+              const head = await executeRepositoryGit(
+                cwd,
+                ["rev-parse", "--verify", "HEAD"],
+                options,
+              );
+              const status = await executeRepositoryGit(
+                cwd,
+                [
+                  "status",
+                  "--porcelain=v1",
+                  "--untracked-files=all",
+                  "--ignored",
+                ],
+                options,
+              );
+
+              if (head.stdout.trim() !== committish || status.stdout.length > 0)
+                throw new MaisterError(
+                  "PRECONDITION",
+                  "Preserve the checkout; its pristine preparation identity cannot be verified",
+                  {
+                    details: {
+                      reason: "operational_preparation_inventory_required",
+                    },
+                  },
+                );
+            }
+            await preparation.advance({
+              phase: "claimed",
+              resolvedCommit: committish,
+            });
+            if (!existing)
+              await addDetachedWorktree({
+                projectRepoPath: project.repoPath,
+                worktreePath: cwd,
+                committish,
+              });
+            await preparation.advance({
+              phase: "checkout_ready",
+              resolvedCommit: committish,
+            });
+          } else {
+            await removeWorktree({
+              projectRepoPath: project.repoPath as string,
+              worktreePath: cwd,
+              force: true,
+            });
+            await addDetachedWorktree({
+              projectRepoPath: project.repoPath as string,
+              worktreePath: cwd,
+              committish,
+            });
+          }
+        }
+      } catch (err) {
+        if (preparation) throw err;
+        log.error(
+          { runId, err: err instanceof Error ? err.message : String(err) },
+          "agent read-only checkout failed",
+        );
+        await finalizeAgentRun(runId, "Failed", {
+          db: _db,
+          expectedAssignmentId: assignmentId,
+          reason: "repo_read_checkout_failed",
+        });
+
+        return;
+      }
+    } else if (workspace === "repo_read") {
+      cwd = preparationWorkspace?.cwd ?? project.repoPath;
+    } else if (workspace === "worktree") {
+      // M37 Phase 10 (ADR-099): a shared-mode child resolves the tree from its
+      // root_run_id (a reusing sibling has NO workspaces row of its own — the
+      // allocator owns it under the UNIQUE worktree_path), so the shared path is
+      // computed deterministically rather than read back.
+      if (run.workspaceMode === "shared" && run.rootRunId) {
+        cwd =
+          preparationWorkspace?.cwd ??
+          sharedAgentWorktreePath(project.slug, run.rootRunId as string);
+      } else {
+        const wsRows = await _db
+          .select({ worktreePath: workspaces.worktreePath })
+          .from(workspaces)
+          .where(eq(workspaces.runId, runId));
+
+        cwd =
+          preparationWorkspace?.cwd ??
+          wsRows[0]?.worktreePath ??
+          agentWorkdirPath(project.slug, runId);
+      }
+    } else {
+      cwd = preparationWorkspace?.cwd ?? agentWorkdirPath(project.slug, runId);
+      await mkdir(cwd, { recursive: true });
+    }
+
+    if (run.taskLaunchIntentId && workspace === "worktree") {
+      const sharedOwner =
+        run.workspaceMode === "shared" && run.rootRunId
+          ? await findSharedTreeWorkspace(_db, run.rootRunId)
+          : null;
+      const [ownedWorkspace] = await _db
+        .select()
+        .from(workspaces)
+        .where(
+          sharedOwner
+            ? eq(workspaces.id, sharedOwner.id)
+            : eq(workspaces.runId, runId),
+        );
+
+      if (
+        !ownedWorkspace ||
+        ownedWorkspace.removedAt ||
+        !ownedWorkspace.baseCommit ||
+        ownedWorkspace.worktreePath !== cwd
+      )
+        throw new MaisterError(
+          "PRECONDITION",
+          "Accepted agent workspace identity is incomplete",
+          { details: { reason: "launch_workspace_changed" } },
+        );
+      const existing = (
+        await listWorktrees(ownedWorkspace.parentRepoPath)
+      ).find((tree) => tree.path === cwd);
+
+      if (!existing && run.workspaceMode === "shared")
+        throw new MaisterError(
+          "PRECONDITION",
+          "Preserve the missing shared agent checkout for root-owner recovery",
+          { details: { reason: "launch_workspace_changed" } },
+        );
+      if (!existing) {
+        await preparation?.advance({
+          phase: "claimed",
+          resolvedCommit: ownedWorkspace.baseCommit,
+        });
+        await addWorktree({
+          projectRepoPath: ownedWorkspace.parentRepoPath,
+          worktreePath: cwd,
+          branch: ownedWorkspace.branch,
+          startPoint: ownedWorkspace.baseCommit,
+          provenance: {
+            version: 2,
+            runId,
+            parentRepoPath: ownedWorkspace.parentRepoPath,
+            projectId: project.id,
+            branch: ownedWorkspace.branch,
+            workspaceKind: "agent",
+            createdAt: new Date().toISOString(),
           },
         });
-
-        // A leftover from a crashed prior spawn of the SAME run is stale —
-        // recreate at the freshly resolved ref (removeWorktree no-ops when
-        // missing).
-        await removeWorktree({
-          projectRepoPath: project.repoPath as string,
-          worktreePath: cwd,
-          force: true,
-        });
-        await addDetachedWorktree({
-          projectRepoPath: project.repoPath as string,
-          worktreePath: cwd,
-          committish,
-        });
       }
-    } catch (err) {
-      log.error(
-        { runId, err: err instanceof Error ? err.message : String(err) },
-        "agent read-only checkout failed",
-      );
+      await ensureWorktreeProvenance({
+        worktreePath: cwd,
+        metadata: { runId: sharedOwner?.runId ?? runId },
+      });
+      if (
+        run.workspaceMode !== "shared" &&
+        !run.operationalIntegrityBaseline &&
+        ((await resolveBaseCommit({
+          projectRepoPath: cwd,
+          baseRef: "HEAD",
+        })) !== ownedWorkspace.baseCommit ||
+          (await statusPorcelain({ worktreePath: cwd })).trim())
+      )
+        throw new MaisterError(
+          "PRECONDITION",
+          "Preserve the accepted agent checkout; its pristine identity changed",
+          { details: { reason: "launch_workspace_changed" } },
+        );
+      const currentCommit = sharedOwner
+        ? await resolveBaseCommit({ projectRepoPath: cwd, baseRef: "HEAD" })
+        : ownedWorkspace.baseCommit;
+
+      await preparation?.advance({
+        phase: "checkout_ready",
+        resolvedCommit: currentCommit,
+      });
+      preparationCommit = currentCommit;
+    }
+
+    const snapshot = run.runnerSnapshot;
+
+    if (!snapshot) {
       await finalizeAgentRun(runId, "Failed", {
         db: _db,
-        reason: "repo_read_checkout_failed",
+        expectedAssignmentId: assignmentId,
+        reason: "run has no runner snapshot",
       });
 
       return;
     }
-  } else if (workspace === "repo_read") {
-    cwd = project.repoPath;
-  } else if (workspace === "worktree") {
-    // M37 Phase 10 (ADR-099): a shared-mode child resolves the tree from its
-    // root_run_id (a reusing sibling has NO workspaces row of its own — the
-    // allocator owns it under the UNIQUE worktree_path), so the shared path is
-    // computed deterministically rather than read back.
-    if (run.workspaceMode === "shared" && run.rootRunId) {
-      cwd = sharedAgentWorktreePath(project.slug, run.rootRunId as string);
-    } else {
-      const wsRows = await _db
-        .select({ worktreePath: workspaces.worktreePath })
-        .from(workspaces)
-        .where(eq(workspaces.runId, runId));
 
-      cwd = wsRows[0]?.worktreePath ?? agentWorkdirPath(project.slug, runId);
-    }
-  } else {
-    cwd = agentWorkdirPath(project.slug, runId);
-    await mkdir(cwd, { recursive: true });
-  }
+    operationalSpawnStage = "baseline";
 
-  const snapshot = run.runnerSnapshot;
+    try {
+      let integrityBaseline: OperationalIntegrityBaseline | null =
+        run.operationalIntegrityBaseline ?? null;
 
-  if (!snapshot) {
-    await finalizeAgentRun(runId, "Failed", {
-      db: _db,
-      reason: "run has no runner snapshot",
-    });
+      const prepareAttachedContextMounts = async (): Promise<
+        ContextMountSnapshot[]
+      > => {
+        // ADR-157 (T30): read-only sibling-repo mounts for a platform-agent run. The
+        // declaration is the PROJECT ATTACHMENT's `context_repos` — the definition's
+        // `recommended` bindings are prefill for the attach dialog only and can never
+        // name a real project by themselves (package slugs are not portable).
+        // D11: no launching user exists here, so consent was the attach-time admin
+        // action (`authorizeContextRepos` on the attach route) — not re-checked.
+        // FLAT single-table read (V14): a multi-table select mis-maps same-named
+        // columns in the app runtime.
+        const contextRepoLinks = await _db
+          .select({ contextRepos: agentProjectLinks.contextRepos })
+          .from(agentProjectLinks)
+          .where(
+            and(
+              eq(agentProjectLinks.agentId, agent.id),
+              eq(agentProjectLinks.projectId, project.id),
+            ),
+          );
 
-    return;
-  }
+        const prepare =
+          run.agentKind === "operational"
+            ? prepareOperationalContextMounts
+            : prepareContextMounts;
 
-  let operationalSpawnStage = "baseline";
+        return prepare({
+          db: _db,
+          runId,
+          consumingProjectSlug: project.slug as string,
+          decls: contextRepoLinks[0]?.contextRepos as ContextRepoDecl[] | null,
+          consent: { kind: "attach-time" },
+        });
+      };
+      let contextMounts = run.contextMounts ?? [];
 
-  try {
-    let integrityBaseline: OperationalIntegrityBaseline | null =
-      run.operationalIntegrityBaseline ?? null;
-
-    const prepareAttachedContextMounts = async (): Promise<
-      ContextMountSnapshot[]
-    > => {
-      // ADR-157 (T30): read-only sibling-repo mounts for a platform-agent run. The
-      // declaration is the PROJECT ATTACHMENT's `context_repos` — the definition's
-      // `recommended` bindings are prefill for the attach dialog only and can never
-      // name a real project by themselves (package slugs are not portable).
-      // D11: no launching user exists here, so consent was the attach-time admin
-      // action (`authorizeContextRepos` on the attach route) — not re-checked.
-      // FLAT single-table read (V14): a multi-table select mis-maps same-named
-      // columns in the app runtime.
-      const contextRepoLinks = await _db
-        .select({ contextRepos: agentProjectLinks.contextRepos })
-        .from(agentProjectLinks)
-        .where(
-          and(
-            eq(agentProjectLinks.agentId, agent.id),
-            eq(agentProjectLinks.projectId, project.id),
-          ),
-        );
-
-      const prepare =
-        run.agentKind === "operational"
-          ? prepareOperationalContextMounts
-          : prepareContextMounts;
-
-      return prepare({
-        db: _db,
-        runId,
-        consumingProjectSlug: project.slug as string,
-        decls: contextRepoLinks[0]?.contextRepos as ContextRepoDecl[] | null,
-        consent: { kind: "attach-time" },
-      });
-    };
-    let contextMounts = run.contextMounts ?? [];
-
-    if (run.agentKind === "operational" && !integrityBaseline) {
-      if (contextMounts.length > 0)
-        throw new MaisterError(
-          "PRECONDITION",
-          "Operational context mounts have no frozen baseline; preserve them for diagnosis before retrying",
-          { details: { reason: "operational_context_baseline_missing" } },
-        );
-      contextMounts = await prepareAttachedContextMounts();
-    }
-
-    if (run.agentKind === "operational") {
-      if (integrityBaseline) {
-        const verdict =
-          integrityBaseline.generation > 0
-            ? await inspectOperationalRun(_db, { ...run, contextMounts })
-            : await inspectOperationalContexts(_db, { ...run, contextMounts });
-
-        if (verdict.verdict !== "clean")
+      if (run.agentKind === "operational" && !integrityBaseline) {
+        if (contextMounts.length > 0)
           throw new MaisterError(
             "PRECONDITION",
-            "operational workspace changed before continuation",
+            "Operational context mounts have no frozen baseline; preserve them for diagnosis before retrying",
+            { details: { reason: "operational_context_baseline_missing" } },
+          );
+        contextMounts = await prepareAttachedContextMounts();
+      }
+
+      if (
+        run.agentKind === "operational" ||
+        (run.taskLaunchIntentId && !integrityBaseline)
+      ) {
+        if (integrityBaseline) {
+          assertPreparationCommit(preparationCommit, integrityBaseline.head);
+          const verdict =
+            integrityBaseline.generation > 0
+              ? await inspectOperationalRun(_db, { ...run, contextMounts })
+              : await inspectOperationalContexts(_db, {
+                  ...run,
+                  contextMounts,
+                });
+
+          if (verdict.verdict !== "clean")
+            throw new MaisterError(
+              "PRECONDITION",
+              "operational workspace changed before continuation",
+              {
+                details: {
+                  reason: "operational_integrity_refused",
+                  reasons: verdict.reasonCodes,
+                },
+              },
+            );
+        } else if (!integrityBaseline) {
+          if (run.taskLaunchIntentId)
+            await assertTaskAgentPreparationSource(_db, run);
+          integrityBaseline = await captureOperationalBaseline(
+            cwd,
+            preparationWorkspace?.resourceKind ?? operationalResourceKind(run),
             {
-              details: {
-                reason: "operational_integrity_refused",
-                reasons: verdict.reasonCodes,
+              context: {
+                ...preparationContext,
+                stage: "baseline",
               },
             },
           );
-      } else if (!integrityBaseline) {
-        integrityBaseline = await captureOperationalBaseline(
-          cwd,
-          operationalResourceKind(run),
-        );
-        integrityBaseline = {
-          ...integrityBaseline,
-          owner: { cwd, repoPath: project.repoPath, projectSlug: project.slug },
-          contextMounts: await captureOperationalContextMounts(contextMounts),
-        };
-        const written = await _db
-          .update(runs)
-          .set({ operationalIntegrityBaseline: integrityBaseline })
-          .where(
-            and(
-              eq(runs.id, runId),
-              eq(runs.status, "Running"),
-              isNull(runs.operationalIntegrityBaseline),
-              assignmentId
-                ? eq(runs.executionAssignmentId, assignmentId)
-                : isNull(runs.executionAssignmentId),
-            ),
-          )
-          .returning({ id: runs.id });
-
-        if (!written[0])
-          throw new MaisterError(
-            "CONFLICT",
-            "operational baseline generation was superseded",
-            { details: { reason: "assignment_fenced" } },
-          );
+          assertPreparationCommit(preparationCommit, integrityBaseline.head);
+          integrityBaseline = {
+            ...integrityBaseline,
+            owner: {
+              cwd,
+              repoPath: preparationWorkspace?.repoPath ?? project.repoPath,
+              projectSlug: project.slug,
+            },
+            contextMounts: await captureOperationalContextMounts(contextMounts),
+          };
+          await preparation?.publishBaseline(integrityBaseline);
+        }
+        if (run.operationalIntegrityBaseline)
+          await preparation?.advance({
+            phase: "baseline_ready",
+            generation: integrityBaseline!.generation,
+          });
       }
-    }
-    // ADR-090 L2 (materialize-only): instructed deny rules in the session
-    // cwd; manifest-tracked and restored at the terminal choke point.
-    if (workspace !== "worktree") {
-      await materializeAgentReadOnlySettings(
-        cwd,
-        snapshot.adapter,
-        runId,
-      ).catch((err: unknown) => {
-        if (run.agentKind === "operational") throw err;
-        log.warn(
-          { runId, err: err instanceof Error ? err.message : String(err) },
-          "L2 materialization failed — L1/L3 carry the contract",
-        );
-      });
-    }
+      // ADR-090 L2 (materialize-only): instructed deny rules in the session
+      // cwd; manifest-tracked and restored at the terminal choke point.
+      if (workspace !== "worktree") {
+        await materializeAgentReadOnlySettings(
+          cwd,
+          snapshot.adapter,
+          runId,
+        ).catch((err: unknown) => {
+          if (run.agentKind === "operational") throw err;
+          log.warn(
+            { runId, err: err instanceof Error ? err.message : String(err) },
+            "L2 materialization failed — L1/L3 carry the contract",
+          );
+        });
+      }
 
-    // ADR-152: resolve + snapshot + stamp in one step, skipped wholesale on the
-    // override branch below (which discards `basePrompt` and would otherwise
-    // record provenance for a prompt that carried no memory).
-    operationalSpawnStage = "prompt";
-    const memoryText = await applyAgentMemoryForLaunch(
-      _db,
-      run,
-      project.slug as string,
-      overridePrompt != null,
-    );
-    const basePrompt = await buildAgentPrompt(
-      _db,
-      effective.parsed,
-      run,
-      memoryText,
-    );
-    const prompt = operationalCompletionPrompt(
-      run,
-      overridePrompt ??
-        (draftPayload
-          ? consensusAgentDraftPrompt(basePrompt, draftPayload)
-          : basePrompt),
-    );
-
-    const issuedToken = await issueAgentRunToken({
-      agentId: agent.id,
-      projectId: project.id,
-      runId,
-      db: _db,
-    });
-
-    // RD7: the agent's capability_profile.mcps resolve through the existing
-    // platform/project catalog (precedence + exec-trust stdio gate) and ride
-    // createSession alongside the facade.
-    const profileMcpServers = await resolveAgentProfileMcpServers({
-      db: _db,
-      projectId: project.id as string,
-      capabilityProfile: effective.parsed.capabilityProfile ?? undefined,
-      capabilityAgent: snapshot.capabilityAgent as string,
-      execTrust: effective.execTrust,
-      runId,
-    });
-
-    // ADR-108 (M40): explicit agent guardrail hooks. Agent runs carry no
-    // execution-policy preset, so there is no `unattended` auto-arm — only what
-    // the agent definition declares (undefined when it declares none). Resolved
-    // once so it can be both logged and threaded; resolver stays pure. NOTE:
-    // resolved-and-sent ≠ enforced — the supervisor interceptor lands in Phase 2;
-    // until then the session body is accept-and-ignore.
-    const hooksConfig = resolveHooksConfig({
-      hooks: effective.parsed.hooks ?? undefined,
-      preset: undefined,
-      defaults: hookEnvDefaults(),
-    });
-
-    if (hooksConfig) {
-      log.debug(
-        { runId, rules: Object.keys(hooksConfig) },
-        "guardrail hooks resolved (enforcement: Phase 2)",
+      // ADR-152: resolve + snapshot + stamp in one step, skipped wholesale on the
+      // override branch below (which discards `basePrompt` and would otherwise
+      // record provenance for a prompt that carried no memory).
+      operationalSpawnStage = "prompt";
+      const memoryText = await applyAgentMemoryForLaunch(
+        _db,
+        run,
+        project.slug as string,
+        overridePrompt != null,
       );
-    }
+      const basePrompt = await buildAgentPrompt(
+        _db,
+        effective.parsed,
+        run,
+        memoryText,
+      );
+      const prompt = operationalCompletionPrompt(
+        run,
+        overridePrompt ??
+          (draftPayload
+            ? consensusAgentDraftPrompt(basePrompt, draftPayload)
+            : basePrompt),
+      );
 
-    operationalSpawnStage = "capability_materialization";
-    const packageSkillRoots = await packageSkillMaterializationRoots(effective);
-
-    log.debug(
-      {
-        runId,
+      const issuedToken = await issueAgentRunToken({
         agentId: agent.id,
         projectId: project.id,
-        packageInstallId: effective.packageInstallId,
-        installedPath: effective.installedPath,
-        skillRoots: packageSkillRoots,
-        skillRootCount: packageSkillRoots.length,
-        adapterId: snapshot.adapter,
-        workspace,
-      },
-      "standalone agent package capability inventory resolved",
-    );
-    const redirectsHome =
-      run.agentKind === "operational" &&
-      getAdapterSupportById(snapshot.adapter as AdapterId)?.materialization
-        ?.mode === "home-redirect";
-    const capabilityRoot = redirectsHome
-      ? operationalAgentRuntimePath(project.slug, runId)
-      : cwd;
+        runId,
+        db: _db,
+      });
 
-    if (packageSkillRoots.length > 0 && redirectsHome)
-      await mkdir(capabilityRoot, { recursive: true });
-    const packageSkillHome =
-      packageSkillRoots.length > 0
-        ? await materializeAdapterCapabilityHome({
-            agent: snapshot.adapter as AdapterId,
-            worktreePath: capabilityRoot,
-            runId,
-            installedPaths: packageSkillRoots,
-          })
-        : null;
+      // RD7: the agent's capability_profile.mcps resolve through the existing
+      // platform/project catalog (precedence + exec-trust stdio gate) and ride
+      // createSession alongside the facade.
+      const profileMcpServers = await resolveAgentProfileMcpServers({
+        db: _db,
+        projectId: project.id as string,
+        capabilityProfile: effective.parsed.capabilityProfile ?? undefined,
+        capabilityAgent: snapshot.capabilityAgent as string,
+        execTrust: effective.execTrust,
+        runId,
+      });
 
-    // ADR-089 D9 + platform_mcp gate: the MAIster facade is the agent's
-    // sanctioned domain-write channel. Inject it only when the agent declares
-    // `platform_mcp` (default true). If it is required but not runnable in this
-    // deployment, fail loud rather than silently launch a tool-less agent that
-    // burns tokens and a concurrency slot only to give up (the stand bug).
-    const facadeServer = effective.parsed.platformMcp
-      ? agentFacadeMcpServer(issuedToken.secret)
-      : null;
+      // ADR-108 (M40): explicit agent guardrail hooks. Agent runs carry no
+      // execution-policy preset, so there is no `unattended` auto-arm — only what
+      // the agent definition declares (undefined when it declares none). Resolved
+      // once so it can be both logged and threaded; resolver stays pure. NOTE:
+      // resolved-and-sent ≠ enforced — the supervisor interceptor lands in Phase 2;
+      // until then the session body is accept-and-ignore.
+      const hooksConfig = resolveHooksConfig({
+        hooks: effective.parsed.hooks ?? undefined,
+        preset: undefined,
+        defaults: hookEnvDefaults(),
+      });
 
-    if (effective.parsed.platformMcp && !facadeServer) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `agent run ${runId} requires the MAIster MCP facade, but it is not runnable in this deployment. Build it (\`pnpm --filter @maister/mcp build\`) or set MAISTER_MCP_FACADE_COMMAND. Agents that use no MAIster tools can opt out with \`platform_mcp: false\`.`,
-      );
-    }
-
-    if (run.agentKind !== "operational") await prepareAttachedContextMounts();
-
-    operationalSpawnStage = "materialization_witness";
-    if (run.agentKind === "operational" && integrityBaseline) {
-      const ownedPaths = await agentMaterializationPathsForRun(cwd, runId);
-      const next = await captureOperationalGeneration(cwd, integrityBaseline, [
-        ...ownedPaths,
-        ".maister/agent-materialization/index.json",
-        `.maister/agent-materialization/runs/${runId}.json`,
-        ".maister/agent-materialization/mutex.sqlite",
-        ".maister/agent-materialization/mutex.sqlite-journal",
-        ".maister/agent-materialization/mutex.sqlite-shm",
-        ".maister/agent-materialization/mutex.sqlite-wal",
-      ]);
-      const written = await _db
-        .update(runs)
-        .set({ operationalIntegrityBaseline: next })
-        .where(
-          and(
-            eq(runs.id, runId),
-            eq(runs.status, "Running"),
-            sql`${runs.operationalIntegrityBaseline}->>'generation' = ${String(integrityBaseline.generation)}`,
-            assignmentId
-              ? eq(runs.executionAssignmentId, assignmentId)
-              : isNull(runs.executionAssignmentId),
-          ),
-        )
-        .returning({ id: runs.id });
-
-      if (!written[0])
-        throw new MaisterError(
-          "CONFLICT",
-          "operational materialization generation was superseded",
-          { details: { reason: "assignment_fenced" } },
+      if (hooksConfig) {
+        log.debug(
+          { runId, rules: Object.keys(hooksConfig) },
+          "guardrail hooks resolved (enforcement: Phase 2)",
         );
-    }
+      }
 
-    // ADR-166: the create is handle-form — the workspace (and its context
-    // mounts, snapshotted on the run above) is adopted by the bound client.
-    const execution = await bindAgentExecution(hosts, runId, assignmentId);
+      operationalSpawnStage = "capability_materialization";
+      await packageCapture.current?.assertCurrentPath();
+      const packageSkillRoots =
+        await packageSkillMaterializationRoots(effective);
 
-    // S2.12: a resume that reaches here resolved NO turn above, so its
-    // generation is named by the placement its claim minted. A turn resolved
-    // earlier keeps its identity — minting a second one here would strand the
-    // original queued and consume another pool slot.
-    if (!agentTurn) {
-      const ownedVariant =
-        overridePrompt === undefined && !run.acpSessionId
-          ? draftPayload
-            ? ("consensus_draft" as const)
-            : ("initial" as const)
-          : resumeVariantFor(execution.client.assignment.placementReason);
-
-      if (!ownedVariant)
-        throw new MaisterError(
-          "CONFLICT",
-          "agent prompt requires an owned generation",
-          {
-            details: {
-              runId,
-              reason: "unowned_agent_generation",
-              placementReason: execution.client.assignment.placementReason,
-            },
-          },
-        );
-      agentTurn = await _db.transaction((tx: ExecutionDb) =>
-        admitAgentGenerationTurn(tx, {
-          runId,
-          assignmentId: execution.client.assignment.id,
-          variant: ownedVariant,
-          prompt,
-        }),
-      );
-    }
-    const createPayload = {
-      stepId: "agent",
-      executor: runnerExecutorInput(snapshot),
-      runner: runnerSupervisorInput({ snapshot }),
-      adapterLaunch: mergeRunnerAdapterLaunch(
-        snapshot,
-        packageSkillHome ?? undefined,
-      ),
-      // ADR-089 D9: the facade (gated by platform_mcp above) carries the
-      // ephemeral token to the agent.
-      mcpServers: [
-        ...profileMcpServers,
-        ...(facadeServer ? [facadeServer] : []),
-      ],
-      // ADR-090 L1: none/repo_read agents run the whole session read-only.
-      readOnlySession: workspace !== "worktree",
-      agentKind: baseRun.agentKind ?? "code_delivery",
-      // M34 lifecycle: a one-shot (non-persistent) agent has no driver that acts
-      // on a bare end_turn — let the supervisor reap the session so the run
-      // finalizes instead of leaking a slot. Persistent agents park + re-message.
-      reapOnEndTurn: baseRun.persistent !== true,
-      hooksConfig,
-      // M39 Phase 5 (ADR-106): autoApply='permissions'/'full' maps to B1
-      // permissions=auto_approve — the supervisor's requestPermission handler
-      // auto-selects the allow option inline (L3, below the read-only layers),
-      // so a standalone agent never pauses to a permission HITL. Read from the
-      // run's immutable execution_policy snapshot (fail-closed to `ask`).
-      autoApprovePermissions:
-        permissionsFromSnapshot(run.executionPolicy ?? null) === "auto_approve",
-      ...(run.acpSessionId ? { resumeSessionId: run.acpSessionId } : {}),
-    };
-    const session = agentTurn
-      ? await execution.client.createOwnedSession(
-          {
-            variant: "agent",
-            turnId: agentTurn.id,
-            promptOrdinal: agentTurn.ordinal,
-          },
-          async () => createPayload,
-        )
-      : await execution.client.createSession(createPayload);
-
-    if (agentTurn) {
-      await dispatchStoredAgentTurn(
-        _db,
-        execution,
-        agentTurn,
-        session.sessionId,
-        opts.signal,
-      );
-
-      return;
-    }
-
-    observeAgentSession({
-      db: _db,
-      execution,
-      runId,
-      sessionId: session.sessionId,
-    });
-  } catch (err) {
-    if (isFencedError(err)) {
-      // ADR-166: a newer driver generation owns the run — yield without
-      // touching run state.
-      log.warn({ runId }, "agent session spawn/prompt fenced — yielding");
-
-      return;
-    }
-    if (err instanceof AgentPromptQuarantined) throw err;
-    if (
-      err instanceof AgentPromptContinuationPending ||
-      err instanceof SessionCreatePending ||
-      err instanceof PromptIncarnationPending
-    ) {
-      log.warn(
+      log.debug(
         {
           runId,
-          commandId: err.details?.commandId,
-          hostSessionId: err.details?.hostSessionId,
+          agentId: agent.id,
+          projectId: project.id,
+          packageInstallId: effective.packageInstallId,
+          installedPath: effective.installedPath,
+          skillRoots: packageSkillRoots,
+          skillRootCount: packageSkillRoots.length,
+          adapterId: snapshot.adapter,
+          workspace,
         },
-        err instanceof PromptIncarnationPending
-          ? "agent-prompt-admission-yielded"
-          : "agent prompt retained for owner recovery",
+        "standalone agent package capability inventory resolved",
       );
+      const redirectsHome =
+        run.agentKind === "operational" &&
+        getAdapterSupportById(snapshot.adapter as AdapterId)?.materialization
+          ?.mode === "home-redirect";
+      const capabilityRoot = redirectsHome
+        ? operationalAgentRuntimePath(project.slug, runId)
+        : cwd;
 
-      return;
-    }
-    log.error(
-      {
-        runId,
-        ...(run.agentKind === "operational"
-          ? {
-              operationalSpawnStage,
-              sqlState: pgErrorOf(err)?.code,
-              constraint: pgErrorOf(err)?.constraint,
-              systemCode:
-                err &&
-                typeof err === "object" &&
-                "code" in err &&
-                typeof err.code === "string"
-                  ? err.code
-                  : undefined,
-              errorFrames:
-                err instanceof Error
-                  ? err.stack
-                      ?.split("\n")
-                      .filter((line) => line.trim().startsWith("at "))
-                      .slice(0, 4)
-                  : undefined,
-            }
-          : {}),
-        errorType: err instanceof Error ? err.name : "unknown",
-        code: err instanceof MaisterError ? err.code : undefined,
-        reason: err instanceof MaisterError ? err.details?.reason : undefined,
-        causeCode:
-          err instanceof MaisterError ? err.details?.causeCode : undefined,
-      },
-      "agent session spawn/prompt failed",
-    );
-    if (agentTurn) {
+      if (packageSkillRoots.length > 0 && redirectsHome)
+        await mkdir(capabilityRoot, { recursive: true });
+      const materializeCapabilityHome =
+        run.agentKind === "operational"
+          ? materializeOperationalAdapterCapabilityHome
+          : materializeAdapterCapabilityHome;
+      const packageSkillHome =
+        packageSkillRoots.length > 0
+          ? await materializeCapabilityHome({
+              agent: snapshot.adapter as AdapterId,
+              worktreePath: capabilityRoot,
+              runId,
+              installedPaths: packageSkillRoots,
+            })
+          : null;
+
+      if (packageCapture.current) {
+        await packageCapture.current.release();
+        packageCapture.current = null;
+      }
+
+      // ADR-089 D9 + platform_mcp gate: the MAIster facade is the agent's
+      // sanctioned domain-write channel. Inject it only when the agent declares
+      // `platform_mcp` (default true). If it is required but not runnable in this
+      // deployment, fail loud rather than silently launch a tool-less agent that
+      // burns tokens and a concurrency slot only to give up (the stand bug).
+      const facadeServer = effective.parsed.platformMcp
+        ? agentFacadeMcpServer(issuedToken.secret)
+        : null;
+
+      if (effective.parsed.platformMcp && !facadeServer) {
+        throw new MaisterError(
+          "PRECONDITION",
+          `agent run ${runId} requires the MAIster MCP facade, but it is not runnable in this deployment. Build it (\`pnpm --filter @maister/mcp build\`) or set MAISTER_MCP_FACADE_COMMAND. Agents that use no MAIster tools can opt out with \`platform_mcp: false\`.`,
+        );
+      }
+
+      if (run.agentKind !== "operational") await prepareAttachedContextMounts();
+
+      operationalSpawnStage = "materialization_witness";
+      if (
+        (run.agentKind === "operational" || run.taskLaunchIntentId) &&
+        integrityBaseline
+      ) {
+        const ownedPaths = await agentMaterializationPathsForRun(cwd, runId);
+        const next = await captureOperationalGeneration(
+          cwd,
+          integrityBaseline,
+          [
+            ...ownedPaths,
+            ".maister/agent-materialization/index.json",
+            `.maister/agent-materialization/runs/${runId}.json`,
+            ".maister/agent-materialization/mutex.sqlite",
+            ".maister/agent-materialization/mutex.sqlite-journal",
+            ".maister/agent-materialization/mutex.sqlite-shm",
+            ".maister/agent-materialization/mutex.sqlite-wal",
+          ],
+        );
+
+        await preparation?.publishGeneration(
+          next,
+          integrityBaseline.generation,
+        );
+      }
+
+      if (run.taskLaunchIntentId) {
+        if (!assignmentId || !preparation)
+          throw new MaisterError(
+            "CONFLICT",
+            "Accepted agent preparation has no current assignment owner",
+            { details: { reason: "assignment_fenced" } },
+          );
+        await commitTaskAgentLaunchFirstDispatch(_db, {
+          runId,
+          assignmentId,
+          preparationId: preparation.operation.id,
+        });
+      }
+
+      // ADR-166: the create is handle-form — the workspace (and its context
+      // mounts, snapshotted on the run above) is adopted by the bound client.
       const execution = await bindAgentExecution(hosts, runId, assignmentId);
 
-      if (
-        isHostPressuredError(err) &&
-        (await parkClaimedAgentTurnForHostPressure(
+      // S2.12: a resume that reaches here resolved NO turn above, so its
+      // generation is named by the placement its claim minted. A turn resolved
+      // earlier keeps its identity — minting a second one here would strand the
+      // original queued and consume another pool slot.
+      if (!agentTurn) {
+        const ownedVariant =
+          overridePrompt === undefined && !run.acpSessionId
+            ? draftPayload
+              ? ("consensus_draft" as const)
+              : ("initial" as const)
+            : resumeVariantFor(execution.client.assignment.placementReason);
+
+        if (!ownedVariant)
+          throw new MaisterError(
+            "CONFLICT",
+            "agent prompt requires an owned generation",
+            {
+              details: {
+                runId,
+                reason: "unowned_agent_generation",
+                placementReason: execution.client.assignment.placementReason,
+              },
+            },
+          );
+        agentTurn = await _db.transaction((tx: ExecutionDb) =>
+          admitAgentGenerationTurn(tx, {
+            runId,
+            assignmentId: execution.client.assignment.id,
+            variant: ownedVariant,
+            prompt,
+          }),
+        );
+      }
+      const ownedTurn = agentTurn;
+
+      if (!ownedTurn)
+        throw new MaisterError(
+          "CONFLICT",
+          "Agent generation admission did not retain its owner",
+          { details: { runId, reason: "unowned_agent_generation" } },
+        );
+      if (preparation) {
+        await preparation.advance({
+          phase: "handed_off",
+          turnId: ownedTurn.id,
+        });
+        await preparation.release();
+      }
+
+      return await withoutGitOwnership(async () => {
+        if (run.taskAdmissionSnapshot?.version === 3)
+          await assertTaskAdmissionForDispatch(_db, runId);
+        const createPayload = {
+          stepId: "agent",
+          executor: runnerExecutorInput(snapshot),
+          runner: runnerSupervisorInput({ snapshot }),
+          adapterLaunch: mergeRunnerAdapterLaunch(
+            snapshot,
+            packageSkillHome ?? undefined,
+          ),
+          // ADR-089 D9: the facade (gated by platform_mcp above) carries the
+          // ephemeral token to the agent.
+          mcpServers: [
+            ...profileMcpServers,
+            ...(facadeServer ? [facadeServer] : []),
+          ],
+          // ADR-090 L1: none/repo_read agents run the whole session read-only.
+          readOnlySession: workspace !== "worktree",
+          agentKind: baseRun.agentKind ?? "code_delivery",
+          // M34 lifecycle: a one-shot (non-persistent) agent has no driver that acts
+          // on a bare end_turn — let the supervisor reap the session so the run
+          // finalizes instead of leaking a slot. Persistent agents park + re-message.
+          reapOnEndTurn: baseRun.persistent !== true,
+          hooksConfig,
+          // M39 Phase 5 (ADR-106): autoApply='permissions'/'full' maps to B1
+          // permissions=auto_approve — the supervisor's requestPermission handler
+          // auto-selects the allow option inline (L3, below the read-only layers),
+          // so a standalone agent never pauses to a permission HITL. Read from the
+          // run's immutable execution_policy snapshot (fail-closed to `ask`).
+          autoApprovePermissions:
+            permissionsFromSnapshot(run.executionPolicy ?? null) ===
+            "auto_approve",
+          ...(run.acpSessionId ? { resumeSessionId: run.acpSessionId } : {}),
+        };
+        const session = await execution.client.createOwnedSession(
+          {
+            variant: "agent",
+            turnId: ownedTurn.id,
+            promptOrdinal: ownedTurn.ordinal,
+          },
+          async () => createPayload,
+        );
+
+        await dispatchStoredAgentTurn(
           _db,
-          execution.client,
-          agentTurn,
-        ))
-      )
-        return;
-      if (
-        await settleAgentCreateFailure(_db, execution.client, agentTurn, {
-          hostPressureRefusal: isHostPressuredError(err),
-        })
-      )
-        return;
-      throw err;
+          execution,
+          ownedTurn,
+          session.sessionId,
+          opts.signal,
+        );
+      });
+    } catch (originalError) {
+      const err = packageCapture.current
+        ? await releaseTaskAgentCaptureAfterFailure(
+            packageCapture.current,
+            originalError,
+            { ...preparationContext, stage: operationalSpawnStage },
+          )
+        : originalError;
+
+      packageCapture.current = null;
+      if (!isFencedError(err))
+        await recordAgentPreparationFailure(preparation, err, {
+          ...preparationContext,
+          stage: operationalSpawnStage,
+        });
+      else
+        await releaseAgentPreparationAfterFailure(preparation, err, {
+          ...preparationContext,
+          stage: operationalSpawnStage,
+        });
+
+      return await withoutGitOwnership(async () => {
+        if (isFencedError(err)) {
+          // ADR-166: a newer driver generation owns the run — yield without
+          // touching run state.
+          log.warn({ runId }, "agent session spawn/prompt fenced — yielding");
+
+          return;
+        }
+        if (err instanceof AgentPromptQuarantined) throw err;
+        if (
+          err instanceof AgentPromptContinuationPending ||
+          err instanceof SessionCreatePending ||
+          err instanceof PromptIncarnationPending
+        ) {
+          log.warn(
+            {
+              runId,
+              commandId: err.details?.commandId,
+              hostSessionId: err.details?.hostSessionId,
+            },
+            err instanceof PromptIncarnationPending
+              ? "agent-prompt-admission-yielded"
+              : "agent prompt retained for owner recovery",
+          );
+
+          return;
+        }
+        log.error(
+          {
+            runId,
+            ...(run.agentKind === "operational"
+              ? {
+                  operationalSpawnStage,
+                  sqlState: pgErrorOf(err)?.code,
+                  constraint: pgErrorOf(err)?.constraint,
+                  systemCode:
+                    err &&
+                    typeof err === "object" &&
+                    "code" in err &&
+                    typeof err.code === "string"
+                      ? err.code
+                      : undefined,
+                  ...operationalFailureDiagnostic(err, {
+                    runId,
+                    ...(assignmentId ? { assignmentId } : {}),
+                    stage: operationalSpawnStage,
+                  }),
+                }
+              : {}),
+            errorType: err instanceof Error ? err.name : "unknown",
+            code: err instanceof MaisterError ? err.code : undefined,
+            reason:
+              err instanceof MaisterError ? err.details?.reason : undefined,
+            causeCode:
+              err instanceof MaisterError ? err.details?.causeCode : undefined,
+          },
+          "agent session spawn/prompt failed",
+        );
+        if (agentTurn) {
+          const execution = await bindAgentExecution(
+            hosts,
+            runId,
+            assignmentId,
+          );
+
+          if (
+            isHostPressuredError(err) &&
+            (await parkClaimedAgentTurnForHostPressure(
+              _db,
+              execution.client,
+              agentTurn,
+            ))
+          )
+            return;
+          if (
+            await settleAgentCreateFailure(_db, execution.client, agentTurn, {
+              hostPressureRefusal: isHostPressuredError(err),
+            })
+          )
+            return;
+          throw err;
+        }
+        const diagnostic =
+          run.agentKind === "operational"
+            ? {
+                ...(assignmentId ? { expectedAssignmentId: assignmentId } : {}),
+                causeReason:
+                  isMaisterError(err) && typeof err.details?.reason === "string"
+                    ? err.details.reason
+                    : "operational_preparation_failed",
+                infrastructureFailure: operationalFailureDiagnostic(err, {
+                  ...preparationContext,
+                  stage: operationalSpawnStage,
+                }),
+              }
+            : {};
+
+        if (preparation) {
+          if (
+            await settleAgentPreparationFailure(_db, runId, preparation, err, {
+              ...preparationContext,
+              stage: operationalSpawnStage,
+            })
+          )
+            return;
+          throw err;
+        }
+        if (
+          await settleUndispatchedAgentFailure(
+            _db,
+            runId,
+            "agent_dispatch_failed",
+            diagnostic,
+          )
+        )
+          return;
+        await finalizeAgentRun(runId, "Failed", {
+          db: _db,
+          expectedAssignmentId: assignmentId,
+          reason: "agent_session_spawn_failed",
+          ...diagnostic,
+        });
+      });
     }
-    await finalizeAgentRun(runId, "Failed", {
-      db: _db,
-      reason: "agent_session_spawn_failed",
-    });
   }
 }
 
@@ -4703,6 +5574,7 @@ export async function consumeAgentSession(args: {
             : "Failed",
           {
             db: args.db,
+            expectedAssignmentId: args.execution.client.assignment.id,
             reason:
               event.exitCode === 0
                 ? undefined
@@ -4723,6 +5595,7 @@ export async function consumeAgentSession(args: {
         await finalizeAgentRun(args.runId, "Crashed", {
           db: args.db,
           reason: "supervisor reported session crash",
+          expectedAssignmentId: args.execution.client.assignment.id,
         });
 
         return;
@@ -4777,6 +5650,7 @@ export async function consumeAgentSession(args: {
             await finalizeAgentRun(args.runId, "Crashed", {
               db: args.db,
               reason: "hook_trip escalation failed (executor unavailable)",
+              expectedAssignmentId: args.execution.client.assignment.id,
             });
 
             return;

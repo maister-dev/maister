@@ -134,8 +134,8 @@ export async function senseAndRestore(args: {
   return { reverted: true };
 }
 
-/** DB-only terminalization of a still-pending turn. The response path locks the
- * HITL row first; this keeps that order so a concurrent claim cannot deadlock. */
+/** DB-only terminalization takes HITL -> turn and never acquires the Run later;
+ * callers already owning the Run keep the same relative order. */
 export async function terminalizePendingGateChatTurn(
   tx: Db,
   args: {

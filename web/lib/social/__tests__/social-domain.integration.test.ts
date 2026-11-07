@@ -760,13 +760,14 @@ describe("task relations (ADR-078 D4/D5)", () => {
 
     await db
       .update(schema.tasks)
-      .set({ triageStatus: "flagged" })
+      .set({ triageStatus: "flagged", triageFlagOrigin: "explicit" })
       .where(eq(schema.tasks.id, a.taskId));
 
     const rows = await rowsOf("tasks", `id = '${a.taskId}'`);
 
     expect(rows).toHaveLength(1);
     expect(rows[0].triage_status).toBe("flagged");
+    expect(rows[0].triage_flag_origin).toBe("explicit");
   });
 
   it("getTaskRelations returns both directions with the counterpart ref", async () => {

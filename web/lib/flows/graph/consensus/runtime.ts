@@ -271,6 +271,7 @@ function participantById(
 
 function consensusRoleCtx(args: RunConsensusNodeInput): {
   db: Db;
+  parentRunId: string;
   projectId: string;
   taskId: string | null;
   flowRevisionId: string | null;
@@ -279,6 +280,7 @@ function consensusRoleCtx(args: RunConsensusNodeInput): {
 } {
   return {
     db: args.db,
+    parentRunId: args.loaded.run.id,
     projectId: args.loaded.run.projectId,
     taskId: args.loaded.run.taskId,
     flowRevisionId: args.loaded.run.flowRevisionId ?? null,

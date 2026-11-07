@@ -1,8 +1,10 @@
+import type { LaunchRunInput } from "@/lib/services/runs";
 import type { PlatformStatus } from "@/types/platform-status";
+
+import { rm } from "node:fs/promises";
 
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { eq } from "drizzle-orm";
-import { NextRequest } from "next/server";
 import {
   afterAll,
   beforeAll,
@@ -13,6 +15,13 @@ import {
   vi,
 } from "vitest";
 
+import { git as fixtureGit } from "@/test-support/git-fixture";
+import {
+  seedAcceptedRepositoryQualification,
+  createEngineFixtureRepository,
+  isolateEngineFixtureRuntime,
+} from "@/test-support/repository-qualification";
+import { launchEngineResponse } from "@/test-support/launch-engine-response";
 import {
   readyExecutionHostCapabilities,
   TEST_HOST_IDENTITY,
@@ -27,6 +36,8 @@ import {
 const schema = schemaModule as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
+const repositories: string[] = [];
+let restoreEngineRuntime: (() => Promise<void>) | undefined;
 let db: NodePgDatabase;
 
 // Controllable session — the REAL authz layer runs against the test DB.
@@ -73,25 +84,50 @@ vi.mock("@/lib/supervisor-client", async (importOriginal) => {
   };
 });
 
-vi.mock("@/lib/worktree", () => ({
-  addWorktree: (input: unknown) => addWorktreeMock(input),
-  removeWorktree: (input: unknown) => removeWorktreeMock(input),
-  listBranches: async () => ["main"],
-  listRemoteUrls: async () => [],
-  resolveBaseCommit: async () => "0000000000000000000000000000000000000000",
-}));
+vi.mock("@/lib/worktree", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/worktree")>();
+
+  return {
+    ...actual,
+    addWorktree: async (input: Parameters<typeof actual.addWorktree>[0]) => {
+      await addWorktreeMock(input);
+
+      return actual.addWorktree(input);
+    },
+    removeWorktree: async (
+      input: Parameters<typeof actual.removeWorktree>[0],
+    ) => {
+      await removeWorktreeMock(input);
+
+      return actual.removeWorktree(input);
+    },
+    listBranches: async () => ["main"],
+    listRemoteUrls: async () => [],
+    resolveBaseCommit: async (args: {
+      projectRepoPath: string;
+      baseRef: string;
+    }) =>
+      fixtureGit(
+        args.projectRepoPath,
+        "rev-parse",
+        "--verify",
+        `${args.baseRef}^{commit}`,
+      ),
+  };
+});
 vi.mock("@/lib/flows/runner", () => ({
   runFlow: (runId: string) => runFlowMock(runId),
 }));
 
-let POST: typeof import("@/app/api/runs/route").POST;
-
-function request(taskId: string): NextRequest {
-  return new NextRequest("http://localhost/api/runs", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ taskId }),
+function launchResponse(input: LaunchRunInput): Promise<Response> {
+  return launchEngineResponse(testDatabase.db, input, {
+    actorUserId: "u-member",
+    authorize: async () => undefined,
   });
+}
+
+function request(taskId: string): LaunchRunInput {
+  return { taskId };
 }
 
 // Manifest whose pinned revision declares an ai_coding node with a strict
@@ -221,12 +257,15 @@ async function seedProjectWithManifest(
   manifest: unknown,
   opts: { trustStatus?: string } = {},
 ): Promise<void> {
+  const repoPath = await createEngineFixtureRepository();
+
+  repositories.push(repoPath);
   await db.insert(schema.projects).values({
     taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id,
     slug,
     name: slug,
-    repoPath: `/repos/${slug}`,
+    repoPath,
     maisterYamlPath: `/repos/${slug}/maister.yaml`,
   });
 
@@ -241,7 +280,7 @@ async function seedProjectWithManifest(
     manifestDigest: `digest-${id}`,
     manifest,
     schemaVersion: 1,
-    installedPath: `/cache/${id}`,
+    installedPath: `${repoPath}/.fixture-flow`,
     setupStatus: "not_required",
     packageStatus: "Installed",
   });
@@ -251,7 +290,7 @@ async function seedProjectWithManifest(
     flowRefId: "bugfix",
     source: "github.com/x/y",
     version: "v1.0.0",
-    installedPath: `/cache/${id}`,
+    installedPath: `${repoPath}/.fixture-flow`,
     manifest,
     schemaVersion: 1,
     enabledRevisionId: revisionId,
@@ -279,9 +318,11 @@ async function seedProjectWithManifest(
     prompt: "do it",
     flowId: `flow-${id}`,
   });
+  await seedAcceptedRepositoryQualification(testDatabase.db, id, `task-${id}`);
 }
 
 beforeAll(async () => {
+  restoreEngineRuntime = await isolateEngineFixtureRuntime();
   testDatabase = await startMainPostgresTestDb({
     databaseName: "runs_enf_test",
   });
@@ -397,15 +438,17 @@ beforeAll(async () => {
     mappedRunnerId: null,
     status: "Pending",
   });
-
-  ({ POST } = await import("@/app/api/runs/route"));
 }, 180_000);
 
 afterAll(async () => {
+  await restoreEngineRuntime?.();
   await testDatabase?.stop();
+  await Promise.all(
+    repositories.map((repo) => rm(repo, { recursive: true, force: true })),
+  );
 });
 
-describe("POST /api/runs — settings-enforcement launch refusal (integration)", () => {
+describe("Delivery engine — settings-enforcement launch refusal (integration)", () => {
   beforeEach(() => {
     checkSupervisorHealthMock.mockResolvedValue(readyPlatformStatus());
     addWorktreeMock.mockClear();
@@ -415,7 +458,7 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
   });
 
   it("refuses a strict-skills ai_coding manifest with 400 CONFIG and NO side-effect", async () => {
-    const res = await POST(request("task-proj-strict"));
+    const res = await launchResponse(request("task-proj-strict"));
 
     expect(res.status).toBe(400);
     expect((await res.json()).code).toBe("CONFIG");
@@ -449,7 +492,7 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
   it("refuses a legacy pinned revision with 400 CONFIG before launch mutations", async () => {
     const sessionCountBefore = (await db.select().from(schema.runSessions))
       .length;
-    const response = await POST(request("task-proj-legacy"));
+    const response = await launchResponse(request("task-proj-legacy"));
 
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({
@@ -484,7 +527,7 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
   });
 
   it("refuses a strict-skills judge manifest with 400 CONFIG too", async () => {
-    const res = await POST(request("task-proj-judge"));
+    const res = await launchResponse(request("task-proj-judge"));
 
     expect(res.status).toBe(400);
     expect((await res.json()).code).toBe("CONFIG");
@@ -499,7 +542,7 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
   });
 
   it("an all-instruct manifest launches cleanly (202, creates runs + workspaces rows)", async () => {
-    const res = await POST(request("task-proj-instruct"));
+    const res = await launchResponse(request("task-proj-instruct"));
 
     expect(res.status).toBe(202);
     expect(addWorktreeMock).toHaveBeenCalledTimes(1);
@@ -527,7 +570,7 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
   });
 
   it("persists a mapped Flow step runner as a per-slot binding, not the platform default", async () => {
-    const res = await POST(request("task-proj-remap-mapped"));
+    const res = await launchResponse(request("task-proj-remap-mapped"));
 
     expect(res.status).toBe(202);
     expect(addWorktreeMock).toHaveBeenCalledTimes(1);
@@ -556,7 +599,7 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
   });
 
   it("rejects a pending Flow runner remap before worktree/run/workspace side effects", async () => {
-    const res = await POST(request("task-proj-remap-pending"));
+    const res = await launchResponse(request("task-proj-remap-pending"));
     const body = await res.json();
 
     expect(res.status).toBe(400);
@@ -585,7 +628,7 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
   });
 
   it("refuses an unknown retired settings.executors ref before launch mutations", async () => {
-    const res = await POST(request("task-proj-badexec"));
+    const res = await launchResponse(request("task-proj-badexec"));
 
     expect(res.status).toBe(400);
     expect((await res.json()).code).toBe("CONFIG");
@@ -607,7 +650,7 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
   });
 
   it("refuses a matching retired settings.executors ref just as strictly", async () => {
-    const res = await POST(request("task-proj-goodexec"));
+    const res = await launchResponse(request("task-proj-goodexec"));
 
     expect(res.status).toBe(400);
     expect((await res.json()).code).toBe("CONFIG");
@@ -622,7 +665,7 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
   });
 
   it("refuses a manifest role ref missing from the active project Flow role registry before worktree creation", async () => {
-    const res = await POST(request("task-proj-badrole"));
+    const res = await launchResponse(request("task-proj-badrole"));
 
     expect(res.status).toBe(400);
 
@@ -641,7 +684,7 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
   });
 
   it("does not enforce manifest role refs when the project has no active Flow role registry", async () => {
-    const res = await POST(request("task-proj-emptyrole"));
+    const res = await launchResponse(request("task-proj-emptyrole"));
 
     expect(res.status).toBe(202);
     expect(addWorktreeMock).toHaveBeenCalledTimes(1);
@@ -657,7 +700,7 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
   it("refuses an untrusted revision on the TRUST gate BEFORE the enforcement evaluator (PRECONDITION 409, not CONFIG)", async () => {
     // The manifest carries enforcement.skills:"strict" (would yield CONFIG at the
     // enforcement gate), but trust runs first → the evaluator is never reached.
-    const res = await POST(request("task-proj-untrusted"));
+    const res = await launchResponse(request("task-proj-untrusted"));
 
     expect(res.status).toBe(409);
 

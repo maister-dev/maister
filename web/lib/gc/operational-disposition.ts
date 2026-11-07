@@ -29,6 +29,7 @@ import {
 } from "@/lib/agents/operational-context";
 import { restoreAgentMaterialization } from "@/lib/agents/dirty-watchdog";
 import { operationalAgentRuntimePath } from "@/lib/agents/workspace-paths";
+import { acquirePreparationWorkspace } from "@/lib/agents/preparation-workspace";
 import { frozenOperationalDefinition } from "@/lib/agents/launch-contract";
 import { withOperationalContextLock } from "@/lib/context-mounts/operational-lock";
 import { releaseOperationalContextMounts } from "@/lib/context-mounts/terminal";
@@ -350,105 +351,121 @@ export async function disposeOperationalRun(
     )
       throw cleanupError("operational_execution_not_quiescent");
     const context = await operationalWorkspace(db, run);
-    const present = await exists(context.cwd);
+    const preparationFence = await acquirePreparationWorkspace(context);
 
-    assertOperationalContextSnapshot(run);
-    const contextMounts = operationalContextMountSnapshots(run);
+    try {
+      await preparationFence.run(async () => {
+        const present = await exists(context.cwd);
 
-    if (contextMounts.length > 0)
-      await withOperationalContextLock(runId, async () => {
         assertOperationalContextSnapshot(run);
-        for (const mount of contextMounts) {
-          // A previous cleanup attempt may have removed an independent sibling.
-          if (!(await exists(mount.mountPath))) continue;
-          const verdict = await inspectOperationalContextMount(db, run, mount);
+        const contextMounts = operationalContextMountSnapshots(run);
 
-          if (verdict.verdict !== "clean") {
+        if (contextMounts.length > 0)
+          await withOperationalContextLock(runId, async () => {
+            assertOperationalContextSnapshot(run);
+            for (const mount of contextMounts) {
+              // A previous cleanup attempt may have removed an independent sibling.
+              if (!(await exists(mount.mountPath))) continue;
+              const verdict = await inspectOperationalContextMount(
+                db,
+                run,
+                mount,
+              );
+
+              if (verdict.verdict !== "clean") {
+                if (!client)
+                  throw cleanupError("operational_evidence_host_missing");
+                const ids = await preserveOperationalEvidence({
+                  runId,
+                  cwd: mount.mountPath,
+                  resourceKind: "ephemeral_checkout",
+                  client,
+                  renew,
+                });
+
+                await persist({
+                  ...cleanup,
+                  evidenceIds: [...new Set([...cleanup.evidenceIds, ...ids])],
+                });
+              }
+            }
+            await renew();
+            await releaseOperationalContextMounts({
+              runId,
+              mounts: contextMounts,
+            });
+          });
+        if (!cleanup.removedAt && present) {
+          const integrity = await inspectOperationalWorkspace(db, run);
+          const preserveBytes =
+            run.status !== "Done" || integrity.verdict !== "clean";
+
+          if (preserveBytes) {
             if (!client)
               throw cleanupError("operational_evidence_host_missing");
-            const ids = await preserveOperationalEvidence({
+            const evidenceIds = await preserveOperationalEvidence({
               runId,
-              cwd: mount.mountPath,
-              resourceKind: "ephemeral_checkout",
+              cwd: context.cwd,
+              resourceKind: context.resourceKind,
               client,
               renew,
             });
 
             await persist({
               ...cleanup,
-              evidenceIds: [...new Set([...cleanup.evidenceIds, ...ids])],
+              evidenceIds: [
+                ...new Set([...cleanup.evidenceIds, ...evidenceIds]),
+              ],
             });
           }
+          await renew();
+          await restoreAgentMaterialization(context.cwd, runId);
+          if (workspace) {
+            const preserved = await (options.preserve ?? preserveWorktree)({
+              runId,
+              worktreePath: context.cwd,
+              parentRepoPath: context.repoPath,
+              branch: workspace.branch,
+              baseRef: workspace.baseCommit ?? workspace.baseBranch ?? "HEAD",
+              archivePush: false,
+            });
+
+            if (!preserved.ok)
+              throw cleanupError(
+                preserved.failureReason ?? "operational_preservation_failed",
+              );
+            await recordArchive({
+              database: db,
+              workspaceId: workspace.id,
+              attemptId: attemptId!,
+              archivedBranch: preserved.archivedBranch ?? null,
+              archivedAt: preserved.archivedAt ?? new Date(),
+              archivedCommit: preserved.archivedCommit ?? null,
+              preservationOutcome:
+                preserved.preservationOutcome ?? "not_needed",
+            });
+          }
+          await renew();
+          if (
+            context.resourceKind === "worktree" ||
+            context.resourceKind === "ephemeral_checkout"
+          )
+            await removeOwnedWorktree({
+              projectRepoPath: context.repoPath,
+              worktreePath: context.cwd,
+              allowedRoot: worktreesRoot(),
+              force: true,
+            });
+          else if (context.resourceKind === "plain_directory")
+            await removeOwnedPlainAgentDirectory({
+              root: worktreesRoot(),
+              directoryPath: context.cwd,
+            });
+          // Shared parent repositories are never removed. Only this run's leases release.
         }
-        await renew();
-        await releaseOperationalContextMounts({
-          runId,
-          mounts: contextMounts,
-        });
       });
-    if (!cleanup.removedAt && present) {
-      const integrity = await inspectOperationalWorkspace(db, run);
-      const preserveBytes =
-        run.status !== "Done" || integrity.verdict !== "clean";
-
-      if (preserveBytes) {
-        if (!client) throw cleanupError("operational_evidence_host_missing");
-        const evidenceIds = await preserveOperationalEvidence({
-          runId,
-          cwd: context.cwd,
-          resourceKind: context.resourceKind,
-          client,
-          renew,
-        });
-
-        await persist({
-          ...cleanup,
-          evidenceIds: [...new Set([...cleanup.evidenceIds, ...evidenceIds])],
-        });
-      }
-      await renew();
-      await restoreAgentMaterialization(context.cwd, runId);
-      if (workspace) {
-        const preserved = await (options.preserve ?? preserveWorktree)({
-          runId,
-          worktreePath: context.cwd,
-          parentRepoPath: context.repoPath,
-          branch: workspace.branch,
-          baseRef: workspace.baseCommit ?? workspace.baseBranch ?? "HEAD",
-          archivePush: false,
-        });
-
-        if (!preserved.ok)
-          throw cleanupError(
-            preserved.failureReason ?? "operational_preservation_failed",
-          );
-        await recordArchive({
-          database: db,
-          workspaceId: workspace.id,
-          attemptId: attemptId!,
-          archivedBranch: preserved.archivedBranch ?? null,
-          archivedAt: preserved.archivedAt ?? new Date(),
-          archivedCommit: preserved.archivedCommit ?? null,
-          preservationOutcome: preserved.preservationOutcome ?? "not_needed",
-        });
-      }
-      await renew();
-      if (
-        context.resourceKind === "worktree" ||
-        context.resourceKind === "ephemeral_checkout"
-      )
-        await removeOwnedWorktree({
-          projectRepoPath: context.repoPath,
-          worktreePath: context.cwd,
-          allowedRoot: worktreesRoot(),
-          force: true,
-        });
-      else if (context.resourceKind === "plain_directory")
-        await removeOwnedPlainAgentDirectory({
-          root: worktreesRoot(),
-          directoryPath: context.cwd,
-        });
-      // Shared parent repositories are never removed. Only this run's leases release.
+    } finally {
+      await preparationFence.release();
     }
     const removedAt = cleanup.removedAt ?? new Date().toISOString();
 
@@ -517,16 +534,21 @@ export async function disposeOperationalRun(
       isMaisterError(error) && typeof error.details?.reason === "string"
         ? error.details.reason
         : "operational_cleanup_failed";
-    const exhausted = cleanup.attempts >= 5;
+    const contended = reason === "operation_busy";
+    const attempts = contended
+      ? Math.max(0, cleanup.attempts - 1)
+      : cleanup.attempts;
+    const exhausted = !contended && attempts >= 5;
 
     try {
       await persist({
         ...cleanup,
+        attempts,
         state: exhausted ? "exhausted" : "retry",
         dueAt: exhausted
           ? null
           : new Date(
-              now.getTime() + DELAYS[cleanup.attempts - 1],
+              now.getTime() + DELAYS[Math.max(0, attempts - 1)],
             ).toISOString(),
         errorCode: reason,
         revision: cleanup.revision + 1,

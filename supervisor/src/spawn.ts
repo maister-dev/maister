@@ -3,6 +3,7 @@ import type { RuntimeEventPublisher } from "./runtime-event-publisher";
 import type { Logger } from "pino";
 import type { WorkspaceResolution } from "./workspace-registry";
 import type { Readable } from "node:stream";
+import type { SessionRegistry } from "./registry";
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter, once } from "node:events";
@@ -22,6 +23,21 @@ import {
 } from "./types";
 import { getAdapterRuntime, resolveAdapterBinary } from "./adapter-registry";
 import { effectiveStartSessionRequest } from "./runner-provisioner";
+import { UnstartedSessionProcessError } from "./session-create-outcome";
+import { UnsettledSessionCreateError } from "./session-create-outcome";
+import { attachHeartbeat } from "./heartbeat";
+import {
+  signalOwnedSessionProcess,
+  requestOwnedSessionTermination,
+  terminateSessionProcess,
+} from "./execution-fence";
+import { readHostProcessContext } from "./session-process-context";
+import {
+  SESSION_PROCESS_GATE_PATH,
+  sessionGateEnvironment,
+  startGatedSessionProcess,
+} from "./session-process-ownership";
+import { isSupervisorError } from "./types";
 
 type RuntimeObjectEnvName =
   | "MAISTER_OUTPUT_FILE"
@@ -29,9 +45,11 @@ type RuntimeObjectEnvName =
   | "MAISTER_PLAN_REVIEW_FILE";
 type RuntimeObjectEnvPaths = Partial<Record<RuntimeObjectEnvName, string>>;
 
-export type SpawnSessionOptions = {
+export type SpawnSessionOptions = (
+  | { hostState: HostState; registry: SessionRegistry; killGraceMs: number }
+  | { hostState?: undefined; registry?: undefined; killGraceMs?: undefined }
+) & {
   sessionId: string;
-  hostState?: HostState;
   runtimeEventPublisher?: RuntimeEventPublisher;
   request: StartSessionRequest;
   // ADR-166: every run-dir path and the cwd come from the resolved workspace
@@ -115,296 +133,433 @@ export function buildChildEnv(
 export async function spawnSession(
   opts: SpawnSessionOptions,
 ): Promise<SpawnSessionResult> {
-  const { sessionId, logger } = opts;
-  const request = effectiveStartSessionRequest(opts.request);
-  const workspace = opts.workspace;
-  const adapterRuntime = getAdapterRuntime(request.executor.agent);
-  const binaryResolution = resolveAdapterBinary({
-    adapter: request.executor.agent,
-    testOverride: opts.binaryOverride,
-  });
-  const binary = binaryResolution.binary;
-
-  // Each incarnation owns an exclusive raw log. Reusing a step's append file
-  // would interleave producers and invalidate captured segment byte offsets.
-  const logPath = join(dirname(workspace.logPath), `${sessionId}.log`);
-
-  await mkdir(dirname(logPath), { recursive: true });
-  const seedMonotonicId = 0;
-  // M42 (ADR-114): a single-session run omits sessionName → "default".
-  const sessionName = request.sessionName ?? "default";
-
-  const args: string[] = [
-    ...adapterRuntime.defaultArgs,
-    ...(opts.preArgs ?? []),
-  ];
-
-  if (request.adapterLaunch?.preArgs) {
-    args.push(...request.adapterLaunch.preArgs);
-  }
-
-  // Resume is performed at the ACP protocol level via session/resume (see
-  // createAcpConnection), NOT a CLI flag: both claude-agent-acp and codex-acp
-  // ignore `--resume` on argv. request.resumeSessionId still drives the cost
-  // `resumed` marker below and is forwarded to createAcpConnection.
-
-  if (request.adapterLaunch?.postArgs) {
-    args.push(...request.adapterLaunch.postArgs);
-  }
-
-  const childEnv = buildChildEnv(request, {
-    contextMounts: workspace.contextMounts,
-    capabilityProfilePath: opts.runtimeObjectEnv?.capabilityProfilePath,
-    capabilityInstructionsPath:
-      opts.runtimeObjectEnv?.capabilityInstructionsPath,
-    outputPaths: opts.runtimeObjectEnv?.outputPaths,
-  });
-
-  logger.info(
-    {
-      sessionId,
-      agent: request.executor.agent,
-      adapter: adapterRuntime.id,
-      binary,
-      binarySource: binaryResolution.source,
-      binaryOverrideEnv: binaryResolution.overrideEnv ?? null,
-      model: request.executor.model,
-      cwd: workspace.cwd,
-      executionWorkspaceId: workspace.executionWorkspaceId,
-      resume: Boolean(request.resumeSessionId),
-      runnerId: opts.request.runner?.runnerId ?? null,
-      runnerProvider: opts.request.runner?.provider.kind ?? null,
-      hasEnv: Boolean(
-        request.executor.env && Object.keys(request.executor.env).length > 0,
-      ),
-      envKeys: Object.keys(request.executor.env ?? {}).sort(),
-      hasAdapterEnv: Boolean(
-        request.adapterLaunch?.env &&
-        Object.keys(request.adapterLaunch.env).length > 0,
-      ),
-      adapterEnvKeys: Object.keys(request.adapterLaunch?.env ?? {}).sort(),
-      hasCapabilityProfile: Boolean(
-        opts.runtimeObjectEnv?.capabilityProfilePath,
-      ),
-      hasCapabilityInstructions: Boolean(
-        opts.runtimeObjectEnv?.capabilityInstructionsPath,
-      ),
-      runtimeOutputEnvNames: Object.keys(
-        opts.runtimeObjectEnv?.outputPaths ?? {},
-      ).sort(),
-    },
-    "spawn",
-  );
-
-  const releaseOutputProducer = reserveOutputProducer();
-  let logStream: WriteStream;
-  let producerFiles: ProducerFiles | undefined;
+  let nativeChild: ChildProcess | undefined;
 
   try {
-    if (opts.hostState)
-      producerFiles = prepareProducerFiles({
-        state: opts.hostState,
-        walletId: opts.createdBy.commandId,
-        sessionId,
-        logPath,
-      });
-    logStream = createWriteStream(logPath, { flags: "wx", mode: 0o600 });
-    await once(logStream, "open");
-  } catch (error) {
-    opts.hostState?.reportRuntimeStorageFailure(error);
-    producerFiles?.abandonUnstarted();
-    releaseOutputProducer();
-    if (error instanceof HostRuntimeEventError) throw error;
-    throw new SupervisorError(
-      "EXECUTOR_UNAVAILABLE",
-      "session output log could not be opened",
-      {
-        cause: error,
-        details: {
-          reason: "required_output_incomplete",
-          outputFailure: "producer_output_storage",
-        },
-      },
-    );
-  }
-  const child = spawn(binary, args, {
-    cwd: workspace.cwd,
-    env: childEnv,
-    stdio: ["pipe", "pipe", "inherit"],
-  });
+    const { sessionId, logger } = opts;
+    const request = effectiveStartSessionRequest(opts.request);
+    const workspace = opts.workspace;
+    const adapterRuntime = getAdapterRuntime(request.executor.agent);
+    const binaryResolution = resolveAdapterBinary({
+      adapter: request.executor.agent,
+      testOverride: opts.binaryOverride,
+    });
+    const binary = binaryResolution.binary;
 
-  await new Promise<void>((resolveP, rejectP) => {
-    const onError = (err: Error) => {
-      child.off("spawn", onSpawn);
+    // Each incarnation owns an exclusive raw log. Reusing a step's append file
+    // would interleave producers and invalidate captured segment byte offsets.
+    const logPath = join(dirname(workspace.logPath), `${sessionId}.log`);
+
+    await mkdir(dirname(logPath), { recursive: true });
+    const seedMonotonicId = 0;
+    // M42 (ADR-114): a single-session run omits sessionName → "default".
+    const sessionName = request.sessionName ?? "default";
+
+    const args: string[] = [
+      ...adapterRuntime.defaultArgs,
+      ...(opts.preArgs ?? []),
+    ];
+
+    if (request.adapterLaunch?.preArgs) {
+      args.push(...request.adapterLaunch.preArgs);
+    }
+
+    // Resume is performed at the ACP protocol level via session/resume (see
+    // createAcpConnection), NOT a CLI flag: both claude-agent-acp and codex-acp
+    // ignore `--resume` on argv. request.resumeSessionId still drives the cost
+    // `resumed` marker below and is forwarded to createAcpConnection.
+
+    if (request.adapterLaunch?.postArgs) {
+      args.push(...request.adapterLaunch.postArgs);
+    }
+
+    const childEnv = buildChildEnv(request, {
+      contextMounts: workspace.contextMounts,
+      capabilityProfilePath: opts.runtimeObjectEnv?.capabilityProfilePath,
+      capabilityInstructionsPath:
+        opts.runtimeObjectEnv?.capabilityInstructionsPath,
+      outputPaths: opts.runtimeObjectEnv?.outputPaths,
+    });
+
+    logger.info(
+      {
+        sessionId,
+        agent: request.executor.agent,
+        adapter: adapterRuntime.id,
+        binary,
+        binarySource: binaryResolution.source,
+        binaryOverrideEnv: binaryResolution.overrideEnv ?? null,
+        model: request.executor.model,
+        cwd: workspace.cwd,
+        executionWorkspaceId: workspace.executionWorkspaceId,
+        resume: Boolean(request.resumeSessionId),
+        runnerId: opts.request.runner?.runnerId ?? null,
+        runnerProvider: opts.request.runner?.provider.kind ?? null,
+        hasEnv: Boolean(
+          request.executor.env && Object.keys(request.executor.env).length > 0,
+        ),
+        envKeys: Object.keys(request.executor.env ?? {}).sort(),
+        hasAdapterEnv: Boolean(
+          request.adapterLaunch?.env &&
+          Object.keys(request.adapterLaunch.env).length > 0,
+        ),
+        adapterEnvKeys: Object.keys(request.adapterLaunch?.env ?? {}).sort(),
+        hasCapabilityProfile: Boolean(
+          opts.runtimeObjectEnv?.capabilityProfilePath,
+        ),
+        hasCapabilityInstructions: Boolean(
+          opts.runtimeObjectEnv?.capabilityInstructionsPath,
+        ),
+        runtimeOutputEnvNames: Object.keys(
+          opts.runtimeObjectEnv?.outputPaths ?? {},
+        ).sort(),
+      },
+      "spawn",
+    );
+
+    const releaseOutputProducer = reserveOutputProducer();
+    let logStream: WriteStream;
+    let producerFiles: ProducerFiles | undefined;
+
+    try {
+      if (opts.hostState)
+        producerFiles = prepareProducerFiles({
+          state: opts.hostState,
+          walletId: opts.createdBy.commandId,
+          sessionId,
+          logPath,
+        });
+      logStream = createWriteStream(logPath, { flags: "wx", mode: 0o600 });
+      await once(logStream, "open");
+    } catch (error) {
+      producerFiles?.abandonUnstarted();
+      releaseOutputProducer();
+      if (error instanceof HostRuntimeEventError) throw error;
+      throw new SupervisorError(
+        "EXECUTOR_UNAVAILABLE",
+        "session output log could not be opened",
+        {
+          cause: error,
+          details: {
+            reason: "required_output_incomplete",
+            outputFailure: "producer_output_storage",
+          },
+        },
+      );
+    }
+    // Every asynchronous preparation precedes this durable fence read. Native
+    // spawn and registry publication below share this uninterrupted call stack.
+    const current = opts.hostState?.getFence(workspace.runId);
+
+    if (
+      opts.hostState &&
+      (current?.epoch !== opts.createdBy.assignmentEpoch ||
+        current.assignmentId !== opts.createdBy.assignmentId)
+    ) {
       logStream.end();
       producerFiles?.abandonUnstarted();
       releaseOutputProducer();
+      throw new SupervisorError(
+        "FENCED",
+        "Session creation belongs to a superseded assignment",
+        {
+          details: {
+            reason: "assignment_fenced",
+            runId: workspace.runId,
+            commandEpoch: opts.createdBy.assignmentEpoch,
+            ...(current ? { hostEpoch: current.epoch } : {}),
+          },
+        },
+      );
+    }
+    const processContext = opts.hostState
+      ? readHostProcessContext()
+      : undefined;
+    let child: ChildProcess;
+
+    try {
+      child = opts.hostState
+        ? spawn(process.execPath, [SESSION_PROCESS_GATE_PATH], {
+            cwd: workspace.cwd,
+            env: sessionGateEnvironment(),
+            detached: true,
+            stdio: ["pipe", "pipe", "inherit", "ipc"],
+          })
+        : spawn(binary, args, {
+            cwd: workspace.cwd,
+            env: childEnv,
+            stdio: ["pipe", "pipe", "inherit"],
+          });
+    } catch (error) {
+      logStream.end();
+      producerFiles?.abandonUnstarted();
+      releaseOutputProducer();
+      throw error;
+    }
+    nativeChild = child;
+
+    if (child.pid === undefined)
+      await new Promise<void>((resolveP, rejectP) => {
+        const onError = (err: Error) => {
+          child.off("spawn", onSpawn);
+          logStream.end();
+          producerFiles?.abandonUnstarted();
+          releaseOutputProducer();
+          logger.warn(
+            {
+              sessionId,
+              agent: request.executor.agent,
+              errno: (err as NodeJS.ErrnoException).code,
+            },
+            "spawn-failed",
+          );
+          rejectP(
+            child.pid === undefined
+              ? new UnstartedSessionProcessError(err)
+              : new SupervisorError(
+                  "SPAWN",
+                  "Agent process startup failed without confirmed retirement",
+                  { cause: err },
+                ),
+          );
+        };
+        const onSpawn = () => {
+          child.off("error", onError);
+          resolveP();
+        };
+
+        child.once("error", onError);
+        child.once("spawn", onSpawn);
+      });
+
+    const pid = child.pid;
+
+    if (pid === undefined) {
+      logStream.end();
+      producerFiles?.abandonUnstarted();
+      releaseOutputProducer();
+      throw new SupervisorError("SPAWN", "child has no pid after spawn");
+    }
+
+    const record: SessionRecord = {
+      sessionId,
+      ...(opts.hostState ? { processGroup: pid, processContext } : {}),
+      adapter: adapterRuntime.id,
+      runId: workspace.runId,
+      projectSlug: workspace.projectSlug,
+      stepId: request.stepId,
+      nodeAttemptId: request.nodeAttemptId,
+      sessionName,
+      status: "live",
+      pid,
+      startedAt: new Date().toISOString(),
+      logPath,
+      worktreePath: workspace.cwd,
+      repoPath: workspace.repoPath,
+      confineRoot: workspace.confineRoot,
+      executionWorkspaceId: workspace.executionWorkspaceId,
+      assignmentId: opts.createdBy.assignmentId,
+      assignmentEpoch: opts.createdBy.assignmentEpoch,
+      createdByCommandId: opts.createdBy.commandId,
+      monotonicId: seedMonotonicId,
+      // M34 (ADR-090 L1): session-scoped read-only permission arbitration.
+      readOnlySession: request.readOnlySession === true,
+      agentKind: request.agentKind ?? "code_delivery",
+      // B1 (execution-policy permissions=auto_approve): inline L3 auto-approve.
+      autoApprovePermissions: request.autoApprovePermissions === true,
+      // ADR-108 (M40): arm the universal guardrail interceptor with the web tier's
+      // resolved rule set. Counters start fresh (in-memory only; a resume rebuilds
+      // this record, so a resumed run counts from zero).
+      hooksConfig: request.hooksConfig,
+      // ADR-130: arm the capability_guard interceptor with the web-derived profile.
+      // Counters start fresh (in-memory; a resume rebuilds this record from zero).
+      enforcementProfile: request.enforcementProfile,
+      // ADR-157: arm the unconditional read-only mount guard + the prompt preamble
+      // with the mounts the web tier materialized for this session.
+      contextMounts: workspace.contextMounts,
+      runtimeOutputObjectIds: opts.runtimeObjectEnv?.outputObjectIds,
+      capabilityDenyCount: 0,
+      capabilityPendingWriteIds: new Set<string>(),
+      repeatCount: 0,
+      turnsSinceProgress: 0,
+      // Failed synchronous setup can still be retired through its provisional
+      // registry entry; full frame capture replaces this before the next yield.
+      outputDrained: Promise.resolve(),
+    };
+    const emitter = new EventEmitter();
+
+    emitter.setMaxListeners(0);
+    if (opts.registry) {
+      opts.registry.register(record, child, emitter, {
+        runtimeEventPublisher: opts.runtimeEventPublisher,
+      });
+      attachHeartbeat({ sessionId, child, registry: opts.registry, logger });
+    }
+
+    try {
+      opts.hostState?.bindProducerSession(record.createdByCommandId, sessionId);
+    } catch (error) {
+      signalOwnedSessionProcess({ child, record }, "SIGKILL");
+      logStream.end();
+      releaseOutputProducer();
+      throw error;
+    }
+    if (!child.stdout) {
+      releaseOutputProducer();
+      signalOwnedSessionProcess({ child, record }, "SIGKILL");
+      throw new SupervisorError("SPAWN", "child has no stdout for ACP");
+    }
+    let drained: () => void = () => {};
+
+    record.outputDrained = new Promise<void>((resolve) => {
+      drained = resolve;
+    });
+    const pressure = opts.hostState
+      ? producerPressure(
+          opts.hostState,
+          record,
+          producerFiles,
+          opts.producerPauseBound,
+          logger,
+        )
+      : undefined;
+    let outputTap: Readable | null = null;
+
+    record.stopOutputForTeardown = () => {
+      record.outputTeardownStarted = true;
+      pressure?.beginTeardown();
+      outputTap?.resume();
+    };
+    child.once("exit", () => record.stopOutputForTeardown?.());
+    record.abortOutput = (error) => {
+      if (record.outputFailure) return;
+      record.outputFailure = {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+      };
+      logger.error(
+        {
+          sessionId,
+          commandId: record.activePromptCommandId,
+          reason: error.details?.reason,
+          outputFailure: error.details?.outputFailure,
+        },
+        "producer-output-incomplete",
+      );
+      pressure?.beginTeardown();
+      requestOwnedSessionTermination({ child, record }, "SIGKILL", logger);
+      child.stdout?.destroy();
+    };
+    const acpStdoutTap = captureAcpFrames({
+      source: child.stdout,
+      onStorageFailure: opts.hostState?.reportRuntimeStorageFailure,
+      storageAvailable: opts.hostState?.runtimeStorageAvailable,
+      beforeFrame: pressure?.beforeFrame,
+      beforeWrite: pressure?.beforeWrite,
+      spoolPath: producerFiles?.spoolPath,
+      onSpoolBytes: producerFiles?.recordSpoolBytes,
+      onLogBytes: producerFiles?.recordLogBytes,
+      shouldDrain: pressure?.shouldDrain,
+      onSegment: opts.runtimeEventPublisher
+        ? (segment) =>
+            opts.runtimeEventPublisher?.publishStdoutSegment(record, segment)
+        : undefined,
+      directory: dirname(logPath),
+      log: logStream,
+      onFailure(error) {
+        record.abortOutput?.(error);
+      },
+      onDrained() {
+        try {
+          producerFiles?.finish();
+        } finally {
+          releaseOutputProducer();
+          drained();
+        }
+      },
+    });
+
+    outputTap = acpStdoutTap;
+    record.drainSessionOutput = () => acpStdoutTap.resume();
+    acpStdoutTap.on("error", (error: unknown) => {
+      // The capture owner already records the structured output failure and
+      // terminates its producer. A pre-handshake failure still needs an event
+      // receiver before an ACP reader has been installed.
       logger.warn(
         {
           sessionId,
-          agent: request.executor.agent,
-          errno: (err as NodeJS.ErrnoException).code,
+          error: error instanceof Error ? error.name : typeof error,
         },
-        "spawn-failed",
+        "session-bootstrap-output-failed",
       );
-      rejectP(
-        new SupervisorError("SPAWN", `spawn ${binary} failed: ${err.message}`, {
-          cause: err,
-        }),
-      );
-    };
-    const onSpawn = () => {
-      child.off("error", onError);
-      resolveP();
-    };
+    });
 
-    child.once("error", onError);
-    child.once("spawn", onSpawn);
-  });
-
-  const pid = child.pid;
-
-  if (pid === undefined) {
-    logStream.end();
-    producerFiles?.abandonUnstarted();
-    releaseOutputProducer();
-    throw new SupervisorError("SPAWN", "child has no pid after spawn");
-  }
-
-  const record: SessionRecord = {
-    sessionId,
-    adapter: adapterRuntime.id,
-    runId: workspace.runId,
-    projectSlug: workspace.projectSlug,
-    stepId: request.stepId,
-    nodeAttemptId: request.nodeAttemptId,
-    sessionName,
-    status: "live",
-    pid,
-    startedAt: new Date().toISOString(),
-    logPath,
-    worktreePath: workspace.cwd,
-    repoPath: workspace.repoPath,
-    confineRoot: workspace.confineRoot,
-    executionWorkspaceId: workspace.executionWorkspaceId,
-    assignmentId: opts.createdBy.assignmentId,
-    assignmentEpoch: opts.createdBy.assignmentEpoch,
-    createdByCommandId: opts.createdBy.commandId,
-    monotonicId: seedMonotonicId,
-    // M34 (ADR-090 L1): session-scoped read-only permission arbitration.
-    readOnlySession: request.readOnlySession === true,
-    agentKind: request.agentKind ?? "code_delivery",
-    // B1 (execution-policy permissions=auto_approve): inline L3 auto-approve.
-    autoApprovePermissions: request.autoApprovePermissions === true,
-    // ADR-108 (M40): arm the universal guardrail interceptor with the web tier's
-    // resolved rule set. Counters start fresh (in-memory only; a resume rebuilds
-    // this record, so a resumed run counts from zero).
-    hooksConfig: request.hooksConfig,
-    // ADR-130: arm the capability_guard interceptor with the web-derived profile.
-    // Counters start fresh (in-memory; a resume rebuilds this record from zero).
-    enforcementProfile: request.enforcementProfile,
-    // ADR-157: arm the unconditional read-only mount guard + the prompt preamble
-    // with the mounts the web tier materialized for this session.
-    contextMounts: workspace.contextMounts,
-    runtimeOutputObjectIds: opts.runtimeObjectEnv?.outputObjectIds,
-    capabilityDenyCount: 0,
-    capabilityPendingWriteIds: new Set<string>(),
-    repeatCount: 0,
-    turnsSinceProgress: 0,
-  };
-
-  try {
-    opts.hostState?.bindProducerSession(record.createdByCommandId, sessionId);
-  } catch (error) {
-    child.kill("SIGKILL");
-    logStream.end();
-    releaseOutputProducer();
-    throw error;
-  }
-  const emitter = new EventEmitter();
-
-  emitter.setMaxListeners(0);
-
-  if (!child.stdout) {
-    releaseOutputProducer();
-    child.kill("SIGKILL");
-    throw new SupervisorError("SPAWN", "child has no stdout for ACP");
-  }
-  let drained: () => void = () => {};
-
-  record.outputDrained = new Promise<void>((resolve) => {
-    drained = resolve;
-  });
-  const pressure = opts.hostState
-    ? producerPressure(
-        opts.hostState,
-        record,
-        producerFiles,
-        opts.producerPauseBound,
-        logger,
-      )
-    : undefined;
-
-  record.stopOutputForTeardown = () => {
-    record.outputTeardownStarted = true;
-    pressure?.beginTeardown();
-  };
-  child.once("exit", () => record.stopOutputForTeardown?.());
-  record.abortOutput = (error) => {
-    if (record.outputFailure) return;
-    record.outputFailure = {
-      code: error.code,
-      message: error.message,
-      details: error.details,
-    };
-    logger.error(
-      {
-        sessionId,
-        commandId: record.activePromptCommandId,
-        reason: error.details?.reason,
-        outputFailure: error.details?.outputFailure,
-      },
-      "producer-output-incomplete",
-    );
-    pressure?.beginTeardown();
-    child.kill("SIGKILL");
-    child.stdout?.destroy();
-  };
-  const acpStdoutTap = captureAcpFrames({
-    source: child.stdout,
-    onStorageFailure: opts.hostState?.reportRuntimeStorageFailure,
-    storageAvailable: opts.hostState?.runtimeStorageAvailable,
-    beforeFrame: pressure?.beforeFrame,
-    beforeWrite: pressure?.beforeWrite,
-    spoolPath: producerFiles?.spoolPath,
-    onSpoolBytes: producerFiles?.recordSpoolBytes,
-    onLogBytes: producerFiles?.recordLogBytes,
-    shouldDrain: pressure?.shouldDrain,
-    onSegment: opts.runtimeEventPublisher
-      ? (segment) =>
-          opts.runtimeEventPublisher?.publishStdoutSegment(record, segment)
-      : undefined,
-    directory: dirname(logPath),
-    log: logStream,
-    onFailure(error) {
-      record.abortOutput?.(error);
-    },
-    onDrained() {
+    if (opts.hostState) {
       try {
-        producerFiles?.finish();
-      } finally {
-        releaseOutputProducer();
-        drained();
-      }
-    },
-  });
+        await startGatedSessionProcess({
+          child,
+          record,
+          state: opts.hostState,
+          registry: opts.registry,
+          binary,
+          arguments: args,
+          environment: childEnv,
+        });
+      } catch (cause) {
+        const entry = opts.registry.get(sessionId);
 
-  return {
-    child,
-    emitter,
-    record,
-    logPath,
-    logStream,
-    acpStdoutTap,
-  };
+        opts.registry.markIntentionalShutdown(sessionId, "intentional");
+        const termination = entry
+          ? await terminateSessionProcess(entry, opts.killGraceMs, logger)
+          : "process_exit";
+
+        if (termination !== "confirmed")
+          throw new UnsettledSessionCreateError({
+            runId: record.runId,
+            sessionId,
+            stage: termination,
+            killGraceMs: opts.killGraceMs,
+            cause,
+            retainedSession: entry ?? null,
+          });
+        const obligation = opts.hostState
+          .sessionProcessesForRun(record.runId)
+          .find(
+            (candidate) => candidate.commandId === record.createdByCommandId,
+          );
+
+        if (obligation?.phase === "registered")
+          opts.hostState.releaseSessionProcess(
+            record.createdByCommandId,
+            new Date().toISOString(),
+          );
+        throw new SupervisorError(
+          isSupervisorError(cause) ? cause.code : "SPAWN",
+          isSupervisorError(cause)
+            ? cause.message
+            : "The session gate failed before its ACP handshake",
+          {
+            cause,
+            details: {
+              ...(isSupervisorError(cause) ? cause.details : {}),
+              sessionCreateQuiescence: { version: 1, process: "terminated" },
+            },
+          },
+        );
+      }
+    }
+
+    return {
+      child,
+      emitter,
+      record,
+      logPath,
+      logStream,
+      acpStdoutTap,
+    };
+  } catch (error) {
+    if (nativeChild) throw error;
+    throw new UnstartedSessionProcessError(error);
+  }
 }

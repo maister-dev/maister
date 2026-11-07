@@ -10,7 +10,10 @@ import { join } from "node:path";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
-import { startBarePostgresTestDb } from "@/test-support/pg-container";
+import {
+  declareCurrentTestDatabaseWriter,
+  startBarePostgresTestDb,
+} from "@/test-support/pg-container";
 
 let database: StartedPostgresTestDb;
 let prefix: string;
@@ -85,6 +88,7 @@ it("IT-PKD-11: upgrades 0209 with retained data, exact paging indexes and repeat
   ).rows;
 
   await migrate(database.db, { migrationsFolder: "lib/db/migrations" });
+  await declareCurrentTestDatabaseWriter(database);
   const indexes = (
     await database.pool.query(
       "SELECT indexname,indexdef FROM pg_indexes WHERE indexname LIKE '%peek_%' ORDER BY indexname",

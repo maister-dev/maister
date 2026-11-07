@@ -3,6 +3,7 @@ import "server-only";
 import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { manualTriageHoldPredicate } from "@/lib/tasks/triage-flag-origin";
 import { taskTriageAutoEnqueuePredicate } from "@/lib/tasks/qualification-predicates";
 import { LAUNCHABLE_FLOW_ENABLEMENT_STATES } from "@/lib/flows/enablement-states";
 import { getDb } from "@/lib/db/client";
@@ -220,13 +221,14 @@ export async function applyTriageVerdict(
   if (input.queueFields) applyQueueWriteFields(input.queueFields, set);
   const now = new Date();
   const arm = input.enqueue === true;
-  const armWhenAllowed = sql`CASE WHEN ${taskTriageAutoEnqueuePredicate()} THEN ${arm} ELSE false END`;
+  const armWhenAllowed = sql`CASE WHEN NOT (${manualTriageHoldPredicate()}) AND ${taskTriageAutoEnqueuePredicate()} THEN ${arm} ELSE false END`;
 
   await tx
     .update(tasks)
     .set({
       ...set,
-      triageStatus: "triaged",
+      triageStatus: sql`CASE WHEN ${manualTriageHoldPredicate()} THEN 'flagged' ELSE 'triaged' END`,
+      triageFlagOrigin: sql`CASE WHEN ${manualTriageHoldPredicate()} THEN ${tasks.triageFlagOrigin} ELSE NULL END`,
       // ADR-112: triage_set is AUTHORITATIVE for the enqueue intent — arm the
       // auto_launch_triaged tick when enqueue, else CLEAR any stale 'auto' left
       // by a prior pass (mirrors sendTaskToTriage). A verdict that does not
@@ -312,6 +314,8 @@ export async function applyTriageFlag(
 ): Promise<void> {
   const set: Record<string, unknown> = {
     triageStatus: "flagged",
+    triageFlagOrigin: "explicit",
+    revision: sql`${tasks.revision}+1`,
     launchMode: null,
     launchArmedAt: null,
     updatedAt: new Date(),
@@ -404,10 +408,11 @@ export async function sendTaskToTriageInTransaction(
   await tx
     .update(tasks)
     .set({
-      qualificationMode: sql`CASE WHEN ${tasks.qualificationMode}='execution_child' OR (SELECT coalesce(task_qualification_override,task_qualification_baseline) FROM projects WHERE id=${input.projectId})='required' THEN 'required' ELSE ${tasks.qualificationMode} END`,
-      qualificationChildProof: sql`CASE WHEN ${tasks.qualificationMode}='execution_child' OR (SELECT coalesce(task_qualification_override,task_qualification_baseline) FROM projects WHERE id=${input.projectId})='required' THEN NULL ELSE ${tasks.qualificationChildProof} END`,
-      qualificationInputRevision: sql`${tasks.qualificationInputRevision}+CASE WHEN ${tasks.qualificationMode}<>'legacy' OR (SELECT coalesce(task_qualification_override,task_qualification_baseline) FROM projects WHERE id=${input.projectId})='required' THEN 1 ELSE 0 END`,
-      triageStatus: null,
+      qualificationMode: "required",
+      qualificationChildProof: null,
+      qualificationInputRevision: sql`${tasks.qualificationInputRevision}+1`,
+      triageStatus: sql`CASE WHEN ${manualTriageHoldPredicate()} THEN 'flagged' ELSE NULL END`,
+      triageFlagOrigin: sql`CASE WHEN ${manualTriageHoldPredicate()} THEN ${tasks.triageFlagOrigin} ELSE NULL END`,
       launchMode: null,
       launchArmedAt: null,
       ...(input.launchIntent === undefined

@@ -1,3 +1,4 @@
+import type { TaskLaunchRequest } from "@/lib/tasks/launch-schema";
 import type {
   AgentRetryOptions,
   RetryRunnerOption,
@@ -28,6 +29,7 @@ export type AgentRetryBatchRequest = {
     requestKey: string;
     previewFingerprint: string;
     strategy: "pre_work_retry" | "fresh_qualification";
+    launchRequest?: TaskLaunchRequest;
   }>;
 };
 

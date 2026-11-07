@@ -57,6 +57,12 @@ function mapDomainEvent(row: DomainEventActivityRow): DomainEventMapping {
         },
         summary: "agent incident changed",
       };
+    case "task.launch_changed":
+      return {
+        salience: "low",
+        action: { verb: "update", object: "task launch", outcome: "changed" },
+        summary: "task launch changed",
+      };
     case "task.qualification_changed":
       return {
         salience: "low",

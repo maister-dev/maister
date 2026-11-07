@@ -39,6 +39,12 @@ info:
     pre-ADR-166 path field (`runId`, `projectSlug`, `worktreePath`,
     `repoPath`, `confineRoot`, `contextMounts`) is
     `409 PRECONDITION {reason: legacy_field, field}`.
+    Before admitting any executable command, the host confirms retirement of
+    retained lower-epoch processes. An unconfirmed retirement returns
+    `503 EXECUTOR_UNAVAILABLE` with `session_eviction_exit_unconfirmed`, retains
+    the high-water and session inventory, and writes no target command receipt.
+    Retrying the same command and epoch repeats this gate; it may execute once
+    retirement is confirmed. Terminal receipt replay remains unchanged.
     The supported deployment is single-host and loopback. Repository/worktree
     material stays local until Stage C, but Stage B removes web access to the
     supervisor runtime-data filesystem. Remote enrollment/authentication is
@@ -1188,11 +1194,12 @@ paths:
         unknown handle → `unknown_workspace` (the client re-adopts once and
         issues a NEW command); a released one → `workspace_released`. Handler
         order: parse envelope → fence check (the handle's stored run binds
-        `run_mismatch`) → receipt lookup (duplicate id → verbatim replay with
-        `X-Maister-Command-Replayed: true`, in-flight → join) → execute (a
-        higher epoch evicts the run's lower-epoch sessions first, inside the
-        in-flight execution, then the handle is resolved and the adapter
-        spawned) → write receipt → respond. Replay wins over the handle check:
+        `run_mismatch`) → lower-epoch retirement gate for executable commands →
+        receipt lookup (duplicate id → verbatim replay with
+        `X-Maister-Command-Replayed: true`, in-flight → join) → execute (the
+        handle is resolved and the adapter spawned) → write receipt → respond.
+        A higher high-water alone never proves prior-process eviction; retries
+        at that same epoch must also pass the gate. Replay wins over the handle check:
         a duplicate id whose original completed replays its `201` even after
         the handle was released. A bare body without an envelope is
         `409 PRECONDITION missing_envelope`; a payload carrying a pre-ADR-166
@@ -1304,7 +1311,20 @@ paths:
                       message: "spawn claude-agent-acp failed: ENOENT",
                     }
         "503":
-          description: Executor unavailable (missing env ref, unsupported adapter readiness, or reserved pool exhaustion).
+          description: |
+            Executor unavailable (missing env ref, unsupported adapter readiness,
+            reserved pool exhaustion, or failed ACP handshake). A receipt-owned
+            refusal carries `details.sessionCreateQuiescence` only when the host
+            proves that no process was started or confirms its exit and terminal
+            output. If handshake teardown remains unconfirmed,
+            `session_create_exit_unconfirmed` retains the registered session and
+            leaves the create receipt `accepted` (HTTP status 503, no completion
+            timestamp). Replays preserve that unresolved decision without
+            spawning again. A later confirmed child exit or owned session DELETE
+            settles the same original create receipt as rejected with a
+            `terminated` witness; no replacement create id is minted. Reconcile
+            the retained session before releasing its workspace. An unstamped
+            historical refusal is not proof of process retirement.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -1320,15 +1340,35 @@ paths:
         `assignmentId`, `assignmentEpoch`, and `createdByCommandId`. Host-private
         paths (`logPath`, `worktreePath`, `repoPath`, `confineRoot`,
         `contextMounts`) never leave the host — no web reader consumes them.
+        With `runId`, this is a physically verified inventory for that Run.
+        Missing registry entries do not erase durable process obligations.
+        Registered inherited groups must be retired before an empty inventory
+        can attest quiescence; unproven ownership returns a scoped 503. The
+        success header is required by manager quiescence consumers. Aggregate
+        inventory remains a registry projection and does not attest absence.
       operationId: listSessions
+      parameters:
+        - in: query
+          name: runId
+          schema: { type: string, minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9._:-]+$" }
+          description: Exact Run whose physical ownership must be verified; no synthetic session identity is created for legacy obligations.
       responses:
         "200":
           description: Current registry contents.
+          headers:
+            X-Maister-Session-Ownership-Version:
+              description: Present only for a successful Run-scoped physical inventory; absent on old hosts and aggregate projections.
+              schema: { type: string, enum: ["1"] }
           content:
             application/json:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/SessionRecord" }
+        "503":
+          description: The requested Run has an active untracked group, an unknown process namespace, or an unproven legacy owner; no quiescence is attested.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
         default:
           description: Unhandled supervisor error.
           content:
@@ -3619,7 +3659,18 @@ components:
             (ADR-085) The node attempt this session executes; updated on every
             prompt. Absent for scratch / single-session runs.
         status: { $ref: "#/components/schemas/SessionStatus" }
-        pid: { type: integer, minimum: 1 }
+        pid:
+          type: integer
+          minimum: 1
+          description: Current native process owner; for journalled sessions this is the detached gate leader, not the adapter PID.
+        processGroup:
+          type: integer
+          minimum: 1
+          description: Immutable journalled gate process group. This is diagnostic metadata, never authority to signal a recovered process.
+        adapterPid:
+          type: integer
+          minimum: 1
+          description: Actual adapter child PID reported by the trusted gate after successful native spawn. Absent before spawn succeeds.
         startedAt: { type: string, format: date-time }
         exitedAt: { type: string, format: date-time, nullable: true }
         exitCode: { type: integer, nullable: true }
@@ -3968,6 +4019,10 @@ components:
         - runtime_output_frame_too_large
         - required_output_incomplete
         - session_delete_exit_unconfirmed
+        - session_create_exit_unconfirmed
+        - session_eviction_exit_unconfirmed
+        - process_identity_unavailable
+        - session_process_owner_unconfirmed
         - runtime_object_missing
         - runtime_object_range_invalid
         - runtime_object_integrity_mismatch
@@ -4150,12 +4205,51 @@ components:
         stage:
           type: string
           enum: [process_exit, terminal_output]
-          description: (`session_delete_exit_unconfirmed`) The unconfirmed quiescence barrier.
+          description: (`session_delete_exit_unconfirmed` / `session_create_exit_unconfirmed`) The unconfirmed quiescence barrier.
         killGraceMs:
           type: integer
           minimum: 0
-          description: (`session_delete_exit_unconfirmed`) The timeout used for each termination barrier.
+          description: (`session_delete_exit_unconfirmed` / `session_create_exit_unconfirmed`) The timeout used for each termination barrier.
+        sessionCreateQuiescence:
+          type: object
+          additionalProperties: false
+          required: [version, process]
+          description: |
+            Versioned host proof in a rejected session.create receipt. Minted
+            only before invoking process spawn or after confirming process exit
+            and terminal output. Its absence, including historical receipts,
+            leaves create quiescence unproven.
+          properties:
+            version: { type: integer, enum: [1] }
+            process: { type: string, enum: [not_started, terminated] }
+        sessionCreateFailure:
+          type: object
+          additionalProperties: false
+          required: [version, stage, causeChain]
+          description: |
+            Bounded original create failure identity, preserved unchanged when
+            late retirement settles the original receipt. Contains no error
+            messages, paths, stderr, source, or environment values.
+          properties:
+            version: { type: integer, enum: [1] }
+            stage: { type: string, enum: [spawn, acp_handshake] }
+            causeChain:
+              type: array
+              maxItems: 4
+              items:
+                type: object
+                additionalProperties: false
+                required: [name]
+                properties:
+                  name: { type: string, pattern: "^[A-Za-z_][A-Za-z0-9_]{0,63}$" }
+                  code:
+                    oneOf:
+                      - { type: integer, minimum: -9007199254740991, maximum: 9007199254740991 }
+                      - { type: string, pattern: "^(?:[A-Za-z_][A-Za-z0-9_]{0,63}|[0-9A-Z]{5})$" }
+                  syscall: { type: string, pattern: "^[A-Za-z_][A-Za-z0-9_]{0,63}$" }
+                  signal: { type: string, pattern: "^[A-Za-z_][A-Za-z0-9_]{0,63}$" }
         commandEpoch: { type: integer, minimum: 0 }
+        processGroup: { type: integer, minimum: 1, description: Diagnostic recorded process group; not signal authority. }
         hostEpoch: { type: integer, minimum: 0 }
         parentCommandId:
           type: string
@@ -4610,8 +4704,13 @@ components:
         (Implemented — ADR-166) The host's durable record of one command id.
         `completed` and `rejected` receipts are replayed verbatim on a
         duplicate (`X-Maister-Command-Replayed: true`); an `accepted` receipt
-        with `inflight: false` means the host restarted mid-turn
-        (`turn_lost`) — the web recovery folds it without re-sending.
+        with `inflight: false` is not physical retirement proof. A create
+        retains its exact accepted identity while a journalled process group is
+        active or unproven, including across Supervisor restart. Only positive
+        group or verified OS-boot retirement settles that create; no duplicate
+        adapter may be inferred from an empty registry or lost in-memory turn.
+        A `session_create_exit_unconfirmed` body is replayable as an accepted
+        503 without spawning. Historical unstamped outcomes remain unproven.
       example:
         commandId: "3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a"
         runId: "run-abc"

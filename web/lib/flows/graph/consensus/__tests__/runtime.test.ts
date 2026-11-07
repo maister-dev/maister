@@ -17,6 +17,7 @@ import {
   withConsensusVars,
 } from "@/lib/flows/graph/consensus/runtime";
 import { renderStrict } from "@/lib/flows/templating";
+import { runs } from "@/lib/db/schema";
 
 const launchConsensusDraftRuns = vi.hoisted(() => vi.fn());
 const latestConsensusRound = vi.hoisted(() => vi.fn());
@@ -217,19 +218,23 @@ function db(): unknown {
     transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(tx)),
     insert: runSessionInsertStub(),
     select: vi.fn(() => ({
-      from: vi.fn(() => ({
-        where: vi.fn(async () => [
-          {
-            id: "claude",
-            adapter: "claude",
-            capabilityAgent: "claude",
-            model: "sonnet",
-            provider: { kind: "anthropic" },
-            permissionPolicy: "default",
-            enabled: true,
-            readinessStatus: "Ready",
-          },
-        ]),
+      from: vi.fn((table: unknown) => ({
+        where: vi.fn(async () =>
+          table === runs
+            ? [legacyParent()]
+            : [
+                {
+                  id: "claude",
+                  adapter: "claude",
+                  capabilityAgent: "claude",
+                  model: "sonnet",
+                  provider: { kind: "anthropic" },
+                  permissionPolicy: "default",
+                  enabled: true,
+                  readinessStatus: "Ready",
+                },
+              ],
+        ),
       })),
     })),
   };
@@ -300,14 +305,26 @@ function dbWithRunnerRows(rows: Record<string, unknown>[]): unknown {
     transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(tx)),
     insert: runSessionInsertStub(),
     select: vi.fn(() => ({
-      from: vi.fn(() => ({
+      from: vi.fn((table: unknown) => ({
         where: vi.fn(async () => {
+          if (table === runs) return [legacyParent()];
           const row = queue.shift();
 
           return row ? [row] : [];
         }),
       })),
     })),
+  };
+}
+
+function legacyParent() {
+  return {
+    id: "run-1",
+    projectId: "project-1",
+    taskId: "task-1",
+    flowRevisionId: "rev-1",
+    taskLaunchIntentId: null,
+    taskAdmissionSnapshot: null,
   };
 }
 

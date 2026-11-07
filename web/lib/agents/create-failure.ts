@@ -1,5 +1,8 @@
 import "server-only";
 
+import type { AgentPreparationOwner } from "./preparation-workspace";
+import type { OperationalProbeContext } from "./operational-diagnostics";
+import type { AgentFinalizeOptions } from "@/lib/agents/finalization";
 import type { Db } from "@/lib/execution-host/db";
 import type { AgentTurn } from "@/lib/db/schema";
 import type { BoundClient } from "@/lib/execution-host/client";
@@ -13,6 +16,9 @@ import {
   prepareAgentRunFinalization,
   prepareUndispatchedAgentFailure,
 } from "./finalization";
+import { releaseAgentPreparationAfterFailure } from "./preparation-workspace";
+import { readAgentDispatchEvidence } from "./execution-quiescence";
+import { operationalFailureDiagnostic } from "./operational-diagnostics";
 import { afterPersistentAgentPark, applyAgentPark } from "./park";
 import { insertHostParkSuccessor } from "./host-park-settlement";
 
@@ -23,6 +29,7 @@ import {
 } from "@/lib/execution-host/create-intent";
 import { lockCurrentSessionAssignment } from "@/lib/execution-host/session-binding";
 import { UNKNOWN_OUTCOME_DETAIL } from "@/lib/execution-host/contracts";
+import { isMaisterError } from "@/lib/errors";
 import { isHostPressureFailure } from "@/lib/execution-host/host-pressure";
 
 const log = pino({
@@ -35,8 +42,16 @@ export async function settleUndispatchedAgentFailure(
   db: Db,
   runId: string,
   reason: "agent_workspace_prepare_failed" | "agent_dispatch_failed",
+  diagnostic: Pick<
+    AgentFinalizeOptions,
+    "causeReason" | "infrastructureFailure" | "expectedAssignmentId"
+  > = {},
 ): Promise<boolean> {
-  const prepared = await prepareUndispatchedAgentFailure(runId, { db, reason });
+  const prepared = await prepareUndispatchedAgentFailure(runId, {
+    db,
+    reason,
+    ...diagnostic,
+  });
   const application = await db.transaction(prepared.apply);
 
   await prepared.afterCommit(application);
@@ -44,6 +59,62 @@ export async function settleUndispatchedAgentFailure(
     { runId, reason, finalized: application.finalized },
     "agent-undispatched-failure-settled",
   );
+
+  return application.finalized;
+}
+
+/** Commit a preparation failure before releasing its physical owner; cleanup runs afterwards. */
+export async function settleAgentPreparationFailure(
+  db: Db,
+  runId: string,
+  preparation: AgentPreparationOwner,
+  primaryError: unknown,
+  context: OperationalProbeContext,
+): Promise<boolean> {
+  let application: AgentFinalizationApplication;
+  let prepared: Awaited<ReturnType<typeof prepareUndispatchedAgentFailure>>;
+
+  log.warn(
+    {
+      ...context,
+      preparationId: preparation.operation.id,
+      primaryFailure: operationalFailureDiagnostic(primaryError, context),
+    },
+    "agent-preparation-failure-settlement",
+  );
+  try {
+    preparation.assertHeld();
+    const options: AgentFinalizeOptions = {
+      db,
+      reason: "agent_workspace_prepare_failed",
+      expectedAssignmentId: preparation.operation.assignmentId,
+      expectedPreparation: preparation,
+      infrastructureFailure: operationalFailureDiagnostic(
+        primaryError,
+        context,
+      ),
+      causeReason:
+        isMaisterError(primaryError) &&
+        typeof primaryError.details?.reason === "string"
+          ? primaryError.details.reason
+          : "operational_preparation_failed",
+    };
+    const evidence = await readAgentDispatchEvidence(db, runId);
+
+    prepared =
+      evidence.hasOwnedCommand || evidence.hasBoundSession
+        ? await prepareAgentRunFinalization(runId, "Failed", options)
+        : await prepareUndispatchedAgentFailure(runId, options);
+
+    application = await db.transaction(prepared.apply);
+  } finally {
+    await releaseAgentPreparationAfterFailure(
+      preparation,
+      primaryError,
+      context,
+    );
+  }
+  await prepared.afterCommit(application);
 
   return application.finalized;
 }

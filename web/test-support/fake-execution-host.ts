@@ -910,7 +910,32 @@ export function createFakeExecutionHost(
 
         if (status !== null && err instanceof MaisterError) {
           if (receipts.get(commandId)?.phase === "accepted") {
-            writeReceipt(envelope, "rejected", status, errorBodyOf(err));
+            const failure = errorBodyOf(err);
+            const details = failure.details;
+            const rejection =
+              method === "createSession" &&
+              ![...sessions.values()].some(
+                (session) => session.createdByCommandId === commandId,
+              )
+                ? {
+                    ...failure,
+                    details: {
+                      ...(details &&
+                      typeof details === "object" &&
+                      !Array.isArray(details)
+                        ? (details as Record<string, unknown>)
+                        : {}),
+                      sessionCreateQuiescence: {
+                        version: 1,
+                        process: "not_started",
+                      },
+                    },
+                  }
+                : failure;
+
+            writeReceipt(envelope, "rejected", status, rejection);
+            if (rejection !== failure)
+              throw wireError(method, status, rejection);
           }
         }
         throw err;
@@ -1119,6 +1144,14 @@ export function createFakeExecutionHost(
         assignmentEpoch: s.assignmentEpoch,
         createdByCommandId: s.createdByCommandId,
       }));
+    },
+    async listSessionsForRun(runId) {
+      await record("listSessionsForRun", null, [runId]);
+      loseAdminResponse("listSessionsForRun");
+
+      return (await transport.listSessions()).filter(
+        (session) => session.runId === runId,
+      );
     },
     // Per-session event queue: yields what `pushEvent` scripted (plus the
     // shared `setStreamEvents` script on the first stream of a session), ends
@@ -1616,16 +1649,14 @@ export function createFakeExecutionHost(
         method: "createSession",
         envelope,
         args: [opts],
-        guard: () => {
-          const ws = workspaces.get(envelope.payload.executionWorkspaceId);
+        guard: () =>
+          workspaces.get(envelope.payload.executionWorkspaceId)?.runId,
+        execute: async () => {
+          const payload = envelope.payload;
+          const ws = workspaces.get(payload.executionWorkspaceId);
 
           if (!ws) throw unknownWorkspaceError();
           if (ws.releasedAt) throw workspaceReleasedError(ws.runId);
-
-          return ws.runId;
-        },
-        execute: async () => {
-          const payload = envelope.payload;
 
           for (const field of [
             "stepId",
@@ -1639,8 +1670,6 @@ export function createFakeExecutionHost(
               throw precondition(`${field} must match /^[A-Za-z0-9._-]+$/`, {});
             }
           }
-          const ws = workspaces.get(payload.executionWorkspaceId)!;
-
           if (payload.capabilityProfileObjectId) {
             const profile = runtimeObjects.get(
               payload.capabilityProfileObjectId,
@@ -3049,11 +3078,7 @@ export function memoryBoundClient(args: {
       );
     },
     async sessionsForRun() {
-      const runId = current.runId;
-
-      return (await fake.transport.listSessions()).filter(
-        (record) => record.runId === runId,
-      );
+      return fake.transport.listSessionsForRun(current.runId);
     },
     cancelPrompt: (sessionId) =>
       fake.transport.cancelPrompt(sessionId, envelope("session.cancel", {})),
@@ -3098,6 +3123,7 @@ export function memoryAdminClient(fake: FakeExecutionHost): HostAdminClient {
       fake.transport.resolveModelSuggestions(draft, opts),
     probeMcp: (req) => fake.transport.probeMcp(req),
     listSessions: () => fake.transport.listSessions(),
+    listSessionsForRun: (runId) => fake.transport.listSessionsForRun(runId),
     streamSession: (sessionId, opts) =>
       fake.transport.streamSession(sessionId, opts),
     getCommandReceipt: (id) => fake.transport.getCommandReceipt(id),

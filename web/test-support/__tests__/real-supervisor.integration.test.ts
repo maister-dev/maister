@@ -1,9 +1,8 @@
-// The real-supervisor harness: the child leads its own process group so
+// The real-supervisor harness captures its detached session groups so
 // `kill()` reaches the adapter children it spawned (no PID-1 orphans), and
 // the inherited environment is scrubbed of every execution-host setting so a
 // developer/CI pin cannot give every child one identity.
 
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -16,6 +15,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildEnvelope } from "@/lib/execution-host/ledger";
 import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
 import { asExecutionWorkspaceId } from "@/lib/execution-host/types";
+import { captureOwnedAdapterProcess } from "@/test-support/capture-supervisor-process-groups";
+import {
+  invocationFromEnvironment,
+  readProcessSnapshot,
+} from "@/test-support/process-invocation";
 import { retryFixturePortAllocation } from "@/test-support/owned-fixture";
 import {
   startRealSupervisor,
@@ -24,24 +28,6 @@ import {
 } from "@/test-support/real-supervisor";
 
 const PINNED_KEY = "eh_pinned_by_ci_00000000";
-
-function pgrep(args: string[]): Promise<number[]> {
-  return new Promise((resolve) => {
-    execFile("pgrep", args, (err, stdout) => {
-      if (err) {
-        resolve([]);
-
-        return;
-      }
-      resolve(
-        stdout
-          .split("\n")
-          .map((l) => Number.parseInt(l.trim(), 10))
-          .filter((pid) => Number.isFinite(pid)),
-      );
-    });
-  });
-}
 
 let sup: RealSupervisor | null = null;
 let restoreUrl: () => void = () => {};
@@ -122,7 +108,7 @@ describe("real-supervisor harness", () => {
     }
   }, 60_000);
 
-  it("kills the whole process group — the adapter child dies with the supervisor — and scrubs the inherited host pin", async () => {
+  it("kills its captured session groups — the adapter child dies with the supervisor — and scrubs the inherited host pin", async () => {
     process.env.MAISTER_EXECUTION_HOST_KEY = PINNED_KEY;
     sup = await startRealSupervisor({ fixtureArgs: ["--hang"] });
     restoreUrl = useRealSupervisorUrl(sup.url);
@@ -173,20 +159,32 @@ describe("real-supervisor harness", () => {
       }),
     );
 
-    expect(created.pid).toBeGreaterThan(0);
-    const group = await pgrep(["-g", String(sup.pid)]);
+    const invocation = invocationFromEnvironment();
 
-    // The supervisor leads the group and the adapter is a member of it.
-    expect(group).toContain(sup.pid);
-    expect(group).toContain(created.pid);
-    expect(await pgrep(["-f", sup.fixturePath])).toContain(created.pid);
+    if (!invocation)
+      throw new Error("Supervisor harness requires an owned invocation");
+    const captured = await captureOwnedAdapterProcess({
+      invocation,
+      supervisor: sup,
+      sessionId: created.sessionId,
+      expected: { runId, assignmentId: fence.assignmentId, assignmentEpoch: 1 },
+    });
 
-    const { pid, fixturePath } = sup;
+    expect(created.pid).toBe(captured.gate.pid);
+    expect(captured.adapter.pid).not.toBe(created.pid);
+    expect(captured.adapter.pgid).toBe(captured.gate.pid);
+    expect(captured.adapter.ppid).toBe(captured.gate.pid);
+    const pid = sup.pid;
+    const group = captured.gate.pgid;
 
     await sup.kill();
     sup = null;
 
-    expect(await pgrep(["-g", String(pid)])).toEqual([]);
-    expect(await pgrep(["-f", fixturePath])).not.toContain(created.pid);
+    expect(
+      (await readProcessSnapshot(invocation)).filter(
+        (entry) =>
+          !entry.zombie && (entry.pgid === pid || entry.pgid === group),
+      ),
+    ).toEqual([]);
   }, 60_000);
 });

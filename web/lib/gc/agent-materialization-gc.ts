@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { Db as ExecutionDb } from "@/lib/execution-host/db";
+
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 
@@ -42,6 +44,7 @@ export type AgentMaterializationRunCleanupState = {
   readonly status: string;
   readonly agentKind?: string | null;
   readonly agentWorkspace: string | null;
+  readonly taskLaunchIntentId?: string | null;
 };
 
 export type RunAgentMaterializationCleanupSweepOptions = {
@@ -112,6 +115,7 @@ async function loadRunStatuses(
       status: runs.status,
       agentWorkspace: runs.agentWorkspace,
       agentKind: runs.agentKind,
+      taskLaunchIntentId: runs.taskLaunchIntentId,
     })
     .from(runs)
     .where(inArray(runs.id, [...runIds]))) as Array<{
@@ -119,6 +123,7 @@ async function loadRunStatuses(
     readonly status: string;
     readonly agentWorkspace: string | null;
     readonly agentKind?: string | null;
+    readonly taskLaunchIntentId?: string | null;
   }>;
 
   return new Map(
@@ -128,6 +133,7 @@ async function loadRunStatuses(
         status: row.status,
         agentWorkspace: row.agentWorkspace,
         agentKind: row.agentKind,
+        taskLaunchIntentId: row.taskLaunchIntentId,
       },
     ]),
   );
@@ -138,6 +144,7 @@ function shouldRestoreMaterialization(
 ): boolean {
   if (!state) return false;
   if (state.agentKind === "operational") return false;
+  if (state.taskLaunchIntentId && state.status === "Crashed") return false;
   if (TERMINAL_CLEANUP_STATUSES.has(state.status)) return true;
 
   // A crashed worktree can be resumed. Crashed none/repo_read sessions have no
@@ -199,7 +206,16 @@ export async function runAgentMaterializationCleanupSweep(
     }
 
     try {
-      await restore(candidate.cwd, candidate.runId);
+      if (state.taskLaunchIntentId) {
+        const { withAcceptedAgentCleanup } =
+          await import("@/lib/agents/accepted-cleanup");
+
+        await withAcceptedAgentCleanup(
+          resolveDb() as unknown as ExecutionDb,
+          candidate.runId,
+          () => restore(candidate.cwd, candidate.runId),
+        );
+      } else await restore(candidate.cwd, candidate.runId);
       restored += 1;
     } catch (err) {
       failed += 1;

@@ -91,6 +91,11 @@ describe("TOOL_SPECS registry", () => {
         "run_discard",
         "run_get",
         "run_launch",
+        "task_launch",
+        "task_launch_options",
+        "task_launch_status",
+        "task_launch_cancel",
+        "task_launch_replace",
         "run_message",
         "run_plan",
         "run_promote",
@@ -649,13 +654,16 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     });
   });
 
-  it("run_launch → POST /api/v1/ext/runs forwards the full canonical launch surface (runnerId/baseBranch/targetBranch)", async () => {
+  it("run_launch forwards versioned intent fields and the compatibility runner/branch surface", async () => {
     mockOnce({ runId: "run-1", status: "Running" }, 202);
 
     await dispatchTool({
       name: "run_launch",
       args: {
         taskId: "task-1",
+        expectedTaskRevision: 3,
+        expectedSettingsToken: "settings-3",
+        operationKey: "legacy-launch-3",
         runnerId: "claude-code",
         baseBranch: "main",
         targetBranch: "develop",
@@ -669,8 +677,13 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     expect(init.method).toBe("POST");
     expect(url).toBe(`${BASE_URL}/api/v1/ext/runs`);
     expect(headerAuth(init)).toBe(AUTH);
+    expect((init.headers as Record<string, string>)["Idempotency-Key"]).toBe(
+      "legacy-launch-3",
+    );
     expect(parsedBody(init)).toEqual({
       taskId: "task-1",
+      expectedTaskRevision: 3,
+      expectedSettingsToken: "settings-3",
       runnerId: "claude-code",
       baseBranch: "main",
       targetBranch: "develop",
@@ -779,6 +792,7 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
       args: {
         target: { agentId: "pkg:worker" },
         mode: "task",
+        operationKey: "delegate-operation",
         prompt: "Do the subtask",
         title: "Subtask",
       },
@@ -791,6 +805,9 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     expect(init.method).toBe("POST");
     expect(url).toBe(`${BASE_URL}/api/v1/ext/runs/delegate`);
     expect(headerAuth(init)).toBe(AUTH);
+    expect(new Headers(init.headers).get("Idempotency-Key")).toBe(
+      "delegate-operation",
+    );
     // workspace + runnerOverride omitted (undefined) — only defined keys ride.
     expect(parsedBody(init)).toEqual({
       target: { agentId: "pkg:worker" },
@@ -820,7 +837,7 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
 
     await dispatchTool({
       name: "run_plan",
-      args: { tasks: planTasks },
+      args: { tasks: planTasks, operationKey: "plan-operation" },
       ctx: httpCtx,
       baseUrl: BASE_URL,
     });

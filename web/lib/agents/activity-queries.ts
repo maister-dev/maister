@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
+import type { TaskLaunchReceipt } from "@/lib/tasks/launch-types";
 import type { RunStatusValue } from "@/lib/runs/run-status-values";
 import type { AgentActivityTimestampProvenance } from "@/lib/agents/activity-types";
 import type {
@@ -18,6 +19,8 @@ import { z } from "zod";
 
 import {
   agentTriggerAttempts,
+  taskLaunchIntents,
+  tasks,
   hitlRequests,
   projects,
   runs,
@@ -363,7 +366,16 @@ export async function loadRunScheduledRequest(
   return parseScheduledRequestSnapshot(row?.snapshot);
 }
 
+export type AgentAttemptLaunchIntent = Readonly<{
+  intentId: string;
+  taskId: string;
+  taskNumber: number;
+  state: TaskLaunchReceipt["state"];
+  reason: string | null;
+}>;
+
 export type AgentAttemptItem = {
+  launchIntent?: AgentAttemptLaunchIntent;
   attemptId: string;
   triggerSource: string;
   claimedAt: string;
@@ -420,8 +432,43 @@ export async function getAgentAttemptHistory(
       desc(agentTriggerAttempts.id),
     )
     .limit(limit + 1);
-  const items: AgentAttemptItem[] = rows.slice(0, limit).map((row) => ({
+  const visibleRows = rows.slice(0, limit);
+  const attemptIds = visibleRows.map((row) => row.attemptId);
+  const owners =
+    attemptIds.length > 0
+      ? await db
+          .select({
+            attemptId: agentTriggerAttempts.id,
+            intentId: taskLaunchIntents.id,
+            taskId: taskLaunchIntents.taskId,
+            taskNumber: tasks.number,
+            state: taskLaunchIntents.state,
+            reason: taskLaunchIntents.reason,
+          })
+          .from(taskLaunchIntents)
+          .innerJoin(tasks, eq(tasks.id, taskLaunchIntents.taskId))
+          .innerJoin(
+            agentTriggerAttempts,
+            sql`${taskLaunchIntents.settingsSnapshot}->'serverExecution'->'execution'->'agentTriggerReservation'->>'attemptId'=${agentTriggerAttempts.id} AND ${taskLaunchIntents.settingsSnapshot}->'serverExecution'->'execution'->'agentTriggerReservation'->>'runId'=${agentTriggerAttempts.reservedRunId}`,
+          )
+          .where(
+            and(
+              eq(taskLaunchIntents.projectId, projectId),
+              eq(agentTriggerAttempts.projectId, projectId),
+              eq(agentTriggerAttempts.sourceAgentId, agentId),
+              sql`${taskLaunchIntents.settingsSnapshot}->'serverExecution'->>'kind'='agent_trigger'`,
+              inArray(agentTriggerAttempts.id, attemptIds),
+            ),
+          )
+      : [];
+  const ownersByAttempt = new Map(
+    owners.map(({ attemptId, ...owner }) => [attemptId, owner]),
+  );
+  const items: AgentAttemptItem[] = visibleRows.map((row) => ({
     ...row,
+    ...(ownersByAttempt.has(row.attemptId)
+      ? { launchIntent: ownersByAttempt.get(row.attemptId) }
+      : {}),
     settledAt: row.settledAt?.toISOString() ?? null,
     provenance: row.provenance === "claim" ? "recorded" : "legacy_latest",
   }));

@@ -13,12 +13,17 @@ import type { SessionCreateOwner } from "./create-intent";
 import type { HostSessionId } from "./types";
 import type { Logger } from "pino";
 
+import { randomUUID } from "node:crypto";
+
 import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
+
+import { hasSessionCreateQuiescence } from "../../../runtime/session-create-quiescence";
 
 import { assertAgentResumeCreateRequest } from "./agent-permission-handoff";
 import {
   createIntentError,
+  createOperationKey,
   latestOwnedCreate,
   lockCreateOwner,
   readCreateIntent,
@@ -32,28 +37,85 @@ import {
 } from "./deliverer";
 import { applyCreateAck } from "./create-ack";
 import { hostPressuredError, isHostPressureRefusal } from "./host-pressure";
-import { issueCommand } from "./ledger";
+import { buildEnvelope, issueCommand } from "./ledger";
+import { lockConsensusDraftCommandAdmission } from "./consensus-command-admission";
 import { casTransition, markFailed, requeueDelivering } from "./commands";
 import { ensureSessionOutputIntents } from "./session-output-intents";
 import { isReadoptableWorkspaceError } from "./adoption";
+import {
+  createContinuationObjectIds,
+  type OwnedCreateContinuation,
+} from "./create-continuation";
+import { assertRuntimeObjectsReferenceable } from "./runtime-object-holds";
 import { staleSessionBinding } from "./session-binding";
 import { asHostSessionId } from "./types";
+import { projectPrivateCreateFailure } from "./private-create-failure";
 
 import { executionCommands, gateResults, nodeAttempts } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { isTurnLostError } from "@/lib/reconcile-evidence";
 import { isMaisterErrorCode } from "@/lib/errors-core";
+import { pgErrorOf } from "@/lib/db/pg-error";
 
 export type OwnedSessionOptions = Readonly<{
   assertCommit?: (tx: Db) => Promise<void>;
+  prepareContinuation?: () => Promise<OwnedCreateContinuation>;
 }>;
+export type { OwnedCreateContinuation } from "./create-continuation";
+
+/** Server-only replay source. Its prompt and runtime configuration must never
+ * enter a public receipt, DTO or diagnostic log.
+ */
+export async function readOwnedCreateContinuation(
+  db: Db,
+  client: BoundClient,
+  owner: SessionCreateOwner,
+): Promise<OwnedCreateContinuation | null> {
+  return db
+    .transaction(async (tx) => {
+      const authority = {
+        runId: client.assignment.runId,
+        assignmentId: client.assignment.id,
+        owner,
+      };
+
+      if (!(await lockCreateOwner(tx, authority, "create")))
+        throw staleSessionBinding(authority.runId, authority.assignmentId);
+      const original = await latestOwnedCreate(tx, authority);
+
+      if (!original) return null;
+      const { intent } = readCreateIntent(original, client.host.hostKey);
+
+      if (
+        !(await lockCreateOwner(
+          tx,
+          { ...authority, owner: intent.owner },
+          "create",
+        ))
+      )
+        throw staleSessionBinding(authority.runId, authority.assignmentId);
+
+      return intent.continuation ?? null;
+    })
+    .catch((error: unknown) => {
+      throw privateCreateFailure(error, client);
+    });
+}
 export class SessionCreatePending extends MaisterError {
-  constructor(commandId: string, cause?: unknown) {
+  constructor(
+    commandId: string | null,
+    cause?: unknown,
+    operationKey?: string,
+  ) {
     super(
       "PRECONDITION",
       "session creation awaits its original command result",
       {
-        details: { reason: "session_create_pending", commandId },
+        details: {
+          reason: "session_create_pending",
+          ...(commandId === null ? {} : { commandId }),
+          ...(operationKey === undefined ? {} : { operationKey }),
+        },
         ...(cause instanceof Error ? { cause } : {}),
       },
     );
@@ -82,10 +144,21 @@ function storedFailure(command: ExecutionCommand): MaisterError {
   });
 }
 
-/** The create payload factory is called only for a first admission. Restarts
- * use private original bytes; credentials/capabilities are not re-resolved.
- */
-export async function createOwnedSession(input: {
+async function assertCreateReplacementQuiescence(
+  db: Db,
+  command: ExecutionCommand,
+  failure: MaisterError,
+): Promise<void> {
+  const [current] = await db
+    .select()
+    .from(executionCommands)
+    .where(eq(executionCommands.id, command.id));
+
+  if (!current || !hasSessionCreateQuiescence(current.receiptEvidence?.body))
+    throw new SessionCreatePending(command.id, failure);
+}
+
+type OwnedSessionCreateInput = {
   db: Db;
   client: BoundClient;
   transport: ExecutionHostTransport;
@@ -95,12 +168,74 @@ export async function createOwnedSession(input: {
   >;
   options?: OwnedSessionOptions;
   logger: Logger;
-}): Promise<
-  CreateSessionResult & {
-    hostSessionId: HostSessionId;
-    sessionFallback: boolean;
+};
+type OwnedSessionCreateResult = CreateSessionResult & {
+  hostSessionId: HostSessionId;
+  sessionFallback: boolean;
+};
+
+function privateCreateFailure(
+  error: unknown,
+  client: BoundClient,
+): MaisterError {
+  const projected = projectPrivateCreateFailure(error, {
+    runId: client.assignment.runId,
+    assignmentId: client.assignment.id,
+    assignmentEpoch: client.assignment.epoch,
+  });
+
+  if (
+    projected !== error &&
+    error instanceof SessionCreatePending &&
+    typeof error.details?.commandId === "string"
+  )
+    return new SessionCreatePending(error.details.commandId, projected);
+
+  return projected;
+}
+
+function createStorageFailure(
+  error: unknown,
+  client: BoundClient,
+  commandId: string,
+): MaisterError {
+  const failure = privateCreateFailure(error, client);
+
+  if (
+    isMaisterError(error) ||
+    (error &&
+      typeof error === "object" &&
+      "cause" in error &&
+      failure === error.cause)
+  )
+    return failure;
+
+  return new SessionCreatePending(commandId, failure);
+}
+
+/** The create payload factory is called only for a first admission. Restarts
+ * use private original bytes; credentials/capabilities are not re-resolved.
+ */
+export async function createOwnedSession(
+  input: OwnedSessionCreateInput,
+): Promise<OwnedSessionCreateResult> {
+  const knownCreate: { commandId: string | null } = { commandId: null };
+
+  try {
+    return await createOwnedSessionFromIntent(input, (commandId) => {
+      knownCreate.commandId = commandId;
+    });
+  } catch (error) {
+    if (knownCreate.commandId)
+      throw createStorageFailure(error, input.client, knownCreate.commandId);
+    throw privateCreateFailure(error, input.client);
   }
-> {
+}
+
+async function createOwnedSessionFromIntent(
+  input: OwnedSessionCreateInput,
+  recordKnownCreate: (commandId: string) => void,
+): Promise<OwnedSessionCreateResult> {
   const { db, client, transport, owner, logger } = input;
   const authority = {
     runId: client.assignment.runId,
@@ -112,11 +247,45 @@ export async function createOwnedSession(input: {
     if (!(await lockCreateOwner(tx, authority, "create")))
       throw staleSessionBinding(authority.runId, authority.assignmentId);
   };
-  let original = await db.transaction(async (tx) => {
-    await assertOwner(tx);
+  let original: ExecutionCommand | undefined;
 
-    return latestOwnedCreate(tx, authority);
-  });
+  try {
+    original = await db.transaction(async (tx) => {
+      await assertOwner(tx);
+      const existing = await latestOwnedCreate(tx, authority);
+
+      if (existing) {
+        const { intent } = readCreateIntent(existing, client.host.hostKey);
+
+        if (
+          !(await lockCreateOwner(
+            tx,
+            { ...authority, owner: intent.owner },
+            "create",
+          ))
+        )
+          throw staleSessionBinding(authority.runId, authority.assignmentId);
+      }
+
+      return existing;
+    });
+  } catch (error) {
+    const failure = privateCreateFailure(error, client);
+
+    if (
+      isMaisterError(error) ||
+      failure === error ||
+      (error &&
+        typeof error === "object" &&
+        "cause" in error &&
+        failure === error.cause)
+    )
+      throw failure;
+    // A failed lookup can hide an already admitted or created session. Retain
+    // its owner without inventing a command ID; re-entry locks before reading.
+    throw new SessionCreatePending(null, failure, createOperationKey(owner));
+  }
+  if (original) recordKnownCreate(original.id);
   const persistCreateRejection = async (
     command: ExecutionCommand,
   ): Promise<void> => {
@@ -154,7 +323,7 @@ export async function createOwnedSession(input: {
       receipt.phase !== "rejected" ||
       receipt.inflight ||
       receipt.httpStatus < 400 ||
-      !receipt.completedAt
+      (!receipt.completedAt && !receipt.evidenceV2?.terminal)
     ) {
       logger.warn(
         {
@@ -238,7 +407,7 @@ export async function createOwnedSession(input: {
           .where(eq(nodeAttempts.id, owner.nodeAttemptId));
 
         const [evaluation] =
-          owner.variant !== "node"
+          owner.variant === "gate_ai" || owner.variant === "gate_skill"
             ? await db
                 .select({ resume: gateResults.permissionResume })
                 .from(gateResults)
@@ -252,6 +421,7 @@ export async function createOwnedSession(input: {
           evaluation?.resume?.assignmentId === authority.assignmentId
         )
           throw failure;
+        await assertCreateReplacementQuiescence(db, original, failure);
         const { resumeSessionId, ...fresh } = envelope.payload;
 
         void resumeSessionId;
@@ -260,17 +430,15 @@ export async function createOwnedSession(input: {
         isReadoptableWorkspaceError(failure) &&
         intent.generation < 2
       ) {
+        await assertCreateReplacementQuiescence(db, original, failure);
         replacement = {
           ...envelope.payload,
           executionWorkspaceId: await client.ensureWorkspace({ force: true }),
         };
       } else if (isTurnLostError(original.lastError) && intent.generation < 2) {
-        // D2c. A create whose turn the host lost bound no session, so the
-        // original intent bytes are reissued once under a new generation —
-        // the same answer D2a gives one step earlier, when no receipt exists.
-        // The stored workspace handle rides along unchanged, as it does on the
-        // CHECKPOINT arm: if the restarted host no longer honours it, the
-        // readoption arm above catches the refusal on the next generation.
+        await assertCreateReplacementQuiescence(db, original, failure);
+        // A lost logical turn is not process-exit evidence. The original host
+        // must prove retirement before these stored bytes start a new process.
         replacement = { ...envelope.payload };
       } else throw failure;
       logger.warn(
@@ -295,51 +463,98 @@ export async function createOwnedSession(input: {
 
       await ensureSessionOutputIntents(db, client, normalized);
       const predecessor = original;
+      const continuation = predecessor
+        ? readCreateIntent(predecessor, client.host.hostKey).intent.continuation
+        : await input.options?.prepareContinuation?.();
 
-      original = await db.transaction(async (tx) => {
-        await assertOwner(tx);
-        if (owner.variant === "agent")
-          await assertAgentResumeCreateRequest(tx, owner.turnId, normalized);
-        const existing = await latestOwnedCreate(tx, authority);
+      const commandId = randomUUID();
+      const issuedAt = new Date();
+      const admission: { returnedCandidate: ExecutionCommand | null } = {
+        returnedCandidate: null,
+      };
 
-        if (existing && existing.id !== predecessor?.id) return existing;
-        if (predecessor && (!existing || existing.state !== "failed"))
-          throw createIntentError("create_replacement_source");
-        const issued = await issueCommand(tx, {
-          assignment: client.assignment,
-          host: client.host,
-          kind: "session.create",
-          payload: normalized,
-          maxAttempts: COMMAND_POLICY["session.create"].maxAttempts,
-          logger,
+      try {
+        original = await db.transaction(async (tx) => {
+          await lockConsensusDraftCommandAdmission(tx, authority.runId);
+          await assertOwner(tx);
+          if (owner.variant === "agent")
+            await assertAgentResumeCreateRequest(tx, owner.turnId, normalized);
+          const existing = await latestOwnedCreate(tx, authority);
+
+          if (existing && existing.id !== predecessor?.id) {
+            admission.returnedCandidate = existing;
+
+            return existing;
+          }
+          if (predecessor && (!existing || existing.state !== "failed"))
+            throw createIntentError("create_replacement_source");
+          if (continuation)
+            await assertRuntimeObjectsReferenceable(
+              tx,
+              createContinuationObjectIds(continuation),
+            );
+          const envelope = buildEnvelope({
+            commandId,
+            kind: "session.create",
+            hostKey: client.host.hostKey,
+            assignmentId: client.assignment.id,
+            assignmentEpoch: client.assignment.epoch,
+            runId: authority.runId,
+            payload: normalized,
+            issuedAt,
+          });
+          const intent = storeCreateIntent({
+            owner,
+            generation: predecessor
+              ? readCreateIntent(predecessor, client.host.hostKey).intent
+                  .generation + 1
+              : 0,
+            supersedesCommandId: predecessor?.id ?? null,
+            sessionFallback: Boolean(
+              predecessor &&
+              (predecessor.createIntent?.sessionFallback ||
+                (readCreateIntent(predecessor, client.host.hostKey).envelope
+                  .payload.resumeSessionId &&
+                  !normalized.resumeSessionId)),
+            ),
+            envelope,
+            ...(continuation ? { continuation } : {}),
+          });
+          const issued = await issueCommand(tx, {
+            id: commandId,
+            now: issuedAt,
+            assignment: client.assignment,
+            host: client.host,
+            kind: "session.create",
+            payload: normalized,
+            createIntent: intent,
+            maxAttempts: COMMAND_POLICY["session.create"].maxAttempts,
+            logger,
+          });
+
+          await input.options?.assertCommit?.(tx);
+          admission.returnedCandidate = issued.row;
+
+          return issued.row;
         });
-        const intent = storeCreateIntent({
-          owner,
-          generation: predecessor
-            ? readCreateIntent(predecessor, client.host.hostKey).intent
-                .generation + 1
-            : 0,
-          supersedesCommandId: predecessor?.id ?? null,
-          sessionFallback: Boolean(
-            predecessor &&
-            (predecessor.createIntent?.sessionFallback ||
-              (readCreateIntent(predecessor, client.host.hostKey).envelope
-                .payload.resumeSessionId &&
-                !normalized.resumeSessionId)),
-          ),
-          envelope: issued.envelope,
-        });
-        const [created] = await tx
-          .update(executionCommands)
-          .set({ createIntent: intent })
-          .where(eq(executionCommands.id, issued.row.id))
-          .returning();
+      } catch (error) {
+        // Only a completed callback can have sent COMMIT. Its lost reply cannot
+        // establish rollback, even when Drizzle subsequently sends ROLLBACK.
+        const candidate = admission.returnedCandidate;
+        const sqlState = pgErrorOf(error)?.code;
+        const rolledBack =
+          sqlState?.startsWith("23") ||
+          (sqlState?.startsWith("40") && sqlState !== "40003");
 
-        await input.options?.assertCommit?.(tx);
-        if (!created) throw createIntentError("create_admission_missing");
+        if (!candidate || rolledBack) throw error;
+        const failure = privateCreateFailure(error, client);
 
-        return created;
-      });
+        // The next continuation reacquires the same owner lock before reading
+        // the operation key, serializing with a late server commit or rollback.
+        // Do not add another potentially unavailable DB call to this catch.
+        throw new SessionCreatePending(candidate.id, failure);
+      }
+      recordKnownCreate(original.id);
       replacement = undefined;
     }
     const current = original;
@@ -400,20 +615,9 @@ export async function createOwnedSession(input: {
         )
           throw createIntentError("create_receipt_identity");
         if (receipt.phase === "accepted") {
-          // D2c. `accepted` + `inflight:false` is a host restart between the
-          // receipt write and the turn (`contracts.ts`). The supervisor settles
-          // such a receipt only when the SAME command id is re-sent, and
-          // `session.create` is not in `RESTARTABLE_OBJECT_KINDS`, so a re-send
-          // answers turn_lost, never a session. Record the lost turn and let
-          // the loop authorize a fresh generation: an accepted-but-unfinished
-          // create returned no session id to fold, and the restarted host holds
-          // no live adapter to orphan.
-          if (receipt.inflight) throw new SessionCreatePending(current.id);
-          original = await failAndReload(current.id, current.attempts, {
-            code: "ACP_PROTOCOL",
-            reason: "turn_lost",
-          });
-          continue;
+          // Neither V1 liveness nor an empty new registry proves the old OS
+          // process retired. Keep the same create until terminal host proof.
+          throw new SessionCreatePending(current.id);
         }
         if (receipt.phase === "rejected") {
           original = await failAndReload(
@@ -474,6 +678,7 @@ export async function createOwnedSession(input: {
     }
     if (current.state === "delivering") {
       await db.transaction(async (tx) => {
+        await lockConsensusDraftCommandAdmission(tx, current.runId);
         await assertOwner(tx);
         await requeueDelivering(tx, current.id, { logger });
       });
@@ -492,12 +697,33 @@ export async function createOwnedSession(input: {
       });
 
       return resultValue(result);
-    } catch (error) {
+    } catch (originalError) {
+      const error = privateCreateFailure(originalError, client);
+
       if (isFencedError(error)) throw error;
-      const [settled] = await db
-        .select()
-        .from(executionCommands)
-        .where(eq(executionCommands.id, current.id));
+      let settled: ExecutionCommand | undefined;
+
+      try {
+        [settled] = await db
+          .select()
+          .from(executionCommands)
+          .where(eq(executionCommands.id, current.id));
+      } catch (reloadError) {
+        throw new SessionCreatePending(
+          current.id,
+          new MaisterError(
+            "EXECUTOR_UNAVAILABLE",
+            "The original session creation outcome cannot yet be read",
+            {
+              cause: error,
+              details: {
+                reason: "session_create_outcome_read_pending",
+                diagnostics: privateCreateFailure(reloadError, client).details,
+              },
+            },
+          ),
+        );
+      }
 
       if (!settled) throw createIntentError("create_command_missing");
       if (

@@ -1,4 +1,4 @@
-// P0-2 — the three durable workers in the PRODUCTION web boot.
+// P0-2 / R18 — the four durable workers in the PRODUCTION web boot.
 //
 // The proof lane is `server.ts` over a fresh `next build` against a real
 // supervisor and real Postgres; a mocked unit suite cannot show that
@@ -11,6 +11,8 @@
 //   A/B/C  one parameterized control per domain (flow, agent, scratch):
 //          launch through production HTTP, SIGKILL the web while the prompt is
 //          accepted, restart, and assert the durable owner applied the turn.
+//   R18    an accepted, repository-deferred launch survives web death and is
+//          bound by the restarted task-launch worker without another request.
 //   R1-R5  registry composition and worker lifecycle edge cases the happy path
 //          cannot reach.
 //
@@ -27,9 +29,12 @@ import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 
 import { eq } from "drizzle-orm";
+import { z } from "zod";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { readLaunchResult } from "@/e2e/_seed/launch-stream";
+import { acquireRepositoryMutationFence } from "@/lib/project-config-persistence/repository-lock";
+import { launchFlowThroughHttp } from "@/test-support/launch-flow-through-http";
 import * as schema from "@/lib/db/schema";
 import {
   startMainAndBrainPostgresTestDb,
@@ -135,25 +140,11 @@ const domains: DomainRow[] = [
     domain: "flow",
     ownerKind: "flow_node_attempt",
     launch: async () => {
-      const res = await api("/api/runs", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ taskId: flowTaskId }),
+      return launchFlowThroughHttp({
+        api,
+        origin: web.url,
+        taskId: flowTaskId,
       });
-
-      if (![200, 201, 202].includes(res.status))
-        throw new Error(
-          `flow launch answered ${res.status}: ${await res.text()}`,
-        );
-      const body = (await res.json()) as { id?: string; runId?: string };
-      const runId = body.runId ?? body.id;
-
-      if (!runId)
-        throw new Error(
-          `flow launch returned no run id: ${JSON.stringify(body)}`,
-        );
-
-      return runId;
     },
     expectedTerminal: async (runId) =>
       ["Review", "Done", "Running"].includes(await runStatus(runId)),
@@ -164,7 +155,7 @@ const domains: DomainRow[] = [
     launch: async () => {
       const res = await api(agentPath, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", Origin: web.url },
         body: JSON.stringify({}),
       });
 
@@ -422,6 +413,180 @@ describe("P0-2 durable workers in the production web boot", () => {
     },
   );
 
+  it("R18: a deferred accepted launch survives web death and binds once through the restarted production worker without another request", async () => {
+    const target = await seedFlowTask(testDatabase.db, {
+      projectId: project.projectId,
+      installedPath: path.join(packagesRoot, `queued-${randomUUID()}`),
+      terminalDelayMs: 0,
+    });
+    const previewResponse = await api(
+      `/api/runs/launch-options?taskId=${target.taskId}`,
+    );
+
+    expect(previewResponse.ok).toBe(true);
+    const preview = z
+      .object({
+        settingsToken: z.string().min(1),
+        task: z.object({ id: z.string(), revision: z.number().int() }),
+      })
+      .parse(await previewResponse.json());
+    const issuer = web;
+    const beforeStarts =
+      (await web.logTail(4 * 1024 * 1024)).split("task-launch-worker-started")
+        .length - 1;
+    let fence: Awaited<
+      ReturnType<typeof acquireRepositoryMutationFence>
+    > | null = await acquireRepositoryMutationFence(project.repoPath);
+
+    try {
+      const acceptedResponse = await api("/api/task-launch-intents", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          Origin: web.url,
+          "Idempotency-Key": randomUUID(),
+        },
+        body: JSON.stringify({
+          taskId: target.taskId,
+          expectedTaskRevision: preview.task.revision,
+          expectedSettingsToken: preview.settingsToken,
+        }),
+      });
+
+      expect(
+        acceptedResponse.status,
+        await acceptedResponse.clone().text(),
+      ).toBe(202);
+      const accepted = z
+        .object({
+          intentId: z.string(),
+          taskId: z.string(),
+          runId: z.string().nullable(),
+        })
+        .parse(await acceptedResponse.json());
+
+      expect(accepted).toMatchObject({ taskId: target.taskId, runId: null });
+      const deferred = await poll(
+        async () => {
+          const [row] = await testDatabase.db
+            .select()
+            .from(schema.taskLaunchIntents)
+            .where(eq(schema.taskLaunchIntents.id, accepted.intentId));
+
+          return row?.state === "queued" &&
+            row.reason === "operation_busy" &&
+            row.runId === null
+            ? row
+            : null;
+        },
+        EVIDENCE_BUDGET_MS,
+        "the accepted launch to persist a real repository-contention deferral",
+      );
+
+      expect(
+        await testDatabase.db
+          .select()
+          .from(schema.runs)
+          .where(eq(schema.runs.taskLaunchIntentId, accepted.intentId)),
+      ).toEqual([]);
+      expect(deferred.preparationIdentity?.runId).toBeTruthy();
+      expect(
+        await testDatabase.db
+          .select()
+          .from(schema.executionCommands)
+          .where(
+            eq(
+              schema.executionCommands.runId,
+              deferred.preparationIdentity!.runId,
+            ),
+          ),
+      ).toEqual([]);
+      await issuer.kill("SIGKILL");
+      web = await issuer.restart();
+      cookie = await signInWithCredentials(web.url, WORKER_ADMIN);
+      await fence.release();
+      fence = null;
+      const committed = await poll(
+        async () => {
+          const [row] = await testDatabase.db
+            .select()
+            .from(schema.taskLaunchIntents)
+            .where(eq(schema.taskLaunchIntents.id, accepted.intentId));
+
+          return row?.dispatchCommittedAt && row.runId ? row : null;
+        },
+        EVIDENCE_BUDGET_MS,
+        "the restarted task-launch worker to bind the original accepted intent",
+      );
+      const starts =
+        (await web.logTail(4 * 1024 * 1024)).split("task-launch-worker-started")
+          .length - 1;
+
+      expect(beforeStarts).toBeGreaterThanOrEqual(1);
+      expect(starts).toBeGreaterThan(beforeStarts);
+      expect(committed).toMatchObject({
+        id: accepted.intentId,
+        state: "run_bound",
+        attempts: 0,
+      });
+      expect(
+        await testDatabase.db
+          .select()
+          .from(schema.runs)
+          .where(eq(schema.runs.taskLaunchIntentId, accepted.intentId)),
+      ).toHaveLength(1);
+      const commands = await poll(
+        async () => {
+          const rows = await testDatabase.db
+            .select({ kind: schema.executionCommands.kind })
+            .from(schema.executionCommands)
+            .where(eq(schema.executionCommands.runId, committed.runId!));
+          const creates = rows.filter((row) => row.kind === "session.create");
+          const prompts = rows.filter((row) => row.kind === "session.prompt");
+
+          return creates.length > 0 && prompts.length > 0
+            ? { creates, prompts }
+            : null;
+        },
+        EVIDENCE_BUDGET_MS,
+        "one owned create and prompt for the recovered accepted launch",
+      );
+
+      const serviceLog = z.object({
+        msg: z.literal("[FIX:R18] accepted launch pool serviced"),
+        workerId: z.string().startsWith("task-launch-worker:"),
+        pool: z.literal("flow"),
+        runId: z.string(),
+        durableProgress: z.literal(true),
+      });
+      const workerServiced = (await web.logTail(4 * 1024 * 1024))
+        .split("\n")
+        .some((line) => {
+          try {
+            const event = serviceLog.safeParse(JSON.parse(line) as unknown);
+
+            return event.success && event.data.runId === committed.runId;
+          } catch {
+            return false;
+          }
+        });
+
+      expect(
+        workerServiced,
+        "the restarted launch worker—not only a boot sweep—must service this exact Run",
+      ).toBe(true);
+      expect(commands.creates).toHaveLength(1);
+      expect(commands.prompts).toHaveLength(1);
+    } finally {
+      await fence?.release();
+      await issuer.kill("SIGKILL");
+      if (web === issuer) {
+        web = await issuer.restart();
+        cookie = await signInWithCredentials(web.url, WORKER_ADMIN);
+      }
+    }
+  }, 600_000);
+
   // -------------------------------------------------------------------------
   // Registry composition and worker lifecycle (Task 6).
   // -------------------------------------------------------------------------
@@ -454,7 +619,7 @@ describe("P0-2 durable workers in the production web boot", () => {
       const [
         { composePromptOwnerRegistry },
         { flowPromptOwners },
-        { consensusDraftPromptOwners },
+        { createConsensusDraftPromptOwners },
         { agentPromptOwners },
         { scratchPromptOwners },
         { syncPromptOwners },
@@ -472,7 +637,7 @@ describe("P0-2 durable workers in the production web boot", () => {
       expect(() =>
         composePromptOwnerRegistry([
           flowPromptOwners,
-          consensusDraftPromptOwners,
+          createConsensusDraftPromptOwners(),
           agentPromptOwners,
           scratchPromptOwners,
           syncPromptOwners,
@@ -487,7 +652,7 @@ describe("P0-2 durable workers in the production web boot", () => {
       await expect(stopDurableWorkers()).resolves.toBeUndefined();
     });
 
-    it("R5: a double start returns the same three handles", async () => {
+    it("R5: a double start returns the same four handles", async () => {
       const { startDurableWorkers, stopDurableWorkers } =
         await import("@/lib/workers/runtime");
       const first = startDurableWorkers();
@@ -498,6 +663,7 @@ describe("P0-2 durable workers in the production web boot", () => {
         expect(second.promptOwner).toBe(first.promptOwner);
         expect(second.flowContinuation).toBe(first.flowContinuation);
         expect(second.agentContinuation).toBe(first.agentContinuation);
+        expect(second.taskLaunch).toBe(first.taskLaunch);
       } finally {
         await stopDurableWorkers();
       }

@@ -17,6 +17,10 @@ import pino, { type Logger } from "pino";
 import { ZodError } from "zod";
 
 import { normalizeCommandReceiptV2 } from "../command-receipt";
+import {
+  isPendingSessionInventory,
+  SessionInventoryPending,
+} from "../session-inventory";
 import { asExecutionWorkspaceId } from "../types";
 import {
   RuntimeEventEnvelopeSchema,
@@ -172,6 +176,9 @@ export function createLocalDirectTransport(
     listSessions() {
       return wire.listSessions();
     },
+    listSessionsForRun(runId) {
+      return wire.listSessionsForRun(runId);
+    },
     streamSession(sessionId, opts) {
       return wire.streamSession(sessionId, opts);
     },
@@ -313,7 +320,15 @@ export function createLocalDirectTransport(
     releaseWorkspace(executionWorkspaceId, envelope, opts) {
       return wire.releaseWorkspace(executionWorkspaceId, envelope, opts);
     },
-    createSession(envelope: CommandEnvelope<CreateSessionPayload>, opts) {
+    async createSession(envelope: CommandEnvelope<CreateSessionPayload>, opts) {
+      try {
+        await wire.listSessionsForRun(envelope.fence.runId);
+      } catch (error) {
+        if (isPendingSessionInventory(error))
+          throw new SessionInventoryPending(envelope.fence.runId, error);
+        throw error;
+      }
+
       return wire.createSessionEnveloped(envelope, opts);
     },
     startPrompt(sessionId, envelope, opts) {

@@ -28,6 +28,7 @@ vi.mock("@/lib/db/schema", () => ({
   // The active-session ranking correlates liveness off the incarnation ledger,
   // so the module-level destructure in active-run-session.ts needs it present.
   runSessionIncarnations: { _t: "run_session_incarnations" },
+  executionCommands: { _t: "execution_commands" },
   flows: { _t: "flows" },
   // M11b: resume-recovery now also references these tags for the
   // takeover-return stranded-Running sweep (runTakeoverReturnRecoverySweep).
@@ -124,6 +125,9 @@ function makeFakeDb(opts: {
                 },
               }),
             };
+          }
+          if (table._t === "execution_commands") {
+            return { limit: async () => [] };
           }
 
           return Promise.resolve([]);

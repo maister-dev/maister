@@ -13,7 +13,7 @@ import { initRepo } from "@/test-support/git-fixture";
 // The relational spine the durable-worker production-boot suites launch over.
 // Both suites drive the REAL web through HTTP, so everything here stops at the
 // row level: no run is inserted by hand for the flow and scratch domains —
-// `POST /api/runs` and `POST /api/scratch-runs` create them, which is what
+// authenticated launch intents and `POST /api/scratch-runs` create them, which is what
 // makes the evidence belong to the production launch path.
 //
 // The agent domain is the exception: its run row carries a result contract the
@@ -134,7 +134,7 @@ export async function seedProjectRepo(
 }
 
 /**
- * A one-node `ai_coding` flow plus a Backlog task, ready for `POST /api/runs`.
+ * A one-node `ai_coding` flow plus a Backlog task, ready for an explicit launch.
  * The node's prompt is the fixture spec verbatim, so the adapter's terminal
  * response is the thing the kill window straddles.
  */
@@ -167,6 +167,17 @@ export async function seedFlowTask(
       },
     ],
   };
+  const installedPath = path.join(
+    input.installedPath,
+    "flow-assets",
+    flowRefId,
+  );
+
+  await mkdir(installedPath, { recursive: true });
+  await writeFile(
+    path.join(installedPath, "flow.yaml"),
+    JSON.stringify(manifest),
+  );
 
   await db.insert(schema.flowRevisions).values({
     id: flowRevisionId,
@@ -177,7 +188,7 @@ export async function seedFlowTask(
     manifestDigest: `digest-${flowRefId}`,
     manifest,
     schemaVersion: 1,
-    installedPath: input.installedPath,
+    installedPath,
     setupStatus: "not_required",
     packageStatus: "Installed",
     execTrust: "trusted",
@@ -188,7 +199,7 @@ export async function seedFlowTask(
     flowRefId,
     source: `github.com/fixture/${flowRefId}`,
     version: "v1.0.0",
-    installedPath: input.installedPath,
+    installedPath,
     manifest,
     schemaVersion: 1,
     enablementState: "Enabled",

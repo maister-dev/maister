@@ -93,9 +93,9 @@ beforeAll(async () => {
   const childRunId = randomUUID();
 
   await pool.query(
-    `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id",
+    `INSERT INTO "runs" ("id", "run_kind", "project_id",
        "status", "flow_version", "flow_revision", "root_run_id")
-     VALUES ($1, 'agent', 'test-pkg:orchestrator', $2, 'Running', 'agent', 'manual', $1)`,
+     VALUES ($1, 'flow', $2, 'Running', 'v1', 'manual', $1)`,
     [orchestratorRunId, projectId],
   );
   await pool.query(

@@ -9,6 +9,7 @@ import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { Client } from "pg";
 
 import { startMainPostgresTestDb } from "@/test-support/pg-container";
+import { declareWriterCapability } from "@/lib/db/writer-capability";
 
 let database: StartedPostgresTestDb;
 
@@ -117,6 +118,8 @@ it("IT-PKD-09: independent transactions committing in reverse creation order bot
   try {
     await first.connect();
     await second.connect();
+    await declareWriterCapability(first);
+    await declareWriterCapability(second);
     await first.query("BEGIN");
     await second.query("BEGIN");
     await first.query(

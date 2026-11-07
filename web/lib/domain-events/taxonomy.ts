@@ -8,6 +8,7 @@ export const DOMAIN_EVENT_KINDS = [
   "agent.activity_changed",
   "agent.incident_changed",
   "task.qualification_changed",
+  "task.launch_changed",
   "task.created",
   "task.comment_added",
   "task.triage_requeued",
@@ -67,6 +68,7 @@ export const INTERNAL_PROJECTION_EVENT_KINDS = [
   "agent.activity_changed",
   "agent.incident_changed",
   "task.qualification_changed",
+  "task.launch_changed",
 ] as const satisfies readonly DomainEventKind[];
 export const AGENT_TRIGGER_EVENT_KINDS = DOMAIN_EVENT_KINDS.filter(
   (
@@ -393,6 +395,7 @@ export const OPERATIONAL_ATTENTION_EVENT_KINDS = [
   "agent.activity_changed",
   "agent.incident_changed",
   "task.qualification_changed",
+  "task.launch_changed",
   "run.operational_attention_acknowledged",
   "run.operational_cleanup_changed",
 ] as const satisfies readonly DomainEventKind[];

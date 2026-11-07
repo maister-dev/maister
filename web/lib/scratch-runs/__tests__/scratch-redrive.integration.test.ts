@@ -14,6 +14,7 @@ import type { ProjectionWorker } from "@/lib/execution-host/events/projection-wo
 import type { RealSupervisor } from "@/test-support/real-supervisor";
 import type { ScratchLaunchInput } from "@/lib/scratch-runs/types";
 import type { SupervisorFaultProxy } from "@/test-support/supervisor-fault-proxy";
+import type { SupervisorSessionRecord } from "@/lib/supervisor-client";
 
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -49,6 +50,10 @@ import {
   useRealSupervisorUrl,
 } from "@/test-support/real-supervisor";
 import { startSupervisorFaultProxy } from "@/test-support/supervisor-fault-proxy";
+import {
+  findProcessIdentity,
+  invocationFromEnvironment,
+} from "@/test-support/process-invocation";
 
 const execFileAsync = promisify(execFile);
 const USER_ID = "scratch-redrive-user";
@@ -598,12 +603,45 @@ describe("scratch re-drive — the agent continuation worker's scratch arm (ADR-
       await (await fetch(`${supervisor.url}/sessions`)).json()
     ).filter(
       (row: { sessionId: string }) => row.sessionId === hostSessionId,
-    ) as Array<{ pid: number }>;
+    ) as SupervisorSessionRecord[];
+    const [run] = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, runId));
+    const [assignment] = await db
+      .select()
+      .from(schema.executionAssignments)
+      .where(eq(schema.executionAssignments.id, run.executionAssignmentId!));
+
+    expect(record).toMatchObject({
+      runId,
+      assignmentId: assignment.id,
+      assignmentEpoch: assignment.epoch,
+    });
+    if (!record.adapterPid || !record.processGroup)
+      throw new Error(
+        "Current scratch adapter has no native process-group identity",
+      );
+    const invocation = invocationFromEnvironment();
+
+    if (!invocation)
+      throw new Error("Scratch crash control has no owning test invocation");
+    expect(
+      await findProcessIdentity(invocation, record.adapterPid),
+    ).toMatchObject({
+      pid: record.adapterPid,
+      pgid: record.processGroup,
+      owned: true,
+      inspected: true,
+    });
+    expect(await supervisor.captureOwnedSessionGroups()).toContain(
+      record.processGroup,
+    );
 
     // The adapter dies while the dialog is idle: no scratch consumer is
     // listening between turns, so the dialog still reads WaitingForUser — only
     // the canonical projection sees the incarnation end.
-    process.kill(record.pid, "SIGKILL");
+    process.kill(record.adapterPid, "SIGKILL");
     await expect
       .poll(
         async () => {

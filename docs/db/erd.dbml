@@ -122,6 +122,30 @@ table agent_incident_reader_states {
   }
 }
 
+table agent_preparation_operations {
+  id text [pk, not null]
+  run_id text [not null]
+  assignment_id text [not null]
+  assignment_epoch integer [not null]
+  resource_id text [not null]
+  incarnation text [not null]
+  resolved_commit text
+  phase text [not null]
+  lease_expires_at "timestamp with time zone"
+  generation integer
+  turn_id text
+  failure jsonb
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    resource_id [name: 'agent_preparation_active_resource_uq', unique]
+    (run_id, created_at) [name: 'agent_preparation_run_idx']
+
+
+  }
+}
+
 table agent_project_links {
   id text [pk, not null]
   agent_id text [not null]
@@ -1103,6 +1127,7 @@ table execution_commands {
   request_schema text
   request_sha256 text
   request_canonical_json text
+  coordinator_child_launch_context jsonb
   receipt_evidence jsonb
   terminal_event_id text
   terminal_evidence_sha256 text
@@ -1146,6 +1171,7 @@ table execution_commands {
     (transport_state, next_attempt_at, id) [name: 'execution_commands_reconciliation_idx']
     (application_state, application_next_retry_at, application_claim_expires_at, id) [name: 'execution_commands_application_idx']
     (run_id, logical_operation_key) [name: 'execution_commands_prompt_logical_operation_uq', unique]
+
 
 
 
@@ -2250,13 +2276,20 @@ table project_tokens {
   last_used_at "timestamp with time zone"
   expires_at "timestamp with time zone"
   revoked_at "timestamp with time zone"
+  bound_run_id text
+  origin_kind text
+  revocation_reason text
 
   indexes {
     prefix [name: 'project_tokens_prefix_idx']
     project_id [name: 'project_tokens_project_idx']
     owner_user_id [name: 'project_tokens_owner_idx']
     agent_id [name: 'project_tokens_agent_idx']
+    (project_id, origin_kind, bound_run_id) [name: 'project_tokens_run_origin_idx']
     (owner_user_id, created_at) [name: 'project_tokens_owner_created_idx']
+
+
+
 
 
 
@@ -2587,6 +2620,7 @@ table runs {
   task_qualification_snapshot jsonb
   task_admission_checked_at "timestamp with time zone"
   task_admission_snapshot jsonb
+  task_launch_intent_id text
   retry_of_run_id text
   source_agent_id text
   launched_at "timestamp with time zone"
@@ -2662,6 +2696,7 @@ table runs {
   indexes {
 
 
+    task_launch_intent_id [name: 'runs_task_launch_intent_uq', unique]
     (project_id, status) [name: 'runs_project_status_idx']
     retry_of_run_id [name: 'runs_agent_retry_child_uq', unique]
 
@@ -2980,6 +3015,66 @@ table task_comments {
   }
 }
 
+table task_launch_intents {
+  id text [pk, not null]
+  schema_version integer [not null, default: 1]
+  project_id text [not null]
+  task_id text [not null]
+  principal_kind text [not null]
+  principal_id text [not null]
+  actor_user_id text
+  launch_source text [not null]
+  operation text [not null]
+  request_key text [not null]
+  payload_digest text [not null]
+  task_revision integer [not null]
+  input_revision integer [not null]
+  input_digest text [not null]
+  input_snapshot jsonb [not null]
+  settings_digest text [not null]
+  settings_snapshot jsonb [not null]
+  basis jsonb [not null]
+  reservation_lane text [not null, default: 'ordinary']
+  replaces_intent_id text
+  source_run_id text
+  run_id text
+  original_run_id text
+  state text [not null, default: 'queued']
+  state_version integer [not null, default: 1]
+  parent_observed_version integer
+  attempts integer [not null, default: 0]
+  due_at "timestamp with time zone"
+  lease_token text
+  lease_expires_at "timestamp with time zone"
+  reason text
+  terminal_outcome text
+  dispatch_committed_at "timestamp with time zone"
+  cancellation_receipt jsonb
+  preparation_identity jsonb
+  preparation_phase text
+  cleanup_state text
+  dispatch_receipt jsonb
+  accepted_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (principal_kind, principal_id, project_id, operation, request_key) [name: 'task_launch_intents_request_key_uq', unique]
+    (project_id, cancellation_receipt) [name: 'task_launch_intents_cancel_key_uq', unique]
+    task_id [name: 'task_launch_intents_active_task_uq', unique]
+    original_run_id [name: 'task_launch_intents_run_binding_uq', unique]
+    replaces_intent_id [name: 'task_launch_intents_replace_uq', unique]
+    (state, due_at, id) [name: 'task_launch_intents_recovery_idx']
+    (project_id, task_id, accepted_at) [name: 'task_launch_intents_history_idx']
+    (project_id, basis, accepted_at, id) [name: 'task_launch_intents_parent_obligations_idx']
+
+
+
+
+
+
+  }
+}
+
 table task_qualifications {
   id text [pk, not null, default: `gen_random_uuid()::text`]
   project_id text [not null]
@@ -3087,6 +3182,7 @@ table tasks {
   stage text [not null, default: 'Backlog']
   attempt_number integer [not null, default: 1]
   triage_status text
+  triage_flag_origin text
   runner_id text
   base_branch text
   target_branch text
@@ -3113,6 +3209,7 @@ table tasks {
     (project_id, number) [name: 'tasks_project_number_uq', unique]
     (project_id, status) [name: 'tasks_project_status_idx']
     (agent_id, trigger_event_id) [name: 'tasks_agent_trigger_event_uq', unique]
+
 
 
 
@@ -3560,6 +3657,10 @@ ref agent_incident_occurrences_run_id_runs_id_fk: agent_incident_occurrences.run
 ref agent_incident_reader_states_user_id_users_id_fk: agent_incident_reader_states.user_id > users.id [delete: cascade, update: no action]
 
 ref agent_incident_reader_states_episode_id_agent_incident_episodes_id_fk: agent_incident_reader_states.episode_id > agent_incident_episodes.id [delete: cascade, update: no action]
+
+ref agent_preparation_operations_run_id_runs_id_fk: agent_preparation_operations.run_id > runs.id [delete: cascade, update: no action]
+
+ref agent_preparation_operations_assignment_id_execution_assignments_id_fk: agent_preparation_operations.assignment_id > execution_assignments.id [delete: restrict, update: no action]
 
 ref agent_project_links_agent_id_agents_id_fk: agent_project_links.agent_id > agents.id [delete: cascade, update: no action]
 
@@ -4077,6 +4178,8 @@ ref run_transcript_states_run_id_runs_id_fk: run_transcript_states.run_id > runs
 
 ref run_transcript_states_node_attempt_id_node_attempts_id_fk: run_transcript_states.node_attempt_id > node_attempts.id [delete: cascade, update: no action]
 
+ref runs_task_launch_intent_id_task_launch_intents_id_fk: runs.task_launch_intent_id > task_launch_intents.id [delete: restrict, update: no action]
+
 ref runs_agent_id_agents_id_fk: runs.agent_id > agents.id [delete: set null, update: no action]
 
 ref runs_scheduled_launch_id_scheduled_task_launches_id_fk: runs.scheduled_launch_id > scheduled_task_launches.id [delete: set null, update: no action]
@@ -4146,6 +4249,18 @@ ref task_clarifications_source_message_id_librarian_messages_id_fk: task_clarifi
 ref task_comments_task_id_tasks_id_fk: task_comments.task_id > tasks.id [delete: cascade, update: no action]
 
 ref task_comments_project_id_projects_id_fk: task_comments.project_id > projects.id [delete: cascade, update: no action]
+
+ref task_launch_intents_project_id_projects_id_fk: task_launch_intents.project_id > projects.id [delete: restrict, update: no action]
+
+ref task_launch_intents_task_id_tasks_id_fk: task_launch_intents.task_id > tasks.id [delete: restrict, update: no action]
+
+ref task_launch_intents_actor_user_id_users_id_fk: task_launch_intents.actor_user_id > users.id [delete: restrict, update: no action]
+
+ref task_launch_intents_replaces_intent_id_task_launch_intents_id_fk: task_launch_intents.replaces_intent_id > task_launch_intents.id [delete: restrict, update: no action]
+
+ref task_launch_intents_source_run_id_runs_id_fk: task_launch_intents.source_run_id > runs.id [delete: restrict, update: no action]
+
+ref task_launch_intents_run_id_runs_id_fk: task_launch_intents.run_id > runs.id [delete: set null, update: no action]
 
 ref task_qualifications_project_id_projects_id_fk: task_qualifications.project_id > projects.id [delete: cascade, update: no action]
 

@@ -94,6 +94,322 @@ function wrappers(
 export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   [
     ...classified(
+      "../runtime/process-group.ts",
+      "repository-worktree",
+      "Read-only native group observation for the Web caller's reviewed repository Git owner; accepts no filesystem path and never reads supervisor runtime data",
+      [["inspectProcessGroup", "node:child_process.execFile", "spawn", "ps"]],
+    ),
+    ...classified(
+      "lib/agents/finalization.ts",
+      "repository-worktree",
+      "Accepted terminal cleanup uses the same physical preparation owner before removing its plain runtime overlay",
+      [
+        [
+          "cleanupAcceptedResources",
+          "lib/gc/plain-agent-directory-gc.ts#removeOwnedPlainAgentDirectory",
+          "wrapper",
+        ],
+      ],
+    ),
+    ...classified(
+      "lib/tasks/launch-agent-definition.ts",
+      "repository-worktree",
+      "Agent package captures validate exact copied bytes and manager ancestry before consumption or release",
+      [
+        [
+          "captureTaskAgentPackage",
+          "lib/tasks/launch-capability-materialization.ts#captureAcceptedDirectory",
+          "wrapper",
+        ],
+        [
+          "captureTaskAgentPackage",
+          "lib/tasks/launch-capture-path.ts#assertManagedCapturePath",
+          "wrapper",
+        ],
+        [
+          "assertCurrentPath",
+          "lib/tasks/launch-capture-path.ts#assertManagedCapturePath",
+          "wrapper",
+        ],
+        [
+          "release",
+          "lib/tasks/launch-capture-path.ts#assertManagedCapturePath",
+          "wrapper",
+        ],
+      ],
+    ),
+    ...classified(
+      "lib/tasks/launch-flow-assets.ts",
+      "manager-flow-state",
+      "Private Flow sources remain rooted in canonical manager storage and keep their immutable preparation witness",
+      [
+        ["assetPaths", "node:fs/promises.realpath", "stat"],
+        [
+          "prepareTaskLaunchFlowAssets",
+          "lib/tasks/launch-capability-materialization.ts#captureAcceptedDirectory",
+          "wrapper",
+        ],
+        [
+          "assertManagedAssetPaths",
+          "lib/tasks/launch-capture-path.ts#assertManagedCapturePath",
+          "wrapper",
+        ],
+      ],
+    ),
+    ...classified(
+      "lib/tasks/launch-capture-path.ts",
+      "manager-flow-state",
+      "Configured root aliases are canonicalized while every managed child component rejects symlinks",
+      [["assertManagedCapturePath", "node:fs/promises.realpath", "stat"]],
+    ),
+    ...classified(
+      "lib/tasks/launch-capability-materialization.ts",
+      "repository-worktree",
+      "Capability capture effects and cleanup revalidate manager containment before filesystem use",
+      [
+        [
+          "withTaskLaunchCapabilityBundles",
+          "lib/tasks/launch-capture-path.ts#assertManagedCapturePath",
+          "wrapper",
+        ],
+      ],
+    ),
+    ...classified(
+      "lib/agents/launch.ts",
+      "repository-worktree",
+      "Agent preparation writes only its owned checkout or runtime overlay under the durable workspace fence",
+      [["launchAgentRunWithAdmission", "node:fs/promises.mkdir", "write"]],
+    ),
+    ...classified(
+      "lib/capabilities/materialize-bundle.ts",
+      "repository-worktree",
+      "Explicit verified capability sources materialize only managed checkout artifact directories",
+      [
+        [
+          "copyCapturedBundleArtifactsToWorktree",
+          "node:fs/promises.cp",
+          "write",
+        ],
+        ["copyBundleArtifacts", "node:fs/promises.mkdir", "write"],
+        ["copyBundleArtifacts", "node:fs/promises.readdir", "list"],
+      ],
+    ),
+    ...classified(
+      "lib/tasks/launch-agent-definition.ts",
+      "repository-worktree",
+      "Accepted package identity and private capture are resolved before model dispatch under the preparation owner",
+      [
+        ["captureTaskAgentPackage", "node:fs/promises.mkdir", "write"],
+        ["captureTaskAgentPackage", "node:fs/promises.mkdtemp", "write"],
+        ["release", "node:fs/promises.rm", "remove"],
+        ["readTaskAgentDefinitionSource", "node:fs/promises.readFile", "read"],
+      ],
+    ),
+    ...classified(
+      "lib/tasks/launch-agent-resolution.ts",
+      "repository-worktree",
+      "Read-only installed package content identity is computed during agent preflight outside SQL transactions",
+      [
+        [
+          "taskAgentPackageContentDigest",
+          "lib/flows.ts#localDirectoryContentDigest",
+          "wrapper",
+        ],
+      ],
+    ),
+    ...classified(
+      "lib/tasks/launch-capability-materialization.ts",
+      "repository-worktree",
+      "Private content-verified package captures never read execution-host runtime; removal targets only the owned capture",
+      [
+        ["captureAcceptedDirectory", "node:fs/promises.cp", "write"],
+        ["captureAcceptedDirectory", "node:fs/promises.lstat", "stat"],
+        [
+          "captureAcceptedDirectory",
+          "lib/flows.ts#localDirectoryContentDigest",
+          "wrapper",
+        ],
+        ["withTaskLaunchCapabilityBundles", "node:fs/promises.mkdir", "write"],
+        [
+          "withTaskLaunchCapabilityBundles",
+          "node:fs/promises.mkdtemp",
+          "write",
+        ],
+        ["withTaskLaunchCapabilityBundles", "node:fs/promises.rm", "remove"],
+        ["readInternalDirectorySymlinks", "node:fs/promises.readdir", "list"],
+        ["readInternalDirectorySymlinks", "node:fs/promises.readlink", "read"],
+        ["readInternalDirectorySymlinks", "node:fs/promises.realpath", "stat"],
+      ],
+    ),
+    ...classified(
+      "lib/tasks/launch-flow-assets.ts",
+      "manager-flow-state",
+      "Manager-owned Flow source captures and witnesses freeze the exact scripts and schemas consumed by the Run",
+      [
+        [
+          "flowAssetContentDigest",
+          "lib/flows.ts#localDirectoryContentDigest",
+          "wrapper",
+        ],
+        ["assertAssetWitness", "node:fs/promises.readFile", "read"],
+        ["removeTaskLaunchFlowAssets", "node:fs/promises.rm", "remove"],
+        ["prepareTaskLaunchFlowAssets", "node:fs/promises.mkdir", "write"],
+        [
+          "prepareTaskLaunchFlowAssets",
+          "lib/atomic.ts#atomicWriteJson",
+          "wrapper",
+        ],
+        ["exists", "node:fs/promises.lstat", "stat"],
+      ],
+    ),
+    ...classified(
+      "scripts/generate-task-launch-json.ts",
+      "build-tooling",
+      "Build-time public launch schema export; never accesses execution-host runtime",
+      [
+        ["<module>", "node:fs/promises.readFile", "read"],
+        ["<module>", "node:fs/promises.writeFile", "write"],
+      ],
+    ),
+    ...classified(
+      "lib/tasks/launch-preparation-cleanup.ts",
+      "repository-worktree",
+      "Unbound closed preparation cleanup validates the owned managed checkout under the repository mutation fence",
+      [
+        ["present", "node:fs/promises.lstat", "stat"],
+        [
+          "assertPristine",
+          "lib/worktree-provenance.ts#assertWorktreeProvenancePristine",
+          "wrapper",
+        ],
+        ["assertManagedPath", "node:fs/promises.realpath", "stat"],
+      ],
+    ),
+    ...classified(
+      "lib/worktree-provenance.ts",
+      "repository-worktree",
+      "Pristine cleanup checks read only platform-owned metadata in the already fenced checkout",
+      [
+        [
+          "assertWorktreeProvenancePristine",
+          "node:fs/promises.readdir",
+          "list",
+        ],
+        [
+          "assertWorktreeProvenancePristine",
+          "node:fs/promises.readFile",
+          "read",
+        ],
+      ],
+    ),
+    ...classified(
+      "lib/tasks/launch-capabilities.ts",
+      "repository-worktree",
+      "Read-only content identities of installed capability bundles freeze the accepted request before its DB transaction",
+      [
+        [
+          "capabilityContentDigest",
+          "lib/flows.ts#localDirectoryContentDigest",
+          "wrapper",
+        ],
+      ],
+    ),
+    ...classified(
+      "lib/tasks/launch-execution.ts",
+      "repository-worktree",
+      "Intent-owned private worktree materialization and completed-manifest recovery under the repository mutation fence",
+      [
+        [
+          "assertFrozenTaskLaunchRepository",
+          "node:fs/promises.realpath",
+          "stat",
+        ],
+        [
+          "assertTaskLaunchMaterializationReceipt",
+          "node:fs/promises.readFile",
+          "read",
+        ],
+        [
+          "assertTaskLaunchMaterializationReceipt",
+          "lib/flows.ts#localDirectoryContentDigest",
+          "wrapper",
+        ],
+        [
+          "acceptedTaskLaunchExecution.materialize",
+          "node:fs/promises.mkdir",
+          "write",
+        ],
+        [
+          "acceptedTaskLaunchExecution.materialize",
+          "lib/atomic.ts#atomicWriteJson",
+          "wrapper",
+        ],
+        [
+          "acceptedTaskLaunchExecution.materialize",
+          "lib/flows.ts#localDirectoryContentDigest",
+          "wrapper",
+        ],
+      ],
+    ),
+    ...classified(
+      "scripts/generate-ask-human-json.ts",
+      "build-tooling",
+      "Build-time generated public schema; never reads execution-host runtime",
+      [
+        ["<module>", "node:fs/promises.readFile", "read"],
+        ["<module>", "node:fs/promises.writeFile", "write"],
+      ],
+    ),
+    ...classified(
+      "lib/agents/preparation-ownership.ts",
+      "repository-worktree",
+      "Preparation resolves only server-owned repository identity under the physical fence",
+      [
+        [
+          "claimAgentPreparation",
+          "lib/agents/preparation-resource.ts#agentPreparationResourceId",
+          "wrapper",
+        ],
+      ],
+    ),
+    ...classified(
+      "lib/agents/preparation-resource.ts",
+      "repository-worktree",
+      "Read-only canonical server-owned workspace identity, including missing suffixes; no directory creation or execution-host runtime access",
+      [
+        ["canonicalAncestor", "node:fs/promises.lstat", "stat"],
+        ["canonicalAncestor", "node:fs/promises.realpath", "stat"],
+        ["canonicalPreparationPath", "node:fs/promises.lstat", "stat"],
+        ["canonicalPreparationPath", "node:fs/promises.realpath", "stat"],
+        ["agentPreparationResourceId", "node:fs/promises.realpath", "stat"],
+      ],
+    ),
+    ...classified(
+      "lib/tasks/launch-first-dispatch.ts",
+      "repository-worktree",
+      "Physical identity derives only from the frozen accepted workspace before the dispatch transaction",
+      [
+        [
+          "commitTaskAgentLaunchFirstDispatch",
+          "lib/agents/preparation-resource.ts#agentPreparationResourceId",
+          "wrapper",
+        ],
+      ],
+    ),
+    ...classified(
+      "lib/agents/preparation-workspace.ts",
+      "repository-worktree",
+      "Stable physical mutex outside disposable operational trees",
+      [
+        ["acquirePreparationWorkspace", "node:fs/promises.mkdir", "write"],
+        [
+          "acquirePreparationWorkspace",
+          "lib/agents/preparation-resource.ts#canonicalPreparationPath",
+          "wrapper",
+        ],
+      ],
+    ),
+    ...classified(
       "lib/agents/retry-allocation.ts",
       "repository-worktree",
       "Intent-fenced allocation checks only server-owned execution worktrees",
@@ -155,7 +471,6 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["preserveOperationalEvidence", "node:fs/promises.readlink", "read"],
         ["preserveOperationalEvidence", "node:fs.constants", "unresolved"],
         ["preserveOperationalEvidence", "node:fs/promises.open", "open"],
-        ["git", "node:child_process.execFile", "spawn", "git"],
       ],
     ),
     ...classified(
@@ -174,7 +489,6 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["visit", "node:fs.constants", "unresolved"],
         ["visit", "node:fs/promises.open", "open"],
         ["captureTree", "node:fs/promises.readdir", "list"],
-        ["git", "node:child_process.execFile", "spawn", "git"],
       ],
     ),
     ...classified(
@@ -312,7 +626,6 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "Reviewed configuration persistence: repository policy, private staging and Git process ownership; no supervisor runtime data",
       [
         ["commonGitDirectory", "node:fs/promises.realpath", "stat"],
-        ["groupIsDead", "node:child_process.execFile", "spawn", "ps"],
         ["readOwner", "node:fs/promises.lstat", "stat"],
         ["readOwner", "node:fs/promises.readFile", "read"],
         ["assertOnlyOwnedMetadata", "node:fs/promises.readdir", "list"],
@@ -549,14 +862,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "lib/agents/finalization.ts",
       "repository-worktree",
       "worktree, repository, package and capability materialization on the shared checkout — Stage C repository cut",
-      [
-        ["pathIsDirectory", "node:fs/promises.stat", "stat"],
-        [
-          "afterCommit",
-          "lib/gc/plain-agent-directory-gc.ts#removeOwnedPlainAgentDirectory",
-          "wrapper",
-        ],
-      ],
+      [["pathIsDirectory", "node:fs/promises.stat", "stat"]],
     ),
     ...classified(
       "lib/agents/flow-binding.ts",
@@ -570,8 +876,9 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "worktree, repository, package and capability materialization on the shared checkout — Stage C repository cut",
       [
         ["packageSkillMaterializationRoots", "node:fs/promises.stat", "stat"],
-        ["launchAgentRun", "node:fs/promises.mkdir", "write"],
-        ["driveAgentSession", "node:fs/promises.mkdir", "write"],
+
+        ["prepareAndDispatch", "node:fs/promises.mkdir", "write"],
+        ["prepareAndDispatch", "node:fs/promises.lstat", "stat"],
         [
           "applyAgentMemoryForLaunch",
           "lib/atomic.ts#atomicWriteText",
@@ -715,8 +1022,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "worktree, repository, package and capability materialization on the shared checkout — Stage C repository cut",
       [
         ["pathExists", "node:fs/promises.stat", "stat"],
-        ["copyBundleArtifactsToWorktree", "node:fs/promises.mkdir", "write"],
-        ["copyBundleArtifactsToWorktree", "node:fs/promises.readdir", "list"],
+
         ["copyBundleArtifactsToWorktree", "node:fs/promises.cp", "write"],
         ["skipWorktree", "node:child_process.execFile", "spawn", "git"],
         ["writeAiFactoryConfigOverride", "node:fs/promises.readFile", "read"],
@@ -1274,12 +1580,6 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["removeOwnedPlainAgentDirectory", "node:fs/promises.lstat", "stat"],
         ["removeOwnedPlainAgentDirectory", "node:fs/promises.rm", "remove"],
       ],
-    ),
-    ...classified(
-      "lib/gc/preserve.ts",
-      "repository-worktree",
-      "worktree, repository, package and capability materialization on the shared checkout — Stage C repository cut",
-      [["git", "node:child_process.execFile", "spawn", "git"]],
     ),
     ...classified(
       "lib/gc/revision-gc.ts",
@@ -2067,13 +2367,9 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["fetchRemote", "node:child_process.execFile", "spawn", "git"],
         ["remoteBranchHead", "node:child_process.execFile", "spawn", "git"],
         ["pruneWorktrees", "node:child_process.execFile", "spawn", "git"],
-        ["removeWorktree", "node:child_process.execFile", "spawn", "git"],
-        ["listWorktrees", "node:child_process.execFile", "spawn", "git"],
-        ["logRange", "node:child_process.execFile", "spawn", "git"],
         ["diffRange", "node:child_process.execFile", "spawn", "git"],
         ["streamGitTruncatedTo", "node:child_process.spawn", "spawn", "git"],
         ["withTempIndexCopy", "node:fs/promises.mkdtemp", "write"],
-        ["withTempIndexCopy", "node:child_process.execFile", "spawn", "git"],
         ["withTempIndexCopy", "node:fs/promises.copyFile", "write"],
         ["withTempIndexCopy", "node:fs/promises.rm", "remove"],
         [
@@ -2082,9 +2378,6 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
           "spawn",
           "git",
         ],
-        // ADR-181 D8: the rescue commit is staged through a COPY of the index.
-        ["writeRescueRef", "node:child_process.execFile", "spawn", "git"],
-        ["commitTree", "node:child_process.execFile", "spawn", "git"],
         ["diffWorkingTree", "node:child_process.execFile", "spawn", "git"],
         [
           "diffWorkingTreeChangeStats",
@@ -2092,7 +2385,6 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
           "spawn",
           "git",
         ],
-        ["statusPorcelain", "node:child_process.execFile", "spawn", "git"],
         ["resolveBaseRef", "node:child_process.execFile", "spawn", "git"],
         ["resolveRefSha", "node:child_process.execFile", "spawn", "git"],
         ["readBlob", "node:child_process.execFile", "spawn", "git"],
@@ -2298,6 +2590,58 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   ];
 
 export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
+  // Numeric native process observation has no caller-selected filesystem path.
+  ...wrappers("../runtime/process-group.ts", "repository-worktree", [
+    ["inspectProcessGroup", false],
+  ]),
+  ...wrappers("lib/tasks/launch-capture-path.ts", "manager-flow-state", [
+    ["assertManagedCapturePath", true],
+  ]),
+  ...wrappers("lib/agents/launch.ts", "repository-worktree", [
+    ["launchAcceptedTaskAgentRun", false],
+  ]),
+  ...wrappers("lib/capabilities/materialize-bundle.ts", "repository-worktree", [
+    ["materializeCapabilityBundlesIntoWorktree", false],
+  ]),
+  ...wrappers("lib/tasks/launch-agent-definition.ts", "repository-worktree", [
+    ["captureTaskAgentPackage", false],
+    ["frozenTaskAgentDefinition", false],
+    ["pinnedTaskAgentDefinition", false],
+  ]),
+  ...wrappers(
+    "lib/tasks/launch-capability-materialization.ts",
+    "repository-worktree",
+    [
+      ["captureAcceptedDirectory", true],
+      ["withTaskLaunchCapabilityBundles", false],
+    ],
+  ),
+  ...wrappers("lib/tasks/launch-flow-assets.ts", "manager-flow-state", [
+    ["prepareTaskLaunchFlowAssets", false],
+    ["removeTaskLaunchFlowAssets", false],
+    ["taskLaunchFlowAssetsPathForRun", false],
+  ]),
+  ...wrappers(
+    "lib/tasks/launch-preparation-cleanup.ts",
+    "repository-worktree",
+    [
+      ["cleanupTaskLaunchPreparation", false],
+      ["sweepTaskLaunchPreparationCleanup", false],
+    ],
+  ),
+  ...wrappers("lib/worktree-provenance.ts", "repository-worktree", [
+    ["assertWorktreeProvenancePristine", true],
+  ]),
+  ...wrappers("lib/tasks/launch-execution.ts", "repository-worktree", [
+    ["acceptedTaskLaunchExecution", false],
+    ["assertFrozenTaskLaunchRepository", false],
+    ["assertTaskLaunchMaterializationReceipt", false],
+    ["assertTaskLaunchBoundWorkspace", false],
+  ]),
+  ...wrappers("lib/services/runs.ts", "repository-worktree", [
+    ["launchTasklessAgentCarrierRun", false],
+    ["launchAcceptedTaskRun", false],
+  ]),
   ...wrappers("lib/agents/retry-allocation.ts", "repository-worktree", [
     ["allocateAgentRetryWorktree", false],
   ]),
@@ -2380,7 +2724,6 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
       ["acquireRepositoryFence", false],
       ["commonGitDirectory", false],
       ["withRepositoryMutationFence", false],
-      ["assertConfigGitOwnerRetired", false],
     ],
   ),
   ...wrappers(
@@ -2472,10 +2815,24 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ]),
   ...wrappers("lib/agents/launch.ts", "repository-worktree", [
     ["launchAgentRun", false],
+    ["launchConsensusDraftAgentRun", false],
     ["reworkChildRun", false],
     ["sendAgentMessage", false],
     ["startAgentSession", false],
   ]),
+  ...wrappers("lib/agents/preparation-resource.ts", "repository-worktree", [
+    ["canonicalPreparationPath", true],
+    ["agentPreparationResourceId", true],
+  ]),
+  ...wrappers("lib/agents/preparation-workspace.ts", "repository-worktree", [
+    ["acquirePreparationWorkspace", false],
+    ["openAgentPreparation", false],
+  ]),
+  ...wrappers(
+    "lib/project-config-persistence/repository-lock.ts",
+    "repository-worktree",
+    [["acquireRepositoryMutationFence", false]],
+  ),
   ...wrappers("lib/agents/materialization-lock.ts", "repository-worktree", [
     ["tryAcquireMaterializationLock", false],
   ]),
@@ -2507,6 +2864,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["buildAutoPromotionReaders", false],
   ]),
   ...wrappers("lib/capabilities/adapter-home.ts", "repository-worktree", [
+    ["materializeOperationalAdapterCapabilityHome", false],
     ["materializeAdapterCapabilityHome", false],
     ["materializeFlowAuthoringSkill", false],
     ["materializeSubagentDefinition", false],
@@ -2667,10 +3025,6 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ...wrappers("lib/gc/plain-agent-directory-gc.ts", "repository-worktree", [
     ["removeOwnedPlainAgentDirectory", true],
   ]),
-  ...wrappers("lib/gc/preserve.ts", "repository-worktree", [
-    ["preserveWorktree", false],
-    ["rescueStagedWorkBeforeSnapshot", false],
-  ]),
   ...wrappers("lib/gc/revision-gc.ts", "repository-worktree", [
     ["runRevisionGcSweep", false],
   ]),
@@ -2806,10 +3160,6 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ...wrappers("lib/services/gate-chat.ts", "repository-worktree", [
     ["sendGateChatTurn", false],
   ]),
-  ...wrappers("lib/services/runs.ts", "manager-flow-state", [
-    ["launchRun", false],
-    ["launchRunStaged", false],
-  ]),
   ...wrappers("lib/studio/flow-assistant/action-log.ts", "manager-flow-state", [
     ["appendFlowAssistantActionLog", false],
   ]),
@@ -2829,22 +3179,15 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["fetchRemote", false],
     ["forceWithLeasePush", false],
     ["hasConflictMarkers", false],
-    ["listWorktrees", false],
-    ["logRange", false],
     ["logRangeBounded", false],
     ["pruneWorktrees", false],
-    ["pullRemote", false],
     ["pushBranch", false],
     ["readBlob", false],
     ["remoteBranchExists", false],
     ["remoteBranchHead", false],
-    ["removeOwnedWorktree", false],
-    ["removeWorktree", false],
     ["resolveBaseRef", false],
     ["resolveRefSha", false],
     ["restoreWorktreeToCommit", false],
-    ["snapshotDirtyWorktree", false],
-    ["statusPorcelain", false],
     ["syncOperationInProgress", false],
     ["writeRescueRef", false],
   ]),

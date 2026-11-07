@@ -5,6 +5,9 @@ import type {
   BudgetScope,
   BudgetState,
 } from "@/lib/runs/execution-policy";
+import type { InteractiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
+import type { Db as LaunchDb } from "@/lib/execution-host/db";
+import type { TaskLaunchReceipt } from "@/lib/tasks/launch-types";
 
 import path from "node:path";
 
@@ -23,8 +26,6 @@ import {
 import { NextResponse } from "next/server";
 import pino from "pino";
 
-import { parseScheduledRequestSnapshot } from "@/lib/agents/scheduled-request";
-import { assertScheduledRequestMatches } from "@/lib/agents/scheduled-request-store";
 import { requireProjectAction } from "@/lib/authz";
 import {
   claimAssignment,
@@ -126,7 +127,6 @@ import {
   effectivePoolCap,
   takeSchedulerLock,
 } from "@/lib/scheduler";
-import { launchRun } from "@/lib/services/runs";
 import { sendTaskToTriageInTransaction } from "@/lib/services/triage";
 import { requireNoLiveGateChatTurn } from "@/lib/services/gate-chat";
 import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
@@ -154,6 +154,23 @@ import {
 } from "@/lib/workbench-lifecycle/service";
 import { headCommit, localBranchHead, remoteBranchHead } from "@/lib/worktree";
 import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
+import { assertInteractiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
+import {
+  budgetRestartDecisionRequired,
+  readBudgetRestartLaunch,
+} from "@/lib/tasks/launch-budget-restart";
+import {
+  prepareInteractiveTaskLaunchHandoff,
+  applyPreparedTaskLaunch,
+} from "@/lib/tasks/launch-intent";
+import { lockTaskLaunchReservation } from "@/lib/tasks/launch-locks";
+import { assertTaskLaunchUserAuthority } from "@/lib/tasks/launch-authority";
+import { emitTaskLaunchChanged } from "@/lib/tasks/launch-events";
+import { taskLaunchReceipt } from "@/lib/tasks/launch-receipt";
+import { wakeAcceptedTaskLaunch } from "@/lib/tasks/launch-wake";
+import { createBudgetRestartLaunchSource } from "@/lib/tasks/launch-budget-authority";
+import { retryDigest } from "@/lib/agents/retry-guards";
+import { executionAssignments, taskLaunchIntents } from "@/lib/db/schema";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const {
@@ -175,12 +192,6 @@ const log = pino({
   name: "hitl-service",
   level: process.env.LOG_LEVEL ?? "info",
 });
-
-type BudgetRestartLaunchResult = {
-  runId: string;
-  status: string;
-  queuePosition?: number;
-};
 
 const TERMINAL_RUN_STATUS = new Set([
   "Failed",
@@ -232,11 +243,27 @@ async function lockPlanReviewParent(
   tx: any,
   parentHitlRequestId: string,
 ): Promise<any> {
+  const [source] = await tx
+    .select({ runId: hitlRequests.runId })
+    .from(hitlRequests)
+    .where(eq(hitlRequests.id, parentHitlRequestId));
+
+  if (!source) return undefined;
+  await tx
+    .select({ id: runs.id })
+    .from(runs)
+    .where(eq(runs.id, source.runId))
+    .for("update");
   await tx.execute(
     sql`SELECT pg_advisory_xact_lock(hashtext(${parentHitlRequestId}))`,
   );
 
-  return lockHitlRow(tx, parentHitlRequestId);
+  const parent = await lockHitlRow(tx, parentHitlRequestId);
+
+  if (parent && parent.runId !== source.runId)
+    throw new MaisterError("CONFLICT", "plan-review parent binding changed");
+
+  return parent;
 }
 
 // Schedule a runner wake-up for a delivered HITL row. Called from both
@@ -2485,6 +2512,11 @@ async function completePlanReviewResponse(args: {
   recordSuccessAudit?: (db: any, statusCode: number) => Promise<void>;
 }): Promise<void> {
   await args.db.transaction(async (tx: any) => {
+    await tx
+      .select({ id: runs.id })
+      .from(runs)
+      .where(eq(runs.id, args.runId))
+      .for("update");
     const now = new Date();
 
     if (args.childHitlRequestId) {
@@ -2650,6 +2682,11 @@ async function completeRecoveredPlanReviewHandoff(
   },
 ): Promise<boolean> {
   return args.db.transaction(async (tx: any) => {
+    await tx
+      .select({ id: runs.id })
+      .from(runs)
+      .where(eq(runs.id, args.runId))
+      .for("update");
     const now = new Date();
 
     if (args.childHitlRequestIds.length > 0) {
@@ -3010,6 +3047,7 @@ async function handlePlanReviewDecisionResponse(
         throw new MaisterError("CONFLICT", "parent review is closing");
       }
     } else {
+      await requireNoLiveGateChatTurn(tx, parent.id);
       await tx
         .update(hitlRequests)
         .set({
@@ -3236,6 +3274,8 @@ async function handlePlanReviewParentResponse(
         closedChildCount: 0,
       };
     }
+
+    await requireNoLiveGateChatTurn(tx, parent.id);
 
     if (planDecision === "rework") {
       const now = new Date();
@@ -3504,12 +3544,14 @@ async function handleFormHumanResponse(
   // payloads return 409 BEFORE either request can write to disk.
 
   const claim: FormClaim = await db.transaction(async (tx: any) => {
-    const lockedHitl = await lockHitlRow(tx, hitlRequestId);
+    // Session create ACKs and gate-chat admission share Run -> HITL -> turn.
     const lockedRunRows = await tx
       .select()
       .from(runs)
-      .where(eq(runs.id, runId));
+      .where(eq(runs.id, runId))
+      .for("update");
     const lockedRun = lockedRunRows[0];
+    const lockedHitl = await lockHitlRow(tx, hitlRequestId);
 
     if (!lockedHitl || !lockedRun) {
       throw new MaisterError("PRECONDITION", "row vanished mid-transaction");
@@ -3811,6 +3853,412 @@ async function handleFormHumanResponse(
 //              failed node with the worktree intact (one attempt per click — the
 //              human is the backoff; a repeat failure re-escalates).
 //  - abandon → fail the run terminally (run.failed); the task returns to Backlog.
+async function assertBudgetRestartRunAvailable(
+  db: LaunchDb,
+  runRow: typeof schemaModule.runs.$inferSelect,
+  runId: string,
+): Promise<void> {
+  if (!["NeedsInput", "NeedsInputIdle"].includes(runRow.status))
+    throw budgetRestartDecisionRequired();
+  assertBudgetBreachOptionAvailable(
+    "restart",
+    await loadBudgetBreachAvailabilityContext({ db, runRow, runId }),
+  );
+}
+
+async function handleBudgetRestartIntent(args: {
+  db: LaunchDb;
+  runId: string;
+  hitlRequestId: string;
+  runRow: typeof schemaModule.runs.$inferSelect;
+  actor: HitlActor;
+  executionHosts: ExecutionHosts;
+  restartPrincipal?: InteractiveTaskLaunchPrincipal;
+  restartLaunch: unknown;
+  recordSuccessAudit?: (db: LaunchDb, statusCode: number) => Promise<void>;
+}): Promise<NextResponse> {
+  if (
+    args.restartLaunch === undefined &&
+    args.runRow.status === "Failed" &&
+    args.runRow.projectId &&
+    args.runRow.taskId
+  ) {
+    const [existing] = await args.db
+      .select({ id: schemaModule.runs.id, status: schemaModule.runs.status })
+      .from(schemaModule.runs)
+      .where(
+        and(
+          eq(schemaModule.runs.projectId, args.runRow.projectId),
+          eq(schemaModule.runs.taskId, args.runRow.taskId),
+          ne(schemaModule.runs.id, args.runId),
+          sql`${schemaModule.runs.triggerPayload}->>'kind'='budget_restart'`,
+          sql`${schemaModule.runs.triggerPayload}->>'oldRunId'=${args.runId}`,
+          sql`${schemaModule.runs.triggerPayload}->>'hitlRequestId'=${args.hitlRequestId}`,
+        ),
+      )
+      .limit(1);
+
+    if (existing) {
+      await args.db.transaction(async (tx) => {
+        const gate = await lockHitlRow(tx, args.hitlRequestId);
+        const stored = gate?.response as Record<string, unknown> | null;
+
+        if (!gate || stored?.optionId !== "restart")
+          throw budgetRestartDecisionRequired();
+        if (!gate.respondedAt)
+          await tx
+            .update(schemaModule.hitlRequests)
+            .set({
+              response: { ...stored, stage: "terminalized", ref: existing.id },
+              respondedAt: new Date(),
+            })
+            .where(eq(schemaModule.hitlRequests.id, args.hitlRequestId));
+        await args.recordSuccessAudit?.(tx, 202);
+      });
+
+      return NextResponse.json(
+        {
+          ok: true,
+          runStatus: args.runRow.status,
+          newRunId: existing.id,
+          newRunStatus: existing.status,
+        },
+        { status: 202 },
+      );
+    }
+  }
+  const request = readBudgetRestartLaunch(args.restartLaunch);
+  const principal = args.restartPrincipal;
+
+  if (
+    !principal ||
+    args.actor.kind !== "user" ||
+    args.actor.userId !== principal.userId
+  )
+    throw budgetRestartDecisionRequired();
+  assertInteractiveTaskLaunchPrincipal(principal);
+  if (
+    request.taskId !== args.runRow.taskId ||
+    request.relaunchOfRunId !== args.runId ||
+    !args.runRow.projectId
+  )
+    throw budgetRestartDecisionRequired();
+  const requestKey = `budget_restart:${args.runId}:${args.hitlRequestId}`;
+  const [currentGate] = await args.db
+    .select()
+    .from(schemaModule.hitlRequests)
+    .where(eq(schemaModule.hitlRequests.id, args.hitlRequestId));
+  const currentClaim = currentGate?.response as {
+    stage?: string;
+    launchIntentId?: string;
+  } | null;
+  const originalSource =
+    currentClaim?.launchIntentId || currentClaim?.stage === "claimed"
+      ? await createBudgetRestartLaunchSource(
+          args.db,
+          request,
+          args.hitlRequestId,
+        )
+      : undefined;
+
+  if (!originalSource)
+    await assertBudgetRestartRunAvailable(args.db, args.runRow, args.runId);
+  log.debug(
+    {
+      runId: args.runId,
+      hitlRequestId: args.hitlRequestId,
+      stage: "preflight",
+    },
+    "[FIX:LA08] budget restart handoff",
+  );
+  const preflight = await prepareInteractiveTaskLaunchHandoff(
+    args.db,
+    principal,
+    request,
+    requestKey,
+    originalSource,
+    args.runRow,
+  );
+  const response = (receipt: TaskLaunchReceipt): NextResponse =>
+    NextResponse.json(
+      {
+        ok: true,
+        state: "restart_queued",
+        runStatus: "Failed",
+        intentId: receipt.intentId,
+        ...(receipt.runId ? { newRunId: receipt.runId } : {}),
+      },
+      {
+        status: 202,
+        headers: { Location: `/api/task-launch-intents/${receipt.intentId}` },
+      },
+    );
+
+  if (preflight.kind === "replayed") {
+    wakeAcceptedTaskLaunch(args.db, preflight.receipt);
+
+    return response(preflight.receipt);
+  }
+  log.debug(
+    {
+      runId: args.runId,
+      hitlRequestId: args.hitlRequestId,
+      stage: "preflight_ready",
+    },
+    "[FIX:LA08] budget restart handoff",
+  );
+  await assertBudgetRestartRunAvailable(args.db, args.runRow, args.runId);
+  await preflightBudgetRestartLaunchability({
+    db: args.db,
+    runId: args.runId,
+    runRow: args.runRow,
+  });
+  await args.db.transaction(async (tx) => {
+    await takeSchedulerLock(tx);
+    await assertTaskLaunchUserAuthority(
+      tx,
+      preflight.projectId,
+      principal.userId,
+      ["answerHitl", "launchRun"],
+    );
+    await lockTaskLaunchReservation(tx, request.taskId);
+    await tx
+      .select({ id: schemaModule.runs.id })
+      .from(schemaModule.runs)
+      .where(eq(schemaModule.runs.id, args.runId))
+      .for("update");
+    const gate = await lockHitlRow(tx, args.hitlRequestId);
+
+    if (!gate) throw budgetRestartDecisionRequired();
+    const claim = evaluateBudgetBreachClaim({
+      storedResponse: gate.response,
+      respondedAt: gate.respondedAt,
+      incoming: { optionId: "restart" },
+    });
+    const stored = gate.response as { restartLaunch?: unknown } | null;
+
+    if (
+      claim.kind === "conflict" ||
+      ((claim.kind === "re-drive" || claim.kind === "idempotent") &&
+        (!stored?.restartLaunch ||
+          retryDigest(stored.restartLaunch) !== retryDigest(request)))
+    )
+      throw budgetRestartDecisionRequired();
+    if (claim.kind === "fresh" || claim.kind === "re-claimable")
+      await tx
+        .update(schemaModule.hitlRequests)
+        .set({
+          response: {
+            optionId: "restart",
+            stage: "claimed",
+            restartLaunch: request,
+          },
+          respondedAt: null,
+        })
+        .where(eq(schemaModule.hitlRequests.id, args.hitlRequestId));
+  });
+  const source = await createBudgetRestartLaunchSource(
+    args.db,
+    request,
+    args.hitlRequestId,
+  );
+
+  log.debug(
+    {
+      runId: args.runId,
+      hitlRequestId: args.hitlRequestId,
+      stage: "claim_stored",
+    },
+    "[FIX:LA08] budget restart handoff",
+  );
+  const prepared = await prepareInteractiveTaskLaunchHandoff(
+    args.db,
+    principal,
+    request,
+    requestKey,
+    source,
+  );
+
+  if (prepared.kind === "replayed") {
+    wakeAcceptedTaskLaunch(args.db, prepared.receipt);
+
+    return response(prepared.receipt);
+  }
+  await checkpointBudgetLiveSession({
+    db: args.db,
+    executionHosts: args.executionHosts,
+    runId: args.runId,
+    hitlRequestId: args.hitlRequestId,
+    phase: "restart",
+  });
+  log.debug(
+    {
+      runId: args.runId,
+      hitlRequestId: args.hitlRequestId,
+      stage: "checkpointed",
+    },
+    "[FIX:LA08] budget restart handoff",
+  );
+  try {
+    const receipt = await args.db.transaction(async (tx) => {
+      await takeSchedulerLock(tx);
+      await assertTaskLaunchUserAuthority(
+        tx,
+        prepared.projectId,
+        principal.userId,
+        ["answerHitl", "launchRun"],
+      );
+      await lockTaskLaunchReservation(tx, request.taskId);
+      const [source] = await tx
+        .select()
+        .from(schemaModule.runs)
+        .where(eq(schemaModule.runs.id, args.runId))
+        .for("update");
+
+      await tx
+        .select()
+        .from(executionAssignments)
+        .where(eq(executionAssignments.runId, args.runId))
+        .orderBy(asc(executionAssignments.id))
+        .for("update");
+      const gate = await lockHitlRow(tx, args.hitlRequestId);
+      const stored = gate?.response as {
+        restartLaunch?: unknown;
+        launchIntentId?: string;
+      } | null;
+
+      if (
+        !source ||
+        !gate ||
+        !stored?.restartLaunch ||
+        retryDigest(stored.restartLaunch) !== retryDigest(request)
+      )
+        throw budgetRestartDecisionRequired();
+      if (gate.respondedAt && stored?.launchIntentId) {
+        const [accepted] = await tx
+          .select()
+          .from(taskLaunchIntents)
+          .where(eq(taskLaunchIntents.id, stored.launchIntentId));
+
+        if (
+          !accepted ||
+          accepted.sourceRunId !== source.id ||
+          accepted.taskId !== source.taskId
+        )
+          throw budgetRestartDecisionRequired();
+
+        return taskLaunchReceipt(accepted);
+      }
+      const terminal = await terminalizeBudgetRun({
+        tx,
+        runId: source.id,
+        reason: "budget_restart",
+        assignmentReason: "budget breach restart",
+      });
+
+      if (!terminal) throw budgetRestartDecisionRequired();
+      if (source.taskLaunchIntentId) {
+        const [origin] = await tx
+          .select()
+          .from(taskLaunchIntents)
+          .where(eq(taskLaunchIntents.id, source.taskLaunchIntentId))
+          .for("update");
+
+        if (
+          !origin ||
+          origin.runId !== source.id ||
+          origin.state !== "run_bound"
+        )
+          throw budgetRestartDecisionRequired();
+        const [settled] = await tx
+          .update(taskLaunchIntents)
+          .set({
+            state: "settled",
+            stateVersion: origin.stateVersion + 1,
+            terminalOutcome: "Failed",
+            updatedAt: sql`clock_timestamp()`,
+          })
+          .where(eq(taskLaunchIntents.id, origin.id))
+          .returning();
+
+        await emitTaskLaunchChanged(tx, settled, {
+          type: "user",
+          id: principal.userId,
+        });
+      }
+      const accepted = await applyPreparedTaskLaunch(tx, prepared);
+
+      await tx
+        .update(schemaModule.hitlRequests)
+        .set({
+          response: {
+            optionId: "restart",
+            stage: "terminalized",
+            restartLaunch: request,
+            launchIntentId: accepted.intentId,
+          },
+          respondedAt: new Date(),
+        })
+        .where(eq(schemaModule.hitlRequests.id, args.hitlRequestId));
+      await args.recordSuccessAudit?.(tx, 202);
+
+      return accepted;
+    });
+
+    log.info(
+      {
+        runId: args.runId,
+        hitlRequestId: args.hitlRequestId,
+        intentId: receipt.intentId,
+        taskRevision: request.expectedTaskRevision,
+        basis: receipt.basis,
+      },
+      "[FIX:LA08] budget restart accepted with a fresh one-shot decision",
+    );
+    wakeAcceptedTaskLaunch(args.db, receipt);
+
+    return response(receipt);
+  } catch (error) {
+    await args.db.transaction(async (tx) => {
+      const [source] = await tx
+        .select()
+        .from(schemaModule.runs)
+        .where(eq(schemaModule.runs.id, args.runId))
+        .for("update");
+      const gate = await lockHitlRow(tx, args.hitlRequestId);
+      const stored = gate?.response as { restartLaunch?: unknown } | null;
+
+      if (
+        source &&
+        ["NeedsInput", "NeedsInputIdle"].includes(source.status) &&
+        gate &&
+        !gate.respondedAt &&
+        stored?.restartLaunch &&
+        retryDigest(stored.restartLaunch) === retryDigest(request)
+      )
+        await tx
+          .update(schemaModule.hitlRequests)
+          .set({
+            response: {
+              optionId: "restart",
+              stage: "failed",
+              restartLaunch: request,
+            },
+          })
+          .where(eq(schemaModule.hitlRequests.id, gate.id));
+    });
+    log.warn(
+      {
+        runId: args.runId,
+        hitlRequestId: args.hitlRequestId,
+        code: isMaisterError(error) ? error.code : "CRASH",
+      },
+      "[FIX:LA08] budget restart handoff refused; source terminalization rolled back",
+    );
+    throw error;
+  }
+}
+
 // Idempotent on a responded row. Human-actor-only (enforced in respondToHitl).
 async function handleInfraRecoveryResponse(args: {
   db: any;
@@ -4014,6 +4462,7 @@ async function loadBudgetBreachAvailabilityContext(args: {
     taskId: args.runRow.taskId ?? null,
     flowId: args.runRow.flowId ?? null,
     agentId: args.runRow.agentId ?? null,
+    agentKind: args.runRow.agentKind ?? null,
     parentRunId: args.runRow.parentRunId ?? null,
     agentWorkspace: args.runRow.agentWorkspace ?? null,
     hasOwnedWorkspace: workspace !== null && workspace.removedAt === null,
@@ -4235,48 +4684,6 @@ async function markBudgetParkedRun(args: {
   });
 
   return "Abandoned";
-}
-
-async function loadBudgetRestartOptions(args: {
-  db: any;
-  runId: string;
-  runRow: any;
-}): Promise<{
-  taskId: string;
-  projectId: string;
-  flowId?: string;
-  runnerId?: string;
-  baseBranch?: string;
-  targetBranch?: string;
-}> {
-  if (!args.runRow.taskId || !args.runRow.projectId) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `budget restart requires a task-bound project run: ${args.runId}`,
-    );
-  }
-
-  const workspaceRows = await args.db
-    .select({
-      baseBranch: workspaces.baseBranch,
-      targetBranch: workspaces.targetBranch,
-    })
-    .from(workspaces)
-    .where(eq(workspaces.runId, args.runId));
-  const activeSession = await loadActiveRunSession(args.db, args.runId);
-  const runnerId = activeSession?.runnerId ?? undefined;
-  const workspace = workspaceRows[0] ?? null;
-
-  return {
-    taskId: args.runRow.taskId,
-    projectId: args.runRow.projectId,
-    ...(args.runRow.flowId ? { flowId: args.runRow.flowId } : {}),
-    ...(runnerId ? { runnerId } : {}),
-    ...(workspace?.baseBranch ? { baseBranch: workspace.baseBranch } : {}),
-    ...(workspace?.targetBranch
-      ? { targetBranch: workspace.targetBranch }
-      : {}),
-  };
 }
 
 async function preflightParkExportBranch(args: {
@@ -4518,176 +4925,6 @@ async function preflightBudgetRestartLaunchability(args: {
   }
 }
 
-function budgetRestartTriggerPayload(
-  runId: string,
-  hitlRequestId: string,
-): Record<string, unknown> {
-  return {
-    kind: "budget_restart",
-    oldRunId: runId,
-    hitlRequestId,
-    idempotencyKey: `budget_restart:${runId}:${hitlRequestId}`,
-  };
-}
-
-async function findExistingBudgetRestartRun(args: {
-  db: any;
-  runId: string;
-  hitlRequestId: string;
-  runRow: any;
-}): Promise<BudgetRestartLaunchResult | null> {
-  const predicates = [ne(runs.id, args.runId)];
-
-  predicates.push(
-    sql`${runs.triggerPayload}->>'kind' = 'budget_restart'`,
-    sql`${runs.triggerPayload}->>'oldRunId' = ${args.runId}`,
-    sql`${runs.triggerPayload}->>'hitlRequestId' = ${args.hitlRequestId}`,
-  );
-
-  if (args.runRow.taskId) {
-    predicates.push(eq(runs.taskId, args.runRow.taskId));
-  }
-
-  if (args.runRow.agentId) {
-    predicates.push(eq(runs.agentId, args.runRow.agentId));
-  }
-
-  const rows = await args.db
-    .select({
-      id: runs.id,
-      status: runs.status,
-      taskId: runs.taskId,
-      agentId: runs.agentId,
-      triggerPayload: runs.triggerPayload,
-      scheduledRequestSnapshot: runs.scheduledRequestSnapshot,
-    })
-    .from(runs)
-    .where(and(...predicates))
-    .orderBy(desc(runs.startedAt))
-    .limit(20);
-  const existing =
-    rows.find((row: Record<string, unknown>) => {
-      const payload = row.triggerPayload;
-
-      return (
-        row.id !== args.runId &&
-        (args.runRow.taskId ? row.taskId === args.runRow.taskId : true) &&
-        (args.runRow.agentId ? row.agentId === args.runRow.agentId : true) &&
-        payload !== null &&
-        typeof payload === "object" &&
-        !Array.isArray(payload) &&
-        (payload as Record<string, unknown>).kind === "budget_restart" &&
-        (payload as Record<string, unknown>).oldRunId === args.runId &&
-        (payload as Record<string, unknown>).hitlRequestId ===
-          args.hitlRequestId
-      );
-    }) ?? null;
-
-  if (!existing) return null;
-  assertScheduledRequestMatches(
-    parseScheduledRequestSnapshot(args.runRow.scheduledRequestSnapshot),
-    parseScheduledRequestSnapshot(existing.scheduledRequestSnapshot),
-  );
-
-  log.info(
-    {
-      runId: args.runId,
-      hitlRequestId: args.hitlRequestId,
-      newRunId: existing.id,
-      status: existing.status,
-    },
-    "[FIX:budget-breach-restart] recovered existing restart run from trigger payload",
-  );
-
-  return { runId: String(existing.id), status: String(existing.status) };
-}
-
-async function launchBudgetRestart(args: {
-  db: any;
-  actor: HitlActor;
-  runId: string;
-  runRow: any;
-  hitlRequestId: string;
-}): Promise<BudgetRestartLaunchResult> {
-  const existing = await findExistingBudgetRestartRun(args);
-
-  if (existing !== null) return existing;
-
-  const triggerPayload = budgetRestartTriggerPayload(
-    args.runId,
-    args.hitlRequestId,
-  );
-
-  if (args.runRow.runKind === "agent") {
-    if (!args.runRow.agentId || !args.runRow.projectId) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `agent budget restart requires agent/project ids: ${args.runId}`,
-      );
-    }
-    await requireProjectAction(args.runRow.projectId, "launchRun");
-    const { launchAgentRun } = await import("@/lib/agents/launch");
-    const result = await launchAgentRun({
-      agentId: args.runRow.agentId,
-      projectId: args.runRow.projectId,
-      taskId: args.runRow.taskId ?? null,
-      launchOverrideRunnerId: null,
-      trigger: {
-        source: "manual",
-        payload: triggerPayload,
-      },
-      workspace: args.runRow.agentWorkspace ?? null,
-      ...(args.runRow.scheduledRequestSnapshot
-        ? {
-            scheduledRequestSnapshot: parseScheduledRequestSnapshot(
-              args.runRow.scheduledRequestSnapshot,
-            ),
-          }
-        : {}),
-      db: args.db,
-    });
-
-    if ("deduped" in result) {
-      throw new MaisterError(
-        "CONFLICT",
-        `agent restart deduped by trigger event for run ${args.runId}`,
-      );
-    }
-
-    return result;
-  }
-
-  const restartOptions = await loadBudgetRestartOptions({
-    db: args.db,
-    runId: args.runId,
-    runRow: args.runRow,
-  });
-
-  return launchRun(
-    {
-      taskId: restartOptions.taskId,
-      ...(restartOptions.flowId ? { flowId: restartOptions.flowId } : {}),
-      ...(restartOptions.runnerId ? { runnerId: restartOptions.runnerId } : {}),
-      ...(restartOptions.baseBranch
-        ? { baseBranch: restartOptions.baseBranch }
-        : {}),
-      ...(restartOptions.targetBranch
-        ? { targetBranch: restartOptions.targetBranch }
-        : {}),
-      triggerSource: "manual",
-      triggerPayload,
-      allowConcurrent: false,
-    },
-    {
-      actorUserId: args.actor.kind === "user" ? args.actor.userId : null,
-      authorize: async (projectId, action = "launchRun") => {
-        await requireProjectAction(projectId, action);
-      },
-    },
-    args.db,
-  );
-}
-
 async function performBudgetPark(args: {
   db: any;
   executionHosts: ExecutionHosts;
@@ -4795,6 +5032,7 @@ async function handleBudgetBreachResponse(args: {
   actor: HitlActor;
   recordSuccessAudit?: (db: any, statusCode: number) => Promise<void>;
   executionHosts: ExecutionHosts;
+  restartPrincipal?: InteractiveTaskLaunchPrincipal;
 }): Promise<NextResponse> {
   const {
     db,
@@ -4804,7 +5042,6 @@ async function handleBudgetBreachResponse(args: {
     runId,
     hitlRequestId,
     startedAt,
-    actor,
     recordSuccessAudit,
     executionHosts,
   } = args;
@@ -4815,6 +5052,12 @@ async function handleBudgetBreachResponse(args: {
     breachedMeter: meter,
     breachedLimit: breach.limit,
   });
+
+  if (decision.optionId === "restart")
+    return handleBudgetRestartIntent({
+      ...args,
+      restartLaunch: (body as RespondInput["body"]).restartLaunch,
+    });
   const availabilityContext = await loadBudgetBreachAvailabilityContext({
     db,
     runRow,
@@ -4830,10 +5073,6 @@ async function handleBudgetBreachResponse(args: {
 
   if (needsPreClaimChecks) {
     assertBudgetBreachOptionAvailable(decision.optionId, availabilityContext);
-  }
-
-  if (needsPreClaimChecks && decision.optionId === "restart") {
-    await preflightBudgetRestartLaunchability({ db, runId, runRow });
   }
 
   if (
@@ -4900,14 +5139,6 @@ async function handleBudgetBreachResponse(args: {
     }
 
     if (claim.kind === "re-drive") {
-      if (decision.optionId === "restart") {
-        return {
-          transition: "restart-claimed",
-          reDrive: true,
-          stage: claim.stage,
-          ref: budgetBreachClaimRef(locked.response),
-        } as const;
-      }
       if (decision.optionId === "park") {
         return {
           transition: "park-claimed",
@@ -4916,23 +5147,6 @@ async function handleBudgetBreachResponse(args: {
           ref: budgetBreachClaimRef(locked.response),
         } as const;
       }
-    }
-
-    if (decision.optionId === "restart") {
-      await tx
-        .update(hitlRequests)
-        .set({
-          response: stagedBudgetDecision(decision, "claimed"),
-          respondedAt: null,
-        })
-        .where(eq(hitlRequests.id, hitlRequestId));
-
-      return {
-        transition: "restart-claimed",
-        reDrive: false,
-        stage: "claimed",
-        ref: null,
-      } as const;
     }
 
     if (decision.optionId === "park") {
@@ -5065,165 +5279,6 @@ async function handleBudgetBreachResponse(args: {
     }
 
     return NextResponse.json({ ok: true, idempotent: true }, { status: 200 });
-  }
-
-  if (outcome.transition === "restart-claimed") {
-    let terminalRow: Awaited<ReturnType<typeof terminalizeBudgetRun>> | null =
-      null;
-    let oldRunTerminalized = false;
-
-    try {
-      const oldRunAlreadyTerminal =
-        outcome.reDrive &&
-        (outcome.stage === "terminalized" ||
-          outcome.stage === "relaunch_failed");
-
-      oldRunTerminalized = oldRunAlreadyTerminal;
-
-      if (!oldRunAlreadyTerminal) {
-        await checkpointBudgetLiveSession({
-          db,
-          executionHosts,
-          runId,
-          hitlRequestId,
-          phase: "restart",
-        });
-
-        terminalRow = await db.transaction(async (tx: any) => {
-          const row = await terminalizeBudgetRun({
-            tx,
-            runId,
-            reason: "budget_restart",
-            assignmentReason: "budget breach restart",
-          });
-
-          if (row === null) {
-            throw new MaisterError(
-              "CONFLICT",
-              `run ${runId} is no longer awaiting a budget restart`,
-            );
-          }
-
-          await setBudgetBreachStage({
-            db: tx,
-            hitlRequestId,
-            decision,
-            stage: "terminalized",
-          });
-
-          return row;
-        });
-        oldRunTerminalized = true;
-      }
-
-      const launched = await launchBudgetRestart({
-        db,
-        actor,
-        runId,
-        runRow,
-        hitlRequestId,
-      });
-
-      await setBudgetBreachStage({
-        db,
-        hitlRequestId,
-        decision,
-        stage: "terminalized",
-        ref: launched.runId,
-        respondedAt: new Date(),
-      });
-      await addBudgetSystemCommentBestEffort({
-        taskId: terminalRow?.taskId ?? runRow.taskId ?? null,
-        body: `Budget breach restart: old run ${runId} was terminalized and relaunched as ${launched.runId}.`,
-        runId,
-        hitlRequestId,
-        phase: "restart-launched",
-      });
-
-      log.info(
-        {
-          runId,
-          hitlRequestId,
-          newRunId: launched.runId,
-          status: launched.status,
-          queuePosition: launched.queuePosition,
-          latencyMs: Date.now() - startedAt,
-        },
-        "budget_breach restarted — new run launched",
-      );
-
-      return NextResponse.json(
-        {
-          ok: true,
-          runStatus: "Failed",
-          newRunId: launched.runId,
-          newRunStatus: launched.status,
-          queuePosition: launched.queuePosition,
-        },
-        { status: 202 },
-      );
-    } catch (err) {
-      if (oldRunTerminalized) {
-        const existingRestart = await findExistingBudgetRestartRun({
-          db,
-          runId,
-          hitlRequestId,
-          runRow,
-        });
-
-        if (existingRestart !== null) {
-          await setBudgetBreachStage({
-            db,
-            hitlRequestId,
-            decision,
-            stage: "terminalized",
-            ref: existingRestart.runId,
-            respondedAt: new Date(),
-          });
-          await addBudgetSystemCommentBestEffort({
-            taskId: terminalRow?.taskId ?? runRow.taskId ?? null,
-            body: `Budget breach restart: old run ${runId} was terminalized and relaunched as ${existingRestart.runId}.`,
-            runId,
-            hitlRequestId,
-            phase: "restart-redrive-existing",
-          });
-
-          return NextResponse.json(
-            {
-              ok: true,
-              runStatus: "Failed",
-              newRunId: existingRestart.runId,
-              newRunStatus: existingRestart.status,
-              queuePosition: existingRestart.queuePosition,
-            },
-            { status: 202 },
-          );
-        }
-      }
-
-      await setBudgetBreachStage({
-        db,
-        hitlRequestId,
-        decision,
-        stage: oldRunTerminalized ? "relaunch_failed" : "failed",
-        error: err instanceof Error ? err.message : String(err),
-        respondedAt: oldRunTerminalized ? new Date() : null,
-      });
-
-      if (oldRunTerminalized) {
-        await addBudgetSystemCommentBestEffort({
-          taskId: terminalRow?.taskId ?? runRow.taskId ?? null,
-          body: `Budget breach restart failed after terminalizing run ${runId}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-          runId,
-          hitlRequestId,
-          phase: "restart-failed",
-        });
-      }
-
-      throw err;
-    }
   }
 
   if (outcome.transition === "park-claimed") {
@@ -5683,6 +5738,19 @@ export async function claimNodeInterruptResume(
   return claim;
 }
 
+/** Conflict with ACK's FOR UPDATE while allowing assignment-event FK KEY SHARE.
+ * Restart closes and holds human assignments before placement upgrades this lock. */
+async function lockNodeInterruptRun(
+  tx: LaunchDb,
+  runId: string,
+): Promise<void> {
+  await tx
+    .select({ id: runs.id })
+    .from(runs)
+    .where(eq(runs.id, runId))
+    .for("no key update");
+}
+
 /** ADR-183 D-M2: the `resume` answer to a `node_interrupt`, extracted so the
  * operator's route (through `respondToHitl`, a human actor) and the sweep's
  * auto-resume of a host-paused node (`system`, server-internal — never a
@@ -5703,6 +5771,7 @@ export async function applyNodeInterruptResume(
 }> {
   const { runId, hitlRequestId, actor } = args;
   const answered = await db.transaction(async (tx: any) => {
+    await lockNodeInterruptRun(tx, runId);
     const locked = await lockHitlRow(tx, hitlRequestId);
 
     if (!locked || locked.runId !== runId || locked.kind !== "node_interrupt") {
@@ -5934,6 +6003,7 @@ async function handleNodeInterruptResponse(args: {
       await import("@/lib/workbench-lifecycle/service");
 
     const outcome = await db.transaction(async (tx: any) => {
+      await lockNodeInterruptRun(tx, runId);
       const locked = await lockHitlRow(tx, hitlRequestId);
 
       if (!locked) {
@@ -6231,6 +6301,7 @@ async function handleNodeInterruptResponse(args: {
   });
 
   const outcome = await db.transaction(async (tx: any) => {
+    await lockNodeInterruptRun(tx, runId);
     const locked = await lockHitlRow(tx, hitlRequestId);
 
     if (!locked) {
@@ -6825,6 +6896,7 @@ export async function respondToHitl(
     db: any;
     recordSuccessAudit?: (db: any, statusCode: number) => Promise<void>;
     executionHosts?: ExecutionHosts;
+    restartPrincipal?: InteractiveTaskLaunchPrincipal;
   },
 ): Promise<NextResponse> {
   const { db, recordSuccessAudit } = deps;
@@ -6972,6 +7044,7 @@ export async function respondToHitl(
       actor,
       recordSuccessAudit,
       executionHosts,
+      restartPrincipal: deps.restartPrincipal,
     });
   }
 

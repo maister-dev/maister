@@ -17,6 +17,7 @@ import {
 } from "@/lib/__tests__/runner-fixtures";
 import { capForPool, promoteNextPending } from "@/lib/scheduler";
 import { respondToHitl, type HitlActor } from "@/lib/services/hitl";
+import { readCreateIntent } from "@/lib/execution-host/create-intent";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
@@ -322,6 +323,26 @@ describe("a parked assistant run resumes only through the ADR-097 gate (C5)", ()
 
     expect(state.response).toMatchObject({ optionId: "allow" });
     expect(state.resumePlacements).toBe(1);
+    const [create] = await db
+      .select()
+      .from(schema.executionCommands)
+      .where(
+        and(
+          eq(schema.executionCommands.runId, parked.runId),
+          eq(schema.executionCommands.kind, "session.create"),
+        ),
+      );
+    const execution = await parked.hosts.executionFor(parked.runId);
+    const frozen = readCreateIntent(create, execution.client.host.hostKey);
+
+    expect(frozen.intent).toMatchObject({
+      owner: { variant: "package_scratch", localPackageId: parked.packageId },
+      continuation: {
+        kind: "package_recovery",
+        recoveryState: { status: "NeedsInputIdle" },
+      },
+    });
+    expect(frozen.envelope.payload).toMatchObject({ readOnlySession: true });
     // The re-prompt is detached from the 202: let it settle before the
     // database closes under it.
     const deadline = Date.now() + 30_000;

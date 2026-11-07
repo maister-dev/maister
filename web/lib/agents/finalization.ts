@@ -1,6 +1,8 @@
 import "server-only";
 
+import type { AgentPreparationOwner } from "@/lib/agents/preparation-workspace";
 import type { RawNodeOutputPayload } from "@/lib/flows/graph/node-output";
+import type { OperationalFailureDiagnostic } from "@/lib/agents/operational-diagnostics";
 import type { Db } from "@/lib/execution-host/db";
 import type { Run, Workspace, Project } from "@/lib/db/schema";
 import type { RunResultContract, ResultStatus } from "@/lib/run-results/types";
@@ -51,7 +53,14 @@ import { parseOperationalResult } from "@/lib/run-results/operational-schema";
 import { terminalCauseReason } from "@/lib/domain-events/taxonomy";
 import { closedAnswerResponse } from "@/lib/hitl-closed-answer";
 import { getDb } from "@/lib/db/client";
-import { hitlRequests, projects, runs, workspaces } from "@/lib/db/schema";
+import {
+  executionAssignments,
+  agentPreparationOperations,
+  hitlRequests,
+  projects,
+  runs,
+  workspaces,
+} from "@/lib/db/schema";
 import { releaseRunContextMounts } from "@/lib/context-mounts/terminal";
 import {
   cancelActiveAssignmentsForRun,
@@ -70,6 +79,7 @@ import {
   recordInvalidRunResult,
 } from "@/lib/run-results/ledger";
 import { gcAgeDays, worktreesRoot } from "@/lib/instance-config";
+import { withAcceptedAgentCleanup } from "@/lib/agents/accepted-cleanup";
 import { removeOwnedPlainAgentDirectory } from "@/lib/gc/plain-agent-directory-gc";
 import { removeWorktree } from "@/lib/worktree";
 import { promoteNextPending } from "@/lib/scheduler";
@@ -80,6 +90,10 @@ import {
   inspectOperationalRun,
   operationalResourceKind,
 } from "@/lib/agents/operational-context";
+import {
+  assertAgentPreparationFailureOwner,
+  preparationFenced,
+} from "@/lib/agents/preparation-ownership";
 import { prepareQualificationPublication } from "@/lib/tasks/qualification";
 
 const log = pino({
@@ -119,6 +133,11 @@ type AgentAssignmentClose =
 
 export type AgentFinalizeOptions = {
   db?: Db;
+  infrastructureFailure?: OperationalFailureDiagnostic;
+  /** A dispatch driver's diagnosis cannot settle another assignment generation. */
+  expectedAssignmentId?: string | null;
+  /** Private current physical owner; retained through the pre-dispatch terminal commit. */
+  expectedPreparation?: Pick<AgentPreparationOwner, "operation" | "assertHeld">;
   /** Exact retained prompt whose validated result-resume grant may settle. */
   applicationCommandId?: string;
   reason?: string;
@@ -262,6 +281,7 @@ type FinalizationContext = Readonly<{
     | "operationalIntegrityBaseline"
     | "operationalTerminal"
     | "taskQualificationSnapshot"
+    | "taskLaunchIntentId"
   > & { projectId: string };
   workspaceRows: readonly Pick<Workspace, "id" | "worktreePath">[];
   workspaceContext: Awaited<ReturnType<typeof loadAgentWorkspaceContext>>;
@@ -311,6 +331,7 @@ async function loadFinalizationContext(
       operationalIntegrityBaseline: runs.operationalIntegrityBaseline,
       operationalTerminal: runs.operationalTerminal,
       taskQualificationSnapshot: runs.taskQualificationSnapshot,
+      taskLaunchIntentId: runs.taskLaunchIntentId,
     })
     .from(runs)
     .where(eq(runs.id, runId));
@@ -376,13 +397,45 @@ export async function prepareUndispatchedAgentFailure(
     afterCommit: prepared.afterCommit,
     apply: async (tx) => {
       const [run] = await tx
-        .select({ status: runs.status })
+        .select({
+          status: runs.status,
+          assignmentId: runs.executionAssignmentId,
+        })
         .from(runs)
         .where(eq(runs.id, runId))
         .for("update");
 
       if (!run || (run.status !== "Pending" && run.status !== "Running"))
         return { finalized: false };
+      if (opts.expectedPreparation) {
+        if (
+          opts.expectedPreparation.operation.runId !== runId ||
+          opts.expectedPreparation.operation.assignmentId !== run.assignmentId
+        )
+          throw preparationFenced(runId);
+        opts.expectedPreparation.assertHeld();
+      } else if (run.assignmentId) {
+        const [preparation] = await tx
+          .select({ id: agentPreparationOperations.id })
+          .from(agentPreparationOperations)
+          .where(
+            and(
+              eq(agentPreparationOperations.runId, runId),
+              eq(agentPreparationOperations.assignmentId, run.assignmentId),
+              inArray(agentPreparationOperations.phase, [
+                "claimed",
+                "checkout_ready",
+                "baseline_ready",
+                "materialized",
+                "failed",
+                "handed_off",
+              ]),
+            ),
+          )
+          .limit(1);
+
+        if (preparation) throw preparationFenced(runId);
+      }
       const evidence = await readAgentDispatchEvidence(tx, runId);
 
       if (evidence.hasOwnedCommand || evidence.hasBoundSession) {
@@ -634,13 +687,68 @@ async function prepareAgentFinalization(
 
   const apply = async (tx: Db): Promise<AgentFinalizationApplication> => {
     const [locked] = await tx
-      .select({ id: runs.id, status: runs.status })
+      .select({
+        id: runs.id,
+        status: runs.status,
+        assignmentId: runs.executionAssignmentId,
+      })
       .from(runs)
       .where(eq(runs.id, runId))
       .for("update");
 
     if (!locked || !sourceStatuses.includes(locked.status))
       return { finalized: false };
+    if (opts.expectedAssignmentId !== undefined) {
+      if (locked.assignmentId !== opts.expectedAssignmentId)
+        throw new MaisterError(
+          "CONFLICT",
+          "The dispatch failure belongs to a superseded assignment",
+          {
+            details: {
+              reason: "assignment_fenced",
+              runId,
+              assignmentId: opts.expectedAssignmentId,
+            },
+          },
+        );
+      if (opts.expectedAssignmentId !== null) {
+        const [assignment] = await tx
+          .select({ state: executionAssignments.state })
+          .from(executionAssignments)
+          .where(
+            and(
+              eq(executionAssignments.id, opts.expectedAssignmentId),
+              eq(executionAssignments.runId, runId),
+            ),
+          )
+          .for("update");
+
+        if (!assignment || assignment.state !== "active")
+          throw new MaisterError(
+            "CONFLICT",
+            "The dispatch failure belongs to a released assignment",
+            {
+              details: {
+                reason: "assignment_fenced",
+                runId,
+                assignmentId: opts.expectedAssignmentId,
+              },
+            },
+          );
+      }
+    }
+    if (opts.expectedPreparation) {
+      if (
+        opts.expectedPreparation.operation.runId !== runId ||
+        opts.expectedPreparation.operation.assignmentId !== locked.assignmentId
+      )
+        throw preparationFenced(runId);
+      opts.expectedPreparation.assertHeld();
+      await assertAgentPreparationFailureOwner(
+        tx,
+        opts.expectedPreparation.operation,
+      );
+    }
     if (
       preparedRun.agentKind === "operational" &&
       preparedRun.operationalTerminal
@@ -782,6 +890,9 @@ async function prepareAgentFinalization(
           baselineGeneration:
             preparedRun.operationalIntegrityBaseline?.generation ?? null,
           evidenceIds: [],
+          ...(opts.infrastructureFailure
+            ? { infrastructureFailure: opts.infrastructureFailure }
+            : {}),
         }
       : null;
     const cleanupDue = new Date(
@@ -1072,6 +1183,31 @@ async function prepareAgentFinalization(
       );
 
     if (original.run.agentKind === "operational") {
+      // Qualification publication and terminalization are committed before a
+      // delivery intent reads their current pointers or resolves repository state.
+      if (original.run.taskId) {
+        const { enqueueQualifiedAutomaticTaskLaunch } =
+          await import("@/lib/tasks/launch-automatic-enqueue");
+
+        try {
+          const intent = await enqueueQualifiedAutomaticTaskLaunch(
+            _db,
+            original.run.taskId,
+          );
+
+          if (intent?.basis === "automatic")
+            await promoteNextPending({ db: _db, pool: "flow" });
+        } catch (error) {
+          log.error(
+            {
+              runId,
+              taskId: original.run.taskId,
+              errorType: error instanceof Error ? error.name : "unknown",
+            },
+            "qualified-delivery-enqueue-deferred",
+          );
+        }
+      }
       log.info(
         { runId, status: result.status },
         "operational-terminal-cleanup-armed",
@@ -1099,89 +1235,107 @@ async function prepareAgentFinalization(
       return;
     }
 
-    let materializationReleaseFailedFor: string | null = null;
+    const cleanupAcceptedResources = async (): Promise<void> => {
+      let materializationReleaseFailedFor: string | null = null;
 
-    if (materializationCleanup) {
-      const cleanup = materializationCleanup as {
+      if (materializationCleanup) {
+        const cleanup = materializationCleanup as {
+          cwd: string;
+          workspace: "none" | "repo_read" | "worktree";
+        };
+
+        await restoreAgentMaterialization(cleanup.cwd, runId).catch(
+          (err: unknown) => {
+            materializationReleaseFailedFor = cleanup.cwd;
+            log.error(
+              {
+                runId,
+                workspace: cleanup.workspace,
+                errorType: err instanceof Error ? err.name : "unknown",
+              },
+              "post-commit agent materialization release failed",
+            );
+          },
+        );
+      }
+
+      log.info(
+        {
+          runId,
+          outcome,
+          status: result.status,
+          hasReason: Boolean(opts.reason),
+        },
+        "agent run finalized",
+      );
+
+      if (ephemeralCleanup) {
+        const cleanup = ephemeralCleanup as {
+          repoPath: string;
+          worktreePath: string;
+        };
+
+        if (materializationReleaseFailedFor === cleanup.worktreePath) {
+          log.warn(
+            { runId, workspace: "repo_read" },
+            "ephemeral checkout retained because materialization release must be retried",
+          );
+        } else {
+          await removeWorktree({
+            projectRepoPath: cleanup.repoPath,
+            worktreePath: cleanup.worktreePath,
+            force: true,
+          }).catch((err: unknown) => {
+            log.warn(
+              {
+                runId,
+                errorType: err instanceof Error ? err.name : "unknown",
+              },
+              "ephemeral checkout removal failed — next spawn recreates it",
+            );
+          });
+        }
+      }
+
+      const plainAgentCleanup = materializationCleanup as {
         cwd: string;
         workspace: "none" | "repo_read" | "worktree";
-      };
+      } | null;
 
-      await restoreAgentMaterialization(cleanup.cwd, runId).catch(
-        (err: unknown) => {
-          materializationReleaseFailedFor = cleanup.cwd;
-          log.error(
-            {
-              runId,
-              workspace: cleanup.workspace,
-              errorType: err instanceof Error ? err.name : "unknown",
-            },
-            "post-commit agent materialization release failed",
-          );
-        },
-      );
-    }
-
-    log.info(
-      {
-        runId,
-        outcome,
-        status: result.status,
-        hasReason: Boolean(opts.reason),
-      },
-      "agent run finalized",
-    );
-
-    if (ephemeralCleanup) {
-      const cleanup = ephemeralCleanup as {
-        repoPath: string;
-        worktreePath: string;
-      };
-
-      if (materializationReleaseFailedFor === cleanup.worktreePath) {
-        log.warn(
-          { runId, workspace: "repo_read" },
-          "ephemeral checkout retained because materialization release must be retried",
-        );
-      } else {
-        await removeWorktree({
-          projectRepoPath: cleanup.repoPath,
-          worktreePath: cleanup.worktreePath,
-          force: true,
+      if (
+        plainAgentCleanup?.workspace === "none" &&
+        materializationReleaseFailedFor !== plainAgentCleanup.cwd
+      ) {
+        await removeOwnedPlainAgentDirectory({
+          root: worktreesRoot(),
+          directoryPath: plainAgentCleanup.cwd,
         }).catch((err: unknown) => {
           log.warn(
             {
               runId,
               errorType: err instanceof Error ? err.name : "unknown",
             },
-            "ephemeral checkout removal failed — next spawn recreates it",
+            "plain agent directory removal failed and will retry during GC",
           );
         });
       }
-    }
+    };
 
-    const plainAgentCleanup = materializationCleanup as {
-      cwd: string;
-      workspace: "none" | "repo_read" | "worktree";
-    } | null;
-
-    if (
-      plainAgentCleanup?.workspace === "none" &&
-      materializationReleaseFailedFor !== plainAgentCleanup.cwd
-    ) {
-      await removeOwnedPlainAgentDirectory({
-        root: worktreesRoot(),
-        directoryPath: plainAgentCleanup.cwd,
-      }).catch((err: unknown) => {
+    if (original.run.taskLaunchIntentId) {
+      try {
+        await withAcceptedAgentCleanup(_db, runId, cleanupAcceptedResources);
+      } catch (error) {
         log.warn(
           {
             runId,
-            errorType: err instanceof Error ? err.name : "unknown",
+            status: result.status,
+            reason: "launch_cleanup_deferred",
+            errorType: error instanceof Error ? error.name : "unknown",
           },
-          "plain agent directory removal failed and will retry during GC",
+          "accepted agent cleanup deferred to its durable terminal-run GC candidate",
         );
-      });
-    }
+      }
+    } else await cleanupAcceptedResources();
 
     // ADR-157 (T32): release this run's read-only sibling mounts from the SAME
     // post-commit choke that releases the ephemeral `-ro` checkout. Reads the

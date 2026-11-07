@@ -232,7 +232,10 @@ child is **SETTLED** when it reaches a terminal state (`Done` / `Failed` /
 settled transition emits a domain event carrying `parent_run_id`. A
 `Failed`/`Crashed`/`Abandoned` child wakes the parent unconditionally; a
 success-side settle (`run.done` OR `run.review`) wakes it only once no pending
-(non-settled, `SETTLED_RUN_STATUSES`) sibling remains. The `orchestrator_resume`
+sibling remains. Pending includes non-settled Runs (`SETTLED_RUN_STATUSES`) and
+accepted, never-bound execution-child intents in `queued`, `preparing` or `held`.
+A bound intent is counted through its Run once. These completion obligations do
+not consume queued live-fanout capacity. The `orchestrator_resume`
 consumer does the wake via ACP `session/resume`; a child reaching `Review` keeps
 its `acp_session_id` so a later `run_rework` can resume it.
 
@@ -280,6 +283,18 @@ a retryable respawn failure keeps it. Event, catch-up and worker races grant one
 winner; losers get a typed `skipped`, a stale attempt or a terminal parent is a
 no-op. Capacity deferral (which still stamps `resume_requested_at` on the
 parked row) and terminal/cancellation guards remain in force.
+
+Failed or cancelled never-bound child requests have no child Run settlement
+event. Their `task.launch_changed` invalidation resolves the canonical parent
+from the stored child proof, and the continuation worker also discovers their
+unobserved outcome after restart. Both use the same capacity-checked wake CAS.
+The next coordinator input includes bounded, content-free child receipts in
+private typed command metadata and as display context. Only a successful applied
+owned prompt can acknowledge its exact receipt versions; marker-like prose,
+fresh context during replay and cleanup metadata cannot acknowledge them. An
+unseen failure can wake a parent while other children remain pending, but an
+observed outcome cannot keep waking it. The authoritative contract is
+[task launch admission](task-launch-admission.md#external-delegated-child-requests).
 
 A successful wake of either coordinator kind is durable in the existing
 Running status, current NeedsInput attempt, `wait_resume` assignment and
@@ -374,45 +389,48 @@ flowchart TD
     MERGE -- clean / up-to-date --> SETTLE[one tx: flip ALL shared children Review -> Done<br/>+ promotion_state=done]
 ```
 
-### (g) flow-target delegation — carrier task, canonical launcher, post-commit parent re-check (Implemented — ADR-163)
+### (g) Flow-target delegation — accepted child intent and canonical launcher (Implemented locally)
 
-A `target.flowId` delegation runs the SAME pipeline a board Launch runs. Every
-refusal above the carrier-task line writes **zero** rows: the wire shape, the
-limits, and the flow-trust resolution are three separate modules and none of them
-can start a run. The carrier task and its `parent_of` relation are minted in ONE
-transaction that also holds the per-orchestrator admission lock; the run,
-workspace, and sessions land in `launchRunStaged`'s own transaction; execution
-starts strictly after that commit.
+A `target.flowId` delegation resolves the same governed Flow as board Launch.
+Wire shape, option allow-lists and trust checks precede carrier creation. The
+carrier and `parent_of` relation commit under the existing parent delegation
+lock. Canonical acceptance then freezes the exact child input, selected settings
+and parent admission proof; its required token audit commits with the intent.
+The response is `202` with an intent ID and null Run selectors until binding.
+The existing scheduler owns preparation, capacity admission, binding and model
+dispatch. No model starts merely because the route accepted a request.
 
 ```mermaid
 sequenceDiagram
     participant O as orchestrator session
-    participant X as ext route (ext/runs/delegate)
-    participant A as admission (per-orchestrator advisory lock)
-    participant F as delegatable-flow resolver (no launcher import)
-    participant L as launchRunStaged (canonical flow pipeline)
-    participant S as supervisor
-    O->>X: run_delegate target.flowId mode prompt title? runnerOverride?
-    X->>X: strict target + exactly-one refinement<br/>per-kind option allow-list at the route (refuseUnsupportedDelegationOption)
-    X->>X: resolveActiveBoundRun (projectId + parent runId are token-derived)
-    X->>F: resolveDelegatableFlow projectId flowId
-    F-->>X: flowId flowRefId revisionId engine range<br/>OR PRECONDITION/CONFIG (no rows written)
-    X->>A: one tx - advisory lock on parent run id
-    Note over A: depth walk + live-child count under the lock (fast path)<br/>over the cap - CONFIG 422, nothing written<br/>the DECISIVE count runs again inside launchRunStaged's run-insert tx
-    A->>A: INSERT carrier task (launch_mode manual, flowId = SELECTED flow)<br/>+ parent_of relation - BOTH modes
-    A-->>X: committed
-    X->>L: launchRun taskId=carrier parentRunId rootRunId launchMode delegationSnapshot
-    Note over L: trust re-run + worktree + one tx (runs, run_sessions, workspaces)<br/>then COMMIT then tryStartRun then void runFlow
-    L-->>X: childRunId status
-    X->>X: post-commit parent re-read
-    alt parent terminalized during launch
-        X->>X: cascadeAbandonRunTree the just-born child + tear down its live session, return PRECONDITION 409
-    else parent still live
-        X-->>O: 202 childRunId childTaskId
-    end
-    L->>S: POST sessions (after commit, inside runFlow)
-    Note over X: launchRun throws after the carrier tx -><br/>outermost compensation ABANDONS the carrier task (relation kept as provenance)<br/>the task-has-no-runs guard is inside the UPDATE, typed error propagates
+    participant X as ext delegate route
+    participant A as canonical admission
+    participant Q as existing scheduler
+    participant S as execution host
+    O->>X: target Flow, mode, prompt, Idempotency-Key
+    X->>X: verify run-bound scope, target, bounds and option allow-list
+    X->>A: carrier task + relation, then exact child acceptance
+    Note over A: parent Run share lock through intent + audit commit
+    A-->>X: accepted intent, no Run yet
+    X-->>O: 202 accepted + intentId + null Run selectors
+    O->>O: clean turn sees accepted obligation<br/>parks and releases slot
+    Q->>A: revalidate source, parent proof and frozen input/settings
+    Q->>Q: capacity + fenced preparation + bind one Run
+    Q->>S: model dispatch only after Run and dispatch receipt commit
+    Note over O,A: normal close locks parent Run for final obligation check<br/>and retires delegation credentials atomically
 ```
+
+A request accepted before normal close keeps the coordinator waiting. A request
+arriving after the closing boundary cannot use its retired delegation credential.
+The same short admission fence runs before rework rewinds or recreates a
+checkout; Git runs after that transaction, while the final ledger fence remains
+in place. A pending child therefore prevents the workspace effect as well as
+the node's completion.
+Explicit parent stop, revoked authority or stale parent/input proof still prevents
+later dispatch. Task-backed agent targets and agent Flow facades share these
+obligation rules; standalone operational/taskless execution keeps its distinct
+contract. See the [launch contract](task-launch-admission.md#external-delegated-child-requests)
+for exact replay and security boundaries.
 
 ## Flow-target delegation contract (Implemented — ADR-163)
 

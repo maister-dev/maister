@@ -3,13 +3,22 @@ import type { Pool } from "pg";
 
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
 import { NextRequest } from "next/server";
+import { vi } from "vitest";
 
+// Direct route tests own request completion; actual intent binding remains explicit in acceptance cases.
+vi.mock("next/server", async (original) => ({
+  ...(await original<typeof import("next/server")>()),
+  after: vi.fn(),
+}));
+
+import { awaitTokenAuditWrites } from "@/test-support/token-audit-quiescence";
+import { historicalChildFixtureAdmission } from "@/test-support/queued-delegation";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as fullSchema from "@/lib/db/schema";
 
@@ -50,7 +59,7 @@ export async function initGitRepo(): Promise<string> {
   await execFileAsync("git", ["-C", dir, "add", "."]);
   await execFileAsync("git", ["-C", dir, "commit", "-q", "-m", "seed"]);
 
-  return dir;
+  return realpath(dir);
 }
 
 const TABLES_IN_DELETE_ORDER = [
@@ -91,9 +100,10 @@ export async function resetDelegationFixture(args: {
 }): Promise<DelegationSeedCtx> {
   const { pool, db, agentsRoot } = args;
 
-  for (const table of TABLES_IN_DELETE_ORDER) {
-    await pool.query(`DELETE FROM "${table}"`);
-  }
+  await awaitTokenAuditWrites();
+  await pool.query(
+    `TRUNCATE ${TABLES_IN_DELETE_ORDER.map((table) => `"${table}"`).join(",")} RESTART IDENTITY CASCADE`,
+  );
 
   const projectId = randomUUID();
   const executorId = randomUUID();
@@ -159,6 +169,7 @@ export async function resetDelegationFixture(args: {
 
 export type SeedFlowOptions = {
   flowRefId: string;
+  resolvedRevision?: string;
   installedPath?: string;
   enablementState?: string;
   trustStatus?: "trusted" | "untrusted";
@@ -209,6 +220,13 @@ export async function seedFlow(
   const flowId = randomUUID();
   const manifest = opts.manifest ?? minimalGraphManifest(opts.flowRefId);
 
+  await mkdir(installedPath, { recursive: true });
+  await writeFile(
+    path.join(installedPath, "flow.yaml"),
+    JSON.stringify(manifest),
+    "utf8",
+  );
+
   if (!opts.withoutRevisionRow) {
     await ctx.pool.query(
       `INSERT INTO "flow_revisions"
@@ -220,7 +238,7 @@ export async function seedFlow(
         revisionId,
         opts.flowRefId,
         `github.com/acme/${opts.flowRefId}`,
-        `rev-${opts.flowRefId}`,
+        opts.resolvedRevision ?? `rev-${opts.flowRefId}`,
         JSON.stringify(manifest),
         opts.schemaVersion ?? 1,
         opts.engineMin ?? null,
@@ -427,10 +445,11 @@ export async function seedTask(
   return { id, number };
 }
 
-/** Seed an orchestrator parent run plus its run-bound delegation token. */
+/** Seed a Flow coordinator plus its run-bound token; an absent revision pin is intentional. */
 export async function seedOrchestratorRun(
   ctx: DelegationSeedCtx,
   args: {
+    /** Legacy caller label; a Flow coordinator has no catalog agent identity. */
     orchestratorAgentId: string;
     taskId?: string | null;
     rootRunId?: string | null;
@@ -442,12 +461,11 @@ export async function seedOrchestratorRun(
   const runId = randomUUID();
 
   await ctx.pool.query(
-    `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "task_id",
+    `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id",
        "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id")
-     VALUES ($1, 'agent', $2, $3, $4, $7, 'agent', 'manual', $5, $6)`,
+     VALUES ($1, 'flow', $2, $3, $6, 'v1', 'manual', $4, $5)`,
     [
       runId,
-      args.orchestratorAgentId,
       ctx.projectId,
       args.taskId ?? null,
       args.parentRunId ?? null,
@@ -485,11 +503,16 @@ export async function seedChildRun(
   },
 ): Promise<string> {
   const runId = randomUUID();
+  const admission = await historicalChildFixtureAdmission(
+    ctx.db as unknown as import("@/lib/execution-host/db").Db,
+    ctx.projectId,
+    args.taskId ?? null,
+  );
 
   await ctx.pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "agent_id", "flow_id", "project_id", "task_id",
-       "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id", "launch_mode")
-     VALUES ($1, $2, $3, $4, $5, $6, $7, 'v1', 'rev', $8, $9, 'manual')`,
+       "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id", "launch_mode", "task_admission_snapshot", "task_admission_checked_at")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 'v1', 'rev', $8, $9, 'manual', $10::jsonb, $11)`,
     [
       runId,
       args.runKind ?? "agent",
@@ -500,6 +523,8 @@ export async function seedChildRun(
       args.status ?? "Running",
       args.parentRunId,
       args.rootRunId ?? args.parentRunId,
+      admission ? JSON.stringify(admission) : null,
+      admission ? new Date() : null,
     ],
   );
 
@@ -509,10 +534,14 @@ export async function seedChildRun(
 export function delegateRequest(
   secret: string | null,
   body: unknown,
+  operationKey: string = randomUUID(),
 ): NextRequest {
   const req = new NextRequest("http://localhost/api/v1/ext/runs/delegate", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "idempotency-key": operationKey,
+    },
     body: JSON.stringify(body),
   });
 
@@ -521,10 +550,17 @@ export function delegateRequest(
   return req;
 }
 
-export function planRequest(secret: string | null, body: unknown): NextRequest {
+export function planRequest(
+  secret: string | null,
+  body: unknown,
+  operationKey: string = randomUUID(),
+): NextRequest {
   const req = new NextRequest("http://localhost/api/v1/ext/runs/plan", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "idempotency-key": operationKey,
+    },
     body: JSON.stringify(body),
   });
 

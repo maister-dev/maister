@@ -24,8 +24,8 @@ const log = pino({
  * tick. Matched by runId and never narrowed by stepId — a run may hold more
  * than one logical session, so EVERY live one is stopped.
  *
- * ADR-166: the host is listed ONCE through the admin client; each delete rides
- * the run's own (teardown-bound) client so it is fenced and ledgered.
+ * Each run requires an attested scoped inventory; aggregate observations can
+ * contribute positive session identities but never prove process absence.
  */
 export async function teardownLiveSessionsForRuns(
   runIds: readonly string[],
@@ -38,20 +38,28 @@ export async function teardownLiveSessionsForRuns(
   if (runIds.length === 0) return;
 
   const hosts = opts.executionHosts ?? createExecutionHosts();
-  let records: readonly SupervisorSessionRecord[];
-
-  try {
-    records = opts.records ?? (await hosts.local().listSessions());
-  } catch (err) {
-    log.warn(
-      { runIds, err: err instanceof Error ? err.message : String(err) },
-      `${opts.logLabel} listSessions failed — leaving teardown to the reconcile sweep`,
-    );
-
-    return;
-  }
 
   for (const runId of runIds) {
+    let records: readonly SupervisorSessionRecord[];
+
+    try {
+      records = [
+        ...(await hosts.local().listSessionsForRun(runId)),
+        ...(opts.records ?? []).filter(
+          (record) => record.runId === runId && record.status === "live",
+        ),
+      ];
+    } catch (error) {
+      log.warn(
+        {
+          runId,
+          errorType: error instanceof Error ? error.name : typeof error,
+          logLabel: opts.logLabel,
+        },
+        "process inventory unproven; retaining pending session teardown",
+      );
+      continue;
+    }
     const live = records.filter(
       (r) => r.status === "live" && r.runId === runId,
     );

@@ -23,10 +23,17 @@ import path from "node:path";
 
 import { test, expect } from "@playwright/test";
 
-import { singleValue, withE2EDb } from "./_seed/db";
+import {
+  countBoundExecutionFlowChildren,
+  singleValue,
+  withE2EDb,
+} from "./_seed/db";
 import { DELEGATED_FLOW_RELEASE } from "./_seed/delegated-release";
 import { loadFixtures } from "./_seed/fixtures";
-import { readLaunchResult } from "./_seed/launch-stream";
+import {
+  readTaskLaunchReceipt,
+  waitForTaskLaunchRun,
+} from "./_seed/task-launch";
 
 const CRON_HEADER = "X-Maister-Cron-Token";
 const CRON_TOKEN = process.env.MAISTER_CRON_TOKEN ?? "e2e-cron-token-change-me";
@@ -36,6 +43,13 @@ const CRON_TOKEN = process.env.MAISTER_CRON_TOKEN ?? "e2e-cron-token-change-me";
 // children — the default 30s test budget expires mid-wake, with every earlier
 // assertion already green.
 test.setTimeout(180_000);
+
+function releaseDelegatedFlowChildren(): void {
+  mkdirSync(path.dirname(DELEGATED_FLOW_RELEASE), { recursive: true });
+  writeFileSync(DELEGATED_FLOW_RELEASE, "");
+}
+
+test.afterEach(releaseDelegatedFlowChildren);
 
 test("flow-target delegation: launch → flow children in Review → the parked coordinator wakes", async ({
   page,
@@ -102,7 +116,7 @@ test("flow-target delegation: launch → flow children in Review → the parked 
 
   const launchResponse = page.waitForResponse(
     (response) =>
-      response.url().includes("/api/runs") &&
+      new URL(response.url()).pathname === "/api/task-launch-intents" &&
       response.request().method() === "POST",
   );
 
@@ -113,7 +127,7 @@ test("flow-target delegation: launch → flow children in Review → the parked 
   await expect(dialog).toBeVisible();
 
   const createRun = dialog.getByRole("button", {
-    name: "Create run",
+    name: "Launch",
     exact: true,
   });
 
@@ -122,9 +136,10 @@ test("flow-target delegation: launch → flow children in Review → the parked 
 
   const response = await launchResponse;
 
-  expect(response.status()).toBe(200);
+  expect(response.status()).toBe(202);
 
-  const { runId } = await readLaunchResult(response);
+  const receipt = await readTaskLaunchReceipt(response);
+  const runId = await waitForTaskLaunchRun(receipt);
 
   expect(runId).toBeTruthy();
 
@@ -139,10 +154,18 @@ test("flow-target delegation: launch → flow children in Review → the parked 
     )
     .toBe("WaitingOnChildren");
 
+  // Parking also covers accepted, unbound child intents. Inspect the actual
+  // selected Flow Runs only once both immutable intent associations exist.
+  await expect
+    .poll(() => countBoundExecutionFlowChildren(runId, fx.delegatedFlowRef), {
+      timeout: 60_000,
+      intervals: [1000],
+    })
+    .toBe(2);
+
   // The coordinator parked with its children held; release them, so they reach
   // `Review` only after the park — the order the wake below exists to prove.
-  mkdirSync(path.dirname(DELEGATED_FLOW_RELEASE), { recursive: true });
-  writeFileSync(DELEGATED_FLOW_RELEASE, "");
+  releaseDelegatedFlowChildren();
 
   // Every child is a run_kind='flow' run with a carrier task — the thing that
   // did not exist before ADR-163.

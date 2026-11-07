@@ -179,7 +179,7 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | Getting Started | `docs/getting-started.md` | Install, dev workflow, first run |
 | Russian Guide | `docs/ru/README.md` | Purpose, workflow, operator guide |
 | Supervisor | `docs/supervisor.md` | ACP daemon: HTTP+SSE API, lifecycle, durable events, runtime objects, env vars |
-| Database Schema | `docs/database-schema.md` | 153 tables, FK cascade chain, indexes, Drizzle workflow |
+| Database Schema | `docs/database-schema.md` | 155 tables, FK cascade chain, indexes, Drizzle workflow |
 | Error Taxonomy | `docs/error-taxonomy.md` | `MaisterError` codes — when each fires, what the UI does |
 | Configuration | `docs/configuration.md` | `maister.yaml` v2 + `flow.yaml` v1 + `form_schema` versioning + env vars |
 | Project configuration persistence | `docs/system-analytics/project-config-persistence.md` | Reviewed export, commits, recovery and push; Implemented |
@@ -189,6 +189,8 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | Decisions | `docs/decisions.md` | ADRs and locked technical decisions |
 | Agent activity design | `docs/system-analytics/agent-activity-history.md` | Active executions and retained history |
 | Task qualification design | `docs/system-analytics/task-qualification.md` | Incoming requests and admission contracts |
+| Task launch admission | `docs/system-analytics/task-launch-admission.md` | Explicit manual authority and qualified automation |
+| Agent preparation | `docs/system-analytics/agent-preparation.md` | Fenced checkout, baseline, handoff and cleanup |
 | System Analytics | `docs/system-analytics/` | Domain flows for projects, runs, HITL, executors, Flow DSL, and test database infrastructure |
 | Screens Reference | `docs/screens/README.md` | User-facing screens and shared chrome |
 | API Contracts | `docs/api/` | Web/supervisor OpenAPI and SSE AsyncAPI contracts |

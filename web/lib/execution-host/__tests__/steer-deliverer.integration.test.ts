@@ -48,6 +48,11 @@ import {
 } from "@/test-support/real-supervisor";
 import { startSupervisorFaultProxy } from "@/test-support/supervisor-fault-proxy";
 import { seedNodePromptOwner } from "@/test-support/prompt-owner-fixture";
+import {
+  invocationFromEnvironment,
+  processIdentity,
+  signalInvocationProcess,
+} from "@/test-support/process-invocation";
 
 let testDatabase: StartedPostgresTestDb;
 let projectionWorker: ProjectionWorker;
@@ -136,9 +141,26 @@ async function heldPrompt(name: string): Promise<Held> {
     (row) =>
       row.method === "session/prompt" && row.sessionId === created.acpSessionId,
   );
-  const pid = (await hosts.local().listSessions()).find(
+  const session = (await client.sessionsForRun()).find(
     (session) => session.sessionId === created.sessionId,
-  )?.pid;
+  );
+  const invocation = invocationFromEnvironment();
+
+  if (!invocation || !session?.adapterPid || !session.processGroup)
+    throw new Error(
+      "Controlled prompt requires its owned native adapter metadata",
+    );
+  const adapter = await processIdentity(invocation, session.adapterPid);
+
+  expect(adapter.pgid).toBe(session.processGroup);
+  expect(adapter.pid).not.toBe(session.pid);
+  expect(
+    (await invocations()).find(
+      (row) =>
+        row.method === "session/prompt" &&
+        row.sessionId === created.acpSessionId,
+    )?.pid,
+  ).toBe(adapter.pid);
 
   return {
     runId,
@@ -147,7 +169,7 @@ async function heldPrompt(name: string): Promise<Held> {
     acpSessionId: created.acpSessionId,
     parentCommandId: handle.commandId,
     release: async () => {
-      if (pid) process.kill(pid, "SIGUSR1");
+      await signalInvocationProcess(invocation, adapter, "SIGUSR1");
       await client.waitForPrompt(handle, {
         signal: AbortSignal.timeout(15_000),
       });

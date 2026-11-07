@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { Db } from "@/lib/execution-host/db";
+
 import { createHash, randomUUID } from "node:crypto";
 
 import { and, eq, gt, isNull, lt, or, sql, type SQL } from "drizzle-orm";
@@ -18,8 +20,6 @@ import {
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { librarianConfig } from "@/lib/librarian/config";
-
-type Db = ReturnType<typeof getDb>;
 
 export type LibrarianOperationResult = {
   statusCode: number;

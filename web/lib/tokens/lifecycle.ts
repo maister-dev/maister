@@ -12,15 +12,14 @@ type Db = any;
 
 // ADR-168. TWO distinct rules share this one pattern, and conflating them is a
 // bug in both directions:
-//   1. `isManagedToken` — refuses to EDIT a row that already carries such a
-//      name (it is a live run-bound credential).
+//   1. `isManagedToken` — refuses to EDIT an unstamped legacy row that already
+//      carries such a name. New machine rows are excluded by immutable origin.
 //   2. `assertTokenNameAllowed` — refuses to SET such a name on a
-//      human-issued token (the name is the run-binding authorization subject
-//      that `parseBoundRunId` derives).
+//      human-issued token (the legacy decoder derives binding from that name).
 // Spelling the pattern twice is how the two halves drift apart.
 //
 // The prefix LIST is shared with `parseBoundRunId` in verify.ts, which derives
-// the run-binding authorization subject from the same names. A new run-bound
+// fully unstamped live legacy bindings from the same names. A new run-bound
 // prefix added there without being added here leaves that credential class
 // editable and forgeable — keep the two in sync.
 export const RESERVED_TOKEN_NAME_PATTERN =
@@ -38,6 +37,8 @@ export type TokenLifecycleActor = {
 export type ManagedTokenRow = {
   token_kind?: string | null;
   name?: string | null;
+  origin_kind: string | null;
+  bound_run_id: string | null;
 };
 
 /**
@@ -45,7 +46,8 @@ export type ManagedTokenRow = {
  * management UIs create and list. A NON-managed token is machine-minted and
  * run-bound, revoked by its own lifecycle.
  *
- * The kind alone is not enough: `issueOrchestratorRunToken` inserts
+ * Immutable machine origin excludes new rows independently of a display name.
+ * The kind alone is not enough for unstamped legacy rows: `issueOrchestratorRunToken` inserts
  * `token_kind='project'` named `orchestrator-run:<runId>` (ADR-098), so a
  * kind-only check would admit a live orchestrator credential.
  *
@@ -55,6 +57,8 @@ export function isManagedToken(row: ManagedTokenRow): boolean {
   const kind = row.token_kind ?? "project";
 
   return (
+    row.origin_kind === null &&
+    row.bound_run_id === null &&
     kind !== "agent" &&
     kind !== "librarian" &&
     !RESERVED_TOKEN_NAME_PATTERN.test(row.name ?? "")

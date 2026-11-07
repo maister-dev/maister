@@ -2,8 +2,6 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { RealSupervisor } from "./real-supervisor";
 import type { RealWeb } from "./real-web";
 
-import { readFile } from "node:fs/promises";
-
 import { z } from "zod";
 
 import {
@@ -20,10 +18,12 @@ import {
   signalInvocationProcess,
   type ProcessIdentity,
 } from "./process-invocation";
+import { readAdapterInvocations } from "./adapter-invocations";
+import { captureOwnedAdapterProcess } from "./capture-supervisor-process-groups";
 
 import { TERMINAL_COMMAND_STATES } from "@/lib/execution-host/types";
 
-const invocationSchema = z.object({
+const terminalBaseSchema = z.object({
   pid: z.number().int().positive(),
   sessionId: z.string().min(1),
   method: z.string().min(1),
@@ -35,7 +35,7 @@ const invocationSchema = z.object({
   at: z.number().int().nonnegative().optional(),
   outcome: z.enum(["complete", "cancelled"]).optional(),
 });
-const terminalSchema = invocationSchema.extend({
+const terminalSchema = terminalBaseSchema.extend({
   method: z.enum([
     "session/prompt/terminal-held",
     "session/prompt/terminal-released",
@@ -48,6 +48,7 @@ const sessionSchema = z.object({
   sessionId: z.string(),
   runId: z.string(),
   pid: z.number().int().positive(),
+  adapterPid: z.number().int().positive().optional(),
   acpSessionId: z.string().optional(),
   status: z.enum(["live", "exited", "crashed"]),
 });
@@ -80,36 +81,6 @@ class TerminalBarrierError extends Error {
   readonly name = "TerminalBarrierError";
 }
 
-async function invocationRows(filename: string) {
-  let text: string;
-
-  try {
-    text = await readFile(filename, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw error;
-  }
-
-  // A newline commits a witness; a concurrent append may still be incomplete.
-  return text
-    .slice(0, text.lastIndexOf("\n") + 1)
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => invocationSchema.parse(JSON.parse(line) as unknown));
-}
-
-function assertOwned(identity: ProcessIdentity, parentPid: number): void {
-  if (
-    !identity.owned ||
-    !identity.inspected ||
-    identity.zombie ||
-    identity.ppid !== parentPid
-  )
-    throw new TerminalBarrierError(
-      `refusing terminal signal to unproved adapter ${JSON.stringify(identity)}`,
-    );
-}
-
 async function sessionsFor(input: TerminalInput) {
   const response = await fetch(`${input.supervisor.url}/sessions`);
   const body = await response.text();
@@ -123,21 +94,19 @@ async function sessionsFor(input: TerminalInput) {
 }
 
 async function sessionFor(input: TerminalInput, command: PromptCommandRow) {
-  const session = (await sessionsFor(input)).find(
-    (row) => row.sessionId === command.targetSessionId,
-  );
+  const invocation = invocationFromEnvironment();
 
-  if (
-    !session ||
-    session.status !== "live" ||
-    session.runId !== command.runId ||
-    !session.acpSessionId
-  )
+  if (!invocation || !command.targetSessionId)
     throw new TerminalBarrierError(
-      `command ${command.id} has no exact live host/ACP session: ${JSON.stringify(session)}`,
+      "Terminal command has no owned host session",
     );
 
-  return session;
+  return captureOwnedAdapterProcess({
+    invocation,
+    supervisor: input.supervisor,
+    sessionId: command.targetSessionId,
+    expected: { runId: command.runId },
+  });
 }
 
 /** Owns one real ACP terminal and proves the issuer lifetime required by each release. */
@@ -152,8 +121,8 @@ export function createTerminalBarrier(input: TerminalInput): TerminalBarrier {
   let witness: HeldWitness | undefined;
   let released = false;
   const tokenRows = async () =>
-    (await invocationRows(input.adapterLog)).filter(
-      (row) => row.terminalBarrier === input.token,
+    (await readAdapterInvocations(input.adapterLog)).filter(
+      (row) => "terminalBarrier" in row && row.terminalBarrier === input.token,
     );
   const records = async () =>
     (await tokenRows())
@@ -168,15 +137,19 @@ export function createTerminalBarrier(input: TerminalInput): TerminalBarrier {
       throw new TerminalBarrierError(
         "terminal barrier has no admitted command",
       );
-    const session = await sessionFor(input, command);
-    const identity = await processIdentity(invocation, record.pid);
+    const { sessionRecord: session, adapter: identity } = await sessionFor(
+      input,
+      command,
+    );
 
-    assertOwned(identity, input.supervisor.pid);
-    if (session.pid !== record.pid || session.acpSessionId !== record.sessionId)
+    if (
+      identity.pid !== record.pid ||
+      session.acpSessionId !== record.sessionId
+    )
       throw new TerminalBarrierError(
         `terminal witness does not match command ${command.id}: ${JSON.stringify(record)}`,
       );
-    const prompt = (await invocationRows(input.adapterLog)).find(
+    const prompt = (await readAdapterInvocations(input.adapterLog)).find(
       (row) =>
         row.method === "session/prompt" &&
         row.pid === record.pid &&
@@ -209,13 +182,14 @@ export function createTerminalBarrier(input: TerminalInput): TerminalBarrier {
       throw new TerminalBarrierError(
         "terminal release requires one unreleased held witness",
       );
-    const session = await sessionFor(input, command);
-    const current = await processIdentity(invocation, witness.identity.pid);
+    const { sessionRecord: session, adapter: current } = await sessionFor(
+      input,
+      command,
+    );
 
-    assertOwned(current, input.supervisor.pid);
     if (
       !sameProcess(current, witness.identity) ||
-      session.pid !== current.pid ||
+      session.adapterPid !== current.pid ||
       session.sessionId !== witness.hostSessionId ||
       session.acpSessionId !== witness.record.sessionId
     )
@@ -384,7 +358,6 @@ export function createTerminalBarrier(input: TerminalInput): TerminalBarrier {
       const identity = await findProcessIdentity(invocation, candidate.pid);
 
       if (!identity || identity.zombie) return;
-      assertOwned(identity, input.supervisor.pid);
       if (witness && !sameProcess(identity, witness.identity))
         throw new TerminalBarrierError(
           "cleanup adapter kernel identity changed",
@@ -392,7 +365,7 @@ export function createTerminalBarrier(input: TerminalInput): TerminalBarrier {
       const sessions = (await sessionsFor(input)).filter(
         (row) =>
           row.status === "live" &&
-          row.pid === candidate.pid &&
+          row.adapterPid === candidate.pid &&
           row.acpSessionId === candidate.sessionId,
       );
 
@@ -405,6 +378,16 @@ export function createTerminalBarrier(input: TerminalInput): TerminalBarrier {
         throw new TerminalBarrierError(
           `cleanup terminal has no exact live session: ${JSON.stringify(candidate)}`,
         );
+      const session = sessions[0]!;
+      const owned = await captureOwnedAdapterProcess({
+        invocation,
+        supervisor: input.supervisor,
+        sessionId: session.sessionId,
+        expected: { runId: session.runId, acpSessionId: candidate.sessionId },
+      });
+
+      if (!sameProcess(owned.adapter, identity))
+        throw new TerminalBarrierError("Cleanup adapter changed before signal");
       if (!held) {
         // A turn interrupted before the held witness cannot remain live in teardown.
         await signalInvocationProcess(invocation, identity, "SIGTERM");

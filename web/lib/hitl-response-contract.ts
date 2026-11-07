@@ -17,6 +17,7 @@ export const HITL_RESPOND_REASONS = [
   // ADR-183: the host refused the answer at its HARD outbox bound — reachable
   // from an answer only there, since the soft gate admits resolve commands.
   "event_outbox_backpressure",
+  "budget_restart_preview_required",
 ] as const;
 
 export type HitlRespondReason = (typeof HITL_RESPOND_REASONS)[number];
@@ -38,7 +39,9 @@ export type HitlStructuredResponse = {
   confidence?: number;
 };
 export type HitlStoredResponse =
-  HitlPermissionResponse | HitlStructuredResponse;
+  | HitlPermissionResponse
+  | HitlStructuredResponse
+  | { optionId: "restart"; restartLaunch: TaskLaunchRequest };
 
 export type HitlAnswerState = "open" | "answer_stored";
 
@@ -70,3 +73,4 @@ export function canReplayHitlAnswer(kind: string, schema: unknown): boolean {
     value.kind !== "consensus_resolution"
   );
 }
+import type { TaskLaunchRequest } from "@/lib/tasks/launch-schema";

@@ -9,6 +9,7 @@ import type {
 } from "@/lib/db/schema";
 import type { SendPromptInput } from "@/lib/execution-host";
 import type { ScratchPromptOwner } from "./prompt-owner";
+import type { ScratchCreateOwner } from "@/lib/execution-host/create-owner-contract";
 import type { ScratchPromptIntent } from "./prompt-intent";
 import type { ScratchExecution } from "./events";
 import type { CapabilityAgent } from "@/lib/config.schema";
@@ -31,8 +32,14 @@ import path from "node:path";
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import pino from "pino";
 
+import {
+  assertScratchCreateContinuation,
+  completeOwnedScratchCreate,
+  ScratchCreateHandoffPending,
+} from "./create-continuation";
+
 import { assertRuntimeObjectsReferenceable } from "@/lib/execution-host/runtime-object-holds";
-import { assertCurrentSessionBinding } from "@/lib/execution-host/session-binding";
+import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
 import { PromptIncarnationPending } from "@/lib/execution-host/prompt-incarnation";
 import {
   requireActiveSession,
@@ -601,6 +608,7 @@ export async function markScratchCrashed(args: {
   db?: Db;
   runId: string;
   err: unknown;
+  expectedAssignmentId?: string;
   // Cost-budget governance: a budget-kill is a DELIBERATE terminal, not a crash,
   // so it must be NON-recoverable (Recover gates on runs.status='Crashed'). With
   // `terminal:"failed"` the run goes terminal `Failed` (+ emits `run.failed`),
@@ -639,6 +647,9 @@ export async function markScratchCrashed(args: {
       .where(
         and(
           eq(runs.id, args.runId),
+          args.expectedAssignmentId
+            ? eq(runs.executionAssignmentId, args.expectedAssignmentId)
+            : undefined,
           inArray(runs.status, [
             "Running",
             "NeedsInput",
@@ -1254,24 +1265,6 @@ export async function* launchScratchRunStaged(
       instructionsLogicalName: "scratch-capability-instructions.md",
       instructionsPath: materialized.instructionsPath,
     });
-    const session = await client.createSession({
-      stepId: scratchStepId(),
-      executor: runnerExecutorInput(runnerResolution.runnerSnapshot),
-      runner: runnerSupervisorInput({
-        snapshot: runnerResolution.runnerSnapshot,
-      }),
-      capabilityProfileObjectId: capabilityBundle.profileObjectId,
-      capabilityInstructionsObjectId: capabilityBundle.instructionsObjectId,
-      adapterLaunch: mergeRunnerAdapterLaunch(runnerResolution.runnerSnapshot, {
-        ...materialized.adapterLaunch,
-        env: {
-          ...(materialized.adapterLaunch.env ?? {}),
-          ...adapterHomeEnv,
-        },
-      }),
-      mcpServers: gated.mcpServers,
-    });
-
     const launchPrompt = normalizeScratchPrompt(prompt, executor.agent, {
       runId,
     });
@@ -1284,40 +1277,64 @@ export async function* launchScratchRunStaged(
       ]),
     };
 
-    await db.transaction(async (tx: Db) => {
-      const dialogStatus: ScratchDialogStatus = hasInitialPrompt
-        ? "Running"
-        : "WaitingForUser";
+    const createOwner: ScratchCreateOwner = {
+      variant: "scratch",
+      scratchRunId: runId,
+      turnId: client.assignment.id,
+      promptOrdinal: 0,
+    };
+    const createContinuation = {
+      version: 1 as const,
+      kind: "initial" as const,
+      sourceMessageId: messageId,
+      payload: hasInitialPrompt ? launchPayload : null,
+    };
+    const session = await client.createOwnedSession(
+      createOwner,
+      async () => ({
+        stepId: scratchStepId(),
+        executor: runnerExecutorInput(runnerResolution.runnerSnapshot),
+        runner: runnerSupervisorInput({
+          snapshot: runnerResolution.runnerSnapshot,
+        }),
+        capabilityProfileObjectId: capabilityBundle.profileObjectId,
+        capabilityInstructionsObjectId: capabilityBundle.instructionsObjectId,
+        adapterLaunch: mergeRunnerAdapterLaunch(
+          runnerResolution.runnerSnapshot,
+          {
+            ...materialized.adapterLaunch,
+            env: {
+              ...(materialized.adapterLaunch.env ?? {}),
+              ...adapterHomeEnv,
+            },
+          },
+        ),
+        mcpServers: gated.mcpServers,
+      }),
+      {
+        prepareContinuation: async () => createContinuation,
+        assertCommit: (tx) =>
+          assertScratchCreateContinuation(
+            tx,
+            client,
+            createOwner,
+            createContinuation,
+          ),
+      },
+    );
+    const completedCreate = await completeOwnedScratchCreate(
+      db,
+      { client, admin },
+      createOwner,
+      session,
+    );
 
-      await assertCurrentSessionBinding(tx, {
-        runId,
-        sessionName: "default",
-        assignmentId: client.assignment.id,
-        hostSessionId: session.sessionId,
-        acpSessionId: session.acpSessionId,
-      });
-      await tx
-        .update(scratchRuns)
-        .set({
-          dialogStatus,
-          updatedAt: new Date(),
-        })
-        .where(eq(scratchRuns.runId, runId));
-      if (hasInitialPrompt)
-        await freezeScratchPromptIntent(tx, {
-          client,
-          hostSessionId: session.sessionId,
-          owner: { variant: "initial" },
-          sourceMessageId: messageId,
-          payload: launchPayload,
-        });
-    });
     yield launchProgress("session_ready", undefined, {
       runId,
       dialogUrl: `/scratch-runs/${runId}`,
     });
 
-    if (!hasInitialPrompt) {
+    if (!hasInitialPrompt || !completedCreate?.payload) {
       log.info(
         {
           runId,
@@ -1398,6 +1415,34 @@ export async function* launchScratchRunStaged(
       planMode: policy.planMode,
     });
   } catch (err) {
+    if (
+      err instanceof SessionCreatePending ||
+      err instanceof ScratchCreateHandoffPending
+    ) {
+      log.warn(
+        {
+          runId,
+          commandId: err.details?.commandId,
+          reason: err.details?.reason,
+        },
+        "scratch-create-continuation-retained",
+      );
+
+      return launchResponse({
+        runId,
+        projectId: project.id,
+        name,
+        runStatus: "Running",
+        dialogStatus: "Starting",
+        branchName: branch,
+        baseBranch: args.body.baseBranch,
+        baseCommit,
+        targetBranch: args.body.baseBranch,
+        workMode: policy.workMode,
+        reasoningEffort: policy.reasoningEffort,
+        planMode: policy.planMode,
+      });
+    }
     // ADR-166 E-EH-11: a fenced, superseded or owner-retained turn belongs to
     // another owner — the run and its dialog are that owner's to settle; write
     // nothing.
@@ -1936,27 +1981,6 @@ export async function* launchLocalPackageAssistantStaged(
       instructionsLogicalName: "scratch-capability-instructions.md",
       instructionsPath: materialized.instructionsPath,
     });
-    const session = await client.createSession({
-      readOnlySession: true,
-      stepId: scratchStepId(),
-      executor: runnerExecutorInput(runnerResolution.runnerSnapshot),
-      runner: runnerSupervisorInput({
-        snapshot: runnerResolution.runnerSnapshot,
-      }),
-      capabilityProfileObjectId: capabilityBundle.profileObjectId,
-      capabilityInstructionsObjectId: capabilityBundle.instructionsObjectId,
-      adapterLaunch: mergeRunnerAdapterLaunch(runnerResolution.runnerSnapshot, {
-        ...materialized.adapterLaunch,
-        env: {
-          ...(materialized.adapterLaunch.env ?? {}),
-          ...authoringSkill.env,
-        },
-      }),
-      mcpServers: materialized.mcpServers,
-    });
-
-    createdSessionId = session.sessionId;
-
     const launchPrompt = normalizeScratchPrompt(
       groundedFlowAssistantPrompt({
         context: flowContext?.prompt ?? "",
@@ -1974,34 +1998,63 @@ export async function* launchLocalPackageAssistantStaged(
     };
     const launchPayload = { stepId: scratchStepId(), prompt: launchPrompt };
 
-    await db.transaction(async (tx: Db) => {
-      const dialogStatus: ScratchDialogStatus = hasInitialPrompt
-        ? "Running"
-        : "WaitingForUser";
+    const createOwner: ScratchCreateOwner = {
+      variant: "package_scratch",
+      scratchRunId: runId,
+      turnId: client.assignment.id,
+      promptOrdinal: 0,
+      localPackageId: pkg.id,
+      postprocessActionId,
+      lockGeneration: args.body.sessionId,
+    };
+    const createContinuation = {
+      version: 1 as const,
+      kind: "package_initial" as const,
+      sourceMessageId: messageId,
+      payload: hasInitialPrompt ? launchPayload : null,
+    };
+    const session = await client.createOwnedSession(
+      createOwner,
+      async () => ({
+        readOnlySession: true,
+        stepId: scratchStepId(),
+        executor: runnerExecutorInput(runnerResolution.runnerSnapshot),
+        runner: runnerSupervisorInput({
+          snapshot: runnerResolution.runnerSnapshot,
+        }),
+        capabilityProfileObjectId: capabilityBundle.profileObjectId,
+        capabilityInstructionsObjectId: capabilityBundle.instructionsObjectId,
+        adapterLaunch: mergeRunnerAdapterLaunch(
+          runnerResolution.runnerSnapshot,
+          {
+            ...materialized.adapterLaunch,
+            env: {
+              ...(materialized.adapterLaunch.env ?? {}),
+              ...authoringSkill.env,
+            },
+          },
+        ),
+        mcpServers: materialized.mcpServers,
+      }),
+      {
+        prepareContinuation: async () => createContinuation,
+        assertCommit: (tx) =>
+          assertScratchCreateContinuation(
+            tx,
+            client,
+            createOwner,
+            createContinuation,
+          ),
+      },
+    );
 
-      await assertCurrentSessionBinding(tx, {
-        runId,
-        sessionName: "default",
-        assignmentId: client.assignment.id,
-        hostSessionId: session.sessionId,
-        acpSessionId: session.acpSessionId,
-      });
-      await tx
-        .update(scratchRuns)
-        .set({
-          dialogStatus,
-          updatedAt: new Date(),
-        })
-        .where(eq(scratchRuns.runId, runId));
-      if (hasInitialPrompt)
-        await freezeScratchPromptIntent(tx, {
-          client,
-          hostSessionId: session.sessionId,
-          owner: launchOwner,
-          sourceMessageId: messageId,
-          payload: launchPayload,
-        });
-    });
+    createdSessionId = session.sessionId;
+    const completedCreate = await completeOwnedScratchCreate(
+      db,
+      { client, admin },
+      createOwner,
+      session,
+    );
 
     // Run row is persisted with the resume handle; surface `runId` so the
     // editor attaches the live run SSE BEFORE the first turn streams.
@@ -2010,7 +2063,7 @@ export async function* launchLocalPackageAssistantStaged(
       dialogUrl: `/scratch-runs/${runId}`,
     });
 
-    if (!hasInitialPrompt) {
+    if (!hasInitialPrompt || !completedCreate?.payload) {
       return localPackageAssistantResponse({
         runId,
         name,
@@ -2065,6 +2118,29 @@ export async function* launchLocalPackageAssistantStaged(
       actionResult,
     });
   } catch (err) {
+    if (
+      err instanceof SessionCreatePending ||
+      err instanceof ScratchCreateHandoffPending
+    ) {
+      log.warn(
+        {
+          runId,
+          commandId: err.details?.commandId,
+          reason: err.details?.reason,
+        },
+        "package-scratch-create-continuation-retained",
+      );
+
+      return localPackageAssistantResponse({
+        runId,
+        name,
+        runStatus: "Running",
+        dialogStatus: "Starting",
+        baseBranch,
+        baseCommit,
+        policy,
+      });
+    }
     // ADR-166 E-EH-11: a fenced, superseded or owner-retained turn belongs to
     // another owner — no teardown, no terminal write from this driver.
     if (isYieldedScratchTurn(err)) {

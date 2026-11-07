@@ -1,12 +1,17 @@
+import type { Db } from "@/lib/execution-host/db";
 import type { PlatformStatus } from "@/types/platform-status";
+import type { TaskLaunchFixture } from "@/test-support/task-launch-admission";
 
 import { randomUUID } from "node:crypto";
+import { rm } from "node:fs/promises";
+import path from "node:path";
 
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
 import {
   afterAll,
+  afterEach,
   beforeAll,
   beforeEach,
   describe,
@@ -25,6 +30,27 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { automaticSelectorAdmissionSnapshot } from "@/test-support/automatic-qualification";
+import { seedTaskLaunchFixture } from "@/test-support/task-launch-admission";
+import { prepareEvaluationEngineFixture } from "@/test-support/evaluation-engine-launch";
+import {
+  launchConcurrentEngineRun,
+  bindAcceptedEngineFixture,
+} from "@/test-support/launch-engine-response";
+import {
+  createControlledLaunchBatch,
+  runControlledLaunchBatch,
+} from "@/lib/evaluations/launch-batch";
+import { defaultLaunchRunSeam } from "@/lib/evaluations/launch-seam";
+import { taskLaunchReceipt } from "@/lib/tasks/launch-receipt";
+import { interactiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
+import { cancelInteractiveTaskLaunch } from "@/lib/tasks/launch-cancel";
+import { abandonRunInTransaction } from "@/lib/runs/state-transitions";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
+import { prepareTaskQualification } from "@/lib/tasks/qualification";
+import { qualificationFixture } from "@/test-support/task-qualification";
+import { mkdtempReal } from "@/test-support/worktree-test-root";
+import { git } from "@/test-support/git-fixture";
 
 // Lineage-guard escape hatches (review findings C-2..C-5): a launched
 // evaluation participant must never auto-promote/auto-deliver and its evidence
@@ -32,8 +58,8 @@ import {
 // + force-mode launchability), BRANCH SYNC (launched-lineage refusal), WORKTREE
 // GC (open-study retention hold), and the PROMOTION-HOLD route (no clearing an
 // evaluation_study hold while the study is live). Real Postgres
-// (Testcontainers); git/supervisor mocked at the same seams as the
-// relaunch-concurrency launch harness.
+// (Testcontainers), real Git fixtures and source-authorized launch intents;
+// model dispatch is disabled at the Flow-driver seam.
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -67,19 +93,6 @@ vi.mock("@/lib/supervisor-client", async (importOriginal) => {
   };
 });
 
-vi.mock("@/lib/worktree", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/worktree")>();
-
-  return {
-    ...actual,
-    addWorktree: async (_input: unknown) => undefined,
-    removeWorktree: async (_input: unknown) => undefined,
-    listBranches: async (_repo: string) => ["main"],
-    resolveBaseCommit: async (_args: unknown) =>
-      "feedface00000000000000000000000000000000",
-  };
-});
-
 // Keep the launch synchronous-only: no background runFlow, deterministic
 // Pending return.
 vi.mock("@/lib/scheduler", async (importOriginal) => {
@@ -93,12 +106,12 @@ vi.mock("@/lib/scheduler", async (importOriginal) => {
 vi.mock("@/lib/flows/runner", () => ({ runFlow: async () => undefined }));
 
 // The promotion-hold route's authz seam; project-role wiring is not under test.
-vi.mock("@/lib/authz", () => ({
-  requireActiveSession: async () => undefined,
+vi.mock("@/lib/authz", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/authz")>()),
+  requireActiveSession: async () => ({ id: fixture.userId }),
   requireProjectAction: async () => undefined,
 }));
 
-let launchRun: typeof import("@/lib/services/runs").launchRun;
 let isLaunchedLineageRun: typeof import("@/lib/evaluations/membership").isLaunchedLineageRun;
 let syncRunTarget: typeof import("@/lib/runs/sync-target").syncRunTarget;
 let runWorkspaceGcSweep: typeof import("@/lib/gc/workspace-gc").runWorkspaceGcSweep;
@@ -121,50 +134,34 @@ const instructManifest = {
 let projectId: string;
 let flowId: string;
 
+let root: string;
+let fixture: TaskLaunchFixture;
+const repositories: string[] = [];
+
 async function seedProject(): Promise<void> {
-  projectId = `proj-${randomUUID().slice(0, 8)}`;
-  flowId = `flow-${projectId}`;
-  await db.insert(schema.projects).values({
-    taskKey: `T${randomUUID().slice(0, 8)}`.toUpperCase(),
-    id: projectId,
-    slug: projectId,
-    name: projectId,
-    repoPath: `/repos/${projectId}`,
-    mainBranch: "main",
-    maisterYamlPath: `/repos/${projectId}/maister.yaml`,
-  });
-
-  const revisionId = `rev-${projectId}`;
-
-  await db.insert(schema.flowRevisions).values({
-    id: revisionId,
-    flowRefId: "bugfix",
-    source: "github.com/x/y",
-    versionLabel: "v1.0.0",
-    resolvedRevision: projectId.padEnd(40, "x").slice(0, 40),
-    manifestDigest: `digest-${projectId}`,
-    manifest: instructManifest,
-    schemaVersion: 1,
-    installedPath: `/cache/${projectId}`,
-    setupStatus: "not_required",
-    packageStatus: "Installed",
-  });
-  await db.insert(schema.flows).values({
-    id: flowId,
-    projectId,
-    flowRefId: "bugfix",
-    source: "github.com/x/y",
-    version: "v1.0.0",
-    installedPath: `/cache/${projectId}`,
-    manifest: instructManifest,
-    schemaVersion: 1,
-    enabledRevisionId: revisionId,
-    enablementState: "Enabled",
-    trustStatus: "trusted_by_policy",
-  });
+  fixture = await seedTaskLaunchFixture(
+    testDatabase,
+    path.join(root, randomUUID()),
+  );
+  await testDatabase.pool.query("UPDATE projects SET task_key=$2 WHERE id=$1", [
+    fixture.projectId,
+    `EVAL${randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase()}`,
+  ]);
+  repositories.push(fixture.repo);
+  projectId = fixture.projectId;
+  flowId = fixture.flowId;
+  await db
+    .update(schema.flows)
+    .set({ manifest: instructManifest })
+    .where(eq(schema.flows.id, flowId));
+  await db
+    .update(schema.flowRevisions)
+    .set({ manifest: instructManifest })
+    .where(eq(schema.flowRevisions.flowRefId, flowId));
 }
 
 async function seedTask(): Promise<string> {
+  const db: Db = testDatabase.db;
   const id = randomUUID();
 
   await db.insert(schema.tasks).values({
@@ -174,7 +171,30 @@ async function seedTask(): Promise<string> {
     title: "lineage task",
     prompt: "do it",
     flowId,
+    runnerId: fixture.runnerId,
   });
+  const sha = await git(fixture.repo, "rev-parse", "HEAD");
+  const qualification = qualificationFixture();
+
+  qualification.evidenceRefs = [
+    { id: "repo", kind: "repository", reference: `git:${sha}:README.md` },
+  ];
+  const prepared = await prepareTaskQualification(testDatabase.db, {
+    projectId,
+    taskId: id,
+    author: { kind: "user", identity: fixture.userId, userId: fixture.userId },
+    request: {
+      requestKey: randomUUID(),
+      expectedInputRevision: 1,
+      expectedQualificationRevision: null,
+      qualification,
+      flowId,
+      runnerId: fixture.runnerId,
+      enqueue: false,
+    },
+  });
+
+  await db.transaction((tx) => prepared.apply(tx));
 
   return id;
 }
@@ -188,6 +208,10 @@ async function seedRun(
   await db.insert(schema.runs).values({
     id,
     taskId,
+    taskAdmissionSnapshot: await automaticSelectorAdmissionSnapshot(
+      testDatabase,
+      taskId,
+    ),
     projectId,
     flowId,
     capabilityAgent: "claude",
@@ -245,21 +269,32 @@ async function seedStudyWithLaunchedParticipant(args: {
   return { studyId, recipeId, participantId };
 }
 
-const ctx = { actorUserId: null, authorize: async () => {} };
+function context() {
+  return { actorUserId: fixture.userId, authorize: async () => undefined };
+}
 
-function budgetRestartInput(taskId: string, oldRunId: string) {
-  // The exact shape hitl.ts launchBudgetRestart sends into launchRun.
-  return {
-    taskId,
-    triggerSource: "manual" as const,
-    triggerPayload: {
-      kind: "budget_restart",
-      oldRunId,
-      hitlRequestId: "hitl-1",
-      idempotencyKey: `budget_restart:${oldRunId}:hitl-1`,
-    },
-    allowConcurrent: false,
-  };
+async function relaunch(taskId: string, oldRunId: string) {
+  return launchConcurrentEngineRun(
+    { taskId, relaunchOfRunId: oldRunId, allowConcurrent: true },
+    context(),
+    testDatabase.db,
+  );
+}
+
+async function evaluatedSource(taskId: string) {
+  const prepared = await prepareEvaluationEngineFixture(
+    testDatabase.db,
+    { taskId },
+    context(),
+  );
+  const source = await prepared.launch();
+
+  await db
+    .update(schema.runs)
+    .set({ status: "Failed", endedAt: new Date() })
+    .where(eq(schema.runs.id, source.runId));
+
+  return { ...prepared, runId: source.runId };
 }
 
 beforeAll(async () => {
@@ -276,7 +311,7 @@ beforeAll(async () => {
     defaultRunnerId: "claude-default",
   });
 
-  ({ launchRun } = await import("@/lib/services/runs"));
+  root = await mkdtempReal("evaluation-lineage-");
   ({ isLaunchedLineageRun } = await import("@/lib/evaluations/membership"));
   ({ syncRunTarget } = await import("@/lib/runs/sync-target"));
   ({ runWorkspaceGcSweep } = await import("@/lib/gc/workspace-gc"));
@@ -285,32 +320,129 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await testDatabase?.stop();
+  for (const repository of repositories) {
+    const worktrees = await git(repository, "worktree", "list", "--porcelain");
+
+    for (const line of worktrees.split("\n")) {
+      if (line.startsWith("worktree ") && line.slice(9) !== repository)
+        await git(repository, "worktree", "remove", "--force", line.slice(9));
+    }
+  }
+  if (root) await rm(root, { recursive: true, force: true });
 });
 
 beforeEach(async () => {
   await seedProject();
+  await fakeExecutionHosts(testDatabase.db);
+});
+
+afterEach(async () => {
+  // These technical allocations never dispatch a model. End their live pool
+  // reservations explicitly so each case owns only its own capacity effects.
+  const created = await testDatabase.db
+    .select({ id: schemaModule.executionCommands.id })
+    .from(schemaModule.executionCommands)
+    .innerJoin(
+      schemaModule.runs,
+      eq(schemaModule.runs.id, schemaModule.executionCommands.runId),
+    )
+    .where(
+      and(
+        eq(schemaModule.runs.projectId, projectId),
+        eq(schemaModule.executionCommands.kind, "session.create"),
+      ),
+    );
+
+  expect(created).toHaveLength(0);
+  const intents = await testDatabase.db
+    .select()
+    .from(schemaModule.taskLaunchIntents)
+    .where(
+      and(
+        eq(schemaModule.taskLaunchIntents.projectId, projectId),
+        inArray(schemaModule.taskLaunchIntents.state, [
+          "queued",
+          "preparing",
+          "held",
+          "run_bound",
+        ]),
+      ),
+    );
+  const principal = await interactiveTaskLaunchPrincipal();
+
+  for (const intent of intents) {
+    expect(intent.state).not.toBe("preparing");
+    expect(intent.leaseToken).toBeNull();
+    expect(intent.dispatchCommittedAt).toBeNull();
+    await cancelInteractiveTaskLaunch(
+      testDatabase.db,
+      principal,
+      intent.id,
+      { expectedStateVersion: intent.stateVersion },
+      randomUUID(),
+    );
+  }
+  const retainedRuns = await testDatabase.db
+    .select({
+      id: schemaModule.runs.id,
+      intentId: schemaModule.runs.taskLaunchIntentId,
+    })
+    .from(schemaModule.runs)
+    .where(
+      and(
+        eq(schemaModule.runs.projectId, projectId),
+        inArray(schemaModule.runs.status, [
+          "Pending",
+          "Running",
+          "NeedsInput",
+          "WaitingOnChildren",
+        ]),
+      ),
+    );
+
+  for (const run of retainedRuns) {
+    // Only the historical technical rows remain after intent cancellation.
+    expect(run.intentId).toBeNull();
+    expect(
+      await testDatabase.db.transaction((tx) =>
+        abandonRunInTransaction(tx, run.id),
+      ),
+    ).toBe(true);
+  }
+  const activeIntents = await testDatabase.db
+    .select({ id: schemaModule.taskLaunchIntents.id })
+    .from(schemaModule.taskLaunchIntents)
+    .where(
+      and(
+        eq(schemaModule.taskLaunchIntents.projectId, projectId),
+        inArray(schemaModule.taskLaunchIntents.state, [
+          "queued",
+          "preparing",
+          "held",
+          "run_bound",
+        ]),
+      ),
+    );
+
+  expect(activeIntents).toEqual([]);
 });
 
 describe("C-2 — launched-participant restart", () => {
-  it("budget-restarts a launched participant while a study sibling is active: succeeds, successor row + evaluation_study hold", async () => {
+  it("explicitly relaunches a launched participant while a study sibling is active: succeeds, successor row + evaluation_study hold", async () => {
     const taskId = await seedTask();
-    const oldRunId = await seedRun(taskId, {
-      status: "Failed",
-      endedAt: new Date(),
-    });
+    const {
+      runId: oldRunId,
+      studyId,
+      recipeId,
+    } = await evaluatedSource(taskId);
 
     // A study sibling still active — the pre-fix busy gate refused exactly here.
     await seedRun(taskId, { status: "Running" });
-    const { studyId, recipeId } = await seedStudyWithLaunchedParticipant({
-      taskId,
-      runId: oldRunId,
-    });
-
-    const result = await launchRun(
-      budgetRestartInput(taskId, oldRunId),
-      ctx,
-      db,
-    );
+    const result = await relaunch(taskId, oldRunId);
+    const [originalParticipant] = await db
+      .select()
+      .from(schema.evaluationParticipants)
+      .where(eq(schema.evaluationParticipants.runId, oldRunId));
 
     expect(result.runId).toBeTruthy();
 
@@ -334,7 +466,7 @@ describe("C-2 — launched-participant restart", () => {
       studyId,
       sourceType: "launched",
       recipeId,
-      replicateGroup: "recipe-a",
+      replicateGroup: originalParticipant.replicateGroup,
       replicateOrdinal: 2,
       launchReason: "manual_relaunch",
       batchItemId: null,
@@ -348,22 +480,13 @@ describe("C-2 — launched-participant restart", () => {
 
   it("mirrors a tombstoned source: the successor row is tombstoned but still holds the replacement", async () => {
     const taskId = await seedTask();
-    const oldRunId = await seedRun(taskId, {
-      status: "Failed",
-      endedAt: new Date(),
-    });
+    const { runId: oldRunId } = await evaluatedSource(taskId);
 
-    await seedStudyWithLaunchedParticipant({
-      taskId,
-      runId: oldRunId,
-      participantRemoved: true,
-    });
-
-    const result = await launchRun(
-      budgetRestartInput(taskId, oldRunId),
-      ctx,
-      db,
-    );
+    await db
+      .update(schema.evaluationParticipants)
+      .set({ removedAt: new Date() })
+      .where(eq(schema.evaluationParticipants.runId, oldRunId));
+    const result = await relaunch(taskId, oldRunId);
     const successors = await db
       .select()
       .from(schema.evaluationParticipants)
@@ -376,22 +499,13 @@ describe("C-2 — launched-participant restart", () => {
 
   it("a decided study stops inheriting: the restart launches as a plain run (experiments-rule mirror)", async () => {
     const taskId = await seedTask();
-    const oldRunId = await seedRun(taskId, {
-      status: "Failed",
-      endedAt: new Date(),
-    });
+    const { runId: oldRunId, studyId } = await evaluatedSource(taskId);
 
-    await seedStudyWithLaunchedParticipant({
-      taskId,
-      runId: oldRunId,
-      studyStatus: "decided",
-    });
-
-    const result = await launchRun(
-      budgetRestartInput(taskId, oldRunId),
-      ctx,
-      db,
-    );
+    await db
+      .update(schema.evaluationStudies)
+      .set({ status: "decided", decidedAt: new Date() })
+      .where(eq(schema.evaluationStudies.id, studyId));
+    const result = await relaunch(taskId, oldRunId);
     const [newRun] = await db
       .select({ promotionHold: schema.runs.promotionHold })
       .from(schema.runs)
@@ -409,21 +523,12 @@ describe("C-2 — launched-participant restart", () => {
 describe("C-5 — evaluation_study promotion hold", () => {
   it("a controlled evaluation launch (seam contract) stamps an evaluation_study hold", async () => {
     const taskId = await seedTask();
-    const studyId = randomUUID();
-
-    await db.insert(schema.evaluationStudies).values({
-      id: studyId,
-      projectId,
-      taskId,
-      title: "S",
-      status: "open",
-    });
-
-    const result = await launchRun(
-      { taskId, autoPromote: false, evaluationStudyId: studyId },
-      ctx,
-      db,
+    const prepared = await prepareEvaluationEngineFixture(
+      testDatabase.db,
+      { taskId },
+      context(),
     );
+    const result = await prepared.launch();
     const [run] = await db
       .select({ promotionHold: schema.runs.promotionHold })
       .from(schema.runs)
@@ -530,7 +635,7 @@ describe("C-3 — branch sync refuses launched lineage", () => {
       projectId,
       branch: `maister/task-${taskId}/attempt-1`,
       worktreePath: `/tmp/nonexistent-${runId}`,
-      parentRepoPath: `/repos/${projectId}`,
+      parentRepoPath: fixture.repo,
       baseBranch: "main",
     });
     await seedStudyWithLaunchedParticipant({ taskId, runId });
@@ -564,7 +669,7 @@ describe("C-4 — worktree GC holds open-study evidence", () => {
       projectId,
       branch: "b-held",
       worktreePath: `/tmp/gone-${heldRunId}`,
-      parentRepoPath: `/repos/${projectId}`,
+      parentRepoPath: fixture.repo,
       baseBranch: "main",
     });
     const { studyId } = await seedStudyWithLaunchedParticipant({
@@ -586,7 +691,7 @@ describe("C-4 — worktree GC holds open-study evidence", () => {
       projectId,
       branch: "b-observed",
       worktreePath: `/tmp/gone-${observedRunId}`,
-      parentRepoPath: `/repos/${projectId}`,
+      parentRepoPath: fixture.repo,
       baseBranch: "main",
     });
     await db.insert(schema.evaluationParticipants).values({
@@ -641,31 +746,15 @@ describe("C-4 — worktree GC holds open-study evidence", () => {
 });
 
 describe("ADR-150 — controlled-launch seam idempotency (T1.2)", () => {
-  function controlledInput(
-    taskId: string,
-    studyId: string,
-    batchItemId: string,
-  ) {
-    return {
-      taskId,
-      triggerSource: "manual" as const,
-      allowConcurrent: true,
-      autoPromote: false,
-      evaluationStudyId: studyId,
-      evaluationBatchItemId: batchItemId,
-    };
-  }
-
   it("launches with the forced evaluation_study hold and persists the batch-item binding", async () => {
     const taskId = await seedTask();
-    const studyId = randomUUID();
-    const batchItemId = randomUUID();
-
-    const result = await launchRun(
-      controlledInput(taskId, studyId, batchItemId),
-      ctx,
-      db,
+    const prepared = await prepareEvaluationEngineFixture(
+      testDatabase.db,
+      { taskId },
+      context(),
     );
+    const result = await prepared.launch();
+    const { studyId, batchItemId } = prepared;
 
     const [run] = await db
       .select({
@@ -682,19 +771,14 @@ describe("ADR-150 — controlled-launch seam idempotency (T1.2)", () => {
 
   it("adopts the existing run when the same launchKey is re-driven (never a second run)", async () => {
     const taskId = await seedTask();
-    const studyId = randomUUID();
-    const batchItemId = randomUUID();
-
-    const first = await launchRun(
-      controlledInput(taskId, studyId, batchItemId),
-      ctx,
-      db,
+    const prepared = await prepareEvaluationEngineFixture(
+      testDatabase.db,
+      { taskId },
+      context(),
     );
-    const second = await launchRun(
-      controlledInput(taskId, studyId, batchItemId),
-      ctx,
-      db,
-    );
+    const first = await prepared.launch();
+    const second = await prepared.launch();
+    const { batchItemId } = prepared;
 
     expect(second.runId).toBe(first.runId);
 
@@ -708,80 +792,67 @@ describe("ADR-150 — controlled-launch seam idempotency (T1.2)", () => {
 
   it("keeps distinct batch items as distinct runs (no false adoption)", async () => {
     const taskId = await seedTask();
-    const studyId = randomUUID();
+    const prepared = await prepareEvaluationEngineFixture(
+      testDatabase.db,
+      { taskId },
+      context(),
+    );
+    const a = await prepared.launch();
+    const batch = await createControlledLaunchBatch(
+      {
+        studyId: prepared.studyId,
+        projectId,
+        requestedByUserId: fixture.userId,
+        items: [{ recipeId: prepared.recipeId }],
+      },
+      testDatabase.db,
+    );
+    const seam = defaultLaunchRunSeam(context(), testDatabase.db);
+    const bound: string[] = [];
 
-    const a = await launchRun(
-      controlledInput(taskId, studyId, randomUUID()),
-      ctx,
-      db,
+    await runControlledLaunchBatch(
+      batch.batchId,
+      async (args) => {
+        const accepted = await seam(args);
+
+        if ("runId" in accepted)
+          throw new Error("New batch item reused an existing Run");
+        const [intent] = await testDatabase.db
+          .select()
+          .from(schemaModule.taskLaunchIntents)
+          .where(eq(schemaModule.taskLaunchIntents.id, accepted.intentId));
+
+        if (!intent)
+          throw new Error("Accepted batch item has no durable intent");
+        const next = await bindAcceptedEngineFixture(
+          testDatabase.db,
+          taskLaunchReceipt(intent),
+        );
+
+        bound.push(next.runId);
+
+        return next;
+      },
+      testDatabase.db,
     );
-    const b = await launchRun(
-      controlledInput(taskId, studyId, randomUUID()),
-      ctx,
-      db,
-    );
+    expect(bound).toHaveLength(1);
+    const b = { runId: bound[0] };
 
     expect(b.runId).not.toBe(a.runId);
   });
 
   it("threads a recipe hard-pin slot binding onto the run's session runner", async () => {
-    const { defaultLaunchRunSeam } =
-      await import("@/lib/evaluations/launch-seam");
-    const { buildFlowContractProjection } =
-      await import("@/lib/evaluations/preflight-loaders");
-    const { computeArtifactContractDigest, computeInputContractDigest } =
-      await import("@/lib/evaluations/recipe");
     const taskId = await seedTask();
-    const studyId = randomUUID();
-    const batchItemId = randomUUID();
-    const flowRevisionId = `rev-${projectId}`;
-
-    // Codex-1: the seam now preflights fail-closed against the LIVE contracts
-    // — the study must exist and the recipe must pin the REAL revision with
-    // projection-derived digests.
-    await db.insert(schema.evaluationStudies).values({
-      id: studyId,
-      projectId,
-      taskId,
-      title: "seam",
-      status: "open",
-    });
-    const projection = await buildFlowContractProjection(
-      { projectId, flowRefId: "bugfix", flowRevisionId },
-      db as never,
+    const prepared = await prepareEvaluationEngineFixture(
+      testDatabase.db,
+      {
+        taskId,
+        sessionRunnerOverrides: { default: "claude-default" },
+      },
+      context(),
     );
-
-    const seam = defaultLaunchRunSeam(ctx);
-    const { runId } = await seam({
-      studyId,
-      projectId,
-      taskId,
-      recipeId: randomUUID(),
-      recipeDefinition: {
-        schemaVersion: 1,
-        flow: {
-          flowRefId: "bugfix",
-          flowRevisionId,
-          inputContractDigest: computeInputContractDigest(projection),
-          artifactContractDigest: computeArtifactContractDigest(projection),
-        },
-        inputs: { taskSnapshotRef: "s", formValues: {} },
-        executionPolicy: { preset: "supervised" },
-        slotBindings: {
-          "session:default": { mode: "runner", runnerId: "claude-default" },
-        },
-        nodeAgentBindings: [],
-        materializationIntent: {
-          packagePins: [],
-          capabilityRequirements: [],
-          allowedProjectOverlays: [],
-        },
-        promotionHold: { source: "evaluation_study" },
-      } as never,
-      replicateOrdinal: 1,
-      launchKey: batchItemId,
-      requestedByUserId: null,
-    });
+    const result = await prepared.launch();
+    const { runId } = result;
 
     const [session] = await db
       .select({ runnerId: schema.runSessions.runnerId })

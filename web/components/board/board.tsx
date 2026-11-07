@@ -179,11 +179,14 @@ export async function Board({
     }
     const gate = boardTaskGate({
       triageStatus: card.triageStatus,
+      triageFlagOrigin: card.triageFlagOrigin,
+      queuePaused: card.queuePaused,
       clarificationPending: card.workStageClarificationPending,
       blockedByCount: card.blockedBy.length,
     });
 
     if (gate === "flagged") return t("launchFlagged");
+    if (gate === "queue_paused") return t("launchQueuePaused");
     if (gate === "clarification_pending")
       return t("launchClarificationPending");
     if (gate === "blocked") {
@@ -200,11 +203,14 @@ export async function Board({
     if (launchDisabledReason) return launchDisabledReason;
     const gate = boardTaskGate({
       triageStatus: card.triageStatus,
+      triageFlagOrigin: card.triageFlagOrigin,
+      queuePaused: card.queuePaused,
       clarificationPending: card.clarificationPending,
       blockedByCount: card.blockedBy.length,
     });
 
     if (gate === "flagged") return t("launchFlagged");
+    if (gate === "queue_paused") return t("launchQueuePaused");
     if (gate === "clarification_pending")
       return t("launchClarificationPending");
     if (gate === "blocked") {

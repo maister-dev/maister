@@ -185,8 +185,8 @@ paths:
       summary: (Implemented — ADR-196–198) getProjectAgentHistory
       description:
         Identifiers are URL parameters; actor/project/source context is derived from
-        authenticated server state. Existing data grants apply before aggregation and nested evidence
-        serialization. No secrets, host paths or session handles are returned.
+        authenticated server state. Canonical same-origin session authorization precedes parsing and retry admission.
+        Existing data grants apply before aggregation and nested evidence serialization. No secrets, host paths or session handles are returned.
       parameters:
         - &a2
           name: slug
@@ -461,6 +461,9 @@ paths:
         Reports individual blockers, deduplicates eligible task targets and intersects
         ready runners. Viewing this preview never accepts or starts work.
       parameters:
+        - name: runnerId
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 256 }
         - name: cursor
           in: query
           schema: { type: string, minLength: 1, maxLength: 2048 }
@@ -497,6 +500,7 @@ paths:
                   uniqueItems: true
                   items: { type: string, format: uuid }
                 cursor: { type: string, minLength: 1, maxLength: 2048 }
+                runnerId: { type: string, minLength: 1, maxLength: 256 }
       responses:
         "200":
           description: Current authorized selected-source preview
@@ -514,6 +518,7 @@ paths:
       summary: Explicitly accept keyed agent retries on one selected runner
       description: >-
         Authenticated actor and project/agent scope come from server state.
+        Requires canonical same-origin session authorization before parsing or accepting items.
         Validates all source IDs before accepting any item, then records each
         independently through the single-retry owner. Task targets are deduplicated.
         Per-item request keys and content guards survive partial/lost responses;
@@ -558,10 +563,15 @@ paths:
         launchRun required. Generic replay requires proven pre-dispatch failure.
         A current read-only operational qualifier can instead advertise an explicit
         fresh assessment of current task inputs; this does not replay or certify old effects.
+        Task-bound delivery retry additionally returns an exact canonical request and material-input preview. Missing legacy witnesses or changed source input require a fresh task Launch.
         Both require source quiescence and refuse unresolved commands/live work.
         The preview binds current recipe/task policy and reports the resolved preferred
         runner, strategy and whether accepting opts a legacy task into qualification.
       parameters:
+        - name: runnerId
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 256 }
+          description: Selected one-off runner; the returned canonical request binds this selection.
         - name: runId
           in: path
           required: true
@@ -587,6 +597,7 @@ paths:
         Identifiers are URL parameters; actor/project/source context is derived from
         authenticated server state. Existing data grants apply before aggregation and nested evidence
         serialization. No secrets, host paths or session handles are returned.
+        Task-bound code-delivery accepts a fresh active-session manual task-launch intent using the displayed launchRequest. It never copies old admission. Missing witnesses refuse with retry_launch_upgrade_required; stale material or preview refuses without allocating a successor. Same canonical request/key replays the original intent before checking later task drift.
       parameters:
         - name: runId
           in: path
@@ -1609,6 +1620,10 @@ paths:
         sessions (including the implicit default session) and roles block both manual
         and force launch with `runner_unresolved`. Optional Flow/runner query
         selections preview the choices without changing the task or bindings.
+        Deterministic strict-enforcement refusal sets `enforcementRefusal` to a
+        bounded node/class/actual-session-agent diagnostic and blocks both
+        ordinary and concurrent launch. Otherwise it is null. Acceptance and
+        dispatch recheck enforcement; preview grants no execution authority.
       operationId: getRunLaunchOptions
       x-maister-m43-legacy-steps:
         status: 200
@@ -1620,17 +1635,26 @@ paths:
         - name: taskId
           in: query
           required: true
-          schema: { type: string, format: uuid }
+          schema: { type: string, minLength: 1, maxLength: 256 }
         - name: flowId
           in: query
           required: false
           description: Preview an enabled Flow belonging to the task's project.
-          schema: { type: string, format: uuid }
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: relaunchOfRunId
+          in: query
+          description: Scoped source run included in the immutable settings token; task input and launch authority are captured fresh.
+          schema: { type: string, minLength: 1, maxLength: 256 }
         - name: runnerId
           in: query
           required: false
           description: Preview the selected primary-session runner and compatible consensus roles.
-          schema: { type: string }
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: packageVersions
+          in: query
+          required: false
+          description: JSON object of up to 64 package install identifiers (1 to 256 characters) mapped to keep or try_once. Previews the existing immutable selected cut without changing package attachments.
+          schema: { type: string, maxLength: 32768 }
       responses:
         "200":
           description: Launch options visible to the caller for the task.
@@ -3156,13 +3180,33 @@ paths:
         launch override, tier 1 of the standalone chain) is validated against
         the enabled runner catalog; body `workspace` (optional launch override)
         is the workspace used for runner compatibility, cwd selection, and
-        persisted `runs.agent_workspace`. Refusals: disabled/quarantined agent,
+        persisted `runs.agent_workspace`. Every fresh session launch, including taskless
+        operational agents, requires canonical same-origin authorization before parsing or allocation.
+        Refusals: disabled/quarantined agent,
         `risk_tier=destructive` (ADR-041 gate), `manual` missing from the
         agent's `triggers`, or a dirty `repo_read` baseline → `409
         PRECONDITION`; runner resolution/incompatibility → `503
-        EXECUTOR_UNAVAILABLE`. Over-budget runs queue as `Pending`.
+        EXECUTOR_UNAVAILABLE`. Operational and taskless agents retain their
+        direct launch receipt. Task-bound code-delivery agents use the same
+        one-shot manual task-launch contract as POST /api/task-launch-intents:
+        first read /api/task-launch-intents/options with taskId and agentId,
+        then send expectedTaskRevision, expectedSettingsToken and a stable
+        Idempotency-Key from an actual same-origin session action. A selected
+        standalone agent remains an agent target; a Flow-driving agent selects
+        its real declared Flow and retains its driving-agent provenance. No
+        accepted qualification is required for this manual decision. The 202
+        TaskLaunchReceipt can wait for capacity and its Location is recoverable;
+        selecting options alone does not execute or arm automation. A code-delivery
+        request missing the optimistic fields is refused with
+        launch_request_upgrade_required. Operational runs still queue as Pending
+        when execution capacity is unavailable.
       operationId: postProjectAgentLaunch
       parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Required for task-bound code-delivery launch; preserve the same key and payload after an uncertain response.
+          schema: { type: string, minLength: 1, maxLength: 256 }
         - name: slug
           in: path
           required: true
@@ -3181,14 +3225,23 @@ paths:
               additionalProperties: false
               properties:
                 taskId: { type: string, format: uuid }
-                runnerId: { type: string }
+                runnerId: { type: string, minLength: 1, maxLength: 128 }
+                expectedTaskRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+                expectedSettingsToken: { type: string, minLength: 1, maxLength: 256 }
                 workspace: { type: string, enum: [none, repo_read, worktree] }
       responses:
         "202":
-          description: Agent run created (`Running` or queued `Pending`).
+          description: Operational/taskless direct run receipt, or a durable code-delivery task launch intent awaiting preparation/capacity.
+          headers:
+            Location:
+              description: Present for accepted code-delivery intents; GET this URI to recover the outcome.
+              schema: { type: string }
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/AgentLaunchResult" }
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/AgentLaunchResult"
+                  - $ref: "#/components/schemas/TaskLaunchReceipt"
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409":
@@ -6172,121 +6225,75 @@ paths:
   /api/runs:
     post:
       tags: [runs]
-      summary: Launch a new run or rerun for a task
-      description: |
-        Requires an active session (`requireActiveSession` — authenticated and
-        with no pending forced password change) AND project membership at
-        `member` or above (`requireProjectAction("launchRun")`). The
-        `projectId` is derived from the task row, never from the body.
-
-        ADR-085 broadens manual launchability: `Done`, `Review`, `Failed`,
-        `Abandoned`, and `Crashed` tasks/runs can launch a new attempt through
-        the same `launchRun` service. Actively executing states and
-        relation-blocked tasks are refused with typed disabled reasons that the
-        UI also receives from `GET /api/runs/launch-options`.
-
-        Body-controlled `flowId`, `runnerId`, branches, and
-        `deliveryPolicy` are validated against server-state for the task's
-        project. A selected Flow must be enabled for the same project; policy
-        defaults are resolved project default -> launch override and snapshotted
-        on the created run.
-
-        Ordinary sessions and consensus participant and synthesizer runner slots are resolved with
-        the parent runner and compatible configured defaults before run/workspace
-        creation. A missing choice returns `CONFIG` or `EXECUTOR_UNAVAILABLE`
-        with allow-listed `details: {reason: "flow_runner_unresolved",
-        slotKey, label}`. The same details survive the launch error SSE frame;
-        provider snapshots and arbitrary error details are excluded.
-
-        After auth, project, Flow, and platform runner checks pass, the web tier
-        calls the supervisor `GET /health` through
-        `web/lib/supervisor-client.ts`. If the supervisor is unreachable,
-        times out, returns non-200, or returns a malformed body, this route
-        fails with `503 EXECUTOR_UNAVAILABLE` before creating a git worktree,
-        run row, workspace row, or task status transition.
-
-        Implemented (FR-F1/F2, T6.3): content-negotiated. A board client that
-        sends `Accept: text/event-stream` receives the staged launch progress on
-        this response (`scratch.launch_progress` frames in order `precondition →
-        worktree_created → materializing(<adapter>)` — flow launch has NO
-        synchronous session spawn, so `spawning`/`session_ready` are scratch-only
-        — then a terminal `scratch.launch_result` frame wrapping
-        `PostRunResponse`, or an `error` frame on post-open failure). Every other
-        caller gets the unchanged JSON 202. Preconditions throw BEFORE the stream
-        opens either way → JSON error with the HTTP status below.
+      summary: Accept an explicit task launch through the compatibility adapter
       operationId: postRun
-      x-maister-m43-legacy-steps:
-        status: 400
-        code: CONFIG
-        sideEffects: none-before-json-or-stream-open
-        message: "legacy steps[] flows are not supported since engine 3.0.0; republish the package with nodes[]"
+      description: |
+        Implemented — ADR-200. Authenticates an active session before parsing,
+        requires same-origin interactive authorization and current project scope,
+        then uses the same immutable intent admission service as
+        POST /api/task-launch-intents. New requests require the displayed task
+        revision, settings token and a stable Idempotency-Key. Missing versioned
+        fields return 422 CONFIG launch_request_upgrade_required; obtain them
+        from GET /api/runs/launch-options and preserve the exact request on retry.
+        The server never refreshes optimistic tokens for an old request.
+
+        allowConcurrent selects the dedicated authorized concurrent operation,
+        preserving force-launch technical gates; it cannot change qualification
+        authority. relaunchOfRunId binds a scoped source run with fresh input and
+        authority; include it in the settings preview. Package adopt/cut_and_adopt
+        require explicit setup through their existing setup workflows and return 422
+        CONFIG launch_request_setup_required until represented by the canonical
+        launch contract. keep and try_once use canonical package selection.
+
+        Acceptance is durable before workspace or model dispatch. An intent-only
+        acceptance returns JSON 202 launch_pending with accepted:true, intentId
+        and Location, including requests accepting text/event-stream. It emits no
+        fake progress or null runId under the historical run success schema.
+        A replay whose intent is already bound to a Pending or Running run may
+        return the historical PostRunResponse with its actual runId. Existing
+        completed cached receipts are never rewritten. Follow Location to inspect
+        held, failed or later bound work; acceptance does not prove model start.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 256 }
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: "#/components/schemas/PostRunBody" }
       responses:
-        "200":
-          description: |
-            Staged launch-progress stream (`text/event-stream`), returned only
-            when the request `Accept`s it. Emits `scratch.launch_progress` frames
-            then a terminal `scratch.launch_result` frame wrapping
-            `PostRunResponse`, or an `error` frame carrying a `MaisterError` code.
-          content:
-            text/event-stream:
-              schema:
-                type: string
-                description: >-
-                  SSE frames, one per `data: <json>\n\n` line (no `id:` —
-                  not durable). See the operation description for the frame union.
         "202":
-          description: Run accepted (JSON path). May be Pending (queued) or Running.
+          description: Durable intent acceptance or an actual bound run receipt.
+          headers:
+            Location:
+              schema: { type: string }
+              description: Authorized intent status resource.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/PostRunResponse" }
-        "401":
-          description: No valid session (`UNAUTHENTICATED`).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-        "403":
-          description: |
-            Caller is not a `member` or above for this project
-            (`UNAUTHORIZED`), or the authenticated account must change its
-            password first (`PASSWORD_CHANGE_REQUIRED`).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/PostRunResponse" }
+                  - { $ref: "#/components/schemas/PostRunPending" }
         "400":
-          description: |
-            Bad request (`CONFIG`): a malformed request body, an unsupported
-            manifest `schemaVersion` / engine incompatibility, unresolved
-            Flow runner remapping, or a node whose `enforcement: strict` declares a
-            capability class the build cannot strictly enforce
-            (settings-enforcement refusal, M11c — see error-taxonomy.md).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+          description: CONFIG; malformed JSON, unsupported authority field or invalid bounded body.
+        "401":
+          description: UNAUTHENTICATED; active session required before any body parsing.
+        "403":
+          description: UNAUTHORIZED or PASSWORD_CHANGE_REQUIRED; interactive origin or account gate.
+        "404":
+          description: Task is missing or inaccessible under current project scope.
         "409":
-          description: |
-            Precondition failed. Examples: task is busy or relation-blocked,
-            project archived, flow not enabled for this project, runner not
-            valid for the chosen Flow, branch / worktree path already in use,
-            target/base branch not in the allow-list, scheduler cap full, or
-            delivery policy target invalid. ADR-124 adds unreachable
-            `baseCommit` and cross-task `relaunchOfRunId` as precondition/
-            conflict failures before worktree side effects.
+          description: Changed request, stale revision/settings, busy task or technical admission refusal.
+        "422":
+          description: CONFIG with launch_request_upgrade_required or launch_request_setup_required and actionable remediation.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+              schema: { $ref: "#/components/schemas/PostRunUpgradeRequired" }
         "503":
-          description: |
-            Platform runner or supervisor unavailable (`EXECUTOR_UNAVAILABLE`).
-            Includes missing platform runner/default resolution and supervisor
-            readiness failure before launch side effects.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+          description: EXECUTOR_UNAVAILABLE; configured execution resources unavailable.
   /api/scratch-runs/launch-options:
     get:
       tags: [scratch-runs]
@@ -6351,6 +6358,20 @@ paths:
         ownership, optional task ownership, branch/base-ref safety, selected
         capability visibility, supervisor readiness, and shared live-session
         capacity. Scratch v1 rejects when capacity is full and does not queue.
+        After those gates accept a launch, an unconfirmed host session inventory
+        may retain its exact private session-create command. The normal result
+        is `runStatus: Running`, `dialogStatus: Starting`: accepted, not session
+        ready. The existing continuation worker reuses the same assignment,
+        command, runner request and frozen first prompt after readiness returns;
+        it does not reconstruct them from current settings. No `session_ready`
+        progress frame is emitted before the create acknowledgement. An empty
+        first prompt becomes `WaitingForUser` after acknowledgement without
+        issuing a prompt. Clients should open the returned Run rather than
+        launch a duplicate.
+        A session already acknowledged by the host can also remain `Starting`
+        while its private first-turn database handoff recovers. The session and
+        assignment stay owned; recovery reuses the original create rather than
+        launching another session or issuing a prompt before the handoff commits.
 
         Accepts JSON for text/metadata-only launches and multipart form data
         for binary uploads. Multipart requests carry a JSON `payload` field
@@ -6836,6 +6857,13 @@ paths:
         new supervisor session id, sends the supplied prompt, and returns the
         resulting dialog status. Permission or crash events observed during the
         prompt are preserved instead of being overwritten to `WaitingForUser`.
+        The recovery prompt and attachment references are frozen before session
+        creation. If inventory readiness delays the create, 202 reports
+        `dialogStatus: Starting`, `delivery: queued`; the current recovery
+        assignment and original create are retained for durable rediscovery.
+        Package recovery additionally retains its edit-lock generation and
+        structured-action identity, and cannot dispatch after that lock expires
+        or changes owner.
       operationId: recoverScratchRun
       parameters:
         - name: runId
@@ -8693,6 +8721,49 @@ paths:
                 { schema: { $ref: "#/components/schemas/MaisterErrorBody" } },
             }
 
+  /api/runs/{runId}/hitl/{hitlRequestId}/restart-preview:
+    get:
+      tags: [hitl]
+      summary: Preview a fresh budget restart decision
+      operationId: getBudgetRestartPreview
+      description: |
+        Read only. Requires an active session with current answerHitl and
+        launchRun permission in the source run project. The source must be
+        a paused task-bound delivery execution with an open budget-breach gate.
+        Shows the current effective task request and selected target, runner,
+        policy and delivery choices. Submit request unchanged as restartLaunch
+        when explicitly confirming Restart. This terminates the old execution;
+        it is an exceptional decision, separate from normal task Launch.
+        No intent, workspace or model session is created by this GET.
+        Missing and inaccessible selectors have the same unavailable response.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - in: path
+          name: runId
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - in: path
+          name: hitlRequestId
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 256 }
+      responses:
+        "200":
+          description: Exact displayed restart request; Cache-Control no-store.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BudgetRestartPreview" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404":
+          description: Scoped preview unavailable; inspect the run or create a fresh task Launch.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: Selected target settings are unavailable or changed; refresh the preview.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
   /api/runs/{runId}/hitl/{hitlRequestId}/respond:
     post:
       tags: [hitl]
@@ -8826,14 +8897,20 @@ paths:
           `optionId: "raise" | "restart" | "park" | "abandon"`. Legacy
           `{optionId:"raise", raiseTo:N}` and bare `{optionId:"abandon"}`
           remain valid. Canonical raise uses
-          `{response:{dimension?, newLimit}}`; restart uses an empty object;
+          `{response:{dimension?, newLimit}}`; restart requires `restartLaunch`, the
+          exact canonical request returned by the read-only restart preview;
           park uses `{response:{mode:"snapshot"|"export", branchName?}}`;
           discard/drop uses `{response:{dropWorkspace:true}}` or top-level
           `dropWorkspace`. The server validates availability from run state
           before claim and exposes the same `availableOptions` in pending-HITL
           read models. Restart and park use staged claims (`response.stage`)
-          until the composite reaches durable success or a final post-terminal
-          failure.
+          until the composite reaches durable success. The restart request is
+          stored before checkpoint; source terminalization, old reservation
+          settlement and fresh one-shot intent acceptance commit atomically.
+          Failed admission rolls back terminalization. Re-drive uses the same
+          stored request and key, never refreshed tokens. A historical pending
+          restart without this witness requires a fresh Launch. An already
+          completed historical restart may return its original actual run receipt.
 
         **(M11a, ADR-138 — Implemented) graph `human_review` decisions.** For a graph
         review HITL the reviewer's `decision` / `comments` / `workspacePolicy`
@@ -8990,10 +9067,14 @@ paths:
                     dimension: "tokens"
                     newLimit: 20000
               budget-restart:
-                summary: (ADR-125) Restart from a fresh policy snapshot
+                summary: Fresh manual budget restart using the displayed request
                 value:
                   optionId: "restart"
-                  response: {}
+                  restartLaunch:
+                    taskId: task-42
+                    expectedTaskRevision: 3
+                    expectedSettingsToken: displayed-settings-token
+                    relaunchOfRunId: source-run-42
               budget-park-export:
                 summary: (ADR-125) Export preserved work and stop
                 value:
@@ -9191,7 +9272,7 @@ paths:
                   runStatus:
                     {
                       type: string,
-                      enum: ["NeedsInput", "NeedsInputIdle", "Running"],
+                      enum: ["NeedsInput", "NeedsInputIdle", "Running", "Failed"],
                     }
                   state:
                     type: string
@@ -9201,7 +9282,14 @@ paths:
                         rework-scheduled,
                         resume-queued,
                         delivery-in-progress,
+                        restart_queued,
                       ]
+                  intentId:
+                    type: string
+                    description: The accepted restart intent. Acceptance may precede run creation; follow Location.
+                  newRunId:
+                    type: string
+                    description: Present only when the accepted intent has an actual bound run; never null or fabricated.
                   remainingDecisionCount:
                     type: integer
                     minimum: 0
@@ -10444,6 +10532,7 @@ paths:
       summary: (M19) Recover a Crashed run
       description: |
         (Implemented, M19 — ADR-034.)
+        Requires canonical same-origin session authorization before creating recovery authority or dispatch effects.
 
         Recovers a `Crashed` flow run via a hybrid plan decided by
         `classifyRecover(run, nodeKind, retrySafe, consensusEvidence)` over the
@@ -10617,7 +10706,7 @@ paths:
             moved and the recover is retryable once that operation finishes.
 
             (ADR-175) The four are machine-distinguishable on
-            `details.reason`: `discard_only`, `recover_cas_lost`,
+            `details.reason`: `discard_only`, `recover_cas_lost`, `launch_recovery_conflict`,
             `workspace_removed`, `busy`. An unattended caller branches on that
             reason to tell "retry later" from "this run is unrecoverable"; the
             UI branches on `code`, and on `busy` alone among the reasons (its
@@ -14234,6 +14323,15 @@ paths:
         HTTP status because they precede the stream. Frames carry no `id:` line
         (not durable).
 
+        A create awaiting confirmed host inventory returns the normal launch
+        result with `dialogStatus: Starting`, without a `session_ready` frame.
+        Its private create request, grounded initial prompt, source-message
+        references and structured-action identity are frozen before delivery.
+        The continuation worker reuses them after readiness returns, subject to
+        the original package edit-lock generation still being live; it does not
+        rebuild context from later package edits. No prompt is sent for an empty
+        initial turn. This accepted state does not mean the session is ready.
+
         Identifier boundaries: `id` is the server-state local package lookup;
         `sessionId` is a body-controlled lock token compared with
         `assertHoldsLock(id, sessionId)`; `runnerId` is a body-controlled launch
@@ -16393,10 +16491,14 @@ paths:
         `next_fire_at`, and is allowed on a paused schedule. The actor is the
         clicking user's id.
 
-        A row currently being dispatched — row-locked, or
-        `last_fire_outcome = 'dispatching'` fresher than the 300s scheduler
-        attempt timeout — returns `409 CONFLICT`; an OLDER `dispatching`
-        remnant (crash window W1) is past the window and may be triggered.
+        A row locked by an active dispatcher returns `409 CONFLICT`. A fresh
+        `dispatching` marker without an accepted launch also returns `409`.
+        When the fire already owns an accepted task launch, replay returns that
+        same decision: `outcome: dispatching` and `intentId` while capacity or
+        preparation is pending, with no invented Run ID. Older historical markers
+        retain the existing crash recovery policy. Each automated fire requires
+        current accepted qualification, including tasks with legacy qualification
+        mode; clicking this control does not grant manual task admission.
 
         A refused launch is NOT an HTTP error: the dispatch itself succeeded
         and recorded the outcome, so the response is `200` with the
@@ -16638,8 +16740,12 @@ paths:
       description: |
         Requires `manageSchedules`, `launchRun`, and applicable
         `launchUnattended`. Tick and Run now share the same revision-CAS claim,
-        durable reservation, normal `launchRun` handoff, retry classification,
-        and finalization. It never bypasses eligibility or capacity. A loser
+        durable reservation, canonical automatic admission, retry classification,
+        and finalization. Current accepted qualification is required even for a
+        legacy task. `Dispatching` may retain one accepted queued intent before
+        its fixed Run exists; source-lease recovery preserves that allocation
+        without another task attempt or cleanup. `Launched` requires the actual
+        linked Run. It never bypasses eligibility or capacity. A loser
         receives `409 CONFLICT` or refreshes the resulting safe intent DTO.
       operationId: runProjectScheduledLaunchNow
       parameters:
@@ -18641,6 +18747,660 @@ paths:
               schema:
                 $ref: "#/components/schemas/RunPeekError"
 
+  /api/task-launch-holds/resolve:
+    post:
+      tags: [tasks]
+      operationId: resolveTaskLaunchHold
+      summary: Resolve an explicit, technical, or historical task hold
+      description: |
+        Authenticated same-origin human action with current editTask permission.
+        Exact task revision and displayed origin are checked under the task lock.
+        Clears only the triage flag/origin and auto arm, increments task revision,
+        and records triage_set activity. Preserves qualification evidence, pause,
+        settings and launch intents. Does not launch or request triage. Reasserting
+        an explicit/dispatch hold advances revision, including the same origin.
+        Bearer automation cannot impersonate this human decision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [taskId, expectedRevision, expectedOrigin]
+              properties:
+                taskId: { type: string, format: uuid }
+                expectedRevision:
+                  { type: integer, minimum: 0, maximum: 2147483647 }
+                expectedOrigin:
+                  { type: string, enum: [explicit, dispatch_failure, unknown] }
+      responses:
+        "200":
+          description: Hold resolved; a separate explicit Launch is required to execute.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [taskId, revision, triageStatus, triageFlagOrigin]
+                properties:
+                  taskId: { type: string, format: uuid }
+                  revision: { type: integer, minimum: 0 }
+                  triageStatus: { type: string, nullable: true, enum: [null] }
+                  triageFlagOrigin:
+                    { type: string, nullable: true, enum: [null] }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Task is unavailable in the caller's visible scope.
+        "409":
+          description: launch_hold_changed; stale revision/origin or no resolvable hold.
+        "400":
+          description: launch_request_invalid; invalid bounded strict body.
+        "500":
+          description: Storage failure; no success or mutation is acknowledged.
+  /api/task-launch-intents/options:
+    get:
+      tags: [runs]
+      summary: Read versioned manual task launch options
+      operationId: taskLaunchOptions
+      description: |
+        An active session and the current project launchRun action are required. Read the
+        current task revision and settings token before accepting a launch.
+        This is a read-only snapshot, not authority or a launch; it creates no
+        intent, run, worktree or model session and does not require successful
+        qualification. Missing and inaccessible tasks return the same 404.
+        Choosing settings and reading options do not record a Launch decision.
+        Without agentId this endpoint returns revision/token metadata with target:null,
+        not a technical launchability verdict; use /api/runs/launch-options for
+        the board Flow preview. Agent/facade targets resolve actual sessions here
+        and return a typed strict-enforcement refusal instead of a successful
+        target snapshot. Acceptance rechecks enforcement for every target.
+        Use taskRevision as expectedTaskRevision and settingsToken as
+        expectedSettingsToken with the same Flow/package selection. Changes
+        before acceptance return a conflict instead of selecting new input.
+      security:
+        - sessionCookie: []
+      parameters:
+        - in: query
+          name: taskId
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - in: query
+          name: flowId
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - in: query
+          name: agentId
+          description: Preview the actual code-delivery agent instead of a Flow; cannot be combined with flowId.
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - in: query
+          name: workspace
+          description: Agent workspace selection; requires agentId.
+          schema: { type: string, enum: [none, repo_read, worktree] }
+        - in: query
+          name: relaunchOfRunId
+          schema: { type: string, minLength: 1, maxLength: 256 }
+          description: Scoped source run included in the exact settings token; its authority is never inherited.
+        - in: query
+          name: runnerId
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - in: query
+          name: packageVersions
+          description: JSON-encoded package choices; at most 64 keys, each 1–256 characters.
+          content:
+            application/json:
+              schema:
+                type: object
+                maxProperties: 64
+                x-propertyNames: { type: string, minLength: 1, maxLength: 256 }
+                additionalProperties: { type: string, enum: [keep, try_once] }
+      responses:
+        "200":
+          description: Current source-free options; Cache-Control is no-store.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskLaunchOptions" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The selected execution target is unavailable or incompatible.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskLaunchError" }
+        "500":
+          description: Options could not be read; no launch effect was accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskLaunchError" }
+        "400":
+          description: The requested target or query is invalid.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskLaunchError" }
+        "503":
+          description: Temporary launch storage failure; retry the read.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskLaunchError" }
+  /api/task-launch-intents:
+    post:
+      tags:
+        - runs
+      summary: "Implemented — ADR-200: AcceptTaskLaunchIntent"
+      operationId: AcceptTaskLaunchIntent
+      description:
+        Active session and live project launchRun/policy grants for writes; readBoard for
+        metadata and readRepoFiles before any source-bearing content. Explicit session Launch records
+        one-shot manual authority. Same-origin/CSRF protection requires exact serialized Origin,
+        using configured AUTH_URL origin (its Auth.js base path is allowed), otherwise actual
+        HTTP Host plus request protocol; Host-absent framework requests use their URL authority.
+        Present malformed Host refuses, even with configured authority. Empty AUTH_URL is unset;
+        malformed nonempty configuration returns static CONFIG launch_origin_configuration_invalid.
+        Forwarded headers never grant origin authority; cross-site fetches and noncanonical
+        client Origin values refuse. Strict bounded request. Server derives project and actor from scoped task/auth
+        state. Persist immutable input/settings/basis, reservation, audit and task.launch_changed in
+        one transaction before effects. Same key/same payload returns original receipt after access
+        checks; changed payload conflicts. 202 describes intent acceptance, not a started run. Lost
+        response does not cancel accepted work.
+      security:
+        - sessionCookie: []
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+          description:
+            Stable principal/project/operation request key; changed payload under the same key
+            conflicts before mutation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskLaunchBody"
+      responses:
+        "202":
+          description:
+            Durably accepted intent; runId may be null. Follow Location or existing authorized
+            attention invalidation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchReceipt"
+          headers:
+            Location:
+              description: Authorized intent status resource.
+              schema:
+                type: string
+        "400":
+          description: Malformed body/header or unsupported fields; no intent accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+        "401":
+          description: Missing or invalid authentication.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+        "403":
+          description: Current principal lacks required operation permission.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+        "404":
+          description: Missing or inaccessible scoped resource.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+        "409":
+          description:
+            Stale revision/state, changed key payload, competing work or committed dispatch; no
+            silent replacement.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+        "503":
+          description: No acceptance when storage is unavailable; replay the same key after recovery.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+  /api/task-launch-intents/concurrent:
+    post:
+      tags:
+        - runs
+      summary: Accept a separately authorized concurrent manual task launch
+      operationId: AcceptConcurrentTaskLaunchIntent
+      description:
+        Active session and live project launchRun/policy grants for writes; readBoard for
+        metadata and readRepoFiles before any source-bearing content. Explicit session Launch records
+        one-shot manual authority. This dedicated operation applies the force-launch gate before accepting a separately reserved concurrent intent; ordinary reservation collisions remain protected. Same-origin/CSRF protection is enforced at the human-action
+        boundary. Strict bounded request. Server derives project and actor from scoped task/auth
+        state. Persist immutable input/settings/basis, reservation, audit and task.launch_changed in
+        one transaction before effects. Same key/same payload returns original receipt after access
+        checks; changed payload conflicts. 202 describes intent acceptance, not a started run. Lost
+        response does not cancel accepted work.
+      security:
+        - sessionCookie: []
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+          description:
+            Stable principal/project/operation request key; changed payload under the same key
+            conflicts before mutation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskLaunchBody"
+      responses:
+        "202":
+          description:
+            Durably accepted intent; runId may be null. Follow Location or existing authorized
+            attention invalidation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchReceipt"
+          headers:
+            Location:
+              description: Authorized intent status resource.
+              schema:
+                type: string
+        "400":
+          description: Malformed body/header or unsupported fields; no intent accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+        "401":
+          description: Missing or invalid authentication.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+        "403":
+          description: Current principal lacks required operation permission.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+        "404":
+          description: Missing or inaccessible scoped resource.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+        "409":
+          description:
+            Stale revision/state, changed key payload, competing work or committed dispatch; no
+            silent replacement.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+        "503":
+          description: No acceptance when storage is unavailable; replay the same key after recovery.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+  /api/task-launch-intents/{intentId}:
+    get:
+      tags:
+        - runs
+      summary: "Implemented — ADR-200: ReadTaskLaunchIntent"
+      operationId: ReadTaskLaunchIntent
+      description:
+        Active session and live project launchRun/policy grants for writes; readBoard for
+        metadata and readRepoFiles before any source-bearing content. Explicit session Launch records
+        one-shot manual authority. Same-origin/CSRF protection is enforced at the human-action
+        boundary. GET is a read-only projection. Return versioned receipt with immutable snapshot
+        summary; never full DB row, prompt, credentials or host paths. No recovery side effect.
+      security:
+        - sessionCookie: []
+      parameters:
+        - in: path
+          name: intentId
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+          description:
+            Untrusted resource selector. Principal/project access derives from server lookup, never
+            this ID alone.
+      responses:
+        "200":
+          description: Current authorized receipt; absent runId is explicit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchReceipt"
+          headers:
+            Location:
+              description: Authorized intent status resource.
+              schema:
+                type: string
+        "400":
+          description: Malformed body/header or unsupported fields; no intent accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+        "401":
+          description: Missing or invalid authentication.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+        "403":
+          description: Current principal lacks required operation permission.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+        "404":
+          description: Missing or inaccessible scoped resource.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+        "409":
+          description:
+            Stale revision/state, changed key payload, competing work or committed dispatch; no
+            silent replacement.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+        "503":
+          description: No acceptance when storage is unavailable; replay the same key after recovery.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+  /api/task-launch-intents/{intentId}/cancel:
+    post:
+      tags:
+        - runs
+      summary: "Implemented — ADR-200: CancelTaskLaunchIntent"
+      operationId: CancelTaskLaunchIntent
+      description:
+        Active session and live project launchRun/policy grants for writes; readBoard for
+        metadata and readRepoFiles before any source-bearing content. Explicit session Launch records
+        one-shot manual authority. Same-origin/CSRF protection is enforced at the human-action
+        boundary. Cancel only before dispatch commitment, using exact stateVersion and request key.
+        Bound never-dispatched run terminalizes through existing owner and arms cleanup; release
+        reservation and wake capacity atomically. A dispatch winner returns 409 and must use existing
+        Stop.
+      security:
+        - sessionCookie: []
+      parameters:
+        - in: path
+          name: intentId
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+          description:
+            Untrusted resource selector. Principal/project access derives from server lookup, never
+            this ID alone.
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+          description:
+            Stable principal/project/operation request key; changed payload under the same key
+            conflicts before mutation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskLaunchCancelBody"
+      responses:
+        "200":
+          description: Cancellation receipt, or identical successful replay.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchReceipt"
+          headers:
+            Location:
+              description: Authorized intent status resource.
+              schema:
+                type: string
+        "400":
+          description: Malformed body/header or unsupported fields; no intent accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+        "401":
+          description: Missing or invalid authentication.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+        "403":
+          description: Current principal lacks required operation permission.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+        "404":
+          description: Missing or inaccessible scoped resource.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+        "409":
+          description:
+            Stale revision/state, changed key payload, competing work or committed dispatch; no
+            silent replacement.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+        "503":
+          description: No acceptance when storage is unavailable; replay the same key after recovery.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+  /api/task-launch-intents/{intentId}/replace:
+    post:
+      tags:
+        - runs
+      summary: "Implemented — ADR-200: ReplaceTaskLaunchIntent"
+      operationId: ReplaceTaskLaunchIntent
+      description:
+        Active session and live project launchRun/policy grants for writes; readBoard for
+        metadata and readRepoFiles before any source-bearing content. Explicit session Launch records
+        one-shot manual authority. Same-origin/CSRF protection is enforced at the human-action
+        boundary. Lock old intent/task and any bound run in canonical order. Cancel old pre-dispatch
+        request and accept newly authorized immutable successor in the same transaction. Any failure
+        rolls back both. Changed input/settings require this fresh decision; no old authority is
+        reused.
+      security:
+        - sessionCookie: []
+      parameters:
+        - in: path
+          name: intentId
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+          description:
+            Untrusted resource selector. Principal/project access derives from server lookup, never
+            this ID alone.
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+          description:
+            Stable principal/project/operation request key; changed payload under the same key
+            conflicts before mutation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskLaunchReplaceBody"
+      responses:
+        "202":
+          description: Successor receipt with supersedesIntentId. Old cancellation remains retained.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchReceipt"
+          headers:
+            Location:
+              description: Authorized intent status resource.
+              schema:
+                type: string
+        "400":
+          description: Malformed body/header or unsupported fields; no intent accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+        "401":
+          description: Missing or invalid authentication.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+        "403":
+          description: Current principal lacks required operation permission.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+        "404":
+          description: Missing or inaccessible scoped resource.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+        "409":
+          description:
+            Stale revision/state, changed key payload, competing work or committed dispatch; no
+            silent replacement.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+        "503":
+          description: No acceptance when storage is unavailable; replay the same key after recovery.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskLaunchError"
+
+  /api/projects/{slug}/tasks/{taskId}/human-assessment:
+    parameters:
+      - { name: slug, in: path, required: true, schema: { type: string } }
+      - { name: taskId, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getHumanTaskAssessment
+      summary: Prepare optional human assessment and authorized evidence choices
+      description: >-
+        Session editTask permission is required. Search returns at most 25 project tasks
+        and 25 project runs. repository=1 also requires readRepoFiles and returns a
+        server-resolved immutable ref/token for the existing project files browser.
+        The context token detects changed input/assessment; it is not an authorization grant.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: search, in: query, schema: { type: string, maxLength: 100 } }
+        - { name: repository, in: query, schema: { type: string, enum: ["1"] } }
+      responses:
+        "200":
+          description: Current assessment context; no qualification or launch created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HumanTaskAssessmentDraft" }
+        "400": { description: Invalid query. }
+        "401": { description: Active session required. }
+        "403":
+          { description: Current task or repository permission unavailable. }
+        "404": { description: Task unavailable in this project. }
+        "409": { description: Repository evidence is unavailable. }
+        "500": { description: Unexpected infrastructure failure. }
+    post:
+      operationId: recordHumanTaskAssessment
+      summary: Record an optional human assessment using authorized evidence selectors
+      description: >-
+        Session-only, same-origin, bounded to 64 KiB. The server validates selected task/run
+        scope and tracked files at the current target, generates evidence IDs and reason
+        codes, and preserves the full seven-check machine result. No launch or automation arm
+        is created. Same original request/key replays the immutable receipt under current
+        authority after task/HEAD changes; different payload/author/adapter conflicts.
+        payload_digest uses the versioned human_authoring canonical domain; existing machine
+        hashing is unchanged. Git resolution precedes the reservation/task-locked DB application.
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HumanTaskAssessmentWrite" }
+      responses:
+        "200":
+          description: Accepted assessment or identical original receipt; no execution authorization.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskQualificationReceipt" }
+        "400":
+          description: Validation failed; issues identify localized keys and exact form paths.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HumanTaskAssessmentError" }
+        "401": { description: Active session required. }
+        "403":
+          {
+            description: Current task or selected-source permission unavailable.,
+          }
+        "404":
+          {
+            description: Task or selected evidence unavailable in this project.,
+          }
+        "409":
+          description: Stale context/repository/revision or conflicting original request key.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HumanTaskAssessmentError" }
+        "500":
+          {
+            description: Unexpected infrastructure failure; replay the same original request.,
+          }
+
 components:
   securitySchemes:
     sessionCookie:
@@ -18836,6 +19596,603 @@ components:
             properties:
               ok: { type: boolean, enum: [true] }
   schemas:
+    TaskLaunchOptions:
+      type: object
+      additionalProperties: false
+      required:
+        [taskId, taskRevision, settingsToken, qualification, activeLaunch, target]
+      properties:
+        taskId: { type: string, minLength: 1, maxLength: 256 }
+        taskRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+        settingsToken: { type: string, minLength: 1, maxLength: 256 }
+        qualification:
+          oneOf:
+            - $ref: "#/components/schemas/TaskQualificationSummary"
+            - { type: object, nullable: true, enum: [null] }
+        activeLaunch:
+          oneOf:
+            - $ref: "#/components/schemas/TaskLaunchReceipt"
+            - { type: object, nullable: true, enum: [null] }
+        target:
+          oneOf:
+            - $ref: "#/components/schemas/TaskLaunchTargetPreview"
+            - { type: object, nullable: true, enum: [null] }
+    TaskLaunchTargetPreview:
+      type: object
+      additionalProperties: false
+      required: [kind, agentId, workspace, flowId, flowRefId, targetBranch, runnerIds, sessions, runners, deliveryPolicy, executionPolicy, autoPromote]
+      properties:
+        kind: { type: string, enum: [flow, agent] }
+        agentId: { type: string, minLength: 1, maxLength: 256 }
+        workspace: { type: string, enum: [none, repo_read, worktree] }
+        flowId: { type: string, nullable: true }
+        flowRefId: { type: string, nullable: true }
+        targetBranch: { type: string }
+        runnerIds:
+          type: array
+          items: { type: string }
+        sessions:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [sessionName, runnerId, model]
+            properties:
+              sessionName: { type: string }
+              runnerId: { type: string }
+              model: { type: string }
+        runners:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, capabilityAgent, model]
+            properties:
+              id: { type: string }
+              capabilityAgent: { type: string }
+              model: { type: string }
+        deliveryPolicy: { $ref: "#/components/schemas/DeliveryPolicy" }
+        executionPolicy: { $ref: "#/components/schemas/ExecutionPolicy" }
+        autoPromote: { type: boolean }
+    TaskLaunchConflictReference:
+      type: object
+      additionalProperties: false
+      required: [intentId, runId, basis]
+      properties:
+        intentId: { type: string, minLength: 1, maxLength: 256, nullable: true }
+        runId: { type: string, minLength: 1, maxLength: 256, nullable: true }
+        basis:
+          type: string
+          enum: [manual, automatic, execution_child, historical]
+      anyOf:
+        - properties:
+            intentId: { type: string, minLength: 1 }
+        - properties:
+            runId: { type: string, minLength: 1 }
+    NodeEnforcementRefusal:
+      type: object
+      additionalProperties: false
+      required: [reason, nodeId, capabilityClass, capabilityAgent, declared, capability]
+      properties:
+        reason: { type: string, enum: [flow_settings_enforcement_refused] }
+        nodeId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._-]*$'
+          not: { enum: [__proto__, constructor, prototype] }
+        capabilityClass:
+          type: string
+          enum: [mcps, tools, skills, restrictions, permissionMode, workspaceAccess, hooks]
+        capabilityAgent:
+          type: string
+          enum: [claude, codex, gemini, opencode, mimo]
+        declared: { type: string, enum: [strict] }
+        capability: { type: string, enum: [instructed, unsupported] }
+    TaskLaunchError:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        details:
+          oneOf:
+            - $ref: "#/components/schemas/NodeEnforcementRefusal"
+            - type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  maxLength: 256
+                  not: { enum: [flow_settings_enforcement_refused] }
+                slotKey: { type: string, minLength: 1, maxLength: 256 }
+                label: { type: string, minLength: 1, maxLength: 256 }
+                existing:
+                  $ref: "#/components/schemas/TaskLaunchConflictReference"
+      description: A scoped reservation conflict identifies earlier delivery work and its original basis. A deterministic strict-enforcement refusal identifies the compiled node and its resolved runner capability without raw error text or source contents; no intent or Run is accepted. These selectors grant no additional access. Asset-digest and capture refusals use PRECONDITION (409) with launch_flow_assets_changed, launch_capabilities_changed or launch_agent_package_changed; pinned or captured agent-definition read failures use launch_agent_definition_changed. Refusal before acceptance creates no intent or Run. These readers retain native I/O causes internally and never return filesystem paths, contents or raw error text.
+    TaskLaunchBody:
+      type: object
+      additionalProperties: false
+      required:
+        - taskId
+        - expectedTaskRevision
+        - expectedSettingsToken
+      properties:
+        taskId:
+          type: string
+          minLength: 1
+          maxLength: 256
+        expectedTaskRevision:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        expectedSettingsToken:
+          type: string
+          minLength: 1
+          maxLength: 256
+        flowId:
+          type: string
+          minLength: 1
+          maxLength: 256
+        agentId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: An actual attached code-delivery agent target; cannot be combined with flowId.
+        workspace:
+          type: string
+          enum: [none, repo_read, worktree]
+          description: Optional agent workspace selection; requires agentId and remains subject to the definition and runner compatibility checks.
+        relaunchOfRunId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Scoped settled source run for a new decision; retains scheduled and evaluation lineage, while task input is captured fresh. Include this selector when obtaining the settings token.
+        runnerId:
+          type: string
+          minLength: 1
+          maxLength: 256
+        baseBranch:
+          type: string
+          minLength: 1
+          maxLength: 256
+        baseCommit:
+          type: string
+          minLength: 7
+          maxLength: 64
+          pattern: ^[a-fA-F0-9]+$
+        targetBranch:
+          type: string
+          minLength: 1
+          maxLength: 256
+        deliveryPolicy:
+          $ref: "#/components/schemas/DeliveryPolicy"
+        executionPolicy:
+          $ref: "#/components/schemas/ExecutionPolicy"
+        autoPromote:
+          type: boolean
+        brainContext:
+          type: boolean
+          nullable: true
+        packageVersions:
+          type: object
+          maxProperties: 64
+          x-propertyNames: { type: string, minLength: 1, maxLength: 256 }
+          description: Existing immutable cut choices only; keys are package install identifiers of 1 to 256 characters. Adopt or create a cut through explicit setup before refreshing this preview.
+          additionalProperties:
+            type: string
+            enum: [keep, try_once]
+      anyOf:
+        - type: object
+          properties:
+            agentId: { not: {} }
+            workspace: { not: {} }
+        - type: object
+          required: [agentId]
+          properties:
+            flowId: { not: {} }
+            agentId: { type: string }
+    TaskLaunchCancelBody:
+      type: object
+      additionalProperties: false
+      required:
+        - expectedStateVersion
+      properties:
+        expectedStateVersion:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+    TaskLaunchReplaceBody:
+      type: object
+      additionalProperties: false
+      required:
+        - taskId
+        - expectedTaskRevision
+        - expectedSettingsToken
+        - expectedStateVersion
+      properties:
+        taskId:
+          type: string
+          minLength: 1
+          maxLength: 256
+        expectedTaskRevision:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        expectedSettingsToken:
+          type: string
+          minLength: 1
+          maxLength: 256
+        flowId:
+          type: string
+          minLength: 1
+          maxLength: 256
+        agentId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: An actual attached code-delivery agent target; cannot be combined with flowId.
+        workspace:
+          type: string
+          enum: [none, repo_read, worktree]
+          description: Optional agent workspace selection; requires agentId and remains subject to the definition and runner compatibility checks.
+        relaunchOfRunId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Scoped settled source run for a new decision; retains scheduled and evaluation lineage, while task input is captured fresh. Include this selector when obtaining the settings token.
+        runnerId:
+          type: string
+          minLength: 1
+          maxLength: 256
+        baseBranch:
+          type: string
+          minLength: 1
+          maxLength: 256
+        baseCommit:
+          type: string
+          minLength: 7
+          maxLength: 64
+          pattern: ^[a-fA-F0-9]+$
+        targetBranch:
+          type: string
+          minLength: 1
+          maxLength: 256
+        deliveryPolicy:
+          $ref: "#/components/schemas/DeliveryPolicy"
+        executionPolicy:
+          $ref: "#/components/schemas/ExecutionPolicy"
+        autoPromote:
+          type: boolean
+        brainContext:
+          type: boolean
+          nullable: true
+        packageVersions:
+          type: object
+          maxProperties: 64
+          x-propertyNames: { type: string, minLength: 1, maxLength: 256 }
+          description: Existing immutable cut choices only; keys are package install identifiers of 1 to 256 characters. Adopt or create a cut through explicit setup before refreshing this preview.
+          additionalProperties:
+            type: string
+            enum: [keep, try_once]
+        expectedStateVersion:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+      anyOf:
+        - type: object
+          properties:
+            agentId: { not: {} }
+            workspace: { not: {} }
+        - type: object
+          required: [agentId]
+          properties:
+            flowId: { not: {} }
+            agentId: { type: string }
+    TaskLaunchReceipt:
+      type: object
+      additionalProperties: false
+      required:
+        - schemaVersion
+        - intentId
+        - taskId
+        - state
+        - stateVersion
+        - basis
+        - acceptedAt
+        - taskRevision
+        - inputRevision
+        - settingsDigest
+        - runId
+        - reason
+        - snapshot
+      properties:
+        schemaVersion:
+          type: integer
+          enum:
+            - 1
+        intentId:
+          type: string
+          minLength: 1
+          maxLength: 256
+        taskId:
+          type: string
+          minLength: 1
+          maxLength: 256
+        state:
+          type: string
+          enum:
+            - queued
+            - preparing
+            - run_bound
+            - held
+            - cancelled
+            - failed
+            - settled
+        stateVersion:
+          type: integer
+          minimum: 1
+        basis:
+          type: string
+          enum:
+            - manual
+            - automatic
+            - execution_child
+        acceptedAt:
+          type: string
+          format: date-time
+        taskRevision:
+          type: integer
+          minimum: 0
+        inputRevision:
+          type: integer
+          minimum: 1
+        settingsDigest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        runId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+          maxLength: 256
+        runStatus:
+          type: string
+          enum:
+            - Pending
+            - Running
+            - NeedsInput
+            - NeedsInputIdle
+            - HumanWorking
+            - WaitingOnChildren
+            - Review
+            - Done
+            - Failed
+            - Crashed
+            - Abandoned
+        queuePosition:
+          type: integer
+          minimum: 1
+        queueReason:
+          type: string
+          maxLength: 256
+        snapshot:
+          type: object
+          additionalProperties: false
+          properties:
+            kind:
+              type: string
+              enum:
+                - flow
+                - agent
+            workspace:
+              type: string
+              enum: [none, repo_read, worktree]
+            agentId:
+              type: string
+              nullable: true
+              minLength: 1
+              maxLength: 256
+            flowId:
+              type: string
+              minLength: 1
+              maxLength: 256
+              nullable: true
+            flowRevisionId:
+              type: string
+              minLength: 1
+              maxLength: 256
+              nullable: true
+            runnerIds:
+              type: array
+              minItems: 1
+              uniqueItems: true
+              maxItems: 64
+              items:
+                type: string
+                minLength: 1
+                maxLength: 256
+            flowRefId:
+              type: string
+              nullable: true
+            deliveryPolicy:
+              $ref: "#/components/schemas/DeliveryPolicy"
+            sessions:
+              type: array
+              maxItems: 64
+              description: Safe immutable session identities from the accepted runner snapshots, independent of the current catalog.
+              items:
+                type: object
+                additionalProperties: false
+                required: [sessionName, runnerId, capabilityAgent, model]
+                properties:
+                  sessionName: { type: string }
+                  runnerId: { type: string }
+                  capabilityAgent: { type: string }
+                  model: { type: string }
+            baseCommit:
+              type: string
+              nullable: true
+              pattern: "^[a-f0-9]{40}([a-f0-9]{24})?$"
+              maxLength: 64
+            targetBranch:
+              type: string
+              minLength: 1
+              maxLength: 256
+            promotionMode:
+              type: string
+              enum:
+                - local_merge
+                - rebase_merge
+                - pull_request
+            autoPromote:
+              type: boolean
+          required:
+            - kind
+            - workspace
+            - agentId
+            - flowId
+            - flowRevisionId
+            - runnerIds
+            - baseCommit
+            - targetBranch
+            - promotionMode
+            - autoPromote
+          oneOf:
+            - properties:
+                kind:
+                  enum:
+                    - flow
+                workspace:
+                  enum: [worktree]
+                baseCommit:
+                  type: string
+                  nullable: false
+                agentId:
+                  type: string
+                  nullable: true
+                  enum:
+                    - null
+                flowId:
+                  type: string
+                  nullable: false
+                flowRevisionId:
+                  type: string
+                  nullable: false
+            - oneOf:
+                - properties:
+                    workspace:
+                      enum: [none]
+                - properties:
+                    workspace:
+                      enum: [repo_read, worktree]
+                    baseCommit:
+                      type: string
+                      nullable: false
+              properties:
+                kind:
+                  enum:
+                    - agent
+                agentId:
+                  type: string
+                  nullable: false
+                flowId:
+                  type: string
+                  nullable: true
+                  enum:
+                    - null
+                flowRevisionId:
+                  type: string
+                  nullable: true
+                  enum:
+                    - null
+        changedFields:
+          type: array
+          maxItems: 32
+          items:
+            type: string
+            enum:
+              - input
+              - clarifications
+              - flow
+              - runner
+              - delivery
+              - policy
+              - authority
+              - workspace
+        supersedesIntentId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          nullable: true
+        terminalOutcome:
+          type: string
+          enum:
+            - Done
+            - Failed
+            - Crashed
+            - Abandoned
+      example:
+        schemaVersion: 1
+        intentId: launch-example
+        taskId: task-example
+        state: queued
+        stateVersion: 1
+        basis: manual
+        acceptedAt: 2026-11-02T12:00:00.000Z
+        taskRevision: 0
+        inputRevision: 1
+        settingsDigest: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        runId: null
+        reason: null
+        snapshot:
+          kind: flow
+          agentId: null
+          flowId: flow-example
+          flowRevisionId: revision-example
+          runnerIds:
+            - codex-sol
+          workspace: worktree
+          baseCommit: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          targetBranch: main
+          promotionMode: pull_request
+          autoPromote: true
+      oneOf:
+        - properties:
+            state:
+              enum:
+                - queued
+                - preparing
+                - cancelled
+        - properties:
+            state:
+              enum:
+                - run_bound
+            runId:
+              type: string
+              minLength: 1
+        - properties:
+            state:
+              enum:
+                - held
+                - failed
+            reason:
+              type: string
+              minLength: 1
+        - required:
+            - terminalOutcome
+          properties:
+            state:
+              enum:
+                - settled
+            runId:
+              type: string
+              minLength: 1
     RunStandaloneTranscriptResponse:
       type: object
       additionalProperties: false
@@ -19568,6 +20925,17 @@ components:
         - reasonCode
         - provenance
       properties:
+        launchIntent:
+          type: object
+          additionalProperties: false
+          required: [intentId, taskId, taskNumber, state, reason]
+          description: Exact owning task launch for this scoped attempt, including held/cancelled attempts before any Run exists. Omitted without an owning witness; never inferred from another attempt.
+          properties:
+            intentId: { type: string, format: uuid }
+            taskId: { type: string, format: uuid }
+            taskNumber: { type: integer }
+            state: { type: string, enum: [queued, preparing, run_bound, held, cancelled, failed, settled] }
+            reason: { type: string, nullable: true }
         scheduledRequestState:
           $ref: "#/components/schemas/ScheduledRequestState"
         scheduledRequest:
@@ -19769,6 +21137,9 @@ components:
         - requestKey
         - previewFingerprint
       properties:
+        launchRequest:
+          allOf: [{ $ref: "#/components/schemas/TaskLaunchBody" }]
+          description: Exact displayed canonical request, required for task-bound code-delivery retry; actor identity comes only from the active session.
         runnerId: *a6
         requestKey: *a2
         previewFingerprint:
@@ -19795,6 +21166,16 @@ components:
         - runners
         - differences
       properties:
+        launchRequest:
+          allOf: [{ $ref: "#/components/schemas/TaskLaunchBody" }]
+          description: Present for supported same-input task-bound delivery retries; changing runner requires a new preview.
+        launchPreview:
+          type: object
+          additionalProperties: false
+          required: [title, prompt]
+          properties:
+            title: { type: string }
+            prompt: { type: string }
         eligible:
           type: boolean
         reason:
@@ -19887,6 +21268,7 @@ components:
             required: [runId, requestKey, previewFingerprint, strategy]
             properties:
               runId: *a2
+              launchRequest: { $ref: "#/components/schemas/TaskLaunchBody" }
               requestKey: *a2
               previewFingerprint: { type: string, pattern: "^[a-f0-9]{64}$" }
               strategy:
@@ -19950,7 +21332,10 @@ components:
         - refusalReason
         - cleanup
       properties:
-        retryIntentId: *a2
+        retryIntentId:
+          type: string
+          format: uuid
+          description: Historical agent-retry intent or canonical task-launch retry intent identity, scoped to sourceRunId.
         sourceRunId: *a2
         runId:
           type: string
@@ -20144,6 +21529,166 @@ components:
           maxLength: 255
         enqueue:
           type: boolean
+    HumanTaskAssessmentEvidence:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [kind, taskId]
+          properties:
+            kind: { type: string, enum: [task] }
+            taskId: { type: string, minLength: 1, maxLength: 200 }
+        - type: object
+          additionalProperties: false
+          required: [kind, runId]
+          properties:
+            kind: { type: string, enum: [run] }
+            runId: { type: string, minLength: 1, maxLength: 200 }
+        - type: object
+          additionalProperties: false
+          required: [kind, path]
+          properties:
+            kind: { type: string, enum: [file] }
+            path:
+              {
+                type: string,
+                minLength: 1,
+                maxLength: 180,
+                description: Validated repository-relative tracked file path.,
+              }
+    HumanTaskAssessmentWrite:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          requestKey,
+          contextToken,
+          expectedInputRevision,
+          expectedQualificationRevision,
+          repositoryToken,
+          requestType,
+          decision,
+          checks,
+          evidence,
+          nextActions,
+        ]
+      properties:
+        requestKey: { type: string, format: uuid }
+        contextToken: { type: string, pattern: "^[a-f0-9]{64}$" }
+        expectedInputRevision:
+          { type: integer, minimum: 1, maximum: 2147483647 }
+        expectedQualificationRevision:
+          { type: integer, minimum: 1, maximum: 2147483647, nullable: true }
+        repositoryToken:
+          { type: string, pattern: "^[a-f0-9]{64}$", nullable: true }
+        requestType:
+          { type: string, enum: [bug, feature, maintenance, question] }
+        decision:
+          {
+            type: string,
+            enum: [ready, needs_information, needs_review, not_actionable],
+          }
+        checks:
+          type: array
+          minItems: 7
+          maxItems: 7
+          items:
+            type: object
+            additionalProperties: false
+            required: [dimension, state, rationale, evidenceIndexes]
+            properties:
+              dimension:
+                {
+                  type: string,
+                  enum:
+                    [
+                      goal_scope,
+                      acceptance,
+                      consistency,
+                      constraints_dependencies,
+                      duplicates,
+                      relevance,
+                      bug_evidence,
+                    ],
+                }
+              state:
+                { type: string, enum: [pass, fail, unknown, not_applicable] }
+              rationale: { type: string, minLength: 1, maxLength: 2000 }
+              evidenceIndexes:
+                type: array
+                maxItems: 32
+                items: { type: integer, minimum: 0, maximum: 31 }
+        evidence:
+          type: array
+          maxItems: 32
+          items: { $ref: "#/components/schemas/HumanTaskAssessmentEvidence" }
+        nextActions:
+          type: array
+          maxItems: 16
+          items: { type: string, minLength: 1, maxLength: 2000 }
+    HumanTaskAssessmentDraft:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          contextToken,
+          expectedInputRevision,
+          expectedQualificationRevision,
+          tasks,
+          runs,
+        ]
+      properties:
+        contextToken: { type: string, pattern: "^[a-f0-9]{64}$" }
+        expectedInputRevision: { type: integer, minimum: 1 }
+        expectedQualificationRevision:
+          { type: integer, minimum: 1, nullable: true }
+        tasks:
+          type: array
+          maxItems: 25
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, label]
+            properties:
+              id: { type: string }
+              label: { type: string }
+        runs:
+          type: array
+          maxItems: 25
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, label]
+            properties:
+              id: { type: string }
+              label: { type: string }
+        repository:
+          type: object
+          additionalProperties: false
+          required: [token, ref]
+          properties:
+            token: { type: string, pattern: "^[a-f0-9]{64}$" }
+            ref:
+              {
+                type: string,
+                description: Server-resolved commit for read-only file browsing; never manually entered.,
+              }
+    HumanTaskAssessmentError:
+      type: object
+      additionalProperties: false
+      required: [code, message, reason, issues]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        reason: { type: string }
+        issues:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [path, key]
+            properties:
+              path: { type: string }
+              key: { type: string }
     TaskQualificationReceipt:
       type: object
       additionalProperties: false
@@ -20256,6 +21801,48 @@ components:
         - blockedReason
         - nextActions
       properties:
+        sourceFailure:
+          type: object
+          additionalProperties: false
+          description: Latest qualifier failed without a current accepted assessment and its frozen inputRevision/inputDigest match the current task input; absent for unbound legacy snapshots, input drift, current accepted assessments or any newer non-failed attempt. modelStarted false requires proven pre-model preparation failure; null makes no model-start claim and also has null stage/causeCode. Safe metadata only; no assessment is fabricated.
+          required: [runId, stage, causeCode, modelStarted]
+          oneOf:
+            - properties:
+                modelStarted: { type: boolean, enum: [false] }
+            - properties:
+                modelStarted: { type: boolean, nullable: true, enum: [null] }
+                stage: { type: string, nullable: true, enum: [null] }
+                causeCode: { type: string, nullable: true, enum: [null] }
+          properties:
+            runId:
+              {
+                type: string,
+                minLength: 1,
+                maxLength: 256,
+                pattern: "^[A-Za-z0-9_-]+$",
+              }
+            stage:
+              type: string
+              nullable: true
+              enum:
+                [
+                  workspace_acquisition,
+                  checkout,
+                  baseline,
+                  materialize,
+                  capability_materialization,
+                  materialization_witness,
+                  null,
+                ]
+            causeCode:
+              {
+                type: string,
+                minLength: 1,
+                maxLength: 64,
+                pattern: "^[A-Za-z0-9_]+$",
+                nullable: true,
+              }
+            modelStarted: { type: boolean, nullable: true, enum: [false, null] }
         candidate:
           oneOf:
             - $ref: "#/components/schemas/TaskQualificationReceipt"
@@ -20578,6 +22165,34 @@ components:
           minLength: 1
           maxLength: 128
           description: Canonical schema-known field path with numeric indices, or $ for the root.
+    OperationalPreparationFailure:
+      type: object
+      additionalProperties: false
+      required: [causeChain]
+      description: Safe primary workspace-preparation cause. Preparation can fail on a continuation after earlier model execution, so this record alone does not prove that the model never ran. Messages, paths, stderr, source and credentials are excluded; the record may be absent on historical receipts.
+      properties:
+        runId: { type: string, minLength: 1, maxLength: 256 }
+        assignmentId: { type: string, minLength: 1, maxLength: 256 }
+        assignmentEpoch: { type: integer, minimum: 1 }
+        preparationId: { type: string, minLength: 1, maxLength: 256 }
+        stage: { type: string, minLength: 1, maxLength: 64 }
+        probeOperation: { type: string, pattern: "^[a-z.-]{1,64}$" }
+        causeChain:
+          type: array
+          maxItems: 4
+          items:
+            type: object
+            additionalProperties: false
+            required: [name]
+            properties:
+              name: { type: string, pattern: "^[A-Za-z_][A-Za-z0-9_]{0,63}$" }
+              code:
+                oneOf:
+                  - { type: integer }
+                  - { type: string, pattern: "^[A-Za-z_][A-Za-z0-9_]{0,63}$" }
+              syscall:
+                { type: string, pattern: "^[A-Za-z_][A-Za-z0-9_]{0,63}$" }
+              signal: { type: string, pattern: "^[A-Za-z_][A-Za-z0-9_]{0,63}$" }
     OperationalOutcome:
       type: object
       additionalProperties: false
@@ -20657,6 +22272,8 @@ components:
           description: Optional safe rule/path details for invalid output; absent on legacy receipts. Does not make rejected output usable.
           items:
             $ref: "#/components/schemas/OperationalValidationDiagnostic"
+        infrastructureFailure:
+          $ref: "#/components/schemas/OperationalPreparationFailure"
         referenceLinks:
           type: array
           description: Safe declared external links and server-resolved task links within the Run project. The reported result remains unchanged.
@@ -21683,7 +23300,6 @@ components:
           type: string
           nullable: true
           minLength: 1
-          maxLength: 255
           description: |
             Null means the project default branch at resolution time. Non-null
             values are server-validated against the project branch allow-list.
@@ -21704,7 +23320,6 @@ components:
           type: string
           nullable: true
           minLength: 1
-          maxLength: 255
     ExecutionPolicyOverrides:
       type: object
       additionalProperties: false
@@ -21741,6 +23356,11 @@ components:
         dirtyResolve:
           type: string
           enum: [ask, commit, proceed]
+        onBudgetBreach:
+          type: string
+          enum: [escalate, terminate, terminate_restorable]
+        budget:
+          $ref: "#/components/schemas/ExecutionBudgetAxis"
     ExecutionPolicy:
       type: object
       required: [preset]
@@ -21757,6 +23377,45 @@ components:
           enum: [supervised, assisted, unattended]
         overrides:
           $ref: "#/components/schemas/ExecutionPolicyOverrides"
+    ExecutionBudgetAxis:
+      type: object
+      additionalProperties: false
+      properties:
+        run:
+          $ref: "#/components/schemas/ExecutionBudgetLimits"
+        task:
+          $ref: "#/components/schemas/ExecutionBudgetLimits"
+        tree:
+          $ref: "#/components/schemas/ExecutionBudgetLimits"
+    ExecutionBudgetLimits:
+      type: object
+      additionalProperties: false
+      properties:
+        maxTokens:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 9007199254740991
+        hardMaxTokens:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 9007199254740991
+        consecutiveFailures:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 9007199254740991
+        wallClockMinutes:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 9007199254740991
+        warnAtPct:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 100
     ProjectSettingsPatchBody:
       type: object
       additionalProperties: false
@@ -21974,129 +23633,76 @@ components:
             enum: [manual, auto_draft]
     PostRunBody:
       type: object
-      required: [taskId]
       additionalProperties: false
+      required: [taskId, expectedTaskRevision, expectedSettingsToken]
+      description: |
+        Canonical immutable launch fields plus compatibility-only allowConcurrent
+        and package setup choices. New calls must include
+        expectedTaskRevision and expectedSettingsToken. Unknown authority fields
+        are refused. allowConcurrent is routed to its own authorized operation;
+        relaunchOfRunId retains scoped source lineage with fresh authority and current
+        input; adopt and cut_and_adopt return typed setup-required.
       properties:
         taskId:
-          type: string
-          minLength: 1
+          $ref: "#/components/schemas/TaskLaunchBody/properties/taskId"
+        expectedTaskRevision:
+          $ref: "#/components/schemas/TaskLaunchBody/properties/expectedTaskRevision"
+        expectedSettingsToken:
+          $ref: "#/components/schemas/TaskLaunchBody/properties/expectedSettingsToken"
         flowId:
-          type: string
-          minLength: 1
-          description: |
-            Optional per-launch Flow override, accepted as either the `flows.id`
-            UUID or the project's `flows.flow_ref_id` (both resolve to the same
-            Flow). The server derives the project from `taskId` and refuses a
-            Flow that is not enabled for that same project; a value matching
-            neither form is refused `PRECONDITION`. Omitted means the task's
-            current Flow.
+          $ref: "#/components/schemas/TaskLaunchBody/properties/flowId"
         runnerId:
-          type: string
-          minLength: 1
-          description: |
-            Optional per-launch platform ACP runner override. Omitted means the
-            saved task runner, then configured Flow/project/platform defaults.
-            The launch/task choice overrides the primary session and supplies a
-            same-capability default for other unbound sessions. Explicit bindings
-            and other-capability sessions retain their own runner selection.
+          $ref: "#/components/schemas/TaskLaunchBody/properties/runnerId"
         baseBranch:
-          type: string
-          minLength: 1
-          description: |
-            (M18, Implemented) Optional base branch the run worktree is created
-            from. Server-validated against the project's branch allow-list
-            (`listBranches(project.repoPath)`) BEFORE use as a git
-            `startPoint` — an unknown branch is refused `PRECONDITION` (409).
-            Defaults to the project's `default_branch`.
+          $ref: "#/components/schemas/TaskLaunchBody/properties/baseBranch"
         baseCommit:
-          type: string
-          minLength: 7
-          description: |
-            (ADR-124, Implemented) Optional immutable commit SHA/ref resolved by
-            the caller for pinned launches. The server verifies that it exists
-            and is ancestor-reachable from the selected server-derived base ref
-            (`baseBranch` / task / project default) before any worktree side
-            effect. Missing or unreachable commits return `PRECONDITION` (409).
-            Experiment fan-out passes the experiment's pinned `base_commit`.
+          $ref: "#/components/schemas/TaskLaunchBody/properties/baseCommit"
         targetBranch:
-          type: string
-          minLength: 1
-          description: |
-            (M18, Implemented) Optional branch the run is promoted into after
-            review. Server-validated against the same branch allow-list;
-            unknown branch → `PRECONDITION` (409). Defaults to `baseBranch`.
+          $ref: "#/components/schemas/TaskLaunchBody/properties/targetBranch"
         deliveryPolicy:
-          allOf: [{ $ref: "#/components/schemas/DeliveryPolicy" }]
-          description: |
-            Optional per-launch policy override. Omitted means the project
-            default. Any field differing from the default is shown as an
-            override in the launch dialog and snapshotted on the run.
+          $ref: "#/components/schemas/TaskLaunchBody/properties/deliveryPolicy"
         executionPolicy:
-          allOf: [{ $ref: "#/components/schemas/ExecutionPolicy" }]
-          description: |
-            Optional per-launch execution-control policy. Omitted resolves
-            through task -> project defaults -> `supervised`. A blind-ship combo
-            is refused `PRECONDITION` (409); a non-supervised resolved policy
-            requires the `launchUnattended` action (403).
-        allowConcurrent:
-          type: boolean
-          default: false
-          description: |
-            (ADR-119 — Implemented) Body-controlled behaviour flag selecting the
-            FORCE-relaunch launchability gate. Default `false` ⇒ the manual gate
-            (`classifyManualTaskLaunchability`) refuses a launch while any prior
-            run for the task is active (`busy`). `true` ⇒ the force gate
-            (`classifyForceRelaunchLaunchability`) treats every RUN status as
-            launchable, allowing an additive concurrent run alongside a still-
-            running one. It NEVER bypasses the TASK gates: a `flagged` (triage)
-            or `blocked` (open blocking relation) task is still refused
-            `PRECONDITION` (409). Gated behind the same
-            `requireProjectAction("launchRun")` — no new auth path. Not a
-            cross-resource locator (`projectId` is derived from `taskId`).
+          $ref: "#/components/schemas/TaskLaunchBody/properties/executionPolicy"
+        autoPromote:
+          $ref: "#/components/schemas/TaskLaunchBody/properties/autoPromote"
+        brainContext:
+          $ref: "#/components/schemas/TaskLaunchBody/properties/brainContext"
+        allowConcurrent: { type: boolean, default: false }
         relaunchOfRunId:
-          type: string
-          minLength: 1
-          description: |
-            (ADR-124, Implemented; membership inheritance retired by ADR-150)
-            Optional source run for a relaunch. It must reference a run of the
-            same task or the route returns `CONFLICT` (409). It always produces
-            a plain run — the legacy server-derived experiment-membership
-            inheritance was removed with the experiments feature.
+          $ref: "#/components/schemas/TaskLaunchBody/properties/relaunchOfRunId"
         packageVersions:
           type: object
+          maxProperties: 64
           additionalProperties:
             type: string
-            enum: [keep, adopt, cut_and_adopt, try_once]
-          description: |
-            (M39 Stream B, ADR-107 — Implemented; `try_once` ADR-132) Per-package
-            version-adopt decision
-            for the centralized Studio packages backing the task's flow. Keys are
-            `package_installs` ids (the project's currently-attached cut); each
-            value is `keep` (launch on the pin), `adopt` (advance the project
-            attachment to the package's newest cut), `cut_and_adopt` (mint a
-            fresh cut from uncut Studio edits via the cut gate, then adopt), or
-            `try_once` (ADR-132 — run THIS launch on the newest cut as an
-            ephemeral per-run pin: the run's `flow_revision_id`/`flow_revision`
-            snapshot points at the newer cut while
-            `project_package_attachments` stays byte-identical; offered exactly
-            when `adopt` is offered).
-            Server-constrained to the launch-detected available-version set — an
-            unknown key or an option not offered for that package → `CONFLICT`
-            (409). Flow runs keep `runs.local_package_id` NULL.
-          example: { "pkg-install-1": "try_once" }
-        brainContext:
-          type: boolean
-          nullable: true
-          description: |
-            (ADR-122 — Implemented) Opt this run into ambient Project-Brain
-            context (persisted on `runs.brain_context`). `null`/absent = off.
-        autoPromote:
-          type: boolean
-          default: true
-          description: |
-            (ADR-126) Opt this run OUT of auto-promotion when `false` — a
-            `launch`-sourced `promotion_hold` is written at run INSERT so the
-            auto-promotion sweep never considers it. Default `true`.
+            enum: [keep, try_once, adopt, cut_and_adopt]
+    PostRunPending:
+      type: object
+      additionalProperties: false
+      required: [accepted, code, intentId, location]
+      properties:
+        accepted: { type: boolean, enum: [true] }
+        code: { type: string, enum: [launch_pending] }
+        intentId: { type: string, minLength: 1, maxLength: 256 }
+        location: { type: string }
+    PostRunUpgradeRequired:
+      type: object
+      additionalProperties: false
+      required: [code, message, details]
+      properties:
+        code: { type: string, enum: [CONFIG] }
+        message: { type: string }
+        details:
+          type: object
+          additionalProperties: false
+          required: [reason, optionsEndpoint, intentEndpoint]
+          properties:
+            reason:
+              type: string
+              enum:
+                [launch_request_upgrade_required, launch_request_setup_required]
+            optionsEndpoint: { type: string }
+            intentEndpoint: { type: string, enum: [/api/task-launch-intents] }
     PostRunResponse:
       type: object
       required: [runId, status]
@@ -22529,6 +24135,9 @@ components:
           type: string
           nullable: true
           description: Present when the dispatch launched (or queued) a run.
+        intentId:
+          type: string
+          description: Accepted task launch identity; available before its Run is created.
         queuePosition:
           type: integer
           minimum: 1
@@ -23150,6 +24759,9 @@ components:
       required:
         [
           task,
+          settingsToken,
+          qualification,
+          activeLaunch,
           launchability,
           flows,
           selectedFlowId,
@@ -23161,15 +24773,39 @@ components:
           deliveryPolicyDefault,
         ]
       properties:
+        canManagePackages:
+          type: boolean
+          description: Current manageLocalPackages project action permits explicit package adoption; it does not launch a task.
+        canCutPackages:
+          type: boolean
+          description: Package management plus the current global member role permits an explicit version cut before refreshing launch settings.
+        settingsToken:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+          description: Protects the displayed selected Flow revision, immutable package cut, runner catalog and current task configuration. Not an authorization grant.
+        qualification:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/TaskQualificationSummary"
+        activeLaunch:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/TaskLaunchReceipt"
+        enforcementRefusal:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/NodeEnforcementRefusal"
         task:
           type: object
           additionalProperties: false
-          required: [id, projectId, projectSlug, number, status, flowId]
+          required:
+            [id, projectId, projectSlug, number, status, flowId, revision]
           properties:
             id: { type: string, format: uuid }
             projectId: { type: string, format: uuid }
             projectSlug: { type: string }
             number: { type: integer, minimum: 1 }
+            revision: { type: integer, minimum: 0, maximum: 2147483647 }
             status:
               type: string
               enum: [Backlog, InFlight, Done, Abandoned]
@@ -23195,6 +24831,7 @@ components:
                   runner_unavailable,
                   runner_unresolved,
                   project_archived,
+                  flow_settings_enforcement_refused,
                   unconfigured,
                   flow_missing,
                   no_revision,
@@ -23249,6 +24886,7 @@ components:
                   unsupported_schema,
                   incompatible,
                   runner_unresolved,
+                  flow_settings_enforcement_refused,
                 ]
         flows:
           type: array
@@ -25451,6 +27089,32 @@ components:
             resolvedThreadCount: { type: integer, minimum: 0 }
             gateChatMessageCount: { type: integer, minimum: 0 }
             payload: { type: string }
+    BudgetRestartPreview:
+      type: object
+      additionalProperties: false
+      required: [request, title, prompt, flowName, runnerLabel, targetRevision, settings]
+      properties:
+        request: { $ref: "#/components/schemas/TaskLaunchBody" }
+        title: { type: string }
+        prompt:
+          type: string
+          description: Effective current task request including answered clarifications, shown before confirmation.
+        flowName:
+          type: string
+          description: Display name of the selected Flow or standalone agent target.
+        runnerLabel: { type: string }
+        targetRevision: { type: string }
+        settings:
+          type: object
+          additionalProperties: false
+          required: [executionPolicy, deliveryPolicy, autoPromote, brainContext, targetBranch, workspace]
+          properties:
+            executionPolicy: { $ref: "#/components/schemas/ExecutionPolicy" }
+            deliveryPolicy: { $ref: "#/components/schemas/DeliveryPolicy" }
+            autoPromote: { type: boolean }
+            brainContext: { type: boolean, nullable: true }
+            targetBranch: { type: string }
+            workspace: { type: string, enum: [none, repo_read, worktree] }
     HitlResponseBody:
       type: object
       description: |
@@ -25460,6 +27124,8 @@ components:
         `form` | `human` | `agent_question` and may carry option-specific payload for
         `budget_breach`. Exactly ONE shape MUST match the row's `kind`.
       properties:
+        restartLaunch:
+          $ref: "#/components/schemas/TaskLaunchBody"
         reviewSourceFingerprint:
           type: string
           pattern: "^sha256:[0-9A-Za-z_-]+$"
@@ -26492,6 +28158,7 @@ components:
         - permission_not_pending
         - edit_lock_not_held
         - event_outbox_backpressure
+        - budget_restart_preview_required
       description: |
         `agent_session_ended` is deprecated: it has no producer since
         2026-09-26 (a dead session answers 409 `session_ended`) and stays in the
@@ -26514,6 +28181,8 @@ components:
         answers use response (including JSON null) and optional confidence.
         Null with answer_stored means legacy data cannot safely be replayed.
       properties:
+        restartLaunch:
+          $ref: "#/components/schemas/TaskLaunchBody"
         optionId: { type: string }
         response: {}
         confidence: { type: number, minimum: 0, maximum: 1 }

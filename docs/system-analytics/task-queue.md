@@ -1,183 +1,172 @@
 # Task queue (priority-ordered dependency-draining admission)
 
+**Implemented locally — ADR-121/200.** The [launch admission contract](task-launch-admission.md)
+owns immutable decisions, manual/automatic authority and compatibility. Final
+combined acceptance and deployed qualification remain separate.
+
 ## Purpose
 
-This domain (**ADR-121**) covers the **activating layer** over the shipped
-operator→triager→auto-drain loop (ADR-111/112): cycle-safe relation authoring,
-first-class task **priority** backed by a criticality dictionary, a single
-**priority-ordered admission funnel** shared by the slot-free scheduler gate and
-the 60s poll backstop, **cap-safe resume**, advisory **triage confidence**, and an
-operator **pause/dequeue** valve. It does not rebuild the triage/relations/launch
-substrate — it orders and bounds admission and closes the resume over-cap bug.
+Order and bound eligible task execution under existing Flow/agent capacity pools,
+parent limits and operator pause. Queue admission consumes an accepted request;
+choosing task configuration alone never authorizes execution.
 
 ## Domain entities
 
-- **Task priority** (`tasks.priority`, Implemented) — closed set
-  `{low, normal, high, urgent}` (default `normal`), the live input to the
-  criticality dictionary. Read LIVE at admission, never snapshotted onto a run.
-- **Criticality dictionary** (`web/lib/tasks/criticality.ts`, Implemented) — the
-  single ordering source, enum→weight `{low:100, normal:200, high:300, urgent:400}`.
-- **Triage confidence** (`tasks.triage_confidence` `numeric(4,3)`, Implemented) —
-  advisory only, DB-CHECK-bounded to `[0,1]`; Observatory-fed; never a routing input.
-- **Queue pause** (`tasks.queue_paused`, Implemented) — operator valve excluding a
-  task from auto-admission, auto-resume, and the poll backstop; reversible.
-- **Project queue settings** (`projects.task_queue_settings` jsonb, Implemented) —
-  `{ edgeDrain?, maxInFlightAuto? }`; NULL ⇒ env defaults.
-- **Admission claim** (`tasks.queue_claimed_at`, Implemented) — the task-level C2
-  claim, CAS-set under the scheduler lock before the worktree-first `launchRun`
-  (no run row exists at claim time). While set, the claim removes the task from
-  both C2 consumers' candidate query (`loadC2CandidateRows`): the scheduler lock
-  orders two gate admissions and the later one never selects a task the earlier
-  one still holds. The CAS additionally requires no live or unseen flow run for
-  the task (`unseenOrLiveFlowRunExists`: a non-terminal flow run, or one started
-  after the latest run the eligibility verdict saw), because claimless admitters
-  — the poll backstop, a manual Launch, a crash recover — run outside the lock
-  and can land a run between the verdict's reads and the CAS. Cleared on
-  run-exists or launch failure; reconcile-swept if the claimer crashes.
-- **Auto-drain origin** (`runs.queue_admitted_at`, Implemented) — set at the
-  run-INSERT for funnel-minted runs; the precise per-project `liveAuto` counter.
-- **Resume request** (`runs.resume_requested_at`, Implemented) — the C3 FIFO key,
-  set when an answered idle run is deferred at cap and consumed (cleared) when the
-  gate flips it to Running. It is also stamped on a parked (`WaitingOnChildren`)
-  coordinator whose wake was deferred for capacity; C3 never selects that row.
-  An orchestrator's failed-child wake intent is deliberately a separate column
-  (`runs.failed_child_wake_at`, P0-5 v2), so C3 can never read it as "answered"
-  and resume a coordinator whose own HITL is still open.
+- **Task priority** — live `low | normal | high | urgent`, ordered by
+  `web/lib/tasks/criticality.ts` (`100/200/300/400`); it is not frozen into
+  execution authority.
+- **Accepted launch intent** — one immutable request, ordinary task reservation,
+  due time and preparation ownership. Held requests retain their reservation.
+- **Preparation slot** — reserved under the scheduler lock before Git effects;
+  transferred to a bound Pending Run and then its Running slot without double count.
+- **Automatic task arm** — current accepted Ready assessment plus independent
+  `launchMode=auto`, triaged state and compatible launch intent.
+- **Queue settings** — project `edgeDrain` / `maxInFlightAuto` overrides and
+  configured manual reserve; `triageConfidence` remains advisory.
+- **Pause** — `queuePaused` holds new manual/automatic dispatch and automatic
+  continuation until explicitly cleared.
+- **Resume request** — existing `resumeRequestedAt` FIFO intent for idle work;
+  failed-child wake retains its separate owner and cannot answer open HITL.
 
-See ERDs: [`db/runs-domain.md`](../db/runs-domain.md),
-[`db/projects-domain.md`](../db/projects-domain.md), and the consolidated
-[`db/erd.md`](../db/erd.md). Decision: [ADR-121](../decisions.md#adr-121-priority-ordered-dependency-draining-task-queue-unified-admission-gate).
+Persistence is owned by [launch/preparation](../db/task-launch-domain.md) and
+[runs](../db/runs-domain.md).
 
 ## State machine
 
-The admission state of one eligible unit of work (Implemented):
+Accepted intent state and Run state are distinct; the owning contract carries the
+complete state machine. This projection shows queue-to-capacity transfer.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> BacklogEligible: triaged + auto + flow + unblocked + not paused
-    BacklogEligible --> Held: latest Flow run has D2 graph-only cut-over failure\nAND arm is absent or not newer than event
-    Held --> BacklogEligible: human re-triage writes a fresh arm
-    BacklogEligible --> Claimed: C2 admit (CAS queue_claimed_at IS NULL\nAND no live or unseen flow run)
-    Claimed --> Running: launchRun inserts run (queue_admitted_at)
-    Claimed --> BacklogEligible: launchRun fails → clear claim
-    [*] --> Pending: queued run (over cap)
-    Pending --> Running: C1 admit (weight DESC, FIFO)
-    [*] --> NeedsInputIdle: idle checkpoint
-    NeedsInputIdle --> ResumeRequested: HITL answered at cap (set resume_requested_at)
-    ResumeRequested --> Running: C3 admit (cap-safe)
-    Running --> [*]: terminal / idle
+  [*] --> Queued: Explicit manual or qualified automatic acceptance
+  Queued --> Preparing: Current authority + capacity + fenced claim
+  Preparing --> BoundPending: Same immutable Run identity bound
+  BoundPending --> Running: Revalidate and commit first dispatch
+  BoundPending --> Queued: Capacity unavailable, keep linked Run
+  Queued --> Held: Changed input/settings or revoked authority
+  Preparing --> Held: Proven refusal or exhausted failure budget
+  Held --> Cancelled: Explicit cancel or replace original
+  Running --> [*]: Existing terminal/idle lifecycle
 ```
+
+Replacement cancels the original and atomically creates a separately queued
+successor; it never changes the original frozen authority.
 
 ## Process flows
 
-The unified admission funnel on a freed slot (Implemented). `promoteNextPending`
-is the gate; the 60s `auto-launch-triaged` poll is the C2 BACKSTOP (both share
-`lib/scheduler/c2-eligibility`):
+Qualification publication requests automatic acceptance after commit. The
+scheduler and its existing backstop converge on the same durable request.
 
 ```mermaid
 flowchart TD
-    A[freed slot / poll tick] --> B[take scheduler advisory lock]
-    B --> C{free = cap - countLiveRuns > 0?}
-    C -- no --> Z[return]
-    C -- yes --> D[gather candidates C1 + C3 + eligible C2]
-    D --> E[order: weight DESC, classRank, FIFO ASC]
-    E --> F{best candidate class}
-    F -- C1 --> G[CAS Pending to Running, dispatch runFlow/resume]
-    F -- C3 --> H[flip NeedsInputIdle to Running, dispatch session/resume]
-    F -- C2 --> I{edgeDrain on AND reserve AND maxInFlightAuto?}
-    I -- no --> Z
-    I -- yes --> J[CAS queue_claimed_at and no live or unseen flow run, launchRun outside lock]
+  A[Qualification published / scheduler tick] --> B[Check current assessment and automatic arm]
+  B --> C[enqueueQualifiedAutomaticTaskLaunch]
+  C --> D[Existing reservation or one keyed accepted intent]
+  D --> E[Scheduler capacity lock and task reservation]
+  E --> F{Eligible capacity and source limits?}
+  F -- no --> G[Remain queued, no Git or model effect]
+  F -- yes --> H[Claim immutable preparation identity]
+  H --> I[Owned workspace preparation outside SQL]
+  I --> J[Atomic Run binding and first-dispatch revalidation]
 ```
+
+`promoteNextPending`, `claimTaskLaunchIntent` and `tryStartRun` share the scheduler
+capacity lock. `countLiveRuns` includes preparing intents and bound Pending
+reservations; the candidate's own reservation is subtracted once. Qualified task
+drain also applies manual reserve and per-project automatic share. Explicit
+scheduled/evaluation/agent-source operations keep their source limits and global
+pool cap; they do not become the C2 task-drain policy merely because their basis
+is automatic. Parent-created work additionally uses the existing fanout/depth/tree
+budget. [Admission](task-launch-admission.md) owns this source matrix.
+
+The existing `auto-launch-triaged` backstop and `runSystemSweep` reconcile accepted
+requests. No client polling or second execution engine is introduced. Priority,
+FIFO and relation readiness still select work; acceptance, preparation and model
+execution remain different outcomes.
+
+### Autonomous accepted-request service (Implemented)
+
+The [durable launch worker](task-launch-admission.md#durable-launch-worker-implemented)
+serves one Flow and one Agent slot under the existing web worker runtime.
+Advisory pool wakes and startup/database-deadline reconciliation call the same
+shared scheduler; they cannot promote a selected intent ahead of eligible work
+or bypass its authority. Expired preparation and bound-but-undispatched requests
+remain recoverable without an HTTP callback or cron tick. The existing scheduler
+and host backstops retain their responsibilities.
+
+Local queue, restart and combined browser qualification are recorded with the
+[launch contract](task-launch-admission.md#durable-launch-worker-implemented).
+Hosted and production acceptance remain separate.
+Required combined acceptance uses real PostgreSQL/Git fixtures: a busy owned
+repository released after acceptance and several rapid acceptances progress without HTTP `after` or
+cron; restart discovers expired preparation and bound-undispatched work; blocked
+work in either pool does not starve its other eligible candidates or the other
+pool. Repeated wakes and competing worker instances preserve one binding and
+first dispatch. A no-progress pass waits, and stop admits no new claim while
+joining active shared dispatch without an independent lease release. Existing
+authorization, cap, retry and fencing assertions remain required.
 
 ## Expectations
 
-- A pool's live count NEVER exceeds `capForPool(pool)`, including under a resume
-  burst — `resumeRun` and the agent idle-resume cap-gate the claim, deferring to
-  the C3 gate source instead of bypassing the cap (INV-1, the D2 fix).
-- A blocked task (`getOpenRelationBlockers` ≠ ∅) is NEVER admitted; priority is a
-  tiebreak WITHIN eligibility, never an override of a blocker or the cap (INV-2).
-- Admission ordering uses ONLY the criticality dictionary
-  (`weightOf`) as the primary key — no module computes an ad-hoc weight (INV-4).
-- `triage_confidence` is NEVER read by any admission/launch/scheduler/routing path;
-  it is read only by the read-only Observatory surface (INV-5).
-- A gating-kind (`blocks|depends_on|requires`) relation graph is acyclic at all
-  times — a cycle-closing write is refused with `MaisterError("CONFLICT")` inside
-  the insert transaction (INV-6).
-- `edgeDrain` disabled turns OFF only the C2 fresh-Backlog-task source; C1 (Pending
-  promote) and C3 (resume) still flow cap-safe and priority-ordered (INV-7).
-- Auto-drain's aggregate flow-pool footprint NEVER exceeds `flowCap − reserve`
-  (`MAISTER_TASK_QUEUE_AUTO_RESERVE`), keeping headroom for scratch/manual/resume
-  (INV-8).
-- Per-project live auto-drained flow runs (counted off `runs.queue_admitted_at`,
-  excluding manual/scratch/ADR-119 force-relaunch runs) NEVER exceed
-  `maxInFlightAuto` when set (INV-9).
-- A `queue_paused` task is NEVER admitted (C2), NEVER auto-resumed (C3), and NEVER
-  picked by the 60s poll backstop, until unpaused; pause/unpause preserve all task
-  config — flow, runner, priority, relations (INV-10).
-- Priority is read LIVE at selection from `tasks.priority` (never snapshotted onto a
-  run), so a re-prioritization takes effect for not-yet-admitted work.
-- Exactly-once admission per eligible unit across {edge, poll, direct launch,
-  resume} (INV-3): C2 via the `tasks.queue_claimed_at` CAS under the scheduler
-  lock. Two gate admissions: the lock orders their transactions and a claimed
-  task is excluded from the candidate query, so the later one never reaches the
-  CAS (before that exclusion it could CAS after the winner cleared its claim —
-  the `AC-F1-claim` double launch); gate vs a claimless admitter (poll backstop,
-  manual Launch): the CAS refuses a live or unseen flow run (the `AC-F1-claim`
-  straddled cases in `admission-gate.integration.test.ts`); the poll never
-  selects a claimed task and its `launchRun` busy gate refuses a task with a
-  live run; C1/C3 via the status-guarded `Pending|NeedsInputIdle → Running` CAS.
-- Both C2 consumers MUST inspect the durable `run.failed` graph-only cut-over
-  event for the latest Flow run before claiming or launching. When the task has no
-  `launch_armed_at`, or its arm is at or before the event's `occurred_at`, the
-  shared CAS give-up transaction clears `launch_mode`, marks the task `flagged`,
-  and writes the system comment/activity without creating another run. A later
-  human re-triage writes a fresh arm and is eligible again.
+- **TQ-01:** Ordinary repeated/competing manual and automatic requests cannot
+  duplicate delivery, enforced by the task reservation lock, active partial
+  unique index and principal/project/operation/key payload comparison.
+- **TQ-02:** Capacity includes pre-run preparation and actual execution exactly
+  once, enforced by scheduler-lock accounting and first-dispatch transfer.
+- **TQ-03:** Automatic task drain requires current accepted qualification and its
+  independent arm, enforced by `armedAutomaticTaskLaunchBasis` and frozen
+  dispatch checks. A manual decision never arms future revisions.
+- **TQ-04:** Input/settings changes before dispatch hold the original request,
+  enforced by queued-edit locks and current semantic/settings/runner checks.
+- **TQ-05:** Queue pause, blockers, target availability, workspace isolation,
+  Flow gates and current authority remain effective, enforced by common admission
+  and dispatch paths rather than a button state.
+- **TQ-06:** Capacity/ownership contention consumes no genuine failure attempt;
+  bounded preparation failures retain their cause, enforced by intent attempts,
+  due times and typed hold reasons. Qualification findings are not rewritten.
+- **TQ-07:** Historical v1 occupancy, already-running work and continuation remain
+  protected. Old incomplete pre-dispatch input is held rather than reconstructed;
+  migration guards and the common dispatch reader enforce that compatibility.
+
+- Eligible work uses the shared criticality dictionary and deterministic class/FIFO
+  ordering, enforced by `admission-selector.ts` and the scheduler candidate sorter.
+  Priority cannot override a blocker, pause, capacity limit or missing authority;
+  confidence is read by the Observatory, not routing.
+- `edgeDrain=false` disables fresh C2 task-drain selection, while existing Pending
+  work and requested idle continuation retain their cap-safe paths. The scheduler,
+  `resumeRun` and agent idle-resume checks enforce the same pool cap.
+- Gating relation writes cannot create a new cycle, enforced by the relation
+  service's transaction/advisory lock and cycle check. Existing mutually blocked
+  work remains visible and requires explicit relation repair.
 
 ## Edge cases
 
-- Relation write closes a gating cycle → `MaisterError("CONFLICT")` (HTTP 409),
-  evaluated under a per-project advisory lock (no TOCTOU).
-- Out-of-set priority / out-of-range confidence on a write → `MaisterError("CONFIG")`
-  (HTTP 422); the DB CHECK is the final backstop.
-- `launchRun` failure after a C2 claim → clear `queue_claimed_at`, task re-eligible
-  next tick; a TERMINAL refusal (PRECONDITION/CONFIG) or the ADR-112 failure cap
-  gives the task up (`flagged`) on both the gate and the poll path. A latest-run
-  D2 graph-only cut-over failure is held before any new C2 claim, using its
-  durable `occurred_at` boundary rather than a retryable launch failure.
-- A C2 claimer crash between the CAS and the run-INSERT → the reconcile sweep clears
-  the stale `queue_claimed_at` past a grace window (`staleClaimsCleared`); the
-  per-task live-flow-run guard prevents a double-mint if a run was created.
-- A claimless launch (poll backstop, manual Launch) lands a flow run between a
-  gate admission's verdict reads and its claim CAS → the CAS is refused by the
-  live-run arm; if that run already reached a terminal status, by the
-  unseen-run arm (a flow run started after the latest one the verdict counted)
-  — the gate never launches a retry ahead of its backoff or failure cap. Pinned
-  by the two `AC-F1-claim, straddled` cases.
-- Two gate admissions of one task → the later one, ordered behind the winner by
-  the scheduler lock, does not select the task while the winner's claim is set;
-  once the claim is cleared the winner's run exists and the live-run guard
-  skips it (the `AC-F1-claim, sequential` control).
-- The poll backstop ticks while the gate's claimer is between its CAS and the
-  run-INSERT → the task is not a poll candidate (outstanding claim); without
-  that filter the poll's `launchRun` would refuse on the claimer's worktree
-  (`PRECONDITION`) and give the task up while its launch succeeds.
-- A just-answered low-criticality resume can be starved by higher-criticality fresh
-  tasks (accepted v1; priority aging is future — NG5).
+- Invalid priority/confidence values refuse through the shared field mapper and
+  database CHECKs; the configured queue settings are validated independently.
+- No free slot: retain the accepted request; a Run may not exist yet. A bound
+  Pending Run can return to queued ownership without a new attempt or workspace.
+- Parent fanout full: keep the child queued with `launch_parent_capacity_wait`,
+  before allocation, without consuming the preparation failure budget.
+- Current assessment/evidence stale: automatic launch refuses or holds;
+  authorized manual admission remains independent of qualification.
+- Lost acceptance response: replay the exact key/body; changing payload with the
+  same key conflicts. A receipt is not a successful execution.
+- Stale worker, expired lease or restart: re-entry retains the exact allocation;
+  current durable claims and physical exclusion prevent unsafe recreation/cleanup.
+- Existing `queue_claimed_at` values remain compatibility/reconciliation facts
+  for historical C2 owners; they are not a manual grant or an alternative current
+  task-launch reservation.
 
 ## Linked artifacts
 
-- ADR: [ADR-121](../decisions.md#adr-121-priority-ordered-dependency-draining-task-queue-unified-admission-gate)
-- Code: `web/lib/tasks/{criticality,admission-selector,queue-fields,queue-settings}.ts`,
-  `web/lib/scheduler.ts` (the unified `promoteNextPending` gate),
-  `web/lib/scheduler/c2-eligibility.ts` (the shared C2 selection primitives),
-  `web/lib/scheduler/handlers/auto-launch-triaged.ts` (the C2 poll backstop),
-  `web/lib/runs/resume.ts` + `web/lib/services/hitl.ts` (the cap-gated resume),
-  `web/lib/reconcile.ts` (stale-claim sweep),
-  `web/lib/social/relations.ts`, `web/lib/queries/observatory-confidence.ts`.
-- Related domains: [`scheduler.md`](scheduler.md), [`tasks.md`](tasks.md),
-  [`triage.md`](triage.md), [`social-board.md`](social-board.md),
-  [`hitl.md`](hitl.md), [`runs.md`](runs.md), [`observatory.md`](observatory.md).
-- Config: [`../configuration.md`](../configuration.md) (env vars);
-  [`../error-taxonomy.md`](../error-taxonomy.md) (CONFLICT relation-cycle).
-- API: [`../api/web.openapi.yaml`](../api/web.openapi.yaml),
-  [`../api/external/operations.openapi.yaml`](../api/external/operations.openapi.yaml).
+- [Launch admission](task-launch-admission.md), [preparation](agent-preparation.md),
+  [qualification](task-qualification.md), [scheduler](scheduler.md).
+- Sources: `web/lib/tasks/launch-automatic-enqueue.ts`, `launch-dispatch-claim.ts`,
+  `launch-capacity.ts`, `web/lib/scheduler.ts`, `web/lib/scheduler/c2-eligibility.ts`,
+  `web/lib/scheduler/handlers/auto-launch-triaged.ts`.
+- Real behavior coverage: `web/lib/tasks/__tests__/launch-intent.integration.test.ts`,
+  `web/lib/scheduler/__tests__/tick.integration.test.ts`,
+  `web/e2e/task-launch-gating.spec.ts`.
+- [Queue configuration](../configuration.md), [Web API](../api/web.openapi.yaml),
+  [external API](../api/external/operations.openapi.yaml),
+  [relations](social-board.md) and [HITL](hitl.md).

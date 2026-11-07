@@ -19,6 +19,7 @@ import {
   vi,
 } from "vitest";
 
+import { bindPendingPlanIntentsForRunChecks } from "@/test-support/queued-delegation";
 import { schema } from "@/test-support/graph-run-seed";
 import {
   type DelegationSeedCtx,
@@ -150,6 +151,19 @@ async function seedAsPlanTask(args: {
     db,
   );
 
+  const { establishExecutionChildAdmission } =
+    await import("@/lib/tasks/qualification-admission");
+
+  await establishExecutionChildAdmission(
+    db as unknown as import("@/lib/execution-host/db").Db,
+    {
+      projectId: ctx.projectId,
+      parentRunId,
+      childTaskId: task.id,
+      planRevision: "delegation-fixture",
+    },
+  );
+
   return task.id;
 }
 
@@ -260,6 +274,9 @@ describe("auto_launch_run_plan with FLOW children (ADR-163)", () => {
         rows.map((r) => ({ ...r, payload: { runKind: "scratch" } })),
       ),
     );
+    await bindPendingPlanIntentsForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
+    );
 
     expect(launched).toHaveLength(0);
 
@@ -272,6 +289,9 @@ describe("auto_launch_run_plan with FLOW children (ADR-163)", () => {
         runKind: "agent",
         status: "Done",
       }),
+    );
+    await bindPendingPlanIntentsForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
     );
 
     expect(launched).toEqual([dependentTaskId]);
@@ -344,6 +364,9 @@ describe("auto_launch_run_plan with FLOW children (ADR-163)", () => {
 
     // At-least-once contract: a refusal is never thrown out of the consumer.
     await expect(consumer.handle(events)).resolves.toBeUndefined();
+    await bindPendingPlanIntentsForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
+    );
 
     expect(launched).toEqual([]);
 
@@ -372,6 +395,9 @@ describe("auto_launch_run_plan with FLOW children (ADR-163)", () => {
 
     // A redelivered window (same refusal) does not post a second identical comment.
     await consumer.handle(events);
+    await bindPendingPlanIntentsForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
+    );
 
     expect(await comments()).toHaveLength(1);
   }, 60_000);
@@ -416,6 +442,9 @@ describe("auto_launch_run_plan with FLOW children (ADR-163)", () => {
         status: "Review",
         cause: "graph_completed",
       }),
+    );
+    await bindPendingPlanIntentsForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
     );
 
     expect(promoted).toEqual([childRunId]);
@@ -470,6 +499,9 @@ describe("auto_launch_run_plan with FLOW children (ADR-163)", () => {
           cause,
         }),
       );
+      await bindPendingPlanIntentsForRunChecks(
+        db as unknown as import("@/lib/execution-host/db").Db,
+      );
 
       expect(promoted).toEqual([]);
 
@@ -519,6 +551,9 @@ describe("auto_launch_run_plan with FLOW children (ADR-163)", () => {
         runKind: "flow",
         status: "Review",
       }),
+    );
+    await bindPendingPlanIntentsForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
     );
 
     expect(promoted).toEqual([]);
@@ -591,6 +626,9 @@ describe("auto_launch_run_plan with FLOW children (ADR-163)", () => {
         }),
       ),
     ).resolves.toBeUndefined();
+    await bindPendingPlanIntentsForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
+    );
 
     expect(
       (
@@ -737,16 +775,40 @@ describe("the as-plan auto-launcher is bounded by the shared cap (ADR-163 REQ-15
     // The consumer's contract is idempotent: a refusal is a logged skip, never a
     // throw — a throw would redeliver this window forever.
     await expect(consumer.handle(events)).resolves.toBeUndefined();
+    await bindPendingPlanIntentsForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
+    );
 
     expect(await runsForTask(dependentTaskId)).toBe(0);
 
     // Free a slot and re-deliver. The dependent now launches, which proves the
     // refusal above was the CAP and not a broken fixture — without this half the
     // first assertion would pass on any failure at all.
+    const [waiting] = (
+      await pool.query(
+        "SELECT state,reason,attempts,preparation_identity FROM task_launch_intents WHERE task_id=$1",
+        [dependentTaskId],
+      )
+    ).rows;
+
+    expect(waiting).toMatchObject({
+      state: "queued",
+      reason: "launch_parent_capacity_wait",
+      attempts: 0,
+      preparation_identity: null,
+    });
     await pool.query(`UPDATE "runs" SET "status" = 'Done' WHERE "id" = $1`, [
       hog,
     ]);
+    // Advance only the owned capacity wake's due time; no real delay or failure retry is involved.
+    await pool.query(
+      "UPDATE task_launch_intents SET due_at=now() WHERE task_id=$1 AND state='queued' AND reason='launch_parent_capacity_wait'",
+      [dependentTaskId],
+    );
     await expect(consumer.handle(events)).resolves.toBeUndefined();
+    await bindPendingPlanIntentsForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
+    );
 
     expect(await runsForTask(dependentTaskId)).toBe(1);
 
@@ -780,12 +842,36 @@ describe("the as-plan auto-launcher is bounded by the shared cap (ADR-163 REQ-15
     const consumer = buildAutoLaunchRunPlanConsumer({ db });
 
     await expect(consumer.handle(events)).resolves.toBeUndefined();
+    await bindPendingPlanIntentsForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
+    );
     expect(await runsForTask(dependentTaskId)).toBe(0);
 
+    const [waiting] = (
+      await pool.query(
+        "SELECT state,reason,attempts,preparation_identity FROM task_launch_intents WHERE task_id=$1",
+        [dependentTaskId],
+      )
+    ).rows;
+
+    expect(waiting).toMatchObject({
+      state: "queued",
+      reason: "launch_parent_capacity_wait",
+      attempts: 0,
+      preparation_identity: null,
+    });
     await pool.query(`UPDATE "runs" SET "status" = 'Done' WHERE "id" = $1`, [
       hog,
     ]);
+    // Advance only the owned capacity wake's due time; no real delay or failure retry is involved.
+    await pool.query(
+      "UPDATE task_launch_intents SET due_at=now() WHERE task_id=$1 AND state='queued' AND reason='launch_parent_capacity_wait'",
+      [dependentTaskId],
+    );
     await expect(consumer.handle(events)).resolves.toBeUndefined();
+    await bindPendingPlanIntentsForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
+    );
 
     expect(await runsForTask(dependentTaskId)).toBe(1);
     expect(
@@ -851,6 +937,9 @@ describe("the as-plan auto-launcher is bounded by the shared cap (ADR-163 REQ-15
         status: "Done",
         extra: { completion: "result_only", resultStatus: "valid" },
       }),
+    );
+    await bindPendingPlanIntentsForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
     );
 
     expect(launched).toEqual([dependentTaskId]);

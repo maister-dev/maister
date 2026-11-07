@@ -12,6 +12,7 @@ import path from "node:path";
 import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { taskLaunchPreparationOwnsWorktree } from "@/lib/tasks/launch-preparation-ownership";
 import { CONFIG_PERSISTENCE_DIRECTORY } from "@/lib/project-config-persistence/review-files";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { getDb } from "@/lib/db/client";
@@ -496,6 +497,17 @@ async function checkFinalOrphanRemovalPreconditions(args: {
 
   if (project === null) return "trust_lost";
 
+  if (
+    args.candidate.worktreePath &&
+    (await taskLaunchPreparationOwnsWorktree(args.database, {
+      runId: provenance.runId,
+      worktreePath: args.candidate.worktreePath,
+      parentRepoPath: provenance.parentRepoPath,
+      projectId: project.id,
+    }))
+  )
+    return "ownership_reappeared";
+
   const liveSessions = args.liveSessions;
   const [workspaceRows, runRows] = await Promise.all([
     args.database
@@ -572,6 +584,25 @@ async function processTrustedCandidate(args: {
     })
     .from(runs)
     .where(eq(runs.id, provenance.runId));
+
+  if (
+    await taskLaunchPreparationOwnsWorktree(args.database, {
+      runId: provenance.runId,
+      worktreePath,
+      parentRepoPath: provenance.parentRepoPath,
+      projectId: project.id,
+    })
+  ) {
+    await holdReconciliationFinding({
+      database: args.database,
+      claim: args.claim,
+      resultCode: "launch_intent_owned",
+      now: args.now(),
+    });
+    args.summary.retained += 1;
+
+    return;
+  }
 
   const retryOwners = await args.database
     .execute(sql`SELECT id FROM agent_retry_intents
@@ -1241,25 +1272,10 @@ export async function runWorkspaceReconciliationSweep(
     limit: RECONCILIATION_BATCH_SIZE,
   });
 
-  // ADR-166: ONE session listing per sweep (was one per candidate action) —
-  // and never act on a transient host outage: a failed listing skips the tick.
+  // Each destructive decision needs the host's attested inventory for its run.
   const hosts =
     options.executionHosts ??
     createExecutionHosts({ db: database as unknown as ExecutionDb });
-  let liveSessions: SupervisorSessionRecord[] = [];
-
-  if (dueFindings.length > 0) {
-    try {
-      liveSessions = await hosts.local().listSessions();
-    } catch (error) {
-      log.warn(
-        { err: error instanceof Error ? error.message : String(error) },
-        "workspace reconciliation sweep: session listing failed — skipping tick",
-      );
-
-      return summary;
-    }
-  }
 
   log.info(
     {
@@ -1298,6 +1314,10 @@ export async function runWorkspaceReconciliationSweep(
         });
         continue;
       }
+      const runId = candidate.workspace?.runId ?? candidate.provenance?.runId;
+      const liveSessions = runId
+        ? await hosts.local().listSessionsForRun(runId)
+        : [];
 
       if (candidate.workspace !== null) {
         await processMissingWorkspaceCandidate({

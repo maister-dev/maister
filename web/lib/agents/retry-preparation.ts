@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { TaskLaunchRequest } from "@/lib/tasks/launch-schema";
 import type { Db } from "@/lib/execution-host/db";
 import type { Run } from "@/lib/db/schema";
 import type {
@@ -58,6 +59,8 @@ export type RetryRunnerOption = {
   reason: string | null;
 };
 export type AgentRetryOptions = {
+  launchRequest?: TaskLaunchRequest;
+  launchPreview?: { title: string; prompt: string };
   eligible: boolean;
   reason: string | null;
   expiresAt: string;
@@ -192,6 +195,12 @@ export async function prepareAgentRetry(
       "Retry runner catalog exceeds the supported 100 candidates",
       { details: { reason: "retry_runner_catalog_limit" } },
     );
+  const previewWorkspace =
+    source.taskId &&
+    source.agentKind === "code_delivery" &&
+    source.agentWorkspace
+      ? source.agentWorkspace
+      : context.effective.parsed.workspace;
   const resolutions = new Map<string, RunnerResolution>();
   const runners: RetryRunnerOption[] = catalog.map((runner) => {
     try {
@@ -200,7 +209,7 @@ export async function prepareAgentRetry(
         link: {},
         agent: {
           mode: context.effective.parsed.mode,
-          workspace: context.effective.parsed.workspace,
+          workspace: previewWorkspace,
         },
         project: {},
         platform: { defaultRunnerId: runner.id },
@@ -235,7 +244,7 @@ export async function prepareAgentRetry(
       db,
       context,
       undefined,
-      context.effective.parsed.workspace,
+      previewWorkspace,
     );
 
     selectedRunnerId = currentRunner.runnerId;

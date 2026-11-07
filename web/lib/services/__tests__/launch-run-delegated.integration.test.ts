@@ -1,12 +1,14 @@
+import type { LaunchRunContext, LaunchRunInput } from "@/lib/services/runs";
 import type { FlowDelegationSnapshotInput } from "@/lib/flows/delegatable-flow";
 
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
+import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
@@ -22,6 +24,32 @@ import {
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
 import { minimalGraphManifest } from "@/test-support/delegation-seed";
+import {
+  seedAcceptedRepositoryQualification,
+  isolateEngineFixtureRuntime,
+} from "@/test-support/repository-qualification";
+import {
+  launchQualifiedEngineRun,
+  bindAcceptedEngineFixture,
+} from "@/test-support/launch-engine-response";
+import { createDelegatedTaskLaunchSource } from "@/lib/orchestrator/delegated-launch-authority";
+import {
+  delegationLaunchOperation,
+  delegationPlanRevision,
+} from "@/lib/orchestrator/launch-operation";
+import { issueOrchestratorRunToken } from "@/lib/agents/tokens";
+import { tokenTaskLaunchPrincipal } from "@/lib/tasks/launch-token";
+import { establishExecutionChildAdmission } from "@/lib/tasks/qualification-admission";
+import {
+  serverTaskLaunchRequest,
+  acceptServerTaskLaunch,
+} from "@/lib/tasks/launch-intent";
+import { tasks } from "@/lib/db/schema";
+import { issueToken } from "@/lib/tokens/issue";
+import { revokeToken, SYSTEM_REVOKE_ACTOR } from "@/lib/tokens/revoke";
+import { cancelTokenTaskLaunch } from "@/lib/tasks/launch-cancel";
+import { prepareTaskLaunchIntent } from "@/lib/tasks/launch-dispatch";
+import { assertAcceptedTaskLaunchServerSource } from "@/lib/tasks/launch-server-source";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
@@ -37,7 +65,7 @@ const schema = schemaModule as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
-let db: NodePgDatabase;
+let db: NodePgDatabase<typeof schemaModule>;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 vi.mock("@/lib/scheduler", async (importOriginal) => {
@@ -60,10 +88,11 @@ vi.mock("@/lib/supervisor-client", async (importOriginal) => {
   };
 });
 
-let launchRun: typeof import("@/lib/services/runs").launchRun;
+let restoreEngineRuntime: (() => Promise<void>) | undefined;
 let loadRun: typeof import("@/lib/flows/graph/runner-core").loadRun;
 
 beforeAll(async () => {
+  restoreEngineRuntime = await isolateEngineFixtureRuntime();
   testDatabase = await startMainPostgresTestDb({
     databaseName: "launch_delegated_test",
   });
@@ -72,11 +101,11 @@ beforeAll(async () => {
   // ADR-166: every launch places the run on the local execution host.
   await fakeExecutionHosts(db);
 
-  ({ launchRun } = await import("@/lib/services/runs"));
   ({ loadRun } = await import("@/lib/flows/graph/runner-core"));
 }, 180_000);
 
 afterAll(async () => {
+  await restoreEngineRuntime?.();
   await testDatabase?.stop();
 });
 
@@ -92,19 +121,9 @@ const EXT_CTX = {
 } as unknown as Parameters<typeof import("@/lib/services/runs").launchRun>[1];
 
 beforeEach(async () => {
-  for (const t of [
-    "run_sessions",
-    "workspaces",
-    "execution_commands",
-    "runs",
-    "task_relations",
-    "tasks",
-    "flows",
-    "flow_revisions",
-    "projects",
-  ]) {
-    await pool.query(`DELETE FROM "${t}"`);
-  }
+  await pool.query(
+    `TRUNCATE TABLE runs, task_launch_intents, tasks, flows, flow_revisions, projects CASCADE`,
+  );
 
   projectId = randomUUID();
   executorId = randomUUID();
@@ -141,13 +160,14 @@ beforeEach(async () => {
        ("id", "project_id", "flow_ref_id", "source", "version", "installed_path",
         "manifest", "schema_version", "enabled_revision_id", "enablement_state",
         "trust_status", "version_binding")
-     VALUES ($1, $2, 'delegated', 'github.com/acme/delegated', 'v1.0.0', '/tmp/flows/delegated',
+     VALUES ($1, $2, 'delegated', 'github.com/acme/delegated', 'v1.0.0', $5,
              $3::jsonb, 1, $4, 'Enabled', 'trusted', 'pinned')`,
     [
       flowId,
       projectId,
       JSON.stringify(minimalGraphManifest("delegated")),
       revisionId,
+      join(repoPath, ".fixture-flow"),
     ],
   );
 });
@@ -169,7 +189,9 @@ async function initRepo(): Promise<string> {
   await execFileAsync("git", ["-C", dir, "add", "."]);
   await execFileAsync("git", ["-C", dir, "commit", "-q", "-m", "seed"]);
 
-  return dir;
+  await mkdir(join(dir, ".fixture-flow"));
+
+  return realpath(dir);
 }
 
 async function seedRevision(id: string, resolved: string): Promise<void> {
@@ -179,8 +201,13 @@ async function seedRevision(id: string, resolved: string): Promise<void> {
         "manifest_digest", "manifest", "schema_version", "installed_path",
         "package_status", "setup_status")
      VALUES ($1, 'delegated', 'github.com/acme/delegated', 'v1.0.0', $2, 'digest',
-             $3::jsonb, 1, '/tmp/flows/delegated', 'Installed', 'done')`,
-    [id, resolved, JSON.stringify(minimalGraphManifest("delegated"))],
+             $3::jsonb, 1, $4, 'Installed', 'done')`,
+    [
+      id,
+      resolved,
+      JSON.stringify(minimalGraphManifest("delegated")),
+      join(repoPath, ".fixture-flow"),
+    ],
   );
 }
 
@@ -219,6 +246,99 @@ function flowSnapshot(carrierTaskId: string): FlowDelegationSnapshotInput {
     mode: "task",
     runnerOverride: null,
   };
+}
+
+type AcceptedDelegation = Readonly<{
+  receipt: Awaited<ReturnType<typeof acceptServerTaskLaunch>>;
+  source: Awaited<ReturnType<typeof createDelegatedTaskLaunchSource>>;
+  request: Awaited<ReturnType<typeof serverTaskLaunchRequest>>;
+  principal: Awaited<ReturnType<typeof tokenTaskLaunchPrincipal>>;
+  body: Parameters<typeof createDelegatedTaskLaunchSource>[4];
+  operationKey: string;
+  token: Awaited<ReturnType<typeof issueOrchestratorRunToken>>;
+}>;
+
+async function acceptDelegatedFixture(
+  input: LaunchRunInput,
+): Promise<AcceptedDelegation> {
+  if (!input.parentRunId)
+    throw new Error("Delegated fixture requires an actual parent");
+  const [task] = await testDatabase.db
+    .select()
+    .from(tasks)
+    .where(eq(tasks.id, input.taskId));
+  const body = {
+    target: { flowId: input.flowId! },
+    mode: "task" as const,
+    title: task.title,
+    prompt: task.prompt,
+  };
+  const token = await issueOrchestratorRunToken({
+    projectId,
+    runId: input.parentRunId,
+    db: testDatabase.db,
+  });
+  const principal = await tokenTaskLaunchPrincipal(
+    testDatabase.db,
+    token.secret,
+  );
+  const operationKey = randomUUID();
+  const operation = delegationLaunchOperation(
+    "delegate",
+    token.tokenId,
+    input.parentRunId,
+    operationKey,
+    body,
+  );
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(tasks)
+      .set({
+        launchMode: "manual",
+        delegationSpec: { kind: "flow", flowId: input.flowId! },
+      })
+      .where(eq(tasks.id, task.id));
+    await establishExecutionChildAdmission(tx, {
+      projectId,
+      parentRunId: input.parentRunId!,
+      childTaskId: task.id,
+      planRevision: delegationPlanRevision(operation),
+    });
+  });
+  const source = await createDelegatedTaskLaunchSource(
+    testDatabase.db,
+    principal,
+    projectId,
+    task.id,
+    body,
+    operationKey,
+  );
+  const request = await serverTaskLaunchRequest(testDatabase.db, source, {
+    taskId: task.id,
+    flowId: input.flowId!,
+  });
+  const receipt = await acceptServerTaskLaunch(
+    testDatabase.db,
+    source,
+    request,
+    operationKey,
+  );
+
+  return { receipt, source, request, principal, body, operationKey, token };
+}
+
+async function launchRun(
+  input: LaunchRunInput,
+  context: LaunchRunContext,
+  _connection: NodePgDatabase<typeof schemaModule>,
+): Promise<{ runId: string; status: string }> {
+  if (!input.parentRunId)
+    return launchQualifiedEngineRun(input, context, testDatabase.db);
+  await context.authorize(projectId, "launchRun");
+  const accepted = await acceptDelegatedFixture(input);
+
+  return bindAcceptedEngineFixture(testDatabase.db, accepted.receipt);
 }
 
 describe("launchRun with delegation provenance (ADR-163 REQ-06/REQ-08)", () => {
@@ -418,6 +538,12 @@ describe("launchRun with delegation provenance (ADR-163 REQ-06/REQ-08)", () => {
   it("a NON-delegated launch leaves every run-tree column NULL", async () => {
     const taskId = await seedCarrierTask();
 
+    await seedAcceptedRepositoryQualification(
+      testDatabase.db,
+      projectId,
+      taskId,
+    );
+
     const { runId } = await launchRun({ taskId, flowId }, EXT_CTX, db);
 
     const run = (
@@ -433,4 +559,129 @@ describe("launchRun with delegation provenance (ADR-163 REQ-06/REQ-08)", () => {
     expect(run.launch_mode).toBeNull();
     expect(run.delegation_snapshot).toBeNull();
   }, 60_000);
+});
+
+it("an exact accepted child survives internal token rotation while a stale principal cannot authorize a new key after cancellation", async () => {
+  const parentRunId = await seedParentRun();
+  const carrierTaskId = await seedCarrierTask();
+  const accepted = await acceptDelegatedFixture({
+    taskId: carrierTaskId,
+    flowId,
+    parentRunId,
+  });
+
+  await issueOrchestratorRunToken({ projectId, runId: parentRunId, db });
+  await expect(
+    assertAcceptedTaskLaunchServerSource(db, accepted.receipt.intentId),
+  ).resolves.toBeUndefined();
+  const cancelCredential = await issueToken(
+    {
+      projectId,
+      name: "Cancel accepted child",
+      scopes: ["runs:launch", "runs:read", "tasks:update"],
+    },
+    db,
+  );
+  const cancelPrincipal = await tokenTaskLaunchPrincipal(
+    db,
+    cancelCredential.secret,
+  );
+  const cancelled = await cancelTokenTaskLaunch(
+    db,
+    cancelPrincipal,
+    accepted.receipt.intentId,
+    { expectedStateVersion: accepted.receipt.stateVersion },
+    randomUUID(),
+  );
+
+  expect(cancelled.state).toBe("cancelled");
+  await expect(
+    assertAcceptedTaskLaunchServerSource(db, cancelled.intentId),
+  ).rejects.toMatchObject({ details: { reason: "launch_authority_revoked" } });
+  await expect(
+    createDelegatedTaskLaunchSource(
+      db,
+      accepted.principal,
+      projectId,
+      carrierTaskId,
+      accepted.body,
+      accepted.operationKey,
+    ),
+  ).rejects.toMatchObject({ details: { reason: "launch_authority_revoked" } });
+  await expect(
+    acceptServerTaskLaunch(db, accepted.source, accepted.request, randomUUID()),
+  ).rejects.toMatchObject({ details: { reason: "launch_not_found" } });
+  expect(
+    (
+      await pool.query("SELECT id FROM task_launch_intents WHERE task_id=$1", [
+        carrierTaskId,
+      ])
+    ).rows,
+  ).toHaveLength(1);
+  expect(
+    (await pool.query("SELECT id FROM runs WHERE task_id=$1", [carrierTaskId]))
+      .rows,
+  ).toEqual([]);
+});
+
+it("accepted-only dispatch binds after rotation but explicit family revocation or changed child input holds without allocation", async () => {
+  const parentRunId = await seedParentRun();
+  const carrierTaskId = await seedCarrierTask();
+  const accepted = await acceptDelegatedFixture({
+    taskId: carrierTaskId,
+    flowId,
+    parentRunId,
+  });
+
+  await issueOrchestratorRunToken({ projectId, runId: parentRunId, db });
+  const bound = await prepareTaskLaunchIntent(db, accepted.receipt.intentId);
+
+  expect(bound.state).toBe("run_bound");
+  expect(bound.runId).toBeTruthy();
+  const revokedTaskId = await seedCarrierTask();
+  const revoked = await acceptDelegatedFixture({
+    taskId: revokedTaskId,
+    flowId,
+    parentRunId,
+  });
+
+  await issueOrchestratorRunToken({ projectId, runId: parentRunId, db });
+  await revokeToken(
+    { projectId, tokenId: revoked.token.tokenId },
+    SYSTEM_REVOKE_ACTOR,
+    db,
+  );
+  const held = await prepareTaskLaunchIntent(db, revoked.receipt.intentId);
+
+  expect(held).toMatchObject({
+    state: "held",
+    reason: "launch_authority_revoked",
+    runId: null,
+  });
+  const changedTaskId = await seedCarrierTask();
+  const changed = await acceptDelegatedFixture({
+    taskId: changedTaskId,
+    flowId,
+    parentRunId,
+  });
+
+  await issueOrchestratorRunToken({ projectId, runId: parentRunId, db });
+  await expect(
+    pool.query(
+      "UPDATE task_launch_intents SET basis=jsonb_set(basis,'{parent,parentRunId}',to_jsonb($2::text)) WHERE id=$1",
+      [changed.receipt.intentId, randomUUID()],
+    ),
+  ).rejects.toMatchObject({ code: "23514" });
+  await db
+    .update(tasks)
+    .set({ prompt: "A different child objective" })
+    .where(eq(tasks.id, changedTaskId));
+  const stale = await prepareTaskLaunchIntent(db, changed.receipt.intentId);
+
+  expect(stale.state).toBe("held");
+  expect(stale.runId).toBeNull();
+  for (const taskId of [revokedTaskId, changedTaskId])
+    expect(
+      (await pool.query("SELECT id FROM runs WHERE task_id=$1", [taskId])).rows,
+    ).toEqual([]);
 });

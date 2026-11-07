@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
@@ -12,8 +11,14 @@ import {
 } from "@/test-support/production-fault-fixture";
 import {
   invocationFromEnvironment,
-  processIdentity,
+  signalInvocationProcess,
 } from "@/test-support/process-invocation";
+import {
+  readAdapterInvocations,
+  readAdapterPrompts,
+  type AdapterPromptInvocation,
+} from "@/test-support/adapter-invocations";
+import { captureOwnedAdapterProcess } from "@/test-support/capture-supervisor-process-groups";
 import { mkdtempReal } from "@/test-support/worktree-test-root";
 
 let fixture: ProductionFaultFixture | undefined;
@@ -115,26 +120,30 @@ async function assertOneBinding(runId: string): Promise<string> {
 
   return row[0]!.session_id;
 }
-async function adapterInvocations(): Promise<
-  Array<{ pid: number; sessionId: string }>
-> {
-  try {
-    return (await readFile(fixture!.adapterLog, "utf8"))
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as { pid: number; sessionId: string });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw error;
-  }
+async function adapterInvocations(): Promise<AdapterPromptInvocation[]> {
+  return readAdapterPrompts(fixture!.adapterLog);
 }
 async function releaseAdapter(pid: number): Promise<void> {
-  const identity = await processIdentity(invocationFromEnvironment()!, pid);
+  const response = await fetch(`${fixture!.supervisor.url}/sessions`);
 
-  expect(identity?.owned).toBe(true);
-  expect(identity?.ppid).toBe(fixture!.supervisor.pid);
-  process.kill(pid, "SIGUSR1");
+  if (!response.ok)
+    throw new Error(`Adapter session discovery failed: ${response.status}`);
+  const rows = (await response.json()) as Array<{
+    sessionId: string;
+    adapterPid?: number;
+  }>;
+  const matches = rows.filter((row) => row.adapterPid === pid);
+
+  expect(matches).toHaveLength(1);
+  const invocation = invocationFromEnvironment()!;
+  const { adapter } = await captureOwnedAdapterProcess({
+    invocation,
+    supervisor: fixture!.supervisor,
+    sessionId: matches[0]!.sessionId,
+  });
+
+  expect(adapter.pid).toBe(pid);
+  await signalInvocationProcess(invocation, adapter, "SIGUSR1");
 }
 
 it("D2a: supervisor restart before create effect reissues the original durable intent once", async () => {
@@ -180,6 +189,11 @@ it("D2a: supervisor restart before create effect reissues the original durable i
   expect(prompt.target_session_id).toBe(sessionId);
   await assertOneApply(prompt);
   expect(await adapterInvocations()).toHaveLength(1);
+  expect(
+    (await readAdapterInvocations(fixture.adapterLog)).filter(
+      (row) => row.method === "session/new",
+    ),
+  ).toHaveLength(1);
   const restarted = (await (
     await fetch(`${fixture.supervisor.url}/health`)
   ).json()) as { host: { hostKey: string; bootId: string } };
@@ -262,6 +276,11 @@ it("D2b: supervisor restart after create commit folds its receipt without anothe
       (row) => row.method === "POST" && row.path === "/sessions",
     ),
   ).toHaveLength(1);
+  expect(
+    (await readAdapterInvocations(fixture.adapterLog)).filter(
+      (row) => row.method === "session/new",
+    ),
+  ).toHaveLength(1);
 }, 240_000);
 
 it("D4: web dies after durable create ACK and before first host prompt; restart sends one prompt", async () => {
@@ -284,6 +303,11 @@ it("D4: web dies after durable create ACK and before first host prompt; restart 
   expect(create!.create_intent).toBeTruthy();
   expect(await adapterInvocations()).toEqual([]);
   expect(
+    (await readAdapterInvocations(fixture.adapterLog)).filter(
+      (row) => row.method === "session/new",
+    ),
+  ).toHaveLength(1);
+  expect(
     (await fetch(`${fixture.supervisor.url}/commands/${reached.commandId}`))
       .status,
   ).toBe(404);
@@ -300,6 +324,11 @@ it("D4: web dies after durable create ACK and before first host prompt; restart 
   expect(await commands(runId, "session.prompt")).toHaveLength(1);
   expect(await assertOneBinding(runId)).toBe(sessionId);
   expect(await adapterInvocations()).toHaveLength(1);
+  expect(
+    (await readAdapterInvocations(fixture.adapterLog)).filter(
+      (row) => row.method === "session/new",
+    ),
+  ).toHaveLength(1);
 }, 240_000);
 
 it("L1: active scratch cancellation settles once and the same session accepts a later turn", async () => {
@@ -393,6 +422,12 @@ it("L1: active scratch cancellation settles once and the same session accepts a 
 
   expect(second.sessionId).toBe(first.sessionId);
   expect(second.pid).toBe(first.pid);
+  const effects = await readAdapterInvocations(fixture.adapterLog);
+
+  expect(effects.filter((row) => row.method === "session/new")).toHaveLength(1);
+  expect(effects.filter((row) => row.method === "session/prompt")).toHaveLength(
+    2,
+  );
   await releaseAdapter(second.pid);
   expect((await next).status).toBe(202);
   const rows = await commands(command!.run_id, "session.prompt");

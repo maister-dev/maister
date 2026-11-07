@@ -45,6 +45,16 @@ export type AdapterHomeResult = {
   materializedRoots: string[];
 };
 
+type AdapterCapabilityHomeInput = Readonly<{
+  agent: AdapterId;
+  worktreePath: string;
+  runId: string;
+  nodeAttemptId?: string;
+  installedPaths: readonly string[];
+  // Injectable for tests; defaults to the host's global codex home.
+  codexGlobalHome?: string;
+}>;
+
 async function pathExists(p: string): Promise<boolean> {
   try {
     await lstat(p);
@@ -195,16 +205,37 @@ async function listDir(dir: string): Promise<string[]> {
  *
  * Single-host assumption: the worktree + `~/.codex` are on the agent host (the
  * current colocated deployment). Multi-host moves this supervisor-side.
+ * Operational preparation writes only leased artifacts and preserves source
+ * `.gitignore` bytes and Git index state.
  */
-export async function materializeAdapterCapabilityHome(args: {
-  agent: AdapterId;
-  worktreePath: string;
-  runId: string;
-  nodeAttemptId?: string;
-  installedPaths: readonly string[];
-  // Injectable for tests; defaults to the host's global codex home.
-  codexGlobalHome?: string;
-}): Promise<AdapterHomeResult> {
+export async function materializeOperationalAdapterCapabilityHome(
+  args: AdapterCapabilityHomeInput,
+): Promise<AdapterHomeResult> {
+  return materializeAdapterCapabilityEntries(args);
+}
+
+/** Delivery worktrees additionally hide generated capability artifacts from Git promotion. */
+export async function materializeAdapterCapabilityHome(
+  args: AdapterCapabilityHomeInput,
+): Promise<AdapterHomeResult> {
+  const result = await materializeAdapterCapabilityEntries(args);
+
+  if (getAdapterSupportById(args.agent)?.materialization?.mode === "cwd-dir") {
+    const worktreePath = await assertSafeAgentMaterializationPath(
+      args.worktreePath,
+      ".maister/capabilities",
+    );
+
+    await ensureWorktreeGitignore(worktreePath, result.materializedRoots);
+  }
+
+  return result;
+}
+
+/** Copies lease-owned artifacts; the caller owns delivery Git ignore policy. */
+async function materializeAdapterCapabilityEntries(
+  args: AdapterCapabilityHomeInput,
+): Promise<AdapterHomeResult> {
   const worktreePath = await assertSafeAgentMaterializationPath(
     args.worktreePath,
     ".maister/capabilities",
@@ -263,8 +294,6 @@ export async function materializeAdapterCapabilityHome(args: {
         return [...copiedSkills, ...copiedAgents];
       },
     });
-
-    await ensureWorktreeGitignore(worktreePath, copied);
 
     log.debug(
       {

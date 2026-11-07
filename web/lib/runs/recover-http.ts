@@ -35,6 +35,7 @@ function statusForState(state: RecoverState): number {
       return 202;
     case "discard-only":
     case "conflict":
+    case "launch-conflict":
     case "workspace-removed":
     case "workspace-busy":
       return 409;
@@ -77,6 +78,13 @@ function errorBodyForState(state: RecoverRefusalState): {
   details?: { reason: string };
 } {
   switch (state) {
+    case "launch-conflict":
+      return {
+        code: "CONFLICT",
+        message:
+          "a newer launch owns this task; cancel or finish it before recovering this run",
+        details: { reason: "launch_recovery_conflict" },
+      };
     case "discard-only":
       return {
         code: "CONFLICT",

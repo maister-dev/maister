@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
+import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import type { QueueWriteFields } from "@/lib/tasks/queue-fields";
 
 import { and, eq } from "drizzle-orm";
@@ -361,23 +362,28 @@ export async function POST(
           db,
         );
 
-        await (db as TransactionalDb).transaction(async (tx) => {
-          await applyTriageVerdict(tx, {
-            taskId,
-            projectId: ctx.projectId,
-            verdict: resolvedVerdict,
-            actor,
-            enqueue,
-            queueFields,
-          });
+        const triageStatus = await (db as TransactionalDb).transaction(
+          async (tx) => {
+            await applyTriageVerdict(tx, {
+              taskId,
+              projectId: ctx.projectId,
+              verdict: resolvedVerdict,
+              actor,
+              enqueue,
+              queueFields,
+            });
 
-          await auditOk(tx);
-        });
+            await auditOk(tx);
+            const [updated] = await (tx as ExecutionDb)
+              .select({ triageStatus: schemaModule.tasks.triageStatus })
+              .from(schemaModule.tasks)
+              .where(eq(schemaModule.tasks.id, taskId));
 
-        return NextResponse.json(
-          { ok: true, triageStatus: "triaged" },
-          { status: 200 },
+            return updated.triageStatus;
+          },
         );
+
+        return NextResponse.json({ ok: true, triageStatus }, { status: 200 });
       } catch (err) {
         if (isMaisterError(err)) {
           return NextResponse.json(

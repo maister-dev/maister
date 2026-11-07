@@ -1478,6 +1478,97 @@
       "when": 1793634465152,
       "tag": "0214_transcript_creation_order",
       "breakpoints": true
+    },
+    {
+      "idx": 215,
+      "version": "7",
+      "when": 1793650944183,
+      "tag": "0215_agent_preparation",
+      "breakpoints": true
+    },
+    {
+      "idx": 216,
+      "version": "7",
+      "when": 1793655463733,
+      "tag": "0216_task_launch_admission",
+      "breakpoints": true
+    },
+    {
+      "idx": 217,
+      "version": "7",
+      "when": 1793655588868,
+      "tag": "0217_task_launch_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 218,
+      "version": "7",
+      "when": 1793657055907,
+      "tag": "0218_task_launch_commit_shape",
+      "breakpoints": true
+    },
+    {
+      "idx": 219,
+      "version": "7",
+      "when": 1793659230327,
+      "tag": "0219_task_launch_execution_snapshots",
+      "breakpoints": true
+    },
+    {
+      "idx": 220,
+      "version": "7",
+      "when": 1793662006827,
+      "tag": "0220_task_launch_token_origin",
+      "breakpoints": true
+    },
+    {
+      "idx": 221,
+      "version": "7",
+      "when": 1793695872293,
+      "tag": "0221_task_launch_shared_reservation",
+      "breakpoints": true
+    },
+    {
+      "idx": 222,
+      "version": "7",
+      "when": 1793696404624,
+      "tag": "0222_task_launch_preparation",
+      "breakpoints": true
+    },
+    {
+      "idx": 223,
+      "version": "7",
+      "when": 1793697344503,
+      "tag": "0223_task_triage_flag_origin",
+      "breakpoints": true
+    },
+    {
+      "idx": 224,
+      "version": "7",
+      "when": 1793698825255,
+      "tag": "0224_task_launch_dispatch_receipt",
+      "breakpoints": true
+    },
+    {
+      "idx": 225,
+      "version": "7",
+      "when": 1793708478205,
+      "tag": "0225_task_launch_agent_preparation",
+      "breakpoints": true
+    },
+    {
+      "idx": 226,
+      "version": "7",
+      "when": 1793734764515,
+      "tag": "0226_session_create_owner_continuation",
+      "breakpoints": true
+    },
+    {
+      "idx": 227,
+      "version": "7",
+      "when": 1793752930067,
+      "tag": "0227_queued_child_obligations",
+      "breakpoints": true
     }
   ]
 }

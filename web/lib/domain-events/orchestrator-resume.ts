@@ -6,7 +6,10 @@ import type { Db } from "@/lib/execution-host/db";
 import type { ResumeFlow } from "@/lib/flows/graph/coordinator-wake";
 
 import pino from "pino";
+import { eq } from "drizzle-orm";
 
+import { taskLaunchIntents } from "@/lib/db/schema";
+import { hasUnobservedChildOutcome } from "@/lib/orchestrator/child-obligations";
 import { getDb } from "@/lib/db/client";
 import { isRunSettledEventKind } from "@/lib/domain-events/taxonomy";
 import { isMaisterError } from "@/lib/errors";
@@ -32,10 +35,31 @@ export function buildOrchestratorResumeConsumer(
 
       for (const event of events) {
         try {
-          if (!isRunSettledEventKind(event.kind)) continue;
           const payload = (event.payload ?? {}) as Record<string, unknown>;
-          const parentRunId = payload.parentRunId;
+          let parentRunId = payload.parentRunId;
 
+          if (event.kind === "task.launch_changed") {
+            if (typeof payload.intentId !== "string") continue;
+            const [intent] = await db
+              .select()
+              .from(taskLaunchIntents)
+              .where(eq(taskLaunchIntents.id, payload.intentId));
+
+            if (
+              !intent ||
+              intent.projectId !== event.projectId ||
+              intent.basis.kind !== "execution_child" ||
+              intent.runId !== null ||
+              intent.originalRunId !== null ||
+              !["failed", "cancelled"].includes(intent.state)
+            )
+              continue;
+            const acceptedParentRunId = intent.basis.parent.parentRunId;
+
+            parentRunId = acceptedParentRunId;
+            if (!(await hasUnobservedChildOutcome(db, acceptedParentRunId)))
+              continue;
+          } else if (!isRunSettledEventKind(event.kind)) continue;
           if (typeof parentRunId !== "string" || !parentRunId) continue;
           const coordinator = await currentCoordinator(db, parentRunId);
 

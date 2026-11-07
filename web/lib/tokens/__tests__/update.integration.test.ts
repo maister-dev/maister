@@ -51,6 +51,35 @@ async function tokenRow(tokenId: string) {
   return rows[0];
 }
 
+async function issueFixtureAgentToken(
+  args: Parameters<typeof issueAgentRunToken>[0],
+): Promise<Awaited<ReturnType<typeof issueAgentRunToken>>> {
+  await db.insert(schema.runs).values({
+    id: args.runId,
+    projectId: args.projectId,
+    agentId: args.agentId,
+    runKind: "agent",
+    flowVersion: "v1",
+    status: "Running",
+  });
+
+  return issueAgentRunToken(args);
+}
+
+async function issueFixtureOrchestratorToken(
+  args: Parameters<typeof issueOrchestratorRunToken>[0],
+): Promise<Awaited<ReturnType<typeof issueOrchestratorRunToken>>> {
+  await db.insert(schema.runs).values({
+    id: args.runId,
+    projectId: args.projectId,
+    runKind: "flow",
+    flowVersion: "v1",
+    status: "Running",
+  });
+
+  return issueOrchestratorRunToken(args);
+}
+
 /** A managed project token — the editable, ledger-covered class. */
 async function managedProjectToken(overrides?: {
   name?: string;
@@ -282,7 +311,7 @@ describe("lib/tokens/update — integration (testcontainers)", () => {
 
   it("I6: an agent-kind token is refused PRECONDITION", async () => {
     const runId = randomUUID();
-    const minted = await issueAgentRunToken({
+    const minted = await issueFixtureAgentToken({
       agentId,
       projectId,
       runId,
@@ -301,7 +330,11 @@ describe("lib/tokens/update — integration (testcontainers)", () => {
 
   it("I7: a project-kind token named orchestrator-run:<id> is refused PRECONDITION", async () => {
     const runId = randomUUID();
-    const minted = await issueOrchestratorRunToken({ projectId, runId, db });
+    const minted = await issueFixtureOrchestratorToken({
+      projectId,
+      runId,
+      db,
+    });
 
     const stored = await tokenRow(minted.tokenId);
 
@@ -394,12 +427,12 @@ describe("lib/tokens/update — integration (testcontainers)", () => {
     const orchestratorRunId = randomUUID();
     const agentRunId = randomUUID();
 
-    const orchestratorToken = await issueOrchestratorRunToken({
+    const orchestratorToken = await issueFixtureOrchestratorToken({
       projectId,
       runId: orchestratorRunId,
       db,
     });
-    const agentToken = await issueAgentRunToken({
+    const agentToken = await issueFixtureAgentToken({
       agentId,
       projectId,
       runId: agentRunId,
@@ -497,12 +530,12 @@ describe("lib/tokens/update — integration (testcontainers)", () => {
     const orchestratorRunId = randomUUID();
     const agentRunId = randomUUID();
 
-    const orchestrator = await issueOrchestratorRunToken({
+    const orchestrator = await issueFixtureOrchestratorToken({
       projectId,
       runId: orchestratorRunId,
       db,
     });
-    const agent = await issueAgentRunToken({
+    const agent = await issueFixtureAgentToken({
       agentId,
       projectId,
       runId: agentRunId,
@@ -540,7 +573,7 @@ describe("lib/agents/tokens — revokeAgentRunToken predicate", () => {
 
     expect((await tokenRow(managed.tokenId)).revoked_at).toBeNull();
 
-    const agent = await issueAgentRunToken({
+    const agent = await issueFixtureAgentToken({
       agentId,
       projectId,
       runId: randomUUID(),

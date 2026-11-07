@@ -21,6 +21,7 @@ import {
   markSucceeded,
 } from "./commands";
 import { UNKNOWN_OUTCOME_DETAIL } from "./contracts";
+import { SessionInventoryPending } from "./session-inventory";
 import {
   COMMAND_REQUEST_SCHEMA,
   promptEnvelopeFromCommand,
@@ -332,6 +333,81 @@ export async function deliverCommand<TResult>(
       result = await opts.send(opts.envelope);
     } catch (err) {
       const latencyMs = Date.now() - startedAt;
+
+      if (err instanceof SessionInventoryPending) {
+        if (
+          kind !== "session.create" ||
+          err.runId !== opts.command.runId ||
+          !claimed.row
+        )
+          throw new MaisterError(
+            "CONFLICT",
+            "Session inventory deferral does not match its command",
+            {
+              cause: err,
+              details: {
+                reason: "command_invariant_conflict",
+                commandId: opts.command.id,
+              },
+            },
+          );
+        const primary = claimed.row.lastError ?? errorRecord(err);
+        const previousDetails = primary.details;
+        const source = isMaisterError(err.cause) ? err.cause : null;
+        const readiness = {
+          version: 1,
+          reason: "session_inventory_pending",
+          sourceCode: source?.code ?? null,
+          sourceReason:
+            typeof source?.details?.reason === "string"
+              ? source.details.reason
+              : null,
+          observedAt: now().toISOString(),
+          createPostSent: false,
+        };
+        const deferred = await casTransition(
+          opts.db,
+          opts.command.id,
+          ["delivering"],
+          attempts,
+          {
+            state: "queued",
+            deliveringSince: null,
+            maxAttempts: claimed.row.maxAttempts + 1,
+            lastError: {
+              ...primary,
+              details: {
+                ...(previousDetails &&
+                typeof previousDetails === "object" &&
+                !Array.isArray(previousDetails)
+                  ? (previousDetails as Record<string, unknown>)
+                  : {}),
+                managerReadiness: readiness,
+              },
+            },
+            nextAttemptAt: new Date(
+              now().getTime() +
+                Math.min(
+                  30_000,
+                  backoffMs(policy.backoffBaseMs, Math.min(attempts, 6)),
+                ),
+            ),
+          },
+          { logger, now: now() },
+        );
+
+        logger.warn(
+          {
+            commandId: opts.command.id,
+            runId: opts.command.runId,
+            attempt: attempts,
+            deferred: deferred.changed,
+            readiness,
+          },
+          "session-create-readiness-deferred-before-post",
+        );
+        throw err;
+      }
 
       if (isFencedError(err)) {
         await terminalWithRejection(opts, "fenced", attempts, err, {

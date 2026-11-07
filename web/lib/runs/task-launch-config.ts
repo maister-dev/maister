@@ -293,6 +293,8 @@ export async function resolveTaskLaunchConfig(
     {
       status: task.status ?? "Backlog",
       triageStatus: (task.triageStatus as "triaged" | "flagged" | null) ?? null,
+      triageFlagOrigin: task.triageFlagOrigin,
+      queuePaused: task.queuePaused,
     },
     latestFlowRun,
     { openBlockers },

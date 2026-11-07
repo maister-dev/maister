@@ -18,18 +18,29 @@ import type { ExecutionHosts } from "@/lib/execution-host";
 import type { ScratchLaunchInput } from "@/lib/scratch-runs/types";
 
 import { randomUUID } from "node:crypto";
+import { createServer } from "node:http";
 import { execFile } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import pino from "pino";
 
 import * as schema from "@/lib/db/schema";
+import { SessionInventoryPending } from "@/lib/execution-host/session-inventory";
+import { MaisterError } from "@/lib/errors";
+import { redriveOwnedScratchCreate } from "@/lib/scratch-runs/create-recovery";
+import { rollbackScratchClaim } from "@/lib/scratch-runs/respawn";
+import {
+  completeOwnedScratchCreate,
+  ScratchCreateHandoffPending,
+} from "@/lib/scratch-runs/create-continuation";
+import { readCreateIntent } from "@/lib/execution-host/create-intent";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import {
   createFakeExecutionHost,
@@ -224,6 +235,577 @@ function payloadOf(call: { envelope: { payload: unknown } | null }) {
   return call.envelope?.payload as Record<string, unknown>;
 }
 
+it.each([
+  "nonempty",
+  "empty",
+  "handoff_sql_failure",
+  "handoff_read_failure",
+] as const)(
+  "retains an unposted initial create and its %s prompt for durable scratch rediscovery",
+  async (promptKind) => {
+    const marker =
+      promptKind === "empty"
+        ? ""
+        : promptKind === "handoff_sql_failure"
+          ? "SCRATCH_POST_ACK_PRIVATE_SENTINEL"
+          : promptKind === "handoff_read_failure"
+            ? "SCRATCH_POST_ACK_READ_PRIVATE_SENTINEL"
+            : `retained initial ${randomUUID()}`;
+    const postAckFailure =
+      promptKind === "handoff_sql_failure" ||
+      promptKind === "handoff_read_failure";
+    const originalDb = db;
+    let createAcknowledged = false;
+    let readFaultPending = promptKind === "handoff_read_failure";
+
+    if (promptKind === "handoff_read_failure")
+      db = new Proxy(originalDb, {
+        get(target, property, receiver) {
+          if (property !== "transaction")
+            return Reflect.get(target, property, receiver);
+
+          return async <T>(
+            fn: (
+              tx: Parameters<Parameters<typeof originalDb.transaction>[0]>[0],
+            ) => Promise<T>,
+            config?: Parameters<typeof originalDb.transaction>[1],
+          ): Promise<T> =>
+            originalDb.transaction(async (tx) => {
+              const result = await fn(tx);
+
+              if (createAcknowledged && readFaultPending) {
+                readFaultPending = false;
+                await tx.execute(sql`SELECT ${marker}::integer`);
+              }
+
+              return result;
+            }, config);
+        },
+      });
+    const originalCreate = fake.transport.createSession.bind(fake.transport);
+    const originalUrl = process.env.MAISTER_SUPERVISOR_URL;
+    const { createLocalDirectTransport } =
+      await import("@/lib/execution-host/transports/local-direct");
+    const wire = createLocalDirectTransport();
+    let ready = postAckFailure;
+    let handoffGuardInstalled = false;
+    const posts: string[] = [];
+    const server = createServer((request, response) => {
+      const url = new URL(request.url ?? "/", "http://localhost");
+
+      if (request.method === "GET" && url.pathname === "/sessions") {
+        if (ready)
+          response.setHeader("X-Maister-Session-Ownership-Version", "1");
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end("[]");
+
+        return;
+      }
+      if (request.method === "GET" && url.pathname.startsWith("/commands/")) {
+        void fake.transport
+          .getCommandReceipt(url.pathname.slice("/commands/".length))
+          .then((receipt) => {
+            response.writeHead(receipt ? 200 : 404, {
+              "content-type": "application/json",
+            });
+            response.end(
+              JSON.stringify(
+                receipt ?? { code: "PRECONDITION", message: "unknown command" },
+              ),
+            );
+          });
+
+        return;
+      }
+      const chunks: Buffer[] = [];
+
+      request.on("data", (chunk: Buffer) => chunks.push(chunk));
+      request.on("end", () => {
+        void (async () => {
+          const envelope = JSON.parse(
+            Buffer.concat(chunks).toString("utf8"),
+          ) as Parameters<typeof originalCreate>[0];
+
+          posts.push(envelope.command.id);
+          const result = await originalCreate(envelope);
+
+          createAcknowledged = true;
+
+          response.writeHead(201, { "content-type": "application/json" });
+          response.end(JSON.stringify(result));
+        })().catch(() => {
+          response.writeHead(500);
+          response.end();
+        });
+      });
+    });
+
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const address = server.address();
+
+    if (!address || typeof address === "string")
+      throw new Error("Scratch readiness peer has no address");
+    process.env.MAISTER_SUPERVISOR_URL = `http://127.0.0.1:${address.port}`;
+    fake.transport.createSession = (envelope, options) =>
+      wire.createSession(envelope, options);
+    let worker:
+      | ReturnType<
+          typeof import("@/lib/agents/continuation-worker").startAgentContinuationWorker
+        >
+      | undefined;
+    let createdRunId: string | undefined;
+
+    try {
+      if (promptKind === "handoff_sql_failure") {
+        await db.execute(
+          sql`CREATE FUNCTION scratch_handoff_failure_guard() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'controlled private handoff failure' USING ERRCODE = '23514', CONSTRAINT = 'scratch_handoff_failure_guard'; END $$`,
+        );
+        await db.execute(
+          sql`CREATE TRIGGER scratch_handoff_failure_guard BEFORE UPDATE OF active_prompt_intent ON scratch_runs FOR EACH ROW WHEN (NEW.active_prompt_intent IS NOT NULL) EXECUTE FUNCTION scratch_handoff_failure_guard()`,
+        );
+        handoffGuardInstalled = true;
+      }
+      const generator = launchScratchRunStaged(
+        { body: { ...launchBody(), prompt: marker }, userId: USER_ID },
+        { executionHosts: hosts },
+      );
+      let failure: unknown;
+      let response:
+        | Awaited<
+            ReturnType<
+              typeof import("@/lib/scratch-runs/service").launchScratchRun
+            >
+          >
+        | undefined;
+      const stages: string[] = [];
+
+      try {
+        let step = await generator.next();
+
+        while (!step.done) {
+          stages.push((step.value as { stage: string }).stage);
+          step = await generator.next();
+        }
+        response = step.value;
+      } catch (error) {
+        failure = error;
+      }
+      const [pending] = await db
+        .select({ run: schema.runs, scratch: schema.scratchRuns })
+        .from(schema.scratchRuns)
+        .innerJoin(schema.runs, eq(schema.runs.id, schema.scratchRuns.runId))
+        .where(eq(schema.scratchRuns.initialPrompt, marker));
+
+      createdRunId = pending.run.id;
+      if (postAckFailure)
+        expect(
+          JSON.stringify({
+            message: pending.scratch.errorMessage,
+            details: pending.scratch.errorMetadata,
+          }),
+        ).not.toContain(marker);
+      expect(pending.run.status).toBe("Running");
+      expect(pending.scratch.dialogStatus).toBe("Starting");
+      expect(failure).toBeUndefined();
+      expect(stages).not.toContain("session_ready");
+      expect(response).toMatchObject({
+        runId: createdRunId,
+        status: { dialogStatus: "Starting" },
+      });
+      const before = await db
+        .select()
+        .from(schema.executionCommands)
+        .where(
+          and(
+            eq(schema.executionCommands.runId, createdRunId),
+            eq(schema.executionCommands.kind, "session.create"),
+          ),
+        );
+
+      expect(before).toHaveLength(1);
+      expect(before[0]).toMatchObject({
+        state: postAckFailure ? "succeeded" : "queued",
+        createIntent: {
+          owner: { variant: "scratch", scratchRunId: createdRunId },
+          continuation: {
+            kind: "initial",
+            payload: marker ? { prompt: marker } : null,
+          },
+        },
+      });
+      expect(posts).toEqual(postAckFailure ? [before[0].id] : []);
+      if (postAckFailure) {
+        expect(
+          fake
+            .callsOf("sendPrompt")
+            .filter((call) => call.envelope?.fence.runId === createdRunId),
+        ).toHaveLength(0);
+        expect((await assignmentRows(createdRunId)).at(-1)).toMatchObject({
+          state: "active",
+          epoch: 1,
+        });
+        const incarnations = await db
+          .select()
+          .from(schema.runSessionIncarnations)
+          .where(eq(schema.runSessionIncarnations.runId, createdRunId));
+
+        expect(incarnations).toHaveLength(1);
+        expect(incarnations[0].state).toMatch(/^(created|active)$/);
+        const execution = await hosts.executionFor(createdRunId);
+        const retained = readCreateIntent(
+          before[0],
+          execution.client.host.hostKey,
+        );
+        const binding = (await scratchAndSession(createdRunId)).session;
+
+        if (
+          retained.intent.owner.variant !== "scratch" ||
+          !binding.hostSessionId ||
+          !binding.acpSessionId
+        )
+          throw new Error(
+            "Expected a current created scratch session and its original owner",
+          );
+        if (promptKind === "handoff_read_failure") readFaultPending = true;
+        const handoffFailure: unknown = await completeOwnedScratchCreate(
+          db as never,
+          execution,
+          retained.intent.owner,
+          {
+            sessionId: binding.hostSessionId,
+            acpSessionId: binding.acpSessionId,
+          },
+        ).then(
+          () => null,
+          (error: unknown) => error,
+        );
+        const records: string[] = [];
+        const diagnosticLog = pino(
+          { level: "debug" },
+          {
+            write: (chunk: string) => {
+              records.push(chunk);
+            },
+          },
+        );
+
+        diagnosticLog.error(
+          { err: handoffFailure },
+          "scratch-handoff-diagnostic",
+        );
+        expect(handoffFailure).toBeInstanceOf(ScratchCreateHandoffPending);
+        expect(handoffFailure).toMatchObject({
+          details: {
+            stage: "scratch_create_handoff",
+            diagnostics: {
+              stage: "scratch_create_handoff",
+              sqlState:
+                promptKind === "handoff_read_failure" ? "22P02" : "23514",
+              ...(promptKind === "handoff_sql_failure"
+                ? { constraint: "scratch_handoff_failure_guard" }
+                : {}),
+            },
+          },
+        });
+        expect(JSON.stringify({ handoffFailure, records })).not.toContain(
+          marker,
+        );
+        if (handoffGuardInstalled)
+          await db.execute(
+            sql`DROP TRIGGER scratch_handoff_failure_guard ON scratch_runs`,
+          );
+        if (handoffGuardInstalled)
+          await db.execute(sql`DROP FUNCTION scratch_handoff_failure_guard()`);
+        handoffGuardInstalled = false;
+      }
+      ready = true;
+      const { startAgentContinuationWorker } =
+        await import("@/lib/agents/continuation-worker");
+
+      worker = startAgentContinuationWorker({
+        db: db as never,
+        executionHosts: hosts,
+      });
+      await expect
+        .poll(
+          async () =>
+            (await scratchAndSession(createdRunId!)).scratch.dialogStatus,
+          { timeout: 30_000, interval: 50 },
+        )
+        .toBe("WaitingForUser");
+      const after = await db
+        .select()
+        .from(schema.executionCommands)
+        .where(
+          and(
+            eq(schema.executionCommands.runId, createdRunId),
+            eq(schema.executionCommands.kind, "session.create"),
+          ),
+        );
+
+      expect(after.map((command) => command.id)).toEqual([before[0].id]);
+      expect(after[0].createIntent).toEqual(before[0].createIntent);
+      expect(posts).toEqual([before[0].id]);
+      const prompts = fake
+        .callsOf("sendPrompt")
+        .filter((call) => call.envelope?.fence.runId === createdRunId);
+
+      expect(prompts).toHaveLength(marker ? 1 : 0);
+      if (marker)
+        expect(payloadOf(prompts[0])).toMatchObject({ prompt: marker });
+    } finally {
+      await worker?.stop();
+      db = originalDb;
+      if (handoffGuardInstalled) {
+        await db.execute(
+          sql`DROP TRIGGER scratch_handoff_failure_guard ON scratch_runs`,
+        );
+        await db.execute(sql`DROP FUNCTION scratch_handoff_failure_guard()`);
+      }
+      fake.transport.createSession = originalCreate;
+      if (originalUrl === undefined) delete process.env.MAISTER_SUPERVISOR_URL;
+      else process.env.MAISTER_SUPERVISOR_URL = originalUrl;
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+      if (createdRunId)
+        await markScratchCrashed({
+          db: db as never,
+          runId: createdRunId,
+          err: new Error("Fixture complete"),
+        });
+    }
+  },
+  90_000,
+);
+
+it.each(["succeeded", "refused", "private_sql_failure"] as const)(
+  "retains a pending recovery create until it is %s without allocating another epoch",
+  async (outcome) => {
+    const generator = launchScratchRunStaged(
+      { body: launchBody(), userId: USER_ID },
+      { executionHosts: hosts },
+    );
+    let step = await generator.next();
+
+    while (!step.done) step = await generator.next();
+    const runId = step.value.runId;
+    const { session } = await scratchAndSession(runId);
+
+    fake.sessions.delete(session.hostSessionId!);
+    await markScratchCrashed({
+      db,
+      runId,
+      err: new Error("Fixture lost original session"),
+    });
+    const [source] = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, runId));
+    const originalCreate = fake.transport.createSession;
+    const prompt = `recover exact ${randomUUID()}`;
+
+    fake.transport.createSession = async (envelope) => {
+      throw new SessionInventoryPending(
+        envelope.fence.runId,
+        new MaisterError("EXECUTOR_UNAVAILABLE", "Inventory is unproven", {
+          details: { reason: "session_inventory_unproven" },
+        }),
+      );
+    };
+    try {
+      const response = await recoverRoute(
+        new NextRequest(`http://localhost/api/scratch-runs/${runId}/recover`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ prompt }),
+        }),
+        { params: Promise.resolve({ runId }) },
+      );
+
+      expect(response.status).toBe(202);
+      await expect(response.json()).resolves.toMatchObject({
+        runId,
+        dialogStatus: "Starting",
+        delivery: "queued",
+      });
+      const [before] = await db
+        .select()
+        .from(schema.executionCommands)
+        .where(
+          and(
+            eq(schema.executionCommands.runId, runId),
+            eq(schema.executionCommands.kind, "session.create"),
+            eq(schema.executionCommands.assignmentEpoch, 2),
+          ),
+        );
+
+      expect(before).toMatchObject({
+        state: "queued",
+        createIntent: {
+          continuation: {
+            kind: "recovery",
+            payload: { prompt },
+            recoveryState: {
+              status: "Crashed",
+              currentStepId: source.currentStepId,
+              resumeRequestedAt:
+                source.resumeRequestedAt?.toISOString() ?? null,
+            },
+          },
+        },
+      });
+      expect((await assignmentRows(runId)).at(-1)).toMatchObject({
+        epoch: 2,
+        state: "active",
+      });
+      fake.transport.createSession = originalCreate;
+      if (outcome === "refused")
+        fake.failOnce("createSession", definitiveUnavailableError());
+      const privateSentinel = "SCRATCH_PRIVATE_CREATE_DIAGNOSTIC_SENTINEL";
+
+      if (outcome === "private_sql_failure") {
+        const failure: unknown = await db
+          .transaction(async (tx) => {
+            await tx.execute(
+              sql`CREATE TEMP TABLE scratch_private_failure_probe (payload jsonb CONSTRAINT scratch_private_failure_guard CHECK (false)) ON COMMIT DROP`,
+            );
+            await tx.execute(
+              sql`INSERT INTO scratch_private_failure_probe (payload) VALUES (${JSON.stringify({ env: { PRIVATE_TOKEN: privateSentinel }, continuation: before.createIntent })}::jsonb)`,
+            );
+          })
+          .then(
+            () => null,
+            (error: unknown) => error,
+          );
+
+        expect(failure).toBeInstanceOf(Error);
+        if (!(failure instanceof Error))
+          throw new Error("Expected a real private SQL admission failure");
+        expect(failure.message).toContain(privateSentinel);
+        await rollbackScratchClaim(
+          db,
+          runId,
+          before.executionAssignmentId,
+          {
+            status: "Crashed",
+            currentStepId: source.currentStepId,
+            resumeRequestedAt: source.resumeRequestedAt,
+          },
+          "scratch_create_recovery_failed",
+          { commandId: before.id, error: failure },
+        );
+      }
+      await expect
+        .poll(
+          async () => {
+            if (outcome !== "private_sql_failure")
+              await redriveOwnedScratchCreate(db as never, runId, hosts);
+
+            return (await scratchAndSession(runId)).scratch.dialogStatus;
+          },
+          { timeout: 15_000, interval: 50 },
+        )
+        .toBe(outcome === "succeeded" ? "WaitingForUser" : "Crashed");
+      const assignments = await assignmentRows(runId);
+      const [after] = await db
+        .select()
+        .from(schema.executionCommands)
+        .where(eq(schema.executionCommands.id, before.id));
+
+      expect(assignments).toHaveLength(2);
+      expect(assignments.at(-1)).toMatchObject({
+        epoch: 2,
+        state: outcome === "succeeded" ? "active" : "released",
+      });
+      expect(after.createIntent).toEqual(before.createIntent);
+      const recoveryPrompts = fake
+        .callsOf("sendPrompt")
+        .filter(
+          (call) =>
+            call.envelope?.fence.runId === runId &&
+            call.envelope.fence.assignmentEpoch === 2,
+        );
+
+      expect(recoveryPrompts).toHaveLength(outcome === "succeeded" ? 1 : 0);
+      if (outcome === "succeeded")
+        expect(payloadOf(recoveryPrompts[0])).toMatchObject({ prompt });
+      else {
+        const [restored] = await db
+          .select()
+          .from(schema.runs)
+          .where(eq(schema.runs.id, runId));
+        const [scratch] = await db
+          .select()
+          .from(schema.scratchRuns)
+          .where(eq(schema.scratchRuns.runId, runId));
+
+        expect(restored).toMatchObject({
+          status: source.status,
+          currentStepId: source.currentStepId,
+          resumeRequestedAt: source.resumeRequestedAt,
+        });
+        expect(scratch.errorMetadata).toMatchObject({
+          stage: "session_create",
+          commandId: before.id,
+        });
+        if (outcome === "private_sql_failure") {
+          const storedError = {
+            code: scratch.errorCode,
+            message: scratch.errorMessage,
+            details: scratch.errorMetadata,
+          };
+          const { GET } = await import("@/app/api/scratch-runs/[runId]/route");
+          const detail = await GET(
+            new NextRequest(`http://localhost/api/scratch-runs/${runId}`),
+            { params: Promise.resolve({ runId }) },
+          );
+          const dto: unknown = await detail.json();
+          const records: string[] = [];
+          const diagnosticLog = pino(
+            { level: "debug" },
+            {
+              write: (chunk: string) => {
+                records.push(chunk);
+              },
+            },
+          );
+
+          diagnosticLog.error(
+            { error: storedError },
+            "scratch-recovery-diagnostic",
+          );
+          expect(detail.status).toBe(200);
+          expect(JSON.stringify({ storedError, dto, records })).not.toContain(
+            privateSentinel,
+          );
+          expect(storedError).toMatchObject({
+            code: "CRASH",
+            details: {
+              stage: "session_create",
+              commandId: before.id,
+              sqlState: "23514",
+              constraint: "scratch_private_failure_guard",
+              causeChain: [{ name: "Error" }, { name: "error", code: "23514" }],
+            },
+          });
+        }
+      }
+    } finally {
+      fake.transport.createSession = originalCreate;
+      await markScratchCrashed({
+        db,
+        runId,
+        err: new Error("Fixture complete"),
+      });
+    }
+  },
+  90_000,
+);
+
 describe("scratch run placement (ADR-166 Q1–Q3)", () => {
   let runId: string;
   let adoptedWorkspaceId: string;
@@ -254,8 +836,12 @@ describe("scratch run placement (ADR-166 Q1–Q3)", () => {
       ]),
     );
 
-    const adopts = fake.callsOf("adoptWorkspace");
-    const creates = fake.callsOf("createSession");
+    const adopts = fake
+      .callsOf("adoptWorkspace")
+      .filter((call) => call.envelope?.fence.runId === runId);
+    const creates = fake
+      .callsOf("createSession")
+      .filter((call) => call.envelope?.fence.runId === runId);
 
     expect(adopts).toHaveLength(1);
     expect(payloadOf(adopts[0])).toMatchObject({
@@ -296,7 +882,9 @@ describe("scratch run placement (ADR-166 Q1–Q3)", () => {
     );
     expect(scratch.dialogStatus).toBe("WaitingForUser");
 
-    const prompts = fake.callsOf("sendPrompt");
+    const prompts = fake
+      .callsOf("sendPrompt")
+      .filter((call) => call.envelope?.fence.runId === runId);
 
     expect(prompts).toHaveLength(1);
     expect(prompts[0].args[0]).toBe(firstHostSessionId);
@@ -320,9 +908,12 @@ describe("scratch run placement (ADR-166 Q1–Q3)", () => {
     });
 
     expect(result.runId).toBe(runId);
-    expect(fake.callsOf("cancelPrompt").map((call) => call.args[0])).toEqual([
-      firstHostSessionId,
-    ]);
+    expect(
+      fake
+        .callsOf("cancelPrompt")
+        .filter((call) => call.envelope?.fence.runId === runId)
+        .map((call) => call.args[0]),
+    ).toEqual([firstHostSessionId]);
 
     const cancels = await db
       .select({
@@ -382,7 +973,9 @@ describe("scratch run placement (ADR-166 Q1–Q3)", () => {
     });
     expect(response.status).toBe(202);
 
-    const creates = fake.callsOf("createSession");
+    const creates = fake
+      .callsOf("createSession")
+      .filter((call) => call.envelope?.fence.runId === runId);
 
     expect(creates).toHaveLength(2);
     expect(payloadOf(creates[1])).toMatchObject({
@@ -394,7 +987,11 @@ describe("scratch run placement (ADR-166 Q1–Q3)", () => {
       assignmentEpoch: 2,
     });
     // The handle is copied forward across generations: no second adoption.
-    expect(fake.callsOf("adoptWorkspace")).toHaveLength(1);
+    expect(
+      fake
+        .callsOf("adoptWorkspace")
+        .filter((call) => call.envelope?.fence.runId === runId),
+    ).toHaveLength(1);
 
     // S2.9: the recovery turn is owned by its own recover generation, so its
     // WaitingForUser transition is applied from that turn's durable command.

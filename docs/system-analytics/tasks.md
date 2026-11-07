@@ -1,5 +1,7 @@
 # Tasks domain
 
+**Current launch boundary:** [explicit task launch](task-launch-admission.md) owns the implemented manual/automatic admission, immutable request and dispatch contract. New task-delivery allocations use that boundary; historical v1 receipts remain readable without invented authorization. Qualification content and publication remain separate. Final combined acceptance is tracked by the active implementation plan; this is not production qualification.
+
 ## Purpose
 
 A **task** is the operator's unit of intent — one card on a project's
@@ -30,11 +32,13 @@ comment/activity/subscription/inbox substrate around tasks is owned by
   the web UI.
 - **Attempt number** — monotonic counter per task, starting at 1. Current code
   stores it as a **mutable high-water mark** on `tasks.attempt_number`
-  bumped inside the Launch transaction; there is no DB-level guarantee
+  allocated under the preparation claim; there is no per-Run attempt-column guarantee
   that a given attempt was actually persisted on a run. The
   `tasks_id_attempt_uq` UNIQUE on `(tasks.id, attempt_number)` is
   vacuous (PK already enforces unique `id`) and provides no
-  per-attempt guard. The designed run-attempt schema moves the stamp onto
+  per-attempt guard. Current canonical intents freeze the exact run/attempt in
+  `preparationIdentity`; historical counter-only rows remain unchanged. The
+  designed run-attempt schema moves the stamp onto
   `runs.attempt_number` with a real UNIQUE `(task_id, attempt_number)`
   so every run row is immutably tagged and duplicates are rejected at
   the DB.
@@ -65,14 +69,10 @@ comment/activity/subscription/inbox substrate around tasks is owned by
   `launchOverride` tier), `target_branch`, `promotion_mode`
   (`local_merge|pull_request`), and `triage_status` (`'triaged'` | `'flagged'` | NULL =
   untriaged; stamped by the ext triage op, cleared by "Send to triage").
-  **(ADR-112 — Implemented)** the triager's `flag` op writes `'flagged'` (a
-  duplicate, or unroutable in `triage_only` intake) — a **launch-held**
-  state cleared by a human (remove the `duplicate_of` relation / re-send to
-  triage); see [`triage.md`](triage.md).
-  Flowless tasks classify as **`unconfigured`** (not launchable); the
-  board card's launch popover collects and persists the missing fields via
-  `PATCH /api/projects/{slug}/tasks/{number}` (one aggregating endpoint,
-  explicit `null` clears a field) before launching.
+  Qualification-origin flags describe the assessment; explicit, dispatch-failure
+  and unknown-origin flags remain manual holds. A flowless task can select its
+  target in the launch preview and persist that selection atomically with explicit
+  acceptance, rather than first PATCHing a Flow to obtain authorization.
 - **Task revision** (Designed —
   [ADR-188](../decisions.md#adr-188-task-statements-task-revision-and-conversation-provenance))
   — `tasks.revision integer NOT NULL DEFAULT 0` (migration `0186`), incremented
@@ -84,7 +84,7 @@ comment/activity/subscription/inbox substrate around tasks is owned by
   PATCH's `{ok:true}` response gains `revision`. Contract owner:
   [task-statements.md](task-statements.md) (`TST-02`).
 - **Task statement** (Designed — ADR-188) — `tasks.statement_revision integer
-  NULL` names the accepted row of the immutable `task_statement_revisions`
+NULL` names the accepted row of the immutable `task_statement_revisions`
   ledger. Accepting a statement is a task content write: it renders
   `tasks.prompt` deterministically (`renderStatementPrompt`), bumps
   `tasks.revision`, and passes the same `BACKLOG_GATED_FIELDS` gate as a prompt
@@ -108,7 +108,7 @@ comment/activity/subscription/inbox substrate around tasks is owned by
 ```mermaid
 stateDiagram-v2
     [*] --> Backlog: create task<br/>(title + prompt; flow optional)
-    Backlog --> InFlight: Launch click<br/>(preconditions pass,<br/>run created)
+    Backlog --> InFlight: Accepted request binds a Run<br/>(preparation and technical gates pass)
     InFlight --> InFlight: latest run terminates<br/>Failed | Crashed | Abandoned<br/>(retry eligibility is derived)
     InFlight --> Done: latest run merged<br/>(terminal)
     Backlog --> Abandoned: explicit Discard click
@@ -238,53 +238,28 @@ of the last blocking row releases the hold. `/work` shows it as the
 `clarificationPending` attribute ([`work-stages.md`](work-stages.md)). A
 non-blocking clarification never holds launch.
 
-### Launch a task — retry loop (Implemented launch, UI designed)
+### Launch a task (implemented locally)
 
-```mermaid
-sequenceDiagram
-    actor U as Operator
-    participant UI as Web UI
-    participant W as Web tier
-    participant SCH as lib/scheduler (planned)
-    participant DB as Postgres
-    participant SV as Supervisor
+Configuration save and explicit execution authorization are separate. The Web
+launch preview displays the current task revision and settings token; an explicit
+`POST /api/task-launch-intents` with a stable key records the selected request.
+The server authorizes the session, compares the optimistic witnesses and reserves
+the task before any workspace effect. A missing or failed assessment does not
+block an authorized manual decision; automatic roots retain current accepted
+qualification and their source-specific automatic policy.
 
-    U->>UI: Click Launch on Backlog card
-    UI->>W: POST /api/runs { taskId, runnerId? }
-    W->>DB: SELECT task, project, flow, executor
-    W->>W: Resolve executor (override chain)
-    alt EXECUTOR_UNAVAILABLE
-        W-->>UI: 503 EXECUTOR_UNAVAILABLE
-    end
-    W->>SV: GET /health
-    alt supervisor unavailable
-        W-->>UI: 503 EXECUTOR_UNAVAILABLE (no worktree/run/workspace/task change)
-    end
-    W->>W: Run precondition checks (clean repo, branch free, worktree path free)
-    alt PRECONDITION
-        W-->>UI: 409 + specific blocker
-    end
-    W->>SCH: requestSlot()
-    alt cap hit
-        SCH-->>W: queue (status=Pending)
-        W-->>UI: 202 + queue position
-    end
-    W->>DB: INSERT runs (status=Pending)<br/>UPDATE tasks SET attempt_number=N+1
-    W->>SCH: promote (cap not hit)
-    SCH->>W: ok, proceed
-    W->>SV: POST /sessions { runId, projectSlug, worktreePath, ... }
-    SV-->>W: 201 { sessionId, pid }
-    W->>DB: UPDATE runs SET status=Running, acp_session_id=sessionId
-    W->>DB: UPDATE tasks SET status=InFlight
-    UI-->>U: card moves to In Flight column
-```
+The accepted receipt remains visible while queued or preparing. A fenced worker
+then creates/binds at most one Run through the existing engine. First dispatch
+revalidates authority, material input, target/settings and technical gates. The
+[launch contract](task-launch-admission.md) owns the full state/authority matrix;
+[the launch screen](../screens/chrome/launch-dialog.md) owns UI layout.
 
 ### One-time scheduled launch (Implemented, ADR-139)
 
 A future task launch is not a task state transition and does not create a Run
 or consume a Flow slot when a member creates it. The intent stores a validated
-normal launch selection and, at the due claim, reuses `launchRun` through a
-durable reservation. Its unattended classifier is intentionally stricter than
+normal launch selection and, at the due claim, creates a source-owned canonical
+launch intent through the common admission service. Its unattended classifier is intentionally stricter than
 manual retry: `Review`, `HumanWorking`, `NeedsInput`, `Crashed`, `flagged`,
 blocked, unconfigured, Done, and Abandoned targets terminalize with an
 actionable safe refusal instead of forcing a concurrent attempt. A full global
@@ -309,44 +284,24 @@ flowchart LR
     UI --> NextLaunch[Next Launch click<br/>attempt_number = max + 1]
 ```
 
-### Launch progress streaming (Implemented, FR-F1/F2, T6.3)
+### Launch progress and uncertain responses
 
-`POST /api/runs` is content-negotiated. A board client sending
-`Accept: text/event-stream` receives staged progress on the response
-(`precondition → worktree_created → materializing(<adapter>)` — flow launch has
-no synchronous session spawn, so the `spawning`/`session_ready` stages are
-scratch-only) then a terminal `scratch.launch_result` frame, and the Launch
-button shows a live stage label. Every other caller (programmatic, the
-run-schedules dispatcher) gets the unchanged JSON 202. Preconditions throw
-before the stream opens → JSON error with the HTTP status; cancelling mid-launch
-(client disconnect) GCs the worktree pre-commit. The streaming seam is shared
-with scratch — see [`scratch-runs.md`](scratch-runs.md) and `web.openapi.yaml`.
+Task launch uses the durable intent receipt plus existing attention SSE.
+Acceptance, queued capacity, preparation, Run binding and execution are distinct
+states. Closing or remounting the dialog preserves an uncertain request's exact
+key/body. Status refresh does not recreate work; cancel and replace compare the
+observed state version. Scratch launch retains its own staged-stream contract.
+The legacy `/api/runs` adapters require the same optimistic witnesses and common
+admission, and report pending acceptance truthfully when no Run is bound yet.
 
 ### Relations gate launching (Implemented, ADR-078)
 
-`classifyTaskLaunchability` gains optional relation context and a
-`"blocked"` classification with precedence
-`target_terminal > crashed > busy > blocked > launchable` — relations gate
-_launching_ only, they never mask an active run's state. (Implemented —
-ADR-089) a flowless task adds the `"unconfigured"` classification between
-`blocked` and `launchable` (`… > blocked > unconfigured > launchable`):
-launch is refused with `PRECONDITION` at every entry point, the schedules
-dispatcher records `skipped_unconfigured`, ext `run_launch` returns 409, and
-the board card swaps Launch for the popover that collects the missing
-fields. **(ADR-112 — Implemented)** a `flagged` task (the triager bailed on a
-duplicate or an unroutable `triage_only` intake — see [`triage.md`](triage.md))
-adds the `"flagged"` classification between `busy` and `blocked`, so the full
-precedence is
-`target_terminal > crashed > busy > flagged > blocked > unconfigured > launchable`.
-`flagged` is non-launchable **even when `flow_id` is set** (a human could set
-a flow on a flagged duplicate — it stays held); it is gated as an allow-list
-arm in BOTH `classifyTaskLaunchability` and `classifyManualTaskLaunchability`,
-reached via the triage `flag` op and cleared by a human (remove `duplicate_of`
-/ re-send to triage). The board shows a "needs review" chip. Every consumer
-threads the context: `launchRun` (single choke point for internal AND ext
-launches), the run-schedules dispatcher (skip with reason —
-[`run-schedules.md`](run-schedules.md)), and the board/portfolio read
-models (launch disabled + blocker chips on the card).
+Open relation blockers and blocking clarifications remain server launch gates.
+Flow selection can be supplied by the explicit request, so the manual preview does
+not require a previously saved `flow_id`. Qualification-origin flags are advisory
+to manual Launch, while independent hold origins remain blocking. Automatic
+eligibility retains its stricter assessment/arm contract. The shared reservation
+and first-dispatch checks protect these gates across queueing and task edits.
 
 ```mermaid
 flowchart TD
@@ -367,160 +322,31 @@ Blocking predicate: task T is blocked iff there exists a relation
 `(X blocks T)` or `(T depends_on Y)` whose counterpart task status is in
 {`Backlog`, `InFlight`} — `Done` AND `Abandoned` both release, so a
 discarded blocker cannot deadlock its dependents. `parent_of` never gates.
-No cycle detection: a mutual block makes both tasks unlaunchable until one
-relation is removed; the UI always renders blockers as removable chips.
+Cycle-safe relation authoring is owned by [task queue](task-queue.md) and the
+relation service. Existing blockers remain visible and must be resolved; manual
+admission does not waive them.
 
-### Auto-launch of triaged tasks (Implemented, ADR-112)
+### Automatic launch and manual Run again
 
-The triager never launches a run itself; it sets the enqueue _intent_
-(`tasks.launch_mode = 'auto'`), and a system-authority sweep job
-(`auto_launch_triaged`) on the polymorphic scheduler clock performs the
-launch through the standard `launchRun` choke point. Each tick finds and
-launches every candidate that is `triaged` + `launch_mode = 'auto'` + has a
-`flow_id` + classifies `launchable` (no live run, not an orchestrator
-as-plan task); a full cap sends the run to `Pending` exactly like a manual
-launch. Because the tick reuses `classifyTaskLaunchability` +
-`getOpenRelationBlockers`, a dependency-blocked candidate stays
-`triaged + blocked` and **self-launches on a later tick once the blocker
-clears** — "wait in queue for predecessors, then fly" with no extra wiring.
-The predicate is **disjoint** from the orchestrator's `auto_launch_run_plan`
-(which requires `parent_of`-under-orchestrator + a `delegation_spec` — agent
-or flow target, ADR-163 — and dispatches on its kind, see [`orchestrator.md`](orchestrator.md)), so the
-two never collide. See [`triage.md`](triage.md) for the full intent → tick →
-dependency-release → give-up state machine.
+A current accepted Ready assessment and independent automatic arm allow
+`enqueueQualifiedAutomaticTaskLaunch` to accept one request for the selected
+Flow. Both the slot-free scheduler and existing backstop use that canonical
+reservation; relation-blocked work waits rather than bypassing its blockers.
+Parent-created tasks use their exact parent proof and source contract.
 
-```mermaid
-flowchart TD
-    Tick[auto_launch_triaged tick<br/>scheduler clock] --> Scan[SELECT tasks WHERE<br/>triage_status='triaged'<br/>AND launch_mode='auto'<br/>AND flow_id IS NOT NULL]
-    Scan --> Live{live run for task?}
-    Live -- yes --> Skip[skip — idempotent,<br/>no double launch]
-    Live -- no --> Plan{orchestrator as-plan?<br/>parent_of + delegation_spec}
-    Plan -- yes --> Skip2[skip — owned by<br/>auto_launch_run_plan]
-    Plan -- no --> Class{classifyTaskLaunchability}
-    Class -- blocked --> Wait[leave triaged+auto;<br/>self-launch when blocker clears]
-    Class -- launchable --> Launch[launchRun — cap → Pending]
-    Class -- flagged/unconfigured --> Excluded[excluded by construction]
-```
+Manual **Launch / Run again** records a new one-shot decision. Its assessment can
+be absent, stale, negative or source-failed without manufacturing Ready. An
+explicit/dispatch/unknown-origin hold still needs its separate authorized
+resolution. A running or reserved ordinary request identifies existing work;
+intentional concurrent launch uses `/api/task-launch-intents/concurrent` with
+session authority, never an arbitrary bypass flag. Both paths retain capacity,
+resource availability, isolation and Flow gates.
 
-### Manual launchability v2 and "Run again" surfaces (Implemented, ADR-087)
-
-Manual launchability is an operator-facing intent, separate from scheduled
-dispatch. The manual classifier returns:
-
-| Task/latest-run condition                                                             | Manual result          | Required UI surface                                                                                                                          |
-| ------------------------------------------------------------------------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Latest run or task is `Done`                                                          | `launchable`           | Task card and task page show `Run again`.                                                                                                    |
-| Latest run is `Review`                                                                | `launchable`           | Task card and task page show `Run again`; existing promote controls remain on the run detail.                                                |
-| Latest run is `Failed` or `Abandoned`                                                 | `launchable`           | Existing retry behavior plus launch dialog.                                                                                                  |
-| Latest run is `Crashed`                                                               | `launchable`           | `Run again` is allowed; recover/discard controls for the crashed run stay visible on the run surface.                                        |
-| Latest run is `Pending`, `Running`, `NeedsInput`, `NeedsInputIdle`, or `HumanWorking` | `busy`                 | The action is disabled with a visible tooltip/reason, never hidden.                                                                          |
-| Task is `flagged` and no busy state wins **(ADR-112 — Implemented)**                  | `flagged`              | Disabled action plus a "needs review" chip; held even when `flow_id` is set; cleared by a human (remove `duplicate_of` / re-send to triage). |
-| Open relation blocker exists and no busy/flagged state wins                           | `blocked`              | Disabled action plus blocker `KEY-N` chips.                                                                                                  |
-| Supervisor or runner readiness is unavailable                                         | `executor_unavailable` | Disabled or failed launch state with `EXECUTOR_UNAVAILABLE`; no worktree/run/workspace/task side effect.                                     |
-
-Launching a terminal or review task reopens the board task to `InFlight` only
-after `launchRun` has passed auth, flow, runner, branch, readiness, relation,
-and worktree preconditions. Historical runs, workspaces, promotion artifacts,
-and the prior run detail remain immutable and linkable. Done and Abandoned are
-therefore no longer "cannot ever launch again" for the manual UI; they are
-"not part of the automatic Backlog retry loop".
-
-The launch dialog is the single manual surface for overrides:
-
-- Flow selector defaults to the task's Flow and lists every project Flow, but
-  only Flows with a launchable enablement state (`Enabled` or
-  `UpdateAvailable`), an enabled revision, installed package state, completed
-  setup, supported schema, and compatible engine bounds are selectable. Every
-  disabled option carries `disabledReason` (`no_revision`, `not_enabled`,
-  setup/schema/compat issue) so cards and task pages can explain why the Flow
-  cannot be chosen for launch.
-- Runner/model selector displays the resolved runner plus ADR-076 model
-  application metadata.
-- Base and target branch fields default from project/workspace policy and
-  validate against server-derived branch lists.
-- Delivery-policy editor is prefilled from the project default.
-- Execution-policy controls expose preset, checks, human-gate, promotion, and
-  budget ceilings. Empty budget inputs mean unlimited.
-- Every value that differs from the default renders an override marker.
-- The summary line names the branch that will be created and the base commit
-  branch it forks from.
-
-Task history on `/projects/[slug]/tasks/[number]` shows all attempts in a
-view-only table: attempt/run link, Flow, runner/model, outcome, delivery status,
-duration, and token total. Empty state says the task has no runs yet. Error
-states render typed `MaisterError.code` copy. Every string exists in EN and RU.
-
-Board cards keep latest-run semantics, but also show a run-count badge when the
-task has more than one run so repeated attempts are recognizable without opening
-the task page.
-
-### Force-relaunch from the runs-history view (Implemented, ADR-119)
-
-The manual classifier above blocks a new launch while any prior run is active
-(`busy`). The runs-history header on `/projects/[slug]/tasks/[number]` adds a
-**second** launch button — to the right of the runs-count chip — that uses a
-**force-relaunch** classifier so an operator can start another run _alongside_ a
-still-running one (additive concurrency, ralph-loop). The existing page-header
-launch button keeps the manual gate.
-
-`classifyForceRelaunchLaunchability(task, latestRun, relationGate)` mirrors
-`classifyManualTaskLaunchability`'s signature (no `flow_id` ⇒ no `unconfigured`
-arm) and reuses its `flagged`/`blocked` predicates, but **never** returns the
-`busy` run-status verdict — run status is deliberately not consulted. Force-mode
-precedence, highest refusal first:
-
-```
-flagged   (task.triage_status === "flagged")
-> blocked (any open blocking relation)
-> launchable
-```
-
-`unconfigured` is unreachable from this entry point (the button only renders once
-the task has ≥1 run, so it is already configured). The allow-list (only
-`flagged`/`blocked` refuse) is the documented contract — a future `RunStatus`
-must not silently change force behaviour.
-
-Wire-up:
-
-- `POST /api/runs` accepts `allowConcurrent` (boolean, default `false`). When
-  `true`, `launchRunStaged` selects `classifyForceRelaunchLaunchability`;
-  otherwise `classifyManualTaskLaunchability`. The throw-on-not-launchable
-  behaviour is unchanged — a `blocked`/`flagged` task with
-  `allowConcurrent:true` still gets `PRECONDITION`. The flag is gated behind the
-  same `requireProjectAction(projectId,"launchRun")`; it widens only the
-  run-status gate, never the task gates.
-- `GET /api/runs/launch-options` returns an additive
-  `relaunch: { launchable, reason }` (force verdict) next to the unchanged
-  `launchability` (manual). One fetch serves both buttons; existing callers
-  ignore the new field. The `relaunch` verdict layers the SAME flow-setup issues
-  as `launchability` (a flow disabled/dropped after the task's first run →
-  `not_enabled`/`flow_missing`/…), so the runs-history button disables up-front on
-  a non-launchable flow rather than failing after submit; run status is still
-  never consulted, and `launchRunStaged`'s flow-enablement checks remain the
-  authoritative backstop.
-
-Extras beyond the global cap (`MAISTER_MAX_CONCURRENT_RUNS`) queue `Pending` with
-a `queuePosition` via the existing scheduler. The running attempt is never
-cancelled or superseded. A force-relaunch reuses `launchRun`, so it records the
-same `run_launched` `task_activity` (ADR-078) and `inbox_items` fan-out — per
-launch, even while the task is already `InFlight`; no new activity/event kind and
-no `domain_events` outbox row. **Scheduled / auto-launch / run-schedule paths and
-the board flight-card keep the `busy` gate** (they never set `allowConcurrent`),
-so no automatic path fans out concurrent runs.
-
-The runs-history table renders **at most the 10 newest runs** (no per-task run
-cap; hundreds are allowed, full pagination is Phase 2). The count chip and the
-token-total aggregates are computed over **all** runs via SQL aggregates, so the
-display cap never makes the chip lie.
-
-### Phase B UI and test ownership (Implemented, ADR-087)
-
-| User story                           | UI surface(s)                                          | Acceptance and states                                                                                                                                                                                                                                                                                          | Test owner                                                                                |
-| ------------------------------------ | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Rerun a terminal or review task      | Task card, task page `/projects/[slug]/tasks/[number]` | Run again is visible for `Done`, `Review`, `Failed`, `Abandoned`, and `Crashed`; click opens the launch dialog; success reopens task to `InFlight`; EN/RU labels exist.                                                                                                                                        | `web/e2e/multi-run-cost-policy.spec.ts`; `web/lib/runs/__tests__/launchability.test.ts`   |
-| Understand why a task cannot launch  | Task card, task page                                   | Busy, relation-blocked, supervisor-unavailable, and runner-unavailable states show a disabled action with tooltip/reason; control is never hidden silently; error retry keeps the dialog state.                                                                                                                | `web/e2e/multi-run-cost-policy.spec.ts`; launch-options route tests                       |
-| Choose launch overrides deliberately | Launch dialog                                          | Flow, runner/model, base/target branch, delivery policy, execution controls, and budget defaults are prefilled; every deviation from default is marked; empty branch/flow lists and non-launchable Flow states render disabled explanations; invalid server response renders typed error copy; EN/RU coverage. | `web/e2e/multi-run-cost-policy.spec.ts`; `/api/runs` integration tests                    |
-| Recognize multiple attempts quickly  | Board task card and task page history                  | Board preserves latest-run status placement and adds a run-count badge; task page table has empty state for no runs and columns for flow, runner/model, outcome, delivery status, duration, and token total.                                                                                                   | `web/e2e/multi-run-cost-policy.spec.ts`; `web/lib/queries/__tests__/task-detail*.test.ts` |
+The task page keeps prior Run history, outcomes, delivery evidence, costs and
+runner snapshots. A same-Run recovery continues its original admission/input;
+a successor retry requires fresh admission and links to its source. See
+[continuation](task-launch-admission.md),
+[retry](agent-retry.md) and the [board screen](../screens/projects/project-board.md).
 
 ### Assignment-aware board card (Planned)
 
@@ -574,8 +400,9 @@ flowchart TD
 - Task ↔ Run cardinality is 1:N; a task can spawn many runs over its
   lifetime via the retry loop.
 - Current code: per-task attempt counter lives on `tasks.attempt_number` as a
-  mutable high-water mark, monotonic starting at 1, bumped by the
-  Launch transaction. The DB has **no** per-attempt uniqueness guard
+  mutable high-water mark, monotonic starting at 1, allocated by the
+  preparation claim. An accepted intent freezes its exact attempt allocation.
+  The DB has **no** per-Run attempt-column uniqueness guard
   (`tasks_id_attempt_uq` is vacuous because `tasks.id` is the PK);
   `runs` rows carry no attempt stamp at all, so duplicate or missing
   attempts are not detectable from a single table.
@@ -608,19 +435,13 @@ Review | Crashed`.
   via ADR-141 reopen, which returns the task to `InFlight` (never `Backlog`)
   together with its run's `Done → Review` flip.
 - Title and prompt are non-empty at creation.
-- **(Implemented)** A task without `flow_id` MUST classify as
-  `unconfigured` and MUST be refused launch (`PRECONDITION`) at every entry
-  point until a flow is set (triage verdict, card popover PATCH, or task
-  update); `triage_status` MUST be written only by the ext triage op
-  (`'triaged'`) and the "Send to triage" action (NULL + the
-  `task.triage_requeued` emit in ONE transaction).
-- **(ADR-112 — Implemented)** A `flagged` task MUST classify as `flagged`
-  (non-launchable) in BOTH `classifyTaskLaunchability` and
-  `classifyManualTaskLaunchability` — as an allow-list arm at precedence
-  `target_terminal > crashed > busy > flagged > blocked > unconfigured >
-launchable`, held **even when `flow_id` is set** — and MUST be cleared only
-  by a human (remove `duplicate_of` / re-send to triage); the
-  `auto_launch_triaged` tick MUST NEVER launch a `flagged` task.
+- A flowless task can select a real enabled Flow at explicit Launch, or select a
+  task-bound code-delivery agent. Acceptance refuses an unresolved target;
+  selecting configuration alone creates no execution authority.
+- Qualification-origin flags are advisory to manual Launch; explicit,
+  dispatch-failure and unknown-origin flags remain independent holds. The shared
+  manual gate and server admission enforce the distinction; automatic roots
+  still require their current accepted assessment and arm.
 - **(Implemented)** A Backlog card is **compact in the description axis**,
   the sibling of the flight card's identity-first contract above: it shows at
   most a ~120-character plain-text excerpt of `tasks.prompt`, and the full
@@ -664,8 +485,9 @@ launchable`, held **even when `flow_id` is set** — and MUST be cleared only
   [`social-board.md`](social-board.md).
 - Launch runs precondition checks (clean repo, branch free, worktree
   path free, executor registered) BEFORE inserting the `runs` row.
-- Global concurrency cap exceeded on Launch → run inserted as
-  `Pending`, UI shows queue position; this is NOT an error.
+- Capacity exhaustion retains an accepted queued intent; a Run may not exist yet.
+  A bound Pending Run and its intent retain one exact preparation identity. The
+  scheduler-lock capacity accounting owns transfer to execution.
 - Discarding a task with a live run MUST terminate the supervisor
   session (`DELETE /sessions/<id>`) before the task transition; failure
   to terminate does NOT block the transition (reconciliation cleans up).
@@ -674,8 +496,9 @@ launchable`, held **even when `flow_id` is set** — and MUST be cleared only
   admission input; `tasks.triage_confidence` (`numeric(4,3)`, CHECK 0..1) is
   advisory only; `tasks.queue_paused` (default false) excludes a task from
   auto-admission/auto-resume/poll and is settable while Backlog OR InFlight (other
-  config edits stay Backlog-gated); `tasks.queue_claimed_at` is the C2 admission
-  claim. Priority/confidence are dual-writable (human PATCH + agent ext triage,
+  config edits retain their task/dispatch guards); historical `tasks.queue_claimed_at`
+  remains a compatibility/reconciliation fact rather than current manual authority.
+  Priority/confidence are dual-writable (human PATCH + agent ext triage,
   via one shared mapper) and CLEAR-symmetric (priority→`normal`, confidence→NULL).
   See [`task-queue.md`](task-queue.md).
 
@@ -683,8 +506,8 @@ launchable`, held **even when `flow_id` is set** — and MUST be cleared only
 
 - **Empty title or prompt** → `PRECONDITION` (400).
 - **`flow_id` not registered for this project** → `PRECONDITION`.
-- **Launch attempt on a flowless (`unconfigured`) task** → `PRECONDITION`
-  (Implemented); the schedules dispatcher records `skipped_unconfigured`.
+- **No resolved Flow or agent target at acceptance** → typed configuration/
+  precondition refusal; a task need not save a Flow before opening manual Launch.
 - **Selected Flow has no enabled package revision** → launch options return
   `no_revision`; `POST /api/runs` fails fast before any worktree/run/workspace
   side effect.
@@ -700,8 +523,8 @@ launchable`, held **even when `flow_id` is set** — and MUST be cleared only
   `PRECONDITION` ("branch exists; abandon prior run or pick a different
   name").
 - **Worktree path collision** → `PRECONDITION`.
-- **Global concurrency cap hit** → run created as `Pending`, UI shows
-  queue position. Not an error.
+- **Global concurrency cap hit** → accepted work remains queued; Pending Run
+  status applies only after a Run exists. The receipt never invents a Run ID.
 - **Discard a task that has a live run** — supervisor `DELETE
 /sessions/<id>`, then mark worktree stale, then `tasks.status =
 Abandoned`. Failure to terminate the session does NOT block the task
@@ -709,7 +532,8 @@ Abandoned`. Failure to terminate the session does NOT block the task
 - **(Implemented, ADR-078) Mutual block (`A blocks B` + `B blocks A`)** —
   both tasks classify `blocked` until one relation is removed; the UI
   renders blockers as removable chips, so the state is always recoverable.
-  No cycle detection in Stage 1.
+  Cycle-safe authoring prevents new cycles; pre-existing blockers still require
+  explicit resolution.
 - **(Implemented, ADR-083 clause 4) Self relation** → `MaisterError("CONFIG")`
   (400 internal, 422 ext). A cross-project relation is refused the same way in
   Stage 1 and allowed by ADR-155 (Implemented) — see
@@ -785,6 +609,9 @@ Task detail lists open, answered and cancelled requests — see
 - Source: `web/lib/db/schema.ts` (tasks + runs tables),
   `web/lib/runs/launchability.ts`, `web/lib/social/relations.ts` (Implemented).
 
-## Designed extension
+## Current admission boundary
 
-The [agent activity and qualification contract](task-qualification.md) defines the accepted follow-up; current behavior above remains Implemented until its owning phase is qualified.
+[Task launch admission](task-launch-admission.md) owns explicit human decisions,
+qualified automation, derived-child authority and frozen execution. This task
+lifecycle page does not redefine those gates. Historical v1 receipts remain
+history/continuation evidence; they do not grant a new v2 launch.

@@ -239,6 +239,8 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-195](#adr-195-operational-agents-with-frozen-completion-contracts) | Operational agents with frozen completion contracts | Accepted | 2026-10-29 |
 | [ADR-198](#adr-198-incoming-request-qualification-before-delivery) | Incoming request qualification before delivery | Accepted | 2026-10-30 |
 | [ADR-199](#adr-199-immutable-per-schedule-agent-requests) | Immutable per-schedule agent requests | Accepted | 2026-11-02 |
+| [ADR-200](#adr-200-explicit-task-launch-authorization) | Explicit task launch authorization | Accepted | 2026-11-02 |
+| [ADR-201](#adr-201-fenced-agent-workspace-preparation) | Fenced agent workspace preparation | Accepted | 2026-11-02 |
 | [ADR-197](#adr-197-explicit-fenced-agent-retry-admission) | Explicit fenced agent retry admission | Accepted | 2026-10-30 |
 | [ADR-196](#adr-196-agent-activity-history-and-grouped-incidents) | Agent activity history and grouped incidents | Accepted | 2026-10-30 |
 
@@ -2302,5 +2304,23 @@ Full record: [`decisions/adr-198.md`](decisions/adr-198.md)
 **Date:** 2026-11-02
 
 Full record: [`decisions/adr-199.md`](decisions/adr-199.md)
+
+---
+
+### ADR-200: Explicit task launch authorization
+
+**Status:** Accepted
+**Date:** 2026-11-02
+
+Full record: [`decisions/adr-200.md`](decisions/adr-200.md)
+
+---
+
+### ADR-201: Fenced agent workspace preparation
+
+**Status:** Accepted
+**Date:** 2026-11-02
+
+Full record: [`decisions/adr-201.md`](decisions/adr-201.md)
 
 ---

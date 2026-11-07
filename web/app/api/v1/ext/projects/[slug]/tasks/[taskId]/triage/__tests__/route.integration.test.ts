@@ -10,6 +10,7 @@ import { NextRequest } from "next/server";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { seedAgentTokenRunOwner } from "@/test-support/seed-token-run-owner";
 import {
   issueAgentRunToken,
   revokeAgentProjectTokens,
@@ -173,6 +174,11 @@ beforeAll(async () => {
 
   fx.taskId = created.taskId;
 
+  await seedAgentTokenRunOwner(db, {
+    projectId: fx.projectId,
+    agentId: AGENT_ID,
+    runId: fx.runId,
+  });
   const agentToken = await issueAgentRunToken({
     agentId: AGENT_ID,
     projectId: fx.projectId,
@@ -280,10 +286,11 @@ describe("POST /api/v1/ext/.../triage — agent verdict", () => {
     expect(audit.rows[0]).toMatchObject({ result: "ok", status_code: 201 });
   });
 
-  // The agent token here is minted with a name whose run row does not exist, so
+  // Its real owner is pruned after issuance, so
   // this also pins the fail-closed provenance guard: stamping a dangling
   // boundRunId would violate domain_events_run_id_runs_id_fk and 500.
   it("emits task.created with an agent actor and no dangling run provenance", async () => {
+    await pool.query("DELETE FROM runs WHERE id = $1", [fx.runId]);
     const res = await CREATE_TASK(
       request("POST", fx.agentToken, { title: "provenance", prompt: "p" }),
       { params: Promise.resolve({ slug: SLUG }) },

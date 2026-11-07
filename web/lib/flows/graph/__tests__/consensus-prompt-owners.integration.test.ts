@@ -2,10 +2,13 @@ import type { Db } from "@/lib/execution-host/db";
 import type { RealSupervisor } from "@/test-support/real-supervisor";
 import type { ProjectionWorker } from "@/lib/execution-host/events/projection-worker";
 import type { FlowYamlV1 } from "@/lib/config.schema";
+import type { TaskLaunchReceipt } from "@/lib/tasks/launch-types";
 
 import { randomUUID } from "node:crypto";
+import { createServer, request as requestHttp } from "node:http";
 import { fork, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { and, eq, inArray, sql } from "drizzle-orm";
@@ -22,15 +25,22 @@ import {
   hitlRequests,
   nodeAttempts,
   runs,
+  tasks,
+  workspaces,
+  platformAcpRunners,
+  agentSchedules,
+  agentProjectLinks,
+  projects,
 } from "@/lib/db/schema";
 import { buildOrchestratorResumeConsumer } from "@/lib/domain-events/orchestrator-resume";
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
 import { startAgentContinuationWorker } from "@/lib/agents/continuation-worker";
 import { CANONICAL_PROJECTION_CONSUMERS } from "@/lib/execution-host/events/projection-consumers";
 import { PromptIncarnationPending } from "@/lib/execution-host/prompt-incarnation";
+import { retireEligibleCommands } from "@/lib/execution-host/retirement";
 import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
 import { flowPromptOwners } from "@/lib/flows/graph/prompt-owner";
-import { consensusDraftPromptOwners } from "@/lib/flows/graph/consensus/draft-prompt-owner";
+import { createConsensusDraftPromptOwners } from "@/lib/flows/graph/consensus/draft-prompt-owner";
 import { verifyConsensusInputEvidence } from "@/lib/flows/graph/consensus/input-evidence";
 import { recordConsensusVerdict } from "@/lib/flows/graph/consensus/ledger";
 import {
@@ -54,8 +64,27 @@ import { startProjectionWorker } from "@/lib/execution-host/events/projection-wo
 import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
-import { seedGraphRun } from "@/test-support/graph-run-seed";
-import { addWorktree, initRepo } from "@/test-support/git-fixture";
+import {
+  seedTaskLaunchFixture,
+  type TaskLaunchFixture,
+} from "@/test-support/task-launch-admission";
+import {
+  mkdtempReal,
+  resolveTestWorktreesRoot,
+} from "@/test-support/worktree-test-root";
+import { interactiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
+import {
+  acceptInteractiveTaskLaunch,
+  taskLaunchSettingsToken,
+} from "@/lib/tasks/launch-intent";
+import { bindAcceptedEngineFixture } from "@/test-support/launch-engine-response";
+import { tryStartRun } from "@/lib/scheduler";
+import { interactiveTaskLaunchRecoveryAuthority } from "@/lib/tasks/launch-continuation";
+import { launchAgentRun } from "@/lib/agents/launch";
+import { claimCronAgentAttempt } from "@/lib/agents/trigger-attempts";
+import { prepareTaskQualification } from "@/lib/tasks/qualification";
+import { qualificationFixture } from "@/test-support/task-qualification";
+import { seedTaskAgentFlowFacadeFixture } from "@/test-support/task-agent-flow-facade";
 import {
   holdChildProjection,
   suppressIncarnations,
@@ -191,6 +220,14 @@ let worker: ProjectionWorker;
 let restoreUrl: () => void = () => {};
 let originalFlowCap: string | undefined;
 let originalAgentCap: string | undefined;
+let activeUserId: string;
+let taskSequence = 0;
+
+vi.mock("@/lib/db/client", () => ({ getDb: () => database.db }));
+vi.mock("@/lib/authz", async (original) => ({
+  ...(await original<typeof import("@/lib/authz")>()),
+  requireActiveSession: async () => ({ id: activeUserId }),
+}));
 
 beforeAll(async () => {
   // Every case seeds its own project and leaves its parent parked; the global
@@ -204,7 +241,14 @@ beforeAll(async () => {
   database = await startMainPostgresTestDb({
     databaseName: "consensus_prompt_owners",
   });
+  const supervisorRoot = await mkdtempReal("consensus-owner-supervisor-");
+
   supervisor = await startRealSupervisor({
+    runtimeRoot: supervisorRoot,
+    workspaceRoots: [
+      supervisorRoot,
+      resolveTestWorktreesRoot("vitest", process.env),
+    ],
     fixtureArgs: ["--hang", "--lines", "0", "--supports-resume"],
   });
   restoreUrl = useRealSupervisorUrl(supervisor.url);
@@ -261,25 +305,48 @@ async function seedConsensusFlow(
   },
   scheduledRequest?: string,
 ) {
-  const name = randomUUID();
-  const repoPath = await initRepo(`${supervisor.runtimeRoot}/repo-${name}`);
-  const worktreePath = await addWorktree(
-    repoPath,
-    `${supervisor.runtimeRoot}/wt-${name}`,
-    `maister/${name}`,
+  const fixtureRoot = path.join(
+    supervisor.runtimeRoot,
+    `launch-${randomUUID()}`,
   );
+
+  await mkdir(fixtureRoot);
+  const fixture = await seedTaskLaunchFixture(database, fixtureRoot);
+
+  activeUserId = fixture.userId;
+  await database.db
+    .update(projects)
+    .set({ taskKey: `C${randomUUID().slice(0, 8)}`.toUpperCase() })
+    .where(eq(projects.id, fixture.projectId));
+  await database.db
+    .update(platformAcpRunners)
+    .set({
+      adapter: "claude",
+      capabilityAgent: "claude",
+      model: "claude-sonnet-4-6",
+      provider: { kind: "anthropic" },
+    })
+    .where(eq(platformAcpRunners.id, fixture.runnerId));
   const nodes: FlowYamlV1["nodes"] = [
     {
       id: "decide",
       type: "consensus",
       prompt,
       participants: [
-        { id: "architect", runner: "primary" },
-        { id: "qa", runner: "primary" },
+        { id: "architect", runner: fixture.runnerId },
+        { id: "qa", runner: fixture.runnerId },
       ],
       material_axes: [...AXES],
       rounds,
-      synthesizer: { runner: "primary" },
+      workspace: { mode: "repo_read" },
+      on_no_consensus: "escalate",
+      synthesizer: { runner: fixture.runnerId },
+      output: {
+        produces: [
+          { id: "consensus_plan", kind: "plan", current: true },
+          { id: "debate_log", kind: "human_note", current: true },
+        ],
+      },
       transitions: { success: "done" },
     },
   ] as unknown as FlowYamlV1["nodes"];
@@ -297,63 +364,181 @@ async function seedConsensusFlow(
     compat: { engine_min: "1.5.0" },
     nodes,
   };
-  const seeded = await seedGraphRun(database.db, manifest, {
-    repoPath,
-    run: scheduledRequest
-      ? {
-          scheduledRequestSnapshot: {
-            version: 1,
-            scheduleId: randomUUID(),
-            triggerAttemptId: randomUUID(),
-            requestAtLaunch: scheduledRequest,
-          },
-        }
-      : undefined,
-    flowRevision: true,
-    workspace: {
-      worktreePath,
-      parentRepoPath: repoPath,
-      branch: `maister/${name}`,
-    },
-  });
+  const [flow] = await database.db
+    .select()
+    .from(flows)
+    .where(eq(flows.id, fixture.flowId));
 
-  // Every seeded project adds a platform runner, so intent auto-match becomes
-  // ambiguous across suites: bind each slot to this run's concrete runner id.
-  const bound = JSON.parse(
-    JSON.stringify(manifest).replaceAll('"primary"', `"${seeded.executorId}"`),
-  );
-
-  await database.db
-    .update(flowRevisions)
-    .set({ manifest: bound })
-    .where(eq(flowRevisions.id, seeded.flowRevisionId!));
-  await database.db
-    .update(flows)
-    .set({ manifest: bound })
-    .where(eq(flows.id, seeded.flowId));
-
-  return seeded;
-}
-
-async function replaceConsensusPrompt(
-  flowRevisionId: string,
-  flowId: string,
-  prompt: string,
-): Promise<void> {
-  const [revision] = await database.db
-    .select({ manifest: flowRevisions.manifest })
-    .from(flowRevisions)
-    .where(eq(flowRevisions.id, flowRevisionId));
-  const manifest = structuredClone(revision.manifest) as {
-    nodes: Array<{ prompt: string }>;
-  };
-
-  manifest.nodes[0].prompt = prompt;
   await database.db
     .update(flowRevisions)
     .set({ manifest })
-    .where(eq(flowRevisions.id, flowRevisionId));
-  await database.db.update(flows).set({ manifest }).where(eq(flows.id, flowId));
+    .where(eq(flowRevisions.id, flow.enabledRevisionId!));
+  await database.db
+    .update(flows)
+    .set({ manifest })
+    .where(eq(flows.id, fixture.flowId));
+  const taskId = randomUUID();
+
+  await database.db.insert(tasks).values({
+    id: taskId,
+    projectId: fixture.projectId,
+    number: ++taskSequence,
+    title: "Consensus command ownership",
+    prompt: "Complete the bounded consensus fixture",
+    flowId: fixture.flowId,
+    runnerId: fixture.runnerId,
+  });
+  const accepted = scheduledRequest
+    ? await acceptScheduledConsensus(fixture, taskId, scheduledRequest)
+    : await acceptInteractiveTaskLaunch(
+        database.db,
+        await interactiveTaskLaunchPrincipal(),
+        {
+          taskId,
+          expectedTaskRevision: 0,
+          expectedSettingsToken: await taskLaunchSettingsToken(
+            database.db,
+            taskId,
+          ),
+          autoPromote: false,
+        },
+        randomUUID(),
+      );
+  const bound = await bindAcceptedEngineFixture(database.db, accepted);
+
+  expect(bound.runId).toEqual(expect.any(String));
+  const runId = bound.runId!;
+  const [parent] = await database.db
+    .select()
+    .from(runs)
+    .where(eq(runs.id, runId));
+
+  expect(parent).toMatchObject({
+    taskId,
+    taskLaunchIntentId: accepted.intentId,
+    taskAdmissionSnapshot: {
+      version: 2,
+      basis: scheduledRequest ? "automatic" : "manual",
+    },
+  });
+  if (scheduledRequest)
+    expect(parent.scheduledRequestSnapshot).toMatchObject({
+      requestAtLaunch: scheduledRequest,
+    });
+
+  expect(await tryStartRun(runId, { db: database.db })).toMatchObject({
+    started: true,
+  });
+  const [workspace] = await database.db
+    .select()
+    .from(workspaces)
+    .where(eq(workspaces.runId, runId));
+
+  return {
+    projectId: fixture.projectId,
+    taskId,
+    executorId: fixture.runnerId,
+    flowId: fixture.flowId,
+    flowRevisionId: flow.enabledRevisionId!,
+    runId,
+    worktreePath: workspace.worktreePath,
+    repoPath: fixture.repo,
+    runtimeRoot: supervisor.runtimeRoot,
+    slug: fixture.projectId,
+  };
+}
+
+async function acceptScheduledConsensus(
+  fixture: TaskLaunchFixture,
+  taskId: string,
+  scheduledRequest: string,
+): Promise<TaskLaunchReceipt> {
+  const { agentId } = await seedTaskAgentFlowFacadeFixture(database, {
+    root: supervisor.runtimeRoot,
+    projectId: fixture.projectId,
+    flowId: fixture.flowId,
+  });
+
+  await database.db
+    .update(agentProjectLinks)
+    .set({ runnerOverrideId: fixture.runnerId })
+    .where(eq(agentProjectLinks.agentId, agentId));
+  const assessment = await prepareTaskQualification(database.db, {
+    projectId: fixture.projectId,
+    taskId,
+    author: { kind: "user", identity: fixture.userId, userId: fixture.userId },
+    request: {
+      requestKey: randomUUID(),
+      expectedInputRevision: 1,
+      expectedQualificationRevision: null,
+      qualification: qualificationFixture(),
+      enqueue: false,
+    },
+  });
+
+  await database.db.transaction(assessment.apply);
+  const scheduleId = randomUUID();
+  const now = new Date();
+
+  await database.db.insert(agentSchedules).values({
+    id: scheduleId,
+    projectId: fixture.projectId,
+    agentId,
+    triggerType: "cron",
+    cronExpr: "* * * * *",
+    timezone: "UTC",
+    nextFireAt: now,
+    requestAtLaunch: scheduledRequest,
+  });
+  const attempt = await claimCronAgentAttempt(
+    database.db,
+    scheduleId,
+    now,
+    new Date(now.getTime() + 60_000),
+  );
+
+  if (!attempt)
+    throw new Error(
+      "Consensus fixture did not acquire its scheduled occurrence",
+    );
+  const launched = await launchAgentRun({
+    agentId,
+    projectId: fixture.projectId,
+    taskId,
+    runId: attempt.reservedRunId,
+    agentScheduleId: scheduleId,
+    agentTriggerReservation: {
+      attemptId: attempt.id,
+      runId: attempt.reservedRunId,
+    },
+    trigger: { source: "cron" },
+    db: database.db,
+  });
+
+  if (!("queued" in launched))
+    throw new Error("Scheduled consensus bypassed durable task admission");
+
+  return launched.receipt;
+}
+
+async function synthesisResponseFixture(response: {
+  text: string;
+  stopReason: "end_turn" | "max_tokens";
+}): Promise<{ file: string; prompt: string }> {
+  const file = path.join(
+    supervisor.runtimeRoot,
+    `synthesis-response-${randomUUID()}.json`,
+  );
+
+  await writeFile(file, JSON.stringify(response));
+  const declared = JSON.parse(
+    consensusPrompt("agree").slice("fixture-output:".length),
+  ) as { bytes: number; text: string };
+
+  return {
+    file,
+    prompt: `fixture-output:${JSON.stringify({ ...declared, consensusSynthesisResponseFile: file })}`,
+  };
 }
 
 function drive(runId: string): Promise<unknown> {
@@ -746,7 +931,7 @@ describe("Consensus prompt owners through the production graph driver", () => {
     expect(await draftArtifacts()).not.toHaveLength(2);
     const worker = startPromptOwnerWorker({
       db: database.db as unknown as Db,
-      owners: consensusDraftPromptOwners,
+      owners: createConsensusDraftPromptOwners(),
     });
 
     try {
@@ -775,6 +960,321 @@ describe("Consensus prompt owners through the production graph driver", () => {
       ),
     ).toBe(true);
   }, 180_000);
+  it("retirement: a parked consensus parent retains an aged private create needed by its live lifecycle", async () => {
+    const seeded = await seedConsensusFlow(
+      consensusPrompt("agree"),
+      undefined,
+      "retained-scheduled-context",
+    );
+
+    await drive(seeded.runId);
+    await waitForDraftsDone(seeded.runId);
+    expect(
+      (
+        await database.db
+          .select({ status: runs.status })
+          .from(runs)
+          .where(eq(runs.id, seeded.runId))
+      )[0].status,
+    ).toBe("WaitingOnChildren");
+    const [command] = await database.db
+      .select()
+      .from(executionCommands)
+      .where(
+        and(
+          eq(executionCommands.runId, seeded.runId),
+          eq(executionCommands.kind, "session.create"),
+        ),
+      );
+
+    expect(command).toMatchObject({
+      state: "succeeded",
+      createIntent: { owner: { variant: "node" } },
+    });
+    const originalIntent = command.createIntent;
+
+    await database.db
+      .update(executionCommands)
+      .set({ completedAt: new Date(Date.now() - 30 * 86_400_000) })
+      .where(eq(executionCommands.id, command.id));
+    const hosts = createExecutionHosts({ db: database.db as unknown as Db });
+
+    expect(
+      (await hosts.local().listSessionsForRun(seeded.runId)).filter(
+        (session) => session.status === "live",
+      ),
+    ).toHaveLength(0);
+    const retired = await retireEligibleCommands({
+      db: database.db as unknown as Db,
+      hosts,
+    });
+    const [retained] = await database.db
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.id, command.id));
+
+    expect(retired.reasons.run_retained).toBeGreaterThanOrEqual(1);
+    expect(retained).toMatchObject({
+      retiredAt: null,
+      createIntent: originalIntent,
+    });
+    await expect(
+      database.pool.query(
+        "WITH stamp AS (SELECT clock_timestamp() AS at) UPDATE execution_commands SET retired_at=stamp.at,create_intent=NULL,request_canonical_json=NULL,receipt_evidence=NULL,result=NULL,last_error=NULL,payload='{}'::jsonb,updated_at=stamp.at FROM stamp WHERE id=$1",
+        [command.id],
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "execution_commands_immutable_create_intent",
+    });
+  }, 180_000);
+
+  it.each(["consensus_verifier", "consensus_synthesis"] as const)(
+    "readiness: %s retains its exact create and resumes through a fresh driver",
+    async (variant) => {
+      const seeded = await seedConsensusFlow(consensusPrompt("agree"));
+      let blocked = true;
+      const posted: string[] = [];
+      const proxy = createServer((request, response) => {
+        void (async () => {
+          const url = new URL(request.url ?? "/", supervisor.url);
+
+          if (
+            blocked &&
+            request.method === "GET" &&
+            url.pathname === "/sessions" &&
+            url.searchParams.get("runId") === seeded.runId
+          ) {
+            const pending = await database.pool.query<{ pending: boolean }>(
+              "SELECT EXISTS(SELECT 1 FROM execution_commands WHERE run_id=$1 AND kind='session.create' AND state='delivering' AND create_intent->'owner'->>'variant'=$2) AS pending",
+              [seeded.runId, variant],
+            );
+
+            if (pending.rows[0].pending) {
+              response.writeHead(503, { "content-type": "application/json" });
+              response.end(
+                JSON.stringify({
+                  code: "EXECUTOR_UNAVAILABLE",
+                  message:
+                    "Scoped original process ownership remains unresolved",
+                  details: { reason: "session_process_owner_unconfirmed" },
+                }),
+              );
+
+              return;
+            }
+          }
+          const forwarding = requestHttp(
+            url,
+            { method: request.method, headers: request.headers },
+            (upstream) => {
+              response.writeHead(upstream.statusCode ?? 502, upstream.headers);
+              upstream.pipe(response);
+            },
+          );
+
+          response.once("close", () => forwarding.destroy());
+          forwarding.once("error", () => {
+            if (!response.headersSent) response.writeHead(502);
+            response.end();
+          });
+          if (request.method === "POST" && url.pathname === "/sessions") {
+            const chunks: Buffer[] = [];
+
+            request.on("data", (chunk: Buffer) => chunks.push(chunk));
+            request.on("end", () => {
+              const body = JSON.parse(
+                Buffer.concat(chunks).toString("utf8"),
+              ) as { command: { id: string }; fence: { runId: string } };
+
+              if (body.fence.runId === seeded.runId)
+                posted.push(body.command.id);
+            });
+          }
+          request.pipe(forwarding);
+        })().catch(() => {
+          if (!response.headersSent) response.writeHead(500);
+          response.end();
+        });
+      });
+
+      await new Promise<void>((resolve) =>
+        proxy.listen(0, "127.0.0.1", resolve),
+      );
+      const address = proxy.address();
+
+      if (!address || typeof address === "string")
+        throw new Error("Ownership proxy has no port");
+      const restoreProxyUrl = useRealSupervisorUrl(
+        `http://127.0.0.1:${address.port}`,
+      );
+      let continuation:
+        ReturnType<typeof startFlowContinuationWorker> | undefined;
+      const createRows = async () =>
+        (
+          await database.db
+            .select()
+            .from(executionCommands)
+            .where(
+              and(
+                eq(executionCommands.runId, seeded.runId),
+                eq(executionCommands.kind, "session.create"),
+              ),
+            )
+        ).filter((command) => command.createIntent?.owner.variant === variant);
+
+      try {
+        await drive(seeded.runId);
+        await settleDraftsAndResume(seeded.runId);
+        await expect
+          .poll(
+            async () =>
+              (await createRows()).some((command) => {
+                const details = command.lastError?.details;
+
+                return (
+                  command.state === "queued" &&
+                  details !== null &&
+                  typeof details === "object" &&
+                  "managerReadiness" in details
+                );
+              }),
+            { timeout: 30_000 },
+          )
+          .toBe(true);
+        const originals = await createRows();
+
+        expect(originals.length).toBeGreaterThan(0);
+        for (const command of originals) {
+          expect(command.state).toBe("queued");
+          expect(posted.filter((id) => id === command.id)).toHaveLength(0);
+        }
+        expect(
+          (
+            await database.db
+              .select({ status: runs.status })
+              .from(runs)
+              .where(eq(runs.id, seeded.runId))
+          )[0].status,
+        ).toBe("Running");
+        const initialOwner = originals[0].createIntent?.owner;
+
+        if (
+          !initialOwner ||
+          (initialOwner.variant !== "consensus_verifier" &&
+            initialOwner.variant !== "consensus_synthesis")
+        )
+          throw new Error("Readiness did not retain a consensus create owner");
+        const verdictsBefore = await database.db
+          .select()
+          .from(consensusRoundVerdicts)
+          .where(
+            eq(
+              consensusRoundVerdicts.nodeAttemptId,
+              initialOwner.nodeAttemptId,
+            ),
+          );
+
+        expect(verdictsBefore).toHaveLength(
+          variant === "consensus_verifier" ? 0 : 2,
+        );
+        expect(
+          verdictsBefore.every((verdict) => verdict.verdict === "agree"),
+        ).toBe(true);
+        blocked = false;
+        await database.db
+          .update(executionCommands)
+          .set({ nextAttemptAt: null })
+          .where(
+            and(
+              eq(executionCommands.runId, seeded.runId),
+              eq(executionCommands.kind, "session.create"),
+            ),
+          );
+        continuation = startFlowContinuationWorker({
+          db: database.db as unknown as Db,
+          runtimeRoot: supervisor.runtimeRoot,
+          executionHosts: createExecutionHosts({
+            db: database.db as unknown as Db,
+          }),
+        });
+        await expect
+          .poll(
+            async () =>
+              (
+                await database.db
+                  .select({ status: runs.status })
+                  .from(runs)
+                  .where(eq(runs.id, seeded.runId))
+              )[0].status,
+            { timeout: 60_000, interval: 100 },
+          )
+          .toBe("Review");
+        const after = await createRows();
+
+        expect(after).toHaveLength(variant === "consensus_verifier" ? 2 : 1);
+        expect(
+          new Set(after.map((command) => command.createIntent?.operationKey))
+            .size,
+        ).toBe(after.length);
+        expect(
+          after
+            .filter((command) =>
+              originals.some((original) => original.id === command.id),
+            )
+            .map((command) => command.id)
+            .sort(),
+        ).toEqual(originals.map((command) => command.id).sort());
+        for (const original of originals) {
+          const resumed = after.find((command) => command.id === original.id);
+
+          expect(resumed?.createIntent).toEqual(original.createIntent);
+          expect(resumed?.state).toBe("succeeded");
+          expect(posted.filter((id) => id === original.id)).toHaveLength(1);
+        }
+        const [attempt] = await database.db
+          .select()
+          .from(nodeAttempts)
+          .where(
+            and(
+              eq(nodeAttempts.runId, seeded.runId),
+              eq(nodeAttempts.nodeType, "consensus"),
+            ),
+          );
+        const verdicts = await database.db
+          .select()
+          .from(consensusRoundVerdicts)
+          .where(eq(consensusRoundVerdicts.nodeAttemptId, attempt.id));
+
+        expect(verdicts.map((verdict) => verdict.verdict)).toEqual([
+          "agree",
+          "agree",
+        ]);
+        const prompts = await database.db
+          .select()
+          .from(executionCommands)
+          .where(
+            and(
+              eq(executionCommands.runId, seeded.runId),
+              eq(executionCommands.kind, "session.prompt"),
+            ),
+          );
+
+        expect(
+          prompts.filter((command) => command.ownerRef?.variant === variant),
+        ).toHaveLength(after.length);
+      } finally {
+        await continuation?.stop();
+        restoreProxyUrl();
+        proxy.closeAllConnections();
+        await new Promise<void>((resolve, reject) =>
+          proxy.close((error) => (error ? reject(error) : resolve())),
+        );
+      }
+    },
+    180_000,
+  );
+
   it("owner-consensus-verify: every matrix cell owns its own command", async () => {
     const seeded = await seedConsensusFlow(
       consensusPrompt("agree"),
@@ -2013,19 +2513,14 @@ describe("Consensus prompt owners through the production graph driver", () => {
     expect(children).toHaveLength(2);
   }, 180_000);
   it("P0-5: incomplete synthesis keeps its text and Recover mints a fresh generation", async () => {
-    const originalPrompt = consensusPrompt("agree");
-    const seeded = await seedConsensusFlow(originalPrompt);
+    const response = await synthesisResponseFixture({
+      text: "partial synthesis text",
+      stopReason: "max_tokens",
+    });
+    const seeded = await seedConsensusFlow(response.prompt);
 
     await drive(seeded.runId);
-    // This test changes the immutable fixture's authored prompt between the
-    // draft and synthesis drives so the same adapter can return a different
-    // terminal stop reason for synthesis without changing supervisor code.
     await waitForDraftsDone(seeded.runId);
-    await replaceConsensusPrompt(
-      seeded.flowRevisionId!,
-      seeded.flowId,
-      `fixture-output:${JSON.stringify({ bytes: 0, text: "partial synthesis text", stopReason: "max_tokens" })}`,
-    );
     await settleDraftsAndResume(seeded.runId);
     const [failed] = await database.db
       .select()
@@ -2053,9 +2548,13 @@ describe("Consensus prompt owners through the production graph driver", () => {
     if (oldSynthesis.locator.kind !== "inline")
       throw new Error("incomplete synthesis requires inline evidence");
     const hosts = createExecutionHosts({ db: database.db as unknown as Db });
+    const recoveryAuthority = interactiveTaskLaunchRecoveryAuthority(
+      await interactiveTaskLaunchPrincipal(),
+    );
     const recover = () =>
       resumeCrashedRun(seeded.runId, {
         db: database.db as unknown as Db,
+        recoveryAuthority,
         executionHosts: hosts,
         runFlow: (runId, options) =>
           runFlow(runId, {
@@ -2117,10 +2616,14 @@ describe("Consensus prompt owners through the production graph driver", () => {
       .where(eq(nodeAttempts.runId, seeded.runId));
 
     expect(preRecoverAttempts).toHaveLength(1);
-    await replaceConsensusPrompt(
-      seeded.flowRevisionId!,
-      seeded.flowId,
-      originalPrompt,
+    // The provider boundary changes its next response; the accepted Flow and
+    // task input remain immutable across Recover.
+    await writeFile(
+      response.file,
+      JSON.stringify({
+        text: "complete recovered synthesis",
+        stopReason: "end_turn",
+      }),
     );
     const result = await recover();
 
@@ -2167,15 +2670,14 @@ describe("Consensus prompt owners through the production graph driver", () => {
     expect((await recover()).state).toBe("discard-only");
   }, 180_000);
   it("P0-5: an empty end_turn synthesis is a named recoverable crash", async () => {
-    const seeded = await seedConsensusFlow(consensusPrompt("agree"));
+    const response = await synthesisResponseFixture({
+      text: "",
+      stopReason: "end_turn",
+    });
+    const seeded = await seedConsensusFlow(response.prompt);
 
     await drive(seeded.runId);
     await waitForDraftsDone(seeded.runId);
-    await replaceConsensusPrompt(
-      seeded.flowRevisionId!,
-      seeded.flowId,
-      `fixture-output:${JSON.stringify({ bytes: 0, text: "", stopReason: "end_turn" })}`,
-    );
     await settleDraftsAndResume(seeded.runId);
     const [run] = await database.db
       .select({ status: runs.status })

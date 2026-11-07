@@ -62,7 +62,6 @@ export default defineConfig({
   workers: process.env.CI ? undefined : 4,
   reporter: "list",
   globalSetup: "./e2e/global-setup.ts",
-  globalTeardown: "./e2e/global-teardown.ts",
   use: {
     baseURL: BASE_URL,
     trace: "on-first-retry",

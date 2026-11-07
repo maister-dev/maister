@@ -15,7 +15,7 @@
     "typecheck": "tsc --noEmit",
     "test": "pnpm test:unit && pnpm test:integration",
     "test:unit": "vitest run --project unit --passWithNoTests",
-    "test:integration": "vitest run --project integration --passWithNoTests",
+    "test:integration": "node ../scripts/run-supervisor-integration.mjs",
     "test:watch": "vitest --project unit"
   },
   "dependencies": {

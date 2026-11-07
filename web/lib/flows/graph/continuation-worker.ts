@@ -17,8 +17,6 @@ import {
   inArray,
   lt,
   lte,
-  notExists,
-  notInArray,
   or,
   sql,
 } from "drizzle-orm";
@@ -55,13 +53,15 @@ import { markResumedFromWait } from "@/lib/runs/state-transitions";
 import { projectionTransaction } from "@/lib/execution-host/events/projection-transaction";
 import { projectionLimitsFromEnv } from "@/lib/execution-host/events/projection-limits";
 import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
-import { SETTLED_RUN_STATUSES } from "@/lib/runs/run-status-sets";
+import {
+  pendingChildObligationPredicate,
+  unobservedChildOutcomePredicate,
+} from "@/lib/orchestrator/child-obligations";
 
 const log = pino({
   name: "flow-continuation-worker",
   level: process.env.LOG_LEVEL ?? "info",
 });
-const pendingChild = alias(runs, "pending_child");
 const wakeAttempt = alias(nodeAttempts, "wake_attempt");
 const sourceAssignment = alias(executionAssignments, "source_assignment");
 
@@ -294,19 +294,8 @@ export function startFlowContinuationWorker(input: {
                     ),
                     or(
                       isNotNull(runs.failedChildWakeAt),
-                      notExists(
-                        tx
-                          .select({ id: pendingChild.id })
-                          .from(pendingChild)
-                          .where(
-                            and(
-                              eq(pendingChild.parentRunId, runs.id),
-                              notInArray(pendingChild.status, [
-                                ...SETTLED_RUN_STATUSES,
-                              ]),
-                            ),
-                          ),
-                      ),
+                      unobservedChildOutcomePredicate(runs.id),
+                      sql`NOT ${pendingChildObligationPredicate(runs.id)}`,
                     ),
                   ),
                   // ADR-176 C: the committed recover intent. It satisfies NONE
@@ -436,7 +425,7 @@ export function startFlowContinuationWorker(input: {
   //
   // The SQL predicate identifies a candidate; it does not authorize
   // `driveResume`. Liveness decides, and it is a PROBE, not a column: the
-  // sweep resolves it from one `listSessions()` per tick and skips the whole
+  // sweep resolves it from an attested per-run inventory and skips this
   // tick when that call throws. Here the probe runs only for a candidate that
   // has already passed the cheap SQL filter AND the grace guard — a state that
   // exists only after a web death — so it is per-rare-candidate, never
@@ -477,7 +466,7 @@ export function startFlowContinuationWorker(input: {
     let liveSession: boolean;
 
     try {
-      const records = await hosts.local().listSessions();
+      const records = await hosts.local().listSessionsForRun(candidate.id);
 
       liveSession = records.some(
         (record: { runId: string; status: string }) =>

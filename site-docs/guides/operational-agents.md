@@ -104,6 +104,11 @@ A lost response can be recovered with the same request; it never authorizes a se
 successor. The original run, delivery runner and future defaults remain unchanged.
 Unknown effects require reconciliation. Cleanup retry disposes resources only.
 
+Task-bound code-delivery retries instead preview the current task and exact agent
+settings, then record a fresh manual request. They preserve the failed Run and its
+provenance without borrowing its earlier authorization. Same-Run recovery uses the
+existing Run and original admitted input; it is a different action.
+
 Select failed rows in agent history to preview a batch with one runner and a result
 for each task. Multiple failures of the same task produce one new assessment.
 After changing an enabled agent's runner, MAIster offers this batch immediately.
@@ -132,9 +137,22 @@ specific next actions. These can be successful operational outcomes. Runner/API
 failure is an execution problem and does not establish that a request is invalid.
 Human questions resume the same agent run; explicit requeue is a separate action.
 
-Open a task to inspect assessment evidence or record a reviewed human assessment.
+Open a task to inspect the complete structured assessment or optionally record a
+reviewed human assessment. Select task, file or Run evidence; MAIster generates
+internal evidence IDs and resolves repository identity. You do not type IDs, enum
+codes or SHAs.
 Every check requires a rationale; Ready also requires repository evidence for
 relevance. Input edits and confirmed clarifications invalidate old acceptance.
-The platform rechecks revisions and the checked SHA at delivery admission, including
-manual and forced launches. An agent candidate remains held until its clean validated
-terminal result publishes it. Failed, partial, cancelled or dirty runs cannot publish.
+Automatic delivery requires the current accepted assessment and matching evidence
+SHA. An authorized manual task Launch is a separate one-time decision: it does not
+require this form, fabricate Ready or overwrite the Triager result. See
+[manual task launch](/product-tour/tasks-and-runs#launch-deliberately).
+
+Before model execution, the platform owns checkout preparation, integrity baseline
+capture and session handoff. A preparation failure shows an infrastructure cause
+and next step, with technical details on the Run. It does not mean the model
+refused or assessed the request negatively; a missing baseline never counts as
+success. If old history lacks the original cause, it remains unknown.
+
+An agent candidate stays held until its clean validated terminal result publishes
+it. Failed, partial, cancelled or dirty runs cannot publish an assessment.

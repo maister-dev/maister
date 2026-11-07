@@ -9,6 +9,28 @@ vi.mock("@/lib/acp-runners/catalog", () => ({
   loadFlowRunnerBindings,
   loadProjectPlatformRunnerDefaults,
 }));
+vi.mock("@/lib/flows/graph/consensus/roles", async (original) => {
+  const roles =
+    await original<typeof import("@/lib/flows/graph/consensus/roles")>();
+
+  return {
+    ...roles,
+    // These wiring cases use legacy portable resolution; the real parent
+    // snapshot and role freshness contract is covered by the PG/Git primary.
+    resolveConsensusRunnerForParent: roles.resolveConsensusRunnerSlot,
+  };
+});
+vi.mock("@/lib/flows/graph/consensus/admission", () => ({
+  prepareConsensusDraftAdmission: async (
+    _db: unknown,
+    selection: { runnerId: string | null },
+  ) => ({
+    snapshot: {
+      version: 3,
+      parent: { runnerId: selection.runnerId ?? "agent-runner" },
+    },
+  }),
+}));
 
 import {
   launchConsensusDraftRuns,
@@ -52,7 +74,8 @@ function fakeDb(args: {
 }): unknown {
   let selectCall = 0;
 
-  return {
+  const value = {
+    execute: async () => undefined,
     select: (shape?: Record<string, unknown>) => ({
       from: () => ({
         where: () => {
@@ -67,7 +90,10 @@ function fakeDb(args: {
 
           selectCall += 1;
 
-          return existing ?? args.runnerRows ?? [];
+          return (
+            existing ??
+            (shape && "triggerPayload" in shape ? [] : (args.runnerRows ?? []))
+          );
         },
       }),
     }),
@@ -78,6 +104,11 @@ function fakeDb(args: {
         return Promise.resolve();
       },
     }),
+  };
+
+  return {
+    ...value,
+    transaction: async (work: (tx: unknown) => Promise<unknown>) => work(value),
   };
 }
 
@@ -239,6 +270,7 @@ describe("launchConsensusDraftRuns", () => {
             triggerPayload: {
               kind: "consensus_draft",
               participantKind: "agent",
+              prompt: "Settle the release plan.",
             },
           },
         ],

@@ -81,7 +81,13 @@ export async function listTokens(
     .select(TOKEN_LIST_COLUMNS)
     .from(projectTokens)
     .leftJoin(users, eq(projectTokens.owner_user_id, users.id))
-    .where(eq(projectTokens.project_id, projectId))
+    .where(
+      and(
+        eq(projectTokens.project_id, projectId),
+        isNull(projectTokens.origin_kind),
+        isNull(projectTokens.bound_run_id),
+      ),
+    )
     .orderBy(desc(projectTokens.created_at));
 
   return rows.map((r: any) => toTokenListItem(r, "project"));
@@ -98,7 +104,13 @@ export async function getTokenListItem(
     .select(TOKEN_LIST_COLUMNS)
     .from(projectTokens)
     .leftJoin(users, eq(projectTokens.owner_user_id, users.id))
-    .where(eq(projectTokens.id, tokenId))
+    .where(
+      and(
+        eq(projectTokens.id, tokenId),
+        isNull(projectTokens.origin_kind),
+        isNull(projectTokens.bound_run_id),
+      ),
+    )
     .limit(1);
 
   return rows.length === 0 ? null : toTokenListItem(rows[0]);
@@ -123,6 +135,8 @@ export async function listOwnerTokens(
         eq(projectTokens.owner_user_id, ownerUserId),
         eq(projectTokens.token_kind, "user"),
         isNull(projectTokens.project_id),
+        isNull(projectTokens.origin_kind),
+        isNull(projectTokens.bound_run_id),
       ),
     )
     .orderBy(desc(projectTokens.created_at));

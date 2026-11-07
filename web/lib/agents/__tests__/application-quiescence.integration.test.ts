@@ -5,6 +5,7 @@ import type { FakeExecutionHost } from "@/test-support/fake-execution-host";
 import type { PromptResult } from "@/lib/supervisor-client";
 import type { RunResultContract } from "@/lib/run-results/types";
 
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
 import { and, eq } from "drizzle-orm";
@@ -20,7 +21,15 @@ import {
 } from "vitest";
 
 import { startAgentSession } from "@/lib/agents/launch";
-import { assertAgentExecutionQuiescent } from "@/lib/agents/execution-quiescence";
+import {
+  assertAgentExecutionQuiescent,
+  waitForAgentCancellationExecutionQuiescent,
+} from "@/lib/agents/execution-quiescence";
+import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
+import {
+  depsFromOptions,
+  stopWorkbenchRun,
+} from "@/lib/workbench-lifecycle/service";
 import {
   agentPromptOwner,
   agentPromptOwners,
@@ -121,6 +130,24 @@ async function detachedPrompt(
     workspace: "none",
     resultContract: contract,
   });
+
+  return detachPromptFromRun(runId);
+}
+
+async function detachPromptFromRun(runId: string): Promise<ExecutionCommand> {
+  const { command, driving } = await beginInterruptedPrompt(runId);
+
+  await driving;
+
+  return command;
+}
+
+async function beginInterruptedPrompt(runId: string): Promise<
+  Readonly<{
+    command: ExecutionCommand;
+    driving: ReturnType<typeof startAgentSession>;
+  }>
+> {
   const controller = new AbortController();
   const driving = startAgentSession(runId, {
     db,
@@ -147,7 +174,6 @@ async function detachedPrompt(
     )
     .toBe("accepted");
   controller.abort();
-  await driving;
   const [command] = await db
     .select()
     .from(executionCommands)
@@ -158,7 +184,7 @@ async function detachedPrompt(
       ),
     );
 
-  return command;
+  return { command, driving };
 }
 
 async function completedDetachedPrompt(): Promise<ExecutionCommand> {
@@ -393,6 +419,128 @@ describe("agent application quiescence", () => {
           ),
         ),
     ).toHaveLength(0);
+  });
+
+  it("operational Stop retains its owner until the exact delayed canonical exit commits", async () => {
+    const runId = await seedAgentRun(db, {
+      runtimeRoot,
+      definition:
+        "---\nname: Operator\ndescription: controlled delayed exit\nkind: operational\ncompletion: {contract: operational_v1}\nmode: session\nworkspace: worktree\ntriggers: [manual]\nrisk_tier: read_only\nplatform_mcp: false\n---\nPerform the controlled operation.",
+      workspace: "worktree",
+      resultContract: null,
+      operational: true,
+    });
+    const { command, driving } = await beginInterruptedPrompt(runId);
+    const occupied = await countLiveRuns(db as never, "agent");
+
+    fake.holdIngest();
+    let settled = false;
+    let stopError: unknown;
+    const stopping = stopWorkbenchRun(runId, {
+      deps: {
+        ...depsFromOptions(undefined),
+        executionHosts: hosts,
+        requireActiveSession: async () => ({ id: "controlled-stop-user" }),
+        authorize: async () => undefined,
+      },
+    }).then(
+      (result) => {
+        settled = true;
+
+        return result;
+      },
+      (error: unknown) => {
+        settled = true;
+        stopError = error;
+        throw error;
+      },
+    );
+
+    void stopping.catch(() => undefined);
+    try {
+      await expect
+        .poll(() => settled || runEventWakeBus.waiterCount(runId) > 0, {
+          timeout: 2_000,
+        })
+        .toBe(true);
+      if (stopError instanceof Error) throw stopError;
+      expect(runEventWakeBus.waiterCount(runId)).toBeGreaterThan(0);
+      expect(fake.callsOf("deleteSession")).toHaveLength(1);
+      expect(settled).toBe(false);
+      await expectSlotRetained(command, occupied);
+      const owner = {
+        id: runId,
+        executionAssignmentId: command.executionAssignmentId,
+      };
+
+      await expect(
+        waitForAgentCancellationExecutionQuiescent(
+          db,
+          owner,
+          performance.now() + 20,
+        ),
+      ).rejects.toMatchObject({
+        details: { reason: "agent_execution_quiescence_unproven" },
+      });
+      await expect(
+        waitForAgentCancellationExecutionQuiescent(
+          db,
+          { ...owner, executionAssignmentId: randomUUID() },
+          performance.now() + 20,
+        ),
+      ).rejects.toMatchObject({
+        details: { reason: "agent_execution_quiescence_unproven" },
+      });
+      await expectSlotRetained(command, occupied);
+      const missedWake = waitForAgentCancellationExecutionQuiescent(
+        db,
+        owner,
+        performance.now() + 80,
+      );
+      const silenceLocalWake = vi
+        .spyOn(runEventWakeBus, "wake")
+        .mockImplementation(() => undefined);
+
+      try {
+        await fake.releaseIngest();
+        // Simulate a commit in another process: no local EventEmitter wake.
+        // The final strict deadline read must find the actual durable exit.
+        await expect(missedWake).resolves.toBeUndefined();
+      } finally {
+        silenceLocalWake.mockRestore();
+      }
+      runEventWakeBus.wake(runId);
+      await expect(stopping).resolves.toMatchObject({
+        ok: true,
+        runStatus: "Abandoned",
+        supervisorStopped: true,
+      });
+      expect(fake.callsOf("deleteSession")).toHaveLength(1);
+      expect(
+        await db
+          .select({ status: runs.status })
+          .from(runs)
+          .where(eq(runs.id, runId)),
+      ).toEqual([{ status: "Abandoned" }]);
+      expect(
+        await db
+          .select({ state: executionAssignments.state })
+          .from(executionAssignments)
+          .where(eq(executionAssignments.id, command.executionAssignmentId)),
+      ).toEqual([{ state: "released" }]);
+    } finally {
+      await fake.releaseIngest();
+      if (
+        command.targetSessionId &&
+        fake.sessions.get(command.targetSessionId)?.status === "live"
+      ) {
+        const client = await hosts.forRun(runId, { teardown: true });
+
+        await client.deleteSession(command.targetSessionId);
+      }
+      await stopping.catch(() => undefined);
+      await driving;
+    }
   });
 
   it("reuses a successful delete while canonical teardown is delayed, then catches up", async () => {

@@ -1,5 +1,7 @@
 # Explicit agent retries
 
+**Current launch boundary:** [explicit task launch](task-launch-admission.md) owns the implemented manual/automatic admission, immutable request and dispatch contract. New task-delivery allocations use that boundary; historical v1 receipts remain readable without invented authorization. Qualification content and publication remain separate. Final combined acceptance is tracked by the active implementation plan; this is not production qualification.
+
 **Implemented — ADR-196–198.**
 
 ## Purpose
@@ -40,6 +42,28 @@ sequenceDiagram
   W->>D: Atomic child and intent receipt
   W->>W: Existing dispatch ownership
 ```
+
+### Task-bound code-delivery successor
+
+A task-bound standalone code-delivery agent uses a fresh canonical task-launch
+intent. `retry-options` returns the current task/agent/workspace/runner witness and
+protected input preview; acceptance requires the fresh opaque session principal
+and the displayed `launchRequest` in addition to the retry key/fingerprint. The
+server-owned `agent_retry` source preserves original run/request/trigger provenance.
+It never reuses a source manual grant, publishes qualification or silently reruns
+old business effects. Unsupported legacy material requires a new explicit Launch.
+
+`web/lib/agents/retry.ts` delegates this branch to
+`acceptInteractiveAgentTaskRetry`; accepted receipt/replay navigation points
+to the canonical intent. Its preparation and eventual dispatch reuse common
+capacity, input, package, workspace and source fences. No second
+`agent_retry_intents` allocation is created for this branch. Same-Run recovery
+remains a separate continuation operation. The [launch contract](task-launch-admission.md)
+owns the full successor contract.
+
+The operational/taskless pre-work retry, qualifier reassessment and historical
+retry-intent state machine below remain separate. The batch UI does not bypass a
+fresh task-delivery decision.
 
 ### Contract 9
 
@@ -229,10 +253,12 @@ New routes:
   project `launchRun` before disclosing compatible runners; protected original
   input remains behind its existing data grant. Return eligibility/refusal,
   compatible runner metadata, safe differences and expiring preview fingerprint.
-- `POST /api/runs/{runId}/retry`: body-controlled `{runnerId,requestKey,previewFingerprint,strategy?}`
-  only. runnerId must resolve in the authorized compatible set; request key UUID;
-  no taskId/projectId/cwd/package path/eventId supplied by client. Server derives
-  input. 202 `{retryIntentId,sourceRunId,runId,intentState,runStatus,queueReason}`
+- `POST /api/runs/{runId}/retry`: body-controlled `{runnerId,requestKey,previewFingerprint,strategy?,launchRequest?}`.
+  The displayed `launchRequest` is mandatory for a task-bound code-delivery
+  successor and is checked against the current server preview. runnerId must resolve in the authorized compatible set; request key UUID;
+  Generic operational retry has no taskId/projectId/cwd/package path/eventId
+  selector; task-delivery selections remain bounded by the canonical launch DTO
+  and server-owned retry source. Server derives protected input. 202 `{retryIntentId,sourceRunId,runId,intentState,runStatus,queueReason}`
   for accepted intent or its pending replay. intentState is exactly
   `accepted | launched | refused`; runStatus is null before child creation and then
   the canonical RunStatus. queueReason is nullable; queued/started are UI derivations,
@@ -252,7 +278,7 @@ New routes:
   page with optional signed cursor; existing launch grant and server-scoped identity.
 - `POST` to the same path previews `{runIds?}` or `{cursor?}` (mutually exclusive).
 - `POST /api/projects/{slug}/agents/{agentId}/retry`: strict
-  `{runnerId,items:[{runId,requestKey,previewFingerprint,strategy}]}` with at most
+  `{runnerId,items:[{runId,requestKey,previewFingerprint,strategy,launchRequest?}]}` with at most
   100 unique sources. 202 means some intent was accepted; 200 means inspect the
   per-item refusal/unknown receipts. A foreign source rejects before any prefix
   is accepted. A partial/lost response uses the identical item keys to recover.

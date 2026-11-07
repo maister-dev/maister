@@ -65,6 +65,29 @@ flowchart TD
     FlowView --> Studio
 ```
 
+## Manual launch and accepted requests
+
+A configured task exposes **Launch** even when its qualification is absent, stale,
+negative or failed at its source. The assessment remains visible and governs
+automatic execution. Explicit holds, open blockers, unavailable targets and
+current authorization still apply; `board-task-gate.ts` and the server admission
+service enforce those independent gates.
+
+Selecting a Flow or runner only changes configuration/preview. The explicit
+Launch action records one immutable task revision and settings selection. The
+dialog retains its accepted receipt and shows queued, preparing, waiting, held or
+running state; attention SSE refreshes it without polling. A changed queued
+request is held and can be replaced only by a new explicit action. Ordinary
+competing launches identify the existing reservation; intentional concurrent
+launch uses its separate session operation and still respects global capacity.
+See [the launch surface](../chrome/launch-dialog.md) and
+[the admission contract](../../system-analytics/task-launch-admission.md).
+
+Task-bound code-delivery agent actions open an inline preview with the actual
+agent/workspace and runner/model, then a separate Launch action. A Flow-driving
+agent shows its declared Flow and omits a standalone workspace override.
+Operational agent actions retain their own operational launch contract.
+
 ## Layout & Regions
 
 The board is a horizontally scrollable set of columns:
@@ -105,8 +128,10 @@ The board is a horizontally scrollable set of columns:
   `targetBranch`, `promotionMode`, `executionPolicy`) plus editable relations.
   Flow options come from launch-options: launchable Flows are selectable, while
   non-launchable Flows remain disabled with a short reason. The full save uses
-  `PUT /api/projects/{slug}/tasks/{number}` and is accepted only before work
-  starts. Relation targets are picked with a compact search field that matches
+  `PUT /api/projects/{slug}/tasks/{number}`. Before first dispatch, permitted
+  edits hold any accepted request whose input/settings changed; dispatched Run
+  snapshots remain frozen. Relation targets are picked with a compact search
+  field that matches
   task number, title, and prompt text; the relation-kind select stays narrow so
   the target search has the primary width. Description editing here uses a rich
   Markdown editor with heading, list, quote, inline formatting, link,
@@ -155,10 +180,10 @@ The board is a horizontally scrollable set of columns:
   closed, and key handling is skipped while `nativeEvent.isComposing` (RU/CJK
   input). ARIA: textarea carries `aria-expanded` / `aria-controls` /
   `aria-activedescendant`, the list is `role="listbox"` with `role="option"`
-  + `aria-selected`, and a polite live region announces the match count.
-  Selecting replaces the partial token with `@<canonical id>` plus one
-  trailing space and keeps focus. The popover is anchored below the textarea,
-  not caret-tracked.
+  - `aria-selected`, and a polite live region announces the match count.
+    Selecting replaces the partial token with `@<canonical id>` plus one
+    trailing space and keeps focus. The popover is anchored below the textarea,
+    not caret-tracked.
 - **Comment timeline — chips and summon notes (Implemented, ADR-151).** A
   resolved agent mention renders as a **non-navigating accent pill** with the
   agent id as its `title` — deliberately not a link, since `/agents` is
@@ -229,6 +254,7 @@ The board is a horizontally scrollable set of columns:
   path (never an opaque DB error). There is no auto-rename and no
   attachment-level aliasing — the per-project name unique stays
   authoritative.
+
 - **Automations tab** (`?tab=automations`, Implemented, ADR-139) replaces the visible
   Schedules tab. It aggregates one-time task launch intents, existing recurring
   task schedules, and effective agent bindings without merging their mutation

@@ -33,6 +33,7 @@
 import type { AddressInfo } from "node:net";
 import type { Pool } from "pg";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
+import type { CollectResult } from "@/lib/run-results/collect";
 
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -54,6 +55,7 @@ import { canonicalCommandJson } from "../../../runtime/command-json";
 import { objectDigest, objectEtag } from "../../../runtime/object-integrity";
 
 import { E2E_EXECUTION_HOST_SLUG } from "./fixtures";
+import { RECURSIVE_RESEARCH_RELEASE } from "./recursive-release";
 import {
   STUB_BOOT_ID,
   STUB_HOST_KEY,
@@ -75,7 +77,13 @@ import {
   stubSessionListEntry,
   stubSessions,
 } from "./stub-supervisor";
+import {
+  MANUAL_LAUNCH_FLOW_PREFIX,
+  MANUAL_QUALIFICATION_MARKER,
+  MANUAL_REVIEW_MARKER,
+} from "./manual-task-launch";
 
+import { git } from "@/test-support/git-fixture";
 import { qualificationFixture } from "@/test-support/task-qualification";
 
 const STUB_RELEASE_BACKSTOP_MS = 15_000;
@@ -351,6 +359,8 @@ const httpDelegateHook: DelegateHook = async (req) => {
     headers: {
       "content-type": "application/json",
       authorization: `Bearer ${req.facadeToken}`,
+      // Replaying this child decision keeps its key; sibling ordinals differ.
+      "Idempotency-Key": `e2e-delegate:v1:${req.orchestratorRunId}:${req.index}`,
     },
     body: JSON.stringify({
       target: resolved.target,
@@ -379,6 +389,7 @@ export async function startTestSupervisor(
   const childPrompt = opts.childPrompt ?? ((i: number) => `sub-task ${i}`);
 
   const sessions = new Map<string, SessionRecord>();
+  const pendingSessionCreates = new Map<string, string>();
   const created: Array<{
     runId: string;
     runKind: string;
@@ -724,7 +735,7 @@ export async function startTestSupervisor(
     return envelope;
   };
 
-  // Answer the held prompt of the permission scenario (idempotent).
+  // Answer a held permission or controlled operational prompt (idempotent).
   const resolvePendingPrompt = (
     rec: SessionRecord,
     stopReason: "end_turn" | "cancelled",
@@ -881,10 +892,16 @@ export async function startTestSupervisor(
    * ids would produce a result the Lab's `consumed_results_ratio` marks down,
    * so the e2e drives the honest path and asserts the row it produces.
    */
-  async function collectValidChildren(rec: SessionRecord): Promise<string[]> {
+  async function collectChildren(
+    rec: SessionRecord,
+    signal?: AbortSignal,
+  ): Promise<CollectResult[]> {
     const { token, apiBaseUrl } = readFacade(rec.mcpServers);
 
-    if (!token || !apiBaseUrl) return [];
+    if (!token || !apiBaseUrl)
+      throw new Error(
+        "Controlled coordinator is missing its bound collect facade",
+      );
     const res = await fetch(`${apiBaseUrl}/api/v1/ext/runs/collect`, {
       method: "POST",
       headers: {
@@ -892,6 +909,7 @@ export async function startTestSupervisor(
         authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({ all: true }),
+      signal,
     });
 
     if (!res.ok) {
@@ -901,20 +919,120 @@ export async function startTestSupervisor(
           .catch(() => "<no body>")}`,
       );
     }
-    const items = (await res.json()) as {
-      childRunId: string;
-      resultStatus?: string;
-    }[];
 
-    return items
-      .filter((item) => item.resultStatus === "valid")
-      .map((item) => item.childRunId);
+    return (await res.json()) as CollectResult[];
+  }
+
+  async function collectValidChildren(rec: SessionRecord): Promise<string[]> {
+    const children = await collectChildren(rec);
+
+    return children
+      .filter((child) => child.resultStatus === "valid")
+      .map((child) => child.childRunId);
+  }
+
+  // A research provider may finish on its first prompt: the engine need not
+  // resume a coordinator whose children have already settled. Consume the real
+  // authorized answers before emitting completion, independently of session age.
+  async function collectResearchSummary(rec: SessionRecord): Promise<{
+    summary: string;
+    outcome: "completed";
+    consumedChildRunIds: string[];
+  }> {
+    const deadline = performance.now() + 30_000;
+    const signal = AbortSignal.timeout(30_000);
+
+    while (performance.now() < deadline) {
+      const children = await collectChildren(rec, signal);
+      const distinctIds = new Set(children.map((child) => child.childRunId));
+
+      if (children.length > 2 || distinctIds.size !== children.length)
+        throw new Error(
+          "Controlled research collection requires two distinct direct children",
+        );
+      const completed = children.flatMap((child) => {
+        if (!child.settled) return [];
+        const value = child.result?.value;
+
+        if (
+          child.status !== "Done" ||
+          child.resultStatus !== "valid" ||
+          value === null ||
+          typeof value !== "object" ||
+          !("outcome" in value) ||
+          value.outcome !== "completed" ||
+          !("summary" in value) ||
+          typeof value.summary !== "string" ||
+          value.summary.trim().length === 0
+        )
+          throw new Error(
+            "Controlled research child settled without a valid completed result",
+          );
+
+        return [{ childRunId: child.childRunId, summary: value.summary }];
+      });
+
+      if (completed.length === 2) {
+        const ordered = completed.toSorted((a, b) =>
+          a.childRunId.localeCompare(b.childRunId),
+        );
+
+        return {
+          summary: ordered.map((child) => child.summary).join("; "),
+          outcome: "completed",
+          consumedChildRunIds: ordered.map((child) => child.childRunId),
+        };
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(
+      "Controlled research collection did not receive two completed direct-child results within its bound",
+    );
   }
 
   // Decide + run the agent's turn for a session. Called on sendPrompt. For an
   // orchestrator turn 0 it spawns children first (awaited) so countPendingChildren
   // sees them when the runner makes the park decision after the prompt returns.
   async function driveTurn(rec: SessionRecord): Promise<void> {
+    const continuingFlow =
+      rec.runKind === "flow" && delegatedRuns.has(rec.runId);
+
+    if (
+      rec.runKind === "flow" &&
+      (await flowRefOf(rec.runId))?.startsWith(MANUAL_LAUNCH_FLOW_PREFIX)
+    ) {
+      const workspace = (
+        await opts.pool.query<{ worktree_path: string }>(
+          "SELECT worktree_path FROM workspaces WHERE run_id=$1",
+          [rec.runId],
+        )
+      ).rows[0];
+
+      if (!workspace)
+        throw new Error("Controlled manual delivery has no workspace");
+      mkdirSync(path.join(workspace.worktree_path, "docs"), {
+        recursive: true,
+      });
+      writeFileSync(
+        path.join(workspace.worktree_path, "docs/manual-launch-proof.md"),
+        "# Controlled provider output\nThis change was produced by the browser test provider fixture.\n",
+      );
+      await git(workspace.worktree_path, "add", "docs/manual-launch-proof.md");
+      await git(
+        workspace.worktree_path,
+        "commit",
+        "-m",
+        "Controlled manual launch proof",
+      );
+      emitText(
+        rec,
+        "Controlled provider committed its documentation change. The real Flow must still execute its blocking check and human review.",
+      );
+      rec.exitPending = true;
+      rec.exitCode = 0;
+
+      return;
+    }
     if (
       rec.runKind === "flow" &&
       !rec.isResume &&
@@ -939,13 +1057,13 @@ export async function startTestSupervisor(
     }
 
     // ADR-165: the completing turn publishes the run's result.
-    //   • a flow RESUME turn is the coordinator reducing — it collects first and
-    //     reports the ids it actually consumed;
+    //   • a continuing root turn reduces the children it actually collects;
+    //   • research consumes its agents even when they settle in its first turn;
     //   • an agent child with a contract answers its research profile.
-    if (rec.runKind === "flow" && rec.isResume) {
+    if (rec.runKind === "flow") {
       const flowRef = await flowRefOf(rec.runId);
 
-      if (flowRef === RAH_ROOT_FLOW_REF) {
+      if (flowRef === RAH_ROOT_FLOW_REF && (rec.isResume || continuingFlow)) {
         emitText(
           rec,
           sentinel({
@@ -955,15 +1073,16 @@ export async function startTestSupervisor(
           }),
         );
       } else if (flowRef === RAH_RESEARCH_FLOW_REF) {
-        // The research coordinator collects its own agents, then exports.
-        await collectValidChildren(rec);
-        emitText(
-          rec,
-          sentinel({
-            summary: "researched the change surface",
-            outcome: "completed",
-          }),
-        );
+        const releaseDeadline = performance.now() + 90_000;
+
+        while (!existsSync(RECURSIVE_RESEARCH_RELEASE)) {
+          if (performance.now() >= releaseDeadline)
+            throw new Error(
+              "Controlled recursive research completion was not released after the root park",
+            );
+          await new Promise<void>((resolve) => setTimeout(resolve, 50));
+        }
+        emitText(rec, sentinel(await collectResearchSummary(rec)));
       }
     } else if (
       rec.runKind === "agent" &&
@@ -974,9 +1093,10 @@ export async function startTestSupervisor(
           agent_kind: string | null;
           task_id: string | null;
           task_qualification_snapshot: { role: string; sha: string } | null;
+          agent_config: Record<string, unknown> | null;
           slug: string;
         }>(
-          "SELECT r.agent_kind,r.task_id,r.task_qualification_snapshot,p.slug FROM runs r JOIN projects p ON p.id=r.project_id WHERE r.id=$1",
+          "SELECT r.agent_kind,r.task_id,r.task_qualification_snapshot,r.agent_config,p.slug FROM runs r JOIN projects p ON p.id=r.project_id WHERE r.id=$1",
           [rec.runId],
         )
       ).rows[0];
@@ -1002,13 +1122,45 @@ export async function startTestSupervisor(
             `Controlled qualifier task read refused: ${currentResponse.status}`,
           );
         const current = (await currentResponse.json()) as {
+          flowId: string | null;
+          runnerId: string | null;
+          prompt: string;
           qualification: {
             inputRevision: number;
             qualificationRevision: number | null;
           };
         };
-        const qualification = qualificationFixture();
+        const baseQualification = qualificationFixture();
+        const needsReview = current.prompt.includes(MANUAL_REVIEW_MARKER);
+        const qualification = needsReview
+          ? {
+              ...baseQualification,
+              decision: "needs_review" as const,
+              checks: baseQualification.checks.map((check) =>
+                check.dimension === "acceptance"
+                  ? {
+                      ...check,
+                      state: "unknown" as const,
+                      rationale:
+                        "The controlled request explicitly leaves acceptance criteria unresolved.",
+                    }
+                  : check,
+              ),
+              reasonCodes: ["acceptance_unclear"],
+              nextActions: [
+                "Specify the expected acceptance result before automatic execution.",
+              ],
+            }
+          : baseQualification;
+        const enqueue =
+          !needsReview && run.agent_config?.auto_enqueue === "always";
+        const routeSelected =
+          enqueue || current.prompt.includes(MANUAL_QUALIFICATION_MARKER);
 
+        if (enqueue && (!current.flowId || !current.runnerId))
+          throw new Error(
+            "Controlled auto-enqueue qualifier requires an explicitly selected task Flow and runner",
+          );
         qualification.evidenceRefs = [
           {
             id: "repo",
@@ -1025,7 +1177,10 @@ export async function startTestSupervisor(
             expectedQualificationRevision:
               current.qualification.qualificationRevision,
             qualification,
-            enqueue: false,
+            enqueue,
+            ...(routeSelected
+              ? { flowId: current.flowId, runnerId: current.runnerId }
+              : {}),
           }),
         });
 
@@ -1121,8 +1276,8 @@ export async function startTestSupervisor(
   }
 
   const server = createServer((req, res) => {
-    const url = new URL(req.url ?? "/", "http://test-supervisor.local")
-      .pathname;
+    const requestUrl = new URL(req.url ?? "/", "http://test-supervisor.local");
+    const url = requestUrl.pathname;
     const method = req.method ?? "GET";
 
     // ---- stub-supervisor superset: readiness surfaces --------------------
@@ -1776,10 +1931,39 @@ export async function startTestSupervisor(
 
     // ---- GET /sessions — reconcile/keepalive/parkOrchestratorSession view --
     if (method === "GET" && url === "/sessions") {
+      const scopedRunId = requestUrl.searchParams.get("runId");
+
+      if (
+        scopedRunId !== null &&
+        (!/^[0-9a-f-]{36}$/i.test(scopedRunId) ||
+          requestUrl.searchParams.getAll("runId").length !== 1)
+      ) {
+        sendJson(400, {
+          code: "CONFIG",
+          message: "Scoped session inventory requires one run ID",
+        });
+
+        return;
+      }
+      if (
+        scopedRunId !== null &&
+        [...pendingSessionCreates.values()].includes(scopedRunId)
+      ) {
+        sendJson(503, {
+          code: "EXECUTOR_UNAVAILABLE",
+          message: "Controlled session creation is still pending",
+          details: { reason: "session_process_owner_unconfirmed" },
+        });
+
+        return;
+      }
       // The real `SessionListEntry` projection over the shared registry; a
       // checkpointed (detached) or evicted session is no longer listed live.
       const records = [...sessions.values()]
-        .filter((s) => !s.detached)
+        .filter(
+          (s) =>
+            !s.detached && (scopedRunId === null || s.runId === scopedRunId),
+        )
         .map((s) => {
           const entry = stubSessions.get(s.sessionId);
 
@@ -1806,7 +1990,12 @@ export async function startTestSupervisor(
           };
         });
 
-      res.writeHead(200, { "content-type": "application/json" });
+      res.writeHead(200, {
+        "content-type": "application/json",
+        ...(scopedRunId !== null
+          ? { "X-Maister-Session-Ownership-Version": "1" }
+          : {}),
+      });
       res.end(JSON.stringify(records));
 
       return;
@@ -1855,7 +2044,13 @@ export async function startTestSupervisor(
             code: "CONFIG",
             message:
               "Controlled runner binary is unavailable before session creation",
-            details: { reason: "e2e_runner_prework_unavailable" },
+            details: {
+              reason: "e2e_runner_prework_unavailable",
+              sessionCreateQuiescence: {
+                version: 1,
+                process: "not_started",
+              },
+            },
           };
 
           stubRecord(env, 422, failure);
@@ -1916,6 +2111,8 @@ export async function startTestSupervisor(
         const acpSessionId = (body.resumeSessionId as string) || randomUUID();
         const runId = resolved.runId;
         const mcpServers = (body.mcpServers as AgentMcpServer[]) ?? [];
+
+        pendingSessionCreates.set(env.command.id, runId);
         const runKind = await lookupRunKind(runId);
         const permission =
           runKind === "flow" &&
@@ -2069,6 +2266,7 @@ export async function startTestSupervisor(
           sessionName: rec.sessionName,
           acpSessionId,
         });
+        pendingSessionCreates.delete(env.command.id);
         sendJson(201, out);
       });
 
@@ -2181,11 +2379,7 @@ export async function startTestSupervisor(
           });
         };
 
-        // Permission scenario: admission is already durable. `/input` or
-        // `/checkpoint` settles the prompt receipt and terminal event later.
-        if (rec.permission) {
-          const requestId = randomUUID();
-
+        const registerPendingPrompt = (requestId: string): void => {
           rec.pendingPrompt = {
             requestId,
             env,
@@ -2209,6 +2403,14 @@ export async function startTestSupervisor(
               });
             },
           };
+        };
+
+        // Permission scenario: admission is already durable. `/input` or
+        // `/checkpoint` settles the prompt receipt and terminal event later.
+        if (rec.permission) {
+          const requestId = randomUUID();
+
+          registerPendingPrompt(requestId);
           emitOrQueue(rec, {
             type: "session.permission_request",
             sessionId: rec.sessionId,
@@ -2224,6 +2426,34 @@ export async function startTestSupervisor(
               kind: "edit",
             },
           });
+
+          return;
+        }
+        // Operational result-contract sessions auto-drive, so their explicit
+        // controlled hold needs a real pending command rather than stub mode.
+        if (!rec.stub && JSON.stringify(body).includes(E2E_HOLD_TURN_MARKER)) {
+          registerPendingPrompt(`e2e:held:${env.command.id}`);
+          const pending = rec.pendingPrompt;
+
+          if (!pending)
+            throw new Error("Controlled hold has no pending prompt");
+          const deadline = setTimeout(() => {
+            if (rec.pendingPrompt !== held) return;
+            resolvePendingPrompt(rec, "cancelled");
+            rec.exitPending = true;
+            rec.exitCode = 0;
+            flushExit(rec);
+          }, E2E_HOLD_TURN_BACKSTOP_MS);
+          const held: NonNullable<SessionRecord["pendingPrompt"]> = {
+            ...pending,
+            respond: (status: number, result: unknown): void => {
+              clearTimeout(deadline);
+              pending.respond(status, result);
+            },
+          };
+
+          rec.pendingPrompt = held;
+          stubAppendPrompt(rec.sessionId, body);
 
           return;
         }
@@ -2477,6 +2707,15 @@ export async function startTestSupervisor(
 
         stubRecord(env, 200, out);
         sendJson(200, out);
+        if (
+          inputMatch[2] === "cancel" &&
+          rec?.pendingPrompt?.requestId.startsWith("e2e:held:")
+        ) {
+          resolvePendingPrompt(rec, "cancelled");
+          rec.exitPending = true;
+          rec.exitCode = 0;
+          flushExit(rec);
+        }
         // Permission scenario: the delivered answer completes the held turn and
         // the session ends cleanly (the flow runner drives the graph on).
         const payload = stubPayload(body) as {
@@ -2527,6 +2766,11 @@ export async function startTestSupervisor(
         }
         if (rec) {
           resolvePendingPrompt(rec, "cancelled");
+          if (stubSessions.get(rec.sessionId)?.status === "live") {
+            rec.exitPending = true;
+            rec.exitCode = 0;
+            flushExit(rec);
+          }
           if (rec.emit) rec.emit = null;
           sessions.delete(deleteMatch[1]);
         }

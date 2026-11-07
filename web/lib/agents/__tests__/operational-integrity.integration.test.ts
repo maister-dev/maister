@@ -1,10 +1,13 @@
+import type { FileHandle } from "node:fs/promises";
+
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   lstat,
   mkdtemp,
   mkdir,
   readFile,
+  realpath,
   rename,
   rm,
   symlink,
@@ -17,11 +20,92 @@ import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { materializeOperationalContextMounts } from "@/lib/context-mounts/service";
+import { materializeOperationalAdapterCapabilityHome } from "@/lib/capabilities/adapter-home";
+import { materializeAgentReadOnlySettings } from "@/lib/agents/dirty-watchdog";
+import {
+  agentMaterializationPathsForRun,
+  releaseAgentMaterialization,
+} from "@/lib/agents/materialization-manifest";
 import {
   captureOperationalBaseline,
   captureOperationalGeneration,
   verifyOperationalIntegrity,
 } from "@/lib/agents/operational-integrity";
+import { releaseTaskAgentCaptureAfterFailure } from "@/lib/tasks/launch-agent-definition";
+import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
+import { isFencedError } from "@/lib/execution-host/deliverer";
+import { MaisterError } from "@/lib/errors";
+
+const probeFault = vi.hoisted(() => ({
+  current: null as Readonly<{
+    file: string;
+    readError: NodeJS.ErrnoException | null;
+    closeError: NodeJS.ErrnoException;
+    closed: () => void;
+  }> | null,
+  diagnostics: [] as Readonly<Record<string, unknown>>[],
+}));
+
+vi.mock("node:fs/promises", async (original) => {
+  const actual = await original<typeof import("node:fs/promises")>();
+
+  return {
+    ...actual,
+    open: async (
+      ...args: Parameters<typeof actual.open>
+    ): Promise<FileHandle> => {
+      const handle = await actual.open(...args);
+      const fault = probeFault.current;
+
+      if (!fault || args[0] !== fault.file) return handle;
+
+      return new Proxy(handle, {
+        get(target, property): unknown {
+          if (property === "read" && fault.readError)
+            return async (): Promise<never> => {
+              throw fault.readError;
+            };
+          if (property === "close")
+            return async (): Promise<never> => {
+              await target.close();
+              fault.closed();
+              throw fault.closeError;
+            };
+          const value: unknown = Reflect.get(target, property, target);
+
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    },
+  };
+});
+
+vi.mock("pino", async (original) => {
+  const actual = await original<typeof import("pino")>();
+
+  return {
+    ...actual,
+    default: (...args: Parameters<typeof actual.default>) => {
+      const options = args[0];
+
+      if (
+        options &&
+        typeof options === "object" &&
+        "name" in options &&
+        options.name === "agent-workspace-operation"
+      )
+        return actual.default(options, {
+          write: (line: string): void => {
+            probeFault.diagnostics.push(
+              JSON.parse(line) as Record<string, unknown>,
+            );
+          },
+        });
+
+      return actual.default(...args);
+    },
+  };
+});
 
 const exec = promisify(execFile);
 let root: string;
@@ -43,10 +127,255 @@ beforeEach(async () => {
   await git("commit", "-qm", "initial");
 });
 afterEach(async () => {
+  probeFault.current = null;
+  probeFault.diagnostics = [];
   await rm(root, { recursive: true, force: true });
 });
 
 describe("operational source integrity", () => {
+  it("prepares real Claude package skills without changing source gitignore or index and still refuses unowned writes", async () => {
+    const materializationCwd = await realpath(cwd);
+    const bundle = join(root, "bundle");
+    const runId = randomUUID();
+
+    await mkdir(join(bundle, "skills", "qualify"), { recursive: true });
+    await writeFile(
+      join(bundle, "skills", "qualify", "SKILL.md"),
+      "---\nname: qualify\ndescription: fixture\n---\nInspect source.\n",
+    );
+    const baseline = await captureOperationalBaseline(
+      materializationCwd,
+      "ephemeral_checkout",
+    );
+    const gitignore = await readFile(join(cwd, ".gitignore"));
+    const index = await readFile(join(cwd, ".git", "index"));
+
+    await materializeAgentReadOnlySettings(materializationCwd, "claude", runId);
+    const home = await materializeOperationalAdapterCapabilityHome({
+      agent: "claude",
+      worktreePath: materializationCwd,
+      runId,
+      installedPaths: [bundle],
+    });
+
+    expect(home.materializedRoots).toContain(
+      join(materializationCwd, ".claude", "skills", "qualify"),
+    );
+    expect(await readFile(join(cwd, ".gitignore"))).toEqual(gitignore);
+    expect(await readFile(join(cwd, ".git", "index"))).toEqual(index);
+    const ownedPaths = await agentMaterializationPathsForRun(
+      materializationCwd,
+      runId,
+    );
+    const generationPaths = [
+      ...ownedPaths,
+      ".maister/agent-materialization/index.json",
+      `.maister/agent-materialization/runs/${runId}.json`,
+      ".maister/agent-materialization/mutex.sqlite",
+      ".maister/agent-materialization/mutex.sqlite-journal",
+      ".maister/agent-materialization/mutex.sqlite-shm",
+      ".maister/agent-materialization/mutex.sqlite-wal",
+    ];
+    const ready = await captureOperationalGeneration(
+      materializationCwd,
+      baseline,
+      generationPaths,
+    );
+
+    expect(ready.generation).toBe(1);
+    expect(
+      (await verifyOperationalIntegrity(materializationCwd, ready)).verdict,
+    ).toBe("clean");
+    await writeFile(join(cwd, "unowned-source.txt"), "Unexpected write.\n");
+    await expect(
+      captureOperationalGeneration(materializationCwd, ready, generationPaths),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "operational_materialization_conflict" },
+    });
+    await releaseAgentMaterialization(materializationCwd, runId);
+    expect(await readFile(join(cwd, ".gitignore"))).toEqual(gitignore);
+    expect(await readFile(join(cwd, ".git", "index"))).toEqual(index);
+    expect(await readFile(join(cwd, "unowned-source.txt"), "utf8")).toBe(
+      "Unexpected write.\n",
+    );
+  });
+
+  it.each(["fenced", "pending"] as const)(
+    "TB05 retains exact %s authority after private capture release fails",
+    async (kind) => {
+      const stage = await mkdtemp(join(root, "private-capture-"));
+
+      await writeFile(join(stage, "captured.txt"), "private captured content");
+      const primary =
+        kind === "fenced"
+          ? new MaisterError("CONFLICT", "The owner was superseded", {
+              details: { reason: "assignment_fenced" },
+            })
+          : new SessionCreatePending("frozen-create-command");
+      const cleanup: NodeJS.ErrnoException = Object.assign(
+        new Error(`private cleanup ${stage}`),
+        { code: "EIO", syscall: "unlink" },
+      );
+      let released = 0;
+      const retained = await releaseTaskAgentCaptureAfterFailure(
+        {
+          release: async () => {
+            await rm(stage, { recursive: true });
+            released += 1;
+            throw cleanup;
+          },
+        },
+        primary,
+      );
+
+      expect(retained).toBe(primary);
+      expect(
+        kind === "fenced"
+          ? isFencedError(retained)
+          : retained instanceof SessionCreatePending,
+      ).toBe(true);
+      expect(released).toBe(1);
+      await expect(lstat(stage)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readFile(join(cwd, "source.ts"), "utf8")).toBe(
+        "export const value = 1;\n",
+      );
+      expect(probeFault.diagnostics).toContainEqual(
+        expect.objectContaining({
+          cleanupOperation: "agent_package.release",
+          cleanupCauseChain: [
+            { name: "Error", code: "EIO", syscall: "unlink" },
+          ],
+        }),
+      );
+      expect(JSON.stringify(probeFault.diagnostics)).not.toContain(stage);
+    },
+  );
+
+  it.each(["read_and_close", "close_only"] as const)(
+    "TB05 preserves the probe failure when owned cleanup fails (%s)",
+    async (window) => {
+      const plain = join(root, "probe");
+
+      await mkdir(plain);
+      const file = join(await realpath(plain), "source.txt");
+
+      await writeFile(file, "private source content");
+      const readError: NodeJS.ErrnoException = Object.assign(
+        new Error(`private read failure ${file}`),
+        { code: "EIO", syscall: "read" },
+      );
+      const closeError: NodeJS.ErrnoException = Object.assign(
+        new Error(`private close failure ${file}`),
+        { code: "EBADF", syscall: "close" },
+      );
+      let closed = false;
+
+      probeFault.current = {
+        file,
+        readError: window === "read_and_close" ? readError : null,
+        closeError,
+        closed: () => {
+          closed = true;
+        },
+      };
+      let failure: unknown;
+
+      try {
+        await captureOperationalBaseline(plain, "plain_directory", {
+          context: {
+            runId: "probe-failure-owner",
+            assignmentId: "probe-assignment",
+            stage: "baseline",
+          },
+        });
+      } catch (error) {
+        failure = error;
+      }
+      expect(closed).toBe(true);
+      expect(await readFile(file, "utf8")).toBe("private source content");
+      expect(failure).toMatchObject({
+        details: {
+          reason: "operational_integrity_probe_failed",
+          probeOperation: window === "read_and_close" ? "read" : "close",
+        },
+        cause: window === "read_and_close" ? readError : closeError,
+      });
+      if (window === "read_and_close") {
+        expect(probeFault.diagnostics).toContainEqual(
+          expect.objectContaining({
+            runId: "probe-failure-owner",
+            assignmentId: "probe-assignment",
+            stage: "baseline",
+            cleanupOperation: "probe.close",
+            primaryFailure: expect.objectContaining({
+              probeOperation: "read",
+              causeChain: [{ name: "Error", code: "EIO", syscall: "read" }],
+            }),
+            cleanupCauseChain: expect.arrayContaining([
+              { name: "Error", code: "EBADF", syscall: "close" },
+            ]),
+          }),
+        );
+        const details = JSON.stringify(probeFault.diagnostics);
+
+        expect(details).not.toContain(file);
+        expect(details).not.toContain("private source content");
+        expect(details).not.toContain("private read failure");
+      }
+    },
+  );
+
+  it("TB05 preserves a real missing-root cause and probe operation without exposing filesystem paths", async () => {
+    await rm(cwd, { recursive: true });
+
+    let failure: unknown;
+
+    try {
+      await captureOperationalBaseline(cwd, "ephemeral_checkout");
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({
+      code: "PRECONDITION",
+      details: {
+        reason: "operational_integrity_probe_failed",
+        probeOperation: "lstat",
+        causeChain: [{ name: "Error", code: "ENOENT", syscall: "lstat" }],
+      },
+      cause: { code: "ENOENT", syscall: "lstat" },
+    });
+    expect(
+      JSON.stringify((failure as { details: object }).details),
+    ).not.toContain(root);
+  });
+
+  it("TB05 retains a real Git exit category while redacting command diagnostics", async () => {
+    await rename(join(cwd, ".git", "HEAD"), join(root, "saved-head"));
+    let failure: unknown;
+
+    try {
+      await captureOperationalBaseline(cwd, "ephemeral_checkout");
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
+      code: "PRECONDITION",
+      details: {
+        reason: "operational_integrity_probe_failed",
+        probeOperation: expect.stringMatching(/^git\./),
+        causeChain: expect.arrayContaining([
+          expect.objectContaining({ code: 128 }),
+        ]),
+      },
+    });
+    const details = JSON.stringify((failure as { details: object }).details);
+
+    expect(details).not.toContain(root);
+    expect(details).not.toContain("stderr");
+  });
+
   it("bounds concurrent probe buffers while hashing distinct multi-block, empty, short and tiny files exactly", async () => {
     const fixtures = Array.from({ length: 4 }, (_, probe) => ({
       plain: join(root, `probe-${probe}`),

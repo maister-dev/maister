@@ -60,7 +60,8 @@ export type ScratchPromptOwner =
   | Readonly<{ variant: "initial" }>
   | Readonly<{ variant: "recovery" }>
   | Readonly<{ variant: "message"; messageId: string; sequence: number }>
-  | (Readonly<{ variant: "package_initial" }> & PackageTurn)
+  | (Readonly<{ variant: "package_initial" | "package_recovery" }> &
+      PackageTurn)
   | (Readonly<{
       variant: "package_message";
       messageId: string;
@@ -201,8 +202,9 @@ export async function admitScratchPrompt(
           variant: "package_message",
           messageId: owner.messageId,
         }
-      : owner.variant === "package_initial"
-        ? { ...common, ...(pkg as PackageTurn), variant: "package_initial" }
+      : owner.variant === "package_initial" ||
+          owner.variant === "package_recovery"
+        ? { ...common, ...(pkg as PackageTurn), variant: owner.variant }
         : owner.variant === "message"
           ? { ...common, variant: "message", messageId: owner.messageId }
           : { ...common, variant: owner.variant };

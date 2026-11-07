@@ -34,7 +34,6 @@ import {
 import {
   createFakeExecutionHost,
   fakeBoundClient,
-  unknownWorkspaceError,
   type FakeExecutionHost,
 } from "@/test-support/fake-execution-host";
 import { addWorktree, initRepo } from "@/test-support/git-fixture";
@@ -373,8 +372,11 @@ describe("workspace adoption (real supervisor)", () => {
         assignment: fakeAssignment,
       });
 
-      fake.failOnce("createSession", unknownWorkspaceError());
-      fake.failOnce("createSession", unknownWorkspaceError());
+      // The fake host itself refuses each vanished handle before creating a
+      // session, retaining its positive not-started receipt for both attempts.
+      fake.onCall("createSession", () => {
+        fake.workspaces.clear();
+      });
 
       await expect(fakeClient.createSession(CREATE_PAYLOAD)).rejects.toSatisfy(
         (err: unknown) =>

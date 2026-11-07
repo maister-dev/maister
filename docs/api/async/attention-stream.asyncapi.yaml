@@ -190,3 +190,13 @@ components:
 # and incident content changes contribute to the scanned signature even if group
 # identity and badge count are unchanged. Visibility is checked before the tick.
 # No new browser polling, event transport or diagnostic body is introduced.
+
+# Implemented — ADR-200: task.launch_changed is a content-free transactional
+# invalidation fact for intent state before a run exists. Existing attention.tick
+# regions/counters and visibility filtering remain the browser wire contract;
+# refetch the scoped intent receipt on invalidation/reconnect. Existing run
+# execution frames remain run-bound. Compatibility launch requests return a JSON
+# 202 union: an actual run receipt, or accepted:true/code:launch_pending with intentId
+# and Location. Web SSE-accepting requests receive that JSON; no progress is invented.
+# Pending 202 is a successful MCP result. A 503/lost response leaves acceptance
+# uncertain; replay the original key and request to reconcile it.

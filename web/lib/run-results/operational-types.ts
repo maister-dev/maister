@@ -1,5 +1,6 @@
 import type { ContextMountSnapshot } from "@/lib/context-mounts/types";
 import type { AgentFinalStatus } from "@/lib/agents/finalization";
+import type { OperationalFailureDiagnostic } from "@/lib/agents/operational-diagnostics";
 import type { AgentWorkspace } from "@/lib/db/schema";
 
 export type OperationalReference = {
@@ -120,6 +121,7 @@ export type OperationalTerminal = {
   resultRevision: number | null;
   reasonCodes: string[];
   evidenceIds: string[];
+  infrastructureFailure?: OperationalFailureDiagnostic;
 };
 
 export type OperationalCleanupState =
@@ -159,6 +161,7 @@ export type OperationalOutcome = {
   successful: boolean;
   validation: "pending" | OperationalTerminal["validation"];
   validationDiagnostics?: OperationalValidationDiagnostic[];
+  infrastructureFailure?: OperationalFailureDiagnostic;
   integrity: "pending" | OperationalIntegrityVerdict;
   resultRevision: number | null;
   reportedResult: OperationalResultV1 | null;

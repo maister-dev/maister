@@ -264,7 +264,11 @@ describe("POST /api/v1/ext/runs/[runId]/recover", () => {
       state: "resumed",
       runStatus: "Running",
     });
-    expect(resumeCrashedRunMock).toHaveBeenCalledWith(runId);
+    expect(resumeCrashedRunMock).toHaveBeenCalledWith(runId, {
+      recoveryAuthority: expect.objectContaining({
+        assert: expect.any(Function),
+      }),
+    });
 
     const rows = await auditRows();
 

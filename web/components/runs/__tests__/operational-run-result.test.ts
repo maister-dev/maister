@@ -6,6 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { expect, it, vi } from "vitest";
 
 import { OperationalRunResult } from "@/components/runs/operational-run-result";
+import { TaskQualificationSourceFailureNotice } from "@/components/agents/task-qualification-source-failure-notice";
 import en from "@/messages/en.json";
 import ru from "@/messages/ru.json";
 
@@ -36,6 +37,11 @@ it.each([
     invariant: "Partial completion requires confirmed progress.",
     remediation:
       "If nothing completed and no effect was confirmed, report blocked or failed with an actionable error diagnostic.",
+    preparation:
+      "Workspace preparation failed. This is an infrastructure failure, not a task assessment.",
+    preparationAction:
+      "Inspect the preparation details and resolve the reported problem before starting a new attempt.",
+    modelClaim: "The model did not start",
   },
   {
     locale: "ru",
@@ -43,10 +49,23 @@ it.each([
     invariant: "Частичное выполнение требует подтверждённого прогресса.",
     remediation:
       "Если ничего не выполнено и ни один эффект не подтверждён, укажите blocked или failed с описанием ошибки и способом её устранения.",
+    preparation:
+      "Подготовка рабочего пространства завершилась ошибкой. Это сбой инфраструктуры, а не оценка задачи.",
+    preparationAction:
+      "Изучите детали подготовки и устраните указанную проблему перед новой попыткой.",
+    modelClaim: "Модель не была запущена",
   },
 ])(
   "shows the exact rejected invariant, field and remediation in $locale while retaining old receipt compatibility",
-  ({ locale, messages, invariant, remediation }) => {
+  ({
+    locale,
+    messages,
+    invariant,
+    remediation,
+    preparation,
+    preparationAction,
+    modelClaim,
+  }) => {
     const render = (outcome: OperationalOutcome): string =>
       renderToStaticMarkup(
         // The provider's props require children in this non-JSX renderer.
@@ -74,5 +93,52 @@ it.each([
     expect(html).toContain("<code>outcome</code>");
     expect(html).not.toContain(messages.operationalAgents.counts.scanned);
     expect(render(invalid)).toContain(messages.operationalAgents.invalidResult);
+    const preparationHtml = render({
+      ...invalid,
+      resultRevision: null,
+      infrastructureFailure: {
+        runId: "run",
+        // A later epoch carries no evidence that earlier model execution was absent.
+        assignmentEpoch: 3,
+        stage: "baseline",
+        probeOperation: "lstat",
+        causeChain: [{ name: "Error", code: "ENOENT", syscall: "lstat" }],
+      },
+    });
+
+    expect(preparationHtml).toContain(
+      messages.operationalAgents.preparationFailed,
+    );
+    expect(preparationHtml).toContain(preparation);
+    expect(preparationHtml).toContain(preparationAction);
+    expect(preparationHtml).not.toContain(modelClaim);
+    expect(preparationHtml).toContain(
+      messages.operationalAgents.preparationRemediation,
+    );
+    expect(preparationHtml).toContain("ENOENT");
+    expect(preparationHtml).not.toContain(
+      messages.operationalAgents.invalidResult,
+    );
+    const provenTaskFailure = renderToStaticMarkup(
+      // eslint-disable-next-line react/no-children-prop
+      createElement(NextIntlClientProvider, {
+        locale,
+        messages,
+        timeZone: "UTC",
+        children: createElement(TaskQualificationSourceFailureNotice, {
+          failure: {
+            runId: "run",
+            stage: "baseline",
+            causeCode: "ENOENT",
+            modelStarted: false,
+          },
+        }),
+      }),
+    );
+
+    expect(provenTaskFailure).toContain(
+      messages.launch.admission.beforeModelFailure,
+    );
+    expect(provenTaskFailure).toContain('href="/runs/run"');
   },
 );

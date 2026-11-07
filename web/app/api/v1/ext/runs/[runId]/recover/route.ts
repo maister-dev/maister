@@ -14,6 +14,8 @@ import {
   unknownLibrarianEffectResponse,
 } from "@/lib/tokens/ext-handler";
 import { runProjectResolver } from "@/lib/tokens/run-project";
+import { externalTaskLaunchPrincipal } from "@/lib/tasks/launch-external";
+import { tokenTaskLaunchRecoveryAuthority } from "@/lib/tasks/launch-continuation";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { runs } = schemaModule as unknown as Record<string, any>;
@@ -90,7 +92,10 @@ export async function POST(
       }
 
       try {
-        const result = await resumeCrashedRun(runId);
+        const principal = await externalTaskLaunchPrincipal(db, req, ctx);
+        const result = await resumeCrashedRun(runId, {
+          recoveryAuthority: tokenTaskLaunchRecoveryAuthority(principal),
+        });
         const { httpStatus, body } = recoverHttpResponse(result);
 
         if (result.state === "transient" && ctx.operationId) {

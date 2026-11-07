@@ -6,6 +6,12 @@ import type { DomainEventConsumer } from "@/lib/domain-events/consumers";
 import { and, eq, ne } from "drizzle-orm";
 import pino from "pino";
 
+import {
+  createPlanFlowTaskLaunchSource,
+  createPlanAgentTaskLaunchSource,
+} from "./plan-launch-authority";
+
+import { resolveEffectiveAgentDefinition } from "@/lib/agents/effective";
 import { launchAgentRun, type LaunchAgentRunResult } from "@/lib/agents/launch";
 import { resolveResultContractForDelegation } from "@/lib/run-results/resolve-profile";
 import { getDb } from "@/lib/db/client";
@@ -32,6 +38,11 @@ import {
 } from "@/lib/orchestrator/delegation-spec";
 import { isTerminalLaunchRefusal } from "@/lib/scheduler/c2-eligibility";
 import { launchRun } from "@/lib/services/runs";
+import {
+  acceptServerTaskLaunch,
+  serverTaskLaunchRequest,
+} from "@/lib/tasks/launch-intent";
+import { findServerTaskLaunch } from "@/lib/tasks/launch-server-source";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -412,6 +423,53 @@ export function buildAutoLaunchRunPlanConsumer(
                 { projectId: candidate.projectId, flowId: flowSpec.flowId },
                 _db,
               );
+
+              if (!opts.launchFlow) {
+                const key = `execution_plan:${candidate.taskId}`;
+                const existing = await findServerTaskLaunch(
+                  _db,
+                  {
+                    kind: "execution_plan",
+                    id: candidate.taskId,
+                    projectId: candidate.projectId,
+                    taskId: candidate.taskId,
+                  },
+                  key,
+                );
+                const source = existing
+                  ? null
+                  : await createPlanFlowTaskLaunchSource(
+                      _db,
+                      candidate.projectId,
+                      candidate.taskId,
+                    );
+                const receipt =
+                  existing ??
+                  (await acceptServerTaskLaunch(
+                    _db,
+                    source!,
+                    await serverTaskLaunchRequest(_db, source!, {
+                      taskId: candidate.taskId,
+                      flowId: resolved.flowId,
+                      ...(flowSpec.runnerOverride
+                        ? { runnerId: flowSpec.runnerOverride }
+                        : {}),
+                    }),
+                    key,
+                  ));
+
+                log.info(
+                  {
+                    eventId: event.id,
+                    taskId: candidate.taskId,
+                    intentId: receipt.intentId,
+                    runId: receipt.runId,
+                    state: receipt.state,
+                  },
+                  "[delegation.plan] as-plan FLOW child launch accepted",
+                );
+                continue;
+              }
               const launched = await launchFlow(
                 {
                   taskId: candidate.taskId,
@@ -444,6 +502,62 @@ export function buildAutoLaunchRunPlanConsumer(
             }
 
             const spec = agentSpec!;
+
+            if (
+              !opts.launch &&
+              (
+                await resolveEffectiveAgentDefinition(
+                  { projectId: candidate.projectId, agentId: spec.agentId },
+                  _db,
+                )
+              ).parsed.kind === "code_delivery"
+            ) {
+              const key = `execution_plan:${candidate.taskId}`;
+              const existing = await findServerTaskLaunch(
+                _db,
+                {
+                  kind: "execution_plan",
+                  id: candidate.taskId,
+                  projectId: candidate.projectId,
+                  taskId: candidate.taskId,
+                },
+                key,
+              );
+              const source = existing
+                ? null
+                : await createPlanAgentTaskLaunchSource(
+                    _db,
+                    candidate.projectId,
+                    candidate.taskId,
+                  );
+              const receipt =
+                existing ??
+                (await acceptServerTaskLaunch(
+                  _db,
+                  source!,
+                  await serverTaskLaunchRequest(_db, source!, {
+                    taskId: candidate.taskId,
+                    agentId: spec.agentId,
+                    workspace: source!.snapshot.agentWorkspace!,
+                    ...(spec.runnerOverride
+                      ? { runnerId: spec.runnerOverride }
+                      : {}),
+                  }),
+                  key,
+                ));
+
+              log.info(
+                {
+                  eventId: event.id,
+                  taskId: candidate.taskId,
+                  intentId: receipt.intentId,
+                  runId: receipt.runId,
+                  state: receipt.state,
+                },
+                "[delegation.plan] as-plan agent child launch accepted",
+              );
+              continue;
+            }
             const result = await launch({
               agentId: spec.agentId,
               projectId: candidate.projectId,
@@ -466,6 +580,19 @@ export function buildAutoLaunchRunPlanConsumer(
               db: _db,
             });
 
+            if ("queued" in result) {
+              log.info(
+                {
+                  eventId: event.id,
+                  taskId: candidate.taskId,
+                  intentId: result.receipt.intentId,
+                  runId: result.receipt.runId,
+                  state: result.receipt.state,
+                },
+                "[delegation.plan] operational source returned a durable launch receipt",
+              );
+              continue;
+            }
             if ("deduped" in result) {
               log.debug(
                 { eventId: event.id, taskId: candidate.taskId },

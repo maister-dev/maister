@@ -83,6 +83,33 @@ async function referenceHold(
   if (artifacts.some((artifact) => artifact.required))
     return "required_evidence";
   if (artifacts.length > 0) return "referenced_artifact";
+  const [continuation] = await tx
+    .select({ id: executionCommands.id })
+    .from(executionCommands)
+    .innerJoin(runs, eq(runs.id, executionCommands.runId))
+    .where(
+      and(
+        eq(executionCommands.runId, object.runId),
+        eq(executionCommands.kind, "session.create"),
+        eq(executionCommands.executionAssignmentId, runs.executionAssignmentId),
+        inArray(executionCommands.state, [
+          "queued",
+          "delivering",
+          "accepted",
+          "succeeded",
+        ]),
+        inArray(runs.status, [
+          "Running",
+          "NeedsInput",
+          "NeedsInputIdle",
+          "WaitingOnChildren",
+        ]),
+        sql`(${executionCommands.createIntent}->'continuation'->'payload'->'contentBlocks') @> ${JSON.stringify([{ type: "runtime_object", objectId: object.id }])}::jsonb`,
+      ),
+    )
+    .limit(1);
+
+  if (continuation) return "open_command";
   const [attachment] = await tx
     .select({ id: scratchAttachments.id })
     .from(scratchAttachments)

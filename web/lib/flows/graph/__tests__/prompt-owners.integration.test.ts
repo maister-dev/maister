@@ -4,6 +4,7 @@ import type { ProjectionWorker } from "@/lib/execution-host/events/projection-wo
 import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { ExecutionCommand } from "@/lib/db/schema";
 import type { ProcessIdentity } from "@/test-support/process-invocation";
+import type { SupervisorSessionRecord } from "@/lib/supervisor-client";
 
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -65,6 +66,7 @@ import {
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import { seedGraphRun } from "@/test-support/graph-run-seed";
+import { captureOwnedAdapterProcess } from "@/test-support/capture-supervisor-process-groups";
 import { addWorktree, initRepo } from "@/test-support/git-fixture";
 import {
   startMainPostgresTestDb,
@@ -80,7 +82,6 @@ import {
   fixtureProcessEnvironment,
   invocationFromEnvironment,
   registerSpawnedProcess,
-  readProcessSnapshot,
   signalInvocationProcess,
 } from "@/test-support/process-invocation";
 
@@ -1370,7 +1371,11 @@ describe("Flow prompt owners through the production graph driver", () => {
       const sessionName = request.envelope.payload.sessionName ?? "default";
       const oldOwner = request.intent.owner;
 
-      if (oldOwner.variant === "agent" || oldOwner.variant === "librarian")
+      if (
+        oldOwner.variant !== "node" &&
+        oldOwner.variant !== "gate_ai" &&
+        oldOwner.variant !== "gate_skill"
+      )
         throw new Error("expected a Flow create owner");
       let nextOwner: FlowCreateOwner;
 
@@ -3283,32 +3288,55 @@ describe("Flow prompt owners through the production graph driver", () => {
 
   // Kill the adapter the way a host-side crash does: the supervisor survives,
   // its session goes terminal, and the ACP resume handle outlives it.
-  async function killAdapterProcesses(): Promise<void> {
+  async function crashAdapterSession(
+    runId: string,
+    sessionId: string,
+  ): Promise<void> {
     const invocation = invocationFromEnvironment();
 
     if (!invocation)
       throw new Error("adapter crash injection requires an invocation");
-    const processes = await readProcessSnapshot(invocation);
-    const adapters = processes.filter(
-      (identity) =>
-        identity.ppid === supervisor.pid &&
-        identity.pgid === supervisor.pid &&
-        !identity.zombie,
-    );
+    const captured = await captureOwnedAdapterProcess({
+      invocation,
+      supervisor,
+      sessionId,
+      expected: { runId },
+    });
 
-    for (const identity of adapters)
-      await signalInvocationProcess(invocation, identity, "SIGKILL");
+    await signalInvocationProcess(invocation, captured.adapter, "SIGKILL");
   }
 
-  async function liveSessionCount(runId: string): Promise<number> {
+  async function liveRunSessions(
+    runId: string,
+  ): Promise<SupervisorSessionRecord[]> {
     const hosts = createExecutionHosts({ db: database.db as unknown as Db });
-    const sessions = await (
-      await hosts.executionFor(runId)
-    ).admin.listSessions();
+    // Inventory is an attested read of the known host, even after this run's
+    // assignment is legitimately released. It must not mint a new placement.
+    const sessions = await hosts.local().listSessionsForRun(runId);
 
     return sessions.filter(
       (session) => session.runId === runId && session.status === "live",
-    ).length;
+    );
+  }
+
+  async function crashRunAdapters(runId: string): Promise<void> {
+    const sessions = await liveRunSessions(runId);
+
+    expect(
+      sessions.length,
+      "crash injection must reach a live adapter",
+    ).toBeGreaterThan(0);
+    for (const session of sessions)
+      await crashAdapterSession(runId, session.sessionId);
+  }
+
+  async function stopRemainingRunAdapters(runId: string): Promise<void> {
+    for (const session of await liveRunSessions(runId))
+      await crashAdapterSession(runId, session.sessionId);
+  }
+
+  async function liveSessionCount(runId: string): Promise<number> {
+    return (await liveRunSessions(runId)).length;
   }
 
   type CrashedAgentRun = {
@@ -3477,18 +3505,14 @@ describe("Flow prompt owners through the production graph driver", () => {
       };
     }
 
-    // Re-observe this supervisor's direct children until its own session is
-    // terminal. Each signal checks the captured UID/start identity and exact
-    // invocation tag; another fixture using the same executable is untouched.
+    // Fault the exact adapter, then observe its host session becoming terminal.
+    // A sibling using the same executable remains outside this run's scope.
+    await crashRunAdapters(seeded.runId);
     await expect
-      .poll(
-        async () => {
-          await killAdapterProcesses();
-
-          return await liveSessionCount(seeded.runId);
-        },
-        { timeout: 60_000, interval: 500 },
-      )
+      .poll(async () => liveSessionCount(seeded.runId), {
+        timeout: 60_000,
+        interval: 500,
+      })
       .toBe(0);
 
     // Age the run past MAISTER_RECONCILE_GRACE_SECONDS the way the existing
@@ -4231,6 +4255,7 @@ describe("Flow prompt owners through the production graph driver", () => {
       runtimeRoot: supervisor.runtimeRoot,
       executionHosts: hosts,
     }).catch(() => undefined);
+    let primaryFailure: unknown;
 
     try {
       await expect
@@ -4252,7 +4277,7 @@ describe("Flow prompt owners through the production graph driver", () => {
         .where(eq(hitlRequests.runId, seeded.runId));
 
       expect(permissions).toHaveLength(0);
-      await killAdapterProcesses();
+      await crashRunAdapters(seeded.runId);
       await expect
         .poll(
           async () => {
@@ -4447,10 +4472,30 @@ describe("Flow prompt owners through the production graph driver", () => {
           })
           .where(eq(executionEvents.id, childCrash.id));
       });
+    } catch (error) {
+      primaryFailure = error;
+      throw error;
     } finally {
-      await killAdapterProcesses();
-      await driver;
+      const failures: unknown[] = [];
+
+      for (const release of [
+        () => stopRemainingRunAdapters(seeded.runId),
+        () => driver,
+      ]) {
+        try {
+          await release();
+        } catch (error) {
+          failures.push(error);
+        }
+      }
       prepare.mockRestore();
+      if (failures.length > 0)
+        throw new AggregateError(
+          primaryFailure === undefined
+            ? failures
+            : [primaryFailure, ...failures],
+          "Node crash fixture and cleanup failed",
+        );
     }
   }
 
@@ -4544,6 +4589,7 @@ describe("Flow prompt owners through the production graph driver", () => {
     }).catch(() => undefined);
     let released = false;
     let sibling: Awaited<ReturnType<typeof startSiblingAdapter>> | undefined;
+    let primaryFailure: unknown;
 
     try {
       sibling = await startSiblingAdapter();
@@ -4571,7 +4617,7 @@ describe("Flow prompt owners through the production graph driver", () => {
           { timeout: 30_000, interval: 25 },
         )
         .toBe(true);
-      await killAdapterProcesses();
+      await crashRunAdapters(seeded.runId);
       await sibling.assertResponsive();
       const crashFrame = await held.awaitReached(15_000);
 
@@ -4616,15 +4662,38 @@ describe("Flow prompt owners through the production graph driver", () => {
           { timeout: 30_000, interval: 25 },
         )
         .toBe("Crashed");
+    } catch (error) {
+      primaryFailure = error;
+      throw error;
     } finally {
-      if (held.observations.length > 0 && !released) held.release();
-      await killAdapterProcesses();
-      await sibling?.stop();
-      await driver;
+      const failures: unknown[] = [];
+      const releases: ReadonlyArray<() => Promise<unknown>> = [
+        async () => {
+          if (held.observations.length > 0 && !released) held.release();
+        },
+        () => stopRemainingRunAdapters(seeded.runId),
+        async () => sibling?.stop(),
+        () => driver,
+        () => proxy.close(),
+      ];
+
+      for (const release of releases) {
+        try {
+          await release();
+        } catch (error) {
+          failures.push(error);
+        }
+      }
       restoreProxy();
       resetRegistrarStateForTests();
       resetResolverForTests();
-      await proxy.close();
+      if (failures.length > 0)
+        throw new AggregateError(
+          primaryFailure === undefined
+            ? failures
+            : [primaryFailure, ...failures],
+          "Held crash fixture and cleanup failed",
+        );
     }
   }, 90_000);
 });

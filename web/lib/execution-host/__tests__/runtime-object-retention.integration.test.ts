@@ -1,8 +1,12 @@
 import type { Db } from "@/lib/execution-host/db";
+import type { PoolClient } from "pg";
 
 import { randomUUID } from "node:crypto";
+import { createServer } from "node:http";
+import { rm } from "node:fs/promises";
 
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
+import pino from "pino";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
@@ -12,8 +16,21 @@ import { sweepExpiredRuntimeObjects } from "@/lib/execution-host/runtime-object-
 import { recoverExecutionCommands } from "@/lib/execution-host/recovery";
 import { UNKNOWN_OUTCOME_DETAIL } from "@/lib/execution-host/contracts";
 import { recordCurrentArtifact } from "@/lib/flows/graph/artifact-store";
-import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
+import {
+  seedProjectRow,
+  seedRun,
+  seedWorkspace,
+} from "@/test-support/execution-host-seed";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
+import { createExecutionHosts } from "@/lib/execution-host/client";
+import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
+import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
+import {
+  completeOwnedScratchCreate,
+  dispatchOwnedScratchCreatePrompt,
+} from "@/lib/scratch-runs/create-continuation";
+import { initRepoWithWorktree, git } from "@/test-support/git-fixture";
+import { mkdtempReal } from "@/test-support/worktree-test-root";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -148,6 +165,608 @@ describe("runtime object retention", () => {
         ),
     ).toEqual([expired]);
   }, 120_000);
+  it("retains a private continuation reference before any session or public attachment exists", async () => {
+    const root = await mkdtempReal("private-continuation-retention-");
+    const previousUrl = process.env.MAISTER_SUPERVISOR_URL;
+    let posts = 0;
+    const server = createServer((request, response) => {
+      if (request.method === "POST") posts += 1;
+      response.writeHead(503, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          code: "EXECUTOR_UNAVAILABLE",
+          message: "Original process ownership is unresolved",
+          details: { reason: "session_process_owner_unconfirmed" },
+        }),
+      );
+    });
+
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const address = server.address();
+
+    if (!address || typeof address === "string")
+      throw new Error("Private continuation fixture has no port");
+    process.env.MAISTER_SUPERVISOR_URL = `http://127.0.0.1:${address.port}`;
+    try {
+      const repository = await initRepoWithWorktree(root);
+      const project = await seedProjectRow(testDatabase.db, {
+        repoPath: repository.repoPath,
+      });
+      const runId = await seedRun(testDatabase.db, {
+        projectId: project.id,
+        runKind: "scratch",
+      });
+      const userId = randomUUID();
+
+      await db
+        .insert(fullSchema.users)
+        .values({ id: userId, email: `${userId}@test.invalid` });
+      await db
+        .update(fullSchema.runs)
+        .set({ createdByUserId: userId })
+        .where(eq(fullSchema.runs.id, runId));
+      await seedWorkspace(testDatabase.db, {
+        runId,
+        projectId: project.id,
+        worktreePath: repository.worktreePath,
+        parentRepoPath: repository.repoPath,
+        branch: repository.branch,
+      });
+      await db.insert(fullSchema.scratchRuns).values({
+        runId,
+        projectId: project.id,
+        initialPrompt: "Frozen private request",
+        baseBranch: "main",
+        baseCommit: await git(repository.repoPath, "rev-parse", "HEAD"),
+        targetBranch: "main",
+        createdByUserId: userId,
+        dialogStatus: "Starting",
+      });
+      const { hosts, fake } = await fakeExecutionHosts(db, { runId });
+      const original = await hosts.forRun(runId);
+      const objectId = randomUUID();
+
+      await publishRuntimeObject({
+        client: original,
+        objectId,
+        kind: "generated_artifact",
+        logicalName: "private-input.txt",
+        mimeType: "text/plain",
+        retentionClass: "ephemeral",
+        expiresAt: "2026-09-04T11:59:00.000Z",
+        bytes: new TextEncoder().encode("controlled private input"),
+      });
+      const wire = createLocalDirectTransport();
+      const client = await createExecutionHosts({
+        db,
+        transport: {
+          ...fake.transport,
+          createSession: (envelope, options) =>
+            wire.createSession(envelope, options),
+        },
+      }).forAssignment(original.assignment);
+
+      const promptSentinel = `private-prompt-${randomUUID()}`;
+      const environmentSentinel = `private-env-${randomUUID()}`;
+      const create = () =>
+        client.createOwnedSession(
+          {
+            variant: "scratch",
+            scratchRunId: runId,
+            turnId: client.assignment.id,
+            promptOrdinal: 0,
+          },
+          async () => ({
+            stepId: "scratch",
+            executor: { agent: "claude", model: "mock" },
+            adapterLaunch: { env: { PRIVATE_SENTINEL: environmentSentinel } },
+          }),
+          {
+            prepareContinuation: async () => ({
+              version: 1,
+              kind: "initial",
+              sourceMessageId: null,
+              payload: {
+                stepId: "scratch",
+                prompt: promptSentinel,
+                contentBlocks: [
+                  {
+                    type: "runtime_object",
+                    objectId,
+                    name: "private-input.txt",
+                    mimeType: "text/plain",
+                  },
+                ],
+              },
+            }),
+          },
+        );
+      const knownRefusal = new MaisterError(
+        "UNAUTHORIZED",
+        "Current actor cannot create this session",
+        { details: { reason: "controlled_authorization_refusal" } },
+      );
+
+      await expect(
+        client.createOwnedSession(
+          {
+            variant: "scratch",
+            scratchRunId: runId,
+            turnId: client.assignment.id,
+            promptOrdinal: 0,
+          },
+          async () => {
+            throw new Error("A refused owner cannot prepare private inputs");
+          },
+          {
+            assertCommit: async () => {
+              throw knownRefusal;
+            },
+          },
+        ),
+      ).rejects.toBe(knownRefusal);
+      const nested = await client
+        .createOwnedSession(
+          {
+            variant: "scratch",
+            scratchRunId: runId,
+            turnId: client.assignment.id,
+            promptOrdinal: 0,
+          },
+          async () => {
+            throw new Error("A refused owner cannot prepare private inputs");
+          },
+          {
+            assertCommit: async (tx) => {
+              try {
+                await tx.execute(sql`SELECT ${environmentSentinel}::integer`);
+              } catch (cause) {
+                throw new MaisterError(
+                  "CONFLICT",
+                  "The owner operation was refused",
+                  {
+                    cause,
+                    details: {
+                      reason: "controlled_owner_conflict",
+                      privateSnapshot: promptSentinel,
+                    },
+                  },
+                );
+              }
+            },
+          },
+        )
+        .then(
+          () => null,
+          (error: unknown) => error,
+        );
+
+      if (!(nested instanceof Error))
+        throw new Error("Expected create refusal");
+      const nestedLog = JSON.stringify(pino.stdSerializers.err(nested));
+
+      expect(nested).toMatchObject({
+        code: "CONFLICT",
+        details: {
+          reason: "controlled_owner_conflict",
+          stage: "session_create_admission",
+          sqlState: "22P02",
+        },
+      });
+      expect(nested).not.toHaveProperty("cause");
+      expect(nestedLog).not.toContain(promptSentinel);
+      expect(nestedLog).not.toContain(environmentSentinel);
+      const trigger = `private_create_${randomUUID().replaceAll("-", "")}`;
+
+      await testDatabase.pool.query(
+        `CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.kind='session.create' AND NEW.run_id='${runId}' THEN RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='controlled_private_create_failure',MESSAGE='controlled atomic create refusal'; END IF; RETURN NEW; END $$`,
+      );
+      await testDatabase.pool.query(
+        `CREATE TRIGGER ${trigger} BEFORE INSERT ON execution_commands FOR EACH ROW EXECUTE FUNCTION ${trigger}()`,
+      );
+      let failed: unknown;
+
+      try {
+        failed = await create().then(
+          () => null,
+          (error: unknown) => error,
+        );
+      } finally {
+        await testDatabase.pool.query(
+          `DROP TRIGGER ${trigger} ON execution_commands`,
+        );
+        await testDatabase.pool.query(`DROP FUNCTION ${trigger}()`);
+      }
+      if (!(failed instanceof Error))
+        throw new Error("Expected create refusal");
+      const serialized = JSON.stringify(pino.stdSerializers.err(failed));
+
+      expect(serialized).not.toContain(promptSentinel);
+      expect(serialized).not.toContain(environmentSentinel);
+      expect(failed).toMatchObject({
+        code: "CRASH",
+        details: {
+          reason: "private_create_admission_failed",
+          stage: "session_create_admission",
+          sqlState: "23514",
+          constraint: "controlled_private_create_failure",
+        },
+      });
+      expect(failed).not.toHaveProperty("cause");
+      expect(
+        await db
+          .select()
+          .from(fullSchema.executionCommands)
+          .where(eq(fullSchema.executionCommands.runId, runId)),
+      ).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "session.create" }),
+        ]),
+      );
+      const clientQueries = new Map<PoolClient, PoolClient["query"]>();
+      let admissionInserted = false;
+      let lostCommitReplies = 0;
+      const loseAdmissionCommitReply = (connection: PoolClient): void => {
+        if (clientQueries.has(connection)) return;
+        const query = connection.query;
+
+        clientQueries.set(connection, query);
+        connection.query = new Proxy(query, {
+          apply(target, receiver, argumentsList: unknown[]) {
+            const command = argumentsList[0];
+            const text =
+              typeof command === "string"
+                ? command
+                : command && typeof command === "object" && "text" in command
+                  ? command.text
+                  : null;
+            const parameters = argumentsList[1];
+
+            if (
+              typeof text === "string" &&
+              text.startsWith('insert into "execution_commands"') &&
+              Array.isArray(parameters) &&
+              parameters.includes(runId) &&
+              parameters.includes("session.create")
+            )
+              admissionInserted = true;
+            const result: unknown = Reflect.apply(
+              target,
+              receiver,
+              argumentsList,
+            );
+
+            if (
+              text === "commit" &&
+              admissionInserted &&
+              lostCommitReplies === 0
+            ) {
+              lostCommitReplies += 1;
+
+              return Promise.resolve(result).then(() => {
+                throw Object.assign(new Error("Controlled lost COMMIT reply"), {
+                  code: "ECONNRESET",
+                });
+              });
+            }
+
+            return result;
+          },
+        });
+      };
+
+      testDatabase.pool.on("acquire", loseAdmissionCommitReply);
+      let admissionFailure: unknown;
+
+      try {
+        admissionFailure = await create().then(
+          () => null,
+          (error: unknown) => error,
+        );
+      } finally {
+        testDatabase.pool.off("acquire", loseAdmissionCommitReply);
+        for (const [connection, query] of clientQueries)
+          connection.query = query;
+      }
+      expect(lostCommitReplies).toBe(1);
+      expect(admissionFailure).toBeInstanceOf(SessionCreatePending);
+      expect(posts).toBe(0);
+      const [admitted] = await db
+        .select()
+        .from(fullSchema.executionCommands)
+        .where(
+          and(
+            eq(fullSchema.executionCommands.runId, runId),
+            eq(fullSchema.executionCommands.kind, "session.create"),
+          ),
+        );
+
+      expect(admitted).toMatchObject({
+        kind: "session.create",
+        state: "queued",
+        createIntent: { continuation: { kind: "initial" } },
+      });
+      expect(admissionFailure).toMatchObject({
+        details: { commandId: admitted.id },
+      });
+      let lostLookupReplies = 0;
+      const loseOriginalLookupReply = (connection: PoolClient): void => {
+        if (clientQueries.has(connection)) return;
+        const query = connection.query;
+
+        clientQueries.set(connection, query);
+        connection.query = new Proxy(query, {
+          apply(target, receiver, argumentsList: unknown[]) {
+            const command = argumentsList[0];
+            const text =
+              typeof command === "string"
+                ? command
+                : command && typeof command === "object" && "text" in command
+                  ? command.text
+                  : null;
+            const parameters = argumentsList[1];
+            const result: unknown = Reflect.apply(
+              target,
+              receiver,
+              argumentsList,
+            );
+
+            if (
+              lostLookupReplies === 0 &&
+              typeof text === "string" &&
+              text.startsWith("select ") &&
+              text.includes('from "execution_commands"') &&
+              Array.isArray(parameters) &&
+              parameters.includes(runId)
+            ) {
+              lostLookupReplies += 1;
+
+              return Promise.resolve(result).then(() => {
+                throw Object.assign(new Error("Controlled lost SELECT reply"), {
+                  code: "ECONNRESET",
+                });
+              });
+            }
+
+            return result;
+          },
+        });
+      };
+
+      clientQueries.clear();
+      testDatabase.pool.on("acquire", loseOriginalLookupReply);
+      let lookupFailure: unknown;
+
+      try {
+        lookupFailure = await create().then(
+          () => null,
+          (error: unknown) => error,
+        );
+      } finally {
+        testDatabase.pool.off("acquire", loseOriginalLookupReply);
+        for (const [connection, query] of clientQueries)
+          connection.query = query;
+      }
+      expect(lostLookupReplies).toBe(1);
+      expect(lookupFailure).toBeInstanceOf(SessionCreatePending);
+      expect(lookupFailure).toMatchObject({
+        details: { operationKey: `scratch-create:${original.assignment.id}:0` },
+      });
+      expect(lookupFailure).not.toHaveProperty("details.commandId");
+      const [unchangedOwner] = await db
+        .select()
+        .from(fullSchema.runs)
+        .where(eq(fullSchema.runs.id, runId));
+
+      expect(unchangedOwner).toMatchObject({
+        status: "Running",
+        executionAssignmentId: original.assignment.id,
+      });
+      expect(posts).toBe(0);
+      expect(
+        await db
+          .select()
+          .from(fullSchema.runSessionIncarnations)
+          .where(eq(fullSchema.runSessionIncarnations.runId, runId)),
+      ).toHaveLength(0);
+      expect(
+        await db
+          .select()
+          .from(fullSchema.scratchAttachments)
+          .where(eq(fullSchema.scratchAttachments.runId, runId)),
+      ).toHaveLength(0);
+      await sweepExpiredRuntimeObjects({
+        db,
+        hosts,
+        now: new Date("2026-09-04T12:00:00.000Z"),
+      });
+      const [retained] = await db
+        .select()
+        .from(fullSchema.executionRuntimeObjects)
+        .where(eq(fullSchema.executionRuntimeObjects.id, objectId));
+
+      expect(retained).toMatchObject({
+        state: "available",
+        retentionHold: { reason: "open_command" },
+      });
+      expect(fake.callsOf("deleteRuntimeObject")).toHaveLength(0);
+      let hostCreateObserved = false;
+      const execution = await createExecutionHosts({
+        db,
+        transport: {
+          ...fake.transport,
+          createSession: async (request, options) => {
+            const result = await fake.transport.createSession(request, options);
+
+            hostCreateObserved = true;
+
+            return result;
+          },
+        },
+      }).executionFor(runId);
+      const owner = {
+        variant: "scratch" as const,
+        scratchRunId: runId,
+        turnId: original.assignment.id,
+        promptOrdinal: 0,
+      };
+      const replay = () =>
+        execution.client.createOwnedSession(
+          owner,
+          async () => {
+            throw new Error(
+              "Re-entry must retain the committed private request",
+            );
+          },
+          {
+            prepareContinuation: async () => {
+              throw new Error(
+                "Re-entry must retain the committed private continuation",
+              );
+            },
+          },
+        );
+      let lostKnownCreateReplies = 0;
+      let knownCreateReplyFaultsRemaining = 0;
+      const loseKnownCreateReadReply = (connection: PoolClient): void => {
+        if (clientQueries.has(connection)) return;
+        const query = connection.query;
+
+        clientQueries.set(connection, query);
+        connection.query = new Proxy(query, {
+          apply(target, receiver, argumentsList: unknown[]) {
+            const command = argumentsList[0];
+            const text =
+              typeof command === "string"
+                ? command
+                : command && typeof command === "object" && "text" in command
+                  ? command.text
+                  : null;
+            const parameters = argumentsList[1];
+
+            if (
+              hostCreateObserved &&
+              knownCreateReplyFaultsRemaining > 0 &&
+              typeof text === "string" &&
+              text.startsWith("select ") &&
+              text.includes('from "execution_commands"') &&
+              Array.isArray(parameters) &&
+              parameters.includes(admitted.id)
+            ) {
+              knownCreateReplyFaultsRemaining -= 1;
+              lostKnownCreateReplies += 1;
+              const fault = Object.assign(
+                new Error("Controlled lost create outcome read"),
+                { code: "ECONNRESET" },
+              );
+              const callback = argumentsList.at(-1);
+
+              if (typeof callback === "function")
+                return Reflect.apply(target, receiver, [
+                  ...argumentsList.slice(0, -1),
+                  (error: unknown, result: unknown) =>
+                    Reflect.apply(callback, undefined, [
+                      error ?? fault,
+                      result,
+                    ]),
+                ]);
+              const result: unknown = Reflect.apply(
+                target,
+                receiver,
+                argumentsList,
+              );
+
+              return Promise.resolve(result).then(() => {
+                throw fault;
+              });
+            }
+
+            return Reflect.apply(target, receiver, argumentsList);
+          },
+        });
+      };
+      const faultKnownCreateReads = async (count: number): Promise<unknown> => {
+        clientQueries.clear();
+        knownCreateReplyFaultsRemaining = count;
+        testDatabase.pool.on("acquire", loseKnownCreateReadReply);
+
+        try {
+          return await replay().then(
+            () => null,
+            (error: unknown) => error,
+          );
+        } finally {
+          testDatabase.pool.off("acquire", loseKnownCreateReadReply);
+          for (const [connection, query] of clientQueries)
+            connection.query = query;
+        }
+      };
+      const lostAckAndReload = await faultKnownCreateReads(2);
+
+      expect(lostKnownCreateReplies).toBe(2);
+      expect(fake.receipts.get(admitted.id)).toMatchObject({ httpStatus: 201 });
+      expect(lostAckAndReload).toBeInstanceOf(SessionCreatePending);
+      expect(lostAckAndReload).toMatchObject({
+        details: { commandId: admitted.id },
+      });
+      const lostReceiptFold = await faultKnownCreateReads(1);
+
+      expect(lostKnownCreateReplies).toBe(3);
+      expect(lostReceiptFold).toBeInstanceOf(SessionCreatePending);
+      expect(lostReceiptFold).toMatchObject({
+        details: { commandId: admitted.id },
+      });
+      const session = await replay();
+      const lostReadoption = await faultKnownCreateReads(1);
+
+      expect(lostKnownCreateReplies).toBe(4);
+      expect(lostReadoption).toBeInstanceOf(SessionCreatePending);
+      expect(lostReadoption).toMatchObject({
+        details: { commandId: admitted.id },
+      });
+      expect(await replay()).toMatchObject({ sessionId: session.sessionId });
+      const continuation = await completeOwnedScratchCreate(
+        db,
+        execution,
+        owner,
+        session,
+      );
+
+      if (!continuation)
+        throw new Error("Original private continuation is missing");
+      await dispatchOwnedScratchCreatePrompt(
+        db,
+        execution,
+        owner,
+        session.sessionId,
+        continuation,
+      );
+      const creates = await db
+        .select()
+        .from(fullSchema.executionCommands)
+        .where(eq(fullSchema.executionCommands.runId, runId));
+
+      expect(
+        creates
+          .filter((command) => command.kind === "session.create")
+          .map((command) => command.id),
+      ).toEqual([admitted.id]);
+      expect(
+        creates.filter((command) => command.kind === "session.prompt"),
+      ).toHaveLength(1);
+      expect(fake.callsOf("createSession")).toHaveLength(1);
+    } finally {
+      if (previousUrl === undefined) delete process.env.MAISTER_SUPERVISOR_URL;
+      else process.env.MAISTER_SUPERVISOR_URL = previousUrl;
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("fair runtime object retention (AT-14)", () => {

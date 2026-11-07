@@ -13,6 +13,10 @@ import {
 } from "vitest";
 
 import * as schema from "@/lib/db/schema";
+import {
+  seedAcceptedAutomaticQualification,
+  automaticSelectorAdmissionSnapshot,
+} from "@/test-support/automatic-qualification";
 import { MaisterError } from "@/lib/errors-core";
 import { flowManifestIncompatibilityDetails } from "@/lib/flows/manifest-parser";
 import {
@@ -25,7 +29,38 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
-vi.mock("@/lib/services/runs", () => ({ launchRun: mocks.launchRun }));
+// Retain this suite's existing execution injection at the dispatchers' explicit selector seams.
+// Canonical source/qualification/real Git admission is covered by flow-run-admission.integration.test.ts.
+vi.mock("@/lib/run-schedules/dispatch", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/run-schedules/dispatch")>();
+
+  return {
+    ...actual,
+    dispatchDueSchedules: (
+      input: Parameters<typeof actual.dispatchDueSchedules>[0],
+    ) => actual.dispatchDueSchedules({ ...input, launch: mocks.launchRun }),
+    dispatchScheduleNow: (
+      id: string,
+      input: Parameters<typeof actual.dispatchScheduleNow>[1],
+    ) => actual.dispatchScheduleNow(id, { ...input, launch: mocks.launchRun }),
+  };
+});
+vi.mock("@/lib/scheduled-launches/service", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/scheduled-launches/service")>();
+
+  return {
+    ...actual,
+    dispatchClaimedScheduledLaunch: (
+      input: Parameters<typeof actual.dispatchClaimedScheduledLaunch>[0],
+    ) =>
+      actual.dispatchClaimedScheduledLaunch({
+        ...input,
+        launch: mocks.launchRun,
+      }),
+  };
+});
 
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase<typeof schema>;
@@ -89,6 +124,10 @@ beforeEach(async () => {
         flowId: task.flowId,
         status: "Review",
         flowVersion: "v1.0.0",
+        taskAdmissionSnapshot: await automaticSelectorAdmissionSnapshot(
+          testDatabase,
+          input.taskId,
+        ),
         ...(input.scheduledReservation
           ? {
               scheduledLaunchId: input.scheduledReservation.scheduledLaunchId,
@@ -153,6 +192,8 @@ async function seedBase(): Promise<Seed> {
     flowId,
     status: "Backlog",
   });
+
+  await seedAcceptedAutomaticQualification(testDatabase, projectId, taskId);
 
   return { projectId, flowId, taskId, userId };
 }
@@ -477,6 +518,10 @@ describe("runSchedulerTick × run_schedule dispatcher (engine-level)", () => {
         flowId: task.flowId,
         status: "Pending",
         flowVersion: "v1.0.0",
+        taskAdmissionSnapshot: await automaticSelectorAdmissionSnapshot(
+          testDatabase,
+          input.taskId,
+        ),
       });
 
       return { runId, status: "Pending", queuePosition: 1 };
@@ -503,6 +548,10 @@ describe("runSchedulerTick × run_schedule dispatcher (engine-level)", () => {
 
     await db.insert(schema.runs).values({
       id: blocker,
+      taskAdmissionSnapshot: await automaticSelectorAdmissionSnapshot(
+        testDatabase,
+        seed.taskId,
+      ),
       projectId: seed.projectId,
       taskId: seed.taskId,
       flowId: seed.flowId,

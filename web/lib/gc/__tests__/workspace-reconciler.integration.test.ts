@@ -1,3 +1,5 @@
+import type { SupervisorSessionRecord } from "@/lib/supervisor-client";
+
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, realpath, rm, writeFile } from "node:fs/promises";
@@ -35,10 +37,14 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
-const listSessionsMock = vi.hoisted(() => vi.fn());
+const listSessionsMock = vi.hoisted(() =>
+  vi.fn<() => Promise<SupervisorSessionRecord[]>>(),
+);
 
 vi.mock("@/lib/supervisor-client", () => ({
   listSessions: listSessionsMock,
+  listSessionsForRun: async (runId: string) =>
+    (await listSessionsMock()).filter((session) => session.runId === runId),
 }));
 
 const execFileAsync = promisify(execFile);

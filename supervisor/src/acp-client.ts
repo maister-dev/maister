@@ -1354,7 +1354,9 @@ export async function sendPromptOnConnection(
     },
   });
 
-  throwIfCheckpointed();
+  // A real ACP completion remains evidence even when teardown races it.
+  // Only a cancelled response describes a resolved checkpoint interruption.
+  if (resp.stopReason === "cancelled") throwIfCheckpointed();
 
   logger.info(
     {

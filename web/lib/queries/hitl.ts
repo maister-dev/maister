@@ -274,6 +274,7 @@ export type HitlRowBase = {
   agentId: string | null;
   parentRunId: string | null;
   agentWorkspace: BudgetBreachAvailabilityContext["agentWorkspace"];
+  agentKind?: BudgetBreachAvailabilityContext["agentKind"];
   workspaceId: string | null;
   workspaceRemovedAt: Date | null;
   taskNumber: number | null;
@@ -339,6 +340,7 @@ export function mapRowsToHitlItems(
               agentId: row.agentId,
               parentRunId: row.parentRunId,
               agentWorkspace: row.agentWorkspace,
+              agentKind: row.agentKind,
               hasOwnedWorkspace:
                 row.workspaceId !== null && row.workspaceRemovedAt === null,
             })
@@ -438,6 +440,7 @@ export async function getHitlInbox(
       agentId: runs.agentId,
       parentRunId: runs.parentRunId,
       agentWorkspace: runs.agentWorkspace,
+      agentKind: runs.agentKind,
       workspaceId: workspaces.id,
       workspaceRemovedAt: workspaces.removedAt,
       taskNumber: tasks.number,

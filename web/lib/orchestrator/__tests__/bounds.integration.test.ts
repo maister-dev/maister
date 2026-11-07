@@ -12,6 +12,7 @@ import {
   describe,
   expect,
   it,
+  vi,
 } from "vitest";
 
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
@@ -601,8 +602,11 @@ describe("the active-children cap is a QUEUE, not a refusal (AC-29)", () => {
     await pool.query(`UPDATE "runs" SET "status" = 'Review' WHERE id = $1`, [
       children[0],
     ]);
-    await promoteNextPending({ db });
+    const runFlow = vi.fn<(runId: string) => void>();
 
+    await promoteNextPending({ db, runFlow });
+
+    expect(runFlow.mock.calls).toEqual([[children[3]]]);
     expect(await statusOf(children[3])).toBe("Running");
   }, 60_000);
 
@@ -630,23 +634,27 @@ describe("the active-children cap is a QUEUE, not a refusal (AC-29)", () => {
 
     // An unrelated run (no parent) starts and then settles, freeing a slot in
     // the GLOBAL pool while the parent's own two children are still Running.
-    const unrelated = await seedRun({});
+    const unrelated = await seedRun({ status: "Pending" });
 
     await tryStartRun(unrelated, { db });
     await pool.query(`UPDATE "runs" SET "status" = 'Done' WHERE id = $1`, [
       unrelated,
     ]);
 
-    await promoteNextPending({ db });
+    const runFlow = vi.fn<(runId: string) => void>();
 
+    await promoteNextPending({ db, runFlow });
+
+    expect(runFlow).not.toHaveBeenCalled();
     expect(await statusOf(children[2])).toBe("Pending");
 
     // ...and once a SIBLING frees a slot, the same edge does promote it.
     await pool.query(`UPDATE "runs" SET "status" = 'Review' WHERE id = $1`, [
       children[0],
     ]);
-    await promoteNextPending({ db });
+    await promoteNextPending({ db, runFlow });
 
+    expect(runFlow.mock.calls).toEqual([[children[2]]]);
     expect(await statusOf(children[2])).toBe("Running");
   }, 60_000);
 
@@ -665,8 +673,11 @@ describe("the active-children cap is a QUEUE, not a refusal (AC-29)", () => {
     await pool.query(`UPDATE "runs" SET "status" = 'Done' WHERE id = $1`, [
       first,
     ]);
-    await promoteNextPending({ db });
+    const runFlow = vi.fn<(runId: string) => void>();
 
+    await promoteNextPending({ db, runFlow });
+
+    expect(runFlow.mock.calls).toEqual([[queued]]);
     expect(await statusOf(queued)).toBe("Running");
   }, 60_000);
 

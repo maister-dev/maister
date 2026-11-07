@@ -15,6 +15,7 @@ import {
   vi,
 } from "vitest";
 
+import { bindQueuedDelegationResponse } from "@/test-support/queued-delegation";
 import {
   countRows,
   delegateRequest,
@@ -69,8 +70,15 @@ beforeAll(async () => {
   db = testDatabase.db;
 
   ({ issueOrchestratorRunToken } = await import("@/lib/agents/tokens"));
-  ({ POST: delegatePost } =
-    await import("@/app/api/v1/ext/runs/delegate/route"));
+  const delegatePostEndpoint = (
+    await import("@/app/api/v1/ext/runs/delegate/route")
+  ).POST;
+
+  delegatePost = async (request, context) =>
+    bindQueuedDelegationResponse(
+      db as unknown as import("@/lib/execution-host/db").Db,
+      await delegatePostEndpoint(request, context),
+    );
 }, 180_000);
 
 afterAll(async () => {

@@ -1,5 +1,12 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -27,6 +34,31 @@ describe("copyBundleArtifactsToWorktree", () => {
   afterEach(async () => {
     await rm(bundle, { recursive: true, force: true });
     await rm(worktree, { recursive: true, force: true });
+  });
+
+  it("keeps legacy cache references for links into non-materialized bundle content", async () => {
+    await mkdir(path.join(bundle, "docs"), { recursive: true });
+    await mkdir(path.join(bundle, "agents"), { recursive: true });
+    await writeFile(
+      path.join(bundle, "docs", "reference.md"),
+      "LEGACY-REFERENCE",
+    );
+    await symlink(
+      "../docs/reference.md",
+      path.join(bundle, "agents", "reference.md"),
+    );
+
+    await copyBundleArtifactsToWorktree({
+      installedPath: bundle,
+      worktreePath: worktree,
+    });
+
+    expect(
+      await readFile(
+        path.join(worktree, ".claude", "agents", "reference.md"),
+        "utf8",
+      ),
+    ).toBe("LEGACY-REFERENCE");
   });
 
   it("copies bundle skills/agents but never overwrites a repo-local copy", async () => {

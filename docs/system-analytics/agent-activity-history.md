@@ -237,7 +237,6 @@ refusal feedback without manufacturing a run. Backfill only the latest proven
 legacy attempt with `legacy_latest` provenance; prior counts remain unavailable,
 not fabricated from lastAttemptFence.
 
-
 ## Scheduled request input (Implemented)
 
 Per-cron current input and immutable claim/run retention are specified in [scheduled agent requests](scheduled-agent-requests.md). Protected request bodies are stored separately from viewer-safe trigger telemetry; existing admission, completion and permission policies remain authoritative.
@@ -277,3 +276,16 @@ cleanup state, revision and safe reason; they never expose allocation paths,
 recipe, runner credentials or ACP handles. Explicit cleanup rearm uses that
 revision and its own request key. A launched receipt retains its identity after
 child retention and continues to prohibit a second successor from the source.
+An initial batch window selects its eligible rows. Refreshing that window for a
+different runner preserves the user's selected subset intersected with the new
+eligible rows, including an explicitly empty selection; newly eligible rows are
+not implicitly selected. Accepted requests use the refreshed per-row fingerprint
+and canonical launch request. An unresolved keyed submission remains frozen for
+recovery rather than being rebuilt from a refreshed preview.
+The visible batch is bounded to 100 rows. A runner refresh re-previews those exact
+visible run IDs through the existing selected-source API, retaining the history
+cursor, continuation cursor and offset even when Preview more has appended another
+page. Preview more and next/latest window navigation carry the displayed runner.
+Clearing the runner does not request a default preview; submitting fresh work is
+disabled until its displayed runner matches the canonical requests. New windows
+retain the initial eligible-row selection behavior.

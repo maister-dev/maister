@@ -701,7 +701,10 @@ async function invokePost(runId: string, hitlRequestId: string, body: unknown) {
       `http://localhost/api/runs/${runId}/hitl/${hitlRequestId}/respond`,
       {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          origin: "http://localhost",
+        },
         body: JSON.stringify(body),
       },
     ),
@@ -2093,6 +2096,14 @@ describe("HITL respond route — kind=budget_breach", () => {
 
     const res = await invokePost(runId, hitlRequestId, {
       optionId: "restart",
+      restartLaunch: {
+        taskId: "task-1",
+        expectedTaskRevision: 0,
+        expectedSettingsToken: "shown-settings",
+        relaunchOfRunId: runId,
+        flowId: "flow-1",
+        runnerId: "runner-1",
+      },
     });
 
     expect(res.status).toBe(409);

@@ -3,6 +3,7 @@ import "server-only";
 import type { ProjectAction } from "@/lib/authz";
 import type { TokenAuditInput } from "@/lib/tokens/audit";
 import type { TokenActor } from "@/lib/tokens/verify";
+import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
@@ -14,12 +15,14 @@ import { requireProjectActionForUser } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { queryErrorDiagnostics } from "@/lib/db/pg-error";
 import {
   admitLibrarianOperation,
   markLibrarianOperationUnknown,
   refuseLibrarianOperation,
   settleLibrarianOperation,
   type LibrarianOperationResult,
+  type AdmittedLibrarianOperation,
 } from "@/lib/librarian/operations";
 import {
   bumpTokenLastUsed,
@@ -50,6 +53,18 @@ export type ExtCtx = {
 type ResolveProjectCtx = { actor: TokenActor; db: Db };
 type ResolveScopeCtx = ExtCtx & { db: Db };
 
+export type ExtOperationContinuation = Readonly<{
+  replay: (
+    operation: AdmittedLibrarianOperation,
+    context: ExtCtx,
+  ) => Promise<NextResponse>;
+  refuse: (
+    operationId: string,
+    response: NextResponse,
+    db: ExecutionDb,
+  ) => Promise<void>;
+}>;
+
 const log = pino({
   name: "ext-token-handler",
   level: process.env.LOG_LEVEL ?? "info",
@@ -77,7 +92,7 @@ export async function recordRequiredTokenAudit(
   } catch (err) {
     log.error(
       {
-        ...errorFields(err),
+        ...queryErrorDiagnostics(err),
         endpoint: input.endpoint,
         method: input.method,
         projectId: input.projectId,
@@ -381,6 +396,8 @@ export async function handleExt(
       kind: string;
       target: Record<string, string>;
       parseBody: (req: Request) => Promise<unknown>;
+      keyMaxLength?: 128 | 256;
+      continuation?: ExtOperationContinuation;
     };
   },
   work: (ctx: ExtCtx) => Promise<NextResponse>,
@@ -551,7 +568,30 @@ export async function handleExt(
       : undefined);
 
   if (!opts.slug && resolveProjectId) {
-    const resolvedProjectId = await resolveProjectId({ actor, db: d });
+    let resolvedProjectId: string | null;
+
+    try {
+      resolvedProjectId = await resolveProjectId({ actor, db: d });
+    } catch (error) {
+      if (!isMaisterError(error) || error.code !== "CONFIG") throw error;
+      await recordRequiredTokenAudit(
+        {
+          ...tokenAuditIdentity(actor),
+          projectId: auditProjectId,
+          scopeUsed: opts.scopeLabel,
+          endpoint: opts.endpoint,
+          method: opts.method,
+          result: "error",
+          statusCode: 422,
+        },
+        d,
+      );
+
+      return NextResponse.json(
+        { code: error.code, message: error.message, details: error.details },
+        { status: 422 },
+      );
+    }
 
     if (resolvedProjectId === null) {
       await recordRequiredTokenAudit(
@@ -678,6 +718,7 @@ export async function handleExt(
   }
 
   let operationId: string | undefined;
+  let replayedOperation: AdmittedLibrarianOperation | undefined;
 
   if (
     actor.tokenKind === "librarian" &&
@@ -717,8 +758,9 @@ export async function handleExt(
     }
 
     const key = req.headers.get("Idempotency-Key")?.trim();
+    const keyMaxLength = opts.idempotency.keyMaxLength ?? 128;
 
-    if (!key || key.length > 128) {
+    if (!key || key.length > keyMaxLength) {
       await recordRequiredTokenAudit(
         {
           ...tokenAuditIdentity(actor),
@@ -735,7 +777,7 @@ export async function handleExt(
       return NextResponse.json(
         {
           code: "CONFIG",
-          message: "Idempotency-Key must contain 1 to 128 characters",
+          message: `Idempotency-Key must contain 1 to ${keyMaxLength} characters`,
         },
         { status: 422 },
       );
@@ -819,7 +861,7 @@ export async function handleExt(
       );
     }
 
-    if (operation.reused) {
+    if (operation.reused && !opts.idempotency.continuation) {
       await recordRequiredTokenAudit(
         {
           ...tokenAuditIdentity(actor),
@@ -845,17 +887,23 @@ export async function handleExt(
     }
 
     operationId = operation.id;
+    if (operation.reused) replayedOperation = operation;
   }
 
   // 4. Run work().
   let response: NextResponse;
 
   try {
-    response = await work({
+    const context: ExtCtx = {
       actor,
       projectId: targetProjectId ?? "",
       operationId,
-    });
+    };
+
+    response =
+      replayedOperation && opts.idempotency?.continuation
+        ? await opts.idempotency.continuation.replay(replayedOperation, context)
+        : await work(context);
   } catch (err) {
     // Map TokenAuthError("wrong-project") thrown from authorize callback → 404.
     if (err instanceof TokenAuthError) {
@@ -891,17 +939,21 @@ export async function handleExt(
   const statusCode = response.status;
 
   if (operationId && statusCode >= 400) {
-    const body = (await response.clone().json()) as Record<string, unknown>;
+    if (opts.idempotency?.continuation)
+      await opts.idempotency.continuation.refuse(operationId, response, d);
+    else {
+      const body = (await response.clone().json()) as Record<string, unknown>;
 
-    await refuseLibrarianOperation(
-      {
-        id: operationId,
-        errorCode: typeof body.code === "string" ? body.code : "PRECONDITION",
-        statusCode,
-        body,
-      },
-      d,
-    );
+      await refuseLibrarianOperation(
+        {
+          id: operationId,
+          errorCode: typeof body.code === "string" ? body.code : "PRECONDITION",
+          statusCode,
+          body,
+        },
+        d,
+      );
+    }
   }
 
   if (!(opts.successAuditInWork && statusCode < 400)) {

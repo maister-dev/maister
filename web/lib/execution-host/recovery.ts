@@ -416,7 +416,10 @@ async function foldReceipt(
     return reason === "turn_lost" ? "turnLost" : "folded";
   }
 
-  if (receipt.inflight) return "skippedInFlight";
+  // V2 does not carry process liveness. Its normalized false cannot authorize
+  // abandoning an accepted command or starting a replacement generation.
+  if (row.kind === "session.create" || receipt.evidenceV2 || receipt.inflight)
+    return "skippedInFlight";
 
   await settleInLedgerTx(
     db,

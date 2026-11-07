@@ -7,6 +7,7 @@ import type { ExecutionHosts } from "@/lib/execution-host/client";
 import type { RealSupervisor } from "@/test-support/real-supervisor";
 
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -43,7 +44,6 @@ import {
   readRuntimeObjectContent,
 } from "@/lib/execution-host/runtime-objects";
 import { runReconcileSweep } from "@/lib/reconcile";
-import { isTurnLostError } from "@/lib/reconcile-evidence";
 import { defaultTransport } from "@/lib/execution-host/default-transport";
 import { UNKNOWN_OUTCOME_DETAIL } from "@/lib/execution-host/contracts";
 import { MaisterError } from "@/lib/errors";
@@ -64,6 +64,11 @@ import {
 } from "@/test-support/real-supervisor";
 import { holdProjection } from "@/test-support/projection-hold";
 import { seedNodePromptOwner } from "@/test-support/prompt-owner-fixture";
+import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
+import {
+  findProcessIdentity,
+  invocationFromEnvironment,
+} from "@/test-support/process-invocation";
 
 const schema = fullSchema as unknown as Record<string, any>;
 
@@ -997,18 +1002,212 @@ describe("evidence-first classification vs a LIVE prompt-owner worker (ADR-177)"
   }, 180_000);
 });
 
-// D2c (S5.2). The window BETWEEN D2a and D2b: the host wrote its `accepted`
-// receipt and then died before the turn finished. `accepted` + `inflight:false`
-// is the turn_lost signature (`contracts.ts`), and the supervisor settles such
-// a receipt only when the SAME command id is re-sent — which `session.create`,
-// absent from `RESTARTABLE_OBJECT_KINDS`, answers turn_lost rather than with a
-// session. The driver therefore reissues the stored bytes under a new
-// generation, exactly as D2a does one step earlier. The lost turn is staged
-// through the transport (a request lost in flight, then the restarted host's
-// receipt); the reissue itself goes to the REAL supervisor, so "one logical
-// session" is observed and not assumed.
+// D2c: loss of the supervisor's turn does not prove the adapter process exited.
+// Both a real native SIGKILL and legacy liveness-only replay must retain the
+// original create until the host supplies positive process-quiescence proof.
 describe("owned create after a host restart on an accepted receipt (D2c)", () => {
-  it("reissues one new generation from the stored bytes and binds one session", async () => {
+  it("retains a native supervisor-killed create until its actual initialized adapter group retires", async () => {
+    const invocation = invocationFromEnvironment();
+
+    if (!invocation)
+      throw new Error("Native restart requires fixture ownership");
+    const invocationLog = `${sup.runtimeRoot}/native-create-invocations.jsonl`;
+
+    sup = await sup.restart({
+      fixtureArgs: [
+        "--hang-new-session",
+        "--exit-delay-ms",
+        "60000",
+        "--invocation-log",
+        invocationLog,
+      ],
+      env: { MAISTER_ACP_HANDSHAKE_TIMEOUT_MS: "30000" },
+    });
+    const originalSupervisor = sup;
+    const runId = await seedFlowGraphRun("native-supervisor-death");
+    const assignment = await mint(runId);
+    const nodeAttemptId = randomUUID();
+
+    await db.insert(schema.nodeAttempts).values({
+      id: nodeAttemptId,
+      runId,
+      nodeId: "s1",
+      nodeType: "ai_coding",
+      attempt: 1,
+      status: "Running",
+      executionAssignmentId: assignment.id,
+      actionPromptOrdinal: 0,
+    });
+    const owner = { variant: "node" as const, nodeAttemptId, promptOrdinal: 0 };
+    const client = await hosts.forAssignment(assignment);
+    const initial = client
+      .createOwnedSession(owner, async () => ({
+        ...CREATE_PAYLOAD,
+        nodeAttemptId,
+      }))
+      .then(
+        () => "created" as const,
+        (error: unknown) => ({ error }),
+      );
+    let safetyExpired = false;
+    let safety: ReturnType<typeof setTimeout> | undefined;
+    let safetyCleanup: Promise<void> | undefined;
+
+    try {
+      await expect
+        .poll(
+          async () => {
+            const session = (await hosts.local().listSessions()).find(
+              (entry) => entry.runId === runId,
+            );
+
+            if (!session?.adapterPid || !session.processGroup) return false;
+            let text: string;
+
+            try {
+              text = await readFile(invocationLog, "utf8");
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code === "ENOENT")
+                return false;
+              throw error;
+            }
+            const records: unknown[] = text
+              .trim()
+              .split("\n")
+              .map((line) => JSON.parse(line) as unknown);
+
+            return records.some((entry) =>
+              Boolean(
+                entry &&
+                typeof entry === "object" &&
+                "pid" in entry &&
+                entry.pid === session.adapterPid &&
+                "method" in entry &&
+                entry.method === "session/new",
+              ),
+            );
+          },
+          { timeout: 4_000 },
+        )
+        .toBe(true);
+      const originalSession = (await hosts.local().listSessions()).find(
+        (entry) => entry.runId === runId,
+      );
+
+      if (!originalSession?.adapterPid || !originalSession.processGroup)
+        throw new Error("Initialized adapter has no registered native group");
+      const adapterPid = originalSession.adapterPid;
+      const originalGroup = originalSession.processGroup;
+      const adapterIdentity = await findProcessIdentity(invocation, adapterPid);
+
+      expect(adapterIdentity).toMatchObject({
+        pid: adapterPid,
+        pgid: originalGroup,
+        owned: true,
+        inspected: true,
+      });
+      expect(await originalSupervisor.captureOwnedSessionGroups()).toContain(
+        originalGroup,
+      );
+      safety = setTimeout(() => {
+        safetyExpired = true;
+        safetyCleanup = originalSupervisor.kill("SIGKILL");
+        void safetyCleanup.catch(() => undefined);
+      }, 8_000);
+      // Deliberately kill only the Supervisor leader. Fixture stop would also
+      // retire its captured session groups and would not reproduce this crash.
+      process.kill(originalSupervisor.pid, "SIGKILL");
+      await originalSupervisor.exited;
+      expect(() => process.kill(adapterPid, 0)).not.toThrow();
+      await initial;
+      sup = await startRealSupervisor({
+        ...originalSupervisor.options,
+        fixtureArgs: ["--hang-prompt"],
+      });
+      const transport = defaultTransport();
+      const [command] = (await listCommandsForRun(db, runId)).filter(
+        (row) => row.kind === "session.create",
+      );
+
+      expect(await transport.getCommandReceipt(command.id)).toMatchObject({
+        phase: "accepted",
+        body: { details: { reason: "session_create_exit_unconfirmed" } },
+      });
+      await db
+        .update(schema.executionCommands)
+        .set({ nextAttemptAt: null })
+        .where(eq(schema.executionCommands.id, command.id));
+      const reentered = await createExecutionHosts({
+        db,
+        transport,
+      }).forAssignment(assignment);
+      const retained = reentered.createOwnedSession(owner, async () => {
+        throw new Error(
+          "Restart must retain the original stored create request",
+        );
+      });
+
+      await expect(retained).rejects.toBeInstanceOf(SessionCreatePending);
+      expect(() => process.kill(adapterPid, 0)).not.toThrow();
+      expect(
+        (await listCommandsForRun(db, runId)).filter(
+          (row) => row.kind === "session.create",
+        ),
+      ).toHaveLength(1);
+      expect(
+        (await hosts.local().listSessions()).filter(
+          (entry) => entry.runId === runId && entry.status === "live",
+        ),
+      ).toHaveLength(0);
+      expect(
+        safetyExpired,
+        "The bounded orphan cleanup expired before the no-duplicate assertion",
+      ).toBe(false);
+      if (safety) clearTimeout(safety);
+      // Now retire the exact positively captured old group, then require the
+      // restarted host to settle the SAME original receipt before replacement.
+      await originalSupervisor.kill("SIGKILL");
+      await expect
+        .poll(
+          async () => (await transport.getCommandReceipt(command.id))?.body,
+          { timeout: 4_000 },
+        )
+        .toMatchObject({
+          details: {
+            sessionCreateQuiescence: { version: 1, process: "terminated" },
+          },
+        });
+      await db
+        .update(schema.executionCommands)
+        .set({ nextAttemptAt: null })
+        .where(eq(schema.executionCommands.id, command.id));
+      const successor = await reentered.createOwnedSession(owner, async () => {
+        throw new Error(
+          "Confirmed retirement must reuse the original accepted request",
+        );
+      });
+
+      expect(successor.sessionId).toEqual(expect.any(String));
+      expect(
+        (await listCommandsForRun(db, runId)).filter(
+          (row) => row.kind === "session.create",
+        ),
+      ).toHaveLength(2);
+      const live = (await hosts.local().listSessions()).filter(
+        (entry) => entry.runId === runId && entry.status === "live",
+      );
+
+      expect(live).toHaveLength(1);
+      expect(live[0].adapterPid).not.toBe(adapterPid);
+    } finally {
+      if (safety) clearTimeout(safety);
+      if (safetyCleanup) await safetyCleanup;
+      await originalSupervisor.kill("SIGKILL");
+      await initial;
+    }
+  }, 30_000);
+
+  it("retains an unmarked legacy accepted create without inventing process retirement", async () => {
     const runId = await seedFlowGraphRun("d2c");
     const assignment = await mint(runId);
     const nodeAttemptId = randomUUID();
@@ -1087,39 +1286,28 @@ describe("owned create after a host restart on an accepted receipt (D2c)", () =>
                 receivedAt: new Date().toISOString(),
                 completedAt: null,
                 eventId: null,
-                // The host restarted: the receipt survived, the turn did not.
+                // Legacy liveness is deliberately not process-exit evidence.
                 inflight: false,
               }
             : base.getCommandReceipt(commandId),
       },
     }).forAssignment(assignment);
-    const result = await reentered.createOwnedSession(owner, async () => {
-      throw new Error("a reissue must reuse the stored create bytes");
-    });
-    const rows = await creates();
-    const lost = rows.find((row) => row.id === admitted.id)!;
-    const reissued = rows.find((row) => row.id !== admitted.id)!;
 
-    expect(rows).toHaveLength(2);
-    expect(lost.state).toBe("failed");
-    expect(
-      isTurnLostError(lost.lastError),
-      "the driver must record WHY the original create was abandoned",
-    ).toBe(true);
-    expect(reissued.state).toBe("succeeded");
-    expect(reissued.createIntent).toMatchObject({
-      generation: 1,
-      supersedesCommandId: admitted.id,
-    });
-    expect((await runSessionRow(runId))?.hostSessionId).toBe(
-      result.hostSessionId,
-    );
+    await expect(
+      reentered.createOwnedSession(owner, async () => {
+        throw new Error("An unproven create must not resolve a replacement");
+      }),
+    ).rejects.toBeInstanceOf(SessionCreatePending);
+    const rows = await creates();
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: admitted.id, state: "queued" });
+    expect(await runSessionRow(runId)).toBeNull();
 
     const live = (await hosts.local().listSessions()).filter(
       (session) => session.runId === runId && session.status === "live",
     );
 
-    expect(live).toHaveLength(1);
-    expect(live[0].sessionId).toBe(result.hostSessionId);
+    expect(live).toHaveLength(0);
   }, 120_000);
 });

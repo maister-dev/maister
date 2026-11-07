@@ -35,6 +35,25 @@ a lost response keeps its request key. Fresh qualification explicitly identifies
 current-task reassessment and any legacy-task qualification opt-in. See the
 [retry contract](../../system-analytics/agent-retry.md).
 
+## Task delivery and preparation failures
+
+Task-bound code-delivery retry previews freeze the current task revision,
+agent/workspace, runner/model and settings witness. Accepting creates a fresh
+canonical manual intent; it does not reuse the source Run's manual grant or
+manufacture an accepted assessment. Queued acceptance is distinct from a created,
+running or completed successor. Source history and recorded trigger/request
+provenance remain inspectable. Operational pre-work retries and fresh qualifier
+assessment retain the separate [retry contract](../../system-analytics/agent-retry.md).
+
+Workspace-preparation failures show an infrastructure cause and an actionable
+next step, not a model refusal or a negative assessment. Run wording remains
+neutral about earlier model execution because preparation can fail on a
+continuation. Only a task-source failure projection bound to the current input
+with `modelStarted === false` permits the localized explanation that the model
+did not start. Technical details retain stage, operation and safe cause-chain
+data. Missing historical inner causes remain unknown; a later successful probe
+does not reconstruct them.
+
 ## EN/RU copy
 
 | EN | RU |

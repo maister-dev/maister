@@ -6,35 +6,18 @@ import type {
   TaskQualificationHistoryItem,
 } from "@/lib/tasks/qualification-queries";
 import type { ActivityPage } from "@/lib/agents/activity-queries";
-import type { TaskQualificationValue } from "@/lib/tasks/qualification-types";
+import type { HumanAssessmentDraft } from "@/lib/tasks/human-assessment-schema";
 
 import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
-import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
-import { QUALIFICATION_DIMENSIONS } from "@/lib/tasks/qualification-types";
-import { taskQualificationWriteSchema } from "@/lib/tasks/qualification-schema";
+import { HumanAssessmentForm } from "@/components/agents/human-assessment-form";
+import { TaskQualificationSourceFailureNotice } from "@/components/agents/task-qualification-source-failure-notice";
 
 const button =
   "inline-flex min-h-8 items-center rounded-lg border border-line bg-ivory px-3 text-xs font-semibold text-ink disabled:opacity-50";
-const field =
-  "mt-1 block w-full rounded-lg border border-line bg-paper p-2 text-sm";
-const emptyValue: TaskQualificationValue = {
-  schemaVersion: 1,
-  requestType: "feature",
-  decision: "needs_review",
-  checks: QUALIFICATION_DIMENSIONS.map((dimension) => ({
-    dimension,
-    state: "unknown",
-    rationale: "",
-    evidenceIds: [],
-  })),
-  reasonCodes: [],
-  nextActions: [],
-  evidenceRefs: [],
-};
 
 export function TaskQualificationControl({
   summary,
@@ -48,18 +31,15 @@ export function TaskQualificationControl({
   canAct: boolean;
 }): ReactElement {
   const t = useTranslations("taskQualification");
+  const launchT = useTranslations("launch");
   const router = useRouter();
   const [assessmentOpen, setAssessmentOpen] = useState(false);
   const [history, setHistory] =
     useState<ActivityPage<TaskQualificationHistoryItem> | null>(null);
-  const [value, setValue] = useState<TaskQualificationValue>(emptyValue);
-  const [evidence, setEvidence] = useState("");
+  const [draft, setDraft] = useState<HumanAssessmentDraft | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const [acceptedRequest, setAcceptedRequest] = useState<ReturnType<
-    typeof taskQualificationWriteSchema.parse
-  > | null>(null);
   const endpoint = `/api/projects/${slug}/tasks/${taskId}`;
   const load = async (cursor?: string): Promise<void> => {
     setBusy(true);
@@ -83,66 +63,26 @@ export function TaskQualificationControl({
       setBusy(false);
     }
   };
-  const save = async (): Promise<void> => {
-    setError(null);
-    setSaved(false);
-    const parsed = taskQualificationWriteSchema.safeParse(
-      acceptedRequest ?? {
-        requestKey: crypto.randomUUID(),
-        expectedInputRevision: summary.inputRevision,
-        expectedQualificationRevision: summary.qualificationRevision,
-        qualification: {
-          ...value,
-          evidenceRefs: evidence.trim()
-            ? evidence.split("\n").map((line) => {
-                const [id, kind, ...reference] = line.split("|");
-
-                return {
-                  id: id.trim(),
-                  kind: kind?.trim(),
-                  reference: reference.join("|").trim(),
-                };
-              })
-            : [],
-        },
-      },
-    );
-
-    if (!parsed.success) {
-      setError(t("invalid"));
+  const openAssessment = async (): Promise<void> => {
+    if (draft) {
+      setAssessmentOpen(true);
 
       return;
     }
-    setAcceptedRequest(parsed.data);
     setBusy(true);
+    setError(null);
     try {
-      const response = await fetch(`${endpoint}/qualification`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(parsed.data),
-      });
+      const response = await fetch(`${endpoint}/human-assessment`);
 
       if (!response.ok) {
-        setError(
-          t(
-            response.status === 409
-              ? "conflict"
-              : response.status === 403
-                ? "permission"
-                : "saveError",
-          ),
-        );
-        if (response.status < 500) setAcceptedRequest(null);
+        setError(t(response.status === 403 ? "permission" : "loadError"));
 
         return;
       }
-      setSaved(true);
-      setAssessmentOpen(false);
-      setAcceptedRequest(null);
-      router.refresh();
-      await load();
+      setDraft((await response.json()) as HumanAssessmentDraft);
+      setAssessmentOpen(true);
     } catch {
-      setError(t("unknownWrite"));
+      setError(t("loadError"));
     } finally {
       setBusy(false);
     }
@@ -169,6 +109,14 @@ export function TaskQualificationControl({
         <p className="text-sm">
           {t(`publication.${summary.candidate.publicationState}`)}
         </p>
+      ) : null}
+      {summary.sourceFailure ? (
+        <div className="space-y-2">
+          <p className="text-sm">{launchT("admission.triageFailed")}</p>
+          <TaskQualificationSourceFailureNotice
+            failure={summary.sourceFailure}
+          />
+        </div>
       ) : null}
       {summary.nextActions.length ? (
         <ul className="list-disc pl-5 text-sm">
@@ -254,6 +202,14 @@ export function TaskQualificationControl({
                         </p>
                       ))}
                     </details>
+                    <details>
+                      <summary className="cursor-pointer text-sm">
+                        {t("authoring.structuredResult")}
+                      </summary>
+                      <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-all text-xs">
+                        {JSON.stringify(item.qualification, null, 2)}
+                      </pre>
+                    </details>
                   </li>
                 ))}
               </ul>
@@ -271,217 +227,27 @@ export function TaskQualificationControl({
           ) : null}
           <button
             className={button}
+            disabled={busy}
             type="button"
-            onClick={() => setAssessmentOpen(true)}
+            onClick={() => void openAssessment()}
           >
             {t("humanAssessment")}
           </button>
-          {assessmentOpen ? (
-            <ConfirmDialog
-              body={t("humanHint")}
-              busy={busy}
-              cancelLabel={t("close")}
-              testId="task-qualification-dialog"
-              title={t("humanAssessment")}
-              titleId={`qualification-${taskId}`}
+          {draft ? (
+            <HumanAssessmentForm
+              endpoint={`${endpoint}/human-assessment`}
+              initialDraft={draft}
+              open={assessmentOpen}
+              slug={slug}
               onClose={() => setAssessmentOpen(false)}
-            >
-              {error ? (
-                <p className="text-sm text-red-700" role="alert">
-                  {error}
-                </p>
-              ) : null}
-              <fieldset
-                className="space-y-3"
-                disabled={busy || acceptedRequest !== null}
-              >
-                <label className="block text-sm">
-                  {t("requestType")}
-                  <select
-                    aria-label={t("requestType")}
-                    className={field}
-                    value={value.requestType}
-                    onChange={(event) =>
-                      setValue({
-                        ...value,
-                        requestType: event.target
-                          .value as TaskQualificationValue["requestType"],
-                      })
-                    }
-                  >
-                    {["bug", "feature", "maintenance", "question"].map(
-                      (type) => (
-                        <option key={type} value={type}>
-                          {t(`type.${type}`)}
-                        </option>
-                      ),
-                    )}
-                  </select>
-                </label>
-                <label className="block text-sm">
-                  {t("decisionLabel")}
-                  <select
-                    aria-label={t("decisionLabel")}
-                    className={field}
-                    value={value.decision}
-                    onChange={(event) =>
-                      setValue({
-                        ...value,
-                        decision: event.target
-                          .value as TaskQualificationValue["decision"],
-                      })
-                    }
-                  >
-                    {[
-                      "ready",
-                      "needs_information",
-                      "needs_review",
-                      "not_actionable",
-                    ].map((decision) => (
-                      <option key={decision} value={decision}>
-                        {t(`decision.${decision}`)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                {value.checks.map((check, index) => (
-                  <fieldset
-                    key={check.dimension}
-                    className="space-y-2 rounded-lg border border-line p-3"
-                  >
-                    <legend className="px-1 text-sm font-semibold">
-                      {t(`dimension.${check.dimension}`)}
-                    </legend>
-                    <label className="block text-xs">
-                      {t("checkLabel")}
-                      <select
-                        aria-label={t("checkLabel")}
-                        className={field}
-                        value={check.state}
-                        onChange={(event) =>
-                          setValue({
-                            ...value,
-                            checks: value.checks.map((item, i) =>
-                              i === index
-                                ? {
-                                    ...item,
-                                    state: event.target
-                                      .value as typeof check.state,
-                                  }
-                                : item,
-                            ),
-                          })
-                        }
-                      >
-                        {[
-                          "pass",
-                          "fail",
-                          "unknown",
-                          ...(check.dimension === "bug_evidence" &&
-                          value.requestType !== "bug"
-                            ? ["not_applicable"]
-                            : []),
-                        ].map((state) => (
-                          <option key={state} value={state}>
-                            {t(`checkState.${state}`)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="block text-xs">
-                      {t("rationale")}
-                      <textarea
-                        className={field}
-                        maxLength={2000}
-                        value={check.rationale}
-                        onChange={(event) =>
-                          setValue({
-                            ...value,
-                            checks: value.checks.map((item, i) =>
-                              i === index
-                                ? { ...item, rationale: event.target.value }
-                                : item,
-                            ),
-                          })
-                        }
-                      />
-                    </label>
-                    <label className="block text-xs">
-                      {t("checkEvidence")}
-                      <input
-                        className={field}
-                        value={check.evidenceIds.join(", ")}
-                        onChange={(event) =>
-                          setValue({
-                            ...value,
-                            checks: value.checks.map((item, i) =>
-                              i === index
-                                ? {
-                                    ...item,
-                                    evidenceIds: event.target.value
-                                      .split(",")
-                                      .map((id) => id.trim())
-                                      .filter(Boolean),
-                                  }
-                                : item,
-                            ),
-                          })
-                        }
-                      />
-                    </label>
-                  </fieldset>
-                ))}
-                <label className="block text-sm">
-                  {t("evidenceInput")}
-                  <textarea
-                    className={field}
-                    maxLength={16384}
-                    rows={3}
-                    value={evidence}
-                    onChange={(event) => setEvidence(event.target.value)}
-                  />
-                </label>
-                <label className="block text-sm">
-                  {t("reasonInput")}
-                  <input
-                    className={field}
-                    value={value.reasonCodes.join(", ")}
-                    onChange={(event) =>
-                      setValue({
-                        ...value,
-                        reasonCodes: event.target.value
-                          .split(",")
-                          .map((code) => code.trim())
-                          .filter(Boolean),
-                      })
-                    }
-                  />
-                </label>
-                <label className="block text-sm">
-                  {t("nextActions")}
-                  <textarea
-                    className={field}
-                    value={value.nextActions.join("\n")}
-                    onChange={(event) =>
-                      setValue({
-                        ...value,
-                        nextActions: event.target.value
-                          .split("\n")
-                          .filter(Boolean),
-                      })
-                    }
-                  />
-                </label>
-              </fieldset>
-              <button
-                className={`${button} mt-3`}
-                disabled={busy}
-                type="button"
-                onClick={() => void save()}
-              >
-                {t(acceptedRequest ? "sameRequest" : "save")}
-              </button>
-            </ConfirmDialog>
+              onSaved={() => {
+                setAssessmentOpen(false);
+                setDraft(null);
+                setSaved(true);
+                router.refresh();
+                void load();
+              }}
+            />
           ) : null}
         </>
       ) : null}

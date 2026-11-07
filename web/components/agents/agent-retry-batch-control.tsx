@@ -57,21 +57,70 @@ export function AgentRetryBatchControl({
   const offered = useRef(false);
   const selectedIds = runIds?.join(",") ?? "";
   const endpoint = `/api/projects/${slug}/agents/${encodeURIComponent(agentId)}`;
+  const applyPreview = useCallback(
+    (
+      next: BatchOptions,
+      cursor: string | null,
+      offset: number,
+      selectionSnapshot?: ReadonlySet<string>,
+    ): void => {
+      setOptions(next);
+      setWindowCursor(cursor);
+      setWindowStart(offset);
+      setSelectedWork(
+        new Set(
+          next.items
+            .filter(
+              (item) =>
+                item.options?.eligible &&
+                (selectionSnapshot === undefined ||
+                  selectionSnapshot.has(item.runId)),
+            )
+            .map((item) => item.runId),
+        ),
+      );
+      setResults(null);
+      setRequest(null);
+      setPreviewRefused(false);
+      setRunnerId((current) =>
+        next.items.some((item) => item.options?.launchRequest)
+          ? (next.selectedRunnerId ?? "")
+          : next.runners.some((item) => item.id === current && item.ready)
+            ? current
+            : (next.selectedRunnerId ?? ""),
+      );
+      setRefreshed(true);
+      if (offerAfterRunnerChange && next.totalFailed === 0) {
+        setOpen(false);
+        onDismiss?.();
+      }
+    },
+    [offerAfterRunnerChange, onDismiss],
+  );
   const loadPreview = useCallback(
-    async (cursor: string | null, offset: number): Promise<void> => {
+    async (
+      cursor: string | null,
+      offset: number,
+      selectedRunner?: string,
+    ): Promise<void> => {
       setBusy(true);
       setError(null);
       setRefreshed(false);
       try {
+        const search = new URLSearchParams();
+
+        if (cursor) search.set("cursor", cursor);
+        if (selectedRunner) search.set("runnerId", selectedRunner);
         const response = await fetch(
-          cursor
-            ? `${endpoint}/retry-options?cursor=${encodeURIComponent(cursor)}`
-            : `${endpoint}/retry-options`,
+          `${endpoint}/retry-options${search.size ? `?${search}` : ""}`,
           selectedIds && cursor === null
             ? {
                 method: "POST",
                 headers: { "content-type": "application/json" },
-                body: JSON.stringify({ runIds: selectedIds.split(",") }),
+                body: JSON.stringify({
+                  runIds: selectedIds.split(","),
+                  ...(selectedRunner ? { runnerId: selectedRunner } : {}),
+                }),
               }
             : { cache: "no-store" },
         );
@@ -83,36 +132,14 @@ export function AgentRetryBatchControl({
         }
         const next = (await response.json()) as BatchOptions;
 
-        setOptions(next);
-        setWindowCursor(cursor);
-        setWindowStart(offset);
-        setSelectedWork(
-          new Set(
-            next.items
-              .filter((item) => item.options?.eligible)
-              .map((item) => item.runId),
-          ),
-        );
-        setResults(null);
-        setRequest(null);
-        setPreviewRefused(false);
-        setRunnerId((current) =>
-          next.runners.some((item) => item.id === current && item.ready)
-            ? current
-            : (next.selectedRunnerId ?? ""),
-        );
-        setRefreshed(true);
-        if (offerAfterRunnerChange && next.totalFailed === 0) {
-          setOpen(false);
-          onDismiss?.();
-        }
+        applyPreview(next, cursor, offset);
       } catch {
         setError(t("loadError"));
       } finally {
         setBusy(false);
       }
     },
-    [endpoint, selectedIds, t, offerAfterRunnerChange, onDismiss],
+    [endpoint, selectedIds, t, applyPreview],
   );
 
   useEffect(() => {
@@ -125,14 +152,59 @@ export function AgentRetryBatchControl({
     options?.items.filter(
       (item) => item.options?.eligible && selectedWork.has(item.runId),
     ) ?? [];
+  const previewMatchesRunner = eligible.every(
+    (item) =>
+      !item.options?.launchRequest ||
+      item.options.launchRequest.runnerId === runnerId,
+  );
   const uncertain = results?.some((item) => item.state === "unknown") ?? false;
   const pendingRequest =
     request !== null && !previewRefused && (results === null || uncertain);
   const canReplacePreview =
     request === null || previewRefused || (results !== null && !uncertain);
 
+  async function refreshRunnerPreview(selectedRunner: string): Promise<void> {
+    if (!options?.items.length || !selectedRunner || !canReplacePreview) return;
+    setBusy(true);
+    setError(null);
+    setRefreshed(false);
+    try {
+      const response = await fetch(`${endpoint}/retry-options`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          runIds: options.items.map((item) => item.runId),
+          runnerId: selectedRunner,
+        }),
+      });
+
+      if (!response.ok) {
+        setError(t(await retryResponseErrorKey(response)));
+
+        return;
+      }
+      const next = (await response.json()) as BatchOptions;
+
+      applyPreview(
+        { ...next, hasMore: options.hasMore, nextCursor: options.nextCursor },
+        windowCursor,
+        windowStart,
+        selectedWork,
+      );
+    } catch {
+      setError(t("loadError"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function accept(): Promise<void> {
-    if (!options || !runnerId || (!request && eligible.length === 0)) return;
+    if (
+      !options ||
+      !runnerId ||
+      (!request && (eligible.length === 0 || !previewMatchesRunner))
+    )
+      return;
     const accepted = request ?? {
       runnerId,
       items: eligible.map((item) => ({
@@ -140,6 +212,9 @@ export function AgentRetryBatchControl({
         requestKey: crypto.randomUUID(),
         previewFingerprint: item.options!.previewFingerprint,
         strategy: item.options!.strategy,
+        ...(item.options!.launchRequest
+          ? { launchRequest: item.options!.launchRequest }
+          : {}),
       })),
     };
 
@@ -204,14 +279,18 @@ export function AgentRetryBatchControl({
   }
 
   async function loadMore(): Promise<void> {
-    if (!options?.nextCursor || options.items.length >= 100) return;
+    if (!options?.nextCursor || options.items.length >= 100 || !runnerId)
+      return;
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch(
-        `${endpoint}/retry-options?cursor=${encodeURIComponent(options.nextCursor)}`,
-        { cache: "no-store" },
-      );
+      const search = new URLSearchParams({
+        cursor: options.nextCursor,
+        runnerId,
+      });
+      const response = await fetch(`${endpoint}/retry-options?${search}`, {
+        cache: "no-store",
+      });
 
       if (!response.ok) {
         setError(t(await retryResponseErrorKey(response)));
@@ -296,7 +375,8 @@ export function AgentRetryBatchControl({
         type="button"
         onClick={() => {
           setOpen(true);
-          if (canReplacePreview) void loadPreview(windowCursor, windowStart);
+          if (canReplacePreview && (!options || runnerId))
+            void loadPreview(windowCursor, windowStart, runnerId || undefined);
         }}
       >
         {pendingRequest
@@ -385,7 +465,16 @@ export function AgentRetryBatchControl({
                   disabled={busy || request !== null}
                   id={`batch-runner-${agentId}`}
                   value={runnerId}
-                  onChange={(event) => setRunnerId(event.target.value)}
+                  onChange={(event) => {
+                    const selected = event.target.value;
+
+                    setRunnerId(selected);
+                    if (
+                      selected &&
+                      options.items.some((item) => item.options?.launchRequest)
+                    )
+                      void refreshRunnerPreview(selected);
+                  }}
                 >
                   <option value="">{t("chooseRunner")}</option>
                   {options.runners.map((item) => (
@@ -446,6 +535,28 @@ export function AgentRetryBatchControl({
                             {item.title}
                           </Link>
                         </label>
+                        {item.options?.launchPreview &&
+                        item.options.launchRequest ? (
+                          <details>
+                            <summary>
+                              {t("retryTaskRevision", {
+                                revision:
+                                  item.options.launchRequest
+                                    .expectedTaskRevision,
+                              })}
+                            </summary>
+                            <p className="whitespace-pre-wrap break-words">
+                              {item.options.launchPreview.prompt}
+                            </p>
+                            <p>
+                              {t("retryTarget")}:{" "}
+                              {item.options.launchRequest.agentId} ·{" "}
+                              {t(
+                                `retryWorkspace.${item.options.launchRequest.workspace}`,
+                              )}
+                            </p>
+                          </details>
+                        ) : null}
                         {result ? (
                           <>
                             <p>
@@ -508,9 +619,9 @@ export function AgentRetryBatchControl({
                   {windowCursor !== null && canReplacePreview ? (
                     <button
                       className={button}
-                      disabled={busy}
+                      disabled={busy || !runnerId}
                       type="button"
-                      onClick={() => void loadPreview(null, 0)}
+                      onClick={() => void loadPreview(null, 0, runnerId)}
                     >
                       {t("latestFailedWork")}
                     </button>
@@ -521,7 +632,8 @@ export function AgentRetryBatchControl({
                       disabled={
                         busy ||
                         !runnerId ||
-                        (eligible.length === 0 && request === null)
+                        (request === null &&
+                          (eligible.length === 0 || !previewMatchesRunner))
                       }
                       type="button"
                       onClick={() => void accept()}
@@ -544,10 +656,10 @@ export function AgentRetryBatchControl({
                   {!request || previewRefused || (results && !uncertain) ? (
                     <button
                       className={button}
-                      disabled={busy}
+                      disabled={busy || !runnerId}
                       type="button"
                       onClick={() =>
-                        void loadPreview(windowCursor, windowStart)
+                        void loadPreview(windowCursor, windowStart, runnerId)
                       }
                     >
                       {t(results ? "prepareAnotherBatch" : "refresh")}
@@ -556,12 +668,13 @@ export function AgentRetryBatchControl({
                   {options.nextCursor && canReplacePreview ? (
                     <button
                       className={button}
-                      disabled={busy}
+                      disabled={busy || !runnerId}
                       type="button"
                       onClick={() =>
                         void loadPreview(
                           options.nextCursor,
                           windowStart + options.items.length,
+                          runnerId,
                         )
                       }
                     >
@@ -571,7 +684,7 @@ export function AgentRetryBatchControl({
                   {!request && options.hasMore && options.items.length < 100 ? (
                     <button
                       className={button}
-                      disabled={busy}
+                      disabled={busy || !runnerId}
                       type="button"
                       onClick={() => void loadMore()}
                     >

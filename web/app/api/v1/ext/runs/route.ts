@@ -1,38 +1,43 @@
 import "server-only";
 
-import { and, eq } from "drizzle-orm";
-import { NextRequest, NextResponse } from "next/server";
+import type { NextResponse } from "next/server";
+import type { ExtCtx } from "@/lib/tokens/ext-handler";
+
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
-import { isMaisterError } from "@/lib/errors";
-import { refreshSucceededLibrarianReceipt } from "@/lib/librarian/operations";
-import { launchRun } from "@/lib/services/runs";
-import { tokenAuditIdentity } from "@/lib/tokens/audit";
+import { tasks } from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
+import { acceptTokenTaskLaunch } from "@/lib/tasks/launch-intent";
 import {
-  handleExt,
-  httpStatusForExtCode,
-  recordRequiredTokenAudit,
-} from "@/lib/tokens/ext-handler";
-import { actorUserIdForToken, TokenAuthError } from "@/lib/tokens/verify";
-
-// FIXME(any): remove the schema-module bridge once Drizzle's generated table
-// types remain stable across route and integration-test boundaries.
-const { tasks } = schemaModule as unknown as Record<string, any>;
-
-// FIXME(any): narrow this route helper to its database operations.
-type Db = any;
+  readTaskLaunchBody,
+  taskLaunchRequestKey,
+} from "@/lib/tasks/launch-http";
+import {
+  externalTaskLaunchAudit,
+  externalTaskLaunchErrorResponse,
+  externalTaskLaunchPrincipal,
+} from "@/lib/tasks/launch-external";
+import {
+  legacyExternalTaskLaunchContinuation,
+  legacyExternalTaskLaunchResponse,
+} from "@/lib/tasks/launch-legacy-external";
+import { handleExt } from "@/lib/tokens/ext-handler";
+import { wakeAcceptedTaskLaunch } from "@/lib/tasks/launch-wake";
 
 const ENDPOINT = "POST /api/v1/ext/runs";
-
+const CONTRACT = { endpoint: ENDPOINT, statusCode: 202 } as const;
+const identifier = z.string().min(1).max(256);
 const postBodySchema = z
   .object({
-    taskId: z.string().min(1),
-    runnerId: z.string().min(1).optional(),
-    executorOverrideId: z.string().min(1).optional(),
-    baseBranch: z.string().min(1).optional(),
-    targetBranch: z.string().min(1).optional(),
+    taskId: identifier,
+    expectedTaskRevision: z.number().int().nonnegative().optional(),
+    expectedSettingsToken: identifier.optional(),
+    runnerId: identifier.optional(),
+    executorOverrideId: identifier.optional(),
+    baseBranch: identifier.optional(),
+    targetBranch: identifier.optional(),
   })
   .strict()
   .refine(
@@ -45,162 +50,113 @@ const postBodySchema = z
       path: ["executorOverrideId"],
     },
   );
-
-// Project resolution must tolerate fields that the public launch contract
-// rejects later. Otherwise an authenticated caller with a valid taskId gets a
-// misleading existence-hiding 404 before the work handler can return the
-// correct 422 CONFIG response for unsupported overrides.
 const projectResolutionBodySchema = z
-  .object({ taskId: z.string().min(1) })
+  .object({ taskId: identifier })
   .passthrough();
 
-export async function POST(
-  req: NextRequest,
-  _routeCtx: object,
-): Promise<NextResponse> {
-  const db = getDb() as Db;
-  const resolveTaskProjectId = async ({ db: handlerDb }: { db: Db }) => {
-    const parsed = projectResolutionBodySchema.safeParse(
-      await req
-        .clone()
-        .json()
-        .catch(() => null),
+async function readBody(
+  request: Request,
+): Promise<z.infer<typeof postBodySchema>> {
+  const parsed = postBodySchema.safeParse(await readTaskLaunchBody(request));
+
+  if (!parsed.success)
+    throw new MaisterError(
+      "CONFIG",
+      "Legacy launch body is invalid; use task_launch_options and task_launch",
+      { details: { reason: "launch_request_invalid" } },
     );
 
-    if (!parsed.success) return null;
+  return parsed.data;
+}
 
-    const rows = await handlerDb
-      .select({ projectId: tasks.projectId })
-      .from(tasks)
-      .where(eq(tasks.id, parsed.data.taskId));
+export async function POST(
+  request: Request,
+  _routeContext: object,
+): Promise<NextResponse> {
+  const db = getDb();
+  const accept = async (context: ExtCtx): Promise<NextResponse> => {
+    try {
+      const principal = await externalTaskLaunchPrincipal(db, request, context);
+      const body = await readBody(request.clone());
 
-    return rows[0]?.projectId ?? null;
+      if (
+        body.expectedTaskRevision === undefined ||
+        body.expectedSettingsToken === undefined
+      ) {
+        throw new MaisterError(
+          "CONFIG",
+          "Refresh launch options, then provide expectedTaskRevision and expectedSettingsToken with Idempotency-Key; use task_launch_options and task_launch",
+          { details: { reason: "launch_request_upgrade_required" } },
+        );
+      }
+      const key = taskLaunchRequestKey(request);
+      const runnerId = body.runnerId ?? body.executorOverrideId;
+      const receipt = await acceptTokenTaskLaunch(
+        db,
+        principal,
+        {
+          taskId: body.taskId,
+          expectedTaskRevision: body.expectedTaskRevision,
+          expectedSettingsToken: body.expectedSettingsToken,
+          ...(runnerId !== undefined ? { runnerId } : {}),
+          ...(body.baseBranch !== undefined
+            ? { baseBranch: body.baseBranch }
+            : {}),
+          ...(body.targetBranch !== undefined
+            ? { targetBranch: body.targetBranch }
+            : {}),
+        },
+        key,
+        externalTaskLaunchAudit(context, CONTRACT),
+      );
+
+      wakeAcceptedTaskLaunch(db, receipt);
+
+      return await legacyExternalTaskLaunchResponse(db, receipt);
+    } catch (error) {
+      return externalTaskLaunchErrorResponse(error);
+    }
   };
 
-  return handleExt(
-    req,
-    {
-      scopeLabel: "runs:launch",
-      admitLibrarian: true,
-      endpoint: ENDPOINT,
-      method: "POST",
-      successAuditInWork: true,
-      // Resolve the task project before scope enforcement so a global personal
-      // token can launch work only when its owner still has launchRun there.
-      // handleExt preserves existence hiding for absent or unauthorized tasks.
-      resolveProjectId: resolveTaskProjectId,
-      idempotency: {
-        kind: "run_launch",
-        target: { route: "/api/v1/ext/runs" },
-        parseBody: async (request) =>
-          postBodySchema.parse(await request.json()),
-      },
-      db,
-    },
-    async (ctx) => {
-      // Authenticate first (handleExt above), then validate the body — an
-      // unauthenticated caller cannot probe the body schema.
-      let body: z.infer<typeof postBodySchema>;
+  try {
+    return await handleExt(
+      request,
+      {
+        scopeLabel: "runs:launch",
+        admitLibrarian: true,
+        endpoint: ENDPOINT,
+        method: "POST",
+        successAuditInWork: true,
+        db,
+        resolveProjectId: async () => {
+          const parsed = projectResolutionBodySchema.safeParse(
+            await readTaskLaunchBody(request.clone()),
+          );
 
-      try {
-        body = postBodySchema.parse(await req.json());
-      } catch (err) {
-        return NextResponse.json(
-          {
-            code: "CONFIG",
-            message: `invalid body: ${(err as Error).message}`,
-          },
-          { status: 422 },
-        );
-      }
+          if (!parsed.success) return null;
+          const [task] = await db
+            .select({ projectId: tasks.projectId })
+            .from(tasks)
+            .where(eq(tasks.id, parsed.data.taskId));
 
-      // Existence-hide: a task outside the token's project (or absent) returns a
-      // uniform 404 — indistinguishable from a missing task — BEFORE launchRun
-      // (which resolves the task project-unscoped) can leak a state-specific 409
-      // for a cross-project task. Mirrors the task GET/PATCH + gate-report routes.
-      const scopedTask = await db
-        .select({ id: tasks.id })
-        .from(tasks)
-        .where(
-          and(eq(tasks.id, body.taskId), eq(tasks.projectId, ctx.projectId)),
-        );
-
-      if (scopedTask.length === 0) {
-        return NextResponse.json(
-          { code: "NOT_FOUND", message: "task not found" },
-          { status: 404 },
-        );
-      }
-
-      try {
-        const result = await launchRun(
-          {
-            taskId: body.taskId,
-            runnerId: body.runnerId ?? body.executorOverrideId,
-            baseBranch: body.baseBranch,
-            targetBranch: body.targetBranch,
-            librarianOperationId: ctx.operationId,
-          },
-          {
-            actorUserId: actorUserIdForToken(ctx.actor),
-            authorize: async (projectId: string) => {
-              if (projectId !== ctx.projectId) {
-                throw new TokenAuthError("wrong-project");
-              }
-            },
-            recordSuccessAudit: (tx, runId) =>
-              recordRequiredTokenAudit(
-                {
-                  ...tokenAuditIdentity(ctx.actor),
-                  projectId: ctx.projectId,
-                  scopeUsed: "runs:launch",
-                  endpoint: ENDPOINT,
-                  method: "POST",
-                  result: "ok",
-                  statusCode: 202,
-                  operationId: ctx.operationId,
-                  operation: ctx.operationId
-                    ? {
-                        id: ctx.operationId,
-                        result: {
-                          statusCode: 202,
-                          body: { runId, status: "Pending" },
-                        },
-                      }
-                    : undefined,
-                },
-                tx,
-              ),
-          },
-          db,
-        );
-
-        if (ctx.operationId) {
-          await refreshSucceededLibrarianReceipt(
-            {
-              id: ctx.operationId,
-              result: { statusCode: 202, body: result },
-            },
+          return task?.projectId ?? null;
+        },
+        idempotency: {
+          kind: "run_launch",
+          keyMaxLength: 256,
+          target: { route: "/api/v1/ext/runs" },
+          parseBody: readBody,
+          continuation: legacyExternalTaskLaunchContinuation(
             db,
-          );
-        }
-
-        return NextResponse.json(result, { status: 202 });
-      } catch (err) {
-        // TokenAuthError("wrong-project") from authorize → re-throw so handleExt maps it to 404.
-        if (err instanceof TokenAuthError) {
-          throw err;
-        }
-
-        if (isMaisterError(err)) {
-          return NextResponse.json(
-            { code: err.code, message: err.message },
-            { status: httpStatusForExtCode(err.code) },
-          );
-        }
-
-        throw err;
-      }
-    },
-  );
+            request,
+            CONTRACT,
+            accept,
+          ),
+        },
+      },
+      accept,
+    );
+  } catch (error) {
+    return externalTaskLaunchErrorResponse(error);
+  }
 }

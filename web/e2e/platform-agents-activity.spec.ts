@@ -1,9 +1,10 @@
-import { rm, readdir, readFile, mkdir, writeFile, cp } from "node:fs/promises";
+import { rm, mkdir, writeFile, cp } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import { STUB_SESSIONS_DIR } from "./_seed/stub-supervisor";
+import { readStubSessionRecords } from "./_seed/session-records";
 import { withE2EDb } from "./_seed/db";
 
 import { git, initRepo } from "@/test-support/git-fixture";
@@ -369,26 +370,41 @@ test.describe("Agent execution visibility and retained history", () => {
     try {
       const launch = await page.request.post(
         `/api/projects/${slug}/agents/${encodeURIComponent(operationId)}/launch`,
-        { data: {} },
+        { headers: { Origin: new URL(baseURL!).origin }, data: {} },
       );
 
       expect(launch.status()).toBe(202);
       const source = (await launch.json()) as { runId: string };
 
-      await expect
-        .poll(
-          () =>
-            withE2EDb(
-              async (pool) =>
-                (
-                  await pool.query("SELECT status FROM runs WHERE id=$1", [
-                    source.runId,
-                  ])
-                ).rows[0].status,
-            ),
-          { timeout: 30000 },
-        )
-        .toBe("Failed");
+      let lastPreworkFacts = "{}";
+
+      try {
+        await expect
+          .poll(
+            async () => {
+              const facts = await withE2EDb(
+                async (pool) =>
+                  (
+                    await pool.query(
+                      "SELECT r.status,r.execution_assignment_id,r.agent_config,r.operational_terminal,(SELECT jsonb_agg(jsonb_build_object('id',a.id,'epoch',a.epoch,'state',a.state,'placementReason',a.placement_reason)) FROM execution_assignments a WHERE a.run_id=r.id) AS assignments,(SELECT jsonb_agg(jsonb_build_object('phase',p.phase,'failure',p.failure,'leaseExpiresAt',p.lease_expires_at,'assignmentId',p.assignment_id,'assignmentEpoch',p.assignment_epoch)) FROM agent_preparation_operations p WHERE p.run_id=r.id) AS preparations,(SELECT jsonb_agg(jsonb_build_object('kind',c.kind,'state',c.state,'attempts',c.attempts,'errorCode',c.last_error->>'code','reason',coalesce(c.last_error->>'reason',c.last_error->'details'->>'reason'),'receiptPhase',c.receipt_evidence->>'phase','receiptInflight',c.receipt_evidence->'inflight','receiptHttpStatus',c.receipt_evidence->'httpStatus')) FROM execution_commands c WHERE c.run_id=r.id) AS commands,(SELECT jsonb_agg(jsonb_build_object('variant',t.variant,'state',t.state)) FROM agent_turns t WHERE t.run_id=r.id) AS turns,(SELECT jsonb_agg(jsonb_build_object('state',i.state,'assignmentEpoch',i.assignment_epoch)) FROM run_session_incarnations i WHERE i.run_id=r.id) AS incarnations FROM runs r WHERE r.id=$1",
+                      [source.runId],
+                    )
+                  ).rows[0],
+              );
+
+              lastPreworkFacts = JSON.stringify(facts);
+
+              return facts;
+            },
+            { timeout: 30000 },
+          )
+          .toMatchObject({ status: "Failed" });
+      } finally {
+        await test.info().attach("source-prework-facts", {
+          body: lastPreworkFacts,
+          contentType: "application/json",
+        });
+      }
       await page.goto(
         `/projects/${slug}/agents/${encodeURIComponent(operationId)}`,
       );
@@ -481,7 +497,7 @@ test.describe("Agent execution visibility and retained history", () => {
       for (let index = 0; index < 2; index++) {
         const failedLaunch = await page.request.post(
           `/api/projects/${slug}/agents/${encodeURIComponent(operationId)}/launch`,
-          { data: {} },
+          { headers: { Origin: new URL(baseURL!).origin }, data: {} },
         );
 
         expect(failedLaunch.status()).toBe(202);
@@ -589,14 +605,16 @@ test.describe("Agent execution visibility and retained history", () => {
     }
   });
 
-  test("E2E-UX-04 incoming request requires reviewed evidence, moves to accepted backlog and becomes stale after an edit", async ({
+  test("E2E-UX-04 optional selector assessment preserves history and successful Triager automatically queues the selected Flow", async ({
     page,
     context,
     baseURL,
   }) => {
+    test.setTimeout(90_000);
     await context.addCookies([
       { name: "NEXT_LOCALE", value: "en", url: baseURL! },
     ]);
+    await tickAutomaticLaunchScheduler(page);
     await withE2EDb((pool) =>
       pool.query(
         "UPDATE projects SET task_qualification_override='required' WHERE id=$1",
@@ -614,6 +632,13 @@ test.describe("Agent execution visibility and retained history", () => {
     expect(created.status()).toBe(201);
     const task = (await created.json()) as { taskId: string; number: number };
 
+    // An unconfigured incoming request has no manual execution settings yet.
+    await page.goto(`/projects/${slug}`);
+    await expect(
+      page
+        .getByText("Capture only current requests", { exact: true })
+        .filter({ visible: true }),
+    ).toHaveCount(0);
     await page.goto(`/projects/${slug}?tab=incoming`);
     await expect(
       page.getByTestId("incoming-request").filter({ visible: true }),
@@ -634,12 +659,31 @@ test.describe("Agent execution visibility and retained history", () => {
     await assessment
       .getByRole("button", { name: "Save reviewed assessment", exact: true })
       .click();
-    await expect(assessment.getByRole("alert")).toContainText(
-      "Complete all seven checks",
+    await expect(assessment).toContainText(
+      "This assessment is optional. Manual Launch is a separate action and does not require this form.",
     );
+    await expect(assessment.getByRole("alert")).toContainText(
+      "Complete the highlighted field and explain your assessment.",
+    );
+    await expect(
+      assessment.getByLabel("Evidence IDs, separated by commas", {
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    await expect(assessment.getByLabel(/Reason codes|commit SHA/i)).toHaveCount(
+      0,
+    );
+    await assessment.getByLabel(/^Assessment decision/).selectOption("ready");
+    await assessment.getByLabel(/^Task evidence/).selectOption(task.taskId);
     await assessment
-      .getByLabel("Assessment decision", { exact: true })
-      .selectOption("ready");
+      .getByRole("button", { name: "Add task evidence", exact: true })
+      .click();
+    await assessment
+      .getByRole("button", { name: "Browse repository files", exact: true })
+      .click();
+    await assessment
+      .getByRole("button", { name: "+ README.md", exact: true })
+      .click();
     // Target each dimension fieldset; the outer disabled fieldset is excluded by legend.
     const dimensions = [
       "Goal and scope",
@@ -658,7 +702,7 @@ test.describe("Agent execution visibility and retained history", () => {
       });
 
       await check
-        .getByLabel("Check result", { exact: true })
+        .getByLabel(/^Check result/)
         .selectOption(dimension === "Bug evidence" ? "not_applicable" : "pass");
       await check
         .getByLabel("Rationale", { exact: true })
@@ -667,15 +711,15 @@ test.describe("Agent execution visibility and retained history", () => {
             ? "Feature request; bug reproduction is not applicable."
             : "Reviewed the precise request against README.md at the checked repository target.",
         );
-      await check
-        .getByLabel("Evidence IDs, separated by commas", { exact: true })
-        .fill("repo");
+      if (dimension !== "Bug evidence") {
+        await check
+          .getByRole("checkbox", { name: "README.md", exact: true })
+          .check();
+        await check
+          .getByRole("checkbox", { name: /Capture only current requests/ })
+          .check();
+      }
     }
-    await assessment
-      .getByLabel("Evidence: one ID | kind | reference per line.", {
-        exact: false,
-      })
-      .fill("repo | repository | README.md:1");
     await assessment
       .getByRole("button", { name: "Save reviewed assessment", exact: true })
       .click();
@@ -683,6 +727,35 @@ test.describe("Agent execution visibility and retained history", () => {
       panel.getByText("Assessment saved.", { exact: true }),
     ).toBeVisible();
     await expect(panel).toContainText("Ready for accepted backlog");
+    await panel
+      .getByText("Complete structured assessment", { exact: true })
+      .click();
+    await expect(panel.locator("pre")).toContainText('"id": "evidence-1"');
+    await expect(panel.locator("pre")).toContainText('"id": "evidence-2"');
+    await expect(panel.locator("pre")).toContainText("README.md");
+    const manualAssessment = await withE2EDb(async (pool) => ({
+      assessments: (
+        await pool.query(
+          "SELECT author_kind,publication_state FROM task_qualifications WHERE task_id=$1",
+          [task.taskId],
+        )
+      ).rows,
+      runs: (
+        await pool.query("SELECT id FROM runs WHERE task_id=$1", [task.taskId])
+      ).rows,
+      intents: (
+        await pool.query(
+          "SELECT id FROM task_launch_intents WHERE task_id=$1",
+          [task.taskId],
+        )
+      ).rows,
+    }));
+
+    expect(manualAssessment).toEqual({
+      assessments: [{ author_kind: "user", publication_state: "accepted" }],
+      runs: [],
+      intents: [],
+    });
     await page.goto(`/projects/${slug}?tab=incoming`);
     await expect(
       page.getByTestId("incoming-request").filter({ visible: true }),
@@ -693,12 +766,26 @@ test.describe("Agent execution visibility and retained history", () => {
         .getByText("Capture only current requests", { exact: true })
         .filter({ visible: true }),
     ).toBeVisible();
-    await withE2EDb((pool) =>
-      pool.query(
-        "UPDATE tasks SET prompt=prompt||' New constraint requiring reassessment.' WHERE id=$1",
-        [task.taskId],
-      ),
+    const options = await page.request.get(
+      `/api/runs/launch-options?taskId=${task.taskId}`,
     );
+
+    expect(options.status()).toBe(200);
+    const currentInput = (await options.json()) as {
+      task: { revision: number };
+    };
+    const edited = await page.request.patch(
+      `/api/projects/${slug}/tasks/${task.number}`,
+      {
+        data: {
+          expectedRevision: currentInput.task.revision,
+          prompt:
+            "Original issue body: implement an explicit current behavior. Acceptance: preserve source and return a verified receipt. New constraint requiring reassessment.",
+        },
+      },
+    );
+
+    expect(edited.status()).toBe(200);
     await page.goto(`/projects/${slug}?tab=incoming`);
     await expect(
       page.getByTestId("incoming-request").filter({ visible: true }),
@@ -711,6 +798,18 @@ test.describe("Agent execution visibility and retained history", () => {
     await expect(
       page.getByTestId("task-qualification").filter({ visible: true }),
     ).toContainText("Assessment is stale");
+    const stalePanel = page
+      .getByTestId("task-qualification")
+      .filter({ visible: true });
+
+    await stalePanel
+      .getByRole("button", { name: "View assessment evidence", exact: true })
+      .click();
+    await expect(stalePanel).toContainText("Accepted assessment");
+    await stalePanel
+      .getByText("Complete structured assessment", { exact: true })
+      .click();
+    await expect(stalePanel.locator("pre")).toContainText('"id": "evidence-2"');
     await withE2EDb((pool) =>
       pool.query(
         "UPDATE runs SET status='Abandoned',ended_at=now() WHERE id=ANY($1::text[])",
@@ -721,7 +820,23 @@ test.describe("Agent execution visibility and retained history", () => {
     const qualifierId = `fixture-qualifier-${projectId.slice(0, 8)}:triager`;
     const qualifierName = qualifierId.split(":")[0];
     const root = `/tmp/${slug}/qualifier`;
+    const deliveryFlowId = randomUUID();
+    const deliveryRevisionId = randomUUID();
+    const deliveryRoot = `/tmp/${slug}/delivery`;
+    const deliveryManifest = {
+      schemaVersion: 1,
+      name: "Selected delivery fixture",
+      nodes: [
+        {
+          id: "check",
+          type: "cli",
+          action: { command: "true" },
+          transitions: { success: "done" },
+        },
+      ],
+    };
 
+    await mkdir(deliveryRoot, { recursive: true });
     await cp("test-support/fixtures/operational-core", root, {
       recursive: true,
     });
@@ -735,6 +850,29 @@ test.describe("Agent execution visibility and retained history", () => {
     );
 
     await withE2EDb(async (pool) => {
+      // Seed only new fixture catalog entries; task settings and automation are
+      // selected below through their authenticated HTTP control-plane APIs.
+      await pool.query(
+        "INSERT INTO flow_revisions(id,flow_ref_id,source,version_label,resolved_revision,manifest_digest,manifest,schema_version,installed_path,setup_status,package_status,exec_trust) VALUES($1,$2,'fixture','v1',$3,$4,$5,1,$6,'not_required','Installed','trusted')",
+        [
+          deliveryRevisionId,
+          deliveryFlowId,
+          "c".repeat(40),
+          "c".repeat(64),
+          JSON.stringify(deliveryManifest),
+          deliveryRoot,
+        ],
+      );
+      await pool.query(
+        "INSERT INTO flows(id,project_id,flow_ref_id,source,version,installed_path,manifest,schema_version,enabled_revision_id,enablement_state,trust_status) VALUES($1,$2,$1,'fixture','v1',$3,$4,1,$5,'Enabled','trusted')",
+        [
+          deliveryFlowId,
+          projectId,
+          deliveryRoot,
+          JSON.stringify(deliveryManifest),
+          deliveryRevisionId,
+        ],
+      );
       await pool.query(
         "INSERT INTO package_installs(id,source_url,name,version_label,resolved_revision,manifest,manifest_digest,installed_path,package_status,trust_status) VALUES($1,$2,$3,'v1',$4,$5,'fixture',$2,'Installed','trusted')",
         [
@@ -771,9 +909,50 @@ test.describe("Agent execution visibility and retained history", () => {
         [randomUUID(), projectId, qualifierId, runner],
       );
     });
+    const configured = await page.request.patch(
+      `/api/projects/${slug}/tasks/${task.number}`,
+      {
+        data: { flowId: deliveryFlowId, runnerId: runner },
+      },
+    );
+
+    expect(configured.status()).toBe(200);
+    const automation = await page.request.patch(
+      `/api/projects/${slug}/agents/${encodeURIComponent(qualifierId)}`,
+      {
+        data: { configValues: { auto_enqueue: "always" } },
+      },
+    );
+
+    expect(automation.status()).toBe(200);
+    await page.goto(`/projects/${slug}`);
+    // Configured manual work stays visible even while its assessment is stale.
+    await expect(
+      page
+        .getByText("Capture only current requests", { exact: true })
+        .filter({ visible: true }),
+    ).toBeVisible();
+    await page.goto(`/projects/${slug}/tasks/${task.number}`);
+    await expect(
+      page.getByTestId("task-qualification").filter({ visible: true }),
+    ).toContainText("Assessment is stale");
+    expect(
+      await withE2EDb(
+        async (pool) =>
+          (
+            await pool.query(
+              "SELECT id FROM task_launch_intents WHERE task_id=$1",
+              [task.taskId],
+            )
+          ).rows,
+      ),
+    ).toEqual([]);
     const launch = await page.request.post(
       `/api/projects/${slug}/agents/${encodeURIComponent(qualifierId)}/launch`,
-      { data: { taskId: task.taskId } },
+      {
+        headers: { Origin: new URL(baseURL!).origin },
+        data: { taskId: task.taskId },
+      },
     );
 
     expect(launch.status()).toBe(202);
@@ -800,23 +979,7 @@ test.describe("Agent execution visibility and retained history", () => {
         { timeout: 15000 },
       )
       .toMatchObject({ status: "Running", candidates: 1 });
-    const sessionRecords = await Promise.all(
-      (await readdir(STUB_SESSIONS_DIR))
-        .filter((name) => name.endsWith(".json"))
-        .map(
-          async (name) =>
-            JSON.parse(
-              await readFile(`${STUB_SESSIONS_DIR}/${name}`, "utf8"),
-            ) as {
-              request: {
-                runId: string;
-                agentKind?: string;
-                readOnlySession?: boolean;
-                autoApprovePermissions?: boolean;
-              };
-            },
-        ),
-    );
+    const sessionRecords = readStubSessionRecords(STUB_SESSIONS_DIR);
     const qualifierSession = sessionRecords.find(
       (record) => record.request.runId === qualifier.runId,
     );
@@ -838,6 +1001,17 @@ test.describe("Agent execution visibility and retained history", () => {
 
     expect(held).toMatchObject({ current_qualification_id: null });
     expect(held.launch_mode).not.toBe("auto");
+    expect(
+      await withE2EDb(
+        async (pool) =>
+          (
+            await pool.query(
+              "SELECT id FROM task_launch_intents WHERE task_id=$1",
+              [task.taskId],
+            )
+          ).rows,
+      ),
+    ).toEqual([]);
     await page.reload();
     await expect(
       page.getByTestId("task-qualification").filter({ visible: true }),
@@ -852,14 +1026,83 @@ test.describe("Agent execution visibility and retained history", () => {
           withE2EDb(
             async (pool) =>
               (
-                await pool.query("SELECT status FROM runs WHERE id=$1", [
-                  qualifier.runId,
-                ])
-              ).rows[0].status,
+                await pool.query(
+                  "SELECT status,operational_terminal FROM runs WHERE id=$1",
+                  [qualifier.runId],
+                )
+              ).rows[0],
           ),
         { timeout: 15000 },
       )
-      .toBe("Done");
+      .toMatchObject({
+        status: "Done",
+        operational_terminal: {
+          successful: true,
+          validation: "valid",
+          integrity: "clean",
+        },
+      });
+    const published = await withE2EDb(
+      async (pool) =>
+        (
+          await pool.query(
+            "SELECT q.publication_state,q.value->>'decision' AS decision,q.evidence_sha,r.task_qualification_snapshot->>'sha' AS pinned_sha FROM task_qualifications q JOIN runs r ON r.id=q.author_run_id WHERE q.author_run_id=$1",
+            [qualifier.runId],
+          )
+        ).rows,
+    );
+
+    expect(published).toEqual([
+      {
+        publication_state: "accepted",
+        decision: "ready",
+        evidence_sha: expect.any(String),
+        pinned_sha: expect.any(String),
+      },
+    ]);
+    expect(published[0].evidence_sha).toBe(published[0].pinned_sha);
+    const automaticIntent = () =>
+      withE2EDb(
+        async (pool) =>
+          (
+            await pool.query<{
+              basis: string;
+              flow_id: string;
+              flow_revision_id: string;
+            }>(
+              "SELECT basis->>'kind' AS basis,settings_snapshot->>'flowId' AS flow_id,settings_snapshot->>'flowRevisionId' AS flow_revision_id FROM task_launch_intents WHERE task_id=$1",
+              [task.taskId],
+            )
+          ).rows,
+      );
+    const selectedAutomaticIntent = [
+      {
+        basis: "automatic",
+        flow_id: deliveryFlowId,
+        flow_revision_id: deliveryRevisionId,
+      },
+    ];
+
+    // Timers are disabled: clean publication must wake automatic admission.
+    await expect
+      .poll(automaticIntent, { timeout: 15000 })
+      .toEqual(selectedAutomaticIntent);
+    // Timers are disabled in this harness. Drive the real token-authorized
+    // scheduler twice; rearming through the admin API never edits run evidence.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const due = await page.request.patch(
+        "/api/admin/scheduler-jobs/auto_launch_triaged.default",
+        {
+          data: { nextRunAt: new Date(0).toISOString(), enabled: true },
+        },
+      );
+
+      expect(due.status(), await due.text()).toBe(200);
+      await tickAutomaticLaunchScheduler(page);
+    }
+    await expect
+      .poll(automaticIntent, { timeout: 15000 })
+      .toEqual(selectedAutomaticIntent);
     await page.goto(`/projects/${slug}?tab=incoming`);
     await expect(
       page.getByTestId("incoming-request").filter({ visible: true }),
@@ -902,3 +1145,16 @@ test.describe("Agent execution visibility and retained history", () => {
     });
   });
 });
+
+async function tickAutomaticLaunchScheduler(page: Page): Promise<void> {
+  const tick = await page.request.post(
+    "/api/cron/tick?jobKind=auto_launch_triaged",
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.MAISTER_CRON_TOKEN ?? "e2e-cron-token-change-me"}`,
+      },
+    },
+  );
+
+  expect(tick.ok(), await tick.text()).toBe(true);
+}

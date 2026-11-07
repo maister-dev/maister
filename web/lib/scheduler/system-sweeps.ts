@@ -67,6 +67,7 @@ import { runSyncRecoverySweep } from "@/lib/runs/sync-recovery";
 import { configuredEventStreamLagAgeMs } from "@/lib/instance-config";
 import { durableWorkersHealth } from "@/lib/workers/health";
 import { sweepOperationalDispositions } from "@/lib/gc/operational-disposition";
+import { sweepTaskLaunchPreparationCleanup } from "@/lib/tasks/launch-preparation-cleanup";
 
 export type GcCompatibilitySummary = {
   worktreesPreserved: number;
@@ -195,6 +196,7 @@ async function runGcBundle(): Promise<GcBundleResult> {
   let plainAgentDirectory: PlainAgentDirectoryGcSummary | null = null;
 
   try {
+    await sweepTaskLaunchPreparationCleanup(getDb());
     const operational = await sweepOperationalDispositions();
 
     if (operational.deferred > 0)

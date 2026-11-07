@@ -1,11 +1,11 @@
 import "server-only";
 
+import type { Db } from "@/lib/execution-host/db";
+
 import { and, eq, inArray, sql } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import { taskClarifications } from "@/lib/db/schema";
-
-type Db = ReturnType<typeof getDb>;
 
 export async function countOpenBlockingClarifications(
   taskId: string,

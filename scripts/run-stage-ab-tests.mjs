@@ -67,7 +67,7 @@ export const laneSuites = {
     "test-support/__tests__/execution-ab-partitions.integration.test.ts",
     "test-support/__tests__/execution-ab-process-death.integration.test.ts",
     "test-support/__tests__/execution-ab-isolation.integration.test.ts",
-    // P0-2: the three durable workers in the production boot. Same shape as
+    // P0-2: the four durable workers in the production boot. Same shape as
     // AT-16 — `next build` plus two process trees — so the same serial slice.
     "test-support/__tests__/durable-workers-boot.integration.test.ts",
     "test-support/__tests__/durable-workers-concurrency.integration.test.ts",
@@ -178,10 +178,11 @@ export const requiredIsolationCases = {
     "applies the flow_node_attempt owner after the production web restarts",
     "applies the agent_turn owner after the production web restarts",
     "applies the scratch_message owner after the production web restarts",
+    "R18: a deferred accepted launch survives web death and binds once through the restarted production worker without another request",
     "R1: a registry missing a schema kind refuses to compose with CONFIG and starts nothing",
     "R2: composing the agent registry beside the consensus-draft one is a CONFIG failure by design",
     "R4: stopping with nothing started resolves",
-    "R5: a double start returns the same three handles",
+    "R5: a double start returns the same four handles",
     "R3: start refuses while the application is stopping"
   ],
   "test-support/__tests__/durable-workers-concurrency.integration.test.ts": [

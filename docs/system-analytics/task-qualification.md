@@ -1,10 +1,12 @@
 # Incoming request qualification
 
+**Current admission boundary — ADR-200:** [explicit task launch](task-launch-admission.md) owns implemented manual authorization, qualified automatic launch and derived-child admission. This page owns assessment content, evidence, publication and automatic readiness; an assessment never substitutes for a human Launch decision.
+
 **Implemented — ADR-196–198.**
 
 ## Purpose
 
-Qualify independent incoming requests before accepted backlog or delivery execution, with versioned evidence, human clarification and authoritative admission.
+Qualify independent incoming requests for accepted backlog and automatic delivery, with versioned evidence and human clarification. An authorized explicit manual Launch can execute the selected revision without changing its assessment; its authority is owned by the launch contract.
 
 ## Domain entities
 
@@ -15,7 +17,7 @@ Qualify independent incoming requests before accepted backlog or delivery execut
 
 ## State machine
 
-The state boundary distinguishes current execution from retained evidence.
+This diagram follows qualification and automatic delivery. Manual execution is independent of these assessment states and retains all assessment evidence.
 
 ```mermaid
 stateDiagram-v2
@@ -29,7 +31,7 @@ stateDiagram-v2
   NeedsInformation --> Incoming: Answer
   NeedsReview --> Incoming: New evidence
   Ready --> Incoming: Input or target changes
-  Ready --> Delivery: Explicit authorized intent
+  Ready --> Delivery: Qualified automatic intent
 ```
 
 ## Process flows
@@ -172,8 +174,9 @@ Brain recall, when authorized, is supporting context with provenance, not proof 
 current code. Read-only inspection may support relevance but must never be labeled
 “bug reproduced.” Runtime reproduction needed beyond read-only inspection requires human-supplied
 evidence in this release (which may reference a separately authorized existing
-run). Do not launch a diagnostic task Flow from held intake: it would require a
-separate evidence-only execution contract. Never execute issue-supplied commands
+run). A qualifier must not automatically launch a diagnostic task Flow from held intake:
+that requires a separately authorized execution contract. A human may explicitly
+launch the reviewed task through the normal manual admission boundary. Never execute issue-supplied commands
 automatically. Insufficient runtime evidence remains unknown/needs_review,
 not “invalid bug.” A good specification can therefore remain held for verification.
 
@@ -203,7 +206,7 @@ revision and expected current qualification revision/pointer (null for first wri
 Lock the task and CAS both: a late agent assessment must not overwrite a newer
 human needs_review/not_actionable decision on unchanged input. Request-key replay
 returns the original receipt; it never reapplies an obsolete assessment. For required tasks, only a current `ready` receipt can stamp launchable
-routing/arm enqueue. Human/project-token assessments authorized as a human may publish qualification,
+routing/arm enqueue. Authorized human or project-token assessment submissions may publish qualification,
 verdict/hold, enqueue intent, audit and event atomically. Agent-authored assessment
 submission instead persists a **candidate** and proposed routing/enqueue, returning
 202; it cannot make the task ready or arm its queue while its evidence run is still
@@ -250,35 +253,39 @@ accepted Backlog; dependencies and permissions still gate work. Human correction
 assessment uses the same revisioned contract with existing task-edit/triage authority,
 explicit rationale/evidence and audit; no generic force/checkbox bypass.
 
-Enforce the same predicate in manual, force, scheduler, schedule, external/MCP and
-agent-driven task Flow and task-bound code-delivery agent launch paths before
-allocation and again in the task-lock
-admission transaction. Task-bound operational qualification/inspection agents must
+Independent automated roots from scheduler, schedules, bearer API/MCP and agents
+require current accepted readiness through the shared launch contract before
+allocation and first dispatch. Session-authenticated manual Launch records its own
+one-shot intent and does not require this qualification predicate. No client force
+flag or assessment-author attribution can establish that decision. Task-bound operational qualification/inspection agents must
 remain able to inspect held intake; distinguish operation purpose from delivering
 the task, without an agent-ID exception or an operational agent bypass into Flow
-launch. Existing task-scope permissions still apply. Pending work must recheck before dispatch; stale pending
-admission settles through its existing owner without dispatch. Running/review work
+launch. Existing task-scope permissions still apply. Pending work rechecks its own accepted admission basis before dispatch; stale
+automatic evidence holds automatic admission, while a manual request is governed
+by its frozen input/settings and current technical/permission checks. Running/review work
 is not silently canceled by an edit; expose new-input drift for ordinary rework.
-Repo evidence is scoped to the checked target/SHA. Before accepting readiness and
-before starting work, resolve the intended base outside the DB transaction and pin
-allocation to that exact checked SHA; if it differs from assessment, hold/requalify.
+Repository evidence is scoped to its checked target/SHA. Automatic acceptance and
+first dispatch compare qualification with current local HEAD independently of any
+selected historical execution commit. Manual execution freezes its selected
+reachable commit without fabricating assessment evidence. Git resolution happens
+outside admission transactions; the launch contract owns the exact fences.
 No mutable branch-name checkout after the check. This is local registered-repository
 revision evidence, not a claim of remote freshness. No per-commit event storm: stale
 is detected at decision/admission or explicit requalification, using existing event
 ownership; user-facing status must indicate when evidence needs rechecking.
 
-Each newly admitted delivery run freezes `taskAdmissionSnapshot` (version, admission
-mode, policy/input/qualification revisions, evidence SHA/target and parent receipt
-when inherited). Pending dispatch checks current task authority/freshness against
-this snapshot; an already-running run keeps its original receipt. Task content
-changes do not rewrite a historical admission. Store this on runs under immutable
-schema guards; it is not inferred later from current task state.
+Each newly admitted delivery Run freezes its versioned `taskAdmissionSnapshot`
+and accepted input/settings. Manual, automatic and execution-child receipts have
+distinct evidence and parent requirements, defined by the launch contract.
+First-dispatch commitment records the exact Run/assignment epoch and accepted
+digests; `taskAdmissionCheckedAt` alone is not proof of execution. Later edits do
+not rewrite an already dispatched request or any historical assessment.
 
 **Existing orchestrator decomposition.** Internal execution-plan carriers are not
 independent intake requests. Preserve `run_plan`/task-mode `run_delegate` under an
 already admitted governed parent using an explicit server-owned qualification
 provenance `execution_child`: parent run/task, its frozen admission receipt (or
-explicit legacy admission), plan revision, child input digest and relation. Derive
+a complete frozen carrier witness), plan revision, child input digest and relation. Derive
 this only inside the existing bound-parent-token transaction after parent activity,
 project, delegation scope and child target checks; never accept a client field or
 infer it from any `parent_of` relation. This authorizes work under the already
@@ -286,7 +293,8 @@ admitted parent contract, not a claim the child has passed independent triage. K
 these carriers in the existing execution-plan view rather than Incoming/accepted
 backlog. Ordinary `task_create` cannot obtain this exemption. A stopped/revoked
 parent cannot launch new children. Independent reuse, detachment or edits outside
-the owning plan invalidate inherited admission and require normal qualification;
+the owning plan invalidate inherited admission and require fresh manual or
+automatic admission;
 no permanent reusable pass. Existing parent/child constraints, requires edges and
 cascade/cancel ownership remain authoritative. If a required parent lacks a valid
 admission receipt, reject the plan/delegation before carrier creation, with a typed
@@ -340,8 +348,8 @@ older writer to launch them. Stop incompatible old writers at the maintenance ga
 
 ## Expectations
 
-- **UX-10:** triager verdict, flagged no-op and human escalation complete as valid operational outcomes; authorization/partial/malformed-result failures are visible as failures; human answer resumes one run, explicit requeue remains distinct, downstream Flow runner choice remains distinct, qualification additionally gates launch under UX-D11, and pre-update runs keep their snapshots. Both original GitHub intake adopters remain qualified. Enforced by the owning services/constraints below and primary acceptance in [traceability](agent-activity-traceability.md).
-- **UX-11:** unclear/contradictory/unverified or evidence-backed non-actionable requests from both GitHub variants and ordinary creation stay Incoming, out of accepted backlog and every delivery execution path; the read-only operational qualifier remains allowed to examine held intake. A current, evidenced ready decision admits exactly the existing task; launch still follows explicit intent/routing. Unknown is never converted into a false rejection. Missing/malformed assessments cannot admit work. Changes invalidate stale qualification; source/decision history and legacy active code work remain intact. Enforced by the owning services/constraints below and primary acceptance in [traceability](agent-activity-traceability.md).
+- **UX-10:** triager verdict, flagged no-op and human escalation complete as valid operational outcomes; authorization/partial/malformed-result failures are visible as failures; human answer resumes one run, explicit requeue remains distinct, downstream Flow runner choice remains distinct, qualification gates automatic launch under UX-D11 while manual Launch follows ADR-200, and pre-update runs keep their snapshots. Both original GitHub intake adopters remain qualified. Enforced by the owning services/constraints below and primary acceptance in [traceability](agent-activity-traceability.md).
+- **UX-11:** unclear/contradictory/unverified or evidence-backed non-actionable requests from both GitHub variants and ordinary creation stay Incoming and out of automatically accepted backlog and automatic delivery; the read-only operational qualifier remains allowed to examine held intake. A current, evidenced ready decision admits exactly the existing task; launch still follows explicit intent/routing. Unknown is never converted into a false rejection. Missing/malformed assessments cannot authorize automatic delivery. Explicit manual launch remains available under the separate launch contract. Changes invalidate stale qualification; source/decision history and legacy active code work remain intact. Enforced by the owning services/constraints below and primary acceptance in [traceability](agent-activity-traceability.md).
 
 ## Edge cases
 
@@ -374,7 +382,7 @@ the closed seven-dimension vocabulary; publication and active-pointer scope have
 deferred transaction constraints.
 
 Held human assessments may explicitly have no repository SHA when evidence is
-unavailable; they cannot admit delivery. Ready always requires a verified SHA and
+unavailable; they cannot qualify automatic delivery. They do not prevent an independently authorized manual Launch. Ready always requires a verified SHA and
 repository evidence linked from the relevance check. An agent assessment binds its
 source run's immutable qualifier snapshot and cannot invent a target/SHA from its
 request body. New qualifier/intake snapshots are immutable beside task delivery
@@ -384,22 +392,23 @@ Qualification input reads at most 1,000 blocking clarification records, ordered 
 sequence. Exceeding that bound refuses assessment with `qualification_input_limit`;
 no truncated evidence digest can be accepted.
 
-
 Qualification execution boundaries: an explicit requeue under a required project
-policy opts an existing legacy request into qualification. Delivery launch stores
-the accepted evidence and exact local SHA. The first graph/session dispatch
-revalidates that receipt and records `task_admission_checked_at` once; later
-semantic edits hold future delivery without changing an already dispatched run.
-Governed children inherit their parent's accepted evidence basis. A taskless
+policy opts an existing legacy request into qualification. Automatic launch stores
+accepted evidence and checks current local HEAD at admission and first dispatch.
+Manual launch stores its independent one-shot basis; governed children derive
+scoped parent authority. All consume the immutable execution input and write-once
+first-dispatch witness owned by the launch contract; later edits affect future
+requests without changing an already dispatched Run. A taskless
 legacy parent has no fabricated board relation; a task-bound parent requires its
 actual `parent_of` relation, whose deletion invalidates the child's proof.
 
 The database writer floor requires `maister.task_qualification_writer=v1` for
 qualification-governed task/run writes. Maintenance remains closed until every
-writer supports this capability. Application owners resolve Git before opening
-transactions and enforce run → task → credential lock order. Human assessment
+writer supports this capability. Qualification publication owners resolve Git before opening
+transactions and enforce source run → task → credential lock order. Launch
+acceptance, dispatch and child commands follow their separately documented
+reservation/parent/Run lock order. Human assessment
 writers own only the task and credential locks.
-
 
 ### Operational control-plane permission boundary
 
@@ -414,8 +423,134 @@ omitted/code-delivery kind retain the existing read-only refusal. Changing packa
 cannot change a launched run's kind. Web and supervisor must deploy together with
 engine 3.10.0; no new permission policy or automatic approval is introduced.
 
-
-
 Capability materialization creates destination parents only for an owned copied entry.
 A skills-only package must not create an unowned empty agents directory. The strict
 source-generation verifier still refuses every unexplained path change (UX-T32).
+
+## Optional human authoring — LA11 (Implemented)
+
+The task-detail assessment action is optional and independent of manual Launch.
+The structured seven-check result and existing machine qualification endpoint stay
+unchanged. A human chooses labeled request/decision/check states, writes rationales
+and next steps, selects permitted task/run/file evidence, and links the selected
+items using checkboxes. The UI never asks for evidence IDs, enum codes or commit
+SHAs. Server-generated references preserve the complete result for inspection.
+Closing and reopening the dialog retains its unsaved fields, selected evidence,
+and any unresolved submission with its exact body and request key; reopening does
+not silently fetch a replacement context. Confirmed save clears the draft. An
+explicit context reload remains available after a known refusal. Validation
+focuses the first marked invalid control in this form, or its issue summary when
+the failure has no individual control, while retaining localized field messages.
+
+The session-only `GET/POST /api/projects/{slug}/tasks/{taskId}/human-assessment`
+adapter owns this workflow. GET returns current optimistic revisions and an
+opaque semantic context token, plus bounded searchable project task/run choices.
+`repository=1` additionally requires `readRepoFiles`, resolves the current target
+commit and returns a repository token/ref for the existing project file browser.
+File browsing uses the existing permission-checked `/projects/{slug}/files` API;
+no arbitrary filesystem path or caller-selected repository SHA is trusted.
+
+POST accepts a stable UUID request key, the displayed context/revision tokens,
+32 bounded typed selectors at most, and per-check selection indexes. File paths
+must be validated repository-relative paths (at most 180 characters so the final
+machine reference remains within its existing bound). A selected tracked file
+must exist at the server-resolved commit; task/run selectors must belong to the
+same project. The server derives evidence IDs, references, repository SHA and
+held-decision reason codes; a human still supplies every actual check result and
+rationale. Ready requires passing applicable checks and repository relevance
+linked to a selected file; a held decision requires an actionable next step.
+Validation returns localized issue keys and precise form paths; unknown fields,
+missing links, stale task/assessment/repository tokens and unauthorized sources
+refuse without publishing an assessment.
+
+The existing immutable `task_qualifications.payload_digest` stores a domain-
+separated canonical human-authoring payload hash for this adapter. Existing
+machine-request hashing is unchanged. Same author/task/key and identical human
+payload returns the original receipt after current authority checks, including
+after task/HEAD changes; it does not resolve old references against today's
+repository. A changed payload or another author conflicts. The human wrapper
+serializes the task/key under the launch reservation then task lock and rechecks
+replay/freshness before the ordinary qualification transaction. Git/ref resolution
+precedes DB application; source permission is rechecked at application. No new
+assessment table, migration, fake evidence, automated author impersonation, auto
+launch arm or mutation of historical rows is introduced.
+
+The human authoring service uses existing qualification state/publication and does
+not change the automatic/manual admission contract. Refusal owners are:
+
+| Reason                                  | Response / remediation                                                                                           |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `human_assessment_invalid`              | 400, localized issue keys and exact form paths; complete the named fields.                                       |
+| `human_assessment_evidence_unavailable` | 404, selected task/run/file is not available in the scoped project; select permitted evidence.                   |
+| `qualification_stale`                   | 409, input/assessment/repository changed; reload and reassess.                                                   |
+| `qualification_request_conflict`        | 409, the original key belongs to a different payload/author/adapter; preserve the original request for recovery. |
+| Current grant/account/origin refusal    | 401/403; restore authorized session/access, never replace evidence with invented references.                     |
+
+LA11 acceptance owns real-Postgres/Git controls for genuine ready and held results,
+reference scope/access, task/assessment/HEAD drift, exact replay after drift,
+key/payload conflict and field-specific validation. Component/browser controls
+cover labeled selectors, automatic internal IDs, reference links, optional entry,
+EN/RU copy, focus and async error announcements.
+
+### Triage flag origin and explicit hold resolution (Implemented — 0223)
+
+`triageStatus=flagged` carries `triageFlagOrigin`: `qualification` is an
+assessment finding and permits an authorized manual Launch; `explicit` is a
+human/triage hold; `dispatch_failure` is a technical dispatch hold; `unknown`
+retains an upgraded flag whose origin cannot be established. The latter three
+remain manual launch blockers. Missing origin on a historical read is treated
+as `unknown`. Automation still requires current accepted qualification and an
+auto arm. `queuePaused`, blockers and execution protections remain independent.
+
+The additive migration marks existing flagged rows `unknown`; it never infers
+provenance from a current assessment or rewrites qualification history. New
+flag writers supply an origin; clearing the flag clears its origin. Applying a
+qualification result preserves an existing explicit, unknown or dispatch hold.
+Reasserting an explicit/dispatch hold increments task revision, including when
+its origin is unchanged, so a previous human decision cannot clear a newer hold.
+
+An authenticated human may resolve an explicit/dispatch/unknown hold using the
+same-origin `POST /api/task-launch-holds/resolve` operation. Current `editTask`
+permission, exact task revision and exact displayed origin are checked under
+the task lock. The transaction clears the flag/origin and auto arm, increments
+revision and records `triage_set` activity with the previous origin. It preserves
+assessments, pause, settings and launch intents; it launches nothing and emits
+no triage request. Stale or unauthorized resolution changes nothing. A later
+Launch remains a separate explicit action, without a routine confirmation dialog.
+
+Acceptance is owned by real PostgreSQL launch/hold-resolution integration and
+populated 0222→0223 upgrade tests: qualification flags admit manual launch;
+explicit/dispatch/unknown flags refuse; stale/revoked resolution refuses;
+upgrade preserves existing evidence and refuses future unclassified flags.
+
+### Failed qualifier source without an assessment
+
+The optional summary `sourceFailure` identifies the latest operational qualifier
+attempt for this task and project when it failed without publishing a current
+accepted assessment. Immutable `taskQualificationSnapshot.role`
+identifies the qualifier, including after catalog changes or deletion. Select the
+latest attempt before inspecting its outcome; a newer Running or successful
+attempt suppresses an older failure. A current accepted negative or ready decision
+retains its existing meaning and suppresses this diagnostic.
+
+The [immutable qualifier input binding](../db/task-qualification-domain.md#qualifier-source-input-binding)
+must match both current server-owned qualification input revision and digest
+before a source failure is presented as current. An edited/requalified task or a
+digest mismatch suppresses the old failure. Historical snapshots without this
+binding remain available in Run history and are not rewritten or represented as
+a failure of the current input.
+
+Eligibility requires Failed/Crashed. `modelStarted:false` additionally requires a
+persisted infrastructure failure at workspace acquisition, checkout, baseline or
+platform materialization, and no session.create/session.prompt command or retained
+ACP/host session binding or incarnation. Otherwise `modelStarted:null` means the
+summary makes no claim about model startup; stage and cause code are also null.
+The UI shows the specific failed-Triager explanation and Run link in both cases,
+and the before-model explanation only for literal false. The projection contains
+only bounded run ID, recognized stage and safe native cause code when proven.
+It never returns messages, paths, credential values or
+assessment content, and never fabricates an assessment. Existing freshness,
+blocked reason, candidate/history and access grants remain unchanged. Detailed
+diagnostics stay on the privileged Run surface. Real PostgreSQL projection
+controls own zero-command, command-present, accepted-decision and latest-attempt
+suppression behavior; no schema migration is necessary.

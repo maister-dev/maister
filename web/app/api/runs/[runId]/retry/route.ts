@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import pino from "pino";
 
-import { requireActiveSession } from "@/lib/authz";
+import { interactiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
+import { assertInteractiveLaunchOrigin } from "@/lib/tasks/launch-http";
+import { wakeTaskLaunchQueue } from "@/lib/tasks/launch-wake";
 import { getDb } from "@/lib/db/client";
 import {
   acceptAgentRetry,
@@ -22,13 +24,22 @@ export async function POST(
   { params }: { params: Promise<{ runId: string }> },
 ): Promise<NextResponse> {
   try {
-    const user = await requireActiveSession();
+    const principal = await interactiveTaskLaunchPrincipal();
+
+    assertInteractiveLaunchOrigin(request);
     const { runId } = await params;
     const db = getDb();
     const body: unknown = await readAgentRetryJson(request);
-    const receipt = await acceptAgentRetry(db, runId, user.id, body);
+    const receipt = await acceptAgentRetry(
+      db,
+      runId,
+      principal.userId,
+      body,
+      principal,
+    );
 
-    if (receipt.intentState === "accepted")
+    if (receipt.intentState === "accepted") {
+      wakeTaskLaunchQueue(db);
       queueMicrotask(() => {
         void runAgentRetryAdmissionSweep(db).catch((error: unknown) =>
           log.warn(
@@ -40,6 +51,7 @@ export async function POST(
           ),
         );
       });
+    }
 
     return NextResponse.json(receipt, {
       status: receipt.intentState === "refused" ? 200 : 202,

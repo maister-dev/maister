@@ -1,16 +1,22 @@
 import type { Db } from "./db";
 import type { PgUpdateSetSource } from "drizzle-orm/pg-core";
 import type { CommandId, CommandKind, CommandState } from "./types";
+import type { SessionCreateIntent } from "./create-intent";
 
 import { randomUUID } from "node:crypto";
 
 import { and, asc, eq, gt, inArray, or, sql } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
+import { lockConsensusDraftCommandHierarchy } from "./consensus-command-admission";
 import { redactPayload } from "./redact";
 import { OPEN_COMMAND_STATES, TERMINAL_COMMAND_STATES } from "./types";
 
-import { executionCommands, type ExecutionCommand } from "@/lib/db/schema";
+import {
+  executionCommands,
+  runs,
+  type ExecutionCommand,
+} from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
 const defaultLog = pino({
@@ -31,6 +37,7 @@ export type InsertCommandInput = {
   kind: Exclude<CommandKind, "session.prompt">;
   targetSessionId?: string | null;
   payload: unknown;
+  createIntent?: SessionCreateIntent;
   maxAttempts: number;
   driverless?: boolean;
   now?: Date;
@@ -63,6 +70,7 @@ export async function insertCommand(
       kind: input.kind,
       targetSessionId: input.targetSessionId ?? null,
       payload: redactPayload(input.kind, input.payload),
+      createIntent: input.createIntent ?? null,
       state: "queued",
       attempts: 0,
       maxAttempts: input.maxAttempts,
@@ -91,7 +99,52 @@ export async function getCommand(
 // Every ledger transition is a CAS on (id, state IN from, attempts). A signal
 // that arrives for a row that already moved on — a stale attempt number or a
 // terminal row — changes nothing and is logged `command-late-signal`.
+async function withOutboundCommandMutation<T>(
+  db: Db,
+  commandId: string,
+  mutate: (tx: Db) => Promise<T>,
+): Promise<T> {
+  const current = await getCommand(db, commandId);
+
+  if (!current || !["session.create", "session.prompt"].includes(current.kind))
+    return mutate(db);
+  const [owner] = await db
+    .select({ admission: runs.taskAdmissionSnapshot })
+    .from(runs)
+    .where(eq(runs.id, current.runId));
+
+  if (owner?.admission?.version !== 3) return mutate(db);
+
+  return db.transaction(async (tx) => {
+    await lockConsensusDraftCommandHierarchy(tx, current.runId);
+
+    return mutate(tx);
+  });
+}
+
 export async function casTransition(
+  db: Db,
+  id: string,
+  from: readonly CommandState[],
+  attempts: number | null,
+  patch: PgUpdateSetSource<typeof executionCommands>,
+  opts: TransitionOptions = {},
+): Promise<TransitionResult> {
+  const outbound =
+    patch.state === "queued" ||
+    patch.state === "delivering" ||
+    typeof patch.state === "object" ||
+    (patch.state === undefined &&
+      (patch.attempts !== undefined || patch.maxAttempts !== undefined));
+
+  return outbound
+    ? withOutboundCommandMutation(db, id, (tx) =>
+        applyCommandTransition(tx, id, from, attempts, patch, opts),
+      )
+    : applyCommandTransition(db, id, from, attempts, patch, opts);
+}
+
+async function applyCommandTransition(
   db: Db,
   id: string,
   from: readonly CommandState[],
@@ -221,31 +274,36 @@ export async function rearmPromptAdmission(
       "prompt rearm requires the observed delivery budget",
     );
   const at = opts.now ?? new Date();
-  const [row] = await db
-    .update(executionCommands)
-    .set({
-      state: "queued",
-      transportState: "unknown",
-      maxAttempts: input.expectedMaxAttempts + 3,
-      nextAttemptAt: at,
-      deliveringSince: null,
-      updatedAt: at,
-    })
-    .where(
-      and(
-        eq(executionCommands.id, input.commandId),
-        eq(executionCommands.kind, "session.prompt"),
-        eq(executionCommands.requestSchema, "maister.command.request.v2"),
-        eq(executionCommands.requestSha256, input.requestSha256),
-        eq(executionCommands.attempts, input.expectedAttempts),
-        eq(executionCommands.maxAttempts, input.expectedMaxAttempts),
-        eq(executionCommands.transportState, "reconciliation_required"),
-        eq(executionCommands.state, "queued"),
-        sql`${executionCommands.receiptEvidence} IS NULL AND ${executionCommands.terminalEventId} IS NULL
+  const [row] = await withOutboundCommandMutation(
+    db,
+    input.commandId,
+    async (tx) =>
+      tx
+        .update(executionCommands)
+        .set({
+          state: "queued",
+          transportState: "unknown",
+          maxAttempts: input.expectedMaxAttempts + 3,
+          nextAttemptAt: at,
+          deliveringSince: null,
+          updatedAt: at,
+        })
+        .where(
+          and(
+            eq(executionCommands.id, input.commandId),
+            eq(executionCommands.kind, "session.prompt"),
+            eq(executionCommands.requestSchema, "maister.command.request.v2"),
+            eq(executionCommands.requestSha256, input.requestSha256),
+            eq(executionCommands.attempts, input.expectedAttempts),
+            eq(executionCommands.maxAttempts, input.expectedMaxAttempts),
+            eq(executionCommands.transportState, "reconciliation_required"),
+            eq(executionCommands.state, "queued"),
+            sql`${executionCommands.receiptEvidence} IS NULL AND ${executionCommands.terminalEventId} IS NULL
       AND ${executionCommands.acceptedAt} IS NULL AND ${executionCommands.applicationError} IS NULL`,
-      ),
-    )
-    .returning();
+          ),
+        )
+        .returning(),
+  );
 
   (opts.logger ?? defaultLog).info(
     {

@@ -47,6 +47,7 @@ import {
   type SupervisorEvent,
 } from "@/lib/execution-host";
 import { type Db as ExecutionDb } from "@/lib/execution-host/db";
+import { SessionInventoryPending } from "@/lib/execution-host/session-inventory";
 import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
 import { captureCheckpoint } from "@/lib/flows/graph/workspace-checkpoint";
 import { resolveDirtyWorktree } from "@/lib/runs/dirty-resolution";
@@ -969,6 +970,149 @@ describe("sendGateChatTurn — idle claim-before-spawn (X-2PC)", () => {
     stateSpies.markResumed.mockClear();
     stateSpies.rollbackResumedRun.mockClear();
   });
+
+  it("waits for the Run before locking the HITL while create binding owns the Run", async () => {
+    const { runId, hitlId } = await seedChatPause({
+      runStatus: "NeedsInputIdle",
+    });
+    const api = await scriptHost({ runId, checkpointed: true });
+    const binding = await pool.connect();
+    const response = await pool.connect();
+    let turn: Promise<unknown> | undefined;
+
+    try {
+      await binding.query("BEGIN");
+      const {
+        rows: [{ pid }],
+      } = await binding.query<{ pid: number }>(
+        "SELECT pg_backend_pid() AS pid",
+      );
+
+      await binding.query("SELECT id FROM runs WHERE id=$1 FOR UPDATE", [
+        runId,
+      ]);
+      turn = sendGateChatTurn({
+        runId,
+        hitlRequestId: hitlId,
+        message: "Serialize this question with the create binding.",
+      });
+      void turn.catch(() => undefined);
+      await expect
+        .poll(
+          async () => {
+            const result = await pool.query<{ count: number }>(
+              "SELECT count(*)::int AS count FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))",
+              [pid],
+            );
+
+            return result.rows[0].count;
+          },
+          { timeout: 10_000 },
+        )
+        .toBeGreaterThan(0);
+      await response.query("BEGIN");
+      await response.query(
+        "SELECT id FROM hitl_requests WHERE id=$1 FOR UPDATE NOWAIT",
+        [hitlId],
+      );
+      await response.query("COMMIT");
+      await binding.query("COMMIT");
+      await turn;
+      expect(api.createSessionCalls).toHaveLength(1);
+      expect(api.sendPromptCalls).toHaveLength(1);
+      expect(await chatTurnRows(hitlId)).toEqual([
+        expect.objectContaining({ state: "completed" }),
+      ]);
+    } finally {
+      await response.query("ROLLBACK");
+      await binding.query("ROLLBACK");
+      response.release();
+      binding.release();
+      await turn?.catch(() => undefined);
+    }
+  }, 60_000);
+
+  it("retains a pending idle create and completes the original reviewer turn after host inventory recovers", async () => {
+    const { runId, hitlId } = await seedChatPause({
+      runStatus: "NeedsInputIdle",
+    });
+    const api = await scriptHost({ runId, checkpointed: true });
+    const create = api.fake.transport.createSession;
+
+    api.fake.transport.createSession = async () => {
+      throw new SessionInventoryPending(
+        runId,
+        new MaisterError("EXECUTOR_UNAVAILABLE", "host ownership unproven", {
+          details: { reason: "session_inventory_unproven" },
+        }),
+      );
+    };
+    try {
+      await expect(
+        sendGateChatTurn({
+          runId,
+          hitlRequestId: hitlId,
+          message: "Explain the preserved original reviewer request.",
+        }),
+      ).rejects.toBeInstanceOf(MaisterError);
+      expect(api.createSessionCalls).toHaveLength(0);
+      expect(api.sendPromptCalls).toHaveLength(0);
+      expect(stateSpies.rollbackResumedRun).not.toHaveBeenCalled();
+      expect((await runRow(runId)).status).toBe("NeedsInput");
+      expect(await chatTurnRows(hitlId)).toEqual([
+        expect.objectContaining({ state: "pending", error_code: null }),
+      ]);
+      const original = await pool.query<{
+        id: string;
+        state: string;
+        create_intent: { owner: { variant: string } };
+      }>(
+        "SELECT id,state,create_intent FROM execution_commands WHERE run_id=$1 AND kind='session.create'",
+        [runId],
+      );
+
+      expect(original.rows).toEqual([
+        expect.objectContaining({
+          state: "queued",
+          create_intent: expect.objectContaining({
+            owner: expect.objectContaining({ variant: "gate_chat" }),
+          }),
+        }),
+      ]);
+      api.fake.transport.createSession = create;
+      await pool.query(
+        "UPDATE execution_commands SET next_attempt_at=now()-interval '1 second' WHERE id=$1",
+        [original.rows[0].id],
+      );
+      await recoverExpiredGateChatTurns({ db, sessions: [] });
+      const commands = await pool.query<{ id: string; state: string }>(
+        "SELECT id,state FROM execution_commands WHERE run_id=$1 AND kind='session.create'",
+        [runId],
+      );
+
+      expect(commands.rows).toEqual([
+        { id: original.rows[0].id, state: "succeeded" },
+      ]);
+      expect(api.createSessionCalls).toHaveLength(1);
+      expect(api.sendPromptCalls).toEqual([
+        expect.objectContaining({
+          prompt:
+            GATE_CHAT_READONLY_PREAMBLE +
+            "Explain the preserved original reviewer request.",
+          assignmentEpoch: 2,
+        }),
+      ]);
+      expect(await chatTurnRows(hitlId)).toEqual([
+        expect.objectContaining({ state: "completed", error_code: null }),
+      ]);
+      expect(await assignmentRows(runId)).toEqual([
+        expect.objectContaining({ epoch: 1, state: "released" }),
+        expect.objectContaining({ epoch: 2, state: "active" }),
+      ]);
+    } finally {
+      api.fake.transport.createSession = create;
+    }
+  }, 60_000);
 
   it("a lost markResumed claim refuses with CONFLICT and never spawns a duplicate session", async () => {
     const { runId, hitlId } = await seedChatPause({

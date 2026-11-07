@@ -25,6 +25,10 @@ import {
   vi,
 } from "vitest";
 
+import {
+  bindPendingPlanIntentsForRunChecks,
+  historicalChildFixtureAdmission,
+} from "@/test-support/queued-delegation";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
@@ -80,17 +84,9 @@ let orchestratorAgentId: string;
 let workerAgentId: string;
 
 beforeEach(async () => {
-  await pool.query(`DELETE FROM "domain_events"`);
-  await pool.query(`DELETE FROM "runs"`);
-  await pool.query(`DELETE FROM "task_relations"`);
-  await pool.query(`DELETE FROM "tasks"`);
-  await pool.query(`DELETE FROM "agent_project_links"`);
-  await pool.query(`DELETE FROM "agents"`);
-  await pool.query(`DELETE FROM "project_package_attachments"`);
-  await pool.query(`DELETE FROM "package_installs"`);
-  await pool.query(`DELETE FROM "flows"`);
-  await pool.query(`DELETE FROM "flow_revisions"`);
-  await pool.query(`DELETE FROM "projects"`);
+  await pool.query(
+    "TRUNCATE domain_events,runs,task_relations,tasks,agent_project_links,agents,project_package_attachments,package_installs,flows,flow_revisions,projects RESTART IDENTITY CASCADE",
+  );
 
   projectId = randomUUID();
   executorId = randomUUID();
@@ -256,6 +252,27 @@ async function seedAsPlanTask(args: {
     [randomUUID(), projectId, args.orchTaskId, taskId],
   );
 
+  const parent = (
+    await pool.query(
+      "SELECT id FROM runs WHERE task_id=$1 AND status='Running' LIMIT 1",
+      [args.orchTaskId],
+    )
+  ).rows[0];
+
+  if (!parent) throw new Error("As-plan fixture has no active parent");
+  const { establishExecutionChildAdmission } =
+    await import("@/lib/tasks/qualification-admission");
+
+  await establishExecutionChildAdmission(
+    db as unknown as import("@/lib/execution-host/db").Db,
+    {
+      projectId,
+      parentRunId: parent.id,
+      childTaskId: taskId,
+      planRevision: "delegation-fixture",
+    },
+  );
+
   return taskId;
 }
 
@@ -303,10 +320,16 @@ async function emitChildTerminal(args: {
     ]);
   } else {
     childRunId = randomUUID();
+    const admission = await historicalChildFixtureAdmission(
+      db as unknown as import("@/lib/execution-host/db").Db,
+      projectId,
+      args.childTaskId,
+    );
+
     await pool.query(
       `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "task_id",
-         "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id", "launch_mode")
-       VALUES ($1, 'agent', $2, $3, $4, $5, 'agent', 'manual', $6, $6, 'auto')`,
+         "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id", "launch_mode", "task_admission_snapshot", "task_admission_checked_at")
+       VALUES ($1, 'agent', $2, $3, $4, $5, 'agent', 'manual', $6, $6, 'auto', $7::jsonb, $8)`,
       [
         childRunId,
         workerAgentId,
@@ -314,6 +337,8 @@ async function emitChildTerminal(args: {
         args.childTaskId,
         runStatus,
         args.parentRunId,
+        admission ? JSON.stringify(admission) : null,
+        admission ? new Date() : null,
       ],
     );
     await pool.query(
@@ -376,11 +401,16 @@ async function emitChildReview(args: {
   launchMode: "auto" | "manual";
 }): Promise<DomainEventRow> {
   const childRunId = randomUUID();
+  const admission = await historicalChildFixtureAdmission(
+    db as unknown as import("@/lib/execution-host/db").Db,
+    projectId,
+    args.childTaskId,
+  );
 
   await pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "task_id",
-       "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id", "launch_mode")
-     VALUES ($1, 'agent', $2, $3, $4, 'Review', 'agent', 'manual', $5, $5, $6)`,
+       "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id", "launch_mode", "task_admission_snapshot", "task_admission_checked_at")
+     VALUES ($1, 'agent', $2, $3, $4, 'Review', 'agent', 'manual', $5, $5, $6, $7::jsonb, $8)`,
     [
       childRunId,
       workerAgentId,
@@ -388,6 +418,8 @@ async function emitChildReview(args: {
       args.childTaskId,
       args.parentRunId,
       args.launchMode,
+      admission ? JSON.stringify(admission) : null,
+      admission ? new Date() : null,
     ],
   );
   await pool.query(
@@ -446,22 +478,39 @@ describe("auto_launch_run_plan consumer", () => {
     const consumer = buildAutoLaunchRunPlanConsumer({ db });
 
     await consumer.handle([event]);
+    await bindPendingPlanIntentsForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
+    );
 
     // B now has exactly one (Pending) run — launched with parent/root linkage.
     expect(await runCount(taskB)).toBe(1);
     const bRun = await pool.query(
-      `SELECT "parent_run_id", "root_run_id", "trigger_source", "launch_mode"
+      `SELECT "id", "parent_run_id", "root_run_id", "trigger_source", "launch_mode"
        FROM "runs" WHERE "task_id" = $1`,
       [taskB],
     );
 
     expect(bRun.rows[0].parent_run_id).toBe(parentRunId);
     expect(bRun.rows[0].root_run_id).toBe(parentRunId);
-    expect(bRun.rows[0].trigger_source).toBe("domain_event");
+    expect(bRun.rows[0].trigger_source).toBe("manual");
+    expect(
+      (
+        await pool.query(
+          "SELECT basis,launch_source FROM task_launch_intents WHERE run_id=$1",
+          [bRun.rows[0].id],
+        )
+      ).rows[0],
+    ).toMatchObject({
+      basis: { kind: "execution_child" },
+      launch_source: "execution_child",
+    });
     expect(bRun.rows[0].launch_mode).toBe("auto");
 
     // Re-deliver the SAME event → still exactly one run (the has-any-run guard).
     await consumer.handle([event]);
+    await bindPendingPlanIntentsForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
+    );
     expect(await runCount(taskB)).toBe(1);
   });
 
@@ -514,6 +563,9 @@ describe("auto_launch_run_plan consumer", () => {
 
     // Completes normally — the skip must not throw.
     await consumer.handle([event]);
+    await bindPendingPlanIntentsForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
+    );
 
     expect(await runCount(siblingTaskId)).toBe(0);
   });
@@ -537,6 +589,9 @@ describe("auto_launch_run_plan consumer", () => {
     const consumer = buildAutoLaunchRunPlanConsumer({ db });
 
     await Promise.all([consumer.handle([event]), consumer.handle([event])]);
+    await bindPendingPlanIntentsForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
+    );
 
     expect(await runCount(taskB)).toBe(1);
   }, 60_000);
@@ -559,6 +614,9 @@ describe("auto_launch_run_plan consumer", () => {
     });
 
     await buildAutoLaunchRunPlanConsumer({ db }).handle([event]);
+    await bindPendingPlanIntentsForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
+    );
 
     // Both dependents launched (the source A is skipped — it already has a run).
     expect(await runCount(taskB)).toBe(1);
@@ -580,6 +638,9 @@ describe("auto_launch_run_plan consumer", () => {
     });
 
     await buildAutoLaunchRunPlanConsumer({ db }).handle([event]);
+    await bindPendingPlanIntentsForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
+    );
 
     // B is NOT launched.
     expect(await runCount(taskB)).toBe(0);
@@ -604,6 +665,9 @@ describe("auto_launch_run_plan consumer", () => {
     });
 
     await buildAutoLaunchRunPlanConsumer({ db }).handle([event]);
+    await bindPendingPlanIntentsForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
+    );
 
     // B is NOT launched.
     expect(await runCount(taskB)).toBe(0);
@@ -629,6 +693,9 @@ describe("auto_launch_run_plan consumer", () => {
     });
 
     await consumer.handle([eventA]);
+    await bindPendingPlanIntentsForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
+    );
     expect(await runCount(taskC)).toBe(0);
 
     // B done next → both blockers clear → C launched exactly once.
@@ -639,11 +706,17 @@ describe("auto_launch_run_plan consumer", () => {
     });
 
     await consumer.handle([eventB]);
+    await bindPendingPlanIntentsForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
+    );
     expect(await runCount(taskC)).toBe(1);
 
     // A second event after C is already running must not double-launch (the
     // live-run guard): re-deliver B's event → still exactly one.
     await consumer.handle([eventB]);
+    await bindPendingPlanIntentsForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
+    );
     expect(await runCount(taskC)).toBe(1);
   });
 
@@ -666,7 +739,7 @@ describe("auto_launch_run_plan consumer", () => {
       `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "task_id",
          "status", "flow_version", "flow_revision")
        VALUES ($1, 'agent', $2, $3, $4, 'Done', 'agent', 'manual')`,
-      [topRunId, workerAgentId, projectId, taskA],
+      [topRunId, workerAgentId, projectId, null],
     );
     await pool.query(
       `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_id")
@@ -690,6 +763,9 @@ describe("auto_launch_run_plan consumer", () => {
       .where(eq(schema.domainEvents.runId, topRunId))) as DomainEventRow[];
 
     await buildAutoLaunchRunPlanConsumer({ db }).handle([rows[0]]);
+    await bindPendingPlanIntentsForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
+    );
 
     // B not launched — the event carried no orchestrator parent.
     expect(await runCount(taskB)).toBe(0);
@@ -721,6 +797,9 @@ describe("auto_launch_run_plan consumer", () => {
     });
 
     await consumer.handle([event]);
+    await bindPendingPlanIntentsForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
+    );
 
     expect(promoteCalls).toHaveLength(1);
     expect(promoteCalls[0].childRunId).toBe(event.runId);
@@ -749,6 +828,9 @@ describe("auto_launch_run_plan consumer", () => {
     });
 
     await consumer.handle([event]);
+    await bindPendingPlanIntentsForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
+    );
 
     expect(promoteCalls).toEqual([]);
   });

@@ -1,5 +1,8 @@
 import "server-only";
 
+import type { TaskLaunchRequest } from "@/lib/tasks/launch-schema";
+import type { NodeEnforcementRefusal } from "@/lib/flows/enforcement-refusal";
+
 import { and, eq, inArray } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
@@ -12,6 +15,9 @@ import {
   requireProjectAction,
 } from "@/lib/authz";
 import { loadFlowRunnerBindings } from "@/lib/acp-runners/catalog";
+import { assertFlowStaticEnforcement } from "@/lib/acp-runners/enforcement-preflight";
+import { nodeEnforcementRefusalSchema } from "@/lib/flows/enforcement-refusal";
+import { taskLaunchErrorResponse } from "@/lib/tasks/launch-http";
 import { toConsensusRunnerSlotPreview } from "@/lib/acp-runners/consensus-preflight";
 import {
   inspectFlowRunners,
@@ -48,6 +54,9 @@ import {
 import { detectAvailablePackageVersions } from "@/lib/local-packages/versions";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 import { listBranches } from "@/lib/worktree";
+import { taskLaunchPreview } from "@/lib/tasks/launch-preview";
+import { taskLaunchBodySchema } from "@/lib/tasks/launch-schema";
+import { selectedTaskLaunchRevision } from "@/lib/tasks/launch-package-selection";
 
 const {
   flowRevisions,
@@ -66,9 +75,11 @@ const log = pino({
 
 const querySchema = z
   .object({
-    taskId: z.string().min(1),
-    flowId: z.string().min(1).optional(),
-    runnerId: z.string().min(1).optional(),
+    taskId: z.string().min(1).max(256),
+    flowId: z.string().min(1).max(256).optional(),
+    runnerId: z.string().min(1).max(256).optional(),
+    relaunchOfRunId: z.string().min(1).max(256).optional(),
+    packageVersions: z.string().max(32768).optional(),
   })
   .strict();
 
@@ -90,6 +101,21 @@ type SessionPreviewResolution = {
   readonly warning: RunnerResolutionWarning | null;
   readonly declaresRunner: boolean;
 };
+
+function packagePreviewSelection(
+  raw: string | undefined,
+): TaskLaunchRequest["packageVersions"] {
+  if (raw === undefined) return undefined;
+  try {
+    return taskLaunchBodySchema.shape.packageVersions.parse(JSON.parse(raw));
+  } catch (error) {
+    if (!(error instanceof SyntaxError || error instanceof z.ZodError))
+      throw error;
+    throw new MaisterError("CONFIG", "Choose valid existing package versions", {
+      details: { reason: "launch_request_invalid", field: "packageVersions" },
+    });
+  }
+}
 
 function httpStatusForCode(code: string): number {
   switch (code) {
@@ -231,12 +257,15 @@ function projectFlowLaunchIssue(args: {
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
-    await requireActiveSession();
-    const parsed = querySchema.safeParse({
-      taskId: req.nextUrl.searchParams.get("taskId"),
-      flowId: req.nextUrl.searchParams.get("flowId") ?? undefined,
-      runnerId: req.nextUrl.searchParams.get("runnerId") ?? undefined,
-    });
+    const user = await requireActiveSession();
+    const query = req.nextUrl.searchParams;
+
+    if ([...query.keys()].some((key) => query.getAll(key).length !== 1))
+      throw new MaisterError(
+        "CONFIG",
+        "Launch options must not repeat query parameters",
+      );
+    const parsed = querySchema.safeParse(Object.fromEntries(query));
 
     if (!parsed.success) {
       throw new MaisterError(
@@ -270,9 +299,23 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
 
     const authorization = await requireProjectAction(project.id, "launchRun");
+    const packageVersions = packagePreviewSelection(
+      parsed.data.packageVersions,
+    );
+    const selection = {
+      flowId: parsed.data.flowId,
+      runnerId: parsed.data.runnerId,
+      relaunchOfRunId: parsed.data.relaunchOfRunId,
+      packageVersions,
+    };
     const canConfigureRunnerBindings = projectRolesForActions([
       "editSettings",
     ]).includes(authorization.role);
+    const canManagePackages = projectRolesForActions([
+      "manageLocalPackages",
+    ]).includes(authorization.role);
+    const canCutPackages =
+      canManagePackages && (user.role === "member" || user.role === "admin");
 
     // M34 (ADR-089): a flowless simple-intent task still gets options — the
     // popover doubles as the "set up & launch" dialog (the flow pick PATCHes
@@ -305,15 +348,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       } else if (!LAUNCHABLE_FLOW_ENABLEMENT_STATES.has(flow.enablementState)) {
         flowIssue = "not_enabled";
       } else {
-        const revisionRows = await db
-          .select()
-          .from(flowRevisions)
-          .where(eq(flowRevisions.id, flow.enabledRevisionId));
-
-        revision =
-          revisionRows.find(
-            (row: { id: string }) => row.id === flow.enabledRevisionId,
-          ) ?? null;
+        revision = (
+          await selectedTaskLaunchRevision(db, project.id, flow, selection)
+        ).revision;
 
         if (!revision) {
           flowIssue = "no_revision";
@@ -479,6 +516,23 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       )
         ? "runner_unresolved"
         : null;
+    let enforcementRefusal: NodeEnforcementRefusal | null = null;
+
+    if (compatibleManifest && runnerInspection && !runnerIssue) {
+      try {
+        assertFlowStaticEnforcement(compatibleManifest, runnerInspection);
+      } catch (error) {
+        const refusal = nodeEnforcementRefusalSchema.safeParse(
+          isMaisterError(error) ? error.details : null,
+        );
+
+        if (!refusal.success) throw error;
+        enforcementRefusal = refusal.data;
+      }
+    }
+    const enforcementIssue = enforcementRefusal
+      ? "flow_settings_enforcement_refused"
+      : null;
     const latestFlowRun = await getLatestFlowRun(task.id, db);
     const openBlockers =
       (await getOpenRelationBlockers([task.id], db)).get(task.id) ?? [];
@@ -486,6 +540,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const launchabilityTask = {
       status: task.status ?? "Backlog",
       triageStatus: (task.triageStatus as "triaged" | "flagged" | null) ?? null,
+      triageFlagOrigin: task.triageFlagOrigin,
+      queuePaused: task.queuePaused,
     };
     const manualLaunchability = classifyManualTaskLaunchability(
       launchabilityTask,
@@ -507,7 +563,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // the options response and edit away from a stale/broken flow.
     const launchability =
       manualLaunchability === "launchable"
-        ? (flowIssue ?? runnerIssue ?? "launchable")
+        ? (flowIssue ?? runnerIssue ?? enforcementIssue ?? "launchable")
         : manualLaunchability;
     // ADR-119: the force verdict layers the SAME flow-setup issues as the manual
     // launchability (a flow disabled/dropped after the task's first run), so the
@@ -516,7 +572,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // precedence; run status is still never consulted.
     const relaunchReason =
       relaunchLaunchability === "launchable"
-        ? (flowIssue ?? runnerIssue ?? "launchable")
+        ? (flowIssue ?? runnerIssue ?? enforcementIssue ?? "launchable")
         : relaunchLaunchability;
     const branches = await listBranches(project.repoPath, {
       includeRemotes: true,
@@ -582,12 +638,17 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       projectId: project.id,
       db: db as never,
     });
+    const launchPreview = await taskLaunchPreview(db, task.id, selection);
 
     return NextResponse.json({
+      ...launchPreview,
+      enforcementRefusal,
       runnerSlots,
       consensusRunnerSlots,
       selectedFlowRevisionId: revision?.id ?? null,
       canConfigureRunnerBindings,
+      canManagePackages,
+      canCutPackages,
       runners: flowIssue === "incompatible" ? [] : safeRunners,
       // M42 (ADR-114): one entry per logical session of the selected flow, each
       // with its resolved runner; empty for a single-session flow (the single
@@ -610,6 +671,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         number: task.number,
         status: task.status ?? "Backlog",
         flowId: task.flowId,
+        revision: task.revision,
       },
       launchability: {
         launchable: launchability === "launchable" && flowIssue === null,
@@ -679,6 +741,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       availablePackageVersions,
     });
   } catch (err) {
+    if (
+      isMaisterError(err) &&
+      err.details?.reason === "flow_settings_enforcement_refused"
+    )
+      return taskLaunchErrorResponse(err);
+
     return errorResponse(err);
   }
 }

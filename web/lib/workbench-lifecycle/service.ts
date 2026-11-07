@@ -2192,9 +2192,29 @@ function defaultWorkbenchLifecycleDeps(): WorkbenchLifecycleDeps {
     },
     finalizeAgentRun: async ({ runId, reason }) => {
       const { finalizeAgentRun } = await import("@/lib/agents/launch");
+      const { waitForAgentCancellationExecutionQuiescent } =
+        await import("@/lib/agents/execution-quiescence");
+      const [run] = await db()
+        .select({
+          id: runs.id,
+          agentKind: runs.agentKind,
+          executionAssignmentId: runs.executionAssignmentId,
+        })
+        .from(runs)
+        .where(eq(runs.id, runId));
+
+      if (run?.agentKind === "operational")
+        await waitForAgentCancellationExecutionQuiescent(
+          db() as unknown as ExecutionDb,
+          run,
+          performance.now() + 5_000,
+        );
       const result = await finalizeAgentRun(runId, "Abandoned", {
         reason,
         closeAssignments: { kind: "system", reason: "run stopped by operator" },
+        ...(run?.agentKind === "operational"
+          ? { expectedAssignmentId: run.executionAssignmentId }
+          : {}),
       });
 
       return { finalized: result.finalized };

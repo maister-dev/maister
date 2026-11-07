@@ -47,7 +47,7 @@ async function completeEvidence(context) {
   return directory;
 }
 
-test("combined isolation validates two independent preflights and exactly all original 50 cases", async (context) => {
+test("combined isolation validates two independent preflights and exactly all 51 required cases", async (context) => {
   const directory = await completeEvidence(context);
   const nested = join(directory, "part-1", "maister-ab-isolation-negative");
 
@@ -57,10 +57,10 @@ test("combined isolation validates two independent preflights and exactly all or
 
   assert.equal(combined.outcome, "passed");
   assert.equal(combined.files.length, 7);
-  assert.equal(combined.cases, 50);
+  assert.equal(combined.cases, 51);
   assert.equal(combined.preflights, 2);
   assert.equal(combined.stages.length, 4);
-  assert.deepEqual(combined.stages.filter((row) => row.stage === "part").map((row) => row.cases), [19, 31]);
+  assert.deepEqual(combined.stages.filter((row) => row.stage === "part").map((row) => row.cases), [19, 32]);
   assert.deepEqual(JSON.parse(await readFile(join(directory, "combined.json"), "utf8")), combined);
 });
 

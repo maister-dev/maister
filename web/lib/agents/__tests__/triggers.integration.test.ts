@@ -33,6 +33,8 @@ import {
 import { loadAgentContext } from "@/lib/agents/launch";
 import { buildAgentActivitySnapshot } from "@/lib/agents/activity-snapshot";
 import { agentsErrorResponse } from "@/lib/agents/admin-shared";
+import { domainEvents } from "@/lib/db/schema";
+import { initRepo } from "@/test-support/git-fixture";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
@@ -150,7 +152,7 @@ beforeEach(async () => {
        ("id", "source_url", "name", "version_label", "resolved_revision",
         "manifest", "manifest_digest", "installed_path", "package_status", "trust_status")
      VALUES ($1, 'github.com/acme/test-pkg', 'test-pkg', 'v1.0.0', 'rev-pkg-1',
-             '{}'::jsonb, 'digest', $2, 'Installed', 'trusted')`,
+             '{"spec":{"name":"test-pkg","compat":{"engine_min":"3.9.0"},"flows":[]},"inventory":{"platformAgents":[]}}'::jsonb, 'digest', $2, 'Installed', 'trusted')`,
     [packageInstallId, agentsRoot],
   );
   await pool.query(
@@ -181,6 +183,7 @@ async function seedAgent(args: {
   triggers: string[];
   workspace?: string;
   riskTier?: string;
+  kind?: "code_delivery" | "operational";
 }): Promise<string> {
   const qualifiedId = `test-pkg:${args.id}`;
   const workspace = args.workspace ?? "none";
@@ -192,13 +195,14 @@ async function seedAgent(args: {
     `---
 name: ${args.id}
 description: d
+${args.kind ? `kind: ${args.kind}\n` : ""}${args.kind === "operational" ? "completion: {contract: operational_v1}\n" : ""}
 workspace: ${workspace}
 mode: session
 triggers:
 ${args.triggers.map((t) => `  - ${t}`).join("\n")}
 risk_tier: ${riskTier}
 ---
-Do the thing.
+${args.kind === "operational" ? "Read the task and comment context, then report the result through operational_v1 without changing project code." : "Do the thing."}
 `,
     "utf8",
   );
@@ -238,6 +242,44 @@ function fakeEvent(overrides: Partial<DomainEventRow>): DomainEventRow {
     txId: "0" as unknown as DomainEventRow["txId"],
     ...overrides,
   } as DomainEventRow;
+}
+
+function triggerFailureDetails(): string {
+  return JSON.stringify(
+    logLines
+      .filter(({ level }) => level === "warn" || level === "error")
+      .map(({ message, payload }) => {
+        const fields = payload as Record<string, unknown> | null;
+
+        return {
+          message,
+          code: fields?.code,
+          reason: fields?.reason,
+          error: fields?.err,
+        };
+      }),
+  );
+}
+
+/** Persist a new owned input event; its actor is provenance, never launch authority. */
+async function persistTaskEvent(
+  event: DomainEventRow,
+): Promise<DomainEventRow> {
+  const [stored] = await testDatabase.db
+    .insert(domainEvents)
+    .values({
+      kind: event.kind,
+      projectId: event.projectId,
+      taskId: event.taskId,
+      runId: event.runId,
+      actorType: event.actorType,
+      actorId: event.actorId,
+      payload: event.payload,
+      occurredAt: event.occurredAt,
+    })
+    .returning();
+
+  return stored;
 }
 
 async function seedTask(): Promise<string> {
@@ -884,10 +926,12 @@ describe("agent_triggers outbox consumer (ADR-086/087)", () => {
     const requestingAgent = await seedAgent({
       id: "requesting-agent",
       triggers: ["domain_event"],
+      kind: "operational",
     });
     const unrelatedSubscriber = await seedAgent({
       id: "unrelated-subscriber",
       triggers: ["domain_event"],
+      kind: "operational",
     });
     const taskId = await seedTask();
 
@@ -899,29 +943,32 @@ describe("agent_triggers outbox consumer (ADR-086/087)", () => {
       [randomUUID(), unrelatedSubscriber, projectId],
     );
 
-    const event = fakeEvent({
-      id: 4001 as unknown as DomainEventRow["id"],
-      kind: "task.clarification_answered",
-      taskId,
-      payload: {
-        clarificationId: randomUUID(),
-        hitlRequestId: randomUUID(),
-        requestingAgentId: requestingAgent,
-      },
-    });
+    const event = await persistTaskEvent(
+      fakeEvent({
+        id: 4001 as unknown as DomainEventRow["id"],
+        kind: "task.clarification_answered",
+        taskId,
+        payload: {
+          clarificationId: randomUUID(),
+          hitlRequestId: randomUUID(),
+          requestingAgentId: requestingAgent,
+        },
+      }),
+    );
     const consumer = triggers.buildAgentTriggersConsumer({ db });
 
     await consumer.handle([event]);
     await consumer.handle([event]);
 
     const runs = await pool.query(
-      `SELECT "agent_id", "trigger_event_id", "task_id" FROM "runs" WHERE "trigger_event_id" = 4001`,
+      `SELECT "agent_id", "trigger_event_id", "task_id" FROM "runs" WHERE "trigger_event_id" = $1`,
+      [event.id],
     );
 
-    expect(runs.rows).toEqual([
+    expect(runs.rows, triggerFailureDetails()).toEqual([
       {
         agent_id: requestingAgent,
-        trigger_event_id: "4001",
+        trigger_event_id: String(event.id),
         task_id: taskId,
       },
     ]);
@@ -1192,6 +1239,9 @@ describe("agent launch refusals (ADR-090)", () => {
 
 // ADR-151 — one case per row of the frozen summon decision table, plus the
 // interaction cases that keep the pre-existing generic path intact.
+// These comment/context observers are explicitly operational; fan-out does not
+// allocate concurrent ordinary task-delivery roots. The delivery refusal below
+// separately keeps user-comment provenance from becoming human launch authority.
 describe("mention summons in the agent_triggers consumer (ADR-151)", () => {
   async function seedMentionAgent(args: {
     id: string;
@@ -1202,6 +1252,7 @@ describe("mention summons in the agent_triggers consumer (ADR-151)", () => {
     const agentId = await seedAgent({
       id: args.id,
       triggers: args.triggers ?? ["domain_event"],
+      kind: "operational",
     });
 
     if (args.binding === false) return { agentId, scheduleId: null };
@@ -1217,27 +1268,31 @@ describe("mention summons in the agent_triggers consumer (ADR-151)", () => {
     return { agentId, scheduleId };
   }
 
-  function commentEvent(over: {
+  async function commentEvent(over: {
     id: number;
     taskId?: string | null;
     mentionedAgentIds?: string[];
     actorType?: "user" | "agent" | "system";
     actorId?: string | null;
-  }): DomainEventRow {
-    return fakeEvent({
-      id: over.id as unknown as DomainEventRow["id"],
-      kind: "task.comment_added",
-      taskId: over.taskId ?? null,
-      actorType: over.actorType ?? "user",
-      actorId: over.actorId ?? randomUUID(),
-      payload: {
-        taskKey: "K-1",
-        commentId: randomUUID(),
-        ...(over.mentionedAgentIds
-          ? { mentionedAgentIds: over.mentionedAgentIds }
-          : {}),
-      },
-    });
+    runId?: string;
+  }): Promise<DomainEventRow> {
+    return persistTaskEvent(
+      fakeEvent({
+        id: over.id as unknown as DomainEventRow["id"],
+        kind: "task.comment_added",
+        taskId: over.taskId ?? null,
+        actorType: over.actorType ?? "user",
+        actorId: over.actorId ?? randomUUID(),
+        runId: over.runId ?? null,
+        payload: {
+          taskKey: "K-1",
+          commentId: randomUUID(),
+          ...(over.mentionedAgentIds
+            ? { mentionedAgentIds: over.mentionedAgentIds }
+            : {}),
+        },
+      }),
+    );
   }
 
   async function outcomeOf(scheduleId: string): Promise<Record<string, any>> {
@@ -1268,30 +1323,90 @@ describe("mention summons in the agent_triggers consumer (ADR-151)", () => {
     return rows.rows;
   }
 
+  it("a user comment does not grant manual admission to an unqualified delivery task", async () => {
+    const agentId = await seedAgent({
+      id: "m-delivery-unqualified",
+      triggers: ["domain_event"],
+      kind: "code_delivery",
+    });
+    const scheduleId = randomUUID();
+    const repoPath = await initRepo(
+      path.join(agentsRoot, `delivery-${projectId}`),
+    );
+
+    await pool.query("UPDATE projects SET repo_path=$1 WHERE id=$2", [
+      repoPath,
+      projectId,
+    ]);
+    const taskId = await seedTask();
+
+    await pool.query(
+      "INSERT INTO agent_schedules(id,agent_id,project_id,trigger_type) VALUES($1,$2,$3,'mention')",
+      [scheduleId, agentId, projectId],
+    );
+    const event = await commentEvent({
+      id: 5000,
+      taskId,
+      mentionedAgentIds: [agentId],
+    });
+
+    await triggers.buildAgentTriggersConsumer({ db }).handle([event]);
+    await expect(
+      launchModule.launchAgentRun({
+        agentId,
+        projectId,
+        taskId,
+        trigger: { source: "domain_event", eventId: Number(event.id) },
+        db,
+      }),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "qualification_required" },
+    });
+
+    expect(await runCount(agentId)).toBe(0);
+    expect(await outcomeOf(scheduleId)).toMatchObject({
+      last_outcome: "refused",
+      last_error_code: "PRECONDITION",
+    });
+    expect(
+      (
+        await pool.query(
+          "SELECT id FROM task_launch_intents WHERE task_id=$1",
+          [taskId],
+        )
+      ).rows,
+    ).toEqual([]);
+  });
+
   // Row 6 — the happy path.
   it("launches a directed run carrying task_id and trigger_event_id", async () => {
     const { agentId, scheduleId } = await seedMentionAgent({ id: "m-launch" });
     const taskId = await seedTask();
+    const event = await commentEvent({
+      id: 5001,
+      taskId,
+      mentionedAgentIds: [agentId],
+    });
 
-    await triggers
-      .buildAgentTriggersConsumer({ db })
-      .handle([
-        commentEvent({ id: 5001, taskId, mentionedAgentIds: [agentId] }),
-      ]);
+    await triggers.buildAgentTriggersConsumer({ db }).handle([event]);
 
     const runs = await pool.query(
-      `SELECT "task_id", "trigger_event_id", "trigger_source", "status", "agent_schedule_id", "trigger_payload"
+      `SELECT "task_id", "trigger_event_id", "trigger_source", "status", "agent_schedule_id", "trigger_payload", "agent_kind", "result_contract", "task_launch_intent_id"
        FROM "runs" WHERE "agent_id" = $1`,
       [agentId],
     );
 
-    expect(runs.rows).toHaveLength(1);
+    expect(runs.rows, triggerFailureDetails()).toHaveLength(1);
     expect(runs.rows[0]).toMatchObject({
       task_id: taskId,
-      trigger_event_id: "5001",
+      trigger_event_id: String(event.id),
       trigger_source: "domain_event",
       status: "Running",
       agent_schedule_id: scheduleId,
+      agent_kind: "operational",
+      result_contract: { kind: "agent_operational" },
+      task_launch_intent_id: null,
     });
     // runs.trigger_payload stores the INNER object; its {kind, payload} core is
     // what taskCommentTriggerContextBlock routes on, and `mentionedBy` is an
@@ -1310,11 +1425,13 @@ describe("mention summons in the agent_triggers consumer (ADR-151)", () => {
   it("skips the whole branch when the event carries no task id", async () => {
     const { agentId, scheduleId } = await seedMentionAgent({ id: "m-notask" });
 
-    await triggers
-      .buildAgentTriggersConsumer({ db })
-      .handle([
-        commentEvent({ id: 5002, taskId: null, mentionedAgentIds: [agentId] }),
-      ]);
+    await triggers.buildAgentTriggersConsumer({ db }).handle([
+      await commentEvent({
+        id: 5002,
+        taskId: null,
+        mentionedAgentIds: [agentId],
+      }),
+    ]);
 
     expect(await runCount(agentId)).toBe(0);
     expect(await outcomeOf(scheduleId!)).toMatchObject({ last_outcome: null });
@@ -1335,7 +1452,7 @@ describe("mention summons in the agent_triggers consumer (ADR-151)", () => {
     await triggers
       .buildAgentTriggersConsumer({ db })
       .handle([
-        commentEvent({ id: 5003, taskId, mentionedAgentIds: [agentId] }),
+        await commentEvent({ id: 5003, taskId, mentionedAgentIds: [agentId] }),
       ]);
 
     expect(await runCount(agentId)).toBe(0);
@@ -1344,21 +1461,38 @@ describe("mention summons in the agent_triggers consumer (ADR-151)", () => {
 
   // Row 3 — structural loop termination.
   it("never summons an agent through its own comment", async () => {
-    const { agentId, scheduleId } = await seedMentionAgent({ id: "m-self" });
+    const { agentId, scheduleId } = await seedMentionAgent({
+      id: "m-self",
+      triggers: ["manual", "domain_event"],
+    });
     const other = await seedMentionAgent({ id: "m-other" });
     const taskId = await seedTask();
+    const source = await launchModule.launchAgentRun({
+      agentId,
+      projectId,
+      taskId,
+      trigger: { source: "manual" },
+      db,
+    });
+
+    if (!("runId" in source))
+      throw new Error("Operational comment source did not allocate");
 
     await triggers.buildAgentTriggersConsumer({ db }).handle([
-      commentEvent({
+      await commentEvent({
         id: 5004,
         taskId,
         mentionedAgentIds: [agentId, other.agentId],
         actorType: "agent",
         actorId: agentId,
+        runId: source.runId,
       }),
     ]);
 
-    expect(await runCount(agentId)).toBe(0);
+    expect(
+      (await pool.query("SELECT id FROM runs WHERE agent_id=$1", [agentId]))
+        .rows,
+    ).toEqual([{ id: source.runId }]);
     expect(await outcomeOf(scheduleId!)).toMatchObject({ last_outcome: null });
     // Mentioning a DIFFERENT agent in the same comment still works.
     expect(await runCount(other.agentId)).toBe(1);
@@ -1376,7 +1510,7 @@ describe("mention summons in the agent_triggers consumer (ADR-151)", () => {
     );
 
     const consumer = triggers.buildAgentTriggersConsumer({ db });
-    const event = commentEvent({
+    const event = await commentEvent({
       id: 5005,
       taskId,
       mentionedAgentIds: [agentId],
@@ -1394,7 +1528,7 @@ describe("mention summons in the agent_triggers consumer (ADR-151)", () => {
     expect(notes[0].actor_type).toBe("system");
     expect(notes[0].payload).toMatchObject({
       agentId,
-      triggerEventId: "5005",
+      triggerEventId: String(event.id),
     });
     expect(await outcomeOf(scheduleId!)).toMatchObject({
       last_outcome: "suppressed",
@@ -1403,7 +1537,7 @@ describe("mention summons in the agent_triggers consumer (ADR-151)", () => {
 
   // Row 5 boundary — Review and Crashed are deliberately NOT suppressing.
   it.each(["Review", "Crashed"])(
-    "re-summons over a %s run — that is the rework loop",
+    "routes an operational observer over a legacy %s delivery run",
     async (status) => {
       const { agentId } = await seedMentionAgent({
         id: `m-${status.toLowerCase()}`,
@@ -1411,16 +1545,18 @@ describe("mention summons in the agent_triggers consumer (ADR-151)", () => {
       const taskId = await seedTask();
 
       await pool.query(
-        `INSERT INTO "runs" ("id", "project_id", "task_id", "agent_id", "run_kind", "status", "flow_version", "flow_revision", "started_at")
-         VALUES ($1, $2, $3, $4, 'agent', $5, 'v1', 'manual', now())`,
+        `INSERT INTO "runs" ("id", "project_id", "task_id", "agent_id", "run_kind", "status", "flow_version", "flow_revision", "started_at", "agent_kind")
+         VALUES ($1, $2, $3, $4, 'agent', $5, 'v1', 'manual', now(), 'code_delivery')`,
         [randomUUID(), projectId, taskId, agentId, status],
       );
 
-      await triggers
-        .buildAgentTriggersConsumer({ db })
-        .handle([
-          commentEvent({ id: 5006, taskId, mentionedAgentIds: [agentId] }),
-        ]);
+      await triggers.buildAgentTriggersConsumer({ db }).handle([
+        await commentEvent({
+          id: 5006,
+          taskId,
+          mentionedAgentIds: [agentId],
+        }),
+      ]);
 
       expect(await runCount(agentId)).toBe(2);
       expect(await suppressionRows(taskId)).toHaveLength(0);
@@ -1432,7 +1568,7 @@ describe("mention summons in the agent_triggers consumer (ADR-151)", () => {
     const { agentId, scheduleId } = await seedMentionAgent({ id: "m-dedup" });
     const taskId = await seedTask();
     const consumer = triggers.buildAgentTriggersConsumer({ db });
-    const event = commentEvent({
+    const event = await commentEvent({
       id: 5007,
       taskId,
       mentionedAgentIds: [agentId],
@@ -1465,7 +1601,7 @@ describe("mention summons in the agent_triggers consumer (ADR-151)", () => {
     await triggers
       .buildAgentTriggersConsumer({ db, launch })
       .handle([
-        commentEvent({ id: 5008, taskId, mentionedAgentIds: [agentId] }),
+        await commentEvent({ id: 5008, taskId, mentionedAgentIds: [agentId] }),
       ]);
 
     expect(await outcomeOf(scheduleId!)).toMatchObject({
@@ -1493,7 +1629,7 @@ describe("mention summons in the agent_triggers consumer (ADR-151)", () => {
 
     await expect(
       triggers.buildAgentTriggersConsumer({ db, launch }).handle([
-        commentEvent({
+        await commentEvent({
           id: 5009,
           taskId,
           mentionedAgentIds: [refused.agentId, crashed.agentId],
@@ -1518,7 +1654,7 @@ describe("mention summons in the agent_triggers consumer (ADR-151)", () => {
     const taskId = await seedTask();
 
     await triggers.buildAgentTriggersConsumer({ db }).handle([
-      commentEvent({
+      await commentEvent({
         id: 5010,
         taskId,
         mentionedAgentIds: [first.agentId, second.agentId, first.agentId],
@@ -1546,7 +1682,7 @@ describe("mention summons in the agent_triggers consumer (ADR-151)", () => {
     await triggers
       .buildAgentTriggersConsumer({ db })
       .handle([
-        commentEvent({ id: 5011, taskId, mentionedAgentIds: [agentId] }),
+        await commentEvent({ id: 5011, taskId, mentionedAgentIds: [agentId] }),
       ]);
 
     expect(await runCount(agentId)).toBe(1);
@@ -1563,6 +1699,7 @@ describe("mention summons in the agent_triggers consumer (ADR-151)", () => {
     const agentId = await seedAgent({
       id: "m-generic-only",
       triggers: ["domain_event"],
+      kind: "operational",
     });
     const genericId = randomUUID();
 
@@ -1576,7 +1713,7 @@ describe("mention summons in the agent_triggers consumer (ADR-151)", () => {
 
     await triggers
       .buildAgentTriggersConsumer({ db })
-      .handle([commentEvent({ id: 5012, taskId })]);
+      .handle([await commentEvent({ id: 5012, taskId })]);
 
     expect(await runCount(agentId)).toBe(1);
     expect(await outcomeOf(genericId)).toMatchObject({

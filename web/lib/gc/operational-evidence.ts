@@ -3,8 +3,6 @@ import "server-only";
 import type { BoundClient } from "@/lib/execution-host/client";
 import type { OperationalResourceKind } from "@/lib/run-results/operational-types";
 
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { open, readlink, realpath } from "node:fs/promises";
@@ -13,8 +11,7 @@ import path from "node:path";
 import { captureOperationalBaseline } from "@/lib/agents/operational-integrity";
 import { MaisterError } from "@/lib/errors";
 import { publishRuntimeObject } from "@/lib/execution-host/runtime-objects";
-
-const exec = promisify(execFile);
+import { executeRepositoryGit } from "@/lib/project-config-persistence/git-process";
 const CHUNK_BYTES = 1024 * 1024;
 const PACK_BYTES = 8 * 1024 * 1024;
 
@@ -144,9 +141,9 @@ export async function preserveOperationalEvidence(input: {
   if (input.resourceKind !== "plain_directory") {
     const git = async (args: string[]): Promise<string> => {
       await input.renew();
-      const result = await exec(
-        "git",
-        ["-C", root, "-c", "core.fsmonitor=false", ...args],
+      const result = await executeRepositoryGit(
+        root,
+        ["-c", "core.fsmonitor=false", ...args],
         {
           env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", LC_ALL: "C" },
           timeout: 30_000,

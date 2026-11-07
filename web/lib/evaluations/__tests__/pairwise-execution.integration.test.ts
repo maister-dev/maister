@@ -9,6 +9,7 @@ import { eq, inArray } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { seedAgentTokenRunOwner } from "@/test-support/seed-token-run-owner";
 import * as fullSchema from "@/lib/db/schema";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import {
@@ -588,7 +589,7 @@ describe("pairwise pick submission (seal branch)", () => {
     const token = await issueJudgeAttemptToken({
       agentId: AGENT_ID,
       projectId,
-      runId: randomUUID(),
+      runId: await seedAgentTokenRunOwner(db, { projectId, agentId: AGENT_ID }),
       db,
     });
 

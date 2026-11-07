@@ -6,10 +6,8 @@ import { readFile, writeFile } from "node:fs/promises";
 
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 
-import {
-  invocationFromEnvironment,
-  processIdentity,
-} from "@/test-support/process-invocation";
+import { invocationFromEnvironment } from "@/test-support/process-invocation";
+import { captureOwnedAdapterProcess } from "@/test-support/capture-supervisor-process-groups";
 import {
   readScratchPromptIntent,
   type ScratchPromptIntent,
@@ -277,11 +275,40 @@ async function signalAdapter(
   signal: NodeJS.Signals,
 ): Promise<void> {
   const row = await adapterPrompt(index);
-  const identity = await processIdentity(invocationFromEnvironment()!, row.pid);
+  const { rows } = await fixture!.database.pool.query<{
+    run_id: string;
+    assignment_id: string;
+    assignment_epoch: number;
+    acp_session_id: string;
+    host_session_id: string;
+  }>(
+    `SELECT r.id AS run_id, a.id AS assignment_id,
+       a.epoch AS assignment_epoch, rs.acp_session_id, rs.host_session_id
+     FROM runs r
+     JOIN execution_assignments a ON a.id = r.execution_assignment_id
+       AND a.run_id = r.id AND a.state = 'active'
+     JOIN run_sessions rs ON rs.run_id = r.id
+       AND rs.execution_assignment_id = a.id
+     WHERE rs.acp_session_id = $1 AND rs.host_session_id <> ''`,
+    [row.sessionId],
+  );
 
-  expect(identity?.owned).toBe(true);
-  expect(identity?.ppid).toBe(fixture!.supervisor.pid);
-  process.kill(row.pid, signal);
+  expect(rows).toHaveLength(1);
+  const owner = rows[0]!;
+  const { adapter } = await captureOwnedAdapterProcess({
+    invocation: invocationFromEnvironment()!,
+    supervisor: fixture!.supervisor,
+    sessionId: owner.host_session_id,
+    expected: {
+      runId: owner.run_id,
+      assignmentId: owner.assignment_id,
+      assignmentEpoch: owner.assignment_epoch,
+      acpSessionId: owner.acp_session_id,
+    },
+  });
+
+  expect(adapter.pid).toBe(row.pid);
+  process.kill(adapter.pid, signal);
 }
 
 it("S1 launch: a web death after Running commits and before prompt admission re-drives the original turn once", async () => {

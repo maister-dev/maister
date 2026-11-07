@@ -7,10 +7,6 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LaunchPopover } from "@/components/board/launch-popover";
-import {
-  formatLaunchErrorFrame,
-  formatLaunchResultFrame,
-} from "@/lib/runs/launch-progress";
 
 const { router } = vi.hoisted(() => ({
   router: { refresh: vi.fn(), push: vi.fn() },
@@ -18,6 +14,7 @@ const { router } = vi.hoisted(() => ({
 
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
 vi.mock("next-intl", () => ({
+  useLocale: () => "en",
   useTranslations: (namespace: string) => (key: string) =>
     `${namespace}.${key}`,
 }));
@@ -48,7 +45,10 @@ const launchOptions = {
   },
   executionPolicyDefault: { preset: "supervised" },
   availablePackageVersions: [],
-  task: { projectSlug: "course", number: 1 },
+  task: { projectSlug: "course", number: 1, revision: 2 },
+  settingsToken: "settings-token",
+  qualification: null,
+  activeLaunch: null,
 };
 
 let root: Root;
@@ -56,6 +56,15 @@ let container: HTMLDivElement;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  sessionStorage.clear();
+  vi.stubGlobal(
+    "EventSource",
+    class extends EventTarget {
+      onopen = null;
+      onerror = null;
+      close(): void {}
+    },
+  );
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   container = document.createElement("div");
   document.body.append(container);
@@ -87,18 +96,15 @@ async function clickButton(label: string): Promise<void> {
   await act(async () => button.click());
 }
 
-function serveLaunchFrame(frame: string): void {
+function serveLaunchResponse(payload: object, status = 202): void {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
       if (url.startsWith("/api/runs/launch-options?")) {
         return Response.json(launchOptions);
       }
-      if (url === "/api/runs") {
-        return new Response(frame, {
-          headers: { "content-type": "text/event-stream" },
-        });
-      }
+      if (url === "/api/task-launch-intents")
+        return Response.json(payload, { status });
 
       throw new Error(`Unexpected launch request: ${url}`);
     }),
@@ -107,44 +113,76 @@ function serveLaunchFrame(frame: string): void {
 
 describe("launch destination", () => {
   it.each(["Running", "NeedsInput", "Pending"])(
-    "opens the new run after a successful %s launch",
+    "keeps an accepted %s launch visible with the correct run destination",
     async (status) => {
-      serveLaunchFrame(formatLaunchResultFrame({ runId: "run-1", status }));
+      serveLaunchResponse({
+        schemaVersion: 1,
+        intentId: "intent-1",
+        taskId: "task-1",
+        state: "run_bound",
+        stateVersion: 3,
+        basis: "manual",
+        acceptedAt: "2026-11-03T09:00:00.000Z",
+        taskRevision: 2,
+        inputRevision: 1,
+        settingsDigest: "a".repeat(64),
+        runId: "run-1",
+        reason: null,
+        runStatus: status,
+        snapshot: {
+          kind: "flow",
+          workspace: "worktree",
+          flowId: "flow-1",
+          flowRevisionId: "revision-1",
+          agentId: null,
+          runnerIds: ["codex-sol"],
+          baseCommit: "b".repeat(40),
+          targetBranch: "main",
+          promotionMode: "local_merge",
+          autoPromote: false,
+        },
+      });
       await clickButton("Launch");
       expect(document.querySelector('[role="dialog"]')).not.toBeNull();
       await clickButton("launch.createRun");
 
-      expect(router.push).toHaveBeenCalledOnce();
-      expect(router.push).toHaveBeenCalledWith("/runs/run-1");
+      expect(document.querySelector('a[href="/runs/run-1"]')).not.toBeNull();
+      expect(router.push).not.toHaveBeenCalled();
       expect(router.refresh).not.toHaveBeenCalled();
-      expect(document.querySelector('[role="dialog"]')).toBeNull();
+      expect(
+        document.querySelector('[data-testid="task-launch-intent-status"]'),
+      ).not.toBeNull();
     },
   );
 
-  it("keeps the launch form open when the launch stream reports failure", async () => {
-    serveLaunchFrame(formatLaunchErrorFrame("PRECONDITION", "Cannot launch"));
+  it("keeps the launch form open for a definitive admission refusal", async () => {
+    serveLaunchResponse(
+      { code: "PRECONDITION", details: { reason: "launch_settings_changed" } },
+      409,
+    );
     await clickButton("Launch");
     await clickButton("launch.createRun");
 
     expect(router.push).not.toHaveBeenCalled();
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
     expect(document.querySelector('[role="alert"]')?.textContent).toContain(
-      "Cannot launch",
+      "launch.admission.reason.settingsChanged",
     );
   });
 
-  it("shows an actionable pre-stream PRECONDITION message", async () => {
+  it("localizes an actionable typed refusal without exposing backend messages", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string) => {
         if (url.startsWith("/api/runs/launch-options?")) {
           return Response.json(launchOptions);
         }
-        if (url === "/api/runs") {
+        if (url === "/api/task-launch-intents") {
           return Response.json(
             {
               code: "PRECONDITION",
-              message: "flow requirements not met: run sk-init first",
+              message: "private backend details",
+              details: { reason: "launch_input_changed" },
             },
             { status: 409 },
           );
@@ -159,8 +197,9 @@ describe("launch destination", () => {
     expect(router.push).not.toHaveBeenCalled();
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
     expect(document.querySelector('[role="alert"]')?.textContent).toContain(
-      "flow requirements not met: run sk-init first",
+      "launch.admission.reason.inputChanged",
     );
+    expect(document.body.textContent).not.toContain("private backend details");
   });
 
   it("refreshes the current page without navigating when scheduling a future run", async () => {

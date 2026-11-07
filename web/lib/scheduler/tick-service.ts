@@ -259,7 +259,10 @@ async function runClaimedJob(
         return recordSucceeded(job, agentTickSummary);
       }
       case "flow_run": {
-        await runScheduledFlowJob(job.target);
+        await runScheduledFlowJob(job.target, {
+          jobId: job.id,
+          attemptId: job.attemptId,
+        });
 
         return recordSucceeded(job);
       }

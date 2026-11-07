@@ -29,6 +29,7 @@ export type PlainAgentDirectoryCandidate = {
   runId: string;
   projectSlug: string;
   status: (typeof PLAIN_AGENT_DIRECTORY_TERMINAL_STATUSES)[number];
+  taskLaunchIntentId?: string | null;
 };
 
 export type PlainAgentDirectoryGcSummary = {
@@ -130,6 +131,7 @@ async function loadPlainAgentDirectoryCandidates(): Promise<
       runId: runs.id,
       projectSlug: projects.slug,
       status: runs.status,
+      taskLaunchIntentId: runs.taskLaunchIntentId,
     })
     .from(runs)
     .innerJoin(projects, eq(projects.id, runs.projectId))
@@ -139,6 +141,7 @@ async function loadPlainAgentDirectoryCandidates(): Promise<
         sql`coalesce(${runs.agentKind}, 'code_delivery') <> 'operational'`,
         eq(runs.agentWorkspace, "none"),
         inArray(runs.status, [...PLAIN_AGENT_DIRECTORY_TERMINAL_STATUSES]),
+        sql`(${runs.taskLaunchIntentId} IS NULL OR ${runs.status}<>'Crashed')`,
       ),
     )
     .orderBy(asc(runs.endedAt), asc(runs.id))
@@ -169,18 +172,27 @@ export async function runPlainAgentDirectoryGcSweep(
     );
 
     try {
-      await restore(directoryPath, candidate.runId);
-      const didRemove = await remove({ root, directoryPath });
+      const clean = async (): Promise<void> => {
+        await restore(directoryPath, candidate.runId);
+        const didRemove = await remove({ root, directoryPath });
 
-      if (didRemove) {
-        removed += 1;
-        log.info(
-          { runId: candidate.runId, status: candidate.status },
-          "plain agent directory reaped after materialization restoration",
-        );
-      } else {
-        missing += 1;
-      }
+        if (didRemove) {
+          removed += 1;
+          log.info(
+            { runId: candidate.runId, status: candidate.status },
+            "plain agent directory reaped after materialization restoration",
+          );
+        } else {
+          missing += 1;
+        }
+      };
+
+      if (candidate.taskLaunchIntentId) {
+        const { withAcceptedAgentCleanup } =
+          await import("@/lib/agents/accepted-cleanup");
+
+        await withAcceptedAgentCleanup(getDb(), candidate.runId, clean);
+      } else await clean();
     } catch (error) {
       failed += 1;
       log.warn(

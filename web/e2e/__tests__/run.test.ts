@@ -1,4 +1,8 @@
 import type { ChildProcess } from "node:child_process";
+import type {
+  Invocation,
+  InvocationReclaimers,
+} from "@/test-support/process-invocation";
 
 import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
@@ -24,7 +28,31 @@ const mocks = vi.hoisted(() => ({
   prepareE2eDatabase: vi.fn(),
   registerProcess: vi.fn(async () => undefined),
   registerSpawnedProcess: vi.fn(async () => undefined),
-  releaseInvocation: vi.fn(async (): Promise<unknown[]> => []),
+  removeInvocationContainers: vi.fn(async () => []),
+  removeInvocationRoots: vi.fn(
+    async (
+      _invocation: Invocation,
+      beforeRootRemoval?: () => Promise<void>,
+    ) => {
+      await beforeRootRemoval?.();
+    },
+  ),
+  sweepInvocation: vi.fn(async () => []),
+  releaseInvocation: vi.fn(
+    async (
+      invocation: Invocation,
+      _subject: string,
+      reclaimers?: InvocationReclaimers,
+    ): Promise<unknown[]> => {
+      try {
+        await reclaimers?.removeInvocationRoots(invocation);
+
+        return [];
+      } catch (error) {
+        return [error];
+      }
+    },
+  ),
   spawn: vi.fn(),
   startBarePostgresTestDb: vi.fn(),
 }));
@@ -44,7 +72,10 @@ vi.mock("@/test-support/process-invocation", () => ({
   fixtureProcessEnvironment: mocks.fixtureProcessEnvironment,
   registerProcess: mocks.registerProcess,
   registerSpawnedProcess: mocks.registerSpawnedProcess,
+  removeInvocationContainers: mocks.removeInvocationContainers,
+  removeInvocationRoots: mocks.removeInvocationRoots,
   releaseInvocation: mocks.releaseInvocation,
+  sweepInvocation: mocks.sweepInvocation,
 }));
 
 vi.mock("@/test-support/worktree-test-root", () => ({
@@ -166,6 +197,40 @@ describe("E2E wrapper environment", () => {
     );
   });
 
+  it("cleans Git inside quiescent root retirement before stopping the database", async () => {
+    const order: string[] = [];
+    const stop = configureTestDatabase();
+    const child = createChildProcess();
+
+    mocks.spawn.mockReturnValue(child);
+    mocks.removeInvocationRoots.mockImplementationOnce(
+      async (_invocation, beforeRootRemoval) => {
+        order.push("quiescent");
+        await beforeRootRemoval?.();
+        order.push("registered-roots-removed");
+      },
+    );
+    mocks.cleanupTestWorktrees.mockImplementationOnce(async () => {
+      order.push("git-worktrees-removed");
+    });
+    stop.mockImplementation(async () => {
+      order.push("database-stopped");
+    });
+    const invocation = runE2eInvocation([]);
+
+    await vi.waitFor(() => expect(mocks.spawn).toHaveBeenCalledOnce());
+    expect(order).toEqual([]);
+    emitChildExit(child, 0, null);
+    await expect(invocation).resolves.toBe(0);
+    expect(order).toEqual([
+      "quiescent",
+      "git-worktrees-removed",
+      "registered-roots-removed",
+      "database-stopped",
+    ]);
+    expect(mocks.cleanupTestWorktrees).toHaveBeenCalledTimes(1);
+  });
+
   it("hands Playwright a freshly minted invocation, never the caller's", async () => {
     configureTestDatabase();
     const child = createChildProcess();
@@ -277,6 +342,7 @@ describe("E2E wrapper environment", () => {
     expect(mocks.releaseInvocation).toHaveBeenCalledWith(
       expect.objectContaining({ id: "minted-invocation" }),
       "e2e invocation",
+      expect.objectContaining({ removeInvocationRoots: expect.any(Function) }),
     );
   });
 
@@ -285,11 +351,17 @@ describe("E2E wrapper environment", () => {
     const child = createChildProcess();
 
     mocks.spawn.mockReturnValue(child);
-    mocks.releaseInvocation.mockResolvedValueOnce([
-      new Error(
-        "e2e invocation leaked 1 process(es); the final sweep reaped them",
-      ),
-    ]);
+    mocks.releaseInvocation.mockImplementationOnce(
+      async (invocation, _subject, reclaimers) => {
+        await reclaimers?.removeInvocationRoots(invocation);
+
+        return [
+          new Error(
+            "e2e invocation leaked 1 process(es); the final sweep reaped them",
+          ),
+        ];
+      },
+    );
 
     const invocation = runE2eInvocation([]);
 
@@ -303,7 +375,7 @@ describe("E2E wrapper environment", () => {
     );
   });
 
-  it("still cleans the worktrees root and stops the database when the release itself throws", async () => {
+  it("retains roots when release cannot establish quiescence and still stops the database", async () => {
     const stop = configureTestDatabase();
     const child = createChildProcess();
 
@@ -317,9 +389,7 @@ describe("E2E wrapper environment", () => {
 
     await expect(invocation).rejects.toThrow("release crashed");
     expect(stop).toHaveBeenCalledOnce();
-    expect(mocks.cleanupTestWorktrees).toHaveBeenCalledWith(
-      "/tmp/maister-test-worktrees/e2e/invocation",
-    );
+    expect(mocks.cleanupTestWorktrees).not.toHaveBeenCalled();
   });
 
   it("uses the separate live invocation root when the live Playwright config is selected", async () => {

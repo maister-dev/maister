@@ -42,7 +42,6 @@ export function readScratchPromptIntent(value: unknown): ScratchPromptIntent {
   const ref = intent.owner.ref;
 
   if (
-    ref.variant === "package_recovery" ||
     intent.logicalOperationKey !==
       `scratch_message:${ref.variant}:${ref.turnId}:${ref.promptOrdinal}` ||
     ref.scratchRunId !== ref.runId ||
@@ -71,6 +70,7 @@ export function scratchOwnerFromIntent(
         sequence: ref.promptOrdinal,
       };
     case "package_initial":
+    case "package_recovery":
       return {
         variant: ref.variant,
         localPackageId: ref.localPackageId,
@@ -86,8 +86,6 @@ export function scratchOwnerFromIntent(
         postprocessActionId: ref.postprocessActionId,
         lockGeneration: ref.lockGeneration,
       };
-    case "package_recovery":
-      throw new PromptOwnerInvariantError("scratch_intent_identity");
   }
 }
 

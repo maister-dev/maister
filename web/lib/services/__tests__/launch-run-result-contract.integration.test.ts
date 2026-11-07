@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -22,6 +22,11 @@ import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import { flowYamlV1Schema, type FlowYamlV1 } from "@/lib/config.schema";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
+import {
+  seedAcceptedRepositoryQualification,
+  isolateEngineFixtureRuntime,
+} from "@/test-support/repository-qualification";
+import { launchQualifiedEngineRun as launchRun } from "@/test-support/launch-engine-response";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
@@ -44,7 +49,7 @@ const execFileAsync = promisify(execFile);
 
 let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
-let db: NodePgDatabase;
+let db: NodePgDatabase<typeof schemaModule>;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 vi.mock("@/lib/authz", async (importOriginal) => ({
@@ -72,7 +77,7 @@ vi.mock("@/lib/supervisor-client", async (importOriginal) => {
   };
 });
 
-let launchRun: typeof import("@/lib/services/runs").launchRun;
+let restoreEngineRuntime: (() => Promise<void>) | undefined;
 
 let projectId: string;
 let executorId: string;
@@ -132,7 +137,7 @@ async function initRepo(): Promise<string> {
   await execFileAsync("git", ["-C", dir, "add", "."]);
   await execFileAsync("git", ["-C", dir, "commit", "-q", "-m", "seed"]);
 
-  return dir;
+  return realpath(dir);
 }
 
 /** Writes the schema doc into a revision's install dir, or omits it. */
@@ -177,10 +182,13 @@ async function seedTask(): Promise<string> {
     [taskId, projectId, Math.trunc(Math.random() * 1e9) + 1, flowId],
   );
 
+  await seedAcceptedRepositoryQualification(testDatabase.db, projectId, taskId);
+
   return taskId;
 }
 
 beforeAll(async () => {
+  restoreEngineRuntime = await isolateEngineFixtureRuntime();
   testDatabase = await startMainPostgresTestDb({
     databaseName: "launch_result_contract_test",
   });
@@ -188,27 +196,17 @@ beforeAll(async () => {
   db = testDatabase.db;
   // ADR-166: launches gate on a registered local execution host.
   await fakeExecutionHosts(db);
-  ({ launchRun } = await import("@/lib/services/runs"));
 }, 180_000);
 
 afterAll(async () => {
+  await restoreEngineRuntime?.();
   await testDatabase?.stop();
 });
 
 beforeEach(async () => {
-  for (const t of [
-    "run_sessions",
-    "workspaces",
-    "execution_commands",
-    "runs",
-    "task_relations",
-    "tasks",
-    "flows",
-    "flow_revisions",
-    "projects",
-  ]) {
-    await pool.query(`DELETE FROM "${t}"`);
-  }
+  await pool.query(
+    `TRUNCATE TABLE runs, task_launch_intents, tasks, flows, flow_revisions, projects CASCADE`,
+  );
 
   projectId = randomUUID();
   executorId = randomUUID();

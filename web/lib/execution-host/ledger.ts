@@ -1,3 +1,4 @@
+import type { ChildLaunchReceipt } from "@/lib/orchestrator/child-launch-context";
 import type { Db } from "./db";
 import type {
   ExecutionAssignment,
@@ -12,6 +13,7 @@ import type {
 } from "./types";
 import type { PromptOwner } from "./prompt-owner-contract";
 import type { SendPromptInput } from "@/lib/supervisor-client";
+import type { SessionCreateIntent } from "./create-intent";
 
 import { randomUUID } from "node:crypto";
 
@@ -22,15 +24,21 @@ import { canonicalCommandJson } from "../../../runtime/command-json";
 
 import { ADMISSIBLE_PROMPT_INCARNATION_STATES } from "./session-binding";
 import { isAdmissible } from "./assignments";
+import { lockConsensusDraftCommandAdmission } from "./consensus-command-admission";
 import { insertCommand, markFenced } from "./commands";
 import { asAssignmentId, asCommandId } from "./types";
 import { PromptOwnerSchema } from "./prompt-owner-contract";
 import { readPromptRequest, storePromptRequest } from "./command-request";
 import { redactPayload } from "./redact";
 
+import {
+  coordinatorChildLaunchContextSchema,
+  childLaunchPromptContext,
+} from "@/lib/orchestrator/child-launch-context";
 import { MaisterError } from "@/lib/errors";
 import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence";
 import {
+  nodeAttempts,
   executionAssignments,
   executionCommands,
   executionRuntimeObjects,
@@ -51,6 +59,7 @@ export type IssueCommandInput<TPayload> = {
   // cannot mint a prompt; `issueOwnedPrompt` is the only one that can.
   kind: Exclude<CommandKind, "session.prompt">;
   payload: TPayload;
+  createIntent?: SessionCreateIntent;
   maxAttempts: number;
   targetSessionId?: string | null;
   driverless?: boolean;
@@ -134,6 +143,7 @@ export async function issueCommand<TPayload>(
     kind: input.kind,
     targetSessionId: input.targetSessionId ?? null,
     payload: input.payload,
+    createIntent: input.createIntent,
     maxAttempts: input.maxAttempts,
     driverless: input.driverless ?? false,
     now: input.now,
@@ -312,6 +322,7 @@ export type { AssignmentId };
 export type PromptOwnerAdmission = Readonly<{
   owner: PromptOwner;
   logicalOperationKey: string;
+  coordinatorChildLaunchReceipts?: readonly ChildLaunchReceipt[];
   /** DB-only authority check after the immutable request write, under the
    * same locks. A lease may expire while a database statement is blocked. */
   assertCommit?: () => Promise<void>;
@@ -351,6 +362,7 @@ export async function issueOwnedPrompt(
   assertUpgradeMaintenanceAllows("prompt_turn");
 
   return db.transaction(async (tx) => {
+    await lockConsensusDraftCommandAdmission(tx, input.assignment.runId);
     const admission = await input.admitOwner(tx);
     const parsed = PromptOwnerSchema.safeParse(admission.owner);
 
@@ -480,9 +492,42 @@ export async function issueOwnedPrompt(
         },
       };
     }
+    const receipts = admission.coordinatorChildLaunchReceipts;
+    const coordinatorContext = receipts?.length
+      ? coordinatorChildLaunchContextSchema.parse({
+          version: 1,
+          nodeAttemptId: "nodeAttemptId" in ref ? ref.nodeAttemptId : null,
+          promptOrdinal: "promptOrdinal" in ref ? ref.promptOrdinal : null,
+          requestSha256: request.requestSha256,
+          receipts,
+        })
+      : null;
+
+    if (coordinatorContext) {
+      const [attempt] = await tx
+        .select({ nodeType: nodeAttempts.nodeType })
+        .from(nodeAttempts)
+        .where(
+          and(
+            eq(nodeAttempts.id, coordinatorContext.nodeAttemptId),
+            eq(nodeAttempts.runId, ref.runId),
+          ),
+        );
+
+      if (
+        owner.kind !== "flow_node_attempt" ||
+        !["node", "permission_resume"].includes(ref.variant) ||
+        attempt?.nodeType !== "orchestrator" ||
+        !input.payload.prompt.includes(
+          childLaunchPromptContext(coordinatorContext.receipts),
+        )
+      )
+        throw ownedPromptConflict("coordinator_child_context_owner");
+    }
     const [row] = await tx
       .insert(executionCommands)
       .values({
+        coordinatorChildLaunchContext: coordinatorContext,
         id: commandId,
         runId: ref.runId,
         executionAssignmentId: ref.assignmentId,

@@ -10,10 +10,13 @@ import { fileURLToPath } from "node:url";
 
 import {
   FIXTURE_WATCHDOG,
+  assertInvocationGroupEmpty,
   fixtureProcessEnvironment,
   invocationFromEnvironment,
   registerRoot,
+  signalInvocationGroup,
 } from "./process-invocation";
+import { captureSupervisorProcessGroups } from "./capture-supervisor-process-groups";
 import {
   retryFixturePortAllocation,
   retryFixtureStart,
@@ -26,10 +29,9 @@ import {
 // the adapter registry's own override env. Tests point the local-direct
 // transport at it via `MAISTER_SUPERVISOR_URL`.
 //
-// The child runs in its OWN process group (`detached`), so `kill()` signals
-// the whole group: a SIGKILL of the supervisor alone would orphan the adapter
-// children it spawned (they would be re-parented to PID 1 and keep running
-// after the suite). `kill()` asserts the group is empty afterwards.
+// The supervisor and its session gates own separate native groups. Capture
+// exact gate identities while their fixture owner is live so abrupt cleanup
+// can retire those groups without inferring ownership from a PID prefix.
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = path.resolve(HERE, "..");
@@ -66,6 +68,7 @@ export type RealSupervisor = {
   logFile: string;
   options: RealSupervisorOptions;
   exited: Promise<number | null>;
+  captureOwnedSessionGroups(): Promise<readonly number[]>;
   // Signals the child's whole process group, waits for the leader, then
   // asserts no member of the group survived (throws naming the orphans after
   // SIGKILLing them).
@@ -274,7 +277,53 @@ async function startRealSupervisorAttempt(
       (await waitForHealth(url, options.startTimeoutMs ?? 60_000, exited))
         .bootId,
   });
-  const { pid, exited, kill } = owned;
+  const { pid, exited } = owned;
+  const sessionGroups = new Set<number>();
+  let leaderExited = false;
+
+  void exited.then(() => {
+    leaderExited = true;
+  });
+  const captureOwnedSessionGroups = async (): Promise<readonly number[]> => {
+    if (leaderExited) return [...sessionGroups];
+    const groups = await captureSupervisorProcessGroups({
+      invocation,
+      url,
+      supervisorPid: pid,
+      runtimeRoot,
+      bootId: owned.bootId,
+      logFile,
+      caseName: process.env.MAISTER_TEST_CASE_NAME ?? "fixture",
+    });
+
+    for (const group of groups) sessionGroups.add(group);
+
+    return [...sessionGroups];
+  };
+  const kill = async (signal: NodeJS.Signals = "SIGKILL"): Promise<void> => {
+    const failures: unknown[] = [];
+
+    try {
+      await captureOwnedSessionGroups();
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      await owned.kill(signal);
+    } catch (error) {
+      failures.push(error);
+    }
+    for (const group of sessionGroups) {
+      try {
+        await signalInvocationGroup(invocation, group, "SIGKILL");
+        await assertInvocationGroupEmpty(invocation, group);
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length)
+      throw new AggregateError(failures, "Supervisor fixture cleanup failed");
+  };
 
   const handle: RealSupervisor = {
     url,
@@ -287,6 +336,7 @@ async function startRealSupervisorAttempt(
     logFile,
     options: { ...options, runtimeRoot, stateDir, workspaceRoots, port },
     exited,
+    captureOwnedSessionGroups,
     kill,
     stop: () => kill("SIGTERM"),
     logTail: (maxBytes = LOG_TAIL_BYTES) => owned.logTail(maxBytes),

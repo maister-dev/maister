@@ -2,7 +2,7 @@ import type { PendingPermissionRegistry } from "./pending-permissions";
 import type { RegistryEntry, SessionRegistry } from "./registry";
 import type { Logger } from "pino";
 
-import { waitForChildExit } from "./execution-fence";
+import { signalOwnedSessionProcess, waitForChildExit } from "./execution-fence";
 import { SupervisorError } from "./types";
 
 // ADR-180 permission cap; ADR-183 a producer paused by outbox pressure past
@@ -78,7 +78,7 @@ export async function checkpointSession(
 
   registry.markIntentionalShutdown(sessionId, "checkpoint", cause);
   entry.record.stopOutputForTeardown?.();
-  entry.child.kill("SIGTERM");
+  signalOwnedSessionProcess(entry, "SIGTERM");
 
   const exited = await waitForChildExit(entry, killGraceMs);
 
@@ -87,7 +87,7 @@ export async function checkpointSession(
       { sessionId, killGraceMs },
       "checkpoint sigterm-grace-expired-sigkill",
     );
-    entry.child.kill("SIGKILL");
+    signalOwnedSessionProcess(entry, "SIGKILL");
 
     throw new SupervisorError(
       "EXECUTOR_UNAVAILABLE",

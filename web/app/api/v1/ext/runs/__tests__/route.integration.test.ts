@@ -1,773 +1,672 @@
 import { randomUUID } from "node:crypto";
+import { rm } from "node:fs/promises";
 
 import { eq } from "drizzle-orm";
-import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
-import {
-  afterAll,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
+import { z } from "zod";
 
-import { issueToken } from "@/lib/tokens/issue";
+import {
+  flows,
+  flowRevisions,
+  librarianOperations,
+  librarianTurns,
+  projectMembers,
+  projects,
+  taskLaunchIntents,
+  taskRelations,
+  tasks,
+  users,
+} from "@/lib/db/schema";
 import { issueLibrarianTurnToken } from "@/lib/librarian/authority";
-import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
-import * as schemaModule from "@/lib/db/schema";
+import {
+  admitLibrarianOperation,
+  settleLibrarianOperation,
+} from "@/lib/librarian/operations";
+import { prepareTaskQualification } from "@/lib/tasks/qualification";
+import { issueToken } from "@/lib/tokens/issue";
+import { git } from "@/test-support/git-fixture";
+import {
+  seedActiveUser,
+  seedLibrarianTurn,
+} from "@/test-support/librarian-seed";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 import {
-  readyExecutionHostCapabilities,
-  readySupervisorHealth,
-} from "@/test-support/supervisor-health-fixture";
+  seedTaskLaunchFixture,
+  bindPendingTaskLaunchFixture,
+  type TaskLaunchFixture,
+} from "@/test-support/task-launch-admission";
+import { qualificationFixture } from "@/test-support/task-qualification";
+import { mkdtempReal } from "@/test-support/worktree-test-root";
 
-const schema = schemaModule as unknown as Record<string, any>;
-const auditMockState = vi.hoisted(() => ({
-  failSuccessScopes: new Set<string>(),
-}));
-
-let testDatabase: StartedPostgresTestDb;
-let db: NodePgDatabase;
-
-vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
-vi.mock("@/lib/tokens/audit", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/tokens/audit")>();
-
-  return {
-    ...actual,
-    recordTokenAudit: vi.fn(
-      async (
-        input: Parameters<typeof actual.recordTokenAudit>[0],
-        d?: Parameters<typeof actual.recordTokenAudit>[1],
-      ) => {
-        if (
-          input.result === "ok" &&
-          auditMockState.failSuccessScopes.has(input.scopeUsed)
-        ) {
-          throw new Error("forced audit failure (atomicity test)");
-        }
-
-        return actual.recordTokenAudit(input, d);
-      },
-    ),
-  };
-});
-vi.mock("@/lib/supervisor-client", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("@/lib/supervisor-client")>();
-
-  return {
-    ...actual,
-    // ADR-166: the launch registers the local execution host from `/health`.
-    checkSupervisorHealth: vi.fn(async () => readySupervisorHealth()),
-    getExecutionHostCapabilities: vi.fn(async () =>
-      readyExecutionHostCapabilities(),
-    ),
-  };
-});
-vi.mock("@/lib/worktree", () => ({
-  addWorktree: vi.fn(async () => {}),
-  removeWorktree: vi.fn(async () => {}),
-  listBranches: vi.fn(async () => ["main"]),
-  resolveBaseCommit: vi.fn(
-    async () => "0000000000000000000000000000000000000000",
-  ),
-}));
-vi.mock("@/lib/scheduler", () => ({
-  tryStartRun: vi.fn(async () => ({ started: false, queuePosition: 1 })),
-}));
-vi.mock("@/lib/flows/runner", () => ({
-  runFlow: vi.fn(async () => {}),
-}));
-
+let database: StartedPostgresTestDb;
+let fixture: TaskLaunchFixture;
+let root: string;
+let number = 0;
 let POST: typeof import("@/app/api/v1/ext/runs/route").POST;
+let OPTIONS: typeof import("@/app/api/v1/ext/task-launch-intents/options/route").GET;
+
+// The real Next request lifecycle runs these callbacks in the browser lane.
+// Direct handler tests exercise admission without starting autonomous workers.
+vi.mock("next/server", async (original) => ({
+  ...(await original<typeof import("next/server")>()),
+  after: vi.fn(),
+}));
+
+vi.mock("@/lib/db/client", () => ({ getDb: () => database.db }));
 
 beforeAll(async () => {
-  testDatabase = await startMainPostgresTestDb({
-    databaseName: "ext_runs_route_test",
+  database = await startMainPostgresTestDb({
+    databaseName: "ext_runs_intent_compatibility",
   });
-
-  db = testDatabase.db;
+  root = await mkdtempReal("ext-runs-intents-");
+  fixture = await seedTaskLaunchFixture(database, root);
+  POST = (await import("@/app/api/v1/ext/runs/route")).POST;
+  OPTIONS = (await import("@/app/api/v1/ext/task-launch-intents/options/route"))
+    .GET;
 }, 180_000);
 
 afterAll(async () => {
-  await testDatabase?.stop();
+  await database?.stop();
+  if (root) await rm(root, { recursive: true, force: true });
 });
 
-beforeAll(async () => {
-  const routeModule = await import("@/app/api/v1/ext/runs/route");
-
-  POST = routeModule.POST;
-});
-
-async function seedProject(
-  slug: string,
-  manifest: Record<string, unknown> = {
-    schemaVersion: 1,
-    name: "Bugfix",
-    nodes: [
-      {
-        id: "run",
-        type: "cli",
-        action: { command: "echo ok" },
-        transitions: { success: "done" },
-      },
-    ],
-  },
-) {
-  const projectId = randomUUID();
-  const flowId = randomUUID();
-  const executorId = randomUUID();
-  const revisionId = randomUUID();
-
-  await (db as any).insert(schema.projects).values({
-    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
-    id: projectId,
-    slug,
-    name: `Project ${slug}`,
-    repoPath: `/tmp/${slug}`,
-    maisterYamlPath: `/tmp/${slug}/maister.yaml`,
-  });
-
-  await (db as any)
-    .insert(schema.platformAcpRunners)
-    .values(testPlatformRunnerRow(executorId, "claude"));
-
-  // Set defaultRunnerId after the platform runner row exists.
-  await (db as any)
-    .update(schema.projects)
-    .set({ defaultRunnerId: executorId })
-    .where(eq(schema.projects.id, projectId));
-
-  // Runner resolution requires the platform-runtime-settings singleton to exist.
-  // Idempotent across multiple seedProject calls (cross-project tests).
-  await (db as any)
-    .insert(schema.platformRuntimeSettings)
-    .values({ id: "singleton", defaultRunnerId: executorId })
-    .onConflictDoNothing();
-
-  await (db as any).insert(schema.flowRevisions).values({
-    id: revisionId,
-    flowRefId: "bugfix",
-    source: "github.com/x/y",
-    versionLabel: "v1.0.0",
-    resolvedRevision: `abc-${revisionId}`,
-    manifestDigest: `sha256-${revisionId}`,
-    installedPath: "/tmp/flows/bugfix",
-    manifest,
-    schemaVersion: 1,
-    packageStatus: "Installed",
-    setupStatus: "done",
-  });
-
-  await (db as any).insert(schema.flows).values({
-    id: flowId,
-    projectId,
-    flowRefId: "bugfix",
-    source: "github.com/x/y",
-    version: "v1.0.0",
-    installedPath: "/tmp/flows/bugfix",
-    manifest,
-    schemaVersion: 1,
-    enabledRevisionId: revisionId,
-    enablementState: "Enabled",
-    trustStatus: "trusted",
-  });
-
-  return { slug, projectId, flowId, executorId, revisionId };
-}
-
-async function seedTask(projectId: string, flowId: string, status = "Backlog") {
+async function task(): Promise<string> {
   const taskId = randomUUID();
 
-  await (db as any).insert(schema.tasks).values({
-    number: Math.trunc(Math.random() * 1e9) + 1,
+  await database.db.insert(tasks).values({
     id: taskId,
-    projectId,
-    title: "Test Task",
-    prompt: "Do something",
-    flowId,
-    status,
-    stage: status,
-    attemptNumber: 1,
+    projectId: fixture.projectId,
+    number: ++number,
+    title: "External compatibility launch",
+    prompt: "Private compatibility task source",
+    flowId: fixture.flowId,
+    runnerId: fixture.runnerId,
   });
 
   return taskId;
 }
 
-function makeRequest(body?: unknown): NextRequest {
+async function ready(taskId: string): Promise<void> {
+  const [current] = await database.db
+    .select({ inputRevision: tasks.qualificationInputRevision })
+    .from(tasks)
+    .where(eq(tasks.id, taskId));
+  const prepared = await prepareTaskQualification(database.db, {
+    projectId: fixture.projectId,
+    taskId,
+    author: { kind: "user", identity: fixture.userId, userId: fixture.userId },
+    request: {
+      requestKey: randomUUID(),
+      expectedInputRevision: current.inputRevision,
+      expectedQualificationRevision: null,
+      qualification: qualificationFixture(),
+      enqueue: false,
+    },
+  });
+
+  await database.db.transaction(prepared.apply);
+  await database.db
+    .update(tasks)
+    .set({ launchIntent: "triage_then_launch", launchMode: "auto" })
+    .where(eq(tasks.id, taskId));
+}
+
+async function input(taskId: string, secret: string) {
+  const response = await OPTIONS(
+    new Request(
+      `http://localhost/api/v1/ext/task-launch-intents/options?${new URLSearchParams({ taskId })}`,
+      { headers: { Authorization: `Bearer ${secret}` } },
+    ),
+  );
+  const options = z
+    .object({
+      taskId: z.string(),
+      taskRevision: z.number(),
+      settingsToken: z.string(),
+    })
+    .parse(await response.json());
+
+  expect(response.status).toBe(200);
+
+  return {
+    taskId,
+    expectedTaskRevision: options.taskRevision,
+    expectedSettingsToken: options.settingsToken,
+  };
+}
+
+function request(
+  body: unknown,
+  secret: string | null,
+  key: string | null = randomUUID(),
+): NextRequest {
   return new NextRequest("http://localhost/api/v1/ext/runs", {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    headers: {
+      "Content-Type": "application/json",
+      ...(secret ? { Authorization: `Bearer ${secret}` } : {}),
+      ...(key ? { "Idempotency-Key": key } : {}),
+    },
+    body: JSON.stringify(body),
   });
 }
 
-beforeEach(async () => {
-  auditMockState.failSuccessScopes.clear();
-  await db.delete(schema.tokenAuditLog as any);
+async function counts(
+  taskId: string,
+): Promise<{ intents: number; runs: number }> {
+  const result = await database.pool.query<{ intents: number; runs: number }>(
+    "SELECT (SELECT count(*)::int FROM task_launch_intents WHERE task_id=$1) AS intents,(SELECT count(*)::int FROM runs WHERE task_id=$1) AS runs",
+    [taskId],
+  );
+
+  return result.rows[0];
+}
+
+it("LA07 legacy launch authenticates before validation and existence-hides foreign task state", async () => {
+  const taskId = await task();
+  const token = await issueToken(
+    {
+      projectId: fixture.projectId,
+      name: "Compatibility scope",
+      scopes: ["runs:launch"],
+    },
+    database.db,
+  );
+
+  expect((await POST(request({ mode: "manual" }, null), {})).status).toBe(401);
+  expect((await POST(request({ taskId }, "mai_invalid"), {})).status).toBe(401);
+  const otherProject = randomUUID();
+  const foreignTask = randomUUID();
+
+  await database.db.insert(projects).values({
+    id: otherProject,
+    slug: otherProject,
+    name: "Foreign",
+    repoPath: `${root}/foreign`,
+    taskKey: "FOREIGN",
+  });
+  await database.db.insert(tasks).values({
+    id: foreignTask,
+    projectId: otherProject,
+    number: 1,
+    title: "Foreign",
+    prompt: "Foreign task",
+    status: "Done",
+  });
+  const missing = await POST(
+    request({ taskId: randomUUID() }, token.secret),
+    {},
+  );
+  const foreign = await POST(
+    request({ taskId: foreignTask }, token.secret),
+    {},
+  );
+
+  expect(missing.status).toBe(404);
+  expect(foreign.status).toBe(404);
+  expect(await foreign.json()).toEqual(await missing.json());
+  expect(await counts(taskId)).toEqual({ intents: 0, runs: 0 });
 });
 
-describe("POST /api/v1/ext/runs", () => {
-  it("IT-LOP-07 IT-EDGE-LOP-03: launch records a Pending receipt and refuses an unmet dependency", async () => {
-    const { projectId, flowId } = await seedProject(
-      `librarian-launch-${randomUUID().slice(0, 8)}`,
-    );
-    const taskId = await seedTask(projectId, flowId);
-    const userId = randomUUID();
-    const conversationId = randomUUID();
-    const segmentId = randomUUID();
-    const turnId = randomUUID();
+it("LA13 legacy new effects require displayed revision/settings and a key, and never admit forged manual authority", async () => {
+  const taskId = await task();
+  const token = await issueToken(
+    {
+      projectId: fixture.projectId,
+      name: "Compatibility upgrade",
+      scopes: ["runs:launch"],
+    },
+    database.db,
+  );
+  const unversioned = await POST(request({ taskId }, token.secret), {});
 
-    await db.insert(schema.users).values({
-      id: userId,
-      email: `launch-${userId.slice(0, 8)}@example.test`,
-      role: "member",
-      accountStatus: "active",
-      passwordHash: "x",
-    });
-    await db
-      .insert(schema.projectMembers)
-      .values({ projectId, userId, role: "owner" });
-    await db
-      .insert(schema.librarianConversations)
-      .values({ id: conversationId, userId });
-    await db.insert(schema.librarianSegments).values({
-      id: segmentId,
-      conversationId,
-      ordinal: 0,
-      startedAt: new Date(),
-    });
-    await db.insert(schema.librarianTurns).values({
-      id: turnId,
-      conversationId,
-      segmentId,
-      variant: "owner_message",
-      status: "running",
-      contextSnapshotId: randomUUID(),
-    });
-    const token = await issueLibrarianTurnToken(
+  expect(unversioned.status).toBe(422);
+  expect(await unversioned.json()).toMatchObject({
+    code: "CONFIG",
+    details: { reason: "launch_request_upgrade_required" },
+  });
+  const body = await input(taskId, token.secret);
+
+  expect((await POST(request(body, token.secret, null), {})).status).toBe(422);
+  expect(
+    (
+      await POST(
+        request(
+          { ...body, mode: "manual", actorUserId: fixture.userId },
+          token.secret,
+        ),
+        {},
+      )
+    ).status,
+  ).toBe(422);
+  expect(
+    (await POST(request({ ...body, flowId: fixture.flowId }, token.secret), {}))
+      .status,
+  ).toBe(422);
+  const unqualified = await POST(request(body, token.secret), {});
+
+  expect(unqualified.status).toBe(409);
+  expect(await unqualified.json()).toMatchObject({
+    details: { reason: "qualification_required" },
+  });
+  expect(await counts(taskId)).toEqual({ intents: 0, runs: 0 });
+});
+
+it("LA13 legacy versioned acceptance returns a truthful automatic intent and replays frozen input after task/triage drift", async () => {
+  const taskId = await task();
+  const token = await issueToken(
+    {
+      projectId: fixture.projectId,
+      name: "Compatibility accepted",
+      scopes: ["runs:launch"],
+    },
+    database.db,
+  );
+
+  await ready(taskId);
+  const body = await input(taskId, token.secret);
+  const key = randomUUID();
+  const accepted = await POST(request(body, token.secret, key), {});
+  const receipt = z
+    .object({
+      accepted: z.literal(true),
+      code: z.literal("launch_pending"),
+      intentId: z.string(),
+      state: z.string(),
+    })
+    .parse(await accepted.json());
+
+  expect(accepted.status).toBe(202);
+  expect(accepted.headers.get("location")).toBe(
+    `/api/v1/ext/task-launch-intents/${receipt.intentId}`,
+  );
+  expect(await counts(taskId)).toEqual({ intents: 1, runs: 0 });
+  await database.db
+    .update(tasks)
+    .set({
+      prompt: "Changed after acceptance",
+      revision: 1,
+      launchMode: "manual",
+    })
+    .where(eq(tasks.id, taskId));
+  const replay = await POST(request(body, token.secret, key), {});
+
+  expect(replay.status).toBe(202);
+  expect(await replay.json()).toMatchObject({
+    intentId: receipt.intentId,
+    accepted: true,
+  });
+  expect(
+    (
+      await POST(
+        request({ ...body, expectedTaskRevision: 1 }, token.secret, key),
+        {},
+      )
+    ).status,
+  ).toBe(409);
+  const [stored] = await database.db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.id, receipt.intentId));
+
+  expect(stored.basis.kind).toBe("automatic");
+  expect(JSON.stringify(stored.inputSnapshot)).toContain(
+    "Private compatibility task source",
+  );
+  expect(JSON.stringify(stored.inputSnapshot)).not.toContain(
+    "Changed after acceptance",
+  );
+  expect(await counts(taskId)).toEqual({ intents: 1, runs: 0 });
+});
+
+it("LA13 compatibility preserves runner aliases and real Git branch selections while rejecting conflicts", async () => {
+  const taskId = await task();
+  const token = await issueToken(
+    {
+      projectId: fixture.projectId,
+      name: "Compatibility alias",
+      scopes: ["runs:launch"],
+    },
+    database.db,
+  );
+
+  await git(fixture.repo, "branch", "develop");
+  await git(fixture.repo, "branch", "release");
+  await database.db
+    .update(tasks)
+    .set({ baseBranch: "develop", targetBranch: "release" })
+    .where(eq(tasks.id, taskId));
+  await ready(taskId);
+  const body = await input(taskId, token.secret);
+  const conflict = await POST(
+    request(
       {
-        ownerUserId: userId,
-        turnId,
-        scopes: ["runs:launch"],
-        expiresAt: new Date(Date.now() + 60_000),
+        ...body,
+        runnerId: fixture.runnerId,
+        executorOverrideId: "other-runner",
       },
-      db,
-    );
-    const request = () => {
-      const req = makeRequest({ taskId });
+      token.secret,
+    ),
+    {},
+  );
 
-      req.headers.set("authorization", `Bearer ${token.secret}`);
-      req.headers.set("Idempotency-Key", "launch-1");
+  expect(conflict.status).toBe(422);
+  const accepted = await POST(
+    request(
+      {
+        ...body,
+        executorOverrideId: fixture.runnerId,
+        baseBranch: "develop",
+        targetBranch: "release",
+      },
+      token.secret,
+    ),
+    {},
+  );
+  const receipt = await accepted.json();
+  const [intent] = await database.db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.id, receipt.intentId));
 
-      return req;
-    };
-    const first = await POST(request(), {});
-    const firstBody = await first.json();
-    const replay = await POST(request(), {});
-
-    expect(first.status).toBe(202);
-    expect(firstBody).toMatchObject({ status: "Pending", queuePosition: 1 });
-    expect(replay.status).toBe(202);
-    expect(await replay.json()).toEqual(firstBody);
-    const [run] = await db
-      .select()
-      .from(schema.runs)
-      .where(eq(schema.runs.id, firstBody.runId));
-    const [operation] = await db
-      .select()
-      .from(schema.librarianOperations)
-      .where(eq(schema.librarianOperations.conversationId, conversationId));
-
-    expect(run.librarianOperationId).toBe(operation.id);
-    expect(operation.status).toBe("succeeded");
-
-    const secondTaskId = await seedTask(projectId, flowId);
-
-    await db.insert(schema.taskRelations).values({
-      id: randomUUID(),
-      projectId,
-      fromTaskId: secondTaskId,
-      toTaskId: taskId,
-      kind: "requires",
-      actorType: "user",
-      actorId: userId,
-    });
-    const secondRequest = (key: string) => {
-      const req = makeRequest({ taskId: secondTaskId });
-
-      req.headers.set("authorization", `Bearer ${token.secret}`);
-      req.headers.set("Idempotency-Key", key);
-
-      return req;
-    };
-    const blocked = await POST(secondRequest("launch-2"), {});
-
-    expect(blocked.status).toBe(409);
-    expect(await blocked.json()).toMatchObject({ code: "PRECONDITION" });
-    const firstRunAfterBlocked = await db
-      .select()
-      .from(schema.runs)
-      .where(eq(schema.runs.id, firstBody.runId));
-
-    expect(firstRunAfterBlocked).toHaveLength(1);
-    await db
-      .update(schema.runs)
-      .set({ status: "Done" })
-      .where(eq(schema.runs.id, firstBody.runId));
-    await db
-      .update(schema.tasks)
-      .set({ status: "Done" })
-      .where(eq(schema.tasks.id, taskId));
-
-    const second = await POST(secondRequest("launch-3"), {});
-
-    expect(second.status).toBe(202);
-    expect(await second.json()).toMatchObject({ status: "Pending" });
-    const secondRuns = await db
-      .select()
-      .from(schema.runs)
-      .where(eq(schema.runs.taskId, secondTaskId));
-
-    expect(secondRuns).toHaveLength(1);
+  expect(accepted.status).toBe(202);
+  expect(intent.settingsSnapshot.sessions[0].runnerId).toBe(fixture.runnerId);
+  expect(intent.settingsSnapshot).toMatchObject({
+    baseBranch: "develop",
+    targetBranch: "release",
+    baseCommit: await git(fixture.repo, "rev-parse", "develop"),
   });
+  expect(await counts(taskId)).toEqual({ intents: 1, runs: 0 });
+});
 
-  it("missing/invalid token → 401, no audit row", async () => {
-    const { projectId, flowId } = await seedProject(
-      `ext-runs-post-${randomUUID().slice(0, 8)}`,
-    );
-    const taskId = await seedTask(projectId, flowId, "Backlog");
+it("IT-LOP-07 legacy Librarian receipts survive cutover without rewriting historical results or granting new launch authority", async () => {
+  const taskId = await task();
+  const turnId = await seedLibrarianTurn(database.db, fixture.userId);
+  const [turn] = await database.db
+    .select()
+    .from(librarianTurns)
+    .where(eq(librarianTurns.id, turnId));
+  const token = await issueLibrarianTurnToken(
+    {
+      ownerUserId: fixture.userId,
+      turnId,
+      scopes: ["runs:launch"],
+      expiresAt: new Date(Date.now() + 60_000),
+    },
+    database.db,
+  );
+  const key = randomUUID();
+  const body = { taskId };
+  const operation = await admitLibrarianOperation(
+    {
+      conversationId: turn.conversationId,
+      segmentId: turn.segmentId,
+      turnId,
+      idempotencyKey: key,
+      kind: "run_launch",
+      target: { route: "/api/v1/ext/runs" },
+      body,
+      allowDuplicate: false,
+    },
+    database.db,
+  );
+  const historicalReceipt = {
+    runId: randomUUID(),
+    status: "Pending",
+    queuePosition: 1,
+  };
 
-    const req = makeRequest({ taskId });
+  await settleLibrarianOperation(
+    { id: operation.id, result: { statusCode: 202, body: historicalReceipt } },
+    database.db,
+  );
+  const before = await database.db
+    .select()
+    .from(librarianOperations)
+    .where(eq(librarianOperations.id, operation.id));
+  const replay = await POST(request(body, token.secret, key), {});
 
-    req.headers.set("authorization", "Bearer invalid");
-
-    const res = await POST(req, {});
-
-    expect(res.status).toBe(401);
-
-    const auditRows = await db
+  expect(replay.status).toBe(202);
+  expect(await replay.json()).toEqual(historicalReceipt);
+  expect(
+    await database.db
       .select()
-      .from(schema.tokenAuditLog as any)
-      .execute();
+      .from(librarianOperations)
+      .where(eq(librarianOperations.id, operation.id)),
+  ).toEqual(before);
+  const fresh = await POST(request(body, token.secret), {});
 
-    expect(auditRows).toHaveLength(0);
+  expect(fresh.status).toBe(409);
+  const anotherTask = await task();
+  const newEffect = await POST(
+    request({ taskId: anotherTask }, token.secret),
+    {},
+  );
+
+  expect(newEffect.status).toBe(422);
+  expect(await newEffect.json()).toMatchObject({
+    details: { reason: "launch_request_upgrade_required" },
   });
+  expect(await counts(taskId)).toEqual({ intents: 0, runs: 0 });
+  expect(await counts(anotherTask)).toEqual({ intents: 0, runs: 0 });
+});
 
-  it("task in another project → 404, audit row (wrong-project)", async () => {
-    const slug1 = `ext-runs-cross1-${randomUUID().slice(0, 8)}`;
-    const slug2 = `ext-runs-cross2-${randomUUID().slice(0, 8)}`;
-    const { projectId: proj1 } = await seedProject(slug1);
-    const { projectId: proj2, flowId: flow2 } = await seedProject(slug2);
+it("LA13 a real required-audit outage rolls back intent acceptance and same-key Librarian retry settles admitted work", async () => {
+  const taskId = await task();
+  const turnId = await seedLibrarianTurn(database.db, fixture.userId);
+  const token = await issueLibrarianTurnToken(
+    {
+      ownerUserId: fixture.userId,
+      turnId,
+      scopes: ["runs:launch"],
+      expiresAt: new Date(Date.now() + 60_000),
+    },
+    database.db,
+  );
 
-    const taskId = await seedTask(proj2, flow2, "Backlog");
+  await ready(taskId);
+  const body = await input(taskId, token.secret);
+  const key = randomUUID();
 
-    const token = await issueToken(
-      { projectId: proj1, name: "Token for Proj1" },
-      db,
-    );
+  await database.pool.query(
+    `CREATE FUNCTION legacy_launch_audit_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.token_id='${token.tokenId}' AND NEW.result='ok' THEN RAISE EXCEPTION 'fixture audit unavailable' USING ERRCODE='40001'; END IF; RETURN NEW; END; $$`,
+  );
+  await database.pool.query(
+    "CREATE TRIGGER legacy_launch_audit_fault BEFORE INSERT ON token_audit_log FOR EACH ROW EXECUTE FUNCTION legacy_launch_audit_fault()",
+  );
+  try {
+    const unavailable = await POST(request(body, token.secret, key), {});
 
-    const req = makeRequest({ taskId });
-
-    req.headers.set("authorization", `Bearer ${token.secret}`);
-
-    const res = await POST(req, {});
-
-    expect(res.status).toBe(404);
-
-    const auditRows = await db
-      .select()
-      .from(schema.tokenAuditLog as any)
-      .execute();
-
-    expect(auditRows).toHaveLength(1);
-    expect(auditRows[0]).toMatchObject({
-      result: "error",
-      status_code: 404,
-      scope_used: "runs:launch",
-    });
-  });
-
-  it("cross-project task that is NOT in Backlog → 404 (existence-hide, not a 409 state leak)", async () => {
-    const { projectId: proj1 } = await seedProject(
-      `ext-runs-leak1-${randomUUID().slice(0, 8)}`,
-    );
-    const { projectId: proj2, flowId: flow2 } = await seedProject(
-      `ext-runs-leak2-${randomUUID().slice(0, 8)}`,
-    );
-
-    // A task in proj2 that is NOT in Backlog. Without the route's project-scoped
-    // pre-check, launchRun's project-unscoped lookup throws "task is not in
-    // Backlog" → 409, revealing the task exists in another project + its state.
-    const taskId = randomUUID();
-
-    await (db as any).insert(schema.tasks).values({
-      number: Math.trunc(Math.random() * 1e9) + 1,
-      id: taskId,
-      projectId: proj2,
-      title: "Other-project task",
-      prompt: "x",
-      flowId: flow2,
-      status: "InFlight",
-      stage: "Backlog",
-      attemptNumber: 1,
-    });
-
-    const token = await issueToken({ projectId: proj1, name: "proj1" }, db);
-
-    const req = makeRequest({ taskId });
-
-    req.headers.set("authorization", `Bearer ${token.secret}`);
-
-    const res = await POST(req, {});
-
-    expect(res.status).toBe(404);
-    expect((await res.json()).code).toBe("NOT_FOUND");
-
-    // No run created for the cross-project task.
-    const runRows = await (db as any)
-      .select()
-      .from(schema.runs)
-      .where(eq(schema.runs.taskId, taskId))
-      .execute();
-
-    expect(runRows).toHaveLength(0);
-  });
-
-  it("Backlog task in token's project → 202 {runId, status, queuePosition?}, audit row", async () => {
-    const { projectId, flowId } = await seedProject(
-      `ext-runs-launch-${randomUUID().slice(0, 8)}`,
-    );
-    const taskId = await seedTask(projectId, flowId, "Backlog");
-
-    const token = await issueToken({ projectId, name: "Test Token" }, db);
-
-    const req = makeRequest({ taskId });
-
-    req.headers.set("authorization", `Bearer ${token.secret}`);
-
-    const res = await POST(req, {});
-
-    expect(res.status).toBe(202);
-
-    const body = await res.json();
-
-    expect(body).toHaveProperty("runId");
-    expect(typeof body.runId).toBe("string");
-    expect(body).toHaveProperty("status");
-
-    const auditRows = await db
-      .select()
-      .from(schema.tokenAuditLog as any)
-      .execute();
-
-    expect(auditRows).toHaveLength(1);
-    expect(auditRows[0]).toMatchObject({
-      result: "ok",
-      status_code: 202,
-      scope_used: "runs:launch",
-      endpoint: "POST /api/v1/ext/runs",
-    });
-  });
-
-  it("refuses a legacy pinned revision with CONFIG before creating launch side effects", async () => {
-    const { projectId, flowId } = await seedProject(
-      `ext-runs-legacy-${randomUUID().slice(0, 8)}`,
-      { schemaVersion: 1, name: "Legacy bugfix", steps: [] },
-    );
-    const taskId = await seedTask(projectId, flowId, "Backlog");
-    const token = await issueToken({ projectId, name: "Legacy Token" }, db);
-    const req = makeRequest({ taskId });
-    const sessionCountBefore = (
-      await (db as any).select().from(schema.runSessions).execute()
-    ).length;
-
-    req.headers.set("authorization", `Bearer ${token.secret}`);
-
-    const response = await POST(req, {});
-
-    expect(response.status).toBe(422);
-    expect(await response.json()).toMatchObject({
-      code: "CONFIG",
-      message:
-        "legacy steps[] flows are not supported since engine 3.0.0; republish the package with nodes[]",
-    });
-    expect(
-      await (db as any)
-        .select()
-        .from(schema.runs)
-        .where(eq(schema.runs.taskId, taskId))
-        .execute(),
-    ).toHaveLength(0);
-    expect(
-      await (db as any)
-        .select()
-        .from(schema.workspaces)
-        .where(eq(schema.workspaces.projectId, projectId))
-        .execute(),
-    ).toHaveLength(0);
-    expect(
-      await (db as any).select().from(schema.runSessions).execute(),
-    ).toHaveLength(sessionCountBefore);
+    expect(unavailable.status).toBe(503);
+    expect(await counts(taskId)).toEqual({ intents: 0, runs: 0 });
     expect(
       (
-        await (db as any)
-          .select()
-          .from(schema.tasks)
-          .where(eq(schema.tasks.id, taskId))
-          .execute()
-      )[0],
-    ).toMatchObject({ status: "Backlog", attemptNumber: 1 });
+        await database.pool.query<{ status: string }>(
+          "SELECT status FROM librarian_operations WHERE turn_id=$1",
+          [turnId],
+        )
+      ).rows,
+    ).toEqual([{ status: "admitted" }]);
+  } finally {
+    await database.pool.query(
+      "DROP TRIGGER legacy_launch_audit_fault ON token_audit_log",
+    );
+    await database.pool.query("DROP FUNCTION legacy_launch_audit_fault()");
+  }
+  const recovered = await POST(request(body, token.secret, key), {});
+  const recoveredBody = await recovered.json();
+
+  expect(recovered.status).toBe(202);
+  expect(recoveredBody).toMatchObject({
+    accepted: true,
+    code: "launch_pending",
   });
+  expect(await counts(taskId)).toEqual({ intents: 1, runs: 0 });
+  expect(
+    (
+      await database.pool.query<{ status: string; intent_id: string }>(
+        "SELECT status,result->'body'->>'intentId' AS intent_id FROM librarian_operations WHERE turn_id=$1",
+        [turnId],
+      )
+    ).rows,
+  ).toEqual([{ status: "succeeded", intent_id: recoveredBody.intentId }]);
+});
 
-  it("accepts deprecated executorOverrideId as a runnerId alias", async () => {
-    const { projectId, flowId, executorId } = await seedProject(
-      `ext-runs-legacy-runner-${randomUUID().slice(0, 8)}`,
-    );
-    const taskId = await seedTask(projectId, flowId, "Backlog");
-    const token = await issueToken({ projectId, name: "Test Token" }, db);
+it("LA07 personal token owner attribution and live membership survive compatibility admission", async () => {
+  const ownerId = await seedActiveUser(database.db);
 
-    const req = makeRequest({ taskId, executorOverrideId: executorId });
+  await database.db
+    .update(users)
+    .set({ mustChangePassword: false })
+    .where(eq(users.id, ownerId));
+  await database.db
+    .insert(projectMembers)
+    .values({ projectId: fixture.projectId, userId: ownerId, role: "owner" });
+  const token = await issueToken(
+    {
+      projectId: null,
+      name: "Global compatibility",
+      tokenKind: "user",
+      ownerUserId: ownerId,
+      scopes: ["runs:launch"],
+    },
+    database.db,
+  );
+  const taskId = await task();
 
-    req.headers.set("authorization", `Bearer ${token.secret}`);
+  await ready(taskId);
+  const body = await input(taskId, token.secret);
+  const accepted = await POST(request(body, token.secret), {});
+  const receipt = await accepted.json();
+  const [intent] = await database.db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.id, receipt.intentId));
 
-    const res = await POST(req, {});
+  expect(accepted.status).toBe(202);
+  expect(intent.actorUserId).toBe(ownerId);
+  expect(intent.basis.kind).toBe("automatic");
+  await database.db
+    .delete(projectMembers)
+    .where(eq(projectMembers.userId, ownerId));
+  const hidden = await POST(request(body, token.secret), {});
 
-    expect(res.status).toBe(202);
+  expect(hidden.status).toBe(404);
+});
 
-    const body = await res.json();
-    const sessionRows = await (db as any)
-      .select()
-      .from(schema.runSessions)
-      .where(eq(schema.runSessions.runId, body.runId))
-      .execute();
+it("IT-EDGE-LOP-03 compatibility admission preserves unresolved dependency protections", async () => {
+  const taskId = await task();
+  const dependencyId = await task();
+  const token = await issueToken(
+    {
+      projectId: fixture.projectId,
+      name: "Compatibility dependency",
+      scopes: ["runs:launch"],
+    },
+    database.db,
+  );
 
-    expect(sessionRows[0].runnerId).toBe(executorId);
+  await ready(taskId);
+  await database.db.insert(taskRelations).values({
+    id: randomUUID(),
+    projectId: fixture.projectId,
+    fromTaskId: taskId,
+    toTaskId: dependencyId,
+    kind: "requires",
+    actorType: "user",
+    actorId: fixture.userId,
   });
+  const body = await input(taskId, token.secret);
+  const response = await POST(request(body, token.secret), {});
 
-  it("rejects session-only flow and delivery-policy overrides", async () => {
-    const { projectId, flowId } = await seedProject(
-      `ext-runs-v1-subset-${randomUUID().slice(0, 8)}`,
-    );
-    const taskId = await seedTask(projectId, flowId, "Backlog");
-    const token = await issueToken({ projectId, name: "Test Token" }, db);
+  expect(response.status).toBe(409);
+  expect(await counts(taskId)).toEqual({ intents: 0, runs: 0 });
+});
 
-    const req = makeRequest({
-      taskId,
-      flowId,
-      deliveryPolicy: {
-        strategy: "merge",
-        push: "never",
-        trigger: "manual",
-        targetBranch: "main",
-      },
-    });
+it("LA13 compatibility preserves the canonical legacy Flow refusal before accepting execution", async () => {
+  const [flow] = await database.db
+    .select()
+    .from(flows)
+    .where(eq(flows.id, fixture.flowId));
 
-    req.headers.set("authorization", `Bearer ${token.secret}`);
+  if (!flow?.enabledRevisionId)
+    throw new Error("Launch fixture has no Flow revision");
+  const [revision] = await database.db
+    .select()
+    .from(flowRevisions)
+    .where(eq(flowRevisions.id, flow.enabledRevisionId));
+  const flowId = randomUUID();
+  const revisionId = randomUUID();
+  const manifest = { schemaVersion: 1, name: "Legacy fixture", steps: [] };
 
-    const res = await POST(req, {});
-
-    expect(res.status).toBe(422);
-    expect((await res.json()).code).toBe("CONFIG");
-
-    const runRows = await (db as any)
-      .select()
-      .from(schema.runs)
-      .where(eq(schema.runs.taskId, taskId))
-      .execute();
-
-    expect(runRows).toHaveLength(0);
+  await database.db.insert(flowRevisions).values({
+    ...revision,
+    id: revisionId,
+    flowRefId: flowId,
+    manifest,
+    manifestDigest: "b".repeat(64),
   });
-
-  it("forced success-audit failure rolls back the run launch rows", async () => {
-    const { projectId, flowId } = await seedProject(
-      `ext-runs-audit-rb-${randomUUID().slice(0, 8)}`,
-    );
-    const taskId = await seedTask(projectId, flowId, "Backlog");
-    const token = await issueToken({ projectId, name: "Test Token" }, db);
-
-    auditMockState.failSuccessScopes.add("runs:launch");
-
-    const req = makeRequest({ taskId });
-
-    req.headers.set("authorization", `Bearer ${token.secret}`);
-
-    await expect(POST(req, {})).rejects.toThrow("forced audit failure");
-
-    const runRows = await (db as any)
-      .select()
-      .from(schema.runs)
-      .where(eq(schema.runs.taskId, taskId))
-      .execute();
-
-    expect(runRows).toHaveLength(0);
-
-    const taskRows = await (db as any)
-      .select()
-      .from(schema.tasks)
-      .where(eq(schema.tasks.id, taskId))
-      .execute();
-
-    // ADR-119: attempt_number is allocated atomically BEFORE the launch tx (the
-    // sole writer, `UPDATE … attempt_number + 1 RETURNING`) and is intentionally
-    // NOT rolled back on a post-allocation failure — a burned monotonic-counter
-    // gap with no meaning. The run rows roll back (asserted above) and the task
-    // stays Backlog; only the counter advances to 2.
-    expect(taskRows[0]).toMatchObject({
-      status: "Backlog",
-      attemptNumber: 2,
-    });
-
-    const auditRows = await db
-      .select()
-      .from(schema.tokenAuditLog as any)
-      .execute();
-
-    expect(auditRows).toHaveLength(0);
+  await database.db.insert(flows).values({
+    ...flow,
+    id: flowId,
+    flowRefId: flowId,
+    enabledRevisionId: revisionId,
+    manifest,
   });
+  const taskId = await task();
 
-  it("user-owned token attributes launched run to the owner user", async () => {
-    const { projectId, flowId } = await seedProject(
-      `ext-runs-owner-${randomUUID().slice(0, 8)}`,
-    );
-    const ownerUserId = randomUUID();
-    const taskId = await seedTask(projectId, flowId, "Backlog");
+  await database.db.update(tasks).set({ flowId }).where(eq(tasks.id, taskId));
+  await ready(taskId);
+  const token = await issueToken(
+    {
+      projectId: fixture.projectId,
+      name: "Legacy Flow compatibility",
+      scopes: ["runs:launch"],
+    },
+    database.db,
+  );
+  const body = await input(taskId, token.secret);
+  const response = await POST(request(body, token.secret), {});
 
-    await (db as any).insert(schema.users).values({
-      id: ownerUserId,
-      email: `run-owner-${ownerUserId.slice(0, 8)}@example.test`,
-      role: "member",
-      accountStatus: "active",
-      passwordHash: "x",
-    });
-
-    const token = await issueToken(
-      {
-        projectId,
-        name: "Personal Run Agent",
-        tokenKind: "user",
-        ownerUserId,
-        scopes: ["runs:launch"],
-      },
-      db,
-    );
-
-    const req = makeRequest({ taskId });
-
-    req.headers.set("authorization", `Bearer ${token.secret}`);
-
-    const res = await POST(req, {});
-
-    expect(res.status).toBe(202);
-
-    const body = await res.json();
-    const runRows = await (db as any)
-      .select()
-      .from(schema.runs)
-      .where(eq(schema.runs.id, body.runId))
-      .execute();
-
-    expect(runRows[0].createdByUserId).toBe(ownerUserId);
+  expect(response.status).toBe(422);
+  expect(await response.json()).toMatchObject({
+    code: "CONFIG",
+    details: { reason: "flow_legacy_steps" },
   });
+  expect(await counts(taskId)).toEqual({ intents: 0, runs: 0 });
+});
 
-  it("global personal token launches a task when its owner may launch in the project", async () => {
-    const { projectId, flowId } = await seedProject(
-      `ext-runs-global-owner-${randomUUID().slice(0, 8)}`,
-    );
-    const ownerUserId = randomUUID();
-    const taskId = await seedTask(projectId, flowId, "Backlog");
+it("LA13 compatibility returns a run id only after its accepted intent is actually bound", async () => {
+  const taskId = await task();
+  const token = await issueToken(
+    {
+      projectId: fixture.projectId,
+      name: "Bound compatibility",
+      scopes: ["runs:launch"],
+    },
+    database.db,
+  );
 
-    await (db as any).insert(schema.users).values({
-      id: ownerUserId,
-      email: `global-run-owner-${ownerUserId.slice(0, 8)}@example.test`,
-      role: "member",
-      accountStatus: "active",
-      passwordHash: "x",
-    });
-    await (db as any)
-      .insert(schema.projectMembers)
-      .values({ projectId, userId: ownerUserId, role: "owner" });
+  await ready(taskId);
+  const body = await input(taskId, token.secret);
+  const key = randomUUID();
+  const accepted = await POST(request(body, token.secret, key), {});
+  const pending = await accepted.json();
 
-    const token = await issueToken(
-      {
-        projectId: null,
-        name: "Global Personal Run Agent",
-        tokenKind: "user",
-        ownerUserId,
-        scopes: ["runs:launch"],
-      },
-      db,
-    );
-    const req = makeRequest({ taskId });
+  expect(pending).toMatchObject({ accepted: true, code: "launch_pending" });
+  expect(pending).not.toHaveProperty("runId");
+  const bound = await bindPendingTaskLaunchFixture(database, pending.intentId);
+  const replay = await POST(request(body, token.secret, key), {});
 
-    req.headers.set("authorization", `Bearer ${token.secret}`);
-
-    const res = await POST(req, {});
-
-    expect(res.status).toBe(202);
-
-    const body = await res.json();
-    const runRows = await (db as any)
-      .select()
-      .from(schema.runs)
-      .where(eq(schema.runs.id, body.runId))
-      .execute();
-
-    expect(runRows[0]).toMatchObject({
-      projectId,
-      taskId,
-      createdByUserId: ownerUserId,
-    });
+  expect(replay.status).toBe(202);
+  expect(await replay.json()).toEqual({
+    runId: bound.runId,
+    status: "Pending",
+    intentId: pending.intentId,
   });
-
-  it("global personal token hides a task when its owner cannot access the project", async () => {
-    const { projectId, flowId } = await seedProject(
-      `ext-runs-global-hidden-${randomUUID().slice(0, 8)}`,
-    );
-    const ownerUserId = randomUUID();
-    const taskId = await seedTask(projectId, flowId, "Backlog");
-
-    await (db as any).insert(schema.users).values({
-      id: ownerUserId,
-      email: `global-run-hidden-${ownerUserId.slice(0, 8)}@example.test`,
-      role: "member",
-      accountStatus: "active",
-      passwordHash: "x",
-    });
-
-    const token = await issueToken(
-      {
-        projectId: null,
-        name: "Global Personal Run Agent Without Access",
-        tokenKind: "user",
-        ownerUserId,
-        scopes: ["runs:launch"],
-      },
-      db,
-    );
-    const req = makeRequest({ taskId });
-
-    req.headers.set("authorization", `Bearer ${token.secret}`);
-
-    const res = await POST(req, {});
-
-    expect(res.status).toBe(404);
-    expect(await res.json()).toMatchObject({
-      code: "NOT_FOUND",
-      message: "resource not found",
-    });
-    expect(
-      await (db as any)
-        .select()
-        .from(schema.runs)
-        .where(eq(schema.runs.taskId, taskId))
-        .execute(),
-    ).toHaveLength(0);
-  });
+  expect(await counts(taskId)).toEqual({ intents: 1, runs: 1 });
 });
