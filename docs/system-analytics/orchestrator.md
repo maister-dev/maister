@@ -632,9 +632,15 @@ uncommitted children under READ COMMITTED, and would both read the same
 pre-insert count — so both would admit and the ancestor's cap would be blown.
 Admission therefore also takes the delegation lock on the **tree root** before
 counting: the coarsest scope that contains every ancestor, still per-tree rather
-than the platform-wide mutex. The order is always parent-then-root on every
-path, so admissions cannot deadlock; when the parent IS the root the key repeats
-and the advisory lock is re-entrant within the transaction.
+than the platform-wide mutex. The shared helper takes delegation advisory locks
+in tree-root-then-parent order, including task/plan pre-admission. A root owner
+can reenter admission for a nested parent while a competing nested admission
+waits at the root; it cannot hold that nested key and create an inverted cycle.
+The actual chain and bounds are reread after locking. Changed ancestry refuses
+with `CONFLICT/delegation_lineage_changed`; a missing, cyclic or over-64 chain
+refuses with `CONFIG/delegation_lineage_invalid`. When parent and root coincide,
+one reentrant key suffices. These advisory locks do not replace current source
+checks or the decisive Run/assignment row locks.
 
 ### Active-children concurrency is a queue, not a refusal
 

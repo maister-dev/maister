@@ -1,7 +1,9 @@
 import type { DelegationBounds } from "@/lib/run-results/types";
+import type { SqlDatabase } from "@/lib/db/sql-types";
 
 import { randomUUID } from "node:crypto";
 
+import { sql } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
@@ -18,6 +20,7 @@ import {
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
+import { pgErrorOf } from "@/lib/db/pg-error";
 import { admitDelegatedChild } from "@/lib/orchestrator/admission";
 import { writeDelegationBoundsIfChanged } from "@/lib/orchestrator/bounds-store";
 import { promoteNextPending, tryStartRun } from "@/lib/scheduler";
@@ -440,6 +443,112 @@ describe("the per-ancestor child-count budget (AC-28)", () => {
   // different lock keys and cannot see each other's uncommitted children. Both
   // would read the same pre-insert count and both admit, blowing the ancestor's
   // cap. Admission therefore serializes on the TREE ROOT before counting.
+  it("IT-CBC-02 serializes root and nested reentrant admissions without inverted advisory locks", async () => {
+    const root = await seedRun({});
+    const nested = await seedRun({ parentRunId: root, rootRunId: root });
+    const scopedDb = db as unknown as SqlDatabase;
+
+    type Outcome =
+      | Readonly<{ kind: "admitted" }>
+      | Readonly<{ kind: "database_error"; sqlState: string | undefined }>;
+    const failed = (error: unknown): Outcome => ({
+      kind: "database_error",
+      sqlState: pgErrorOf(error)?.code,
+    });
+    let nestedAdmission: Promise<Outcome> | undefined;
+    const rootAdmission: Outcome = await scopedDb
+      .transaction(async (tx): Promise<Outcome> => {
+        await tx.execute(sql`SET LOCAL deadlock_timeout='100ms'`);
+        const rootPid = (await tx.execute(sql`SELECT pg_backend_pid() AS pid`))
+          .rows[0]!.pid;
+
+        await admitDelegatedChild(tx, { parentRunId: root });
+        nestedAdmission = scopedDb
+          .transaction(async (racer): Promise<Outcome> => {
+            await racer.execute(sql`SET LOCAL deadlock_timeout='5s'`);
+            await admitDelegatedChild(racer, { parentRunId: nested });
+
+            return { kind: "admitted" };
+          })
+          .catch(failed);
+        await vi.waitFor(async () => {
+          const waiting = await pool.query<{ waiting: boolean }>(
+            "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1::integer=ANY(pg_blocking_pids(pid))) AS waiting",
+            [rootPid],
+          );
+
+          expect(waiting.rows[0]?.waiting).toBe(true);
+        });
+        await admitDelegatedChild(tx, { parentRunId: nested });
+
+        return { kind: "admitted" };
+      })
+      .catch(failed);
+    const nestedOutcome = await nestedAdmission;
+
+    expect(rootAdmission).toEqual({ kind: "admitted" });
+    expect(nestedOutcome).toEqual({ kind: "admitted" });
+    expect(
+      (await pool.query("SELECT count(*)::int AS count FROM runs")).rows,
+    ).toEqual([{ count: 2 }]);
+  });
+
+  it("IT-CBC-02 refuses ancestry changed while waiting for the tree-root lock", async () => {
+    const root = await seedRun({});
+    const replacementRoot = await seedRun({});
+    const nested = await seedRun({ parentRunId: root, rootRunId: root });
+    const holder = await pool.connect();
+    let pending:
+      Promise<Readonly<{ code: string; reason: string }>> | undefined;
+
+    try {
+      await holder.query("BEGIN");
+      await holder.query(
+        "SELECT pg_advisory_xact_lock($1::int,hashtext($2)::int)",
+        [DELEGATION_LOCK_NAMESPACE, root],
+      );
+      const holderPid = (
+        await holder.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")
+      ).rows[0]!.pid;
+
+      pending = admit(nested).then(
+        () => ({ code: "admitted", reason: "" }),
+        (error: unknown) => ({
+          code: isMaisterError(error)
+            ? error.code
+            : (pgErrorOf(error)?.code ?? "unexpected_error"),
+          reason: isMaisterError(error)
+            ? String(error.details?.reason ?? "")
+            : "",
+        }),
+      );
+      await vi.waitFor(async () => {
+        const waiting = await pool.query<{ waiting: boolean }>(
+          "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1::integer=ANY(pg_blocking_pids(pid))) AS waiting",
+          [holderPid],
+        );
+
+        expect(waiting.rows[0]?.waiting).toBe(true);
+      });
+      await holder.query(
+        "UPDATE runs SET parent_run_id=$2,root_run_id=$2 WHERE id=$1",
+        [nested, replacementRoot],
+      );
+      await holder.query("COMMIT");
+      expect(await pending).toEqual({
+        code: "CONFLICT",
+        reason: "delegation_lineage_changed",
+      });
+      expect(
+        (await pool.query("SELECT count(*)::int AS count FROM runs")).rows,
+      ).toEqual([{ count: 3 }]);
+    } finally {
+      await holder.query("ROLLBACK");
+      holder.release();
+      await pending;
+    }
+  });
+
   it("CROSS-PARENT racers serialize on the tree root, so the ancestor cap holds", async () => {
     process.env.MAISTER_MAX_ORCHESTRATOR_FANOUT = "16";
     process.env.MAISTER_ORCHESTRATOR_MAX_DEPTH = "5";
@@ -465,15 +574,15 @@ describe("the per-ancestor child-count budget (AC-28)", () => {
 
     try {
       await holder.query("BEGIN");
-      // A winning admission under c1, in admission's own lock order: its parent
-      // first, then the tree root, then its children — none yet committed.
-      await holder.query(
-        `SELECT pg_advisory_xact_lock($1::int, hashtext($2)::int)`,
-        [DELEGATION_LOCK_NAMESPACE, c1],
-      );
+      // A winning admission under c1 holds the tree root before its parent,
+      // then retains its children uncommitted until the competing count waits.
       await holder.query(
         `SELECT pg_advisory_xact_lock($1::int, hashtext($2)::int)`,
         [DELEGATION_LOCK_NAMESPACE, root],
+      );
+      await holder.query(
+        `SELECT pg_advisory_xact_lock($1::int, hashtext($2)::int)`,
+        [DELEGATION_LOCK_NAMESPACE, c1],
       );
       for (let i = 0; i < 2; i += 1) {
         await holder.query(

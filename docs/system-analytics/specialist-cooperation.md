@@ -46,7 +46,7 @@ sequenceDiagram
     participant A as Specialist child
     C->>S: assignment/work/input revision, expected result and bounds
     S->>DB: assert owner epoch/current sharing grant
-    S->>DB: parent then root lock, content-guard work key, admit once
+    S->>DB: tree-root then parent advisory lock, content-guard work key, admit once
     S->>A: existing run launch with bounded accessible context
     A->>DB: publish structured result plus settle event atomically
     DB-->>C: existing durable child-settle wake
@@ -58,6 +58,17 @@ sequenceDiagram
 ### Bounds and identity
 
 Logical delegation identity is `(assignmentId,inputRevision,workId,workRevision)`; canonical request digest includes target specialist/Flow binding, objective, refs, constraints, required result and effective bounds. Exact replay returns the same child; changed payload under the key returns 409. Existing `run_delegate` and plan admission must share this guarded seam. Children are direct children of their current coordinator; merely sharing assignment ownership never permits collecting a foreign branch/grandchild.
+
+Delegation advisory locks use tree-root-then-parent order at the shared helper,
+including explicit pre-admission locks used by task/plan paths. The root case
+locks its key once; repeated admission in one transaction is reentrant. Given
+one transaction holding the root and a second admitting a nested coordinator,
+the second must wait before acquiring the nested parent key. The first can then
+admit that nested parent and commit; both finish without a deadlock. After a
+wait the actual ancestry and bounds are reread under the locks. Changed ancestry
+refuses with `CONFLICT/delegation_lineage_changed` rather than counting under a
+stale root. Assignment/Run row-lock ordering and current source authority remain
+additional requirements at each decisive admission boundary.
 
 The shared delegation seam must resolve the actual parent chain to a known root
 before it counts or creates child work. The resolution bound is 64 distinct Run
@@ -104,7 +115,7 @@ These rows cover every current run-status value. Recovery runs through existing 
 
 ### Crash/transaction boundaries
 
-- Logical work key, child reservation/link and parent admission facts commit atomically under parent-then-root locks; loser writes nothing.
+- Logical work key, child reservation/link and parent admission facts commit atomically under tree-root-then-parent delegation advisory locks; loser writes nothing.
 - Child result publication and collectable settle event commit together in existing result/run/attempt transaction. A failed publication cannot emit a successful wake.
 - Collection records the exact served result revision; a concurrent supersession cannot silently mark a different result collected.
 - Context/acceptance decisions check current assignment epoch/input and exact child revision under stable parent lock; losing owner cannot accept.

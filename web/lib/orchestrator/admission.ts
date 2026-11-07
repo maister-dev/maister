@@ -34,21 +34,17 @@ const log = pino({
 // hashtext collision on the parent run id cannot serialize against them.
 const DELEGATION_LOCK_NAMESPACE = 0x646c6774;
 
-/**
- * Serialize admission for ONE orchestrator.
- *
- * Deliberately NOT `SCHEDULER_LOCK_KEY`: that key is a single global mutex, so
- * reusing it would serialize every delegation on the platform against the
- * scheduler for the sake of a bound that is per-orchestrator by definition.
- * Keyed on the parent run id, two children of DIFFERENT orchestrators never
- * wait on each other while two children of the SAME one always do.
- */
+/** Serialize one tree before its immediate parent; independent roots retain independent admission. */
 export async function lockDelegationParent(
   tx: Db,
   parentRunId: string,
 ): Promise<void> {
+  await lockDelegationTree(tx, parentRunId);
+}
+
+async function lockDelegationKey(tx: Db, runId: string): Promise<void> {
   await tx.execute(
-    sql`SELECT pg_advisory_xact_lock(${DELEGATION_LOCK_NAMESPACE}::int, hashtext(${parentRunId})::int)`,
+    sql`SELECT pg_advisory_xact_lock(${DELEGATION_LOCK_NAMESPACE}::int, hashtext(${runId})::int)`,
   );
 }
 
@@ -77,7 +73,7 @@ function invalidDelegationLineage(
  * Walks up the `parent_run_id` chain from `startId`, collecting each ancestor's
  * bounds snapshot on the way.
  *
- * ONE walk serves all three bounds checks (ADR-165 T6.2): the depth count, the
+ * One current chain supplies all three bounds checks (ADR-165 T6.2): the depth count, the
  * root/parent min-merge, and the per-ancestor child-count budget. The chain is
  * `[parent, grandparent, ..., root]` — `parent` itself is depth 0 — and the cap
  * is what guarantees termination, since a self-referencing FK does not rule out
@@ -91,7 +87,7 @@ async function walkAncestorChain(
   let currentId: string | null = startId;
   const visited = new Set<string>();
 
-  while (currentId) {
+  while (currentId !== null) {
     if (visited.has(currentId))
       throw invalidDelegationLineage(startId, "cycle", chain.length);
     if (chain.length === MAX_DELEGATION_ANCESTORS)
@@ -118,6 +114,36 @@ async function walkAncestorChain(
   }
 
   return chain;
+}
+
+/** Never hold a nested parent key while waiting for its root; recheck the actual chain after a wait. */
+async function lockDelegationTree(
+  tx: Db,
+  parentRunId: string,
+): Promise<AncestorLink[]> {
+  const observed = await walkAncestorChain(tx, parentRunId);
+  const rootRunId = observed.at(-1)!.id;
+
+  await lockDelegationKey(tx, rootRunId);
+  if (rootRunId !== parentRunId) await lockDelegationKey(tx, parentRunId);
+  const current = await walkAncestorChain(tx, parentRunId);
+
+  if (
+    observed.length !== current.length ||
+    observed.some((ancestor, index) => ancestor.id !== current[index]?.id)
+  ) {
+    log.warn(
+      { parentRunId, reason: "delegation_lineage_changed" },
+      "delegation ancestry changed before tree admission",
+    );
+    throw new MaisterError(
+      "CONFLICT",
+      "Delegation ancestry changed while waiting for admission; inspect the current parent tree before resubmitting the same work",
+      { details: { reason: "delegation_lineage_changed" } },
+    );
+  }
+
+  return current;
 }
 
 /**
@@ -207,9 +233,9 @@ export async function admitDelegatedChild(
 ): Promise<void> {
   const incoming = args.incoming ?? 1;
 
-  await lockDelegationParent(tx, args.parentRunId);
+  const chain = await lockDelegationTree(tx, args.parentRunId);
 
-  // ONE walk for all three checks below.
+  // One current locked ancestry supplies all three bounds checks below.
   const [ownedIntent] = args.launchIntentId
     ? (
         await tx.execute(sql`SELECT task_id FROM task_launch_intents
@@ -223,7 +249,6 @@ export async function admitDelegatedChild(
       "Delegated launch does not own this parent reservation",
       { details: { reason: "delegation_intent_fenced" } },
     );
-  const chain = await walkAncestorChain(tx, args.parentRunId);
   const depth = chain.length - 1;
   const parentBounds = chain[0]?.bounds ?? null;
   const rootBounds = chain.at(-1)?.bounds ?? null;
@@ -303,14 +328,9 @@ export async function admitDelegatedChild(
   // on its ROOT is the coarsest scope that still contains every ancestor, and
   // it is per-tree, never the platform-wide mutex D-note above rejects.
   //
-  // Lock order is always parent-then-root, identical on every path, so no two
-  // admissions can deadlock; when the parent IS the root the key repeats and
-  // `pg_advisory_xact_lock` is re-entrant within one transaction.
-  const rootRunId = chain.at(-1)?.id;
-
-  if (rootRunId && rootRunId !== args.parentRunId) {
-    await lockDelegationParent(tx, rootRunId);
-  }
+  // The shared tree helper already holds root-then-parent advisory locks.
+  // A transaction holding the root can reenter for a nested parent while a
+  // competitor waits at the root without holding that nested parent's key.
 
   for (const ancestor of chain) {
     const cap = ancestor.bounds?.budget?.maxChildRuns;

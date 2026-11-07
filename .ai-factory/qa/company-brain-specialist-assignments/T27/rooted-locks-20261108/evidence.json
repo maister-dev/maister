@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-07T21:15:11.499701+00:00",
+  "baseline": "43787a0747d783dd392fb5473446df249672e2ca",
+  "status": "T27-rooted-advisory-locks-qualified-local-task-open",
+  "red": [
+    {
+      "cause": "Root owner reentering nested admission deadlocks against parent-then-root competitor",
+      "sqlState": "40P01"
+    },
+    {
+      "cause": "Ancestry changed under a blocked root admission is accepted against the old chain"
+    }
+  ],
+  "gates": {
+    "admissionBoundsRecursiveDelegatePlan": {
+      "passed": 130,
+      "files": 8,
+      "seconds": 80.42
+    },
+    "webUnit": {
+      "passed": 9312,
+      "files": 891,
+      "seconds": 28.29
+    },
+    "types": "passed",
+    "lintAndFormat": "passed",
+    "webBuild": "passed with offline DB_URL",
+    "contracts": "passed",
+    "docs": "passed;176 tables"
+  },
+  "verified": [
+    "Shared tree-root-before-parent advisory locks allow both observed-blocked root/nested transactions to commit",
+    "A changed actual ancestor chain refuses with typed conflict and no child allocation",
+    "Existing count budgets, cross-parent racers, agent/Flow launch and plan semantics remain green",
+    "Missing/cyclic/oversized ancestry remains explicitly refused"
+  ],
+  "remaining": [
+    "T27 logical-work/revision receipts and decisive Run/assignment fences",
+    "Native company/project child dispatch and receiving-role/source authority",
+    "T28-T43 acceptance, ownership, connector, UI and installed-package/global qualification"
+  ],
+  "effects": "Owned local PostgreSQL and controlled execution fixtures only; no production or remote action.",
+  "sources": [
+    {
+      "path": ".ai-factory/plans/codex-company-brain-specialist-assignments.md",
+      "sha256": "f502370834191725a8bfa212131fac67ca23127a819dd51369c8e068f02d024b"
+    },
+    {
+      "path": "docs/system-analytics/orchestrator.md",
+      "sha256": "831ab0818ff1efbfb79d8bb56d6d05cf6885b909cabb073e41111e460be0b797"
+    },
+    {
+      "path": "docs/system-analytics/specialist-cooperation.md",
+      "sha256": "03de82e4c51f8bbe94047731d5611e21f69f3fc7b3fc56988d263b38501ca7ed"
+    },
+    {
+      "path": "web/lib/orchestrator/__tests__/bounds.integration.test.ts",
+      "sha256": "ccd3e07cd05f69487033ed07211cc9f12dfc644695fddc15b9f3c28c6ff575ae"
+    },
+    {
+      "path": "web/lib/orchestrator/admission.ts",
+      "sha256": "0886c4760e841cd9b9bf19c6a4e055076173d1dffe21724399cae7d2f19582e7"
+    }
+  ],
+  "logs": [
+    "lock-order-red.log.gz",
+    "integration-green.log.gz",
+    "unit-green.log.gz",
+    "types-green.log.gz",
+    "lint-green.log.gz",
+    "build-green.log.gz",
+    "contracts-green.log.gz",
+    "docs-green.log.gz"
+  ]
+}
