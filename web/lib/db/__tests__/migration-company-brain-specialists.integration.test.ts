@@ -135,6 +135,9 @@ it("IT-CBX-01 company migration preserves existing project data and identity acr
 
   expect(after).toMatchObject(before.rows[0]!.value as Record<string, unknown>);
   expect(after.knowledge_access).toBeNull();
+  expect(after.company_id).toBeNull();
+  expect(after.company_execution_snapshot).toBeNull();
+  expect(after.company_cancellation_intent).toBeNull();
   expect(
     (
       await database.pool.query(
@@ -148,11 +151,19 @@ it("IT-CBX-01 company migration preserves existing project data and identity acr
         "SELECT to_jsonb(t) AS value FROM project_tokens t WHERE id='legacy-native-actor-token'",
       )
     ).rows[0]?.value,
-  ).toEqual({ ...tokenBefore, knowledge_node_attempt_id: null });
+  ).toEqual({
+    ...tokenBefore,
+    knowledge_node_attempt_id: null,
+    company_id: null,
+    company_run_id: null,
+  });
   expect(Object.keys(after).sort()).toEqual(
     [
       ...Object.keys(before.rows[0]!.value as Record<string, unknown>),
       "knowledge_access",
+      "company_id",
+      "company_execution_snapshot",
+      "company_cancellation_intent",
     ].sort(),
   );
   expect(

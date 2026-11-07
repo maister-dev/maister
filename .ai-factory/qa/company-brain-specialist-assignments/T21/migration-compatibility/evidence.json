@@ -1,0 +1,55 @@
+{
+  "task": "T21",
+  "slice": "Full compatibility regression and explicit migration-fixture correction",
+  "date": "2026-11-07",
+  "baseCommit": "617b77bbf",
+  "status": "Owning correction green; final full rerun pending; T21 remains open",
+  "fullRegression": {
+    "exitCode": 1,
+    "filesPassed": 652,
+    "filesFailed": 1,
+    "filesSkipped": 2,
+    "testsPassed": 5875,
+    "testsFailed": 1,
+    "testsSkipped": 2,
+    "durationSeconds": 6704.18,
+    "failure": "Legacy token and Run JSON assertions did not enumerate nullable company columns introduced by the existing additive migrations"
+  },
+  "correction": {
+    "productionCodeChanged": false,
+    "legacyValues": "Strict original field values and exact resulting key sets retained",
+    "newNullFields": [
+      "project_tokens.company_id",
+      "project_tokens.company_run_id",
+      "runs.company_id",
+      "runs.company_execution_snapshot",
+      "runs.company_cancellation_intent"
+    ],
+    "intermediateFailure": "The first focused correction reached the later Run key-set assertion and exposed the missing cancellation-intent key; the final fixture includes it explicitly"
+  },
+  "gates": {
+    "migrationIntegration": {
+      "exitCode": 0,
+      "tests": 7,
+      "files": 3,
+      "durationSeconds": 9.38
+    },
+    "lint": {
+      "exitCode": 0
+    },
+    "docs": {
+      "exitCode": 0
+    }
+  },
+  "nextGate": {
+    "log": "/private/tmp/cb-t21-full-integration-final.log",
+    "workers": 2,
+    "status": "running"
+  },
+  "sourceSha256": {
+    "web/lib/db/__tests__/migration-company-brain-specialists.integration.test.ts": "67ecdaa858b108fb2ebfdbf28c2dad1cbc7729b2835e533638cdf81f2bf5e3c8",
+    "docs/system-analytics/specialist-runtime.md": "b0505f0659bb9b227015bc4c2d941fe1663855de1c471e8c6922457fe5c5da7d",
+    "docs/system-analytics/specialist-assignments.md": "3ec19235ee5bcefacd058dda28a1239d05a7c65874737f3f0d8d7791c1e7740b",
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "a42006a6c0ead2e65d727750cf6707286ff8169e99f3a06162aa25a28466e7a2"
+  }
+}
