@@ -16,6 +16,7 @@ import {
 import { knowledgeRevisionSchema } from "./knowledge-types";
 
 import { postgresTextSchema } from "@/lib/text-schema";
+import { assignmentContextReadSchema } from "@/lib/specialist-assignments/context-types";
 
 const record = z
   .object({
@@ -26,6 +27,8 @@ const record = z
 
 /** Generated facade schemas and native handlers share these nested input definitions. */
 export const knowledgeToolInputSchemas = {
+  // The native facade shares validation; assignment context remains a separate durable store.
+  assignment_context_get: assignmentContextReadSchema,
   knowledge_search: knowledgeSearchSchema,
   knowledge_get: record,
   knowledge_evidence: record.extend(knowledgePageInputSchema.shape).strict(),

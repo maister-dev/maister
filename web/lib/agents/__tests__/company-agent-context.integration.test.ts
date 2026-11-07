@@ -1,3 +1,4 @@
+import type { CompanyAction } from "@/lib/company/types";
 import type { SessionUser } from "@/lib/authz";
 import type { AgentScheduleInput } from "@/lib/agents/project-links";
 import type { Db } from "@/lib/execution-host/db";
@@ -113,6 +114,8 @@ import { disposeOperationalRun } from "@/lib/gc/operational-disposition";
 import { operationalSuccessFixture } from "@/test-support/operational-agent";
 import { getKnowledgeRecord } from "@/lib/brain/knowledge-records";
 import { resolveKnowledgePrincipal } from "@/lib/brain/knowledge-access";
+import { appendSpecialistAssignmentContext } from "@/lib/specialist-assignments/context";
+import { GET as externalContextGet } from "@/app/api/v1/ext/specialist-assignments/[assignmentId]/context/route";
 import {
   knowledgeSourceReadPolicy,
   knowledgeReadPolicyCte,
@@ -348,6 +351,14 @@ beforeAll(async () => {
   );
   await writeFile(
     join(source, "maister-agents/runner-observer.md"),
+    primarySource,
+  );
+  await writeFile(
+    join(source, "maister-agents/context-observer.md"),
+    primarySource,
+  );
+  await writeFile(
+    join(source, "maister-agents/context-source-observer.md"),
     primarySource,
   );
   await writeFile(
@@ -6232,12 +6243,13 @@ async function reserveCompanyFixtureRun(
     const context = await prepareCompanyAgentContext(tx, userId, {
       ...request,
       assignmentId: assignment.id,
+      bindingId: input.specialistBindingId,
     });
     const snapshot = captureCompanyAgentExecution(context);
     const result = buildOperationalContract(context.effective);
 
     await tx.execute(sql`INSERT INTO runs(id,run_kind,company_id,company_execution_snapshot,agent_id,source_agent_id,agent_kind,agent_workspace,flow_version,flow_revision,status,result_contract,created_by_user_id,launched_at,activity_sort_at,activity_timestamp_provenance,agent_config,execution_policy,agent_activity_snapshot)
-      VALUES(${runId},'agent',${request.companyId},${JSON.stringify(snapshot)}::jsonb,${agentId},${agentId},'operational','none','agent','manual','Pending',${JSON.stringify(result)}::jsonb,${userId},now(),now(),'launch',${JSON.stringify(context.binding.snapshot.effectiveConfiguration)}::jsonb,${JSON.stringify(context.binding.snapshot.executionPolicy)}::jsonb,${JSON.stringify(buildAgentActivitySnapshot(agentId, context.effective))}::jsonb)`);
+      VALUES(${runId},'agent',${request.companyId},${JSON.stringify(snapshot)}::jsonb,${input.responsibleAgentId},${input.responsibleAgentId},'operational','none','agent','manual','Pending',${JSON.stringify(result)}::jsonb,${userId},now(),now(),'launch',${JSON.stringify(context.binding.snapshot.effectiveConfiguration)}::jsonb,${JSON.stringify(context.binding.snapshot.executionPolicy)}::jsonb,${JSON.stringify(buildAgentActivitySnapshot(input.responsibleAgentId, context.effective))}::jsonb)`);
     await linkSpecialistAssignmentRunInTransaction(tx, userId, assignment.id, {
       expectedRevision: 1,
       inputRevision: 1,
@@ -6249,7 +6261,11 @@ async function reserveCompanyFixtureRun(
     return snapshot;
   });
 
-  return { runId, assignmentId: assignment.id, snapshot: prepared };
+  return {
+    runId,
+    assignmentId: assignment.id,
+    snapshot: prepared,
+  };
 }
 
 it("reserves company run ownership and its exact immutable assignment input link in the existing run ledger", async () => {
@@ -6858,6 +6874,294 @@ it("CBS-02 authorizes only the executing specialist's exact assignment input wit
       ]),
     ).rejects.toMatchObject({
       details: { reason: "knowledge_reference_unavailable" },
+    });
+  }
+});
+
+async function reserveContextFixture(
+  roleId: string,
+  actions: readonly CompanyAction[],
+): Promise<
+  Awaited<ReturnType<typeof reserveCompanyFixtureRun>> & {
+    credential: Awaited<ReturnType<typeof issueCompanyAgentRunToken>>;
+  }
+> {
+  const effective = await resolveInstalledAgentDefinition(database.db, {
+    agentId: roleId,
+    packageInstallId: assignmentInput.standingDefinition.packageInstallId,
+  });
+  const binding = await createCompanySpecialistBinding(
+    database.db,
+    userId,
+    roleId,
+    {
+      owner: { kind: "company", companyId: request.companyId },
+      packageInstallId: effective.packageInstallId,
+      packageRevision: effective.resolvedRevision!,
+      definitionSha256: agentDefinitionSha256(effective.parsed),
+      enabled: true,
+      configuration: {},
+      grantActions: [...actions],
+      idempotencyKey: randomUUID(),
+    },
+  );
+  const input: PreparedSpecialistAssignment = {
+    ...assignmentInput,
+    specialistBindingId: binding.specialist.bindingId,
+    responsibleAgentId: roleId,
+    standingDefinition: {
+      ...assignmentInput.standingDefinition,
+      agentId: roleId,
+      definition: effective.parsed,
+      definitionSha256: agentDefinitionSha256(effective.parsed),
+    },
+  };
+  const appointment = await reserveCompanyFixtureRun(input);
+
+  await database.pool.query(
+    "UPDATE runs SET status='Running',knowledge_access=$2::jsonb WHERE id=$1",
+    [
+      appointment.runId,
+      JSON.stringify({
+        schemaVersion: 1,
+        state: "complete",
+        generation: 1,
+        restrictions: [
+          {
+            kind: "assignment_input",
+            assignmentId: appointment.assignmentId,
+            inputRevision: 1,
+            inputSha256: appointment.snapshot.assignment.inputSha256,
+          },
+        ],
+      }),
+    ],
+  );
+  const credential = await issueCompanyAgentRunToken({
+    db: database.db,
+    runId: appointment.runId,
+  });
+
+  return { ...appointment, credential };
+}
+
+it("IT-CBA-04 discloses only the appointed company context through a scoped actual credential without granting Brain access", async () => {
+  const appointment = await reserveContextFixture("rah:context-observer", [
+    "assignments:read",
+  ]);
+  const { credential } = appointment;
+  const foreign = await reserveCompanyFixtureRun();
+
+  await appendSpecialistAssignmentContext(
+    database.db,
+    userId,
+    appointment.assignmentId,
+    {
+      expectedRevision: 0,
+      expectedInputRevision: 1,
+      idempotencyKey: randomUUID(),
+      updates: [
+        {
+          id: "diagnosis-question",
+          kind: "question",
+          text: "Which health observation is still missing?",
+          state: "open",
+          references: [],
+        },
+      ],
+    },
+  );
+  const read = (assignmentId: string, secret: string = credential.secret) =>
+    externalContextGet(
+      new NextRequest(
+        `http://localhost/api/v1/ext/specialist-assignments/${assignmentId}/context`,
+        { headers: { Authorization: `Bearer ${secret}` } },
+      ),
+      { params: Promise.resolve({ assignmentId }) },
+    );
+
+  try {
+    const response = await read(appointment.assignmentId);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(await response.json()).toMatchObject({
+      assignmentId: appointment.assignmentId,
+      revision: 1,
+      entries: [
+        {
+          entry: { id: "diagnosis-question" },
+          actor: { kind: "user", id: userId },
+          ownerEpoch: null,
+        },
+      ],
+    });
+    const withheld = await read(foreign.assignmentId);
+
+    expect(withheld.status).toBe(404);
+    expect(await withheld.json()).toMatchObject({
+      details: { reason: "knowledge_reference_unavailable" },
+    });
+    const actor = await verifyToken(credential.secret, database.db);
+
+    expect(actor.scopes).toEqual(["assignments:read"]);
+    await expect(
+      authorizeSourceRestrictions(
+        database.db,
+        { kind: "execution", runId: appointment.runId, nodeAttemptId: null },
+        [{ kind: "company", companyId: request.companyId }],
+      ),
+    ).rejects.toMatchObject({
+      details: { reason: "knowledge_reference_unavailable" },
+    });
+    await database.pool.query(
+      "UPDATE project_tokens SET revoked_at=now() WHERE id=$1",
+      [credential.tokenId],
+    );
+    expect((await read(appointment.assignmentId)).status).toBe(401);
+  } finally {
+    await revokeAgentRunTokensForRun(appointment.runId, database.db);
+  }
+});
+
+it("IT-CBE-06 captures context sources before disclosure and retains revocation after citation-free supersession", async () => {
+  const appointment = await reserveContextFixture(
+    "rah:context-source-observer",
+    ["assignments:read", "knowledge:read"],
+  );
+  const userGrant = await createCompanyGrants(database.db, administratorId, {
+    principalKind: "user",
+    principalId: userId,
+    actions: ["knowledge:read"],
+    idempotencyKey: randomUUID(),
+  });
+  const professionalGrant = await createCompanyGrants(
+    database.db,
+    administratorId,
+    {
+      principalKind: "agent",
+      principalId: "rah:context-source-observer",
+      actions: ["knowledge:read"],
+      idempotencyKey: randomUUID(),
+    },
+  );
+  const recordId = randomUUID();
+  const read = () =>
+    externalContextGet(
+      new NextRequest(
+        `http://localhost/api/v1/ext/specialist-assignments/${appointment.assignmentId}/context`,
+        {
+          headers: { Authorization: `Bearer ${appointment.credential.secret}` },
+        },
+      ),
+      { params: Promise.resolve({ assignmentId: appointment.assignmentId }) },
+    );
+
+  try {
+    await database.pool.query(
+      "INSERT INTO brain_items(id,company_id,kind,title,content,confidence,content_hash) VALUES($1,$2,'observation','Private context observation','Sensitive observed component state',0.9,$3)",
+      [recordId, request.companyId, randomUUID()],
+    );
+    const witness = (
+      await database.pool.query<{ content_sha256: string }>(
+        "SELECT content_sha256 FROM brain_record_revisions WHERE record_id=$1 AND revision=1",
+        [recordId],
+      )
+    ).rows[0]!;
+
+    await appendSpecialistAssignmentContext(
+      database.db,
+      userId,
+      appointment.assignmentId,
+      {
+        expectedRevision: 0,
+        expectedInputRevision: 1,
+        idempotencyKey: randomUUID(),
+        updates: [
+          {
+            id: "observed-source",
+            kind: "source",
+            text: "Sensitive observed component state",
+            state: "open",
+            references: [
+              {
+                kind: "knowledge",
+                id: recordId,
+                revision: 1,
+                sha256: witness.content_sha256,
+              },
+            ],
+          },
+        ],
+      },
+    );
+    const response = await read();
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      revision: 1,
+      entries: [{ entry: { id: "observed-source" } }],
+    });
+    const capture = (
+      await database.pool.query<{
+        knowledge_access: { restrictions: unknown[] };
+      }>("SELECT knowledge_access FROM runs WHERE id=$1", [appointment.runId])
+    ).rows[0]!.knowledge_access;
+
+    expect(capture.restrictions).toEqual(
+      expect.arrayContaining([{ kind: "record", recordId }]),
+    );
+    await appendSpecialistAssignmentContext(
+      database.db,
+      userId,
+      appointment.assignmentId,
+      {
+        expectedRevision: 1,
+        expectedInputRevision: 1,
+        idempotencyKey: randomUUID(),
+        updates: [
+          {
+            id: "derived-without-citation",
+            supersedesEntryId: "observed-source",
+            kind: "hypothesis",
+            text: "An inferred diagnosis without a repeated citation",
+            state: "open",
+            references: [],
+          },
+        ],
+      },
+    );
+    expect((await read()).status).toBe(200);
+    const professional = professionalGrant.page.items.find(
+      (item) => item.action === "knowledge:read",
+    )!;
+
+    await revokeCompanyGrant(database.db, administratorId, professional.id, {
+      expectedRevision: professional.revision,
+      reason: "Withdraw access after context disclosure",
+      idempotencyKey: randomUUID(),
+    });
+    const denied = await read();
+
+    expect(denied.status).toBe(404);
+    expect(JSON.stringify(await denied.json())).not.toContain(
+      "inferred diagnosis",
+    );
+    await expect(
+      assertNativeRunKnowledgeInputs(database.db, appointment.runId),
+    ).rejects.toMatchObject({
+      details: { reason: "knowledge_reference_unavailable" },
+    });
+  } finally {
+    await revokeAgentRunTokensForRun(appointment.runId, database.db);
+    const grant = userGrant.page.items.find(
+      (item) => item.action === "knowledge:read",
+    )!;
+
+    await revokeCompanyGrant(database.db, administratorId, grant.id, {
+      expectedRevision: grant.revision,
+      reason: "Release owned context qualification authority",
+      idempotencyKey: randomUUID(),
     });
   }
 });

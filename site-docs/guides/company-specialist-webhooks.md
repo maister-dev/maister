@@ -126,6 +126,10 @@ Include `expectedRevision`, `expectedInputRevision`, a stable `idempotencyKey` a
 Use `supersedesEntryId` to replace an existing entry with a new identity. Keep the
 JSON body below 32 KiB. A stale revision returns 409: inspect the latest context
 and explicitly rebase. Repeating the exact key and content returns the original
-accessible revision. Notes cannot accept work or confirm a Brain assertion. This
-context endpoint currently uses session authentication; webhook tokens do not
-provide context editing.
+accessible revision. Notes cannot accept work or confirm a Brain assertion. The session endpoint supports human edits. A global personal token with
+`assignments:read` can inspect context through
+`GET /api/v1/ext/specialist-assignments/{assignmentId}/context`. A company
+specialist whose reviewed role allows that scope can use `assignment_context_get`
+to read its own appointed context through its current Run credential. Other
+assignments and unavailable sources are withheld. This read scope does not grant
+Brain access or context editing.

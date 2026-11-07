@@ -176,6 +176,10 @@ function deref<T extends { $ref?: string }>(node: T): T {
 // the same routing `resolveRouting` encodes; restating it here as the contract
 // anchor means a divergence in either place is caught.
 const TOOL_OP: Record<string, { method: string; path: string }> = {
+  assignment_context_get: {
+    method: "get",
+    path: "/api/v1/ext/specialist-assignments/{assignmentId}/context",
+  },
   knowledge_witness_get: {
     method: "get",
     path: "/api/v1/ext/knowledge/witnesses/{witnessId}",

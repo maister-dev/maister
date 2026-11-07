@@ -512,7 +512,7 @@ Context changes lock the stable assignment, check expected context revision/epoc
 
 ### Versioned context persistence and attribution
 
-**Implemented: retained history and session-user read/update; T23 agent/runtime integration remains in progress.**
+**Implemented: retained history, session-user read/update and scoped execution-bound context reads; T23 agent writes/runtime integration remains in progress.**
 
 Context has its own CAS revision and an exact assignment input revision. An update
 must name both the expected context revision and expected input revision; an
@@ -556,6 +556,8 @@ returned; previews do not bypass that policy. Removing or superseding an entry
 cannot erase inherited restrictions. Same actor/key/payload returns its original
 currently accessible revision; changed payload conflicts. Concurrent distinct
 patches against one base have one winner and one actionable conflict.
+
+The native facade exposes `assignment_context_get` with the same closed assignment/revision selector as HTTP. The external route authenticates and audits the real token, then resolves its current native principal without requiring a knowledge token scope. Company credentials include `assignments:read` only when the reviewed role permits it. A machine reads through its exact Run/node appointment and frozen input, never through the initiating user's identity; arbitrary foreign assignment selectors are withheld. Context source closure is recorded on the existing Run capture before returning content, so omitted citations do not remove downstream restrictions. Human authorization preserves its existing current company/project policy. Agent context writes, result lineage and automatic runtime prompt projection remain unqualified.
 
 ### Delivery and cancellation windows
 

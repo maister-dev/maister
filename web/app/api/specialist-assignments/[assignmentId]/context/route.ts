@@ -13,7 +13,7 @@ import {
   appendSpecialistAssignmentContext,
   getSpecialistAssignmentContext,
 } from "@/lib/specialist-assignments/context";
-import { MaisterError } from "@/lib/errors";
+import { selectAssignmentContextRevision } from "@/lib/specialist-assignments/context-selector";
 import { decodeRouteParam } from "@/lib/route-params";
 
 type RouteParams = { params: Promise<{ assignmentId: string }> };
@@ -28,27 +28,16 @@ export async function GET(
       (await params).assignmentId,
       "assignmentId",
     );
-    const values = request.nextUrl.searchParams.getAll("revision");
-    const raw = values[0];
-
-    if (
-      values.length > 1 ||
-      (raw !== undefined &&
-        (!/^(0|[1-9][0-9]*)$/.test(raw) ||
-          !Number.isSafeInteger(Number(raw)) ||
-          Number(raw) > 2147483647))
-    )
-      throw new MaisterError(
-        "CONFIG",
-        "Context revision must be one canonical nonnegative integer",
-      );
+    const revision = selectAssignmentContextRevision(
+      request.nextUrl.searchParams,
+    );
 
     return knowledgeJson(
       await getSpecialistAssignmentContext(
         getDb(),
         user.id,
         assignmentId,
-        raw === undefined ? undefined : Number(raw),
+        revision,
       ),
     );
   } catch (error) {

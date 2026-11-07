@@ -1,0 +1,153 @@
+{
+  "task": "T23",
+  "date": "2026-11-07",
+  "slice": "Scoped current execution context reads and built native facade",
+  "baseCommit": "6c808bc3e2a6f967c9d2a91c4b5ac42d7136b47b",
+  "status": "Execution read checkpoint; T23 remains open for project credential qualification, agent writes, result lineage and automatic runtime projection",
+  "red": [
+    {
+      "case": "Actual appointed company credential received 403 instead of its own context",
+      "exitCode": 1,
+      "log": "cb-context-agent-read-red.log.gz"
+    },
+    {
+      "case": "Built company facade omitted the assignment context tool",
+      "exitCode": 1,
+      "log": "cb-context-mcp-read-red.log.gz"
+    }
+  ],
+  "gates": {
+    "integration": {
+      "tests": 201,
+      "files": 9,
+      "durationSeconds": 98.99,
+      "exitCode": 0
+    },
+    "webUnit": {
+      "tests": 9322,
+      "files": 889,
+      "durationSeconds": 41.04,
+      "exitCode": 0
+    },
+    "nativeFacadeUnit": {
+      "tests": 406,
+      "files": 6,
+      "exitCode": 0
+    },
+    "builtFacadeWire": {
+      "tests": 10,
+      "files": 1,
+      "exitCode": 0
+    },
+    "webAndFacadeTypes": {
+      "exitCode": 0
+    },
+    "webAndFacadeLint": {
+      "exitCode": 0
+    },
+    "contractsAndCoverage": {
+      "requirements": 84,
+      "exitCode": 0
+    },
+    "docsAndErd": {
+      "tables": 173,
+      "exitCode": 0
+    },
+    "bilingualPublicBuild": {
+      "exitCode": 0
+    },
+    "bilingualPublicLinks": {
+      "brokenLinks": 0,
+      "exitCode": 0
+    },
+    "migrationDrift": {
+      "newMigration": false,
+      "exitCode": 0
+    }
+  },
+  "migration": {
+    "main": "0245_specialist_context_credentials",
+    "scopeAddition": "assignments:read",
+    "rewritesExistingCredentialBytes": false,
+    "retainsCurrentNodeAndStandaloneOwnerShape": true,
+    "retainsExactBindingAndImmutableCredentialGuards": true
+  },
+  "qualified": [
+    "Actual own assignment scope works without a Brain token scope or general Brain permission",
+    "Foreign assignment selector returns existence-hidden 404",
+    "Current credential revocation returns 401",
+    "Private context source capture commits before disclosure",
+    "Citation-free supersession retains source restriction and current revocation blocks context and downstream input reads",
+    "Existing human 403 authorization semantics preserved",
+    "Actual facade tools/list and tools/call preserve encoded selector and revision zero; forged and malformed arguments refuse before HTTP"
+  ],
+  "corrections": [
+    "Credential scope CHECK required an additive generated migration; no committed migration changed",
+    "Existing human authority checks restored after sharing the reader",
+    "Foreign-selector expected status corrected to existing 404 policy",
+    "Native schema generator remains client-safe; server-only query error logic moved to its selector module",
+    "Existing MCP inventory/OpenAPI maps updated for the newly implemented tool"
+  ],
+  "limitations": [
+    "Project automatic credential issuance has not acquired the context scope yet",
+    "Agent writes, accepted child-result lineage and automatic prompt projection remain open",
+    "No business ownership epoch invented or qualified",
+    "No actual installable stand pilot, remote push or deployment"
+  ],
+  "logs": [
+    "cb-context-agent-read-red.log.gz",
+    "cb-context-agent-read-green1.log.gz",
+    "cb-context-agent-read-green2.log.gz",
+    "cb-context-agent-read-green3.log.gz",
+    "cb-context-agent-green4.log.gz",
+    "cb-context-source-green1.log.gz",
+    "cb-context-mcp-read-red.log.gz",
+    "cb-context-mcp-green1.log.gz",
+    "cb-context-mcp-green2.log.gz",
+    "cb-context-mcp-unit.log.gz",
+    "cb-context-mcp-unit2.log.gz",
+    "cb-context-agent-types1.log.gz",
+    "cb-context-agent-types2.log.gz",
+    "cb-context-agent-types3.log.gz",
+    "cb-context-agent-contracts.log.gz",
+    "cb-context-agent-integration-final.log.gz",
+    "cb-context-agent-unit-final.log.gz",
+    "cb-context-agent-docs-final.log.gz",
+    "cb-context-agent-public-build-final.log.gz",
+    "cb-context-agent-public-links-final.log.gz",
+    "cb-context-agent-lint-final.log.gz",
+    "cb-context-agent-drift-final.log.gz",
+    "cb-context-mcp-types-final.log.gz",
+    "cb-context-mcp-lint-final.log.gz"
+  ],
+  "sourceSha256": {
+    "docs/api/external/operations.openapi.yaml": "4e627f15824f4b95edc760a66c9a1b3823122e4fcaad6c9bdcd922bac3e17cbe",
+    "docs/api/web.openapi.yaml": "c2eb8c9ddd98340164f4863ee54a6e74f7122ded6c92ea208bafea70201ef163",
+    "docs/database-schema.md": "0fb3db89a14458e453bbfca491e31cbf398d1bac659c8c09b0feec41481e7478",
+    "docs/db/specialist-assignments-domain.md": "7f60dade5dddd876f6906eeae66052d3cc69852a791d858c8f685a1f0670a34e",
+    "docs/system-analytics/specialist-assignments.md": "0f16f494d866ebb9c548833219a5d7d7e238b05bdb1995e81f139a8e2715dad7",
+    "mcp/src/__tests__/stdio.integration.test.ts": "95702b7fbb7da67b76c67dde2180345a4ff5e1000d84263045308bb799fc861e",
+    "mcp/src/__tests__/tool-contract.test.ts": "a6898c6d883c4b4d2eb092fd0dcd0b06c466c87296151c19aea1e7b1e77592f0",
+    "mcp/src/__tests__/tools.test.ts": "3382653f19cc4b6db557c72fb51ae04140f7ec7ee8f35382f711b462dd0427e2",
+    "mcp/src/knowledge-tools.ts": "f788a6d67d9b2d29c7fd7e57ba4536b9b0ffe1fb3dbcf4011bedcb37e62d8653",
+    "runtime/company-flow-tools.ts": "e57c1d0d9ac30c65b1658f9bcca37a202874d5dc94e87f6bd1bd92b3d2a18743",
+    "runtime/knowledge-tool-effects.ts": "2e3a44afc67189a1271d7c90577b760a3dcffbeecab1b310702ccdf52b8b58aa",
+    "runtime/knowledge-tool-input.schema.json": "62525b2911db1237462dd1c3f17575e3fe5b671bc881f41e56882ae2c186840d",
+    "site-docs/guides/company-specialist-webhooks.md": "9b2b228dbaaf6f90e46f179ab156ecacc37ab7156c992e31ef88eee377b2bdc4",
+    "site-docs/ru/guides/company-specialist-webhooks.md": "5a99fb622b7a409c220e9ea7c990ce36a9d90a4c0dcec5d06a7b3b16f0f15485",
+    "web/app/api/specialist-assignments/[assignmentId]/context/route.ts": "c400a0eeb454485ab03f0840238342cf0bcffb908e54701da2ed4862f0d0bad1",
+    "web/app/api/v1/ext/specialist-assignments/[assignmentId]/context/route.ts": "73ddd9479cff5a3c971543c3a936d8a9d7feb983e03d4b1ab2fa870540029e87",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "07cddb162d897d7f0381d018f31d916ee93f08702a799ea43b8e03a1bad96a53",
+    "web/lib/agents/company-flow-enforcement.ts": "97df71b1a93f40cb12aec5de53756f629d6a29e1950af906c1fde9d9f5898b3e",
+    "web/lib/agents/tokens.ts": "6b08de8aa539e1bd8b2da4b7b6f46f18f2729e18900373050e0f413ae84f04f5",
+    "web/lib/brain/knowledge-access.ts": "fcb594bc1e9c3c360920a9bc0d6febcbcd618a98180a3379f5e69f1f5826109a",
+    "web/lib/brain/knowledge-tool-contract.ts": "ef551b6754857ae031f2fd5874baf2adbca5dd83710893b000ecbf490297298c",
+    "web/lib/db/migrations/0245_specialist_context_credentials.sql": "8bca0c34392798e0a24b4b620e527153a4559a948835bde3a1b098a3aec15500",
+    "web/lib/db/migrations/meta/0245_snapshot.json": "1b69a9c3925a2014bd7924ecdb052b88827963c2e51d04ea06e47933e3365088",
+    "web/lib/db/migrations/meta/_journal.json": "d47fc82ed24a27dab299cd7dc51a24540007498cb20898fc5d6dbad6edec50b4",
+    "web/lib/db/schema.ts": "cd8ad1d83c84c1de155dd57cb7dc3ec660bbd70742577e2f9f9d1eb9b9ba726a",
+    "web/lib/specialist-assignments/context-selector.ts": "d51e60c05cc11228e3098f649b8af118812134ed63af020afdbfa05e76a7b033",
+    "web/lib/specialist-assignments/context-types.ts": "52540da8889867cbc3abdaee5a3ec7b3c429e3b5dc88677d4e7b5c89a8028230",
+    "web/lib/specialist-assignments/context.ts": "44ab6cb790538fa4bde88433c1955fa059dc4b190bccbbcb6ac3821c8265dd33"
+  }
+}

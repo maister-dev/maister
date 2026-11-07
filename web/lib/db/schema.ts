@@ -8276,7 +8276,7 @@ export const projectTokens = pgTable(
   (t) => ({
     companyScopeCheck: check(
       "project_tokens_company_scope_check",
-      sql`((${t.company_id} IS NULL AND ${t.company_run_id} IS NULL) OR (${t.company_id} IS NOT NULL AND ${t.company_run_id} IS NOT NULL AND ${t.project_id} IS NULL AND ${t.token_kind}='agent' AND ${t.agent_id} IS NOT NULL AND ${t.name}='agent-run:'||${t.company_run_id} AND ${t.expires_at} IS NOT NULL AND ${t.librarian_turn_id} IS NULL AND jsonb_typeof(${t.scopes})='array' AND ${t.scopes}<@'["knowledge:read","knowledge:propose"]'::jsonb)) IS TRUE`,
+      sql`((${t.company_id} IS NULL AND ${t.company_run_id} IS NULL) OR (${t.company_id} IS NOT NULL AND ${t.company_run_id} IS NOT NULL AND ${t.project_id} IS NULL AND ${t.token_kind}='agent' AND ${t.agent_id} IS NOT NULL AND ${t.name}='agent-run:'||${t.company_run_id} AND ${t.expires_at} IS NOT NULL AND ${t.librarian_turn_id} IS NULL AND jsonb_typeof(${t.scopes})='array' AND ${t.scopes}<@'["knowledge:read","knowledge:propose","assignments:read"]'::jsonb)) IS TRUE`,
     ),
     companyLiveRunIndex: uniqueIndex("project_tokens_company_live_run_uq")
       .on(t.company_run_id)

@@ -58,6 +58,7 @@ describe("TOOL_SPECS registry", () => {
         "activity_pulse",
         "agent_memory_write",
         "ask_human",
+        "assignment_context_get",
         "clarification_cancel",
         "clarification_list",
         "clarification_request",

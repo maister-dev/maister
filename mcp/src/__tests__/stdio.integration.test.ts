@@ -492,6 +492,51 @@ describe("MCP stdio wire contract", () => {
     expect(requests).toHaveLength(count);
   });
 
+  it("serves assignment context through the real company facade with exact selectors and local closed-schema refusal", async () => {
+    const company = await connectClient({
+      token: "mai_context_wire",
+      toolset: "company",
+    });
+
+    try {
+      const listed = await company.listTools();
+      const context = listed.tools.find(
+        (tool) => tool.name === "assignment_context_get",
+      );
+
+      expect(context?.annotations?.readOnlyHint).toBe(true);
+      const result = await company.callTool({
+        name: "assignment_context_get",
+        arguments: { assignmentId: "assignment / exact", revision: 0 },
+      });
+
+      expect(result.isError).not.toBe(true);
+      expect(requests.at(-1)).toEqual({
+        method: "GET",
+        url: "/api/v1/ext/specialist-assignments/assignment%20%2F%20exact/context?revision=0",
+        authorization: "Bearer mai_context_wire",
+        body: {},
+      });
+      const before = requests.length;
+
+      for (const arguments_ of [
+        { assignmentId: "assignment", revision: -1 },
+        { assignmentId: "assignment", actor: { kind: "user", id: "forged" } },
+        { assignmentId: "assignment", revision: "0" },
+      ]) {
+        const refused = await company.callTool({
+          name: "assignment_context_get",
+          arguments: arguments_,
+        });
+
+        expect(refused.isError).toBe(true);
+      }
+      expect(requests).toHaveLength(before);
+    } finally {
+      await closeClient(company);
+    }
+  });
+
   it.each([true, false])(
     "forwards enqueue=%s and nullable metadata without changing their types",
     async (enqueue) => {
@@ -672,7 +717,7 @@ describe("MCP stdio wire contract", () => {
     ]);
   });
 
-  it("the bundled company facade lists only native read/proposal tools and rejects review, private memory and repository calls before REST", async () => {
+  it("the bundled company facade lists only native knowledge/context tools and rejects review, private memory and repository calls before REST", async () => {
     const company = await connectClient({
       token: "mai_company_wire",
       toolset: "company",
@@ -691,6 +736,7 @@ describe("MCP stdio wire contract", () => {
           "knowledge_proposal_get",
           "knowledge_capture_source",
           "knowledge_propose",
+          "assignment_context_get",
         ].sort(),
       );
       const inspected = await company.callTool({

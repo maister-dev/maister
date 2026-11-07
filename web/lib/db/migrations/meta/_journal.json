@@ -1793,6 +1793,13 @@
       "when": 1794606477962,
       "tag": "0259_specialist_context_revisions",
       "breakpoints": true
+    },
+    {
+      "idx": 260,
+      "version": "7",
+      "when": 1794606477963,
+      "tag": "0260_specialist_context_credentials",
+      "breakpoints": true
     }
   ]
 }

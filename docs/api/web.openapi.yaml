@@ -21146,7 +21146,7 @@ paths:
         Optional revision selects exact retained history. Revision zero is explicitly unrecorded and projects
         the current frozen input without invented authorship, timestamp or context digest. Positive revisions
         retain their exact input; currentInputRevision identifies the current input CAS head. The whole response
-        is private and no-store. Agent credentials and runtime context consumption remain subsequent integration.
+        is private and no-store. Execution-bound reads use the separately scoped external context route; agent writes and automatic runtime consumption remain subsequent integration.
       x-implementation-status: Implemented
       x-required-scope: assignments:read
       responses:

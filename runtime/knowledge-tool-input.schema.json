@@ -1,4 +1,25 @@
 {
+  "assignment_context_get": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "assignmentId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^(?:[^\\u0000\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+      },
+      "revision": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 2147483647
+      }
+    },
+    "required": [
+      "assignmentId"
+    ],
+    "additionalProperties": false
+  },
   "knowledge_search": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "type": "object",

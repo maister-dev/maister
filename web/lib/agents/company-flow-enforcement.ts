@@ -5,7 +5,10 @@ import type { SessionEnforcementProfile } from "@/lib/flows/enforcement-profile"
 
 import pino from "pino";
 
-import { companyFlowEnforcementProfile } from "../../../runtime/company-flow-tools";
+import {
+  companyFlowEnforcementProfile,
+  COMPANY_FLOW_TOKEN_SCOPES,
+} from "../../../runtime/company-flow-tools";
 
 import {
   requireCompanyRunCredentialOwner,
@@ -29,7 +32,7 @@ export async function resolveCompanyFlowNodeEnforcement(
     root,
     nodeAttemptId,
   );
-  const scopes = (["knowledge:read", "knowledge:propose"] as const).filter(
+  const scopes = COMPANY_FLOW_TOKEN_SCOPES.filter(
     (action) => owner.platformMcp && owner.actionLimits.includes(action),
   );
   const profile = companyFlowEnforcementProfile(scopes);

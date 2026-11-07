@@ -1,4 +1,4 @@
-/** Initial company graph credentials admit native knowledge read/proposal actions only. */
+/** Company graph credentials expose only currently reviewed native knowledge and assignment-context actions. */
 export const COMPANY_FLOW_MCP_SERVER = "maister";
 export const COMPANY_FLOW_TOOL_CONTRACT = [
   { name: "knowledge_search", scope: "knowledge:read" },
@@ -9,7 +9,11 @@ export const COMPANY_FLOW_TOOL_CONTRACT = [
   { name: "knowledge_proposal_get", scope: "knowledge:read" },
   { name: "knowledge_capture_source", scope: "knowledge:propose" },
   { name: "knowledge_propose", scope: "knowledge:propose" },
+  { name: "assignment_context_get", scope: "assignments:read" },
 ] as const;
+export const COMPANY_FLOW_TOKEN_SCOPES = [
+  ...new Set(COMPANY_FLOW_TOOL_CONTRACT.map((tool) => tool.scope)),
+];
 export type CompanyFlowKnowledgeScope =
   (typeof COMPANY_FLOW_TOOL_CONTRACT)[number]["scope"];
 export type CompanyFlowToolName =

@@ -154,3 +154,10 @@ export const assignmentContextSchema = z
   });
 
 export type AssignmentContext = z.infer<typeof assignmentContextSchema>;
+
+export const assignmentContextReadSchema = z
+  .object({
+    assignmentId: identity,
+    revision: revision.optional(),
+  })
+  .strict();

@@ -127,6 +127,8 @@ Generated main `0259_specialist_context_revisions` adds retained version-one con
 
 New entries are bound to the server actor and introduced revision; unchanged entries retain their exact original attribution. Removed entries require an explicit replacement, and inherited source restrictions cannot shrink. Public human edits record NULL ownership epoch and cannot manufacture accepted work. Each snapshot is bounded to 256 entries/128 KiB of PostgreSQL JSONB text. Executing-agent appointment/fencing and exact child-result acceptance remain their owning runtime slices.
 
+Generated main `0260_specialist_context_credentials` extends the existing company credential CHECK with `assignments:read`. It preserves the current Flow-node/standalone owner shape, immutable token binding, exact role limit and original credential bytes. Issuers add the scope only under the current reviewed binding; the external context service checks current assignment/input appointment and source access separately. No general Brain permission, table or execution ledger is added.
+
 ## Exact persistence contract
 
 All new entity IDs are server-generated; timestamps UTC. Versioned closed JSON contains typed fields specified in the owning API/native schemas. Absence/null/legacy variants are explicit, not generic empty objects.

@@ -9,6 +9,8 @@ import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
 import { ACTIVE_AGENT_RUN_STATUSES } from "./activity-status";
+import { COMPANY_FLOW_TOKEN_SCOPES } from "../../../runtime/company-flow-tools";
+
 import {
   requireCompanyRunCredentialOwner,
   requireCompanyFlowNodeKnowledgeOwner,
@@ -189,8 +191,8 @@ async function retainCompanyRunCredential(
     owner.companyId,
     "assignments:update",
   );
-  const scopes = (["knowledge:read", "knowledge:propose"] as const).filter(
-    (action) => owner.actionLimits.includes(action),
+  const scopes = COMPANY_FLOW_TOKEN_SCOPES.filter((action) =>
+    owner.actionLimits.includes(action),
   );
   const { secret, prefix, hash } = generateToken();
   const tokenId = randomUUID();

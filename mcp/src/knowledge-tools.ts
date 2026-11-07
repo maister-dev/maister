@@ -7,6 +7,8 @@ import { NATIVE_KNOWLEDGE_TOOL_EFFECTS } from "../../runtime/knowledge-tool-effe
 
 export type KnowledgeToolName = keyof typeof schemas;
 const descriptions: Readonly<Record<KnowledgeToolName, string>> = {
+  assignment_context_get:
+    "Read the exact authorized working context of your appointed assignment. Preserve its revision, input witness, original authors, evidence and unresolved questions. Context is working material; notes and child completion do not confirm Brain facts or accept the overall assignment.",
   knowledge_witness_get:
     "Inspect an accessible original evidence witness, including its exact source version, availability and limitations. Missing evidence must remain explicit.",
   knowledge_propose:
@@ -68,6 +70,15 @@ export function knowledgeToolRouting(
   name: KnowledgeToolName,
   args: Record<string, unknown>,
 ): { method: "GET" | "POST"; path: string; body?: unknown } {
+  if (name === "assignment_context_get") {
+    const query =
+      args.revision === undefined ? "" : `?revision=${String(args.revision)}`;
+
+    return {
+      method: "GET",
+      path: `/api/v1/ext/specialist-assignments/${encodeURIComponent(String(args.assignmentId))}/context${query}`,
+    };
+  }
   if (name === "knowledge_capture_source")
     return {
       method: "POST",

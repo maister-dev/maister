@@ -7,6 +7,7 @@ import type {
   AssignmentContextEntry,
 } from "./context-types";
 import type { AssignmentInputRevision } from "./types";
+import type { KnowledgePrincipal } from "@/lib/brain/knowledge-types";
 import type { KnowledgeAccessWalk } from "@/lib/brain/knowledge-restrictions";
 
 import { sql } from "drizzle-orm";
@@ -19,12 +20,18 @@ import {
   assignmentContextUpdateSchema,
 } from "./context-types";
 import { authorizeAssignment } from "./access";
+import { decodeAssignmentInput } from "./input-snapshot";
 import {
   beginAssignmentTransaction,
   getSpecialistAssignmentInTransaction,
   getSpecialistAssignmentInputInTransaction,
 } from "./store";
 
+import { resolveNativeTokenPrincipal } from "@/lib/brain/knowledge-access";
+import {
+  lockKnowledgeReadConsumer,
+  recordKnowledgeDisclosure,
+} from "@/lib/brain/knowledge-disclosure";
 import {
   authorizeSourceRestrictions,
   restrictionsForKnowledgeAccess,
@@ -56,18 +63,86 @@ function contextConflict(message: string): MaisterError {
   });
 }
 
+/** Source policy includes current assignment authority and the exact execution appointment, without user impersonation. */
+async function readContextInput(
+  tx: SqlTransaction,
+  principal: KnowledgePrincipal,
+  assignmentId: string,
+  revision: number,
+): Promise<AssignmentInputRevision> {
+  const row = (
+    await tx.execute(
+      sql`SELECT * FROM specialist_input_revisions WHERE assignment_id=${assignmentId} AND revision=${revision} FOR SHARE`,
+    )
+  ).rows[0];
+
+  if (!row)
+    throw new MaisterError(
+      "PRECONDITION",
+      "The assignment input is unavailable",
+      { details: { reason: "assignment_context_unavailable" } },
+    );
+  const input = decodeAssignmentInput(row);
+
+  await authorizeSourceRestrictions(tx, principal, [
+    ...input.snapshot.sourceRestrictions,
+    {
+      kind: "assignment_input",
+      assignmentId,
+      inputRevision: input.revision,
+      inputSha256: input.digest,
+    },
+  ]);
+
+  return input;
+}
+
 /** A historical revision is disclosed only under current assignment and complete inherited-source access. */
 async function readContextInTransaction(
   tx: SqlTransaction,
-  userId: string,
+  principal: KnowledgePrincipal,
   assignmentId: string,
-  revision: number,
+  selectedRevision?: number,
 ): Promise<ContextRead> {
-  const assignment = await getSpecialistAssignmentInTransaction(
-    tx,
-    userId,
-    assignmentId,
-  );
+  if (!z.string().min(1).max(128).safeParse(assignmentId).success)
+    throw new MaisterError("CONFIG", "Invalid assignment identity");
+  if (principal.kind === "user")
+    await getSpecialistAssignmentInTransaction(
+      tx,
+      principal.userId,
+      assignmentId,
+    );
+  const head = (
+    await tx.execute(
+      sql`SELECT company_id,project_id,input_revision,context_revision FROM specialist_assignments WHERE id=${assignmentId} FOR SHARE`,
+    )
+  ).rows[0];
+
+  if (!head)
+    throw new MaisterError(
+      "PRECONDITION",
+      "The assignment context is unavailable",
+      { details: { reason: "assignment_context_unavailable" } },
+    );
+  const parsedHead = z
+    .object({
+      inputRevision: z.number().int().positive(),
+      contextRevision: retainedRevision,
+    })
+    .safeParse({
+      inputRevision: head.input_revision,
+      contextRevision: head.context_revision,
+    });
+
+  if (!parsedHead.success)
+    throw new MaisterError(
+      "CONFIG",
+      "Stored assignment context heads are invalid",
+    );
+  const assignment = parsedHead.data;
+
+  await readContextInput(tx, principal, assignmentId, assignment.inputRevision);
+  const revision = selectedRevision ?? assignment.contextRevision;
 
   if (
     !retainedRevision.safeParse(revision).success ||
@@ -92,13 +167,13 @@ async function readContextInTransaction(
       "CONFIG",
       "The retained context head has no matching history; inspect migration and transaction integrity",
     );
-  const input = await getSpecialistAssignmentInputInTransaction(
+  const input = await readContextInput(
     tx,
-    userId,
+    principal,
     assignmentId,
     row === null ? assignment.inputRevision : Number(row.input_revision),
   );
-  let access = await authorizeSourceRestrictions(tx, { kind: "user", userId }, [
+  let access = await authorizeSourceRestrictions(tx, principal, [
     ...input.snapshot.sourceRestrictions,
     {
       kind: "assignment_input",
@@ -117,7 +192,7 @@ async function readContextInTransaction(
   if (row !== null) {
     access = await authorizeSourceRestrictions(
       tx,
-      { kind: "user", userId },
+      principal,
       row.source_restrictions,
       access,
     );
@@ -170,18 +245,13 @@ export async function getSpecialistAssignmentContext(
   try {
     return await db.transaction(async (tx) => {
       await beginAssignmentTransaction(tx);
-      const assignment = await getSpecialistAssignmentInTransaction(
-        tx,
-        userId,
-        assignmentId,
-      );
 
       return (
         await readContextInTransaction(
           tx,
-          userId,
+          { kind: "user", userId },
           assignmentId,
-          revision ?? assignment.contextRevision,
+          revision,
         )
       ).value;
     });
@@ -299,7 +369,7 @@ export async function appendSpecialistAssignmentContext(
         return (
           await readContextInTransaction(
             tx,
-            userId,
+            { kind: "user", userId },
             assignmentId,
             Number(previous.revision),
           )
@@ -321,7 +391,7 @@ export async function appendSpecialistAssignmentContext(
         );
       const current = await readContextInTransaction(
         tx,
-        userId,
+        { kind: "user", userId },
         assignmentId,
         assignment.contextRevision,
       );
@@ -431,7 +501,12 @@ export async function appendSpecialistAssignmentContext(
       );
 
       return (
-        await readContextInTransaction(tx, userId, assignmentId, nextRevision)
+        await readContextInTransaction(
+          tx,
+          { kind: "user", userId },
+          assignmentId,
+          nextRevision,
+        )
       ).value;
     });
   } catch (error) {
@@ -446,6 +521,75 @@ export async function appendSpecialistAssignmentContext(
       },
       "working context update refused",
     );
+    throw redactQueryError(error);
+  }
+}
+
+/** An authenticated token reads as its current bound execution or actual personal user; disclosure commits before response. */
+export async function getSpecialistAssignmentTokenContext(
+  db: SqlDatabase,
+  tokenId: string,
+  assignmentId: string,
+  revision?: number,
+): Promise<AssignmentContext> {
+  try {
+    return await db.transaction(async (tx) => {
+      await beginAssignmentTransaction(tx);
+      const consumer = await lockKnowledgeReadConsumer(tx, {
+        kind: "token",
+        tokenId,
+      });
+      const identity = await resolveNativeTokenPrincipal(
+        tx,
+        tokenId,
+        "assignments:read",
+      );
+      let principal: KnowledgePrincipal;
+
+      if (identity.kind === "user") {
+        if (identity.boundProjectId !== null)
+          throw new MaisterError(
+            "UNAUTHORIZED",
+            "Context user clients require a global personal credential",
+          );
+        principal = { kind: "user", userId: identity.user.id };
+      } else {
+        if (identity.actor.runId === null)
+          throw new MaisterError(
+            "UNAUTHORIZED",
+            "Context requires its exact executing Run",
+          );
+        principal = {
+          kind: "execution",
+          runId: identity.actor.runId,
+          nodeAttemptId: identity.actor.attemptId,
+        };
+      }
+      const result = await readContextInTransaction(
+        tx,
+        principal,
+        assignmentId,
+        revision,
+      );
+
+      await recordKnowledgeDisclosure(
+        tx,
+        consumer,
+        restrictionsForKnowledgeAccess(result.access),
+      );
+      log.debug(
+        {
+          assignmentId,
+          contextRevision: result.value.revision,
+          actorKind: identity.actor.kind,
+          runId: identity.actor.runId,
+        },
+        "authorized working context disclosed with its inherited sources",
+      );
+
+      return result.value;
+    });
+  } catch (error) {
     throw redactQueryError(error);
   }
 }

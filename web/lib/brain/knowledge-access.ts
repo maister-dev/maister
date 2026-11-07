@@ -143,9 +143,19 @@ export async function resolveKnowledgePrincipal(
 
     return resolved.identity;
   }
+
+  return resolveNativeTokenPrincipal(tx, principal.tokenId, action);
+}
+
+/** Shared current credential binding; the requested domain scope does not grant Brain access. */
+export async function resolveNativeTokenPrincipal(
+  tx: KnowledgeTransaction,
+  tokenId: string,
+  action: CompanyAction,
+): Promise<KnowledgePrincipalIdentity> {
   const token = (
     await tx.execute(
-      sql`SELECT id,name,token_kind,owner_user_id,project_id,company_id,company_run_id,agent_id,scopes,knowledge_node_attempt_id FROM project_tokens WHERE id=${principal.tokenId} AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>now()) FOR SHARE`,
+      sql`SELECT id,name,token_kind,owner_user_id,project_id,company_id,company_run_id,agent_id,scopes,knowledge_node_attempt_id FROM project_tokens WHERE id=${tokenId} AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>now()) FOR SHARE`,
     )
   ).rows[0];
 
@@ -156,7 +166,7 @@ export async function resolveKnowledgePrincipal(
   )
     throw new MaisterError(
       "UNAUTHORIZED",
-      "Current knowledge token scope is required",
+      "Current native token scope is required",
     );
   if (token.token_kind === "user" && typeof token.owner_user_id === "string") {
     const identity = await currentKnowledgeUser(tx, token.owner_user_id);
