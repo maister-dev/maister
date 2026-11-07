@@ -970,6 +970,12 @@ it("IT-UX-15 refuses unknown work and stale previews, and revokes delayed execut
   await database.pool.query("DELETE FROM project_members WHERE user_id=$1", [
     source.userId,
   ]);
+  // Authority revocation is the subject; make this receipt unambiguously due
+  // across PostgreSQL microseconds and the sweep's millisecond clock boundary.
+  await database.pool.query(
+    "UPDATE agent_retry_intents SET due_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+    [receipt.retryIntentId],
+  );
   await runAgentRetryAdmissionSweep(database.db);
   expect(
     (

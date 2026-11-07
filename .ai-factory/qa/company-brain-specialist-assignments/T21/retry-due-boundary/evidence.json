@@ -1,0 +1,34 @@
+{
+  "task": "T21",
+  "date": "2026-11-07",
+  "baseCommit": "291b40b01",
+  "status": "Owning retry authority fixture qualified; final full gate pending",
+  "failedFullGate": {
+    "filesPassed": 652,
+    "filesFailed": 1,
+    "filesSkipped": 2,
+    "testsPassed": 5875,
+    "testsFailed": 1,
+    "testsSkipped": 2,
+    "durationSeconds": 3387.84,
+    "exitCode": 1,
+    "failure": "IT-UX-15 expected revoked retry refusal before its receipt was due; observed accepted/null"
+  },
+  "retainedTrace": "The exact receipt 613fef12-398a-42c9-aacc-e9cef155a61c is refused on the next sweep as retry_authority_revoked; no successor is allocated for that source.",
+  "diagnostic": {
+    "tests": 16,
+    "files": 1,
+    "exitCode": 0,
+    "durationSeconds": 5.36
+  },
+  "correction": "Make the authority-test subject explicitly due using the database clock before the existing sweep. Preserve exact refusal and no-successor assertions; no production behavior change.",
+  "correctedOwningGate": {
+    "tests": 16,
+    "files": 1,
+    "durationSeconds": 4.94,
+    "exitCode": 0
+  },
+  "sourceSha256": {
+    "web/lib/agents/__tests__/retry.integration.test.ts": "f777e495aa1a1edc2506be75b1a0e320b2d4bb8e629b2b0ff3348071b1bdaf4c"
+  }
+}
