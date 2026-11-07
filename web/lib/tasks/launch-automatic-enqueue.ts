@@ -8,8 +8,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { acceptAutomaticTaskLaunch } from "./launch-intent";
 import { taskLaunchSettingsToken } from "./launch-resolution";
 import { taskLaunchReceipt } from "./launch-receipt";
-import { lockTaskLaunchReservation } from "./launch-locks";
-import { requireTaskRequalification } from "./qualification";
+import { requestTaskRequalificationIfCurrent } from "./qualification-requalification";
 
 import { tasks, taskLaunchIntents, taskQualifications } from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
@@ -78,19 +77,11 @@ export async function enqueueQualifiedAutomaticTaskLaunch(
       isMaisterError(error) &&
       error.details?.reason === "qualification_evidence_stale"
     ) {
-      await db.transaction(async (tx) => {
-        await lockTaskLaunchReservation(tx, task.id);
-        const [current] = await tx
-          .select()
-          .from(tasks)
-          .where(eq(tasks.id, task.id))
-          .for("update");
-
-        if (
-          current?.currentQualificationId === qualification.id &&
-          current.qualificationInputRevision === qualification.inputRevision
-        )
-          await requireTaskRequalification(tx, task.projectId, task.id);
+      await requestTaskRequalificationIfCurrent(db, {
+        projectId: task.projectId,
+        taskId: task.id,
+        qualificationId: qualification.id,
+        inputRevision: qualification.inputRevision,
       });
     }
     throw error;

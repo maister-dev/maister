@@ -1,3 +1,4 @@
+import type { ProjectAgentTriggerClaim } from "../trigger-attempts";
 import type { AssignmentContextPrincipal } from "@/lib/specialist-assignments/context-access";
 import type { SqlTransaction } from "@/lib/db/sql-types";
 import type { CompanyAction } from "@/lib/company/types";
@@ -74,6 +75,7 @@ import { getCompanyAgentRunHistory } from "../activity-queries";
 import { answerAssignmentQuestion } from "@/lib/services/assignment-question-response";
 import { assignmentQuestionReceiptSchema } from "@/lib/specialist-assignments/question-types";
 import { getSpecialistAssignmentAdmission } from "@/lib/specialist-assignments/admission-read";
+import { requestTaskRequalificationIfCurrent } from "@/lib/tasks/qualification-requalification";
 import {
   getSpecialistAssignment,
   getSpecialistAssignmentInput,
@@ -5550,6 +5552,376 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
         run_id: null,
       },
     ]);
+    const createOrderedCoordinatorSource = async (
+      label: string,
+    ): Promise<ProjectAgentTriggerClaim> => {
+      browserSession.user = await requireActiveUserById(userId);
+      const response = await taskCommentPost(
+        new NextRequest(
+          `http://localhost/api/projects/${project.slug}/tasks/9001/comments`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Origin: "http://localhost",
+              "Sec-Fetch-Site": "same-origin",
+            },
+            body: JSON.stringify({
+              body: `@rah:flow-coordinator Qualify the ${label} ordering without repeating completed work.`,
+            }),
+          },
+        ),
+        { params: Promise.resolve({ slug: project.slug, number: "9001" }) },
+      );
+
+      expect(response.status).toBe(201);
+      const comment = z
+        .object({ comment: z.object({ id: z.string() }) })
+        .parse(await response.json());
+      const event = (
+        await database.pool.query<{ id: string }>(
+          "SELECT id FROM domain_events WHERE project_id=$1 AND kind='task.comment_added' AND payload->>'commentId'=$2",
+          [project.id, comment.comment.id],
+        )
+      ).rows[0]!;
+      const claim = await claimEventAgentAttempt(
+        db,
+        coordinatorSource.id,
+        new Date(),
+        Number(event.id),
+      );
+
+      if (!claim)
+        throw new Error(
+          "Ordered coordinator source was claimed before its controlled intake",
+        );
+      assertProjectAgentTriggerClaim(claim);
+
+      return claim;
+    };
+    const cancellationOrders = [
+      "cancel_before_assessment",
+      "cancel_after_assessment",
+    ] as const;
+    const earlyQualificationOrders = [
+      "current_repository_evidence",
+      "advanced_repository_evidence",
+    ] as const;
+
+    for (const order of cancellationOrders) {
+      const claim = await createOrderedCoordinatorSource(order);
+      const queued = await submitProjectCommentAssignment(db, claim);
+
+      expect(queued.projectAdmission).toMatchObject({
+        kind: "qualification_wait",
+      });
+      const carrier = await getSpecialistAssignmentAdmission(
+        db,
+        userId,
+        queued.assignment.id,
+      );
+
+      if (!carrier.carrier)
+        throw new Error(
+          "Queued cancellation fixture is missing its retained carrier",
+        );
+      if (order === "cancel_after_assessment")
+        await qualifyCoordinatorTask(carrier.carrier.taskId, userId);
+      const cancelled = await cancelSpecialistAssignment(
+        db,
+        userId,
+        queued.assignment.id,
+        queued.assignment.revision,
+        "Cancel the original queued specialist request",
+      );
+
+      if (order === "cancel_before_assessment")
+        await qualifyCoordinatorTask(carrier.carrier.taskId, userId);
+      await drainProjectTriggerEvents();
+      await recoverProjectIntake({ db });
+      const retained = await getSpecialistAssignment(
+        db,
+        userId,
+        queued.assignment.id,
+      );
+
+      expect(retained).toMatchObject({
+        status: "cancelled",
+        revision: cancelled.revision,
+        inputRevision: 1,
+        runIds: [],
+      });
+      await expect(
+        submitProjectCommentAssignment(db, claim),
+      ).rejects.toMatchObject({
+        code: "PRECONDITION",
+        details: { reason: "project_comment_appointment_unavailable" },
+      });
+      expect(
+        (
+          await database.pool.query(
+            "SELECT (SELECT count(*)::int FROM task_launch_intents WHERE task_id=$1) AS intents,(SELECT count(*)::int FROM runs WHERE id=$2) AS runs,(SELECT count(*)::int FROM execution_commands WHERE run_id=$2) AS commands",
+            [carrier.carrier.taskId, claim.reservedRunId],
+          )
+        ).rows,
+      ).toEqual([{ intents: 0, runs: 0, commands: 0 }]);
+      expect(
+        (
+          await database.pool.query(
+            "SELECT outcome,run_id,specialist_assignment->'assignment'->>'id' AS assignment_id FROM agent_trigger_attempts WHERE id=$1",
+            [claim.id],
+          )
+        ).rows,
+      ).toEqual([
+        {
+          outcome: "queued",
+          run_id: null,
+          assignment_id: queued.assignment.id,
+        },
+      ]);
+      expect(
+        await getSpecialistAssignmentAdmission(
+          db,
+          userId,
+          queued.assignment.id,
+        ),
+      ).toMatchObject({
+        status: "cancelled",
+        carrier: {
+          input: { revision: 1 },
+          qualification: { freshness: "current", decision: "ready" },
+        },
+      });
+    }
+    await database.pool.query(
+      "CREATE TABLE cb_ordered_pointer_fault_target(attempt_id text PRIMARY KEY)",
+    );
+    await database.pool
+      .query(`CREATE FUNCTION cb_ordered_pointer_fault() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.specialist_assignment IS NOT NULL AND EXISTS(SELECT 1 FROM cb_ordered_pointer_fault_target WHERE attempt_id=NEW.id) THEN
+        RAISE EXCEPTION 'Controlled interruption before qualification source handoff' USING ERRCODE='23514',CONSTRAINT='cb_ordered_pointer_fault';
+      END IF; RETURN NEW; END $$`);
+    await database.pool.query(
+      "CREATE TRIGGER cb_ordered_pointer_fault BEFORE UPDATE ON agent_trigger_attempts FOR EACH ROW EXECUTE FUNCTION cb_ordered_pointer_fault()",
+    );
+    try {
+      for (const order of earlyQualificationOrders) {
+        const claim = await createOrderedCoordinatorSource(order);
+
+        await database.pool.query(
+          "INSERT INTO cb_ordered_pointer_fault_target(attempt_id) VALUES($1)",
+          [claim.id],
+        );
+        await expect(
+          submitProjectCommentAssignment(db, claim),
+        ).rejects.toMatchObject({
+          code: "CRASH",
+          details: {
+            sqlState: "23514",
+            constraint: "cb_ordered_pointer_fault",
+          },
+        });
+        const original = (
+          await database.pool.query<{
+            id: string;
+            project_task_id: string;
+            input_revision: number;
+          }>(
+            "SELECT head.id,head.project_task_id,head.input_revision FROM specialist_assignments head JOIN domain_events event ON event.id=$2 WHERE head.project_id=$1 AND head.origin->>'commentId'=event.payload->>'commentId'",
+            [project.id, claim.triggerEventId],
+          )
+        ).rows[0]!;
+        const frozenInput = await getSpecialistAssignmentInput(
+          db,
+          userId,
+          original.id,
+          1,
+        );
+
+        await qualifyCoordinatorTask(original.project_task_id, userId);
+        const qualificationBefore = (
+          await database.pool.query<{
+            current_qualification_id: string;
+            qualification_input_revision: number;
+          }>(
+            "SELECT current_qualification_id,qualification_input_revision FROM tasks WHERE id=$1",
+            [original.project_task_id],
+          )
+        ).rows[0]!;
+
+        await drainProjectTriggerEvents();
+        expect(
+          (
+            await database.pool.query(
+              "SELECT run_id,specialist_assignment FROM agent_trigger_attempts WHERE id=$1",
+              [claim.id],
+            )
+          ).rows,
+        ).toEqual([{ run_id: null, specialist_assignment: null }]);
+        expect(
+          (await getSpecialistAssignment(db, userId, original.id)).runIds,
+        ).toEqual([]);
+        if (order === "advanced_repository_evidence") {
+          await writeFile(
+            join(repo, "README.md"),
+            "# Updated diagnostic project\nRepository evidence advanced after qualification and before source handoff.\n",
+          );
+          await git(repo, "add", "README.md");
+          await git(
+            repo,
+            "commit",
+            "-q",
+            "-m",
+            "Advance coordinator qualification evidence",
+          );
+        }
+        await database.pool.query(
+          "DELETE FROM cb_ordered_pointer_fault_target WHERE attempt_id=$1",
+          [claim.id],
+        );
+        await database.pool.query(
+          "UPDATE agent_trigger_attempts SET due_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+          [claim.id],
+        );
+        expect(await reconcileAgentTriggerAttempts(db, new Date())).toEqual({
+          adopted: 0,
+          unknown: 1,
+        });
+        await recoverProjectIntake({ db });
+        if (order === "advanced_repository_evidence") {
+          expect(
+            await getSpecialistAssignmentAdmission(db, userId, original.id),
+          ).toMatchObject({
+            status: "queued",
+            carrier: {
+              input: { revision: 1, sha256: frozenInput.digest },
+              qualification: { freshness: "stale" },
+            },
+          });
+          expect(
+            (await getSpecialistAssignment(db, userId, original.id)).runIds,
+          ).toEqual([]);
+          expect(
+            (
+              await database.pool.query(
+                "SELECT outcome,run_id FROM agent_trigger_attempts WHERE id=$1",
+                [claim.id],
+              )
+            ).rows,
+          ).toEqual([{ outcome: "queued", run_id: null }]);
+          const refusedRevision = (
+            await getSpecialistAssignmentAdmission(db, userId, original.id)
+          ).carrier?.qualification?.inputRevision;
+
+          expect(refusedRevision).toBe(
+            qualificationBefore.qualification_input_revision + 1,
+          );
+          const repeatedRefusals = await Promise.all([
+            submitProjectCommentAssignment(db, claim),
+            submitProjectCommentAssignment(db, claim),
+          ]);
+
+          expect(
+            repeatedRefusals.map((result) => result.projectAdmission?.kind),
+          ).toEqual(["qualification_wait", "qualification_wait"]);
+          expect(
+            (await getSpecialistAssignmentAdmission(db, userId, original.id))
+              .carrier?.qualification?.inputRevision,
+          ).toBe(refusedRevision);
+          await qualifyCoordinatorTask(original.project_task_id, userId);
+          const delayedRefusal = (
+            await database.pool.query<{
+              current_qualification_id: string;
+              qualification_input_revision: number;
+            }>(
+              "SELECT current_qualification_id,qualification_input_revision FROM tasks WHERE id=$1",
+              [original.project_task_id],
+            )
+          ).rows[0]!;
+
+          await qualifyCoordinatorTask(original.project_task_id, userId);
+          expect(
+            await requestTaskRequalificationIfCurrent(db, {
+              projectId: project.id,
+              taskId: original.project_task_id,
+              qualificationId: delayedRefusal.current_qualification_id,
+              inputRevision: delayedRefusal.qualification_input_revision,
+            }),
+          ).toBe(false);
+          expect(
+            await getSpecialistAssignmentAdmission(db, userId, original.id),
+          ).toMatchObject({
+            carrier: {
+              qualification: {
+                inputRevision: delayedRefusal.qualification_input_revision,
+                freshness: "current",
+                decision: "ready",
+              },
+            },
+          });
+
+          await drainProjectTriggerEvents();
+        }
+        await driveCoordinatorAssignment(original.id);
+        await vi.waitFor(
+          async () => {
+            expect(
+              (
+                await database.pool.query(
+                  "SELECT status FROM runs WHERE id=$1",
+                  [claim.reservedRunId],
+                )
+              ).rows,
+            ).toEqual([{ status: "Done" }]);
+          },
+          { timeout: 30000, interval: 25 },
+        );
+        if (claim.triggerEventId === null)
+          throw new Error("Ordered source lost its original event identity");
+        await database.pool.query(
+          "UPDATE domain_event_consumers SET cursor_event_id=$1::bigint-1 WHERE consumer_id='agent_triggers'",
+          [claim.triggerEventId],
+        );
+        await drainProjectTriggerEvents();
+        await recoverProjectIntake({ db });
+        expect(
+          await getSpecialistAssignment(db, userId, original.id),
+        ).toMatchObject({
+          id: original.id,
+          inputRevision: 1,
+          runIds: [claim.reservedRunId],
+        });
+        expect(
+          (await getSpecialistAssignmentInput(db, userId, original.id, 1))
+            .digest,
+        ).toBe(frozenInput.digest);
+        expect(
+          (
+            await database.pool.query(
+              "SELECT count(*)::int AS count FROM task_launch_intents WHERE task_id=$1",
+              [original.project_task_id],
+            )
+          ).rows,
+        ).toEqual([{ count: 1 }]);
+        expect(
+          (
+            await database.pool.query(
+              "SELECT kind,count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt') GROUP BY kind ORDER BY kind",
+              [claim.reservedRunId],
+            )
+          ).rows,
+        ).toEqual([
+          { kind: "session.create", count: 1 },
+          { kind: "session.prompt", count: 1 },
+        ]);
+      }
+    } finally {
+      await database.pool.query(
+        "DROP TRIGGER cb_ordered_pointer_fault ON agent_trigger_attempts",
+      );
+      await database.pool.query("DROP FUNCTION cb_ordered_pointer_fault()");
+      await database.pool.query("DROP TABLE cb_ordered_pointer_fault_target");
+    }
     const deferredFlowRequest = {
       ...flowRequest,
       idempotencyKey: randomUUID(),
@@ -5664,7 +6036,11 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
           [project.id],
         )
       ).rows,
-    ).toEqual([{ count: 3 }]);
+    ).toEqual([
+      {
+        count: 3 + cancellationOrders.length + earlyQualificationOrders.length,
+      },
+    ]);
     expect((await submit(flowRequest)).status).toBe(200);
     expect(
       (

@@ -13,7 +13,8 @@ import { retainProjectSourceHandoff } from "./project-source-handoff";
 import { reserveProjectCoordinatorTask } from "./project-flow-task";
 
 import { createAgentFlowTaskLaunchSource } from "@/lib/agents/flow-launch-authority";
-import { taskLaunchIntents } from "@/lib/db/schema";
+import { taskLaunchIntents, tasks } from "@/lib/db/schema";
+import { requestTaskRequalificationIfCurrent } from "@/lib/tasks/qualification-requalification";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { assertInteractiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
 import {
@@ -102,6 +103,22 @@ export async function acceptProjectCoordinatorAssignmentLaunch(
       : {}),
   });
   const key = `specialist_assignment:${reference.assignmentId}:${reference.inputRevision}`;
+  const [qualification] = await db
+    .select({
+      id: tasks.currentQualificationId,
+      inputRevision: tasks.qualificationInputRevision,
+    })
+    .from(tasks)
+    .where(
+      and(eq(tasks.id, carrier.taskId), eq(tasks.projectId, input.projectId)),
+    );
+
+  if (!qualification)
+    throw new MaisterError(
+      "PRECONDITION",
+      "The retained qualification task is unavailable",
+      { details: { reason: "qualification_task_missing" } },
+    );
 
   try {
     const receipt = principal
@@ -125,8 +142,20 @@ export async function acceptProjectCoordinatorAssignmentLaunch(
       (reason === "qualification_required" ||
         reason === "qualification_stale" ||
         reason === "qualification_evidence_stale")
-    )
+    ) {
+      if (
+        reason === "qualification_evidence_stale" &&
+        qualification.id !== null
+      )
+        await requestTaskRequalificationIfCurrent(db, {
+          projectId: input.projectId,
+          taskId: carrier.taskId,
+          qualificationId: qualification.id,
+          inputRevision: qualification.inputRevision,
+        });
+
       return { kind: "qualification_wait", taskId: carrier.taskId, reason };
+    }
     throw error;
   }
 }

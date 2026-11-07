@@ -142,6 +142,11 @@ disabled, subject to current access. `repository_evidence_not_checked` means a
 ready assessment does not guarantee launch: actual dispatch rechecks repository
 evidence, permissions and execution readiness.
 
+When dispatch detects that repository evidence has advanced, it requests a fresh
+assessment for the same retained work. Refresh the task's qualification controls
+and review the current evidence; preserve the assignment and request key. A
+repeated or delayed refusal cannot invalidate a newer accepted assessment.
+
 ## Inspect result delivery and replay a failed cycle
 
 Use `GET /api/specialist-assignments/{assignmentId}/delivery?runId={runId}`

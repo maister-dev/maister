@@ -891,7 +891,7 @@ mapping remains 400 for session schema failures, 422 for external schema failure
 409 for stale/busy/superseded recovery and 413 for body size. No fixture-only result
 establishes installed stand-pilot readiness.
 
-### Read-only assignment admission inspection (Implemented — T22 ordering qualification pending)
+### Read-only assignment admission inspection (Implemented — locally qualified)
 
 `GET /api/specialist-assignments/{assignmentId}/admission` and the external
 `/api/v1/ext` counterpart expose a closed v1 control view under current human
@@ -939,7 +939,38 @@ company/standalone work with no carrier. Reads must leave all business and
 execution allocation counts unchanged. Ordering/cancellation qualification and
 full Phase 5 exit remain separate gates.
 
-### Qualified project coordinator source handoff (Partial — reopened T22)
+### Qualification/source ordering parity (Implemented — locally qualified)
+
+The native project coordinator must preserve one original assignment/input,
+carrier, source reservation and reserved Run identity across these finite orders.
+Canonical task qualification remains independent of assignment cancellation.
+
+| Order/window | Required observation |
+| --- | --- |
+| Intake and source handoff before assessment | Queued assignment, no Run; a current accepted ready assessment later resumes the original source once. |
+| Assessment before interrupted source handoff commits | The actual carrier can be assessed while its original pointer is unavailable; a qualification event cannot synthesize source authority. Recovery first captures the exact unused original source, then canonical admission may resume it once. |
+| Repository evidence advances after assessment but before handoff/admission | Current master refuses stale evidence, retaining original work and input. A fresh human assessment resumes the same reserved identity without a replacement assignment or fabricated approval. |
+| Duplicate qualification/intake before or after admission | Existing source/intent ownership deduplicates; completed prompt/create commands are never repeated by replayed source events. |
+| Cancel before assessment or after ready assessment but before source admission | Later assessment, duplicate intake, qualification event and scheduler reconciliation cannot revive the cancelled assignment or allocate a Run/intent. Original cancellation, input and producer acknowledgement remain inspectable. |
+| Source/current-user permission changes before admission | Current policy defers/refuses; retained historical authority is not a grant and restoration cannot change the original source/input identities. |
+
+When canonical launch observes stale repository evidence, native intake uses the
+same guarded requalification write as ordinary automatic enqueue. It compares
+the exact prior assessment identity and task input revision under the existing
+task reservation/row locks before requesting requalification. Repeated or delayed
+refusals cannot invalidate a newer human assessment or advance the same input
+revision twice. Original assignment input, source pointer and accepted historical
+assessment remain unchanged. Inspection itself still writes nothing.
+
+Cancellation does not reject or erase a valid assessment: the task assessment and
+cancelled business request remain separate durable facts. A replay of the
+cancelled source receives its existing explicit appointment refusal, and the
+shared scheduler must not interpret that private carrier as independent ordinary
+work. A fresh independent request remains separately admissible. Qualification
+covers the actual registered event consumer and existing automatic-launch job,
+not a model label or manually inserted successful Run.
+
+### Qualified project coordinator source handoff (Implemented — locally qualified)
 
 An automatic project coordinator request first retains its original assignment,
 private input and carrier task. A missing or stale positive qualification returns
