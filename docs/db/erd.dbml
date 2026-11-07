@@ -3200,6 +3200,26 @@ table specialist_input_revisions {
   }
 }
 
+table specialist_intake_receipts {
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  source_kind text [not null]
+  source_key text [not null]
+  request_digest text [not null]
+  disposition text [not null, default: 'created']
+  assignment_id text [not null]
+  input_revision integer [not null]
+  actor jsonb [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (source_kind, source_key) [name: 'specialist_intake_receipts_delivery_uq', unique]
+
+
+
+    (assignment_id, created_at, id) [name: 'specialist_intake_receipts_assignment_idx']
+  }
+}
+
 table specialist_run_links {
   assignment_id text [not null]
   run_id text [not null]
@@ -4730,6 +4750,8 @@ ref specialist_assignments_company_id_companies_id_fk: specialist_assignments.co
 ref specialist_assignments_project_id_projects_id_fk: specialist_assignments.project_id > projects.id [delete: restrict, update: no action]
 
 ref specialist_input_revisions_assignment_fk: specialist_input_revisions.assignment_id > specialist_assignments.id [delete: restrict, update: no action]
+
+ref specialist_intake_receipts_input_fk: specialist_intake_receipts.(assignment_id, input_revision) > specialist_input_revisions.(assignment_id, revision) [delete: restrict, update: no action]
 
 ref specialist_run_links_assignment_id_specialist_assignments_id_fk: specialist_run_links.assignment_id > specialist_assignments.id [delete: restrict, update: no action]
 

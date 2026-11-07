@@ -581,6 +581,7 @@ beforeAll(async () => {
   await applyMainMigration(database.db, "0250_company_flow_workspace_witness");
   await applyMainMigration(database.db, "0251_company_flow_runtime");
   await applyMainMigration(database.db, "0252_company_run_cancellation");
+  await applyMainMigration(database.db, "0253_specialist_intake_receipts");
   migrationTokensAfter = (
     await database.pool.query<{ value: JsonValue }>(
       "SELECT to_jsonb(t) AS value FROM project_tokens t ORDER BY id",
@@ -739,7 +740,7 @@ async function seedRetainedStandalone(): Promise<void> {
   });
 }
 
-it("preserves populated standalone/project/private Run and credential bytes through 0233/0234 and keeps project deletion independent of Brain", async () => {
+it("preserves populated standalone/project/private Run and credential bytes through 0233–0238 and keeps project deletion independent of Brain", async () => {
   expect(migrationTokensAfter).toEqual(migrationTokensBefore);
   expect(migrationTokensBefore).toHaveLength(3);
   await expect(

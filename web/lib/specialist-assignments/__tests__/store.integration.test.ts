@@ -19,7 +19,9 @@ import {
   recoverSpecialistAssignment,
   linkSpecialistAssignmentRun,
 } from "../store";
+import { intakeSpecialistAssignmentInTransaction } from "../intake";
 
+import { MaisterError } from "@/lib/errors";
 import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
 import { parseAgentDefinition } from "@/lib/agents/definition";
 import { createCompanyGrants, revokeCompanyGrant } from "@/lib/company/grants";
@@ -874,4 +876,342 @@ it("IT-CBA-03 refuses a recurring request attributed to another invocation or a 
       )
     ).rows[0]!.count,
   ).toBe(before);
+});
+
+function originalIntakeRequest(input: PreparedSpecialistAssignment) {
+  const { expectedResult: _expectedResult, ...objective } =
+    input.objectiveInput;
+
+  return {
+    ...objective,
+    owner: input.owner,
+    specialistBindingId: input.specialistBindingId,
+  };
+}
+
+it("IT-CBA-02 serializes concurrent source delivery and rejects changed request replay without repeating assignment creation", async () => {
+  const request = originalIntakeRequest(prepared);
+  const origin = { kind: "manual" as const, interactionId: randomUUID() };
+  const prepare = vi.fn(async () => ({ ...prepared, origin }));
+  const intake = () =>
+    database.db.transaction((tx) =>
+      intakeSpecialistAssignmentInTransaction(
+        tx,
+        requesterId,
+        origin,
+        request,
+        prepare,
+      ),
+    );
+  const receipts = await Promise.all([intake(), intake()]);
+
+  expect(receipts.map((receipt) => receipt.duplicate).sort()).toEqual([
+    false,
+    true,
+  ]);
+  expect(new Set(receipts.map((receipt) => receipt.assignment.id)).size).toBe(
+    1,
+  );
+  expect(new Set(receipts.map((receipt) => receipt.receiptId)).size).toBe(1);
+  expect(prepare).toHaveBeenCalledTimes(1);
+  const receipt = receipts[0]!;
+  const before = await database.pool.query(
+    "SELECT * FROM specialist_input_revisions WHERE assignment_id=$1",
+    [receipt.assignment.id],
+  );
+
+  await expect(
+    database.db.transaction((tx) =>
+      intakeSpecialistAssignmentInTransaction(
+        tx,
+        requesterId,
+        origin,
+        { ...request, objective: "Different work under the original delivery" },
+        prepare,
+      ),
+    ),
+  ).rejects.toMatchObject({
+    code: "CONFLICT",
+    details: { reason: "specialist_intake_payload_conflict" },
+  });
+  expect(prepare).toHaveBeenCalledTimes(1);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT * FROM specialist_input_revisions WHERE assignment_id=$1",
+        [receipt.assignment.id],
+      )
+    ).rows,
+  ).toEqual(before.rows);
+  const independentOrigin = {
+    kind: "manual" as const,
+    interactionId: randomUUID(),
+  };
+  const independent = await database.db.transaction((tx) =>
+    intakeSpecialistAssignmentInTransaction(
+      tx,
+      requesterId,
+      independentOrigin,
+      request,
+      async () => ({ ...prepared, origin: independentOrigin }),
+    ),
+  );
+
+  expect(independent.duplicate).toBe(false);
+  expect(independent.assignment.id).not.toBe(receipt.assignment.id);
+});
+
+it("IT-CBA-02 replays original work without provider preparation and refuses current read or submit revocation", async () => {
+  const request = originalIntakeRequest(prepared);
+  const origin = { kind: "manual" as const, interactionId: randomUUID() };
+  const created = await database.db.transaction((tx) =>
+    intakeSpecialistAssignmentInTransaction(
+      tx,
+      requesterId,
+      origin,
+      request,
+      async () => ({ ...prepared, origin }),
+    ),
+  );
+  const changedProvider = vi.fn(
+    async (): Promise<PreparedSpecialistAssignment> => {
+      throw new MaisterError(
+        "PRECONDITION",
+        "The provider changed after the original delivery",
+      );
+    },
+  );
+  const replay = () =>
+    database.db.transaction((tx) =>
+      intakeSpecialistAssignmentInTransaction(
+        tx,
+        requesterId,
+        origin,
+        request,
+        changedProvider,
+      ),
+    );
+
+  await expect(replay()).resolves.toMatchObject({
+    receiptId: created.receiptId,
+    duplicate: true,
+    inputRevision: 1,
+    assignment: { id: created.assignment.id },
+  });
+  for (const action of ["assignments:submit", "assignments:read"] as const) {
+    const grant = (
+      await database.pool.query<{ id: string; revision: number }>(
+        "SELECT id,revision FROM company_grants WHERE principal_type='user' AND principal_id=$1 AND action=$2 AND revoked_at IS NULL",
+        [requesterId, action],
+      )
+    ).rows[0]!;
+
+    await revokeCompanyGrant(database.db, administratorId, grant.id, {
+      expectedRevision: grant.revision,
+      reason: "Verify canonical intake replay uses current authority",
+      idempotencyKey: randomUUID(),
+    });
+    try {
+      await expect(replay()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    } finally {
+      await createCompanyGrants(database.db, administratorId, {
+        principalKind: "user",
+        principalId: requesterId,
+        actions: [action],
+        idempotencyKey: randomUUID(),
+      });
+    }
+  }
+  expect(changedProvider).not.toHaveBeenCalled();
+  expect(
+    (
+      await database.pool.query(
+        "SELECT id FROM specialist_intake_receipts WHERE assignment_id=$1",
+        [created.assignment.id],
+      )
+    ).rows,
+  ).toEqual([{ id: created.receiptId }]);
+});
+
+it("IT-CBA-02 rolls back assignment, frozen input, receipt and state event when intake fails before commit", async () => {
+  const request = originalIntakeRequest(prepared);
+  const origin = { kind: "manual" as const, interactionId: randomUUID() };
+  let rolledBackAssignmentId: string | null = null;
+  const beforeEvents = (
+    await database.pool.query(
+      "SELECT count(*)::int AS count FROM domain_events",
+    )
+  ).rows;
+
+  await expect(
+    database.db.transaction(async (tx) => {
+      const receipt = await intakeSpecialistAssignmentInTransaction(
+        tx,
+        requesterId,
+        origin,
+        request,
+        async () => ({ ...prepared, origin }),
+      );
+
+      rolledBackAssignmentId = receipt.assignment.id;
+      throw new MaisterError(
+        "CONFLICT",
+        "Injected interruption before intake commit",
+      );
+    }),
+  ).rejects.toMatchObject({ code: "CONFLICT" });
+  expect(rolledBackAssignmentId).not.toBeNull();
+  expect(
+    (
+      await database.pool.query(
+        "SELECT (SELECT count(*)::int FROM specialist_assignments WHERE id=$1) AS assignments,(SELECT count(*)::int FROM specialist_input_revisions WHERE assignment_id=$1) AS inputs,(SELECT count(*)::int FROM specialist_intake_receipts WHERE assignment_id=$1) AS receipts",
+        [rolledBackAssignmentId],
+      )
+    ).rows,
+  ).toEqual([{ assignments: 0, inputs: 0, receipts: 0 }]);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS count FROM domain_events",
+      )
+    ).rows,
+  ).toEqual(beforeEvents);
+  const recovered = await database.db.transaction((tx) =>
+    intakeSpecialistAssignmentInTransaction(
+      tx,
+      requesterId,
+      origin,
+      request,
+      async () => ({ ...prepared, origin }),
+    ),
+  );
+
+  expect(recovered.duplicate).toBe(false);
+});
+
+it("IT-CBA-02 keeps source receipts immutable and refuses forged source or submitting actor bindings", async () => {
+  const request = originalIntakeRequest(prepared);
+  const origin = { kind: "manual" as const, interactionId: randomUUID() };
+  const receipt = await database.db.transaction((tx) =>
+    intakeSpecialistAssignmentInTransaction(
+      tx,
+      requesterId,
+      origin,
+      request,
+      async () => ({ ...prepared, origin }),
+    ),
+  );
+
+  await expect(
+    database.pool.query(
+      "UPDATE specialist_intake_receipts SET request_digest=repeat('a',64) WHERE id=$1",
+      [receipt.receiptId],
+    ),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "specialist_intake_receipts_immutable",
+  });
+  await expect(
+    database.pool.query("DELETE FROM specialist_intake_receipts WHERE id=$1", [
+      receipt.receiptId,
+    ]),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "specialist_intake_receipts_immutable",
+  });
+  await expect(
+    database.pool.query(
+      "INSERT INTO specialist_intake_receipts(source_kind,source_key,request_digest,assignment_id,input_revision,actor) SELECT 'event',repeat('b',64),request_digest,assignment_id,input_revision,actor FROM specialist_intake_receipts WHERE id=$1",
+      [receipt.receiptId],
+    ),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "specialist_intake_receipts_binding",
+  });
+  await expect(
+    database.pool.query(
+      "INSERT INTO specialist_intake_receipts(source_kind,source_key,request_digest,assignment_id,input_revision,actor) SELECT source_kind,repeat('c',64),request_digest,assignment_id,input_revision,jsonb_set(actor,'{id}',to_jsonb($2::text)) FROM specialist_intake_receipts WHERE id=$1",
+      [receipt.receiptId, randomUUID()],
+    ),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "specialist_intake_receipts_binding",
+  });
+});
+
+it("IT-CBA-02 separates canonical comment recipients while manual keys reject retargeting", async () => {
+  const request = originalIntakeRequest(prepared);
+  const comment = {
+    kind: "task_comment" as const,
+    projectId: randomUUID(),
+    taskId: randomUUID(),
+    commentId: randomUUID(),
+  };
+  const first = await database.db.transaction((tx) =>
+    intakeSpecialistAssignmentInTransaction(
+      tx,
+      requesterId,
+      comment,
+      request,
+      async () => ({ ...prepared, origin: comment }),
+    ),
+  );
+  const secondRequest = { ...request, specialistBindingId: randomUUID() };
+  const second = await database.db.transaction((tx) =>
+    intakeSpecialistAssignmentInTransaction(
+      tx,
+      requesterId,
+      comment,
+      secondRequest,
+      async () => ({
+        ...prepared,
+        specialistBindingId: secondRequest.specialistBindingId,
+        origin: comment,
+      }),
+    ),
+  );
+
+  expect(second.duplicate).toBe(false);
+  expect(second.assignment.id).not.toBe(first.assignment.id);
+  await expect(
+    database.db.transaction((tx) =>
+      intakeSpecialistAssignmentInTransaction(
+        tx,
+        requesterId,
+        comment,
+        secondRequest,
+        async () => {
+          throw new MaisterError(
+            "CRASH",
+            "Duplicate comment recipient must not prepare work again",
+          );
+        },
+      ),
+    ),
+  ).resolves.toMatchObject({ duplicate: true, receiptId: second.receiptId });
+  const manual = { kind: "manual" as const, interactionId: randomUUID() };
+
+  await database.db.transaction((tx) =>
+    intakeSpecialistAssignmentInTransaction(
+      tx,
+      requesterId,
+      manual,
+      request,
+      async () => ({ ...prepared, origin: manual }),
+    ),
+  );
+  await expect(
+    database.db.transaction((tx) =>
+      intakeSpecialistAssignmentInTransaction(
+        tx,
+        requesterId,
+        manual,
+        secondRequest,
+        async () => ({ ...prepared, origin: manual }),
+      ),
+    ),
+  ).rejects.toMatchObject({
+    code: "CONFLICT",
+    details: { reason: "specialist_intake_payload_conflict" },
+  });
 });

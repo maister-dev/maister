@@ -1,0 +1,86 @@
+{
+  "task": "T22",
+  "slice": "Internal canonical intake receipt core",
+  "date": "2026-11-07",
+  "baseCommit": "617b77bbff3a51a3986d169bf603cf75401d1768",
+  "worktree": "Isolated next-phase preparation; primary T21 gate remains running against the base commit",
+  "status": "Internal core qualified; T22 invocation adapters and T21 full phase exit are not complete",
+  "migrations": [
+    "0238_specialist_intake_receipts"
+  ],
+  "red": [
+    {
+      "case": "Missing canonical service contract",
+      "testsFailed": 1,
+      "testsPassed": 8,
+      "note": "Temporary typed PRECONDITION stub established the initial RED and was replaced before commit."
+    },
+    {
+      "case": "One canonical comment addressing independent specialists collided at its receipt key",
+      "testsFailed": 1,
+      "testsPassed": 12,
+      "reason": "specialist_intake_payload_conflict"
+    }
+  ],
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "tests": 58,
+      "files": 2,
+      "durationSeconds": 33.66
+    },
+    "unit": {
+      "exitCode": 0,
+      "tests": 9318,
+      "files": 889,
+      "durationSeconds": 26.34
+    },
+    "types": {
+      "exitCode": 0
+    },
+    "lint": {
+      "exitCode": 0
+    },
+    "format": {
+      "exitCode": 0
+    },
+    "contracts": {
+      "exitCode": 0
+    },
+    "docs": {
+      "exitCode": 0
+    },
+    "generation": {
+      "exitCode": 0
+    }
+  },
+  "qualified": [
+    "Concurrent identical source delivery retains one assignment and receipt with one provider preparation",
+    "Same manual identity/different request refuses without dependent writes; independent requests create separate queued work",
+    "Task-comment keys distinguish addressed specialist bindings; manual keys cannot retarget their original work",
+    "Replay uses retained input/current read and submit grants without resolving mutable provider state",
+    "Interruption before commit rolls back assignment, input, receipt and state event; a retry creates work once",
+    "Receipt UPDATE/DELETE and forged source/actor bindings refuse at the actual PostgreSQL boundary",
+    "Main-only populated migration chain through 0238 preserves native/v1/project/private bytes and Brain-independent project deletion",
+    "Web and external designed create schemas both expose optional literal input with an explicit empty default"
+  ],
+  "migrationPublication": "Generated migration/snapshot/journal. The earlier unpublished test-only form was regenerated before commit to add a closed created disposition; only owned disposable databases had applied it. Existing committed migrations were not amended.",
+  "qualificationBoundary": "Actual PostgreSQL and existing owned-supervisor/pinned fixture Git package runtime checks. The source identity core receives trusted server-adapter input; these tests do not establish actual manual/project/company API admission, mentions/schedules/events/webhooks, native agent delegation or pilot readiness. Those adapters remain T22/T22.1/T27. No scheduler or execution attempt ledger is introduced.",
+  "sourceSha256": {
+    "web/lib/db/migrations/0238_specialist_intake_receipts.sql": "2c73460f0ffba0047fd0bae546731b2ad4a86c40f4718bd911d5b4f88d5bdb62",
+    "web/lib/db/migrations/meta/0238_snapshot.json": "b7717684fb1389a85470414143f0fc14eae877047db544f16287b3ebb7a7a309",
+    "web/lib/specialist-assignments/intake-types.ts": "36bdc54ec06e8b4ddec5edc301877bbd9baf5275955c62935d9ee4e12fa8c969",
+    "web/lib/specialist-assignments/intake.ts": "87a693c49c3a7db8f5a1e8fbe4472d3bbac887e745144ae810116ae9912c2f00",
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "da3908cec3b104c16459a2462c0f4940fdbd691894a0429f01d8686fa0b9165a",
+    "docs/api/external/operations.openapi.yaml": "d2b3bdfc0a6bd850660cf21ce523e552af66fbb564aa88558b0db88ef275b690",
+    "docs/api/web.openapi.yaml": "927167aea089d0d33fe9f02297e3c3c7dd036e391d19c82c1a4a793a4886669f",
+    "docs/database-schema.md": "862149b86c2d8881dd7d17ccb97b3adb7c918c54983f053617092d33d24fb9d1",
+    "docs/db/erd.dbml": "9884aaae5d02c441a0b432f552595e730bac47bda9d9d9bf98289bf4bbea3aa3",
+    "docs/db/specialist-assignments-domain.md": "53e7fcd9e61598c33ac8216975de27e0972193516ca13c941cfd3b9d81c85d0d",
+    "docs/system-analytics/specialist-assignments.md": "3c2c5ccf76f4dce825d2715aaad48673cdca432f823c344b6b65f9658a2428b4",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "3a1c9a69a2f0adfea74da087cc31925560ef249d99bb6d0be5e3899b7bce60a3",
+    "web/lib/db/migrations/meta/_journal.json": "89d843fe6a4193c31531928f6c846558108f54ec954faee61f457da69ac32536",
+    "web/lib/db/schema.ts": "52e72a4d5c10470dd40524f551125bd1587ad6b8cd3ab207977084af82eec942",
+    "web/lib/specialist-assignments/__tests__/store.integration.test.ts": "d45bdbf6e35fb3758911bd20354e252cd224943111becd2a00ef401ebce50b10"
+  }
+}

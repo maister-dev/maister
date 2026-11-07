@@ -10651,6 +10651,56 @@ export const specialistRunLinks = pgTable(
   }),
 );
 
+/** Immutable source-delivery receipt; execution remains on the existing Run ledgers. */
+export const specialistIntakeReceipts = pgTable(
+  "specialist_intake_receipts",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    sourceKind: text("source_kind").$type<AssignmentOrigin["kind"]>().notNull(),
+    sourceKey: text("source_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    disposition: text("disposition")
+      .$type<"created">()
+      .notNull()
+      .default("created"),
+    assignmentId: text("assignment_id").notNull(),
+    inputRevision: integer("input_revision").notNull(),
+    actor: jsonb("actor").$type<KnowledgeAttribution>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    delivery: unique("specialist_intake_receipts_delivery_uq").on(
+      t.sourceKind,
+      t.sourceKey,
+    ),
+    input: foreignKey({
+      name: "specialist_intake_receipts_input_fk",
+      columns: [t.assignmentId, t.inputRevision],
+      foreignColumns: [
+        specialistInputRevisions.assignmentId,
+        specialistInputRevisions.revision,
+      ],
+    }).onDelete("restrict"),
+    shape: check(
+      "specialist_intake_receipts_shape_check",
+      sql`(${t.sourceKind} IN ('manual','task_comment','schedule','event','webhook','delegation') AND ${t.sourceKey} ~ '^[a-f0-9]{64}$' AND ${t.requestDigest} ~ '^[a-f0-9]{64}$' AND ${t.disposition}='created' AND ${t.inputRevision}>0 AND char_length(${t.assignmentId}) BETWEEN 1 AND 128) IS TRUE`,
+    ),
+    attribution: check(
+      "specialist_intake_receipts_actor_check",
+      specialistActorShape(t.actor),
+    ),
+    assignmentHistory: index("specialist_intake_receipts_assignment_idx").on(
+      t.assignmentId,
+      t.createdAt,
+      t.id,
+    ),
+  }),
+);
+
 export const companySpecialistBindings = pgTable(
   "company_specialist_bindings",
   {

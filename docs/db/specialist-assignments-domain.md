@@ -71,6 +71,17 @@ erDiagram
         jsonb actor
         text digest
     }
+    SPECIALIST_INTAKE_RECEIPTS {
+        text id PK
+        text source_kind
+        text source_key
+        text request_digest
+        text disposition
+        text assignment_id FK
+        integer input_revision FK
+        jsonb actor
+        timestamptz created_at
+    }
     SPECIALIST_CONTEXT_REVISIONS {
         text assignment_id PK,FK
         integer revision PK
@@ -94,6 +105,10 @@ erDiagram
     }
 ```
 
+## Canonical intake receipts
+
+Generated main `0253_specialist_intake_receipts` adds one immutable source-delivery receipt per canonical owner/source key. It references the exact existing assignment input, retains the server actor and original request digest, and indexes assignment history. Source keys include the owner and canonical origin, manual requester identity, and the addressed specialist binding for task comments. A unique `(source_kind,source_key)` plus a bounded transaction advisory lock serializes concurrent deliveries; content conflicts do not repeat dependent writes. Insert validation binds source kind and actor to the retained assignment/input. UPDATE and DELETE refuse. No Brain table is referenced; existing rows are not rewritten. Source dispatch and continuation remain their owning slices.
+
 ## Exact persistence contract
 
 All new entity IDs are server-generated; timestamps UTC. Versioned closed JSON contains typed fields specified in the owning API/native schemas. Absence/null/legacy variants are explicit, not generic empty objects.
@@ -111,7 +126,7 @@ All new entity IDs are server-generated; timestamps UTC. Versioned closed JSON c
 | `specialist_input_revisions` (Implemented) | PK assignment/revision; objective/input/targets/refs/constraints/exact result/verification in objective_input; separate authority, standing, recurring request and source restrictions; digest, actor/time | Assignment FK RESTRICT; creation or input append and parent CAS commit together. UPDATE/DELETE refused; current access governs historical reads |
 | `specialist_context_revisions` | PK assignment/revision; base revision, structured context and server restrictions, actor/epoch/time | Parent row lock + exact base/epoch CAS; immutable rows, no last-writer merge |
 | `specialist_owner_claims` | Assignment PK, owner/run, positive epoch, renewed_at and expires_at, explicit claim state | Owner+epoch+fresh-expiry in every write predicate; lease 120s/renew 40s, not an in-memory mutex; no slot from lease alone |
-| `specialist_intake_receipts` | id/owner/source/delivery key, canonical digest, closed disposition, assignment/input/receipt time | UNIQUE explicit owner/source/delivery key, same digest exact replay; key+assignment/input in one transaction |
+| `specialist_intake_receipts` (Implemented internal core, 0238; source adapters pending) | Server ID, source kind and owner/origin-scoped key hash, original request digest, closed created disposition, exact assignment/input, server actor/time | UNIQUE source kind/key; owner derives from immutable assignment and is included in the key; exact input FK RESTRICT; source/actor binding guard and immutable receipt; same-key lock, creation and state event commit together |
 | `specialist_run_links` (Implemented) | assignment/run PK, input/work revision and role; existing run pointer | Unique run, exact input composite FK, immutable links; owning admission validates scope. No independent attempt counter/ledger |
 | `specialist_work` | Stable work identity, assignment/input/work revision, digest, parent/child run, constraints/result requirements/state | UNIQUE assignment/input/logical-work/revision; existing parent/root lock admits one child; terminal work keeps old result |
 | `specialist_work_decisions` | id/work revision/actor/input/result revision, decision/reason/evidence, owner epoch, digest/key/time | Unique work/idempotency key; exact result references RESTRICT; append-only decision history |

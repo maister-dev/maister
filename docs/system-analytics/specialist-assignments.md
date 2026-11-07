@@ -136,6 +136,37 @@ free-text terminal reason and are not agent triggers. Input/context/result
 contents remain in their current-access-controlled owning stores; this is not an
 additional execution or attempt ledger.
 
+### Canonical intake receipt boundary
+
+The intake service receives a validated request containing owner, specialist binding,
+objective, expected outcome, literal input, targets, references, constraints and
+verification requirements. The authenticated source adapter supplies the canonical
+origin; no caller-supplied origin, requester, standing definition, permissions or
+content digest enters the public create contract. Manual input defaults to an
+explicit empty string when omitted. Provider pins, expected result schema and
+historical authority are prepared by the server and frozen separately.
+
+One immutable `specialist_intake_receipts` row binds the source kind/key, original
+request digest, server actor and exact assignment/input revision. The key hashes
+the owner and canonical origin; manual interactions additionally include the
+current user identity. Task-comment delivery additionally includes the addressed
+specialist binding, allowing one comment to request independent work from
+multiple specialists. Other adapters retain their existing canonical delivery,
+trigger, event/subscription or parent/work identities. Payload hashing
+uses the original normalized request, excluding mutable standing/authority data.
+The transaction serializes the key before lookup. Concurrent identical requests
+produce one assignment; changed payload conflicts without dependent writes.
+Replay checks current assignment/source and submission authority and returns the
+original input receipt without resolving a changed or disabled provider again.
+
+Adapters prepare new work only after the receipt lookup and persist any Run
+reservation in the same outer transaction. There is no external mutation inside
+that transaction and no additional execution scheduler or attempt ledger. Receipt
+storage and manual admission are qualified independently of actual scheduled,
+event and webhook dispatch (T22.1), clarification continuation (T24) and native
+agent delegation (T27). A matching source identity alone never authorizes an
+adapter to act as another principal.
+
 ### Clarification and context
 
 Existing agent-question/HITL services gain an assignment subject without a task requirement. Human `assignments` retains claim/answer ownership; company actor scope and role mapping come from the company Flow binding. A question stores assignment, expected input revision, coordinator epoch, prompt/turn and source principal. Same answer replay is inert; changed/late/wrong-assignment/terminal answer returns 409. Persist answer intent before delivery and mark delivered only after ACK. Failed DB/delivery handling explicitly cancels/releases the supervisor's owned permission deferred; no hidden promise waits.

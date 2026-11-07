@@ -14444,6 +14444,11 @@ components:
           type: string
           minLength: 1
           maxLength: 4000
+        input:
+          type: string
+          maxLength: 8000
+          default: ""
+          description: Literal request input, separate from standing instructions and authority.
         targetIds:
           type: array
           items:
