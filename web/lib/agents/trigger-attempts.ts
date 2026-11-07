@@ -46,7 +46,10 @@ export function assertProjectAgentTriggerClaim(
   if (
     typeof attempt.projectId !== "string" ||
     attempt.companyId !== null ||
-    attempt.bindingSnapshot.version !== 1
+    (attempt.bindingSnapshot.version !== 1 &&
+      attempt.bindingSnapshot.version !== 3) ||
+    (attempt.bindingSnapshot.version === 3 &&
+      attempt.bindingSnapshot.owner.projectId !== attempt.projectId)
   )
     throw new MaisterError(
       "CONFIG",

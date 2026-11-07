@@ -5488,6 +5488,8 @@
     "kindOperational": "Operational",
     "kindCodeDelivery": "Code delivery",
     "requestAtLaunch": "Request at launch",
+    "reviewForAssignments": "Review for specialist assignments",
+    "reviewForAssignmentsHint": "Approve this recurring request for the current pinned specialist using your project authority. Turn off to clear approval or repair settings without approving work.",
     "requestHint": "Optional current request for this schedule, alongside the agent’s standing instructions. Up to {limit} characters. Blank keeps the default behavior. Permissions and human approvals still apply.",
     "requestTooLong": "Use at most {limit} characters.",
     "requestInvalid": "Remove invalid text characters."
@@ -6524,6 +6526,7 @@
     },
     "cause": {
       "input": "The specialist request is too long",
+      "source": "The automation source needs review",
       "cleanup": "Workspace cleanup needs attention",
       "authorization": "Access to the operation was denied",
       "qualification": "Task assessment could not be published",
@@ -6531,6 +6534,7 @@
     },
     "remediation": {
       "input": "Post a new mention within 8000 stored characters, or use bounded input references. The original comment remains available.",
+      "source": "Provide the recurring request and save the source settings with current project settings authority. Future invocations use that review; retained attempts stay unchanged.",
       "cleanup": "Open the specific run, inspect preserved evidence and retry its workspace cleanup when the blocker is resolved.",
       "authorization": "Restore the required access, then preview a safe new attempt. Uncertain prior effects require reconciliation first.",
       "qualification": "Review the current task input and assessment evidence. Requalify changed or incomplete requests before delivery.",

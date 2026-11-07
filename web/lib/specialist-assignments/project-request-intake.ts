@@ -8,7 +8,7 @@ import type {
   AssignmentDestination,
 } from "./types";
 import type { ProjectSpecialistIntakeRequest } from "./intake-types";
-import type { ProjectCommentAppointment } from "./project-source-types";
+import type { ProjectSourceAppointment } from "./project-source-types";
 import type { LaunchAgentRunInput } from "@/lib/agents/launch";
 import type { SpecialistIntakeReceipt } from "./intake-types";
 
@@ -43,7 +43,7 @@ export type ProjectRequestInvocation = Readonly<{
   trigger: LaunchAgentRunInput["trigger"];
   scheduledRequest: PreparedSpecialistAssignment["scheduledRequest"];
   taskId: string | null;
-  source?: ProjectCommentAppointment;
+  source?: ProjectSourceAppointment;
 }>;
 const log = pino({
   name: "project-request-intake",
@@ -253,6 +253,15 @@ export async function submitProjectUserRequest(
         taskId: invocation.taskId,
         runId: invocation.source?.runId,
         agentScheduleId: invocation.source?.scheduleId,
+        scheduledRequestSnapshot: invocation.scheduledRequest,
+        ...(invocation.source?.kind === "cron"
+          ? {
+              agentTriggerReservation: {
+                attemptId: invocation.source.attemptId,
+                runId: invocation.source.runId,
+              },
+            }
+          : {}),
         specialistAssignment: {
           assignmentId: receipt.assignment.id,
           inputRevision: receipt.inputRevision,

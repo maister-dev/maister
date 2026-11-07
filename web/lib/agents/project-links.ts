@@ -62,6 +62,7 @@ export type AgentScheduleInput = {
   eventKinds?: string[];
   enabled?: boolean;
   requestAtLaunch?: string | null;
+  reviewForAssignments?: boolean;
 };
 
 export type AttachedAgentView = {
@@ -595,17 +596,41 @@ export async function updateAgentLink(
   const now = new Date();
   const normalizedSchedules = input.patch.schedules?.map((schedule) => ({
     id: schedule.id,
+    reviewForAssignments: schedule.reviewForAssignments ?? false,
     values: normalizeSchedule(schedule, now),
   }));
   const reviewsNativeSources =
-    normalizedSchedules !== undefined && input.actorUserId != null
-      ? (
-          await resolveEffectiveAgentDefinition(
-            { projectId: input.projectId, agentId: input.agentId },
-            _db,
-          )
-        ).parsed.specialist != null
-      : false;
+    normalizedSchedules?.some((schedule) => schedule.reviewForAssignments) ??
+    false;
+
+  if (reviewsNativeSources) {
+    if (input.actorUserId == null)
+      throw new MaisterError(
+        "UNAUTHENTICATED",
+        "Source review requires an identified current operator",
+      );
+    if (
+      normalizedSchedules?.some(
+        (schedule) =>
+          schedule.reviewForAssignments &&
+          schedule.values.triggerType === "mention",
+      )
+    )
+      throw new MaisterError(
+        "CONFIG",
+        "Mention sources use the comment author's authority and cannot carry automation reviews",
+      );
+    const effective = await resolveEffectiveAgentDefinition(
+      { projectId: input.projectId, agentId: input.agentId },
+      _db,
+    );
+
+    if (effective.parsed.specialist == null)
+      throw new MaisterError(
+        "CONFIG",
+        "Only a declared pinned specialist can receive assignment source approval",
+      );
+  }
 
   if (
     normalizedSchedules?.some(({ values }) => Boolean(values.requestAtLaunch))
@@ -824,6 +849,7 @@ export async function updateAgentLink(
             : schedule.values.requestAtLaunch;
         const projectSourceReview: ProjectSourceReview | null =
           reviewsNativeSources &&
+          schedule.reviewForAssignments &&
           input.actorUserId != null &&
           schedule.values.triggerType !== "mention"
             ? {

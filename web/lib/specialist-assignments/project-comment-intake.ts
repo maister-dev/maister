@@ -8,24 +8,6 @@ import { loadProjectCommentAppointment } from "./project-comment-appointment";
 import { submitProjectUserRequest } from "./project-request-intake";
 import { beginAssignmentTransaction } from "./store";
 
-import { resolveEffectiveAgentDefinition } from "@/lib/agents/effective";
-
-/** The effective project pin is authoritative; catalog metadata from another revision cannot choose native admission. */
-export async function isNativeProjectCommentSpecialist(
-  db: Db,
-  claim: ProjectAgentTriggerClaim,
-): Promise<boolean> {
-  const effective = await resolveEffectiveAgentDefinition(
-    { projectId: claim.projectId, agentId: claim.sourceAgentId },
-    db,
-  );
-
-  return (
-    effective.parsed.specialist !== undefined &&
-    effective.parsed.specialist !== null
-  );
-}
-
 /** Each human comment/recipient is independent durable work, even while another assignment is active. */
 export async function submitProjectCommentAssignment(
   db: Db,

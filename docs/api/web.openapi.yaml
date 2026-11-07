@@ -25823,6 +25823,11 @@ components:
         Limit is 8000 Unicode code points AFTER normalization; reject NUL and
         unpaired surrogates without truncation. Omitted request preserves a
         retained ID's value; new IDs default null. Explicit null/empty clears.
+        reviewForAssignments=true requests native source approval by the actual
+        current settings operator using the installed specialist pin. It applies
+        to cron/event sources only. False/omitted clears review; ordinary edits
+        and request clearing do not require a resolvable pin merely to withhold
+        approval. Review metadata itself is server-only.
       required: [triggerType]
       properties:
         id: { type: string, format: uuid }
@@ -25838,6 +25843,7 @@ components:
           type: string
           nullable: true
           description: Optional literal cron request; limit applies after normalization.
+        reviewForAssignments: { type: boolean, default: false }
     ProjectSourceReview:
       nullable: true
       type: object
@@ -25872,8 +25878,8 @@ components:
     AgentScheduleView:
       type: object
       additionalProperties: false
-      description: Implemented source review metadata; native project automation
-        dispatch remains pending T22. Explicit collection saves by a current
+      description: Implemented source review metadata and native project cron
+        intake; native project event assignment routing remains pending T22. Explicit review intent in a collection save by a current
         settings operator review native cron/event sources using the effective
         installed project pin. Null means unreviewed history, ordinary agent or
         mention source. Request bodies cannot supply review metadata. Review is

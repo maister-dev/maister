@@ -1970,6 +1970,7 @@ async function* executeFlowLaunch(
                   triggerSource: input.triggerSource ?? null,
                   triggerEventId: input.triggerEventId ?? null,
                   agentScheduleId: input.agentScheduleId ?? null,
+                  scheduledRequestSnapshot,
                   agentId,
                   taskId: task.id,
                   executionPolicy,

@@ -10,6 +10,7 @@ import type {
   ProjectCoordinatorFlowSnapshot,
 } from "./types";
 import type { AgentActivitySnapshot } from "@/lib/agents/activity-types";
+import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 
 import { sql } from "drizzle-orm";
 import { z } from "zod";
@@ -20,8 +21,9 @@ import {
   lockSpecialistAssignment,
 } from "./store";
 import { authorizeAssignment } from "./access";
-import { projectCommentAppointmentSchema } from "./project-source-types";
+import { projectSourceAppointmentSchema } from "./project-source-types";
 import { loadProjectCommentAppointment } from "./project-comment-appointment";
+import { loadProjectCronAppointment } from "./project-cron-appointment";
 import { assertProjectCoordinatorProvider } from "./project-flow-provider";
 
 import { resolveAgentConfig } from "@/lib/agents/config";
@@ -48,7 +50,7 @@ export const projectAssignmentAdmissionSchema = z
     inputRevision: knowledgeRevisionSchema,
     expectedRevision: knowledgeRevisionSchema,
     userId: identity,
-    source: projectCommentAppointmentSchema.optional(),
+    source: projectSourceAppointmentSchema.optional(),
   })
   .strict();
 export type ProjectAssignmentAdmission = z.infer<
@@ -67,6 +69,7 @@ export type ProjectAssignmentLaunchContext = Readonly<{
   triggerSource?: string | null;
   triggerEventId?: number | null;
   agentScheduleId?: string | null;
+  scheduledRequestSnapshot?: ScheduledAgentRequestSnapshot | null;
 }>;
 
 /** Hold responsibility and compare the exact frozen input before the existing Run insert. */
@@ -199,7 +202,7 @@ export async function prepareProjectAssignmentAdmission(
 
   if (assignment.origin.kind === "task_comment") {
     if (
-      !reference.source ||
+      reference.source?.kind !== "task_comment" ||
       reference.source.runId !== context.runId ||
       context.triggerSource !== "domain_event" ||
       context.triggerEventId !== reference.source.eventId ||
@@ -230,10 +233,42 @@ export async function prepareProjectAssignmentAdmission(
           details: { reason: "project_comment_appointment_mismatch" },
         },
       );
+  } else if (assignment.origin.kind === "schedule") {
+    if (
+      reference.source?.kind !== "cron" ||
+      reference.source.runId !== context.runId ||
+      context.triggerSource !== "cron" ||
+      context.triggerEventId != null ||
+      context.agentScheduleId !== reference.source.scheduleId
+    )
+      throw new MaisterError(
+        "CONFIG",
+        "Native project cron admission requires its exact reserved source Run",
+        { details: { reason: "project_cron_appointment_required" } },
+      );
+    const source = await loadProjectCronAppointment(tx, reference.source);
+
+    if (
+      source.projectId !== context.projectId ||
+      source.bindingId !== context.bindingId ||
+      source.agentId !== context.effective.parsed.id ||
+      source.userId !== reference.userId ||
+      assignment.origin.scheduleId !== reference.source.scheduleId ||
+      assignment.origin.triggerAttemptId !== reference.source.attemptId ||
+      contentDigest(snapshot.scheduledRequest) !==
+        contentDigest(source.scheduledRequest) ||
+      contentDigest(context.scheduledRequestSnapshot ?? null) !==
+        contentDigest(source.scheduledRequest)
+    )
+      throw new MaisterError(
+        "CONFLICT",
+        "Native project cron admission must preserve its exact source, reviewer and original scheduled request",
+        { details: { reason: "project_cron_appointment_mismatch" } },
+      );
   } else if (reference.source)
     throw new MaisterError(
       "CONFIG",
-      "A native comment appointment cannot authorize another origin",
+      "A native source appointment cannot authorize another origin",
     );
 
   const retainedCoordinator =
@@ -290,6 +325,7 @@ export async function prepareProjectCoordinatorAssignmentAdmission(
     triggerSource?: string | null;
     triggerEventId?: number | null;
     agentScheduleId?: string | null;
+    scheduledRequestSnapshot?: ScheduledAgentRequestSnapshot | null;
   }>,
 ): Promise<
   Readonly<{

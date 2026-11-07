@@ -14,6 +14,8 @@ import {
   loadCompanyFlowBindingRevision,
 } from "./company-flow-bindings";
 import { parseAgentTriggerBindingSnapshot } from "./trigger-attempt-types";
+import { parseProjectSourceReview } from "./project-source-review-types";
+import { projectSourceContentDigest } from "./project-source-review";
 
 import { MaisterError } from "@/lib/errors";
 
@@ -29,6 +31,8 @@ export type TriggerScheduleCapture = Readonly<{
   cronExpr: string | null;
   timezone: string | null;
   eventMatch: Readonly<{ kinds: string[] }> | null;
+  projectSourceReview?: unknown;
+  requestAtLaunch?: string | null;
 }>;
 
 /** Capture current accepted configuration identities under their owning company; the invocation request stays separate v1. */
@@ -55,7 +59,23 @@ export async function captureTriggerBindingSnapshot(
         "Project invocation metadata cannot include company configuration references",
       );
 
-    return parseAgentTriggerBindingSnapshot({ version: 1, ...base });
+    const review = parseProjectSourceReview(source.projectSourceReview);
+
+    if (review === null)
+      return parseAgentTriggerBindingSnapshot({ version: 1, ...base });
+    if (review.sourceSha256 !== projectSourceContentDigest(source))
+      throw new MaisterError(
+        "CONFIG",
+        "Project source content no longer matches its recorded review",
+        { details: { reason: "project_source_review_changed" } },
+      );
+
+    return parseAgentTriggerBindingSnapshot({
+      version: 3,
+      ...base,
+      owner: { kind: "project", projectId: source.projectId },
+      review,
+    });
   }
   if (
     source.projectId !== null ||

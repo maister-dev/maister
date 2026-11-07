@@ -1,4 +1,5 @@
 import type { SessionUser } from "@/lib/authz";
+import type { AgentScheduleInput } from "@/lib/agents/project-links";
 import type { Db } from "@/lib/execution-host/db";
 import type { OperationalWorkspaceContext } from "../operational-context";
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
@@ -147,11 +148,14 @@ import { DOMAIN_EVENT_CONSUMERS } from "@/lib/domain-events/consumers";
 import {
   claimCronAgentAttempt,
   claimEventAgentAttempt,
+  assertProjectAgentTriggerClaim,
   reconcileAgentTriggerAttempts,
   settleCompanyAgentTriggerAttempt,
 } from "@/lib/agents/trigger-attempts";
 import { MaisterError } from "@/lib/errors";
 import { loadProjectCommentAppointment } from "@/lib/specialist-assignments/project-comment-appointment";
+import { loadProjectCronAppointment } from "@/lib/specialist-assignments/project-cron-appointment";
+import { submitProjectCronAssignment } from "@/lib/specialist-assignments/project-cron-intake";
 import { prepareCompanySpecialistAssignment } from "@/lib/specialist-assignments/company-intake";
 import { reserveCompanyCronAssignment } from "@/lib/specialist-assignments/company-cron-intake";
 import { wakePendingSpecialistAssignment } from "@/lib/specialist-assignments/admission-wake";
@@ -2334,11 +2338,13 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
                 timezone: "UTC",
                 requestAtLaunch:
                   "Inspect the explicitly reviewed project target",
+                reviewForAssignments: true,
                 enabled: false,
               },
               {
                 triggerType: "event",
                 eventKinds: ["run.done"],
+                reviewForAssignments: true,
                 enabled: false,
               },
             ],
@@ -3061,6 +3067,502 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
         await database.pool.query(
           "SELECT status FROM specialist_assignments WHERE id=$1",
           [coordinated.id],
+        )
+      ).rows,
+    ).toEqual([{ status: "active" }]);
+    const cronSource = (
+      await database.pool.query<{ id: string }>(
+        "SELECT id FROM agent_schedules WHERE project_id=$1 AND agent_id='rah:wire-observer' AND trigger_type='cron'",
+        [project.id],
+      )
+    ).rows[0]!;
+    const sourceRevision = (
+      await database.pool.query<{ schedules_revision: number }>(
+        "SELECT schedules_revision FROM agent_project_links WHERE id=$1",
+        [link.linkId],
+      )
+    ).rows[0]!.schedules_revision;
+    const cronText =
+      "Inspect the exact reviewed project recurring request.\nKeep original evidence and unknowns 😀";
+
+    browserSession.user = await requireActiveUserById(administratorId);
+    const enableCron = await projectAgentPatch(
+      new NextRequest(
+        `http://localhost/api/projects/${project.slug}/agents/rah:wire-observer`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            schedulesRevision: sourceRevision,
+            schedules: [
+              {
+                id: cronSource.id,
+                triggerType: "cron",
+                cronExpr: "*/5 * * * *",
+                timezone: "UTC",
+                requestAtLaunch: cronText,
+                reviewForAssignments: true,
+                enabled: true,
+              },
+            ],
+          }),
+        },
+      ),
+      {
+        params: Promise.resolve({
+          slug: project.slug,
+          agentId: "rah:wire-observer",
+        }),
+      },
+    );
+
+    expect(enableCron.status).toBe(200);
+    await database.pool.query(
+      "INSERT INTO execution_host_pressure(execution_host_id,pressured_since) SELECT id,now() FROM execution_hosts WHERE kind='local_direct' AND retired_at IS NULL ON CONFLICT DO NOTHING",
+    );
+    let nativeCronRunId: string;
+
+    try {
+      await database.pool.query(
+        "UPDATE agent_schedules SET next_fire_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+        [cronSource.id],
+      );
+      await database.pool.query(
+        "UPDATE scheduler_jobs SET next_run_at=clock_timestamp()-interval '1 second' WHERE id='agent_tick.dispatcher'",
+      );
+      expect(await runSchedulerTick({ jobKind: "agent_tick" })).toMatchObject({
+        succeededCount: 1,
+        failedCount: 0,
+      });
+      const work = (
+        await database.pool.query<{
+          id: string;
+          run_id: string;
+          reserved_run_id: string;
+          binding_snapshot: {
+            version: number;
+            review: { reviewerUserId: string };
+          };
+          scheduled_request_snapshot: unknown;
+          actor: { kind: string; id: string };
+          scheduled_request: unknown;
+          status: string;
+        }>(
+          "SELECT assignment.id,link.run_id,invocation.reserved_run_id,invocation.binding_snapshot,invocation.scheduled_request_snapshot,input.actor,input.scheduled_request,run.status FROM specialist_assignments assignment JOIN specialist_input_revisions input ON input.assignment_id=assignment.id AND input.revision=1 JOIN specialist_run_links link ON link.assignment_id=assignment.id JOIN runs run ON run.id=link.run_id JOIN agent_trigger_attempts invocation ON invocation.id=assignment.origin->>'triggerAttemptId' WHERE assignment.project_id=$1 AND assignment.origin->>'kind'='schedule' AND assignment.origin->>'scheduleId'=$2",
+          [project.id, cronSource.id],
+        )
+      ).rows;
+
+      expect(work).toHaveLength(1);
+      nativeCronRunId = work[0]!.run_id;
+      expect(work[0]).toMatchObject({
+        reserved_run_id: nativeCronRunId,
+        status: "Pending",
+        actor: { kind: "user", id: administratorId },
+        binding_snapshot: {
+          version: 3,
+          review: { reviewerUserId: administratorId },
+        },
+      });
+      expect(work[0]!.scheduled_request).toEqual(
+        work[0]!.scheduled_request_snapshot,
+      );
+      expect(work[0]!.scheduled_request).toMatchObject({
+        version: 1,
+        requestAtLaunch: cronText,
+      });
+      expect(
+        (
+          await database.pool.query(
+            "SELECT id FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt')",
+            [nativeCronRunId],
+          )
+        ).rows,
+      ).toEqual([]);
+    } finally {
+      await database.pool.query("DELETE FROM execution_host_pressure");
+    }
+    await database.pool.query(
+      "UPDATE scheduler_jobs SET next_run_at=clock_timestamp()-interval '1 second' WHERE id='agent_tick.dispatcher'",
+    );
+    expect(await runSchedulerTick({ jobKind: "agent_tick" })).toMatchObject({
+      succeededCount: 1,
+      failedCount: 0,
+    });
+    await vi.waitFor(
+      async () => {
+        expect(
+          (
+            await database.pool.query("SELECT status FROM runs WHERE id=$1", [
+              nativeCronRunId,
+            ])
+          ).rows,
+        ).toEqual([{ status: "Done" }]);
+      },
+      { timeout: 30000, interval: 25 },
+    );
+    expect(
+      (
+        await database.pool.query(
+          "SELECT validity FROM run_results WHERE run_id=$1",
+          [nativeCronRunId],
+        )
+      ).rows,
+    ).toEqual([{ validity: "valid" }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT kind,count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt') GROUP BY kind ORDER BY kind",
+          [nativeCronRunId],
+        )
+      ).rows,
+    ).toEqual([
+      { kind: "session.create", count: 1 },
+      { kind: "session.prompt", count: 1 },
+    ]);
+    const forgedAttemptId = randomUUID();
+
+    await expect(
+      database.pool.query(
+        `INSERT INTO agent_trigger_attempts
+      SELECT (jsonb_populate_record(NULL::agent_trigger_attempts,to_jsonb(original)||jsonb_build_object(
+        'id',$2::text,'reserved_run_id',$3::text,'delivery_key',$4::text,
+        'binding_snapshot',jsonb_set(original.binding_snapshot,'{review,reviewerUserId}',to_jsonb($5::text)),
+        'scheduled_request_snapshot',jsonb_set(original.scheduled_request_snapshot,'{triggerAttemptId}',to_jsonb($2::text))
+      ))).* FROM agent_trigger_attempts original WHERE original.reserved_run_id=$1`,
+        [
+          nativeCronRunId,
+          forgedAttemptId,
+          randomUUID(),
+          `forged:${forgedAttemptId}`,
+          userId,
+        ],
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "agent_trigger_project_review_reference",
+    });
+    const fireCron = async (scheduleId: string): Promise<void> => {
+      await database.pool.query(
+        "UPDATE agent_schedules SET next_fire_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+        [scheduleId],
+      );
+      await database.pool.query(
+        "UPDATE scheduler_jobs SET next_run_at=clock_timestamp()-interval '1 second' WHERE id='agent_tick.dispatcher'",
+      );
+      expect(await runSchedulerTick({ jobKind: "agent_tick" })).toMatchObject({
+        succeededCount: 1,
+        failedCount: 0,
+      });
+    };
+
+    await database.pool.query(
+      "UPDATE agent_schedules SET next_fire_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+      [cronSource.id],
+    );
+    const interruptedCron = await claimCronAgentAttempt(
+      db,
+      cronSource.id,
+      new Date(),
+      new Date(Date.now() + 300000),
+    );
+
+    if (!interruptedCron)
+      throw new Error("Owned interrupted native cron claim was unavailable");
+    assertProjectAgentTriggerClaim(interruptedCron);
+    const cronAppointment = {
+      schemaVersion: 1 as const,
+      kind: "cron" as const,
+      attemptId: interruptedCron.id,
+      scheduleId: cronSource.id,
+      runId: interruptedCron.reservedRunId,
+    };
+    const rollbackCronProbe = new Error(
+      "Rollback owned cron source qualification",
+    );
+
+    await expect(
+      db.transaction(async (tx) => {
+        expect(
+          await loadProjectCronAppointment(tx, cronAppointment),
+        ).toMatchObject({
+          projectId: project.id,
+          userId: administratorId,
+          scheduledRequest: { requestAtLaunch: cronText },
+        });
+        await expect(
+          loadProjectCronAppointment(tx, {
+            ...cronAppointment,
+            runId: randomUUID(),
+          }),
+        ).rejects.toMatchObject({ code: "PRECONDITION" });
+        await tx.execute(
+          sql`UPDATE agent_schedules SET request_at_launch='changed after review' WHERE id=${cronSource.id}`,
+        );
+        await expect(
+          loadProjectCronAppointment(tx, cronAppointment),
+        ).rejects.toMatchObject({
+          code: "CONFIG",
+          details: { reason: "project_source_review_changed" },
+        });
+        throw rollbackCronProbe;
+      }),
+    ).rejects.toBe(rollbackCronProbe);
+    await database.pool.query(
+      "INSERT INTO execution_host_pressure(execution_host_id,pressured_since) SELECT id,now() FROM execution_hosts WHERE kind='local_direct' AND retired_at IS NULL ON CONFLICT DO NOTHING",
+    );
+    try {
+      const concurrent = await Promise.all([
+        submitProjectCronAssignment(db, interruptedCron),
+        submitProjectCronAssignment(db, interruptedCron),
+      ]);
+
+      expect(
+        new Set(concurrent.map((receipt) => receipt.assignment.id)).size,
+      ).toBe(1);
+      expect(
+        concurrent.every(
+          (receipt) =>
+            receipt.assignment.runIds.length === 1 &&
+            receipt.assignment.runIds[0] === interruptedCron.reservedRunId,
+        ),
+      ).toBe(true);
+      await database.pool.query(
+        "UPDATE agent_trigger_attempts SET due_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+        [interruptedCron.id],
+      );
+      expect(await reconcileAgentTriggerAttempts(db, new Date())).toEqual({
+        adopted: 1,
+        unknown: 0,
+      });
+      expect(
+        (
+          await database.pool.query(
+            "SELECT outcome,run_id FROM agent_trigger_attempts WHERE id=$1",
+            [interruptedCron.id],
+          )
+        ).rows,
+      ).toEqual([{ outcome: "queued", run_id: interruptedCron.reservedRunId }]);
+      expect(
+        (
+          await database.pool.query(
+            "SELECT id FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt')",
+            [interruptedCron.reservedRunId],
+          )
+        ).rows,
+      ).toEqual([]);
+    } finally {
+      await database.pool.query("DELETE FROM execution_host_pressure");
+    }
+    await database.pool.query(
+      "UPDATE scheduler_jobs SET next_run_at=clock_timestamp()-interval '1 second' WHERE id='agent_tick.dispatcher'",
+    );
+    expect(await runSchedulerTick({ jobKind: "agent_tick" })).toMatchObject({
+      succeededCount: 1,
+      failedCount: 0,
+    });
+    await vi.waitFor(
+      async () => {
+        expect(
+          (
+            await database.pool.query("SELECT status FROM runs WHERE id=$1", [
+              interruptedCron.reservedRunId,
+            ])
+          ).rows,
+        ).toEqual([{ status: "Done" }]);
+      },
+      { timeout: 30000, interval: 25 },
+    );
+    expect(
+      (
+        await database.pool.query(
+          "SELECT kind,count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt') GROUP BY kind ORDER BY kind",
+          [interruptedCron.reservedRunId],
+        )
+      ).rows,
+    ).toEqual([
+      { kind: "session.create", count: 1 },
+      { kind: "session.prompt", count: 1 },
+    ]);
+
+    const beforeCronRefusals = (
+      await database.pool.query(
+        "SELECT count(*)::int AS count FROM specialist_assignments WHERE project_id=$1 AND origin->>'kind'='schedule'",
+        [project.id],
+      )
+    ).rows;
+
+    await database.pool.query("UPDATE users SET role='viewer' WHERE id=$1", [
+      administratorId,
+    ]);
+    try {
+      await fireCron(cronSource.id);
+      expect(
+        (
+          await database.pool.query(
+            "SELECT outcome,reason_code,run_id FROM agent_trigger_attempts WHERE schedule_id=$1 ORDER BY fence DESC LIMIT 1",
+            [cronSource.id],
+          )
+        ).rows,
+      ).toEqual([
+        { outcome: "refused", reason_code: "UNAUTHORIZED", run_id: null },
+      ]);
+    } finally {
+      await database.pool.query("UPDATE users SET role='admin' WHERE id=$1", [
+        administratorId,
+      ]);
+    }
+    await database.pool.query(
+      "UPDATE agent_schedules SET project_source_review=NULL WHERE id=$1",
+      [cronSource.id],
+    );
+    await fireCron(cronSource.id);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT outcome,reason_code,run_id FROM agent_trigger_attempts WHERE schedule_id=$1 ORDER BY fence DESC LIMIT 1",
+          [cronSource.id],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        outcome: "refused",
+        reason_code: "project_source_review_required",
+        run_id: null,
+      },
+    ]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM specialist_assignments WHERE project_id=$1 AND origin->>'kind'='schedule'",
+          [project.id],
+        )
+      ).rows,
+    ).toEqual(beforeCronRefusals);
+    const saveProjectSchedules = async (
+      agentId: string,
+      schedules: AgentScheduleInput[],
+    ): Promise<Response> => {
+      const revision = (
+        await database.pool.query<{ schedules_revision: number }>(
+          "SELECT schedules_revision FROM agent_project_links WHERE project_id=$1 AND agent_id=$2",
+          [project.id, agentId],
+        )
+      ).rows[0]!.schedules_revision;
+
+      return projectAgentPatch(
+        new NextRequest(
+          `http://localhost/api/projects/${project.slug}/agents/${agentId}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ schedulesRevision: revision, schedules }),
+          },
+        ),
+        { params: Promise.resolve({ slug: project.slug, agentId }) },
+      );
+    };
+
+    expect(
+      (
+        await saveProjectSchedules("rah:wire-observer", [
+          {
+            id: cronSource.id,
+            triggerType: "cron",
+            cronExpr: "*/5 * * * *",
+            timezone: "UTC",
+            requestAtLaunch: null,
+            reviewForAssignments: true,
+            enabled: true,
+          },
+        ])
+      ).status,
+    ).toBe(200);
+    await fireCron(cronSource.id);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT outcome,reason_code,run_id FROM agent_trigger_attempts WHERE schedule_id=$1 ORDER BY fence DESC LIMIT 1",
+          [cronSource.id],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        outcome: "refused",
+        reason_code: "project_scheduled_request_missing",
+        run_id: null,
+      },
+    ]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM specialist_assignments WHERE project_id=$1 AND origin->>'kind'='schedule'",
+          [project.id],
+        )
+      ).rows,
+    ).toEqual(beforeCronRefusals);
+    expect(
+      (
+        await saveProjectSchedules("rah:flow-coordinator", [
+          {
+            triggerType: "cron",
+            cronExpr: "*/5 * * * *",
+            timezone: "UTC",
+            requestAtLaunch:
+              "Coordinate the exact reviewed project cron diagnosis.",
+            reviewForAssignments: true,
+            enabled: true,
+          },
+        ])
+      ).status,
+    ).toBe(200);
+    const flowCronSource = (
+      await database.pool.query<{ id: string }>(
+        "SELECT id FROM agent_schedules WHERE project_id=$1 AND agent_id='rah:flow-coordinator' AND trigger_type='cron'",
+        [project.id],
+      )
+    ).rows[0]!;
+
+    await fireCron(flowCronSource.id);
+    const flowCron = (
+      await database.pool.query<{
+        id: string;
+        run_id: string;
+        reserved_run_id: string;
+      }>(
+        "SELECT assignment.id,link.run_id,invocation.reserved_run_id FROM specialist_assignments assignment JOIN specialist_run_links link ON link.assignment_id=assignment.id JOIN agent_trigger_attempts invocation ON invocation.id=assignment.origin->>'triggerAttemptId' WHERE assignment.project_id=$1 AND assignment.origin->>'kind'='schedule' AND assignment.origin->>'scheduleId'=$2",
+        [project.id, flowCronSource.id],
+      )
+    ).rows;
+
+    expect(flowCron).toHaveLength(1);
+    expect(flowCron[0]!.run_id).toBe(flowCron[0]!.reserved_run_id);
+    await vi.waitFor(
+      async () => {
+        expect(
+          (
+            await database.pool.query(
+              "SELECT status,run_kind FROM runs WHERE id=$1",
+              [flowCron[0]!.run_id],
+            )
+          ).rows,
+        ).toEqual([{ status: "Done", run_kind: "flow" }]);
+      },
+      { timeout: 30000, interval: 25 },
+    );
+    expect(
+      (
+        await database.pool.query(
+          "SELECT validity FROM run_results WHERE run_id=$1",
+          [flowCron[0]!.run_id],
+        )
+      ).rows,
+    ).toEqual([{ validity: "valid" }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status FROM specialist_assignments WHERE id=$1",
+          [flowCron[0]!.id],
         )
       ).rows,
     ).toEqual([{ status: "active" }]);

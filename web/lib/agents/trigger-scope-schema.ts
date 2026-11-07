@@ -3,6 +3,8 @@ import type { AnyPgColumn } from "drizzle-orm/pg-core";
 
 import { sql } from "drizzle-orm";
 
+import { projectSourceReviewShape } from "./project-source-review-schema";
+
 export function configurationReferenceShape(value: SQL): SQL {
   return sql`(CASE WHEN jsonb_typeof(${value})='object' AND jsonb_typeof(${value}->'revision')='number' THEN
     ${value} ?& ARRAY['id','revision','snapshotSha256']
@@ -13,7 +15,7 @@ export function configurationReferenceShape(value: SQL): SQL {
     ELSE false END) IS TRUE`;
 }
 
-/** Project v1 bytes keep their existing admission shape; company v2 cannot masquerade as a project. */
+/** Existing v1/v2 bytes keep their admission shape; reviewed v3 project invocations retain explicit ownership. */
 export function triggerBindingScopeShape(
   snapshot: AnyPgColumn,
   projectId: AnyPgColumn,
@@ -22,7 +24,15 @@ export function triggerBindingScopeShape(
   const specialist = sql`(${snapshot}->'specialistBinding')`;
   const coordinator = sql`(${snapshot}->'coordinatorFlowBinding')`;
 
-  return sql`((${projectId} IS NOT NULL AND ${companyId} IS NULL AND ${snapshot}->'version'='1'::jsonb)
+  return sql`((${projectId} IS NOT NULL AND ${companyId} IS NULL AND (${snapshot}->'version'='1'::jsonb OR (
+      ${snapshot}->'version'='3'::jsonb
+      AND ${snapshot} ?& ARRAY['version','scheduleId','triggerType','cronExpr','timezone','eventKinds','owner','review']
+      AND ${snapshot}-ARRAY['version','scheduleId','triggerType','cronExpr','timezone','eventKinds','owner','review']='{}'::jsonb
+      AND ${snapshot}->'owner'=jsonb_build_object('kind','project','projectId',${projectId})
+      AND ${snapshot}->>'triggerType' IN ('cron','event')
+      AND ${projectSourceReviewShape(sql`(${snapshot}->'review')`)}
+      AND jsonb_typeof(${snapshot}->'eventKinds')='array'
+      AND pg_column_size(${snapshot})<=8192)))
     OR (${projectId} IS NULL AND ${companyId} IS NOT NULL AND CASE WHEN jsonb_typeof(${snapshot})='object' AND jsonb_typeof(${snapshot}->'sourceRevision')='number' THEN
       ${snapshot}->'version'='2'::jsonb
       AND ${snapshot} ?& ARRAY['version','scheduleId','triggerType','cronExpr','timezone','eventKinds','owner','sourceRevision','specialistBinding','coordinatorFlowBinding']

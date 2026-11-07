@@ -5614,7 +5614,7 @@ The [owning input contract](system-analytics/scheduled-agent-requests.md) define
 | agent_trigger_attempts.scheduled_request_snapshot | Nullable jsonb; null default; strict version-1 envelope; IDs match the claim; immutable under the existing identity guard. Protected separately from safe binding metadata. |
 | runs.scheduled_request_snapshot | Nullable jsonb; null default; exact immutable copy, including authorized successors with a different current trigger source. |
 
-No historical input is inferred. Snapshot origin IDs are non-FK retained audit values. Existing schedule navigation FK remains SET NULL; key-share existence resolution makes deletion after claim harmless to launch. Guards permit unrelated settlement/lifecycle updates. CHECKs distinguish SQL NULL, JSON null and missing keys; schema, generated SQL, journal and matching snapshot must agree. No new table/index is introduced.
+No historical input is inferred. Snapshot origin IDs are non-FK retained audit values. Existing schedule navigation FK remains SET NULL; key-share existence resolution preserves legacy cron launch after source deletion. Native reviewed admission additionally validates its current source appointment. Guards permit unrelated settlement/lifecycle updates. CHECKs distinguish SQL NULL, JSON null and missing keys; schema, generated SQL, journal and matching snapshot must agree. No new table/index is introduced.
 
 Main `0256_project_source_review` adds nullable `agent_schedules.project_source_review`.
 Its closed version-one object records an actual settings review of native project
@@ -5627,6 +5627,14 @@ replaced/cleared under the existing collection revision CAS. This does not
 rewrite existing v1/v2 invocation snapshots or enable native dispatch by itself.
 See [project automation review](system-analytics/specialist-assignments.md#project-automation-review)
 for review authority, digest and invocation boundaries.
+
+Main `0257_project_trigger_review` extends the existing trigger binding snapshot
+CHECK with project version 3: exact project owner, selector and version-one review.
+Legacy project v1 and company v2 remain unchanged, as does the separate scheduled
+request v1. The insert guard binds a v3 claim to the actual current source review,
+selector, fence and original cron request or owned source event. Existing identity
+guards retain immutable attempt history. No new table, FK or execution ledger is
+added; deleting a project retains its existing cascade and needs no Brain access.
 
 The additive input fields have no independent lifecycle or cascade.
 

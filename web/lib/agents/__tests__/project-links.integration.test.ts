@@ -223,8 +223,13 @@ it("retains server-reviewed native automation authority with atomic CAS and expl
       cronExpr: "* * * * *",
       timezone: "UTC",
       requestAtLaunch: "Inspect the authorized component",
+      reviewForAssignments: true,
     },
-    { triggerType: "event" as const, eventKinds: ["run.done"] },
+    {
+      triggerType: "event" as const,
+      eventKinds: ["run.done"],
+      reviewForAssignments: true,
+    },
     { triggerType: "mention" as const },
   ];
 
@@ -321,7 +326,10 @@ it("retains server-reviewed native automation authority with atomic CAS and expl
           actorUserId: member,
           patch: {
             schedulesRevision: reviewed.schedulesRevision,
-            schedules: reviewed.schedules,
+            schedules: reviewed.schedules.map((source) => ({
+              ...source,
+              reviewForAssignments: source.triggerType !== "mention",
+            })),
           },
         },
         db,
@@ -344,9 +352,13 @@ it("retains server-reviewed native automation authority with atomic CAS and expl
                 source.triggerType === "cron"
                   ? {
                       ...source,
+                      reviewForAssignments: true,
                       requestAtLaunch: `Request reviewed by ${actorUserId}`,
                     }
-                  : source,
+                  : {
+                      ...source,
+                      reviewForAssignments: source.triggerType !== "mention",
+                    },
               ),
             },
           },
@@ -383,11 +395,41 @@ it("retains server-reviewed native automation authority with atomic CAS and expl
     expect(
       (await current()).schedules.map((source) => source.assignmentReview),
     ).toEqual([null, null, null]);
+    await writeFile(
+      sourcePath,
+      "---\nname: Broken pin\nmode: unsupported\n---\nRepair must remain available.\n",
+    );
+    const repairRevision = (await current()).schedulesRevision;
+
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        actorUserId: reviewer,
+        patch: {
+          schedulesRevision: repairRevision,
+          schedules: [
+            {
+              triggerType: "cron",
+              cronExpr: "* * * * *",
+              timezone: "UTC",
+              requestAtLaunch: null,
+              enabled: false,
+            },
+            { triggerType: "event", eventKinds: ["run.done"], enabled: false },
+          ],
+        },
+      },
+      db,
+    );
+    expect(
+      (await current()).schedules.map((source) => source.assignmentReview),
+    ).toEqual([null, null]);
     await expect(
       pool.query(
         "UPDATE agent_schedules SET project_source_review=$2::jsonb WHERE id=$1",
         [
-          retained.schedules[0].id,
+          (await current()).schedules[0].id,
           JSON.stringify({
             ...stored.project_source_review,
             reviewerUserId: "",

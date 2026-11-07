@@ -69,6 +69,7 @@ type EditableSchedule = {
   timezone: string;
   eventKinds: string[];
   requestAtLaunch: string;
+  reviewForAssignments: boolean;
   enabled: boolean;
 };
 
@@ -80,6 +81,7 @@ function toEditable(s: AttachScheduleView): EditableSchedule {
     timezone: s.timezone ?? "UTC",
     eventKinds: s.eventKinds ?? [],
     requestAtLaunch: s.requestAtLaunch ?? "",
+    reviewForAssignments: s.assignmentReview != null,
     enabled: s.enabled,
   };
 }
@@ -317,6 +319,9 @@ export function AttachEditModal({
                 cronExpr: s.cronExpr.trim(),
                 timezone: s.timezone.trim(),
                 requestAtLaunch: normalizeScheduledRequest(s.requestAtLaunch),
+                ...(s.reviewForAssignments
+                  ? { reviewForAssignments: true }
+                  : {}),
                 enabled: s.enabled,
               }
             : {
@@ -581,6 +586,7 @@ export function AttachEditModal({
                       timezone: "UTC",
                       eventKinds: [],
                       requestAtLaunch: "",
+                      reviewForAssignments: false,
                       enabled: true,
                     },
                   ])
@@ -600,6 +606,7 @@ export function AttachEditModal({
                       timezone: "UTC",
                       eventKinds: [],
                       requestAtLaunch: "",
+                      reviewForAssignments: false,
                       enabled: true,
                     },
                   ])
@@ -619,6 +626,7 @@ export function AttachEditModal({
                       timezone: "UTC",
                       eventKinds: [],
                       requestAtLaunch: "",
+                      reviewForAssignments: false,
                       enabled: true,
                     },
                   ])
@@ -670,6 +678,29 @@ export function AttachEditModal({
                   </button>
                 </div>
               </div>
+              {schedule.triggerType === "cron" ? (
+                <div className="mb-3 text-xs text-ink">
+                  <label className="flex items-start gap-2">
+                    <input
+                      aria-describedby={`schedule-review-help-${index}`}
+                      checked={schedule.reviewForAssignments}
+                      type="checkbox"
+                      onChange={(event) =>
+                        patchSchedule(index, {
+                          reviewForAssignments: event.target.checked,
+                        })
+                      }
+                    />
+                    {t("reviewForAssignments")}
+                  </label>
+                  <p
+                    className="mt-1 text-mute"
+                    id={`schedule-review-help-${index}`}
+                  >
+                    {t("reviewForAssignmentsHint")}
+                  </p>
+                </div>
+              ) : null}
               {schedule.triggerType === "mention" ? (
                 <p className="m-0 text-[12px] leading-[1.45] text-mute">
                   {t("mentionHint")}

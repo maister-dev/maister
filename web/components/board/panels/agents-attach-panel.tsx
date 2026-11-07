@@ -25,6 +25,11 @@ export type AttachScheduleView = {
   eventKinds?: string[];
   enabled: boolean;
   requestAtLaunch?: string | null;
+  assignmentReview?: {
+    schemaVersion: 1;
+    reviewerUserId: string;
+    reviewedAt: string;
+  } | null;
 };
 
 export type AutoApplyMode = "off" | "permissions" | "full";

@@ -2212,6 +2212,7 @@ async function launchAgentRunWithAdmission(
                 configuration: agentConfig,
                 executionPolicy,
                 resultContract: runRow.resultContract,
+                scheduledRequestSnapshot: runRow.scheduledRequestSnapshot,
               },
             )
           : null;

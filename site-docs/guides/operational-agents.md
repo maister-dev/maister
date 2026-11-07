@@ -118,19 +118,31 @@ recover that batch before starting another; accepted items are not duplicated.
 
 ## Review project automation input
 
-When an authorized project settings operator saves a professional's cron or event
-configuration, MAIster records that operator's review of the selector and recurring
-request. The project agent API exposes this read-only witness as `assignmentReview`.
+For a professional's cron source, select **Review for specialist assignments**
+before saving. MAIster checks the current pinned role and your project settings
+authority, then records your review of the selector and recurring request.
+The project agent API exposes this read-only witness as `assignmentReview`.
 It identifies the reviewer and review time; it does not claim who originally wrote
 an old schedule or grant permanent execution authority. Historical schedules have
-no review until an operator saves them. Mention sources use the comment author's
-current authority instead. An internal source replacement without an identified
-reviewer clears the review; unrelated attachment settings preserve it.
+no review until an operator explicitly requests it. Mention sources use the comment
+author's current authority instead. Unchecking approval clears the review and lets
+you repair settings without approving work, including when a pin is broken.
+Unrelated attachment settings preserve it. API source writes request approval with
+`reviewForAssignments:true`; false or omitted clears it. Review metadata cannot be
+submitted by the caller.
 
-This review foundation does not yet qualify native project cron/event assignment
-dispatch. Company automation and native manual/comment intake have their separate
-documented execution paths. Future native project dispatch must recheck current
-permissions and retain its own invocation evidence.
+For a project professional's cron source, provide a nonempty recurring request and
+save its settings as an authorized operator. Each fire retains an assignment, the
+original request and its review, then uses the existing project admission and
+scheduler. Independent fires queue separate work; a repeated delivery retains the
+same Run. The reviewing user's current launch authority is checked again. Empty
+requests and unreviewed history produce an actionable incident without starting
+the professional. Updating source settings applies to future invocations and
+preserves the original input of retained attempts.
+
+Execution results and original scheduled input are inspectable separately. A valid
+Run result remains subject to assignment acceptance. Native project event
+assignment routing and installable stand-pilot qualification remain in progress.
 
 ## Address a professional in a task comment
 

@@ -324,6 +324,44 @@ async function seedClaimReceipt(
 }
 
 describe("agent cron dispatcher (agent_tick.dispatcher)", () => {
+  it("defers a full malformed due page so the next bounded tick can admit healthy work", async () => {
+    const agentId = await seedAgent({ id: "poison-page", triggers: ["cron"] });
+    const now = new Date();
+    const launched: string[] = [];
+    const launch = async (input: {
+      agentId: string;
+    }): Promise<{ runId: string; status: "Running" }> => {
+      launched.push(input.agentId);
+
+      return { runId: randomUUID(), status: "Running" };
+    };
+
+    await pool.query(
+      "INSERT INTO agent_schedules(id,agent_id,project_id,trigger_type,cron_expr,timezone,next_fire_at,request_at_launch) SELECT gen_random_uuid()::text,$1,$2,'cron','invalid expression','UTC',$3,'private-poison-request' FROM generate_series(1,25)",
+      [agentId, projectId, new Date(now.getTime() - 2000)],
+    );
+    await pool.query(
+      "INSERT INTO agent_schedules(id,agent_id,project_id,trigger_type,cron_expr,timezone,next_fire_at) VALUES($1,$2,$3,'cron','* * * * *','UTC',$4)",
+      [randomUUID(), agentId, projectId, new Date(now.getTime() - 1000)],
+    );
+    expect(
+      await triggers.dispatchDueAgentSchedules({ db, now, launch }),
+    ).toMatchObject({ due: 25, refused: 25, claimed: 0 });
+    expect(
+      (
+        await pool.query(
+          "SELECT count(*)::int AS count FROM agent_schedules WHERE project_id=$1 AND cron_expr='invalid expression' AND next_fire_at>$2 AND last_outcome='refused' AND last_error_code='CONFIG'",
+          [projectId, now],
+        )
+      ).rows,
+    ).toEqual([{ count: 25 }]);
+    expect(
+      await triggers.dispatchDueAgentSchedules({ db, now, launch }),
+    ).toMatchObject({ due: 1, launched: 1, claimed: 1 });
+    expect(launched).toEqual([agentId]);
+    expect(JSON.stringify(logLines)).not.toContain("private-poison-request");
+  });
+
   it.each(["edit", "delete"] as const)(
     "captures the committed input when %s wins before claim",
     async (mutation) => {

@@ -247,7 +247,8 @@ Existing legacy workspace/runner launch overrides retain their original contract
 Historical project schedules have no recorded human authority. Migration leaves
 their new `assignmentReview` null, without changing `createdBy`, original request
 bytes or prior invocation snapshots. An explicit schedule-collection save by an
-authenticated operator records a review only for cron/event sources whose
+authenticated operator records a review only for cron/event sources carrying
+explicit `reviewForAssignments:true` whose
 effective installed project definition declares a specialist. The server checks
 the current active operator's project settings authority inside the save
 transaction. Ordinary sources and mentions retain null review metadata.
@@ -258,20 +259,59 @@ normalized selector and literal recurring request, with sorted event kinds;
 enabled state, runtime counters and next-fire time are separate eligibility data.
 Review records authorization now, not original authorship, a permission grant,
 or knowledge confirmation. Request bodies cannot supply review metadata.
-Explicit source replacement without an identified reviewer clears the witness;
+An explicit review request without an identified operator is refused. Replacing
+a source with false/omitted review intent clears the witness;
 unrelated attachment changes preserve it. Schedule revision CAS still governs
 the complete save, including review SET/CLEAR, so concurrent editors cannot
 combine one user's authority with another user's request.
+Ordinary source edits and clearing without approval preserve the existing broken-pin
+repair path. Approval requires the actual current pin; no catalog substitute or
+inferred historical approver is used. The cron editor's review checkbox sends only
+intent. It never submits reviewer identity, permission or confirmation metadata.
 The existing API requires repository-input visibility for this projection. The
 project server component withholds both literal request and review metadata from
 readers without that visibility; a content digest cannot bypass that boundary.
 
-Native dispatch must validate a reviewed source and current initiating authority,
-capture that review in a new versioned project invocation snapshot, preserve the
-existing version-one recurring request, and bind the existing claim/reserved Run
-to canonical intake. Unreviewed history cannot silently become authorized native
-work. Dispatch implementation and real registered-consumer qualification follow
-this storage/API checkpoint; it does not establish native automation readiness.
+Native project cron dispatch validates the reviewed source and current initiating
+authority, captures the review in a versioned invocation snapshot and preserves
+the existing version-one recurring request in its separate input plane. The next
+section defines its canonical claim/Run admission. Native project event routing
+remains T22 work; source review alone does not establish that path's readiness.
+
+### Reviewed project cron invocation
+
+**Implemented native platform cron intake; installable stand-pilot qualification remains separate.**
+
+A newly claimed reviewed project source uses binding snapshot version 3: the
+existing selector fields, explicit project owner and exact version-one `review`.
+Company version 2 and historical project version 1 remain byte-compatible. The
+existing version-one scheduled request remains a separate immutable input plane.
+Claim insertion matches the actual source owner, selector, review, fence and recurring
+request; current content must match the reviewed digest. Review is not inferred
+for old claims. A native professional without review receives a named refusal,
+and a reviewed source cannot silently fall through ordinary-agent execution if
+the professional declaration becomes unavailable.
+
+Native cron work uses origin `{kind:schedule,scheduleId,triggerAttemptId}`, the
+actual reviewing user as requester, an invocation objective label, literal input
+in the scheduled-request plane and server-required result verification. The
+original destination is that user's Inbox. Current read/submit/update authority
+is checked before intake and again at existing Run admission; historical approval
+never restores a revoked permission. A server-only appointment binds the real
+open claim, review, source and reserved Run, with matching cron trigger fields in
+standalone and coordinator insertion. Repository work retains project admission.
+
+Independent fires retain independent assignments; duplicate delivery adopts the
+existing receipt/Run. The original claim and Run ledgers handle uncertain launch
+responses and interruption: reconciliation inspects the exact reserved Run, never
+blindly relaunches. The existing scheduler/pool performs deferred dispatch.
+Malformed source capture records safe source telemetry and a bounded retry under
+a configuration witness so a poison due row cannot indefinitely starve healthy
+work. Actual registered ticks, default drivers, immutable input, current reviewer
+revocation, changed-source refusal, reserved identity and lost-settlement recovery
+are qualified through the actual registered scheduler, default standalone and
+coordinator drivers, real supervisor and controlled ACP processes. These platform
+checks do not establish real-model or installable stand-pilot readiness.
 
 ### Native task-comment intake
 

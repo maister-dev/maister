@@ -17,8 +17,23 @@ const button =
 
 function causeKey(
   reason: string,
-): "input" | "cleanup" | "authorization" | "qualification" | "execution" {
+):
+  | "input"
+  | "source"
+  | "cleanup"
+  | "authorization"
+  | "qualification"
+  | "execution" {
   if (reason === "project_comment_input_too_large") return "input";
+  if (
+    [
+      "project_source_review_required",
+      "project_source_review_changed",
+      "project_cron_source_changed",
+      "project_scheduled_request_missing",
+    ].includes(reason)
+  )
+    return "source";
   if (reason.includes("cleanup") || reason.includes("preserv"))
     return "cleanup";
   if (

@@ -251,7 +251,12 @@ web/lib/supervisor-client ──HTTP──► supervisor/src/http-api  ──►
   Native project cron/event review metadata belongs to the existing schedule head
   and collection CAS; `lib/agents/project-source-review.ts` validates current
   settings authority and hashes the reviewed input. Null legacy history remains
-  unknown, and this source review alone does not enable native dispatch.
+  unknown. Explicit source review intent preserves ordinary editing/repair without
+  a working pin. Reviewed project cron claims capture source v3 and reuse canonical
+  assignment intake, the existing reserved Run and separate scheduled input v1;
+  fresh admission validates the exact current source appointment and authority.
+  Binding-source guards refuse downgraded claims. Project event assignment routing
+  remains a separate T22 extension.
   Human task mentions of actual pinned professionals use that same project request
   service before the legacy busy check. A versioned internal source appointment
   revalidates the stored author/comment, existing claim/selector and reserved Run

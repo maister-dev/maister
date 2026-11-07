@@ -3,10 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { readMigrationFiles } from "drizzle-orm/migrator";
+import { sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
 import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
+import { claimCronAgentAttempt } from "@/lib/agents/trigger-attempts";
+import { projectSourceContentDigest } from "@/lib/agents/project-source-review";
 import {
   startMainPostgresTestDb,
   applyMainMigration,
@@ -73,6 +76,9 @@ it("IT-CBX-01 project source review upgrade preserves legacy bytes and permits p
     await legacy.db.transaction((tx) =>
       applyMainMigration(tx, "0256_project_source_review"),
     );
+    await legacy.db.transaction((tx) =>
+      applyMainMigration(tx, "0257_project_trigger_review"),
+    );
     expect(
       (
         await legacy.pool.query(
@@ -94,6 +100,54 @@ it("IT-CBX-01 project source review upgrade preserves legacy bytes and permits p
         )
       ).rows[0].present,
     ).toBeNull();
+    await legacy.pool.query(
+      "INSERT INTO users(id,email,role,account_status) VALUES('native-review-operator','native-review-operator@example.test','admin','active')",
+    );
+    const review = {
+      schemaVersion: 1,
+      reviewerUserId: "native-review-operator",
+      reviewedAt: new Date().toISOString(),
+      sourceRevision: 2,
+      sourceSha256: projectSourceContentDigest({
+        triggerType: "cron",
+        cronExpr: "* * * * *",
+        timezone: "UTC",
+        eventMatch: null,
+        requestAtLaunch: "Original request\nKeep exact source 😀",
+      }),
+    };
+
+    await legacy.pool.query(
+      "UPDATE agent_schedules SET project_source_review=$1::jsonb WHERE id='legacy-review-source'",
+      [JSON.stringify(review)],
+    );
+    const reviewed = await claimCronAgentAttempt(
+      legacy.db,
+      "legacy-review-source",
+      new Date(),
+      new Date(Date.now() + 60000),
+    );
+
+    expect(reviewed?.bindingSnapshot).toMatchObject({ version: 3, review });
+    await expect(
+      legacy.db.transaction(async (tx) => {
+        await tx.execute(
+          sql`UPDATE agent_schedules SET last_attempt_fence=last_attempt_fence+1 WHERE id='legacy-review-source'`,
+        );
+        await tx.execute(sql`INSERT INTO agent_trigger_attempts
+      SELECT (jsonb_populate_record(NULL::agent_trigger_attempts,to_jsonb(original)||jsonb_build_object(
+        'id','downgraded-review-attempt','reserved_run_id','downgraded-review-run','delivery_key','downgraded-review-delivery',
+        'fence',original.fence+1,
+        'binding_snapshot',(original.binding_snapshot-ARRAY['owner','review'])||jsonb_build_object('version',1),
+        'scheduled_request_snapshot',jsonb_set(original.scheduled_request_snapshot,'{triggerAttemptId}','"downgraded-review-attempt"'::jsonb)
+      ))).* FROM agent_trigger_attempts original WHERE original.id=${reviewed!.id}`);
+      }),
+    ).rejects.toMatchObject({
+      cause: {
+        code: "23514",
+        constraint: "agent_trigger_project_review_reference",
+      },
+    });
     await legacy.pool.query("DELETE FROM projects WHERE id=$1", [project.id]);
     expect(
       (
@@ -105,7 +159,8 @@ it("IT-CBX-01 project source review upgrade preserves legacy bytes and permits p
     expect(
       (
         await legacy.pool.query(
-          "SELECT id FROM agent_trigger_attempts WHERE id='legacy-review-attempt'",
+          "SELECT id FROM agent_trigger_attempts WHERE project_id=$1",
+          [project.id],
         )
       ).rows,
     ).toEqual([]);

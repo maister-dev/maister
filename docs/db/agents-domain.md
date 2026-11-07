@@ -39,6 +39,10 @@ column-level narrative.
 > server-recorded native cron/event review. Legacy rows remain unknown, and no
 > Brain/user FK is added. The [review contract](../system-analytics/specialist-assignments.md#project-automation-review)
 > defines authority and digest semantics; dispatch qualification remains T22.
+> Main `0242` adds reviewed project binding snapshot v3 to the existing claim
+> contract. Its reference guard refuses v1 capture from a currently reviewed
+> source, keeping old workers from bypassing native review. Existing v1/v2
+> history stays unchanged; the separate scheduled input remains v1.
 
 ```mermaid
 erDiagram
@@ -251,7 +255,7 @@ The [owning input contract](../system-analytics/scheduled-agent-requests.md) def
 | agent_trigger_attempts.scheduled_request_snapshot | Nullable jsonb; null default; strict version-1 envelope; IDs match the claim; immutable under the existing identity guard. Protected separately from safe binding metadata. |
 | runs.scheduled_request_snapshot | Nullable jsonb; null default; exact immutable copy, including authorized successors with a different current trigger source. |
 
-No historical input is inferred. Snapshot origin IDs are non-FK retained audit values. Existing schedule navigation FK remains SET NULL; key-share existence resolution makes deletion after claim harmless to launch. Guards permit unrelated settlement/lifecycle updates. CHECKs distinguish SQL NULL, JSON null and missing keys; schema, generated SQL, journal and matching snapshot must agree. No new table/index is introduced.
+No historical input is inferred. Snapshot origin IDs are non-FK retained audit values. Existing schedule navigation FK remains SET NULL; key-share existence resolution preserves legacy cron launch after source deletion. Native reviewed admission additionally validates its current source appointment. Guards permit unrelated settlement/lifecycle updates. CHECKs distinguish SQL NULL, JSON null and missing keys; schema, generated SQL, journal and matching snapshot must agree. No new table/index is introduced.
 
 The additive input fields have no independent lifecycle or cascade.
 

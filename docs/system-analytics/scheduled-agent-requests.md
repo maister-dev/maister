@@ -2,7 +2,14 @@
 
 **Status: Implemented.** Request-bearing writes require the compatible migration and complete runtime on every worker; follow the release and rollback procedure below.
 
-Company-source storage is implemented through main `0238_company_trigger_scope`; company dispatch and company request disclosure remain owned by T22.1/T20. Exclusive owner columns and a separate v2 binding snapshot retain company configuration references. The invocation request grammar below stays v1, including explicit empty input and unchanged legacy project bytes. Company source creation uses current company management/read authority and server authorship; that configuration author does not mint execution authority. Actual admission must resolve current professional/target/source permissions independently. Native company enablement remains capability-gated; storage tests reserve identities without qualifying a company execution loop.
+Company-owned native cron/event sources use the existing registered dispatcher,
+reserved Run and version-2 binding snapshot; their operational and coordinator
+paths are qualified in [specialist runtime](specialist-runtime.md). Reviewed
+project cron sources add version-3 binding snapshots and canonical assignments,
+under the [native admission contract](specialist-assignments.md#reviewed-project-cron-invocation).
+The invocation request grammar below remains v1, including explicit empty input
+and unchanged legacy project bytes. Review, original input and current execution
+authority remain separate; a source review never grants lasting permissions.
 
 
 ## Purpose
@@ -122,7 +129,15 @@ Generate attempt ID before insert so the envelope is complete in the claim trans
 
 IDs inside snapshots are durable audit values, **no schedule/catalog FK or cascade**. Existing `runs.agent_schedule_id ON DELETE SET NULL` remains unchanged; snapshots remain intact. Existing project-level retention/cascade rules remain unchanged. No new index is needed: fetch by existing attempt/run IDs and bounded history pages.
 
-Schedule deletion must not invalidate a claimed launch through the existing nullable FK. In each run-insert transaction, resolve the optional live `agent_schedule_id` with a project/agent-scoped `SELECT ... FOR KEY SHARE`: if the matching row is already gone, insert NULL; if present, hold the key lock through insert so concurrent deletion waits and then applies ON DELETE SET NULL. The original scheduleId always remains in the immutable snapshot. This existence read is solely for the optional FK, never for request content, enabled state or cadence. Apply it to both standalone and Flow inserts; absence/disablement of a schedule after claim is not a launch refusal. Agent/attachment/project trust or authorization revocation is a separate existing admission refusal with retained evidence. Schedule FK resolution precedes run INSERT and does not introduce a schedule→attachment lock.
+For legacy project cron admission, schedule deletion must not invalidate a claimed launch through the existing nullable FK. In each run-insert transaction, resolve the optional live `agent_schedule_id` with a project/agent-scoped `SELECT ... FOR KEY SHARE`: if the matching row is already gone, insert NULL; if present, hold the key lock through insert so concurrent deletion waits and then applies ON DELETE SET NULL. The original scheduleId always remains in the immutable snapshot. This existence read is solely for the optional FK, never for request content, enabled state or cadence. Apply it to both standalone and Flow inserts; absence/disablement of a schedule after claim is not a legacy launch refusal. Agent/attachment/project trust or authorization revocation is a separate existing admission refusal with retained evidence. Schedule FK resolution precedes run INSERT and does not introduce a schedule→attachment lock.
+
+Reviewed native project assignment admission additionally requires its exact live,
+enabled source and unchanged review/selector before a fresh Run is inserted.
+Changing or withdrawing that review can refuse fresh admission without rewriting
+the claimed input. Already admitted Run input stays immutable and is governed by
+current assignment/action authority. This additional native policy does not change
+legacy v1 claim semantics; its complete source appointment is defined in the
+[owning assignment contract](specialist-assignments.md#reviewed-project-cron-invocation).
 
 DB CHECKs must reject malformed JSON shape, unsupported version, invalid text type/length and missing identifiers using explicit null-safe predicates (`IS TRUE`); attempt snapshot IDs must equal its own ID/schedule_id and require cron origin. Run snapshots may survive into authorized manual restart descendants, so do not constrain them to current `trigger_source='cron'`. Extend the existing attempt identity guard and add a run snapshot immutability guard: UPDATE cannot change either column, including NULL→value. Set snapshots only on insert. Parse snapshots on action/read paths; corrupt/unsupported input refuses with safe CONFIG reason, never silently drops text or reads today's schedule.
 

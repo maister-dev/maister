@@ -6,6 +6,7 @@ import type {
 } from "@/lib/agents/trigger-attempts";
 import type { DomainEventConsumer } from "@/lib/domain-events/consumers";
 import type { DomainEventRow, ProjectDomainEventRow } from "@/lib/db/schema";
+import type { ProjectSourceReview } from "@/lib/agents/project-source-review-types";
 
 import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import pino from "pino";
@@ -30,11 +31,13 @@ import { isMaisterError, MaisterError } from "@/lib/errors";
 import { nextFireAt } from "@/lib/run-schedules/cron";
 import { promoteNextPending } from "@/lib/scheduler";
 import { recordTaskActivityOnce } from "@/lib/social/activity";
-import { PROJECT_COMMENT_REASON_CODES } from "@/lib/specialist-assignments/project-source-types";
 import {
-  isNativeProjectCommentSpecialist,
-  submitProjectCommentAssignment,
-} from "@/lib/specialist-assignments/project-comment-intake";
+  PROJECT_COMMENT_REASON_CODES,
+  PROJECT_CRON_REASON_CODES,
+} from "@/lib/specialist-assignments/project-source-types";
+import { isNativeProjectSpecialist } from "@/lib/specialist-assignments/project-specialist";
+import { submitProjectCronAssignment } from "@/lib/specialist-assignments/project-cron-intake";
+import { submitProjectCommentAssignment } from "@/lib/specialist-assignments/project-comment-intake";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { agents, agentProjectLinks, agentSchedules, runs } =
@@ -48,6 +51,7 @@ const log = pino({
 });
 
 const PER_TICK_LIMIT = 25;
+const SOURCE_RETRY_DELAY_MS = 300000;
 
 export type AgentTickSummary = {
   due: number;
@@ -160,6 +164,9 @@ export async function dispatchDueAgentSchedules(
     projectId: string;
     cronExpr: string;
     timezone: string;
+    requestAtLaunch: string | null;
+    projectSourceReview: ProjectSourceReview | null;
+    bindingRevision: number | null;
   }> = await _db
     .select({
       id: agentSchedules.id,
@@ -167,8 +174,18 @@ export async function dispatchDueAgentSchedules(
       projectId: agentSchedules.projectId,
       cronExpr: agentSchedules.cronExpr,
       timezone: agentSchedules.timezone,
+      requestAtLaunch: agentSchedules.requestAtLaunch,
+      projectSourceReview: agentSchedules.projectSourceReview,
+      bindingRevision: agentProjectLinks.schedulesRevision,
     })
     .from(agentSchedules)
+    .leftJoin(
+      agentProjectLinks,
+      and(
+        eq(agentProjectLinks.projectId, agentSchedules.projectId),
+        eq(agentProjectLinks.agentId, agentSchedules.agentId),
+      ),
+    )
     .where(
       and(
         sql`${agentSchedules.projectId} IS NOT NULL`,
@@ -177,6 +194,7 @@ export async function dispatchDueAgentSchedules(
         lte(agentSchedules.nextFireAt, now),
       ),
     )
+    .orderBy(agentSchedules.nextFireAt, agentSchedules.id)
     .limit(PER_TICK_LIMIT);
 
   const summary: AgentTickSummary = {
@@ -189,29 +207,99 @@ export async function dispatchDueAgentSchedules(
   };
 
   for (const row of due) {
-    let next: Date;
+    let fence: AgentTriggerClaim | null;
 
     try {
-      next = nextFireAt(row.cronExpr, row.timezone, now);
+      const next = nextFireAt(row.cronExpr, row.timezone, now);
+
+      fence = await claimCronAgentAttempt(_db, row.id, now, next);
     } catch (err) {
-      log.error(
+      if (
+        !isMaisterError(err) ||
+        !["CONFIG", "PRECONDITION", "CONFLICT"].includes(err.code)
+      )
+        throw err;
+      // Refuse a bounded source capture without inventing a fire; a concurrent settings save wins the configuration witness.
+      await _db
+        .update(agentSchedules)
+        .set({
+          nextFireAt: new Date(now.getTime() + SOURCE_RETRY_DELAY_MS),
+          lastOutcome: "refused",
+          lastErrorCode: err.code,
+          lastErrorMessage: "Project source capture requires attention",
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(agentSchedules.id, row.id),
+            eq(agentSchedules.enabled, true),
+            lte(agentSchedules.nextFireAt, now),
+            eq(agentSchedules.cronExpr, row.cronExpr),
+            eq(agentSchedules.timezone, row.timezone),
+            sql`${agentSchedules.requestAtLaunch} IS NOT DISTINCT FROM ${row.requestAtLaunch}`,
+            sql`${agentSchedules.projectSourceReview} IS NOT DISTINCT FROM ${row.projectSourceReview === null ? null : JSON.stringify(row.projectSourceReview)}::jsonb`,
+            row.bindingRevision === null
+              ? sql`NOT EXISTS(SELECT 1 FROM agent_project_links WHERE project_id=${row.projectId} AND agent_id=${row.agentId})`
+              : sql`EXISTS(SELECT 1 FROM agent_project_links WHERE project_id=${row.projectId} AND agent_id=${row.agentId} AND schedules_revision=${row.bindingRevision})`,
+          ),
+        );
+      summary.refused++;
+      log.warn(
         {
           scheduleId: row.id,
-          cronExpr: row.cronExpr,
-          err: err instanceof Error ? err.message : String(err),
+          agentId: row.agentId,
+          code: err.code,
         },
-        "agent cron schedule has an unusable expression — skipped",
+        "project source capture refused; bounded retry retained",
       );
       continue;
     }
-
-    const fence = await claimCronAgentAttempt(_db, row.id, now, next);
 
     if (!fence) continue;
     assertProjectAgentTriggerClaim(fence);
     summary.claimed += 1;
 
     try {
+      if (
+        fence.bindingSnapshot.version === 3 ||
+        (await isNativeProjectSpecialist(_db, fence))
+      ) {
+        const native = await submitProjectCronAssignment(_db, fence);
+
+        if (!native.assignment.runIds.includes(fence.reservedRunId))
+          throw new MaisterError(
+            "CONFLICT",
+            "Native cron intake did not retain its exact reserved Run",
+          );
+        const [execution] = await _db
+          .select({ status: runs.status })
+          .from(runs)
+          .where(eq(runs.id, fence.reservedRunId));
+
+        if (!execution)
+          throw new MaisterError(
+            "PRECONDITION",
+            "Native cron execution is unavailable",
+            { details: { reason: "project_cron_appointment_unavailable" } },
+          );
+        const outcome = native.duplicate
+          ? "deduplicated"
+          : execution.status === "Pending"
+            ? "queued"
+            : "launched";
+
+        await recordAgentScheduleOutcome({
+          db: _db,
+          scheduleId: row.id,
+          fence,
+          outcome,
+          runId: fence.reservedRunId,
+          now,
+        });
+        if (execution.status === "Pending") summary.queued++;
+        else summary.launched++;
+        continue;
+      }
       const result = await launch({
         agentId: fence.sourceAgentId,
         projectId: fence.projectId,
@@ -252,7 +340,11 @@ export async function dispatchDueAgentSchedules(
         scheduleId: row.id,
         fence,
         outcome: isMaisterError(err) ? "refused" : "failed",
-        errorCode: isMaisterError(err) ? err.code : "CRASH",
+        errorCode: isMaisterError(err)
+          ? (PROJECT_CRON_REASON_CODES.find(
+              (reason) => reason === err.details?.reason,
+            ) ?? err.code)
+          : "CRASH",
         errorMessage: "Agent schedule launch was refused",
         now,
       });
@@ -431,7 +523,7 @@ async function summonMentionedAgents(input: {
     if (!fence) continue;
 
     try {
-      if (await isNativeProjectCommentSpecialist(_db, fence)) {
+      if (await isNativeProjectSpecialist(_db, fence)) {
         if (await chainDepthExhausted(_db, event.id, agentId)) {
           await recordAgentScheduleOutcome({
             db: _db,
