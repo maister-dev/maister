@@ -13,7 +13,10 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import pino from "pino";
 
-import { assertCompanyTriggerReservation } from "./company-trigger-reservation";
+import {
+  assertCompanyTriggerAppointment,
+  assertCompanyTriggerReservation,
+} from "./company-trigger-reservation";
 import {
   captureCompanyFlowExecution,
   companyFlowContextInputSchema,
@@ -111,6 +114,7 @@ export async function reserveCompanyFlowRunInTransaction(
   host: ExecutionHost,
   invocation?: CompanyTriggerReservation,
 ): Promise<CompanyRunReservation> {
+  assertCompanyTriggerAppointment(input.triggerSource, invocation);
   assertUpgradeMaintenanceAllows("run_admission");
   const executionDataPlaneMode = executionDataPlaneModeForHost(host);
   const request = input;

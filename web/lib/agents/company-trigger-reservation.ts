@@ -1,7 +1,10 @@
 import "server-only";
 
 import type { SqlTransaction } from "@/lib/db/sql-types";
-import type { CompanySpecialistContext } from "./company-agent-context";
+import type {
+  CompanyAgentContextInput,
+  CompanySpecialistContext,
+} from "./company-agent-context";
 import type { CompanyFlowBindingRevision } from "./company-flow-binding-types";
 
 import { sql } from "drizzle-orm";
@@ -18,6 +21,25 @@ export type CompanyTriggerReservation = Readonly<{
   attemptId: string;
   runId: string;
 }>;
+
+/** Cron admission must retain its durable source appointment before allocating execution. */
+export function assertCompanyTriggerAppointment(
+  triggerSource: CompanyAgentContextInput["triggerSource"],
+  invocation: CompanyTriggerReservation | undefined,
+): void {
+  if (triggerSource === "cron" && !invocation)
+    throw new MaisterError(
+      "CONFIG",
+      "Company cron admission requires its existing source reservation",
+      { details: { reason: "company_trigger_reservation_required" } },
+    );
+  if (triggerSource !== "cron" && invocation)
+    throw new MaisterError(
+      "CONFIG",
+      "A company cron reservation cannot authorize another invocation trigger",
+      { details: { reason: "company_trigger_reservation_trigger_mismatch" } },
+    );
+}
 const identity = z.string().min(1).max(128);
 const attemptSchema = z.object({
   id: identity,

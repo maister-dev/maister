@@ -57,7 +57,10 @@ import {
   prepareAgentRunFinalization,
   prepareUndispatchedAgentFailure,
 } from "../finalization";
-import { reserveCompanyAgentRun } from "../company-agent-launch";
+import {
+  reserveCompanyAgentRun,
+  reserveCompanyAgentRunInTransaction,
+} from "../company-agent-launch";
 import { startAgentSession } from "../launch";
 import { startAgentContinuationWorker } from "../continuation-worker";
 import { getCompanyAgentRunHistory } from "../activity-queries";
@@ -134,6 +137,8 @@ import {
   claimCronAgentAttempt,
   reconcileAgentTriggerAttempts,
 } from "@/lib/agents/trigger-attempts";
+import { MaisterError } from "@/lib/errors";
+import { prepareCompanySpecialistAssignment } from "@/lib/specialist-assignments/company-intake";
 import { reserveCompanyCronAssignment } from "@/lib/specialist-assignments/company-cron-intake";
 import { wakePendingSpecialistAssignment } from "@/lib/specialist-assignments/admission-wake";
 import { specialistAssignmentSchema } from "@/lib/specialist-assignments/types";
@@ -153,6 +158,7 @@ import {
 import { createCompanyGrants, revokeCompanyGrant } from "@/lib/company/grants";
 import {
   createSpecialistAssignment,
+  createSpecialistAssignmentInTransaction,
   cancelSpecialistAssignment,
   linkSpecialistAssignmentRunInTransaction,
 } from "@/lib/specialist-assignments/store";
@@ -949,6 +955,61 @@ it("IT-CBS-04 completes company HTTP and registered cron intake through the exis
       { kind: "session.prompt", count: 1 },
     ]);
 
+    const { idempotencyKey: _manualKey, ...originalCronRequest } =
+      manualRequest;
+    const reservationHost = await localHost({ db, transport: hosts.transport });
+
+    await expect(
+      db.transaction(async (tx) => {
+        const prepared = await prepareCompanySpecialistAssignment(
+          tx,
+          userId,
+          {
+            ...originalCronRequest,
+            owner: { kind: "company", companyId: request.companyId },
+          },
+          {
+            origin: {
+              kind: "schedule",
+              scheduleId: cron.scheduleId,
+              triggerAttemptId: attempt.id,
+            },
+            scheduledRequest: attempt.scheduled_request_snapshot,
+            destination: { kind: "inbox", userId },
+          },
+        );
+        const unappointed = await createSpecialistAssignmentInTransaction(
+          tx,
+          userId,
+          prepared,
+        );
+
+        await reserveCompanyAgentRunInTransaction(
+          tx,
+          userId,
+          {
+            companyId: request.companyId,
+            assignmentId: unappointed.id,
+            assignmentRevision: unappointed.revision,
+            inputRevision: unappointed.inputRevision,
+            bindingId: binding.specialist.bindingId,
+            bindingRevision: binding.specialist.configRevision,
+            triggerSource: "cron",
+          },
+          hosts,
+          reservationHost,
+        );
+        // The regression rollback must also occur when an unsafe constructor
+        // accepts the missing source appointment, so RED cannot leave live work.
+        throw new MaisterError(
+          "CRASH",
+          "The native constructor accepted cron work without its existing source reservation",
+        );
+      }),
+    ).rejects.toMatchObject({
+      code: "CONFIG",
+      details: { reason: "company_trigger_reservation_required" },
+    });
     const cronReplay = await reserveCompanyCronAssignment(db, {
       attemptId: attempt.id,
       runId: attempt.reserved_run_id,

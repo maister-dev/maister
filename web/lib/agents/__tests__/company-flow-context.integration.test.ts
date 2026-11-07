@@ -103,6 +103,8 @@ import { POST as stopRunPost } from "@/app/api/runs/[runId]/stop/route";
 import { POST as respondHitlPost } from "@/app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route";
 import { GET as retainedResultGet } from "@/app/api/runs/[runId]/results/[revision]/route";
 import { loadRetainedResultForUser } from "@/lib/run-results/retained-result";
+import { createCompanyCronSchedule } from "@/lib/agents/company-schedules";
+import { runSchedulerTick } from "@/lib/scheduler/tick-service";
 import { reserveCompanyManualAssignment } from "@/lib/specialist-assignments/company-manual-intake";
 import { loadNativeInputForUser } from "@/lib/orchestrator/native-input-read";
 import { NativeInputInspectionPanel } from "@/components/runs/native-input-inspection";
@@ -352,10 +354,12 @@ beforeAll(async () => {
 
   await writeFile(
     rolePath,
-    (await readFile(rolePath, "utf8")).replace(
-      "workspace: none",
-      "specialist:\n  responsibilities: [Coordinate authorized diagnosis]\n  targetClasses: [stand]\nflow: rah-control\nworkspace: none",
-    ),
+    (await readFile(rolePath, "utf8"))
+      .replace("  - flow", "  - flow\n  - cron")
+      .replace(
+        "workspace: none",
+        "specialist:\n  responsibilities: [Coordinate authorized diagnosis]\n  targetClasses: [stand]\nflow: rah-control\nworkspace: none",
+      ),
   );
   const diagnosticRolePath = join(
     source,
@@ -2030,7 +2034,9 @@ it("CBS-03 cancels a Pending company Flow with current authority, one attributed
 
 it("CBS-03 executes a native company graph through the existing driver, real supervisor and controlled ACP process without repository records", async () => {
   const hostRoot = join(root, "reservation-host");
+  const previousRuntimeRoot = process.env.MAISTER_RUNTIME_ROOT;
 
+  vi.stubEnv("MAISTER_RUNTIME_ROOT", hostRoot);
   await writeCompanyCapabilityCache(hostRoot);
   const supervisor = await startRealSupervisor({
     runtimeRoot: hostRoot,
@@ -2608,6 +2614,89 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
         )
       ).rows,
     ).toEqual([{ count: 0 }]);
+    const cronRequest =
+      "Inspect the configured target through its pinned native coordinator.\nfixture-output:" +
+      JSON.stringify({
+        bytes: 0,
+        text: "```json maister:output\n" + JSON.stringify(output) + "\n```",
+      });
+    const graphCron = await createCompanyCronSchedule(
+      database.db,
+      requesterId,
+      {
+        owner: { kind: "company", companyId: request.companyId },
+        specialistBindingId: request.bindingId,
+        coordinatorFlowBindingId: request.coordinatorBindingId,
+        cronExpr: "*/5 * * * *",
+        timezone: "UTC",
+        requestAtLaunch: cronRequest,
+        enabled: false,
+        idempotencyKey: randomUUID(),
+      },
+    );
+
+    await database.pool.query(
+      "UPDATE agent_schedules SET enabled=true,company_config_revision=company_config_revision+1,next_fire_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+      [graphCron.scheduleId],
+    );
+    expect(await runSchedulerTick({ jobKind: "agent_tick" })).toMatchObject({
+      succeededCount: 1,
+      failedCount: 0,
+    });
+    const graphAttempt = (
+      await database.pool.query(
+        "SELECT id,reserved_run_id,run_id,outcome FROM agent_trigger_attempts WHERE schedule_id=$1",
+        [graphCron.scheduleId],
+      )
+    ).rows;
+
+    expect(graphAttempt).toHaveLength(1);
+    expect(graphAttempt[0]).toMatchObject({
+      run_id: graphAttempt[0].reserved_run_id,
+      outcome: "queued",
+    });
+    await vi.waitFor(
+      async () => {
+        const [scheduled] = await database.db
+          .select()
+          .from(runs)
+          .where(eq(runs.id, graphAttempt[0].reserved_run_id));
+
+        expect(scheduled).toMatchObject({
+          status: "Done",
+          runKind: "flow",
+          projectId: null,
+          taskId: null,
+          flowId: null,
+          companyId: request.companyId,
+          agentScheduleId: graphCron.scheduleId,
+          operationalTerminal: null,
+          scheduledRequestSnapshot: {
+            version: 1,
+            scheduleId: graphCron.scheduleId,
+            triggerAttemptId: graphAttempt[0].id,
+            requestAtLaunch: cronRequest,
+          },
+        });
+      },
+      { timeout: 30000, interval: 25 },
+    );
+    expect(
+      (
+        await database.pool.query(
+          "SELECT validity,value FROM run_results WHERE run_id=$1",
+          [graphAttempt[0].reserved_run_id],
+        )
+      ).rows,
+    ).toEqual([{ validity: "valid", value: output }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM projects UNION ALL SELECT count(*)::int AS count FROM tasks",
+          [],
+        )
+      ).rows,
+    ).toEqual([{ count: 0 }, { count: 0 }]);
     await stopRuntimeEventConsumers();
     await supervisor.stop();
     resetResolverForTests();
@@ -2633,6 +2722,9 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
     expect(await counts()).toEqual(beforeOfflineReplay);
     expect(await intakeBusinessCounts(database)).toEqual(businessBeforeReplay);
   } finally {
+    if (previousRuntimeRoot === undefined)
+      delete process.env.MAISTER_RUNTIME_ROOT;
+    else process.env.MAISTER_RUNTIME_ROOT = previousRuntimeRoot;
     if (previousCap === undefined)
       delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
     else process.env.MAISTER_MAX_CONCURRENT_RUNS = previousCap;

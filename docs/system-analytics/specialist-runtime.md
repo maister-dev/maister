@@ -102,7 +102,9 @@ exact invocation; the original Unicode request remains unmodified in its v1 plan
 The constructor locks and validates the current enabled source/configuration,
 professional/coordinator revision and content witnesses, server creator, exact
 assignment origin/input, scheduled request and reserved Run ID. A model cannot
-choose that Run identity. Replay resolves the same canonical receipt before host
+choose that Run identity. Both native constructors refuse cron admission without
+the source appointment and refuse an appointment attached to another trigger.
+Replay resolves the same canonical receipt before host
 or mutable provider preflight. Post-commit dispatch uses the existing pool; a wake
 failure cannot reinterpret a committed reservation as a refused admission.
 
@@ -112,8 +114,12 @@ is not blindly dispatched again. Existing project event-receipt recovery and
 incident routing remain project-owned. Company failures retain existing source
 telemetry; company incident grouping remains T39. The controlled-ACP standalone
 checkpoint covers actual scheduler registration, concurrent ticks, one create/prompt,
-independent fires, replay, lost settlement adoption and unknown refusal. Public
-enablement, coordinator-cron and remaining T22.1 source qualification stay open.
+independent fires, replay, lost settlement adoption and unknown refusal. The native
+coordinator checkpoint also reaches its required structured result through the
+registered tick and default Flow driver. Early current-authority refusal terminalizes
+the stale Run and wakes the existing pool after the terminal CAS, preserving the
+host seam while binding a new execution for the next Run. Public enablement and
+remaining refusal/capacity/poison and source qualification stay open.
 
 ### Company agent credentials
 

@@ -1,0 +1,75 @@
+{
+  "task": "T22.1",
+  "slice": "Mandatory cron reservation and default coordinator dispatch",
+  "date": "2026-11-07",
+  "baseCommit": "2a8ba4df2",
+  "status": "Internal checkpoint qualified; public cron enablement and full T22.1 remain open",
+  "red": [
+    {
+      "case": "Native constructor accepted cron without durable source reservation",
+      "testsPassed": 36,
+      "testsFailed": 1,
+      "durationSeconds": 28.04,
+      "exitCode": 1,
+      "log": "cb-t221-cron-appointment-red2.log.gz"
+    },
+    {
+      "case": "Registered cron coordinator remained Pending after an older stale Flow consumed the wake",
+      "testsPassed": 44,
+      "testsFailed": 1,
+      "durationSeconds": 62.99,
+      "exitCode": 1,
+      "log": "cb-t221-coordinator-cron-first.log.gz"
+    }
+  ],
+  "gates": {
+    "owningIntegration": {
+      "tests": 82,
+      "files": 2,
+      "durationSeconds": 65.54,
+      "exitCode": 0
+    },
+    "webUnit": {
+      "tests": 9318,
+      "files": 889,
+      "durationSeconds": 28.66,
+      "exitCode": 0
+    },
+    "types": {
+      "exitCode": 0
+    },
+    "lint": {
+      "exitCode": 0
+    },
+    "contracts": {
+      "exitCode": 0
+    },
+    "docs": {
+      "exitCode": 0
+    }
+  },
+  "qualified": [
+    "Both native constructors require a cron source reservation and reject a cron reservation on other triggers before execution allocation.",
+    "Actual registered coordinator cron reaches Done and its required valid native findings result via the default Flow driver with no repository or Task.",
+    "Early company Flow authority refusal terminalizes the stale Run and wakes existing queued admission only after successful terminal CAS. The next execution binds its own assignment; bound clients and driver fences are not inherited.",
+    "The regression transaction rolls back even on unsafe acceptance, keeping RED free of unexpected live work."
+  ],
+  "corrections": [
+    "The first cron guard run had a missing test import and is retained separately from the genuine behavioral RED.",
+    "Typecheck found an overly broad test owner union; the actual company owner is now explicit without a cast.",
+    "Default dispatch uses the owned fixture runtime root; the temporary environment is restored."
+  ],
+  "limits": [
+    "Public cron enablement remains gated pending capacity, revocation and poison-source qualification. Event and webhook adapters remain open.",
+    "Controlled ACP does not establish actual specialist-package or stand pilot readiness.",
+    "The primary full integration gate remains running on frozen a48a002b2; isolated changes are not yet integrated."
+  ],
+  "sourceSha256": {
+    "web/lib/agents/company-agent-launch.ts": "28c57f646312894760999b4eba01acd9f616a45a012af90ff347f509ca9274c4",
+    "web/lib/agents/company-flow-launch.ts": "283706e29a1acbd2967959a27f827209747fbdbd5e2a5875131428accabccb81",
+    "web/lib/agents/company-trigger-reservation.ts": "5edfe9fd8221112a3d8c8278a16ae0ecc20902e128ceff947ebc4715711a78c5",
+    "web/lib/flows/runner.ts": "5b2c05315cb619fcb2234fb39952b5eb6595e18486754e1faedf2600238dac8a",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "de8e95781d2d0117ebb1571cca967dfd5210097bc020fe65e6417589db4aad06",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "b53114ab31f3a11b30067cf7705e075bca85fd83e42c31dc3d11d88a16fb2070"
+  }
+}
