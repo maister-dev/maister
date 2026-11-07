@@ -718,9 +718,9 @@ writers; finishing the foundation alone does not qualify accepted cooperation.
 This ordering removes the T23-to-T28 dependency cycle without removing any result,
 evidence-preservation or acceptance requirement.
 
-### Durable origin-delivery contract (Designed — T25)
+### Durable origin-delivery contract (Implemented transport; recovery qualification pending — T25)
 
-**Implemented destination admission; receipt capture and delivery remain designed.**
+**Implemented destination admission, exact-result capture and channel transport. Native inspection/recovery and complete qualification remain pending.**
 The shared assignment store validates the destination under the same transaction
 as current requester/owner authority and before creating any assignment, input or
 event. Inbox delivery is private to the actual requester. Task/thread selectors
@@ -730,8 +730,7 @@ requester-owned user subscription (no project/platform recipient), subscribed to
 `assignment.result_available` or `*`. The endpoint and credentials remain server
 configuration. Missing, foreign, disabled or unsupported targets refuse with safe
 `PRECONDITION` reason `assignment_destination_unavailable`; no fallback target is
-chosen. Native store integration proves refusal/rollback and valid targets. Future
-dispatch must repeat validation rather than treating this snapshot as authority.
+chosen. Native store integration proves refusal/rollback and valid targets. Dispatch repeats validation rather than treating this snapshot as authority.
 
 
 Result availability and accepted completion are distinct signals. T25 may notify
@@ -749,6 +748,18 @@ distinct signal identity. A child ending or an agent's prose cannot trigger eith
 | Outbound reply | Exactly one configured requester-owned subscription receives a stable event/delivery identity using existing signing, egress, lease, attempts and backoff. Platform or sibling subscriptions cannot broaden the destination. Every send/retry rechecks current recipient/source authority; lost ACK repeats only delivery and retains at-least-once semantics. |
 | Failure/recovery | Persist pending intent before dispatch. All channels reuse the existing delivery lease, bounded attempt budget/backoff and append-only attempt history (default eight attempts). Source/destination denial creates an inspectable blocked outcome. Authorized replay preserves attempt history and rechecks the exact frozen target; it cannot choose a fallback destination or rerun work. No second delivery-attempt ledger is added. |
 | Quiet checks | T39 applies the configured quiet/incident policy before routine result publication. Unchanged checks do not manufacture repeated alerts; required action and requested delivery remain durable. |
+
+Terminal events gain a nullable server-owned `assignment_result` witness captured
+in their insertion transaction from the actual native root appointment, effective
+input lineage, current validated result and complete Run source capture. Existing
+events remain NULL; migration cannot invent historical witnesses. A versioned
+`postgres_jsonb_sha256_v1` witness hashes the UTF-8 PostgreSQL JSONB representation
+of schemaRef, schemaVersion, schemaSha256 and value with SHA-256. It is a content
+witness, not confirmation. The existing domain dispatcher adopts an immutable
+business receipt from that exact event witness, even when dispatch is delayed;
+it never selects whichever result became current later. Receipt identities and
+frozen source/target snapshots cannot be overwritten. Transport state and attempt
+history remain solely in the existing delivery engine.
 
 The owning migration extends `inbox_items` with an exclusive company/project
 native-assignment branch while preserving every legacy project/task row and

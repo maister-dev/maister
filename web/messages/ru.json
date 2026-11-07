@@ -823,6 +823,8 @@
     "motto": "Ship Happens."
   },
   "inbox": {
+    "resultRun": "Запуск",
+    "resultAvailable": "Результат доступен",
     "company": "Компания",
     "eyebrow": "По всем проектам",
     "title": "Входящие",

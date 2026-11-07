@@ -13,6 +13,8 @@ export interface InboxPanelLabels {
   readAll: string;
   readAllBusy: string;
   empty: string;
+  company: string;
+  run: string;
   eventKind: Record<string, string>;
 }
 
@@ -86,13 +88,19 @@ export function InboxPanel({
                     : "h-1.5 w-1.5 flex-none rounded-full bg-amber"
                 }
               />
-              <span className="flex-none text-mute">{item.projectName}</span>
+              <span className="flex-none text-mute">
+                {item.projectName ?? labels.company}
+              </span>
               <Link
                 className="flex-none rounded border border-line bg-paper px-1 py-px text-[10px] font-bold tracking-[0.05em] text-ink-2 hover:border-amber hover:text-amber"
-                href={`/projects/${item.projectSlug}/tasks/${item.taskNumber}`}
+                href={
+                  item.assignmentId !== undefined
+                    ? `/runs/${item.runId}`
+                    : `/projects/${item.projectSlug}/tasks/${item.taskNumber}`
+                }
                 onClick={() => void markRead(item.id)}
               >
-                {item.keyRef}
+                {item.keyRef ?? labels.run}
               </Link>
               <span className="min-w-0 flex-1 truncate text-ink-2">
                 {item.taskTitle}

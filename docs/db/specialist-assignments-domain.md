@@ -1,12 +1,12 @@
 # Specialist assignment and company runtime persistence
 
-**Implemented: assignment/input/run-link base, reviewed configuration, company standalone/graph execution, canonical intake and human context history; Designed: governed cooperation — ADR-203.** [Runtime](../system-analytics/specialist-runtime.md), [assignments](../system-analytics/specialist-assignments.md) and [cooperation](../system-analytics/specialist-cooperation.md) own behavior. Existing human `assignments` and host `execution_assignments` are not repurposed.
+**Implemented: assignment/input/run-link base, reviewed configuration, company standalone/graph execution, canonical intake and human context history and origin-delivery transport; Designed: governed cooperation — ADR-203.** [Runtime](../system-analytics/specialist-runtime.md), [assignments](../system-analytics/specialist-assignments.md) and [cooperation](../system-analytics/specialist-cooperation.md) own behavior. Existing human `assignments` and host `execution_assignments` are not repurposed.
 
 ## Migration reservations
 
-Main `0232_company_grant_requests` and `0233_native_knowledge_execution` are implemented. Implemented base unit `0234_specialist_assignments` contains assignment heads, immutable inputs, existing-run links and state facts. Specialist bindings use `0236_company_specialist_bindings`; reviewed company Flow bindings use `0237_company_flow_bindings`. Trigger scope uses `0238_company_trigger_scope` on existing scheduler tables. Retry scope uses `0239_company_retry_scope` on the existing retry ledger. Native run ownership and internal credentials use `0240_company_agent_execution` and `0241_company_agent_credentials`. Context history uses `0259_specialist_context_revisions`. Assignment clarification subjects extend existing HITL storage through `0262_specialist_question_subject`; native answer receipts use `0263_specialist_question_answer`; `0264_specialist_flow_question` extends the existing node resume grammar and native source guards. Native session/bearer question and human-answer adapters reuse these existing rows and guards. Delivery, cooperation/acceptance/ownership and stand operations follow as generated logical units in their owning tasks. Allocate each numeric prefix from the then-current journal; later tables are not precreated as a prerequisite for the base store. Existing head/input/run-link rows survive each additive migration. The main migration units never FK a new Brain table; knowledge pointers store typed record/revision/witness/digest values and the owning service validates them after both lineages are ready. `runs.flow_revision_id` and existing immutable installed revision schema remain runtime truth.
+Main `0232_company_grant_requests` and `0233_native_knowledge_execution` are implemented. Implemented base unit `0234_specialist_assignments` contains assignment heads, immutable inputs, existing-run links and state facts. Specialist bindings use `0236_company_specialist_bindings`; reviewed company Flow bindings use `0237_company_flow_bindings`. Trigger scope uses `0238_company_trigger_scope` on existing scheduler tables. Retry scope uses `0239_company_retry_scope` on the existing retry ledger. Native run ownership and internal credentials use `0240_company_agent_execution` and `0241_company_agent_credentials`. Context history uses `0259_specialist_context_revisions`. Assignment clarification subjects extend existing HITL storage through `0262_specialist_question_subject`; native answer receipts use `0263_specialist_question_answer`; `0264_specialist_flow_question` extends the existing node resume grammar and native source guards. Native session/bearer question and human-answer adapters reuse these existing rows and guards. Result-availability witnesses and immutable business delivery receipts use `0265_specialist_result_delivery`; `0266_specialist_delivery_targets` extends existing webhook deliveries and Inbox rows. Native inspection/recovery qualification remains T25. Cooperation/acceptance/ownership and stand operations follow as generated logical units in their owning tasks. Allocate each numeric prefix from the then-current journal; later tables are not precreated as a prerequisite for the base store. Existing head/input/run-link rows survive each additive migration. The main migration units never FK a new Brain table; knowledge pointers store typed record/revision/witness/digest values and the owning service validates them after both lineages are ready. `runs.flow_revision_id` and existing immutable installed revision schema remain runtime truth.
 
-The base business structures link existing execution records rather than duplicating attempts. Work, acceptance, delivery and claim entities in this diagram remain designed until their owning slices land; context history and specialist/Flow binding configuration are implemented.
+The base business structures link existing execution records rather than duplicating attempts. Work, acceptance and claim entities in this diagram remain designed until their owning slices land; context history and specialist/Flow binding configuration are implemented.
 
 ```mermaid
 erDiagram
@@ -25,7 +25,37 @@ erDiagram
     SPECIALIST_WORK ||--o{ SPECIALIST_WORK_DECISIONS : accepts_reworks
     SPECIALIST_ASSIGNMENTS ||--o{ SPECIALIST_ACCEPTANCES : accepts
     SPECIALIST_ASSIGNMENTS ||--o{ SPECIALIST_DELIVERY_RECEIPTS : returns
+    SPECIALIST_DELIVERY_RECEIPTS ||--o| WEBHOOK_DELIVERIES : existing_transport
+    SPECIALIST_DELIVERY_RECEIPTS ||--o| INBOX_ITEMS : private_notice
     SPECIALIST_ASSIGNMENTS ||--o| SPECIALIST_OWNER_CLAIMS : fences
+    SPECIALIST_DELIVERY_RECEIPTS {
+        text id PK
+        text assignment_id FK
+        integer input_revision FK
+        text run_id "logical existing Run"
+        integer result_revision
+        text signal "result_available"
+        text source_event_id "exact server witness"
+        text outbox_event_id UK
+        jsonb snapshot "frozen owner input result target sources"
+        timestamptz created_at
+    }
+    DOMAIN_EVENTS {
+        bigint id PK
+        jsonb assignment_result "nullable server-owned terminal witness"
+    }
+    WEBHOOK_DELIVERIES {
+        text id PK
+        text specialist_delivery_id FK,UK "exclusive with subscription and push targets"
+        text status
+        integer attempt_count
+    }
+    INBOX_ITEMS {
+        text assignment_delivery_id FK,UK
+        text company_id FK "exclusive native company or project"
+        text project_id FK
+        text task_id FK "required on legacy rows"
+    }
     RUNS {
         text company_id FK "exclusive company or project owner"
         text project_id FK "NULL for company work"
@@ -153,7 +183,7 @@ All new entity IDs are server-generated; timestamps UTC. Versioned closed JSON c
 | `specialist_work` | Stable work identity, assignment/input/work revision, digest, parent/child run, constraints/result requirements/state | UNIQUE assignment/input/logical-work/revision; existing parent/root lock admits one child; terminal work keeps old result |
 | `specialist_work_decisions` | id/work revision/actor/input/result revision, decision/reason/evidence, owner epoch, digest/key/time | Unique work/idempotency key; exact result references RESTRICT; append-only decision history |
 | `specialist_acceptances` | id/assignment/input/context/exact result revision, policy/actor/evidence/verification decision, key/digest/time | Unique content-guarded key, acceptance/terminal state/outbox one transaction; cross-row obligations checked transactionally |
-| `specialist_delivery_receipts` | id/assignment/acceptance/frozen typed destination/digest, pending/delivered/unknown/failed, bounded attempts/next_attempt, ACK witness | Unique acceptance/destination/delivery key; delivered marker only after actual acknowledged destination write |
+| `specialist_delivery_receipts` (0250; qualification in progress) | Server ID, assignment/effective input/root Run/exact result revision, result-available signal, source event ID, frozen source/target/versioned witness and private outbox ID | Unique assignment/Run/result/signal and outbox; exact input FK; immutable witness equals the server-captured event; deferred private-outbox coherence. Transport status and attempts remain solely on existing webhook delivery rows |
 
 ## Backfill, guards and lifetime
 
@@ -245,3 +275,22 @@ receipt and original checkpoint. No existing task-question bytes or resume varia
 are rewritten. Native question submission uses the current own appointment and source policy;
 human answers use exact input/business revisions and personal-token authority.
 Public routes add no persistence ledger.
+
+### Native result-event and delivery target extensions (0250–0251; qualification in progress)
+
+`domain_events.assignment_result` is NULL for historical/unenrolled events. Its
+server trigger captures only a real native root appointment's exact effective
+input, pinned schema, valid result and complete source closure in the terminal
+write transaction. Caller metadata cannot set the witness; updates cannot erase
+or retarget it. No historical authorship, source or verification is backfilled.
+The result digest uses the explicitly versioned PostgreSQL JSONB/SHA-256 witness.
+
+`webhook_deliveries.specialist_delivery_id` is a third exclusive transport target.
+Existing subscription/push rows retain their NULL native pointer and bytes. One
+transport row owns each native routing receipt; immutable target identity and
+existing leases, bounded retry curve, append-only attempts and replay are reused.
+`inbox_items` adds an exclusive company/project native branch with an exact
+routing-receipt pointer. Legacy rows still require a project and task. Native
+recipient/owner/result/source references are checked at insertion and remain
+immutable while recipient-owned read timestamps use the existing mutations.
+There is no Brain FK, new execution ledger or second transport-attempt ledger.

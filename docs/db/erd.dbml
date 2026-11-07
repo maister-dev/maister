@@ -753,6 +753,7 @@ table domain_events {
   run_id text
   actor_type text
   actor_id text
+  assignment_result jsonb
   payload jsonb [not null]
   occurred_at "timestamp with time zone" [not null]
   created_at "timestamp with time zone" [not null, default: `now()`]
@@ -1806,14 +1807,18 @@ table inbox_items {
   id text [pk, not null]
   recipient_type text [not null]
   recipient_id text [not null]
-  project_id text [not null]
-  task_id text [not null]
+  company_id text
+  project_id text
+  task_id text
+  assignment_delivery_id text
   event_kind text [not null]
   source_ref jsonb [not null]
   read_at "timestamp with time zone"
   created_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
+    assignment_delivery_id [name: 'inbox_items_assignment_delivery_uq', unique]
+
     (recipient_type, recipient_id, read_at, created_at) [name: 'inbox_items_recipient_idx']
 
 
@@ -3219,6 +3224,28 @@ table specialist_context_revisions {
   }
 }
 
+table specialist_delivery_receipts {
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  assignment_id text [not null]
+  input_revision integer [not null]
+  run_id text [not null]
+  result_revision integer [not null]
+  signal text [not null]
+  source_event_id text [not null]
+  outbox_event_id text [not null]
+  snapshot jsonb [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (assignment_id, run_id, result_revision, signal) [name: 'specialist_delivery_receipts_signal_uq', unique]
+    outbox_event_id [name: 'specialist_delivery_receipts_outbox_uq', unique]
+
+
+    (assignment_id, created_at, id) [name: 'specialist_delivery_receipts_assignment_idx']
+    (run_id, result_revision) [name: 'specialist_delivery_receipts_run_idx']
+  }
+}
+
 table specialist_input_revisions {
   assignment_id text [not null]
   revision integer [not null]
@@ -3649,6 +3676,7 @@ table webhook_deliveries {
   event_id text [not null]
   subscription_id text
   push_subscription_id text
+  specialist_delivery_id text
   status text [not null, default: 'pending']
   attempt_count integer [not null, default: 0]
   next_attempt_at "timestamp with time zone" [not null]
@@ -3663,6 +3691,7 @@ table webhook_deliveries {
 
   indexes {
 
+    specialist_delivery_id [name: 'webhook_deliveries_specialist_target_uq', unique]
     (subscription_id, event_id) [name: 'webhook_deliveries_sub_event_uq', unique]
     (push_subscription_id, event_id) [name: 'webhook_deliveries_push_event_uq', unique]
     next_attempt_at [name: 'webhook_deliveries_due_idx']
@@ -4529,9 +4558,13 @@ ref hitl_specialist_input_fk: hitl_requests.(specialist_assignment_id, specialis
 
 ref hitl_specialist_answer_input_fk: hitl_requests.(specialist_assignment_id, specialist_answer_input_revision) > specialist_input_revisions.(assignment_id, revision) [delete: restrict, update: no action]
 
+ref inbox_items_company_id_companies_id_fk: inbox_items.company_id > companies.id [delete: restrict, update: no action]
+
 ref inbox_items_project_id_projects_id_fk: inbox_items.project_id > projects.id [delete: cascade, update: no action]
 
 ref inbox_items_task_id_tasks_id_fk: inbox_items.task_id > tasks.id [delete: cascade, update: no action]
+
+ref inbox_items_assignment_delivery_id_specialist_delivery_receipts_id_fk: inbox_items.assignment_delivery_id > specialist_delivery_receipts.id [delete: restrict, update: no action]
 
 ref librarian_cards_conversation_id_librarian_conversations_id_fk: librarian_cards.conversation_id > librarian_conversations.id [delete: cascade, update: no action]
 
@@ -4804,6 +4837,8 @@ ref specialist_context_revisions_assignment_id_specialist_assignments_id_fk: spe
 
 ref specialist_context_input_fk: specialist_context_revisions.(assignment_id, input_revision) > specialist_input_revisions.(assignment_id, revision) [delete: restrict, update: no action]
 
+ref specialist_delivery_receipts_input_fk: specialist_delivery_receipts.(assignment_id, input_revision) > specialist_input_revisions.(assignment_id, revision) [delete: restrict, update: no action]
+
 ref specialist_input_revisions_assignment_fk: specialist_input_revisions.assignment_id > specialist_assignments.id [delete: restrict, update: no action]
 
 ref specialist_intake_receipts_input_fk: specialist_intake_receipts.(assignment_id, input_revision) > specialist_input_revisions.(assignment_id, revision) [delete: restrict, update: no action]
@@ -4887,6 +4922,8 @@ ref webhook_deliveries_event_id_webhook_events_id_fk: webhook_deliveries.event_i
 ref webhook_deliveries_subscription_id_webhook_subscriptions_id_fk: webhook_deliveries.subscription_id > webhook_subscriptions.id [delete: cascade, update: no action]
 
 ref webhook_deliveries_push_subscription_id_push_subscriptions_id_fk: webhook_deliveries.push_subscription_id > push_subscriptions.id [delete: cascade, update: no action]
+
+ref webhook_deliveries_specialist_delivery_id_specialist_delivery_receipts_id_fk: webhook_deliveries.specialist_delivery_id > specialist_delivery_receipts.id [delete: restrict, update: no action]
 
 ref webhook_delivery_attempts_delivery_id_webhook_deliveries_id_fk: webhook_delivery_attempts.delivery_id > webhook_deliveries.id [delete: cascade, update: no action]
 

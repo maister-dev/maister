@@ -28,6 +28,8 @@ export interface SignAndSendInput {
   secondarySecret: string | null;
   extraHeaders: Record<string, string>;
   timeoutMs: number;
+  /** Native destinations repeat current recipient/source authority after DNS and before the wire. */
+  authorize?: () => Promise<void>;
 }
 
 export interface SignAndSendResult {
@@ -87,6 +89,8 @@ export async function signAndSend(
       durationMs: 0,
     };
   }
+
+  if (input.authorize) await input.authorize();
 
   const dispatcher: Dispatcher | undefined = destination.addresses
     ? pinnedDispatcher(destination.addresses)

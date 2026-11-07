@@ -5691,6 +5691,18 @@ Generated `0235_specialist_metadata` adds nullable `agents.specialist` with boun
 
 Pinned company bindings and native company standalone/graph execution are implemented. Context human history is implemented; agent integration, questions, coordinator ownership and verified acceptance remain subsequent slices. Completion is refused until exact result/verification acceptance is implemented. Existing `runs`, `node_attempts` and `run_results` remain the execution ledgers. Company result-only Flow pins installed `flow_revisions` with null project/task/project-flow fields; no project `flows` row is fabricated.
 
+Generated main `0265_specialist_result_delivery` adds immutable native result
+witnesses on the existing domain outbox and `specialist_delivery_receipts`.
+The terminal transaction freezes exact root/input/result/schema/source identity;
+historical events remain explicitly unknown. The dispatcher creates one private
+origin intent without completing the assignment. Main `0266_specialist_delivery_targets`
+extends the existing delivery ledger with a third exclusive native target and
+the existing Inbox with a company/project native branch. Legacy project/task
+rows remain unchanged. Routing/evidence guards permit existing recipient read
+mutations, while current source/recipient authority gates new notices and reads.
+No transport attempt ledger or Brain FK is added. Channel/recovery qualification
+is in progress; accepted-outcome delivery remains the acceptance-owning slice.
+
 ## Stand operation model (Designed)
 
 [Stand operation persistence](db/stand-operations-domain.md) specifies the subsequent `stand_operations` and separately hardened `company_brain_constraints` units (numbers allocated at generation): versioned targets/components, effect intents/receipts, canonical resource claims, current permits, independent probes and inspected recovery decisions. Unknown external effects outlive run cleanup. No operation success is inferred from process/HTTP status or current health.

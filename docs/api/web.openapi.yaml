@@ -33338,7 +33338,7 @@ components:
     WebhookEventType:
       type: string
       description: |
-        (ADR-077) The curated outbound event taxonomy (18 types), mirroring
+        (ADR-077) The curated outbound event taxonomy (23 types), mirroring
         `lib/webhooks/taxonomy.ts` in order. The full per-type `data` shapes are
         in `async/outbound-webhooks.asyncapi.yaml`. This enum feeds live
         subscription request bodies, so a missing member is not cosmetic — it
@@ -33362,6 +33362,11 @@ components:
         - run.pr_conflicts
         - gate.decided
         - ping
+        - attention.decision_opened
+        - attention.decision_closed
+        - attention.decisions_changed
+        - attention.digest
+        - assignment.result_available
 
     WebhookEventTypeSelector:
       description: |

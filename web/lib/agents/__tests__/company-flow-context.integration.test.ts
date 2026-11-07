@@ -73,6 +73,8 @@ import {
 
 import { recoverPendingAgentQuestions } from "@/lib/services/agent-question";
 import { computeDecisionsQueue } from "@/lib/queries/decisions";
+import { getInboxItems, getUnreadInboxCount } from "@/lib/queries/inbox";
+import { runWebhookDeliveryJob } from "@/lib/scheduler/handlers/webhook-delivery";
 import { GET as inboxContextGet } from "@/app/api/runs/[runId]/inbox-context/route";
 import { readPromptRequest } from "@/lib/execution-host/command-request";
 import { createOrActivateAssignmentQuestion } from "@/lib/services/assignment-question";
@@ -2352,6 +2354,135 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
         )
       ).rows,
     ).toMatchObject([{ validity: "valid", value: output }]);
+    const allocationBeforeDelivery = await counts();
+
+    expect(await dispatchDomainEvents({ db: database.db })).toMatchObject({
+      failures: 0,
+    });
+    const retainedDelivery = (
+      await database.pool.query(
+        "SELECT receipt.*,receipt.snapshot->'sourceRestrictions'=(SELECT knowledge_access->'restrictions' FROM runs WHERE id=$1) AS sources_match FROM specialist_delivery_receipts receipt WHERE receipt.run_id=$1",
+        [receipt.runId],
+      )
+    ).rows;
+
+    expect(retainedDelivery).toHaveLength(1);
+    expect(retainedDelivery[0]).toMatchObject({
+      assignment_id: assignment.id,
+      input_revision: 1,
+      run_id: receipt.runId,
+      result_revision: 1,
+      signal: "result_available",
+      snapshot: { destination: { kind: "inbox", userId: requesterId } },
+      sources_match: true,
+    });
+    expect(retainedDelivery[0].snapshot.resultSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT type,data FROM webhook_events WHERE id=$1",
+          [retainedDelivery[0].outbox_event_id],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        type: "assignment.result_available",
+        data: {
+          ownerUserId: requesterId,
+          assignmentDeliveryId: retainedDelivery[0].id,
+        },
+      },
+    ]);
+    await database.pool.query(
+      "UPDATE domain_event_consumers SET cursor_event_id=0 WHERE consumer_id='specialist_assignment_delivery'",
+    );
+    expect(await dispatchDomainEvents({ db: database.db })).toMatchObject({
+      failures: 0,
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT * FROM specialist_delivery_receipts WHERE run_id=$1",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toEqual(
+      retainedDelivery.map(({ sources_match: _matched, ...row }) => row),
+    );
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status,acceptance_id FROM specialist_assignments WHERE id=$1",
+          [assignment.id],
+        )
+      ).rows,
+    ).toEqual([{ status: "active", acceptance_id: null }]);
+    expect(await counts()).toEqual(allocationBeforeDelivery);
+    await expect(
+      database.pool.query(
+        "UPDATE specialist_delivery_receipts SET snapshot=jsonb_set(snapshot,'{destination}',$2::jsonb) WHERE id=$1",
+        [
+          retainedDelivery[0].id,
+          JSON.stringify({ kind: "inbox", userId: outsiderId }),
+        ],
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
+    const deliverySettings = (
+      await database.pool.query(
+        "SELECT webhooks_enabled FROM platform_runtime_settings WHERE id='singleton'",
+      )
+    ).rows[0];
+
+    await database.pool.query(
+      "INSERT INTO platform_runtime_settings(id,default_runner_id,webhooks_enabled) SELECT 'singleton',runner_id,false FROM run_sessions WHERE run_id=$1 LIMIT 1 ON CONFLICT(id) DO UPDATE SET webhooks_enabled=false",
+      [receipt.runId],
+    );
+    try {
+      expect(await runWebhookDeliveryJob({ db: database.db })).toMatchObject({
+        delivered: 1,
+        failed: 0,
+        dead: 0,
+      });
+      const updates = await getInboxItems(requesterId, "member");
+      const resultNotice = updates.find(
+        (item) => item.id === retainedDelivery[0].id,
+      );
+
+      expect(resultNotice).toMatchObject({
+        eventKind: "assignment_result_available",
+        assignmentId: assignment.id,
+        runId: receipt.runId,
+        resultRevision: 1,
+        projectSlug: null,
+        read: false,
+      });
+      expect(await getUnreadInboxCount(requesterId, "member")).toBe(1);
+      expect(await getInboxItems(outsiderId, "member")).toEqual([]);
+      expect(await runWebhookDeliveryJob({ db: database.db })).toMatchObject({
+        delivered: 0,
+        failed: 0,
+        dead: 0,
+      });
+      expect(
+        (
+          await database.pool.query(
+            "SELECT count(*)::int AS count FROM inbox_items WHERE id=$1",
+            [retainedDelivery[0].id],
+          )
+        ).rows,
+      ).toEqual([{ count: 1 }]);
+      expect(await counts()).toEqual(allocationBeforeDelivery);
+    } finally {
+      if (deliverySettings)
+        await database.pool.query(
+          "UPDATE platform_runtime_settings SET webhooks_enabled=$1 WHERE id='singleton'",
+          [deliverySettings.webhooks_enabled],
+        );
+      else
+        await database.pool.query(
+          "DELETE FROM platform_runtime_settings WHERE id='singleton'",
+        );
+    }
     const beforeRefusal = await counts();
     const businessBeforeRefusal = await intakeBusinessCounts(database);
 

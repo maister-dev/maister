@@ -1,4 +1,5 @@
 import type { CoordinatorChildLaunchContext } from "@/lib/orchestrator/child-launch-context";
+import type { AssignmentResultWitness } from "@/lib/specialist-assignments/delivery-types";
 import type { AssignmentContextSnapshot } from "@/lib/specialist-assignments/context-types";
 import type { CompanyRunCancellationIntent } from "@/lib/runs/cancellation-types";
 import type { CompanyExecutionSnapshot } from "@/lib/agents/company-execution-types";
@@ -8615,6 +8616,10 @@ export const webhookDeliveries = pgTable(
       () => pushSubscriptions.id,
       { onDelete: "cascade" },
     ),
+    specialistDeliveryId: text("specialist_delivery_id").references(
+      () => specialistDeliveryReceipts.id,
+      { onDelete: "restrict" },
+    ),
     status: text("status", { enum: ["pending", "delivered", "dead"] })
       .notNull()
       .default("pending"),
@@ -8649,7 +8654,10 @@ export const webhookDeliveries = pgTable(
     // neither has nowhere to go and would be claimed forever by the drain pass.
     oneTarget: check(
       "webhook_deliveries_one_target",
-      sql`(${t.subscriptionId} IS NULL) <> (${t.pushSubscriptionId} IS NULL)`,
+      sql`num_nonnulls(${t.subscriptionId},${t.pushSubscriptionId},${t.specialistDeliveryId})=1`,
+    ),
+    uniqSpecialistTarget: unique("webhook_deliveries_specialist_target_uq").on(
+      t.specialistDeliveryId,
     ),
     uniqSubscriptionEvent: uniqueIndex("webhook_deliveries_sub_event_uq").on(
       t.subscriptionId,
@@ -8933,6 +8941,13 @@ export const taskSubscribers = pgTable(
 
 export type InboxSourceRef =
   | {
+      kind: "assignment_delivery";
+      assignmentId: string;
+      deliveryId: string;
+      runId: string;
+      resultRevision: number;
+    }
+  | {
       kind: "comment" | "mention";
       taskId: string;
       commentId: string;
@@ -8955,14 +8970,19 @@ export const inboxItems = pgTable(
       enum: ["user", "agent"],
     }).notNull(),
     recipientId: text("recipient_id").notNull(),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
-    taskId: text("task_id")
-      .notNull()
-      .references(() => tasks.id, { onDelete: "cascade" }),
+    companyId: text("company_id").references(() => companies.id, {
+      onDelete: "restrict",
+    }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    taskId: text("task_id").references(() => tasks.id, { onDelete: "cascade" }),
+    assignmentDeliveryId: text("assignment_delivery_id").references(
+      () => specialistDeliveryReceipts.id,
+      { onDelete: "restrict" },
+    ),
     eventKind: text("event_kind", {
-      enum: TASK_ACTIVITY_EVENT_KINDS,
+      enum: [...TASK_ACTIVITY_EVENT_KINDS, "assignment_result_available"],
     }).notNull(),
     sourceRef: jsonb("source_ref").$type<InboxSourceRef>().notNull(),
     readAt: timestamp("read_at", { withTimezone: true, mode: "date" }),
@@ -8971,6 +8991,13 @@ export const inboxItems = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    nativeIdentity: unique("inbox_items_assignment_delivery_uq").on(
+      t.assignmentDeliveryId,
+    ),
+    owner: check(
+      "inbox_items_owner_check",
+      sql`(( ${t.assignmentDeliveryId} IS NULL AND ${t.companyId} IS NULL AND ${t.projectId} IS NOT NULL AND ${t.taskId} IS NOT NULL AND ${t.eventKind}<>'assignment_result_available') OR (${t.assignmentDeliveryId} IS NOT NULL AND ${t.eventKind}='assignment_result_available' AND ${t.recipientType}='user' AND ((${t.companyId} IS NOT NULL AND ${t.projectId} IS NULL AND ${t.taskId} IS NULL) OR (${t.companyId} IS NULL AND ${t.projectId} IS NOT NULL)))) IS TRUE`,
+    ),
     idxRecipient: index("inbox_items_recipient_idx").on(
       t.recipientType,
       t.recipientId,
@@ -8983,7 +9010,7 @@ export const inboxItems = pgTable(
     ),
     eventKindCheck: check(
       "inbox_items_event_kind_check",
-      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged', 'clarification_requested')`,
+      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged', 'clarification_requested', 'assignment_result_available')`,
     ),
   }),
 );
@@ -9032,6 +9059,8 @@ export const domainEvents = pgTable(
     runId: text("run_id").references(() => runs.id, { onDelete: "cascade" }),
     actorType: text("actor_type", { enum: ["user", "system", "agent"] }),
     actorId: text("actor_id"),
+    assignmentResult:
+      jsonb("assignment_result").$type<AssignmentResultWitness>(),
     payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
     occurredAt: timestamp("occurred_at", {
       withTimezone: true,
@@ -9100,9 +9129,10 @@ export const domainEvents = pgTable(
 );
 export type DomainEventRow = Omit<
   typeof domainEvents.$inferSelect,
-  "companyId"
+  "companyId" | "assignmentResult"
 > & {
   companyId?: string | null;
+  assignmentResult?: AssignmentResultWitness | null;
 };
 export type ProjectDomainEventRow = Omit<
   DomainEventRow,
@@ -10829,6 +10859,59 @@ export const specialistIntakeReceipts = pgTable(
       t.assignmentId,
       t.createdAt,
       t.id,
+    ),
+  }),
+);
+
+/** Immutable origin-routing receipt; transport attempts stay on webhook_deliveries. */
+export const specialistDeliveryReceipts = pgTable(
+  "specialist_delivery_receipts",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    assignmentId: text("assignment_id").notNull(),
+    inputRevision: integer("input_revision").notNull(),
+    runId: text("run_id").notNull(),
+    resultRevision: integer("result_revision").notNull(),
+    signal: text("signal").$type<"result_available">().notNull(),
+    sourceEventId: text("source_event_id").notNull(),
+    outboxEventId: text("outbox_event_id").notNull(),
+    snapshot: jsonb("snapshot").$type<AssignmentResultWitness>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    signalIdentity: unique("specialist_delivery_receipts_signal_uq").on(
+      t.assignmentId,
+      t.runId,
+      t.resultRevision,
+      t.signal,
+    ),
+    outboxIdentity: unique("specialist_delivery_receipts_outbox_uq").on(
+      t.outboxEventId,
+    ),
+    input: foreignKey({
+      name: "specialist_delivery_receipts_input_fk",
+      columns: [t.assignmentId, t.inputRevision],
+      foreignColumns: [
+        specialistInputRevisions.assignmentId,
+        specialistInputRevisions.revision,
+      ],
+    }).onDelete("restrict"),
+    shape: check(
+      "specialist_delivery_receipts_shape_check",
+      sql`(${t.signal}='result_available' AND ${t.inputRevision}>0 AND ${t.resultRevision}>0 AND ${t.sourceEventId} ~ '^[1-9][0-9]{0,23}$' AND jsonb_typeof(${t.snapshot})='object' AND pg_column_size(${t.snapshot})<=131072 AND ${t.snapshot}->'schemaVersion'='1'::jsonb AND ${t.snapshot}->>'assignmentId'=${t.assignmentId} AND ${t.snapshot}->>'runId'=${t.runId} AND ${t.snapshot}->'inputRevision'=to_jsonb(${t.inputRevision}) AND ${t.snapshot}->'resultRevision'=to_jsonb(${t.resultRevision})) IS TRUE`,
+    ),
+    assignmentHistory: index("specialist_delivery_receipts_assignment_idx").on(
+      t.assignmentId,
+      t.createdAt,
+      t.id,
+    ),
+    sourceRun: index("specialist_delivery_receipts_run_idx").on(
+      t.runId,
+      t.resultRevision,
     ),
   }),
 );
