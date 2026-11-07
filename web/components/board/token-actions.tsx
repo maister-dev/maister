@@ -304,6 +304,8 @@ function scopeText(labels: TokenLabels, scope: UserTokenScope): string {
       return labels.scopeAssignmentsSubmit;
     case "assignments:update":
       return labels.scopeAssignmentsUpdate;
+    case "assignments:answer":
+      return labels.scopeAssignmentsAnswer;
     case "knowledge:read":
       return labels.scopeKnowledgeRead;
     case "knowledge:propose":

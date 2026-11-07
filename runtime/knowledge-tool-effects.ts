@@ -1,6 +1,8 @@
 /** Native facade effects are platform contracts, never model-supplied annotations. */
 export const NATIVE_KNOWLEDGE_TOOL_EFFECTS = {
   assignment_get: "read",
+  assignment_question_ask: "write",
+  assignment_question_respond: "write",
   assignment_context_get: "read",
   assignment_context_update: "write",
   knowledge_search: "read",

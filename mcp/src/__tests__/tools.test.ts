@@ -61,6 +61,8 @@ describe("TOOL_SPECS registry", () => {
         "assignment_get",
         "assignment_context_get",
         "assignment_context_update",
+        "assignment_question_ask",
+        "assignment_question_respond",
         "clarification_cancel",
         "clarification_list",
         "clarification_request",

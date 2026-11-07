@@ -74,6 +74,7 @@ import {
 import { recoverPendingAgentQuestions } from "@/lib/services/agent-question";
 import { readPromptRequest } from "@/lib/execution-host/command-request";
 import { createOrActivateAssignmentQuestion } from "@/lib/services/assignment-question";
+import { assignmentQuestionReceiptSchema } from "@/lib/specialist-assignments/question-types";
 import { resolveKnowledgePrincipal } from "@/lib/brain/knowledge-access";
 import { generateToken } from "@/lib/tokens/secret";
 import { verifyToken } from "@/lib/tokens/verify";
@@ -421,6 +422,22 @@ beforeAll(async () => {
       "flow: rah-company-dialogue",
     ),
   );
+  const questionPath = join(source, "flows/rah-company-clarification");
+
+  await cp(join(source, "flows/rah-control"), questionPath, {
+    recursive: true,
+  });
+  await writeFile(
+    join(questionPath, "flow.yaml"),
+    stringify({ ...manifest, name: "rah-company-clarification" }),
+  );
+  await writeFile(
+    join(source, "maister-agents/question-coordinator.md"),
+    (await readFile(rolePath, "utf8")).replace(
+      "flow: rah-control",
+      "flow: rah-company-clarification",
+    ),
+  );
   const eventFlowPath = join(source, "flows/rah-company-event");
 
   await cp(join(source, "flows/rah-control"), eventFlowPath, {
@@ -467,7 +484,7 @@ beforeAll(async () => {
     packagePath,
     (await readFile(packagePath, "utf8")).replace(
       "flows:\n",
-      "flows:\n  - id: rah-company-dialogue\n    path: flows/rah-company-dialogue\n  - id: rah-company-event\n    path: flows/rah-company-event\n",
+      "flows:\n  - id: rah-company-clarification\n    path: flows/rah-company-clarification\n  - id: rah-company-dialogue\n    path: flows/rah-company-dialogue\n  - id: rah-company-event\n    path: flows/rah-company-event\n",
     ),
   );
   await initRepo(source);
@@ -3127,7 +3144,103 @@ it("IT-CBA-05 parks and resumes the same native company Flow node after an assig
   resetResolverForTests();
   resetRegistrarStateForTests();
   try {
-    const input = await createFreshCompanyFlowRequest();
+    const role = await resolveInstalledAgentDefinition(db, {
+      agentId: "rah:question-coordinator",
+      packageInstallId: preparedAssignment.standingDefinition.packageInstallId,
+    });
+    const [questionFlow] = (
+      await database.pool.query<{
+        id: string;
+        manifest_digest: string;
+        installed_path: string;
+        resolved_revision: string;
+      }>(
+        "SELECT id,manifest_digest,installed_path,resolved_revision FROM flow_revisions WHERE flow_ref_id='rah-company-clarification' AND package_status='Installed'",
+        [],
+      )
+    ).rows;
+
+    if (!questionFlow)
+      throw new Error("The clarification Flow fixture is missing");
+    const binding = await createCompanySpecialistBinding(
+      db,
+      requesterId,
+      role.parsed.id,
+      {
+        owner: { kind: "company", companyId: request.companyId },
+        packageInstallId: role.packageInstallId,
+        packageRevision: role.resolvedRevision!,
+        definitionSha256: agentDefinitionSha256(role.parsed),
+        coordinatorFlowRevisionId: questionFlow.id,
+        configuration: {},
+        grantActions: ["assignments:read", "assignments:update"],
+        enabled: true,
+        runnerId,
+        idempotencyKey: randomUUID(),
+      },
+    );
+    const coordinator = await createCompanyFlowBinding(db, requesterId, {
+      owner: binding.specialist.owner,
+      specialistBindingId: binding.specialist.bindingId,
+      specialistRevision: binding.specialist.configRevision,
+      flowRevisionId: questionFlow.id,
+      manifestSha256: questionFlow.manifest_digest,
+      execution: { workspace: "none", completion: "result" },
+      enabled: true,
+      roleMappings: {},
+      idempotencyKey: randomUUID(),
+    });
+
+    await createCompanyGrants(db, administratorId, {
+      principalKind: "agent",
+      principalId: role.parsed.id,
+      actions: ["assignments:read"],
+      idempotencyKey: randomUUID(),
+    });
+    const contract = await resolveFlowExportContract({
+      flowRefId: "rah-company-clarification",
+      manifest: { ...manifest, name: "rah-company-clarification" },
+      revision: {
+        id: questionFlow.id,
+        installedPath: questionFlow.installed_path,
+        resolvedRevision: questionFlow.resolved_revision,
+      },
+    });
+
+    if (!contract)
+      throw new Error("The clarification Flow result contract is missing");
+    const work = await createSpecialistAssignment(db, requesterId, {
+      ...preparedAssignment,
+      specialistBindingId: binding.specialist.bindingId,
+      responsibleAgentId: role.parsed.id,
+      standingDefinition: {
+        ...preparedAssignment.standingDefinition,
+        agentId: role.parsed.id,
+        definition: role.parsed,
+        definitionSha256: agentDefinitionSha256(role.parsed),
+      },
+      objectiveInput: {
+        ...preparedAssignment.objectiveInput,
+        expectedResult: {
+          schemaRef: contract.schemaRef,
+          schemaVersion: contract.schemaVersion,
+          sha256: contract.sha256,
+          required: true,
+        },
+      },
+      origin: { kind: "manual", interactionId: randomUUID() },
+    });
+    const input: CompanyFlowContextInput = {
+      companyId: request.companyId,
+      assignmentId: work.id,
+      assignmentRevision: work.revision,
+      inputRevision: work.inputRevision,
+      bindingId: binding.specialist.bindingId,
+      bindingRevision: binding.specialist.configRevision,
+      coordinatorBindingId: coordinator.binding.id,
+      coordinatorBindingRevision: coordinator.binding.revision,
+      triggerSource: "manual",
+    };
     const hosts = createExecutionHosts({
       db,
       transport: createLocalDirectTransport(),
@@ -3177,15 +3290,71 @@ it("IT-CBA-05 parks and resumes the same native company Flow node after an assig
       reTriggerMode: "agent",
       idempotencyKey: randomUUID(),
     };
+    let credential = await issueCompanyFlowNodeRunToken({
+      db,
+      runId,
+      nodeAttemptId: original.id,
+    });
+    const { POST: askNodeQuestion } =
+      await import("@/app/api/v1/ext/specialist-assignments/[assignmentId]/questions/route");
     const ask = () =>
-      createOrActivateAssignmentQuestion(
-        db,
-        { kind: "user", userId: operatorId },
-        input.assignmentId,
-        questionBody,
-        { executionHosts: hosts },
+      askNodeQuestion(
+        new NextRequest(
+          `http://localhost/api/v1/ext/specialist-assignments/${input.assignmentId}/questions`,
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${credential.secret}`,
+            },
+            body: JSON.stringify(questionBody),
+          },
+        ),
+        { params: Promise.resolve({ assignmentId: input.assignmentId }) },
       );
-    const question = await ask();
+
+    expect((await ask()).status).toBe(403);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM hitl_requests WHERE specialist_assignment_id=$1",
+          [input.assignmentId],
+        )
+      ).rows,
+    ).toEqual([{ count: 0 }]);
+    await createCompanyGrants(db, administratorId, {
+      principalKind: "agent",
+      principalId: role.parsed.id,
+      actions: ["assignments:update"],
+      idempotencyKey: randomUUID(),
+    });
+    const asked = await ask();
+
+    expect(asked.status, JSON.stringify(await asked.clone().json())).toBe(201);
+    const question = assignmentQuestionReceiptSchema.parse(await asked.json());
+
+    expect(
+      (
+        await database.pool.query(
+          "SELECT schema->'assignmentQuestion'->'actor' AS actor FROM hitl_requests WHERE id=$1",
+          [question.hitlRequestId],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        actor: {
+          kind: "agent",
+          id: role.parsed.id,
+          runId,
+          attemptId: original.id,
+        },
+      },
+    ]);
+    credential = await issueCompanyFlowNodeRunToken({
+      db,
+      runId,
+      nodeAttemptId: original.id,
+    });
 
     expect(question).toMatchObject({
       sourceRunId: runId,
@@ -3214,7 +3383,12 @@ it("IT-CBA-05 parks and resumes the same native company Flow node after an assig
         resume_kind: "clarification",
       },
     ]);
-    expect(await ask()).toMatchObject({
+    const repeated = await ask();
+
+    expect(repeated.status).toBe(200);
+    expect(
+      assignmentQuestionReceiptSchema.parse(await repeated.json()),
+    ).toMatchObject({
       hitlRequestId: question.hitlRequestId,
       activationState: "active",
       created: false,
@@ -3266,6 +3440,33 @@ it("IT-CBA-05 parks and resumes the same native company Flow node after an assig
 
     expect(answered.actor).toMatchObject({ kind: "user", id: operatorId });
     expect(answered.snapshot.objectiveInput.input).toContain("configured-web");
+    await database.pool.query(
+      "INSERT INTO execution_host_pressure(execution_host_id,pressured_since) SELECT execution_host_id,now() FROM execution_assignments WHERE id=(SELECT execution_assignment_id FROM runs WHERE id=$1) ON CONFLICT DO NOTHING",
+      [runId],
+    );
+    expect(await promoteNextPending({ db, pool: "flow" })).toEqual({
+      promotedRunId: null,
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status,resume_requested_at IS NOT NULL AS queued FROM runs WHERE id=$1",
+          [runId],
+        )
+      ).rows,
+    ).toEqual([{ status: "NeedsInputIdle", queued: true }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind='session.prompt'",
+          [runId],
+        )
+      ).rows,
+    ).toEqual([{ count: 1 }]);
+    await database.pool.query(
+      "DELETE FROM execution_host_pressure WHERE execution_host_id=(SELECT execution_host_id FROM execution_assignments WHERE id=(SELECT execution_assignment_id FROM runs WHERE id=$1))",
+      [runId],
+    );
     expect(await promoteNextPending({ db, pool: "flow" })).toEqual({
       promotedRunId: runId,
     });

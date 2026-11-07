@@ -537,6 +537,126 @@ describe("MCP stdio wire contract", () => {
     }
   });
 
+  it("serves native assignment questions through the built facade with exact HTTP forwarding and human answers outside the company toolset", async () => {
+    const company = await connectClient({
+      token: "mai_question_wire",
+      toolset: "company",
+    });
+    const body = {
+      expectedRevision: 4,
+      inputRevision: 1,
+      question: "Which configured component?",
+      schema: {
+        schemaVersion: 1,
+        fields: [
+          { name: "component", type: "string", required: true },
+          {
+            name: "observations",
+            type: "array",
+            items: {
+              type: "object",
+              fields: [{ name: "healthy", type: "boolean" }],
+            },
+          },
+        ],
+      },
+      idempotencyKey: "question-wire-1",
+    };
+
+    try {
+      const listed = await company.listTools();
+
+      expect(
+        listed.tools.find((tool) => tool.name === "assignment_question_ask")
+          ?.annotations?.readOnlyHint,
+      ).toBe(false);
+      expect(
+        listed.tools.some(
+          (tool) => tool.name === "assignment_question_respond",
+        ),
+      ).toBe(false);
+      const asked = await company.callTool({
+        name: "assignment_question_ask",
+        arguments: { assignmentId: "assignment / exact", ...body },
+      });
+
+      expect(asked.isError).not.toBe(true);
+      expect(requests.at(-1)).toEqual({
+        method: "POST",
+        url: "/api/v1/ext/specialist-assignments/assignment%20%2F%20exact/questions",
+        authorization: "Bearer mai_question_wire",
+        body: { ...body, reTriggerMode: "agent" },
+      });
+      const before = requests.length;
+
+      for (const arguments_ of [
+        {
+          assignmentId: "assignment",
+          ...body,
+          actor: { kind: "user", id: "forged" },
+        },
+        { assignmentId: "assignment", ...body, inputRevision: 0 },
+        {
+          assignmentId: "assignment",
+          ...body,
+          schema: { ...body.schema, schemaVersion: 2 },
+        },
+        { assignmentId: "assignment", ...body, reTriggerMode: "triage" },
+      ])
+        expect(
+          (
+            await company.callTool({
+              name: "assignment_question_ask",
+              arguments: arguments_,
+            })
+          ).isError,
+        ).toBe(true);
+      expect(
+        (
+          await company.callTool({
+            name: "assignment_question_respond",
+            arguments: {
+              assignmentId: "assignment",
+              questionId: "question",
+              expectedRevision: 5,
+              inputRevision: 1,
+              response: { component: "web" },
+              idempotencyKey: "answer-wire-1",
+            },
+          })
+        ).isError,
+      ).toBe(true);
+      expect(requests).toHaveLength(before);
+      const response = {
+        expectedRevision: 5,
+        inputRevision: 1,
+        response: { component: "web" },
+        idempotencyKey: "answer-wire-1",
+      };
+
+      expect(
+        (
+          await client.callTool({
+            name: "assignment_question_respond",
+            arguments: {
+              assignmentId: "assignment / exact",
+              questionId: "question / exact",
+              ...response,
+            },
+          })
+        ).isError,
+      ).not.toBe(true);
+      expect(requests.at(-1)).toEqual({
+        method: "POST",
+        url: "/api/v1/ext/specialist-assignments/assignment%20%2F%20exact/questions/question%20%2F%20exact/respond",
+        authorization: "Bearer mai_wire_test",
+        body: response,
+      });
+    } finally {
+      await company.close();
+    }
+  });
+
   it("serves assignment context through the real company facade with exact selectors and local closed-schema refusal", async () => {
     const company = await connectClient({
       token: "mai_context_wire",
@@ -839,6 +959,7 @@ describe("MCP stdio wire contract", () => {
           "assignment_get",
           "assignment_context_get",
           "assignment_context_update",
+          "assignment_question_ask",
         ].sort(),
       );
       const inspected = await company.callTool({

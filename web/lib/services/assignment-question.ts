@@ -18,6 +18,13 @@ import pino from "pino";
 
 import { activatePersistedAgentQuestion } from "./agent-question";
 
+import { assignmentClarificationInput } from "@/lib/specialist-assignments/question-input";
+import { assertAssignmentQuestionCapacity } from "@/lib/specialist-assignments/question-capacity";
+import { assignmentObjectiveInputSchema } from "@/lib/specialist-assignments/types";
+import {
+  assertAssignmentQuestionStructure,
+  assertAnswerableAssignmentQuestionForm,
+} from "@/lib/specialist-assignments/question-form";
 import {
   assignmentQuestionInputSchema,
   assignmentQuestionSnapshotSchema,
@@ -225,7 +232,11 @@ async function persistAssignmentQuestion(
       created: false,
     };
   }
-  if (Number(head.revision) >= 2147483647)
+  await assertAssignmentQuestionCapacity(tx, runId, assignmentId);
+  if (
+    Number(head.revision) >= 2147483646 ||
+    Number(head.input_revision) >= 2147483647
+  )
     throw new MaisterError(
       "CONFLICT",
       "Assignment revision is exhausted; retain this work and submit a separate request",
@@ -328,6 +339,22 @@ async function persistAssignmentQuestion(
   });
   const id = randomUUID();
 
+  if (
+    !assignmentObjectiveInputSchema.safeParse({
+      ...currentInput.snapshot.objectiveInput,
+      input: assignmentClarificationInput({
+        originalInput: currentInput.snapshot.objectiveInput.input,
+        questionId: id,
+        question: input.question,
+        response: {},
+      }),
+    }).success
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "The retained request and question leave no answer space; shorten the question before pausing this execution",
+      { details: { reason: "assignment_question_input_exhausted" } },
+    );
   await recordKnowledgeDisclosure(tx, consumer, subject.sourceRestrictions);
   await createHitlRequest(tx, {
     id,
@@ -395,6 +422,7 @@ export async function createOrActivateAssignmentQuestion(
   value: unknown,
   deps: Omit<AgentQuestionActivationDeps, "db"> = {},
 ): Promise<AssignmentQuestionReceipt> {
+  assertAssignmentQuestionStructure(value);
   if (
     !assignmentQuestionSnapshotSchema.shape.assignmentId.safeParse(assignmentId)
       .success
@@ -404,6 +432,7 @@ export async function createOrActivateAssignmentQuestion(
 
   if (!parsed.success)
     throw new MaisterError("CONFIG", "Invalid structured assignment question");
+  assertAnswerableAssignmentQuestionForm(parsed.data.schema);
   if (Buffer.byteLength(JSON.stringify(parsed.data), "utf8") > 32768)
     throw new MaisterError(
       "CONFIG",

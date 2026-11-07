@@ -166,3 +166,32 @@ original input and standing instructions remain inspectable. Capacity or host
 pressure can leave the same Run queued for resume. An exact repeated answer is
 safe; a changed or late answer and a cancelled assignment require inspection.
 Submitting an answer does not complete the assignment or confirm Brain knowledge.
+
+A specialist can request that clarification with `assignment_question_ask`. First
+read `assignment_get`, then send `assignmentId`, the exact `expectedRevision`
+(business revision), `inputRevision`, `question`, a version-one MAIster `schema`,
+and a stable `idempotencyKey`. Use distinct, safe form field names; each object
+supports at most 64 fields. Do not put server question, prompt or session metadata
+in the form. A Run supports up to 32 native answers; after that, another new
+question requires an authorized continuation, while prior work remains retained. The whole request is bounded to 32 KiB and the retained
+question plus original input must leave room within the 8,000-character input.
+Current read/update authority and all source permissions are required. The server
+records the actual Run or Flow node and pauses its owned prompt; callers cannot
+choose authorship or grant themselves authority. Exact repeated requests reuse the
+question. Rotated or revoked credentials require current inspection and access.
+
+The native session endpoint is `POST /api/specialist-assignments/{assignmentId}/questions`;
+its bearer equivalent adds `/v1/ext` after `/api`. A new active question returns
+201, exact replay 200 and pending checkpoint activation 202. An HTTP dependency
+failure may leave a retained pending question: retry the same key/content and
+inspect Inbox rather than create independent work.
+
+A human API client can use `assignment_question_respond` or
+`POST /api/v1/ext/specialist-assignments/{assignmentId}/questions/{questionId}/respond`
+with its current personal `assignments:answer` credential, exact business/input
+revisions, `response` and stable answer key. This queues continuation with 202;
+exact authorized replay returns 200. Machine credentials cannot answer human work,
+and the company agent toolset omits this answer tool. The existing Inbox form
+supplies these retained selectors automatically. The same Flow node resumes under
+a new execution epoch after capacity and host admission; its original Run input,
+completed work and checkpoint evidence remain inspectable.

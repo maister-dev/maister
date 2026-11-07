@@ -7,6 +7,10 @@ import { NATIVE_KNOWLEDGE_TOOL_EFFECTS } from "../../runtime/knowledge-tool-effe
 
 export type KnowledgeToolName = keyof typeof schemas;
 const descriptions: Readonly<Record<KnowledgeToolName, string>> = {
+  assignment_question_ask:
+    "Request human clarification for your current appointed assignment using exact business/input revisions from assignment_get, a version-one MAIster FormSchema and a stable idempotencyKey. The server retains your actual Run/node and checkpoints its current prompt before Inbox activation. Never supply actor, owner, grants or source proof. Human answers become attributed input; they do not accept work or confer action authority.",
+  assignment_question_respond:
+    "Answer an exact native assignment question as the currently authorized human personal-token owner. Preserve exact business/input revisions and the stable answer key. Agents and project tokens cannot answer human work. Accepted answers queue the same Run; this is not evidence of delivery, verification, work acceptance or Brain confirmation.",
   assignment_get:
     "Inspect your appointed assignment, its business/input/context revisions, responsibility and expected result under current source access. These revisions are distinct; preserve the exact business/input values for clarification CAS. Inspection does not accept work or confirm Brain facts.",
   assignment_context_update:
@@ -74,6 +78,24 @@ export function knowledgeToolRouting(
   name: KnowledgeToolName,
   args: Record<string, unknown>,
 ): { method: "GET" | "POST" | "PATCH"; path: string; body?: unknown } {
+  if (name === "assignment_question_ask") {
+    const { assignmentId, ...body } = args;
+
+    return {
+      method: "POST",
+      path: `/api/v1/ext/specialist-assignments/${encodeURIComponent(String(assignmentId))}/questions`,
+      body,
+    };
+  }
+  if (name === "assignment_question_respond") {
+    const { assignmentId, questionId, ...body } = args;
+
+    return {
+      method: "POST",
+      path: `/api/v1/ext/specialist-assignments/${encodeURIComponent(String(assignmentId))}/questions/${encodeURIComponent(String(questionId))}/respond`,
+      body,
+    };
+  }
   if (name === "assignment_get")
     return {
       method: "GET",

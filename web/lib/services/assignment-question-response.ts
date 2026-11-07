@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
+import type { AssignmentContextPrincipal } from "@/lib/specialist-assignments/context-access";
 import type { AssignmentQuestionAnswer } from "@/lib/specialist-assignments/question-types";
 import type { AssignmentInputSnapshot } from "@/lib/specialist-assignments/types";
 
@@ -9,6 +10,8 @@ import pino from "pino";
 
 import { assertAgentQuestionResponse } from "./agent-question-response";
 
+import { assignmentClarificationInput } from "@/lib/specialist-assignments/question-input";
+import { assertAssignmentQuestionCapacity } from "@/lib/specialist-assignments/question-capacity";
 import { assertParkedAssignmentQuestionNode } from "@/lib/specialist-assignments/flow-question";
 import {
   isPlainObject,
@@ -18,6 +21,7 @@ import { hitlRequests } from "@/lib/db/schema";
 import {
   beginAssignmentTransaction,
   getSpecialistAssignmentInputInTransaction,
+  unavailableAssignment,
 } from "@/lib/specialist-assignments/store";
 import { authorizeAssignment } from "@/lib/specialist-assignments/access";
 import {
@@ -31,7 +35,10 @@ import {
 import { assignmentObjectiveInputSchema } from "@/lib/specialist-assignments/types";
 import { retainAssignmentInput } from "@/lib/specialist-assignments/input-snapshot";
 import { readSpecialistAssignmentContextInTransaction } from "@/lib/specialist-assignments/context";
-import { knowledgeOwner } from "@/lib/brain/knowledge-access";
+import {
+  knowledgeOwner,
+  resolveNativeTokenPrincipal,
+} from "@/lib/brain/knowledge-access";
 import {
   lockKnowledgeReadConsumer,
   recordKnowledgeDisclosure,
@@ -64,10 +71,67 @@ export type AssignmentQuestionAnswerReceipt = Readonly<{
   idempotent: boolean;
 }>;
 
-/** Commit the exact human answer, attributed input and existing resume intent atomically; delivery remains the continuation worker's job. */
-export async function answerAssignmentQuestion(
+/** Human session answers retain their actual user identity. */
+export function answerAssignmentQuestion(
   db: Db,
   userId: string,
+  assignmentId: string,
+  questionId: string,
+  value: unknown,
+  recordSuccessAudit?: (tx: Db, status: number) => Promise<void>,
+): Promise<AssignmentQuestionAnswerReceipt> {
+  return persistAssignmentQuestionAnswer(
+    db,
+    { kind: "user", userId },
+    assignmentId,
+    questionId,
+    value,
+    recordSuccessAudit,
+  );
+}
+
+/** A bearer answer requires its current global personal credential inside the answer transaction; agents cannot answer human work. */
+export function answerAssignmentQuestionToken(
+  db: Db,
+  tokenId: string,
+  assignmentId: string,
+  questionId: string,
+  value: unknown,
+): Promise<AssignmentQuestionAnswerReceipt> {
+  return persistAssignmentQuestionAnswer(
+    db,
+    { kind: "token", tokenId },
+    assignmentId,
+    questionId,
+    value,
+  );
+}
+
+async function resolveAnsweringUser(
+  tx: Db,
+  principal: AssignmentContextPrincipal,
+): Promise<string> {
+  if (principal.kind === "user") return principal.userId;
+  const identity = await resolveNativeTokenPrincipal(
+    tx,
+    principal.tokenId,
+    "assignments:answer",
+  );
+
+  if (identity.kind !== "user" || identity.boundProjectId !== null)
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "Clarification answers require a current global personal user credential",
+      { details: { reason: "personal_assignment_token_required" } },
+    );
+
+  return identity.user.id;
+}
+
+/** Commit the exact human answer, attributed input and existing resume intent atomically; delivery remains the continuation worker's job. */
+async function persistAssignmentQuestionAnswer(
+  db: Db,
+  principal: AssignmentContextPrincipal,
   assignmentId: string,
   questionId: string,
   value: unknown,
@@ -94,6 +158,7 @@ export async function answerAssignmentQuestion(
   try {
     const result = await db.transaction(async (tx) => {
       await beginAssignmentTransaction(tx);
+      const userId = await resolveAnsweringUser(tx, principal);
       const selector = (
         await tx
           .select()
@@ -106,31 +171,13 @@ export async function answerAssignmentQuestion(
           )
       )[0];
 
-      if (!selector)
-        throw new MaisterError(
-          "PRECONDITION",
-          "Assignment clarification is unavailable",
-        );
+      if (!selector) throw unavailableAssignment();
       const run = (
         await tx.execute(
           sql`SELECT status,run_kind,agent_kind FROM runs WHERE id=${selector.runId} FOR UPDATE`,
         )
       ).rows[0];
 
-      if (
-        !run ||
-        ["Done", "Failed", "Crashed", "Abandoned"].includes(String(run.status))
-      )
-        throw new MaisterError(
-          "CONFLICT",
-          "The clarification execution is closed; continue or recover the assignment before requesting new input",
-          { details: { reason: "assignment_question_closed" } },
-        );
-      const consumer = await lockKnowledgeReadConsumer(tx, {
-        kind: "execution",
-        runId: selector.runId,
-        nodeAttemptId: null,
-      });
       const head = (
         await tx.execute(
           sql`SELECT * FROM specialist_assignments WHERE id=${assignmentId} FOR UPDATE`,
@@ -150,7 +197,8 @@ export async function answerAssignmentQuestion(
         question.specialistAssignmentId !== assignmentId ||
         question.runId !== selector.runId ||
         question.taskId !== null ||
-        question.kind !== "agent_question"
+        question.kind !== "agent_question" ||
+        typeof question.prompt !== "string"
       )
         throw new MaisterError(
           "CONFLICT",
@@ -175,6 +223,21 @@ export async function answerAssignmentQuestion(
         subject.sourceRestrictions,
         context.access,
       );
+
+      if (
+        !run ||
+        ["Done", "Failed", "Crashed", "Abandoned"].includes(String(run.status))
+      )
+        throw new MaisterError(
+          "CONFLICT",
+          "The clarification execution is closed; continue or recover the assignment before requesting new input",
+          { details: { reason: "assignment_question_closed" } },
+        );
+      const consumer = await lockKnowledgeReadConsumer(tx, {
+        kind: "execution",
+        runId: selector.runId,
+        nodeAttemptId: null,
+      });
 
       assertAgentQuestionResponse(input.response, question.schema);
       if (Buffer.byteLength(JSON.stringify(input), "utf8") > 32768)
@@ -238,6 +301,7 @@ export async function answerAssignmentQuestion(
         );
       if (run.run_kind === "flow")
         await assertParkedAssignmentQuestionNode(tx, question);
+      await assertAssignmentQuestionCapacity(tx, question.runId, assignmentId);
       const original = await getSpecialistAssignmentInputInTransaction(
         tx,
         userId,
@@ -290,12 +354,12 @@ export async function answerAssignmentQuestion(
         );
       const objective = assignmentObjectiveInputSchema.safeParse({
         ...original.snapshot.objectiveInput,
-        input: [
-          original.snapshot.objectiveInput.input,
-          `Assignment clarification ${questionId}\nQuestion: ${question.prompt}\nHuman answer: ${JSON.stringify(input.response)}`,
-        ]
-          .filter(Boolean)
-          .join("\n\n"),
+        input: assignmentClarificationInput({
+          originalInput: original.snapshot.objectiveInput.input,
+          questionId,
+          question: question.prompt,
+          response: input.response,
+        }),
       });
 
       if (!objective.success)

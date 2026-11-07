@@ -523,8 +523,14 @@ stale epoch. If activation persistence fails, the question remains pending, its
 process is already stopped, and recovery adopts the exact successful checkpoint
 receipt instead of issuing another checkpoint. An answer requires its exact new
 input revision; terminal lifecycle closure with NULL response is a distinct
-unanswered closure and creates no invented answer or input revision. Public
-question routes remain Designed until their owning T24 runtime checks pass.
+unanswered closure and creates no invented answer or input revision. Native session and bearer question/answer routes use the same closed contracts,
+32 KiB transport and private/no-store responses. New active questions return 201,
+exact replay 200 and pending activation 202. Session CONFIG errors use 400; bearer
+CONFIG errors and invalid answers use 422. Asking requires current read/update
+and the exact appointment; personal-token answers recheck their current credential
+inside the answer transaction. Machine credentials cannot answer human work.
+The company MCP toolset gains only `assignment_question_ask`; the general facade
+also exposes `assignment_question_respond` for actual human user credentials.
 Native standalone company/project Inbox answer and same-Run continuation
 are implemented through the existing human-work, immutable-input and continuation
 services. The answer transaction retains exact user authority and response/input
@@ -547,6 +553,19 @@ membership and the original root input. Human project answer authority is checke
 at acceptance and replay; a formerly authorized responder cannot replay after
 membership revocation. A resumed specialist reads the exact answered input under
 its own current credential even with general Brain permissions disabled.
+
+Question creation validates raw structural bounds before recursive form parsing,
+then checks field names through the same unsafe-key machinery used for answers.
+Each object has at most 64 distinct fields, including nested array/object forms.
+A minimal retained question/answer envelope must fit the immutable 8,000-character
+assignment input before the source is paused; actual larger answers still receive
+an explicit bound refusal. Business revision space reserves both pause and answer
+transitions, and exhausted input revisions refuse before checkpointing. The same
+Run may retain at most 32 native answers, matching its existing bounded lineage
+resolver. The next new question refuses before pausing; exact accepted-answer and
+question replays remain authorized independently. A legacy pending question beyond
+that bound cannot append another unusable input. Forms also refuse the reserved
+server question/prompt/session envelope keys instead of accepting caller provenance.
 
 The response body carries `response` as a bounded object validated against the exact stored native question FormSchema, not a replacement free-text-only grammar or caller-supplied schema. Required string answers are nonblank; human question suggestions permit custom text as the existing contract specifies, while permission/transition enums stay closed. Work `clarify` decisions may omit resultRevision when no result exists; accept/reject/rework of a result require the exact ready result revision at the service boundary. Context entry IDs are assignment/revision-local logical keys, not caller-authoritative global database row IDs.
 
@@ -579,8 +598,13 @@ Flow scenario qualifies real controlled ACP checkpointing, duplicate question
 adoption, native Inbox answer, registered scheduler dispatch, same-node continuation
 and exact wire answer delivery. Injected post-checkpoint activation failure recovers
 without another checkpoint. Existing permission, interrupt and crash resumes remain
-compatible. Current node-credential question intake and public question adapters
-remain unqualified; this checkpoint is not package or pilot readiness.
+compatible. The current Flow node credential also qualifies through the native bearer route:
+missing explicit professional update authority refuses before creating a question;
+a current grant permits exact node authorship, and rotated credentials adopt the
+retained question. Host pressure retains the answered idle Run without another
+prompt; normal C3 admission resumes it after pressure clears. Built facade
+questions use the same closed form grammar; human answer tools remain outside the
+company agent toolset. This checkpoint is not package or pilot readiness.
 
 ### Versioned context persistence and attribution
 

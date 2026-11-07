@@ -176,6 +176,14 @@ function deref<T extends { $ref?: string }>(node: T): T {
 // the same routing `resolveRouting` encodes; restating it here as the contract
 // anchor means a divergence in either place is caught.
 const TOOL_OP: Record<string, { method: string; path: string }> = {
+  assignment_question_ask: {
+    method: "post",
+    path: "/api/v1/ext/specialist-assignments/{assignmentId}/questions",
+  },
+  assignment_question_respond: {
+    method: "post",
+    path: "/api/v1/ext/specialist-assignments/{assignmentId}/questions/{questionId}/respond",
+  },
   assignment_get: {
     method: "get",
     path: "/api/v1/ext/specialist-assignments/{assignmentId}",
@@ -521,7 +529,9 @@ function baseTypeSet(schema: JsonSchema): Set<string> {
 // Full enum set INCLUDING null — an OpenAPI `nullable` enum lists `null`
 // explicitly (triage.priority), so the facade enum must carry it too.
 function enumSet(schema: JsonSchema): Set<unknown> | null {
-  return schema.enum ? new Set(schema.enum) : null;
+  if (schema.enum) return new Set(schema.enum);
+
+  return Object.hasOwn(schema, "const") ? new Set([schema.const]) : null;
 }
 
 function toolSpec(name: string): JsonSchema {
@@ -683,7 +693,7 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
 
         if (specEnum) {
           expect(
-            new Set(toolField.enum ?? []),
+            enumSet(toolField) ?? new Set(),
             `${toolName}.${field} enum`,
           ).toEqual(specEnum);
         }

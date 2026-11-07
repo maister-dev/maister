@@ -72,6 +72,7 @@ import { startAgentContinuationWorker } from "../continuation-worker";
 import { getCompanyAgentRunHistory } from "../activity-queries";
 
 import { answerAssignmentQuestion } from "@/lib/services/assignment-question-response";
+import { assignmentQuestionReceiptSchema } from "@/lib/specialist-assignments/question-types";
 import { getSpecialistAssignmentInput } from "@/lib/specialist-assignments/store";
 import {
   acknowledgeOperationalAttention,
@@ -2498,6 +2499,98 @@ it.each(["normal", "activation-recovery", "agent", "cancelled"] as const)(
       const { createOrActivateAssignmentQuestion } =
         await import("@/lib/services/assignment-question");
 
+      if (mode === "normal") {
+        for (const schema of [
+          {
+            ...body.schema,
+            assignmentQuestion: { actor: { kind: "user", id: "forged" } },
+          },
+          { ...body.schema, flowQuestion: { commandId: "forged" } },
+          { ...body.schema, agentPrompt: { commandId: "forged" } },
+          { ...body.schema, supervisorSessionId: "forged" },
+          {
+            schemaVersion: 1,
+            fields: Array.from({ length: 65 }, (_, index) => ({
+              name: `field_${index}`,
+              type: "string",
+              required: true,
+            })),
+          },
+          {
+            schemaVersion: 1,
+            fields: [{ name: "constructor", type: "string", required: true }],
+          },
+          {
+            schemaVersion: 1,
+            fields: [
+              { name: "component", type: "string" },
+              { name: "component", type: "number" },
+            ],
+          },
+          {
+            schemaVersion: 1,
+            fields: [
+              {
+                name: "observations",
+                type: "array",
+                items: {
+                  type: "object",
+                  fields: [{ name: "prototype", type: "string" }],
+                },
+              },
+            ],
+          },
+        ]) {
+          await expect(
+            createOrActivateAssignmentQuestion(
+              db,
+              { kind: "user", userId },
+              assignment.id,
+              { ...body, schema },
+              { executionHosts: hosts },
+            ),
+          ).rejects.toMatchObject({ code: "CONFIG" });
+        }
+        let deepField: unknown = { name: "leaf", type: "string" };
+
+        for (let depth = 0; depth < 70; depth += 1)
+          deepField = { name: "nested", type: "object", fields: [deepField] };
+        await expect(
+          createOrActivateAssignmentQuestion(
+            db,
+            { kind: "user", userId },
+            assignment.id,
+            { ...body, schema: { schemaVersion: 1, fields: [deepField] } },
+            { executionHosts: hosts },
+          ),
+        ).rejects.toMatchObject({ code: "CONFIG" });
+        await expect(
+          createOrActivateAssignmentQuestion(
+            db,
+            { kind: "user", userId },
+            assignment.id,
+            { ...body, question: "x".repeat(8100) },
+            { executionHosts: hosts },
+          ),
+        ).rejects.toMatchObject({ code: "PRECONDITION" });
+        expect(
+          (
+            await database.pool.query(
+              "SELECT count(*)::int AS count FROM hitl_requests WHERE specialist_assignment_id=$1",
+              [assignment.id],
+            )
+          ).rows,
+        ).toEqual([{ count: 0 }]);
+        expect(
+          (
+            await database.pool.query(
+              "SELECT count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind='session.checkpoint'",
+              [runId],
+            )
+          ).rows,
+        ).toEqual([{ count: 0 }]);
+      }
+      let questionTokenSecret: string | undefined;
       let questionPrincipal: AssignmentContextPrincipal = {
         kind: "user",
         userId,
@@ -2507,6 +2600,7 @@ it.each(["normal", "activation-recovery", "agent", "cancelled"] as const)(
         const credential = await issueCompanyAgentRunToken({ db, runId });
 
         questionPrincipal = { kind: "token", tokenId: credential.tokenId };
+        questionTokenSecret = credential.secret;
         await expect(
           createOrActivateAssignmentQuestion(
             db,
@@ -2583,13 +2677,113 @@ it.each(["normal", "activation-recovery", "agent", "cancelled"] as const)(
           ).rows,
         ).toEqual([{ count: 1 }]);
       }
-      const first = await createOrActivateAssignmentQuestion(
-        db,
-        questionPrincipal,
-        assignment.id,
-        body,
-        { executionHosts: hosts },
-      );
+      const first = await (async () => {
+        if (mode === "normal") {
+          const { POST } =
+            await import("@/app/api/specialist-assignments/[assignmentId]/questions/route");
+
+          browserSession.user = await requireActiveUserById(userId);
+          const ask = (value: unknown) =>
+            POST(
+              new NextRequest(
+                `http://localhost/api/specialist-assignments/${assignment.id}/questions`,
+                {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify(value),
+                },
+              ),
+              { params: Promise.resolve({ assignmentId: assignment.id }) },
+            );
+
+          expect(
+            (await ask({ ...body, actor: { kind: "user", id: "forged" } }))
+              .status,
+          ).toBe(400);
+          expect(
+            (
+              await ask({
+                ...body,
+                expectedRevision: body.expectedRevision + 1,
+              })
+            ).status,
+          ).toBe(409);
+          expect(
+            (await ask({ ...body, question: "x".repeat(34000) })).status,
+          ).toBe(413);
+          const response = await ask(body);
+
+          expect(
+            response.status,
+            JSON.stringify(await response.clone().json()),
+          ).toBe(201);
+          expect(response.headers.get("cache-control")).toBe(
+            "private, no-store",
+          );
+
+          return assignmentQuestionReceiptSchema.parse(await response.json());
+        }
+        if (mode === "agent") {
+          const { POST } =
+            await import("@/app/api/v1/ext/specialist-assignments/[assignmentId]/questions/route");
+          const ask = (value: unknown) =>
+            POST(
+              new NextRequest(
+                `http://localhost/api/v1/ext/specialist-assignments/${assignment.id}/questions`,
+                {
+                  method: "POST",
+                  headers: {
+                    "content-type": "application/json",
+                    authorization: `Bearer ${questionTokenSecret}`,
+                  },
+                  body: JSON.stringify(value),
+                },
+              ),
+              { params: Promise.resolve({ assignmentId: assignment.id }) },
+            );
+
+          expect(
+            (await ask({ ...body, actor: { kind: "user", id: "forged" } }))
+              .status,
+          ).toBe(422);
+          const response = await ask(body);
+
+          expect(
+            response.status,
+            JSON.stringify(await response.clone().json()),
+          ).toBe(201);
+          expect(response.headers.get("cache-control")).toBe(
+            "private, no-store",
+          );
+          expect((await ask(body)).status).toBe(401);
+          expect(
+            (
+              await database.pool.query(
+                "SELECT result,status_code FROM token_audit_log WHERE token_id=$1 AND endpoint='POST /api/v1/ext/specialist-assignments/[assignmentId]/questions' ORDER BY created_at",
+                [
+                  questionPrincipal.kind === "token"
+                    ? questionPrincipal.tokenId
+                    : null,
+                ],
+              )
+            ).rows,
+          ).toEqual([
+            { result: "error", status_code: 422 },
+            { result: "ok", status_code: 201 },
+            { result: "error", status_code: 401 },
+          ]);
+
+          return assignmentQuestionReceiptSchema.parse(await response.json());
+        }
+
+        return createOrActivateAssignmentQuestion(
+          db,
+          questionPrincipal,
+          assignment.id,
+          body,
+          { executionHosts: hosts },
+        );
+      })();
 
       expect(first).toMatchObject({
         assignmentId: assignment.id,
@@ -2814,8 +3008,31 @@ it.each(["normal", "activation-recovery", "agent", "cancelled"] as const)(
             )
           ).rows,
         ).toEqual([{ count: 1 }]);
+        const { POST: respondNative } =
+          await import("@/app/api/specialist-assignments/[assignmentId]/questions/[questionId]/respond/route");
+        const nativeAnswer = (value: unknown) =>
+          respondNative(
+            new NextRequest(
+              `http://localhost/api/specialist-assignments/${assignment.id}/questions/${first.hitlRequestId}/respond`,
+              {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify(value),
+              },
+            ),
+            {
+              params: Promise.resolve({
+                assignmentId: assignment.id,
+                questionId: first.hitlRequestId,
+              }),
+            },
+          );
+
+        expect(
+          (await nativeAnswer({ ...answerInput, actor: "forged" })).status,
+        ).toBe(400);
         const concurrent = await Promise.all([
-          answer("custom-component"),
+          nativeAnswer(answerInput),
           answer("custom-component"),
         ]);
 
@@ -2848,6 +3065,51 @@ it.each(["normal", "activation-recovery", "agent", "cancelled"] as const)(
             response: { component: "custom-component" },
           },
         ]);
+        const { POST: respondExternal } =
+          await import("@/app/api/v1/ext/specialist-assignments/[assignmentId]/questions/[questionId]/respond/route");
+        const answerToken = await issueUserAccessToken(
+          {
+            ownerUserId: userId,
+            name: "native-human-answer",
+            scopes: ["assignments:answer"],
+          },
+          db,
+        );
+        const externalAnswer = (value: unknown) =>
+          respondExternal(
+            new NextRequest(
+              `http://localhost/api/v1/ext/specialist-assignments/${assignment.id}/questions/${first.hitlRequestId}/respond`,
+              {
+                method: "POST",
+                headers: {
+                  "content-type": "application/json",
+                  authorization: `Bearer ${answerToken.secret}`,
+                },
+                body: JSON.stringify(value),
+              },
+            ),
+            {
+              params: Promise.resolve({
+                assignmentId: assignment.id,
+                questionId: first.hitlRequestId,
+              }),
+            },
+          );
+
+        expect((await externalAnswer(answerInput)).status).toBe(200);
+        expect(
+          (
+            await externalAnswer({
+              ...answerInput,
+              response: { component: "changed" },
+            })
+          ).status,
+        ).toBe(409);
+        await database.pool.query(
+          "UPDATE project_tokens SET revoked_at=now() WHERE id=$1",
+          [answerToken.tokenId],
+        );
+        expect((await externalAnswer(answerInput)).status).toBe(401);
         expect((await answer("custom-component")).status).toBe(200);
         expect((await answer("changed-component")).status).toBe(409);
         expect(
@@ -3070,6 +3332,100 @@ it.each(["normal", "activation-recovery", "agent", "cancelled"] as const)(
             )
           ).rows,
         ).toEqual([{ count: 1 }]);
+        const waitForAnsweredPrompt = async (
+          ordinal: number,
+        ): Promise<void> => {
+          await expect
+            .poll(
+              async () =>
+                (
+                  await database.pool.query(
+                    "SELECT count(*)::int AS count FROM agent_turns turn JOIN execution_commands command ON command.id=turn.command_id WHERE turn.run_id=$1 AND turn.ordinal=$2 AND turn.state='dispatched' AND command.state='accepted'",
+                    [runId, ordinal],
+                  )
+                ).rows[0].count,
+              { timeout: 15000, interval: 25 },
+            )
+            .toBe(1);
+        };
+
+        for (
+          let completedAnswers = 2;
+          completedAnswers < 32;
+          completedAnswers += 1
+        ) {
+          await waitForAnsweredPrompt(completedAnswers);
+          const boundedQuestion = await createOrActivateAssignmentQuestion(
+            db,
+            { kind: "user", userId },
+            assignment.id,
+            {
+              ...body,
+              expectedRevision: questionRevision + completedAnswers * 2,
+              inputRevision: completedAnswers + 1,
+              question: "?",
+              schema: { schemaVersion: 1, fields: [] },
+              idempotencyKey: randomUUID(),
+            },
+            { executionHosts: hosts },
+          );
+
+          await answerAssignmentQuestion(
+            db,
+            userId,
+            assignment.id,
+            boundedQuestion.hitlRequestId,
+            {
+              expectedRevision: questionRevision + completedAnswers * 2 + 1,
+              inputRevision: completedAnswers + 1,
+              response: {},
+              idempotencyKey: randomUUID(),
+            },
+          );
+        }
+        await waitForAnsweredPrompt(32);
+        const beforeLimit = (
+          await database.pool.query(
+            "SELECT count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind='session.checkpoint'",
+            [runId],
+          )
+        ).rows;
+
+        await expect(
+          createOrActivateAssignmentQuestion(
+            db,
+            { kind: "user", userId },
+            assignment.id,
+            {
+              ...body,
+              expectedRevision: questionRevision + 64,
+              inputRevision: 33,
+              question: "?",
+              schema: { schemaVersion: 1, fields: [] },
+              idempotencyKey: randomUUID(),
+            },
+            { executionHosts: hosts },
+          ),
+        ).rejects.toMatchObject({
+          code: "PRECONDITION",
+          details: { reason: "assignment_question_limit" },
+        });
+        expect(
+          (
+            await database.pool.query(
+              "SELECT count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind='session.checkpoint'",
+              [runId],
+            )
+          ).rows,
+        ).toEqual(beforeLimit);
+        expect(
+          (
+            await database.pool.query(
+              "SELECT status,input_revision FROM specialist_assignments WHERE id=$1",
+              [assignment.id],
+            )
+          ).rows,
+        ).toEqual([{ status: "active", input_revision: 33 }]);
       }
       if (mode === "cancelled") {
         const responderId = randomUUID();
@@ -3121,6 +3477,42 @@ it.each(["normal", "activation-recovery", "agent", "cancelled"] as const)(
         );
 
         expect(late.status).toBe(409);
+        const { POST: respondNative } =
+          await import("@/app/api/specialist-assignments/[assignmentId]/questions/[questionId]/respond/route");
+        const nativeClosedAnswer = (questionId: string) =>
+          respondNative(
+            new NextRequest(
+              `http://localhost/api/specialist-assignments/${assignment.id}/questions/${questionId}/respond`,
+              {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                  expectedRevision: questionRevision + 1,
+                  inputRevision: 1,
+                  response: { component: "too-late" },
+                  idempotencyKey: randomUUID(),
+                }),
+              },
+            ),
+            {
+              params: Promise.resolve({
+                assignmentId: assignment.id,
+                questionId,
+              }),
+            },
+          );
+        const outsiderId = randomUUID();
+
+        await database.pool.query(
+          "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+          [outsiderId, `${outsiderId}@example.test`],
+        );
+        browserSession.user = await requireActiveUserById(outsiderId);
+        expect((await nativeClosedAnswer(first.hitlRequestId)).status).toBe(
+          403,
+        );
+        browserSession.user = await requireActiveUserById(responderId);
+        expect((await nativeClosedAnswer(randomUUID())).status).toBe(404);
         expect(
           (
             await database.pool.query(
@@ -3179,7 +3571,7 @@ it.each(["normal", "activation-recovery", "agent", "cancelled"] as const)(
       setDefaultTransportForTests(null);
     }
   },
-  60000,
+  300000,
 );
 
 it("IT-CBA-05 resumes a repository-admitted project assignment after its actual specialist clarification under current project membership", async () => {

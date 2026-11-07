@@ -6525,15 +6525,24 @@ paths:
   /api/v1/ext/specialist-assignments/{assignmentId}/questions:
     post:
       operationId: extSpecialistQuestionAsk
-      summary: Designed — Request durable structured assignment clarification
-      description: Designed; no implementation is implied. Requires current assignments:update. URL identifiers are
-        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
-        target endpoint and execution ownership are derived from authenticated context/server state. Writes
-        compare canonical payload digest and expected revision; exact replay returns the original currently
-        accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
-        422; PRECONDITION/CONFLICT remain 409. Scope authorization plus required transactional token audit
-        apply.
-      x-implementation-status: Designed
+      summary: Request durable structured assignment clarification
+      description: |
+        Requires current assignments:read and assignments:update plus complete source access. The 32 KiB
+        closed request uses the existing version-one human FormSchema; unsafe or duplicate field names,
+        more than 64 fields per object, excessive nesting and a question leaving no retained answer space
+        refuse before checkpointing. Server question/prompt/session metadata is not a form extension.
+        At most 32 native answers may extend one Run; the next new question refuses before pause,
+        preserving exact replay and retained work. The server derives the current root Run/node, prompt, owner, actor,
+        input/context witnesses and destination. Persisted intent precedes checkpoint/quiescence and Inbox
+        activation. Return 201 for a newly active question, 200 for exact currently authorized replay, or
+        202 with pending_termination while activation remains recoverable. Changed delivery content or
+        stale business/input revisions conflict. This does not accept work or confirm Brain knowledge.
+        Responses are private, no-store. Credential rotation/revocation is checked on every call.
+        Bearer scope authorization and the existing required token audit apply. CONFIG/JSON/schema
+        failures use 422. Asking requires a current personal or appointed Run/node identity; answering
+        requires a current global personal token, rechecked inside the answer transaction. Machine,
+        project and librarian tokens cannot answer human work.
+      x-implementation-status: Implemented
       x-required-scope: assignments:update
       requestBody:
         required: true
@@ -6548,13 +6557,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CBReceipt"
+                $ref: "#/components/schemas/CBAssignmentQuestionReceipt"
         "201":
           description: Authorized explicit DTO or idempotent safe existing receipt.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CBReceipt"
+                $ref: "#/components/schemas/CBAssignmentQuestionReceipt"
+        "202":
+          description: Retained question awaiting checkpoint activation; retry the same content/key or inspect Inbox.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CBAssignmentQuestionReceipt" }
         "401":
           $ref: "#/components/responses/CBFailure"
         "403":
@@ -6583,15 +6597,22 @@ paths:
   /api/v1/ext/specialist-assignments/{assignmentId}/questions/{questionId}/respond:
     post:
       operationId: extSpecialistQuestionRespond
-      summary: Designed — Answer exact assignment question
-      description: Designed; no implementation is implied. Requires current assignments:answer. URL identifiers are
-        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
-        target endpoint and execution ownership are derived from authenticated context/server state. Writes
-        compare canonical payload digest and expected revision; exact replay returns the original currently
-        accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
-        422; PRECONDITION/CONFLICT remain 409. Scope authorization plus required transactional token audit
-        apply.
-      x-implementation-status: Designed
+      summary: Answer exact assignment question
+      description: |
+        Requires current human assignments:answer, owner read and complete source access. The closed
+        32 KiB request names exact business/input revisions and the stable delivery key; response is
+        validated against this exact stored FormSchema. Suggested text choices allow custom answers.
+        The transaction retains the actual human author, immutable answer/input receipt and existing
+        resume intent, completes the existing human work item and preserves original Run/standing/
+        scheduled snapshots. Return 202 for accepted queued continuation or 200 for exact authorized
+        replay; neither proves prompt delivery or assignment completion. Changed, stale, cancelled,
+        closed or wrong-assignment answers return 409. Unsafe/deep/invalid answers return 422;
+        oversized combined retained input returns 409. Responses are private, no-store.
+        Bearer scope authorization and the existing required token audit apply. CONFIG/JSON/schema
+        failures use 422. Asking requires a current personal or appointed Run/node identity; answering
+        requires a current global personal token, rechecked inside the answer transaction. Machine,
+        project and librarian tokens cannot answer human work.
+      x-implementation-status: Implemented
       x-required-scope: assignments:answer
       requestBody:
         required: true
@@ -6606,13 +6627,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CBReceipt"
+                $ref: "#/components/schemas/CBAssignmentQuestionAnswerReceipt"
         "202":
           description: Accepted durable intent or explicit pending/unknown outcome, never proof of success.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CBReceipt"
+                $ref: "#/components/schemas/CBAssignmentQuestionAnswerReceipt"
         "401":
           $ref: "#/components/responses/CBFailure"
         "403":
@@ -16901,6 +16922,30 @@ components:
                 - accept
                 - reject
                 - rework
+    CBAssignmentQuestionReceipt:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, assignmentId, hitlRequestId, sourceRunId, inputRevision, activationState, created]
+      properties:
+        schemaVersion: { type: integer, enum: [1] }
+        assignmentId: { type: string, minLength: 1, maxLength: 128 }
+        hitlRequestId: { type: string, minLength: 1, maxLength: 128 }
+        sourceRunId: { type: string, minLength: 1, maxLength: 128 }
+        inputRevision: { type: integer, minimum: 1, maximum: 2147483647 }
+        activationState: { type: string, enum: [pending_termination, active, failed] }
+        created: { type: boolean }
+      description: Exact retained question identity. A failed activation requires recovery and is not a successful creation response.
+    CBAssignmentQuestionAnswerReceipt:
+      type: object
+      additionalProperties: false
+      required: [assignmentId, questionId, runId, inputRevision, idempotent]
+      properties:
+        assignmentId: { type: string, minLength: 1, maxLength: 128 }
+        questionId: { type: string, minLength: 1, maxLength: 128 }
+        runId: { type: string, minLength: 1, maxLength: 128 }
+        inputRevision: { type: integer, minimum: 1, maximum: 2147483647 }
+        idempotent: { type: boolean }
+      description: Durable human answer and new input; actual same-Run continuation remains subject to current capacity, host and source policy.
     CBQuestionInput:
       type: object
       additionalProperties: false

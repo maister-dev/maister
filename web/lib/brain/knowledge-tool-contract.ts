@@ -20,6 +20,10 @@ import {
   assignmentContextReadSchema,
   assignmentContextUpdateSchema,
 } from "@/lib/specialist-assignments/context-types";
+import {
+  assignmentQuestionInputSchema,
+  assignmentQuestionResponseSchema,
+} from "@/lib/specialist-assignments/question-types";
 
 const record = z
   .object({
@@ -32,6 +36,13 @@ const record = z
 export const knowledgeToolInputSchemas = {
   // The native facade shares validation; assignment context remains a separate durable store.
   assignment_get: assignmentContextReadSchema.omit({ revision: true }),
+  assignment_question_ask: assignmentQuestionInputSchema.extend({
+    assignmentId: assignmentContextReadSchema.shape.assignmentId,
+  }),
+  assignment_question_respond: assignmentQuestionResponseSchema.extend({
+    assignmentId: assignmentContextReadSchema.shape.assignmentId,
+    questionId: assignmentContextReadSchema.shape.assignmentId,
+  }),
   assignment_context_get: assignmentContextReadSchema,
   assignment_context_update: assignmentContextUpdateSchema.safeExtend({
     assignmentId: assignmentContextReadSchema.shape.assignmentId,
