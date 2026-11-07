@@ -120,6 +120,59 @@ async function expectRefused(promise: Promise<unknown>): Promise<string> {
 }
 
 describe("admitDelegatedChild (ADR-163 REQ-15)", () => {
+  it.each(["missing", "self_cycle", "two_run_cycle"] as const)(
+    "IT-CBC-02 refuses incomplete or cyclic delegation ancestry: %s",
+    async (shape) => {
+      process.env.MAISTER_ORCHESTRATOR_MAX_DEPTH = "100";
+      const parentRunId =
+        shape === "missing" ? randomUUID() : await seedRun({});
+
+      if (shape === "self_cycle")
+        await pool.query("UPDATE runs SET parent_run_id=id WHERE id=$1", [
+          parentRunId,
+        ]);
+      if (shape === "two_run_cycle") {
+        const childRunId = await seedRun({ parentRunId });
+
+        await pool.query("UPDATE runs SET parent_run_id=$2 WHERE id=$1", [
+          parentRunId,
+          childRunId,
+        ]);
+      }
+      const before = (
+        await pool.query("SELECT count(*)::int AS count FROM runs")
+      ).rows;
+
+      await expect(admit(parentRunId)).rejects.toMatchObject({
+        code: "CONFIG",
+        details: { reason: "delegation_lineage_invalid" },
+      });
+      expect(
+        (await pool.query("SELECT count(*)::int AS count FROM runs")).rows,
+      ).toEqual(before);
+    },
+  );
+
+  it("IT-CBC-02 distinguishes an exact ancestry bound from an unresolved truncated root", async () => {
+    process.env.MAISTER_ORCHESTRATOR_MAX_DEPTH = "100";
+    let parentRunId = await seedRun({});
+
+    for (let depth = 1; depth < 64; depth++)
+      parentRunId = await seedRun({ parentRunId });
+    await expect(admit(parentRunId)).resolves.toBeUndefined();
+    parentRunId = await seedRun({ parentRunId });
+    const before = (await pool.query("SELECT count(*)::int AS count FROM runs"))
+      .rows;
+
+    await expect(admit(parentRunId)).rejects.toMatchObject({
+      code: "CONFIG",
+      details: { reason: "delegation_lineage_invalid" },
+    });
+    expect(
+      (await pool.query("SELECT count(*)::int AS count FROM runs")).rows,
+    ).toEqual(before);
+  });
+
   it("counts a MIXED set of live agent + flow children against ONE shared cap", async () => {
     process.env.MAISTER_MAX_ORCHESTRATOR_FANOUT = "3";
 

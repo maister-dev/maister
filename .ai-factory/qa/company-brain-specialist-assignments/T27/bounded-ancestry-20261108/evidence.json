@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-07T21:07:18.189625+00:00",
+  "baseline": "a5b9bc99541739071aded62af8592934737017f4",
+  "status": "T27-bounded-ancestry-qualified-local-task-open",
+  "red": "Four real-Postgres cases resolve admission instead of explicitly refusing unknown/cyclic/oversized ancestry.",
+  "gates": {
+    "admissionBoundsRecursive": {
+      "passed": 52,
+      "files": 3,
+      "seconds": 23.56
+    },
+    "delegateAndPlanEntries": {
+      "passed": 76,
+      "files": 5,
+      "seconds": 45.04
+    },
+    "webUnit": {
+      "passed": 9312,
+      "files": 891,
+      "seconds": 28.5
+    },
+    "types": "passed",
+    "lintAndFormat": "passed",
+    "contracts": "passed",
+    "docs": "passed;176 tables"
+  },
+  "verified": [
+    "Unknown parent refuses before child creation",
+    "Self-cycle and two-Run cycle cannot manufacture a root",
+    "Exactly 64 ancestors resolve under permissive actual bounds; 65 ancestors refuse without new Run rows",
+    "Existing depth/fanout/ancestor budgets and valid agent/Flow delegation and plan entries remain green"
+  ],
+  "remaining": [
+    "T27 logical-work receipts, lock ordering, company child appointments and sharing authority",
+    "T28-T43 acceptance, owner recovery, stand connector, UI and actual installed-package/global qualification"
+  ],
+  "effects": "Owned local PostgreSQL and existing controlled execution fixtures; no production or remote action.",
+  "sources": [
+    {
+      "path": ".ai-factory/plans/codex-company-brain-specialist-assignments.md",
+      "sha256": "c436df828bacf8b80343f9b2028127029ac3c3fe66e2e6ef1b91c29996bd5120"
+    },
+    {
+      "path": "docs/system-analytics/specialist-cooperation.md",
+      "sha256": "8ebc49c24718d0ef85de0774acdbef62a866c942a54e6cac2f441fe8bb114404"
+    },
+    {
+      "path": "web/lib/orchestrator/__tests__/admission.integration.test.ts",
+      "sha256": "56c1f0120dee95334d6fbfcaa03b5d27da5e45fb61b202c4f31a4b6c146f5743"
+    },
+    {
+      "path": "web/lib/orchestrator/admission.ts",
+      "sha256": "a6a6e22207e57fa52af5f4f490ed7c548a2e3f4659d4b79f834b4210f7adfdbc"
+    }
+  ],
+  "logs": [
+    "lineage-red.log.gz",
+    "lineage-green.log.gz",
+    "entry-green.log.gz",
+    "unit-green.log.gz",
+    "types-green.log.gz",
+    "lint-green.log.gz",
+    "contracts-green.log.gz",
+    "docs-green.log.gz"
+  ]
+}

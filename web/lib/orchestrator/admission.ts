@@ -54,6 +54,24 @@ export async function lockDelegationParent(
 
 /** One link of the ancestor chain: the run id and its bounds snapshot. */
 type AncestorLink = { id: string; bounds: DelegationBounds | null };
+const MAX_DELEGATION_ANCESTORS = 64;
+
+function invalidDelegationLineage(
+  parentRunId: string,
+  failure: "missing_run" | "cycle" | "resolution_limit",
+  resolvedAncestors: number,
+): MaisterError {
+  log.warn(
+    { parentRunId, failure, resolvedAncestors, cap: MAX_DELEGATION_ANCESTORS },
+    "delegation ancestry cannot establish a complete bounded tree",
+  );
+
+  return new MaisterError(
+    "CONFIG",
+    "Delegation requires a complete acyclic Run ancestry within the resolution bound; inspect the retained parent tree",
+    { details: { reason: "delegation_lineage_invalid", failure } },
+  );
+}
 
 /**
  * Walks up the `parent_run_id` chain from `startId`, collecting each ancestor's
@@ -71,9 +89,13 @@ async function walkAncestorChain(
 ): Promise<AncestorLink[]> {
   const chain: AncestorLink[] = [];
   let currentId: string | null = startId;
-  const cap = 64;
+  const visited = new Set<string>();
 
-  while (currentId && chain.length < cap) {
+  while (currentId) {
+    if (visited.has(currentId))
+      throw invalidDelegationLineage(startId, "cycle", chain.length);
+    if (chain.length === MAX_DELEGATION_ANCESTORS)
+      throw invalidDelegationLineage(startId, "resolution_limit", chain.length);
     const rows = (await tx
       .select({
         parentRunId: runs.parentRunId,
@@ -86,7 +108,9 @@ async function walkAncestorChain(
     }[];
     const row = rows[0];
 
-    if (!row) break;
+    if (!row)
+      throw invalidDelegationLineage(startId, "missing_run", chain.length);
+    visited.add(currentId);
     chain.push({ id: currentId, bounds: row.delegationBounds ?? null });
 
     if (!row.parentRunId) break;

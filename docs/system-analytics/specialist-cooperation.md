@@ -59,6 +59,19 @@ sequenceDiagram
 
 Logical delegation identity is `(assignmentId,inputRevision,workId,workRevision)`; canonical request digest includes target specialist/Flow binding, objective, refs, constraints, required result and effective bounds. Exact replay returns the same child; changed payload under the key returns 409. Existing `run_delegate` and plan admission must share this guarded seam. Children are direct children of their current coordinator; merely sharing assignment ownership never permits collecting a foreign branch/grandchild.
 
+The shared delegation seam must resolve the actual parent chain to a known root
+before it counts or creates child work. The resolution bound is 64 distinct Run
+ancestors, including the immediate parent and root. Missing Runs, repeated Run
+identities and a chain exceeding that bound refuse with `CONFIG` and
+`reason=delegation_lineage_invalid`; a truncated chain cannot become a guessed
+root or shed an ancestor budget. Given a real 64-ancestor chain and otherwise
+permissive bounds, admission may proceed; adding a 65th ancestor must refuse
+without allocating child records. Self-cycles, two-Run cycles and an unknown
+parent receive the same explicit safe refusal. This guard extends the existing
+Run-tree admission helper; it supplies neither assignment permission nor a new
+execution ledger. Logical work/receiving-role admission and assignment-wide
+budgets remain the T27/T29 contracts above.
+
 Company coordination resolves company agent/Flow children through explicit installed bindings. Project children use actual project admission. Cross-repository automatic delivery is not added. Context/evidence sharing intersects initiating principal, current child binding, source restrictions and assignment grant; the model cannot widen recipients or assert permission.
 
 Designed default maxima are depth 2 (absolute from root), fanout 4, active children 2, total child attempts 8, tokens 100000, wall-clock 30 minutes and consecutive failures 3, all min-merged with existing instance/ancestor ceilings. A declared smaller limit remains binding. Operator policy may explicitly choose another bounded value before launch; a child or retry cannot raise it. Wall-clock includes parked/HITL/resource time from first assignment admission; expiration stops new work and requests confirmed teardown, never declares external effect failure. A current authorized human can append an explicit policy/budget revision without erasing already consumed time/tokens.
