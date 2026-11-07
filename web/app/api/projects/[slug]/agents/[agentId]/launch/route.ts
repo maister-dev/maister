@@ -19,10 +19,13 @@ import {
   taskLaunchErrorResponse,
 } from "@/lib/tasks/launch-http";
 import { wakeAcceptedTaskLaunch } from "@/lib/tasks/launch-wake";
+import { knowledgeJson } from "@/lib/brain/knowledge-http";
+import { projectRoutedManualAssignmentRequestSchema } from "@/lib/specialist-assignments/intake-types";
+import { submitProjectRoutedManualAssignment } from "@/lib/specialist-assignments/project-routed-manual-intake";
 
 const { projects } = schemaModule as unknown as Record<string, any>;
 
-const bodySchema = z
+const legacyBodySchema = z
   .object({
     taskId: z.string().guid().optional(),
     runnerId: z.string().min(1).max(128).optional(),
@@ -31,6 +34,11 @@ const bodySchema = z
     expectedSettingsToken: z.string().min(1).max(256).optional(),
   })
   .strict();
+
+const bodySchema = z.union([
+  legacyBodySchema,
+  projectRoutedManualAssignmentRequestSchema,
+]);
 
 type RouteParams = { params: Promise<{ slug: string; agentId: string }> };
 
@@ -43,7 +51,7 @@ export async function POST(
   try {
     // Authz-first: authenticate before resolving the slug; project
     // membership is enforced right after the minimal project lookup.
-    await requireActiveSession();
+    const user = await requireActiveSession();
 
     assertInteractiveLaunchOrigin(req);
     const agentId = decodeRouteParam(rawAgentId, "agentId");
@@ -75,6 +83,18 @@ export async function POST(
         );
       }
       body = parsed.data;
+    }
+
+    if ("schemaVersion" in body) {
+      const receipt = await submitProjectRoutedManualAssignment(
+        getDb(),
+        user.id,
+        project.id,
+        agentId,
+        body,
+      );
+
+      return knowledgeJson(receipt.assignment, receipt.duplicate ? 200 : 201);
     }
 
     const input = {

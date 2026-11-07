@@ -130,6 +130,7 @@ import { POST as retryOperationalPost } from "@/app/api/runs/[runId]/operational
 import { POST as assignmentPost } from "@/app/api/specialist-assignments/route";
 import { POST as externalAssignmentPost } from "@/app/api/v1/ext/specialist-assignments/route";
 import { POST as inboundAgentEventPost } from "@/app/api/agents/[agentId]/event/route";
+import { POST as routedProjectLaunchPost } from "@/app/api/projects/[slug]/agents/[agentId]/launch/route";
 import { GET as externalAssignmentGet } from "@/app/api/v1/ext/specialist-assignments/[assignmentId]/route";
 import { issueUserAccessToken, issueToken } from "@/lib/tokens/issue";
 import { createCompanyCronSchedule } from "@/lib/agents/company-schedules";
@@ -229,15 +230,36 @@ const inspectExternal = (
   );
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => database.db }));
-vi.mock("@/lib/authz", async (original) => ({
-  ...(await original<typeof import("@/lib/authz")>()),
-  requireActiveSession: async () => {
-    if (!browserSession.user)
-      throw new Error("The company read fixture has no authenticated session");
+vi.mock("@/lib/authz", async (original) => {
+  const actual = await original<typeof import("@/lib/authz")>();
 
-    return browserSession.user;
-  },
-}));
+  return {
+    ...actual,
+    requireActiveSession: async () => {
+      if (!browserSession.user)
+        throw new Error(
+          "The company read fixture has no authenticated session",
+        );
+
+      return browserSession.user;
+    },
+    requireProjectAction: async (
+      projectId: string,
+      action: Parameters<typeof actual.requireProjectAction>[1],
+    ) => {
+      if (!browserSession.user)
+        throw new Error(
+          "The project launch fixture has no authenticated session",
+        );
+
+      return actual.requireProjectActionForUser(
+        browserSession.user.id,
+        projectId,
+        action,
+      );
+    },
+  };
+});
 
 beforeAll(async () => {
   vi.stubEnv("AUTH_SECRET", "company-agent-knowledge-cursor-fixture");
@@ -2056,6 +2078,52 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
         }),
       );
 
+    const routedContract: { components: { schemas: Record<string, object> } } =
+      parse(await readFile(resolve("../docs/api/web.openapi.yaml"), "utf8"));
+    const validateRouted = new Ajv({
+      strict: false,
+      validateFormats: false,
+    }).compile({
+      components: routedContract.components,
+      ...routedContract.components.schemas.CBProjectManualAssignmentEnvelope,
+    });
+
+    const submitRouted = (
+      agentId: string,
+      request: typeof value,
+    ): Promise<Response> => {
+      const {
+        owner: _owner,
+        specialistBindingId: _binding,
+        idempotencyKey,
+        ...assignment
+      } = request;
+
+      const envelope = { schemaVersion: 1, assignment, idempotencyKey };
+
+      expect(
+        validateRouted(envelope),
+        JSON.stringify(validateRouted.errors),
+      ).toBe(true);
+      expect(validateRouted({ ...envelope, owner: value.owner })).toBe(false);
+
+      return routedProjectLaunchPost(
+        new NextRequest(
+          `http://localhost/api/projects/${project.slug}/agents/${agentId}/launch`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              schemaVersion: 1,
+              assignment,
+              idempotencyKey,
+            }),
+          },
+        ),
+        { params: Promise.resolve({ slug: project.slug, agentId }) },
+      );
+    };
+
     await localHost({ db, transport: createLocalDirectTransport() });
     await database.pool.query(
       "INSERT INTO execution_host_pressure(execution_host_id,pressured_since) SELECT id,now() FROM execution_hosts WHERE kind='local_direct' AND retired_at IS NULL ON CONFLICT DO NOTHING",
@@ -2082,9 +2150,20 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
     const responses = await Promise.all([
       submit(),
       submitExternal(value, personalProjectToken.secret),
+      submitRouted("rah:wire-observer", value),
     ]);
 
-    expect(responses.map((item) => item.status).sort()).toEqual([200, 201]);
+    expect(
+      responses.map((item) => item.status).sort(),
+      JSON.stringify(
+        await Promise.all(
+          responses.map(async (item) => ({
+            status: item.status,
+            body: await item.clone().json(),
+          })),
+        ),
+      ),
+    ).toEqual([200, 200, 201]);
     const response = responses.find((item) => item.status === 201)!;
 
     expect({
@@ -2195,6 +2274,7 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
     );
     try {
       expect((await submit()).status).toBe(403);
+      expect((await submitRouted("rah:wire-observer", value)).status).toBe(403);
       expect(
         (await submitExternal(value, personalProjectToken.secret)).status,
       ).toBe(403);
@@ -2210,6 +2290,9 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
     );
     try {
       expect((await submit()).status).toBe(200);
+      expect((await submitRouted("rah%3Awire-observer", value)).status).toBe(
+        200,
+      );
     } finally {
       await database.pool.query(
         "UPDATE agent_project_links SET enabled=true WHERE id=$1",
@@ -2309,7 +2392,7 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
     };
     const coordinatedResponses = await Promise.all([
       submit(flowRequest),
-      submit(flowRequest),
+      submitRouted("rah:flow-coordinator", flowRequest),
     ]);
 
     expect(

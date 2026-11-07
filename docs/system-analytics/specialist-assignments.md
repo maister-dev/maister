@@ -211,6 +211,35 @@ server-attributed and content-guarded across personal token rotation through the
 existing agent-event entry point. Legacy invocation adapters and assignment
 clarification remain open. See the [runtime contract](specialist-runtime.md#native-company-cron-intake-checkpoint).
 
+### Existing project launch entry — Implemented (T22)
+
+`POST /api/projects/{slug}/agents/{agentId}/launch` additionally accepts a closed
+version-one envelope `{schemaVersion:1, assignment, idempotencyKey}`. The assignment
+contains the bounded canonical objective, expected outcome, literal input, targets,
+references, constraints and verification requirements; owner and attachment are
+resolved from the authenticated route, not accepted from the body. The new branch
+has no runner/workspace override, requester, authority or expected-result override.
+It returns the canonical private/no-store assignment receipt (201 or replay 200).
+The existing task/runner/workspace launch body and its 202 response remain compatible.
+
+Both manual entry points use the same authenticated user/idempotency identity and
+canonical digest. Concurrent browser, bearer and routed deliveries therefore adopt
+one original assignment/input/Run. Exact completed replay does not require current
+execution enablement or provider readiness; current project/source authority still
+applies. New standalone and coordinator work uses the already qualified project
+native admission, repository rules, exact provider witnesses and existing carrier
+Task policy. Source identity lookup does not preflight mutable execution settings.
+
+Three concurrent browser/bearer/routed deliveries qualify one assignment and Run
+for standalone work; routed/native coordinator deliveries likewise share one
+carrier and required result. The atomic intake result is inspected again for an
+existing Run: a caller that missed its initial receipt lookup can adopt work
+created before its later transaction, without re-entering queued-only admission.
+Configuration, provider, payload and authority conflicts remain explicit failures.
+Current project permission loss refuses routed replay, while an encoded role ID
+and disabled current attachment preserve authorized completed-history replay.
+Existing legacy workspace/runner launch overrides retain their original contract.
+
 ### Project manual admission
 
 Project manual work resolves `specialistBindingId` through the current project

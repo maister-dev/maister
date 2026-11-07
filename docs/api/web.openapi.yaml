@@ -3239,33 +3239,7 @@ paths:
     post:
       tags: [projects]
       summary: (M34 — Implemented) Manually launch an agent run
-      description: |
-        Project membership `member`+ (`launchRun`). Identifiers: `slug` and
-        `agentId` are url-params; body `taskId` (optional task-bound context)
-        is validated to belong to the project; body `runnerId` (optional
-        launch override, tier 1 of the standalone chain) is validated against
-        the enabled runner catalog; body `workspace` (optional launch override)
-        is the workspace used for runner compatibility, cwd selection, and
-        persisted `runs.agent_workspace`. Every fresh session launch, including taskless
-        operational agents, requires canonical same-origin authorization before parsing or allocation.
-        Refusals: disabled/quarantined agent,
-        `risk_tier=destructive` (ADR-041 gate), `manual` missing from the
-        agent's `triggers`, or a dirty `repo_read` baseline → `409
-        PRECONDITION`; runner resolution/incompatibility → `503
-        EXECUTOR_UNAVAILABLE`. Operational and taskless agents retain their
-        direct launch receipt. Task-bound code-delivery agents use the same
-        one-shot manual task-launch contract as POST /api/task-launch-intents:
-        first read /api/task-launch-intents/options with taskId and agentId,
-        then send expectedTaskRevision, expectedSettingsToken and a stable
-        Idempotency-Key from an actual same-origin session action. A selected
-        standalone agent remains an agent target; a Flow-driving agent selects
-        its real declared Flow and retains its driving-agent provenance. No
-        accepted qualification is required for this manual decision. The 202
-        TaskLaunchReceipt can wait for capacity and its Location is recoverable;
-        selecting options alone does not execute or arm automation. A code-delivery
-        request missing the optimistic fields is refused with
-        launch_request_upgrade_required. Operational runs still queue as Pending
-        when execution capacity is unavailable.
+      description: "Project membership `member`+ (`launchRun`). Identifiers: `slug` and\n`agentId` are url-params; body `taskId` (optional task-bound context)\nis validated to belong to the project; body `runnerId` (optional\nlaunch override, tier 1 of the standalone chain) is validated against\nthe enabled runner catalog; body `workspace` (optional launch override)\nis the workspace used for runner compatibility, cwd selection, and\npersisted `runs.agent_workspace`. Every fresh session launch, including taskless\noperational agents, requires canonical same-origin authorization before parsing or allocation.\nRefusals: disabled/quarantined agent,\n`risk_tier=destructive` (ADR-041 gate), `manual` missing from the\nagent's `triggers`, or a dirty `repo_read` baseline → `409\nPRECONDITION`; runner resolution/incompatibility → `503\nEXECUTOR_UNAVAILABLE`. Operational and taskless agents retain their\ndirect launch receipt. Task-bound code-delivery agents use the same\none-shot manual task-launch contract as POST /api/task-launch-intents:\nfirst read /api/task-launch-intents/options with taskId and agentId,\nthen send expectedTaskRevision, expectedSettingsToken and a stable\nIdempotency-Key from an actual same-origin session action. A selected\nstandalone agent remains an agent target; a Flow-driving agent selects\nits real declared Flow and retains its driving-agent provenance. No\naccepted qualification is required for this manual decision. The 202\nTaskLaunchReceipt can wait for capacity and its Location is recoverable;\nselecting options alone does not execute or arm automation. A code-delivery\nrequest missing the optimistic fields is refused with\nlaunch_request_upgrade_required. Operational runs still queue as Pending\nwhen execution capacity is unavailable.\n\n\nA closed `CBProjectManualAssignmentEnvelope` instead submits durable\nspecialist work. Owner and attachment derive only from this authenticated\npath, the result contract derives from the pinned specialist/coordinator,\nand caller runner/workspace/authority overrides are refused. The\nuser/idempotency identity and content digest match the native manual\nassignment endpoint, so concurrent entry points adopt one assignment and\nRun. New work returns 201, exact replay 200, both private/no-store. Current\nproject/source access is required on replay; completed history does not\nrequire current provider readiness or attachment enablement.\n"
       operationId: postProjectAgentLaunch
       parameters:
         - name: Idempotency-Key
@@ -3295,6 +3269,14 @@ paths:
                 expectedTaskRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
                 expectedSettingsToken: { type: string, minLength: 1, maxLength: 256 }
                 workspace: { type: string, enum: [none, repo_read, worktree] }
+              oneOf:
+                - type: object
+                  additionalProperties: false
+                  properties:
+                    taskId: { type: string, format: uuid }
+                    runnerId: { type: string }
+                    workspace: { type: string, enum: [none, repo_read, worktree] }
+                - $ref: "#/components/schemas/CBProjectManualAssignmentEnvelope"
       responses:
         "202":
           description: Operational/taskless direct run receipt, or a durable code-delivery task launch intent awaiting preparation/capacity.
@@ -3325,6 +3307,16 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "200":
+          description: Exact routed assignment replay, adopting the same retained input and Run.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CBAssignment" }
+        "201":
+          description: Durable project assignment admitted through the existing native project path.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CBAssignment" }
   /api/agents/{agentId}/event:
     post:
       tags: [agents]
@@ -39318,4 +39310,135 @@ components:
       required:
         - schemaVersion
         - assignment
+      additionalProperties: false
+    CBProjectManualAssignmentEnvelope:
+      type: object
+      properties:
+        schemaVersion:
+          type: number
+          enum:
+            - 1
+        assignment:
+          type: object
+          properties:
+            objective:
+              type: string
+              minLength: 1
+              maxLength: 8000
+              allOf:
+                - type: string
+                  pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                - type: string
+                  pattern: \S
+            expectedOutcome:
+              type: string
+              minLength: 1
+              maxLength: 4000
+              allOf:
+                - type: string
+                  pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                - type: string
+                  pattern: \S
+            input:
+              type: string
+              maxLength: 8000
+              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+            targetIds:
+              maxItems: 32
+              type: array
+              items:
+                type: string
+                minLength: 1
+                maxLength: 128
+                pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+            inputRefs:
+              maxItems: 64
+              type: array
+              items:
+                type: object
+                properties:
+                  kind:
+                    type: string
+                    enum:
+                      - knowledge
+                      - witness
+                      - result
+                      - operation
+                      - verification
+                  id:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                  revision:
+                    type: integer
+                    minimum: 1
+                    maximum: 2147483647
+                  version:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                  sha256:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                required:
+                  - kind
+                  - id
+                additionalProperties: false
+            constraints:
+              maxItems: 32
+              type: array
+              items:
+                type: string
+                minLength: 1
+                maxLength: 2000
+                allOf:
+                  - type: string
+                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                  - type: string
+                    pattern: \S
+            verification:
+              maxItems: 16
+              type: array
+              items:
+                type: object
+                properties:
+                  kind:
+                    type: string
+                    enum:
+                      - result
+                      - effect
+                      - health
+                  referenceId:
+                    nullable: true
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                  required:
+                    type: boolean
+                required:
+                  - kind
+                  - referenceId
+                  - required
+                additionalProperties: false
+          required:
+            - objective
+            - expectedOutcome
+            - input
+            - targetIds
+            - inputRefs
+            - constraints
+            - verification
+          additionalProperties: false
+        idempotencyKey:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+      required:
+        - schemaVersion
+        - assignment
+        - idempotencyKey
       additionalProperties: false

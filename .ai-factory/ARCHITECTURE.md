@@ -245,7 +245,9 @@ web/lib/supervisor-client ──HTTP──► supervisor/src/http-api  ──►
   existing repository admission and links the assignment inside the existing Run
   transaction. Project coordinator intake freezes the exact provider and initial
   existing task while keeping private assignment input out of the shared task.
-  Browser and personal-token handlers reuse the same canonical intake/reader.
+  Browser, personal-token and versioned existing project launch handlers reuse
+  the same canonical intake/reader. Project route owner/attachment identity is
+  server-resolved; late atomic receipt adoption cannot re-enter completed admission.
   Registered company cron dispatch extends the existing agent tick and trigger
   claim/reconciliation ledger; no new scheduler or attempt store is introduced.
   Native cron source enablement requires declared triggers, current creator

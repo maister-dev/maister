@@ -223,6 +223,20 @@ export async function submitProjectManualAssignment(
             prepareProjectManualAssignment(sourceTx, userId, request, origin),
         ),
       ));
+
+    if (receipt.assignment.runIds.length > 0) {
+      await wakePendingSpecialistAssignment(db, receipt);
+      log.debug(
+        {
+          assignmentId: receipt.assignment.id,
+          receiptId: receipt.receiptId,
+          projectId: request.owner.projectId,
+        },
+        "project manual atomic intake adopted retained execution",
+      );
+
+      return receipt;
+    }
     const agentId = receipt.assignment.responsible.id;
 
     if (

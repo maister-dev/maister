@@ -116,6 +116,45 @@ Saving settings never starts retries: inspect the preview and confirm separately
 Large histories are processed in successive batches. If a response is lost,
 recover that batch before starting another; accepted items are not duplicated.
 
+## Submit a structured project assignment
+
+For a declared specialist with an operational result contract or a coordinator
+with a mandatory result export, the existing project launch endpoint also accepts
+structured work. Use an authenticated Web session with permission to launch work
+in that project and `Content-Type: application/json`. Send
+`POST /api/projects/{slug}/agents/{agentId}/launch` with this closed envelope:
+
+```json
+{
+  "schemaVersion": 1,
+  "idempotencyKey": "manual-request-001",
+  "assignment": {
+    "objective": "Diagnose the requested component",
+    "expectedOutcome": "A validated result with evidence and unresolved questions",
+    "input": "Inspect the authorized target without mutation.",
+    "targetIds": [],
+    "inputRefs": [],
+    "constraints": ["Read only"],
+    "verification": [
+      { "kind": "result", "referenceId": null, "required": true }
+    ]
+  }
+}
+```
+
+The route determines project ownership and the specialist attachment. Result
+contract, requester and authority come from the server. The envelope does not
+accept owner, attachment, runner or workspace overrides. A new assignment returns
+`201`; the same user, project, key and original content return `200` with the same
+assignment and Run. Preserve the key after a lost response. Different content
+under one key conflicts; intentional independent work requires a new key.
+
+This identity is shared with native manual assignment submission, including
+personal API clients. Replaying completed work still requires current project
+and source access, while execution readiness is checked for new work. Inspect the
+retained Run and its structured result; accepting the assignment remains a
+separate decision. Existing simple launch payloads keep their `202` contract.
+
 ## Qualify incoming requests
 
 The updated core intake/triager package requires engine **3.10.0 or later** and

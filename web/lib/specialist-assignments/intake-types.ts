@@ -29,6 +29,17 @@ export const manualSpecialistAssignmentRequestSchema =
     })
     .strict();
 
+/** Existing project launch routes derive owner/attachment from their authenticated path. */
+export const projectRoutedManualAssignmentRequestSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    assignment: assignmentObjectiveInputSchema
+      .omit({ expectedResult: true })
+      .strict(),
+    idempotencyKey: knowledgeDeliveryKeySchema,
+  })
+  .strict();
+
 export type SpecialistIntakeRequest = z.infer<
   typeof specialistIntakeRequestSchema
 >;
