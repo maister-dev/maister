@@ -158,3 +158,11 @@ business revision; `inputRevision` and `contextRevision` identify separate
 histories. Preserve the appropriate exact values for each update. Current source
 access applies to the entire assignment and its working context. Sharing another
 Run's input does not expose that Run's assignment or later working notes.
+
+When a specialist assignment clarification appears in Inbox, answer its displayed
+form under your current answer authority. Suggested text choices permit your own
+answer. The accepted answer becomes a new attributed input revision; the Run's
+original input and standing instructions remain inspectable. Capacity or host
+pressure can leave the same Run queued for resume. An exact repeated answer is
+safe; a changed or late answer and a cancelled assignment require inspection.
+Submitting an answer does not complete the assignment or confirm Brain knowledge.

@@ -1764,6 +1764,7 @@ table hitl_requests {
   specialist_assignment_id text
   specialist_input_revision integer
   specialist_answer_input_revision integer
+  specialist_answer jsonb
   activation_state text
   retrigger_mode text
   superseded_at "timestamp with time zone"

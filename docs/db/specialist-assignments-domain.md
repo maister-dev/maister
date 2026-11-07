@@ -4,7 +4,7 @@
 
 ## Migration reservations
 
-Main `0232_company_grant_requests` and `0233_native_knowledge_execution` are implemented. Implemented base unit `0234_specialist_assignments` contains assignment heads, immutable inputs, existing-run links and state facts. Specialist bindings use `0236_company_specialist_bindings`; reviewed company Flow bindings use `0237_company_flow_bindings`. Trigger scope uses `0238_company_trigger_scope` on existing scheduler tables. Retry scope uses `0239_company_retry_scope` on the existing retry ledger. Native run ownership and internal credentials use `0240_company_agent_execution` and `0241_company_agent_credentials`. Context history uses `0259_specialist_context_revisions`. Assignment clarification subjects extend existing HITL storage through `0262_specialist_question_subject`; public answer/continuation and graph qualification remain pending. Delivery, cooperation/acceptance/ownership and stand operations follow as generated logical units in their owning tasks. Allocate each numeric prefix from the then-current journal; later tables are not precreated as a prerequisite for the base store. Existing head/input/run-link rows survive each additive migration. The main migration units never FK a new Brain table; knowledge pointers store typed record/revision/witness/digest values and the owning service validates them after both lineages are ready. `runs.flow_revision_id` and existing immutable installed revision schema remain runtime truth.
+Main `0232_company_grant_requests` and `0233_native_knowledge_execution` are implemented. Implemented base unit `0234_specialist_assignments` contains assignment heads, immutable inputs, existing-run links and state facts. Specialist bindings use `0236_company_specialist_bindings`; reviewed company Flow bindings use `0237_company_flow_bindings`. Trigger scope uses `0238_company_trigger_scope` on existing scheduler tables. Retry scope uses `0239_company_retry_scope` on the existing retry ledger. Native run ownership and internal credentials use `0240_company_agent_execution` and `0241_company_agent_credentials`. Context history uses `0259_specialist_context_revisions`. Assignment clarification subjects extend existing HITL storage through `0262_specialist_question_subject`; native standalone answer receipts use `0263_specialist_question_answer`; public question adapters and project/graph qualification remain pending. Delivery, cooperation/acceptance/ownership and stand operations follow as generated logical units in their owning tasks. Allocate each numeric prefix from the then-current journal; later tables are not precreated as a prerequisite for the base store. Existing head/input/run-link rows survive each additive migration. The main migration units never FK a new Brain table; knowledge pointers store typed record/revision/witness/digest values and the owning service validates them after both lineages are ready. `runs.flow_revision_id` and existing immutable installed revision schema remain runtime truth.
 
 The base business structures link existing execution records rather than duplicating attempts. Work, acceptance, delivery and claim entities in this diagram remain designed until their owning slices land; context history and specialist/Flow binding configuration are implemented.
 
@@ -219,5 +219,22 @@ Run source capture and actual dispatched prompt/incarnation/fence. Subject,
 FormSchema, prompt and attribution are immutable. A committed human answer requires
 its exact retained input revision; the existing terminal close with NULL response
 keeps the question unanswered. Recovery uses the existing pending-termination
-state and successful checkpoint receipt. Public question submission, answer and
-continuation remain Designed until their runtime qualification is complete.
+state and successful checkpoint receipt. Main `0263_specialist_question_answer`
+adds a nullable, immutable `specialist_answer` receipt to the same HITL row. A new
+answer binds its exact question/Run, source and answered input revisions, new
+input digest, actual human author, request/response digests and accepted time.
+Legacy rows remain NULL without invented provenance. Database guards require
+current waiting input, a checkpointed source, the next retained input and
+unchanged standing/scheduled snapshots before permitting the receipt-bound
+`waiting_input` to `active` transition.
+
+The native standalone Inbox answer writer atomically retains that input,
+completes the existing human work item, captures all sources and stamps the
+existing resume intent. The existing continuation worker performs the actual
+capacity/host claim, execution-fence handoff and prompt. A bounded native lineage
+function follows at most 32 answer receipts from the Run's immutable original
+input; this is lineage proof only, with current principal/professional/source
+policy still required. Historical context may refer to an older input; current
+question input is validated independently. No frozen Run or run-link snapshot is
+rewritten. Public question submission and project/graph clarification remain
+Designed until their owning runtime qualification is complete.

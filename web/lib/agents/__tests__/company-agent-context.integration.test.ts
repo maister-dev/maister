@@ -71,6 +71,8 @@ import { startAgentSession } from "../launch";
 import { startAgentContinuationWorker } from "../continuation-worker";
 import { getCompanyAgentRunHistory } from "../activity-queries";
 
+import { answerAssignmentQuestion } from "@/lib/services/assignment-question-response";
+import { getSpecialistAssignmentInput } from "@/lib/specialist-assignments/store";
 import {
   acknowledgeOperationalAttention,
   retryOperationalCleanup,
@@ -429,6 +431,7 @@ beforeAll(async () => {
     "question-observer",
     "question-recovery-observer",
     "question-agent-observer",
+    "question-cancelled-observer",
   ])
     await cp(
       join(source, "maister-agents/wire-observer.md"),
@@ -2351,7 +2354,7 @@ it.each([
   45000,
 );
 
-it.each(["normal", "activation-recovery", "agent"] as const)(
+it.each(["normal", "activation-recovery", "agent", "cancelled"] as const)(
   "IT-CBA-05 persists and activates a company assignment clarification through its real owned checkpoint without a task (%s)",
   async (mode) => {
     const db: Db = database.db;
@@ -2366,6 +2369,10 @@ it.each(["normal", "activation-recovery", "agent"] as const)(
       projectors: canonicalProjectors,
     });
     const abort = new AbortController();
+    let ownedAnswerGrant:
+      Readonly<{ id: string; revision: number }> | undefined;
+    let continuation:
+      ReturnType<typeof startAgentContinuationWorker> | undefined;
     let driver: Promise<unknown> | undefined;
     let runId: string | undefined;
 
@@ -2377,6 +2384,7 @@ it.each(["normal", "activation-recovery", "agent"] as const)(
         normal: "rah:question-observer",
         "activation-recovery": "rah:question-recovery-observer",
         agent: "rah:question-agent-observer",
+        cancelled: "rah:question-cancelled-observer",
       } as const;
       const roleId = roleIds[mode];
       const effective = await resolveInstalledAgentDefinition(db, {
@@ -2450,8 +2458,25 @@ it.each(["normal", "activation-recovery", "agent"] as const)(
         },
         { timeout: 30000, interval: 25 },
       );
+      if (mode === "normal")
+        await appendSpecialistAssignmentContext(db, userId, assignment.id, {
+          expectedRevision: 0,
+          expectedInputRevision: 1,
+          idempotencyKey: randomUUID(),
+          updates: [
+            {
+              id: "retained-diagnostic-hypothesis",
+              kind: "hypothesis",
+              text: "Preserve this working hypothesis across clarification input revisions",
+              state: "open",
+              references: [],
+            },
+          ],
+        });
+      const questionRevision =
+        receipt.assignmentRevision + (mode === "normal" ? 1 : 0);
       const body = {
-        expectedRevision: receipt.assignmentRevision,
+        expectedRevision: questionRevision,
         inputRevision: 1,
         question: "Which configured component should be inspected?",
         schema: {
@@ -2671,6 +2696,447 @@ it.each(["normal", "activation-recovery", "agent"] as const)(
           )
         ).rows,
       ).toEqual([{ count: 1 }]);
+      if (mode === "normal") {
+        const answerGrants = await createCompanyGrants(db, administratorId, {
+          principalKind: "user",
+          principalId: userId,
+          actions: ["assignments:answer"],
+          idempotencyKey: randomUUID(),
+        });
+
+        ownedAnswerGrant = answerGrants.page.items.find(
+          (grant) => grant.action === "assignments:answer",
+        );
+        browserSession.user = await requireActiveUserById(userId);
+        const answerValue = (response: unknown) =>
+          respondHitlPost(
+            new NextRequest(
+              `http://localhost/api/runs/${runId}/hitl/${first.hitlRequestId}/respond`,
+              {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ response }),
+              },
+            ),
+            {
+              params: Promise.resolve({
+                runId: receipt.runId,
+                hitlRequestId: first.hitlRequestId,
+              }),
+            },
+          );
+
+        const answer = (component: string) => answerValue({ component });
+
+        expect((await answer("   ")).status).toBe(422);
+        expect(
+          (
+            await answerValue(
+              JSON.parse('{"component":"web","__proto__":{"forged":true}}'),
+            )
+          ).status,
+        ).toBe(422);
+        expect((await answerValue({})).status).toBe(422);
+        expect((await answer("x".repeat(9000))).status).toBe(409);
+        expect((await answer("x".repeat(34000))).status).toBe(400);
+        let deeplyNested: unknown = "leaf";
+
+        for (let depth = 0; depth < 70; depth += 1)
+          deeplyNested = { child: deeplyNested };
+        expect(
+          (await answerValue({ component: "web", extra: deeplyNested })).status,
+        ).toBe(422);
+        const answerInput = {
+          expectedRevision: questionRevision + 1,
+          inputRevision: 1,
+          response: { component: "custom-component" },
+          idempotencyKey: `hitl:${first.hitlRequestId}`,
+        };
+
+        await expect(
+          answerAssignmentQuestion(
+            db,
+            userId,
+            assignment.id,
+            first.hitlRequestId,
+            {
+              ...answerInput,
+              expectedRevision: answerInput.expectedRevision + 1,
+            },
+          ),
+        ).rejects.toMatchObject({ code: "CONFLICT" });
+        await expect(
+          answerAssignmentQuestion(
+            db,
+            userId,
+            assignment.id,
+            first.hitlRequestId,
+            { ...answerInput, inputRevision: 2 },
+          ),
+        ).rejects.toMatchObject({ code: "CONFLICT" });
+        await expect(
+          answerAssignmentQuestion(
+            db,
+            userId,
+            assignment.id,
+            first.hitlRequestId,
+            answerInput,
+            async () => {
+              throw new MaisterError(
+                "CRASH",
+                "Injected answer audit persistence failure",
+              );
+            },
+          ),
+        ).rejects.toMatchObject({ code: "CRASH" });
+        expect(
+          (
+            await database.pool.query(
+              "SELECT status,input_revision FROM specialist_assignments WHERE id=$1",
+              [assignment.id],
+            )
+          ).rows,
+        ).toEqual([{ status: "waiting_input", input_revision: 1 }]);
+        expect(
+          (
+            await database.pool.query(
+              "SELECT response,specialist_answer_input_revision FROM hitl_requests WHERE id=$1",
+              [first.hitlRequestId],
+            )
+          ).rows,
+        ).toEqual([{ response: null, specialist_answer_input_revision: null }]);
+        expect(
+          (
+            await database.pool.query(
+              "SELECT count(*)::int AS count FROM specialist_input_revisions WHERE assignment_id=$1",
+              [assignment.id],
+            )
+          ).rows,
+        ).toEqual([{ count: 1 }]);
+        const concurrent = await Promise.all([
+          answer("custom-component"),
+          answer("custom-component"),
+        ]);
+
+        expect(concurrent.map((response) => response.status).sort()).toEqual([
+          200, 202,
+        ]);
+
+        const answered = (
+          await database.pool.query(
+            "SELECT status,input_revision,revision FROM specialist_assignments WHERE id=$1",
+            [assignment.id],
+          )
+        ).rows[0];
+
+        expect(answered).toMatchObject({
+          status: "active",
+          input_revision: 2,
+          revision: questionRevision + 2,
+        });
+        expect(
+          (
+            await database.pool.query(
+              "SELECT specialist_answer_input_revision,response FROM hitl_requests WHERE id=$1",
+              [first.hitlRequestId],
+            )
+          ).rows,
+        ).toEqual([
+          {
+            specialist_answer_input_revision: 2,
+            response: { component: "custom-component" },
+          },
+        ]);
+        expect((await answer("custom-component")).status).toBe(200);
+        expect((await answer("changed-component")).status).toBe(409);
+        expect(
+          (
+            await database.pool.query(
+              "SELECT count(*)::int AS count FROM specialist_input_revisions WHERE assignment_id=$1",
+              [assignment.id],
+            )
+          ).rows,
+        ).toEqual([{ count: 2 }]);
+        expect(
+          (
+            await database.pool.query(
+              "SELECT status,resume_requested_at IS NOT NULL AS resume_requested FROM runs WHERE id=$1",
+              [runId],
+            )
+          ).rows,
+        ).toEqual([{ status: "NeedsInputIdle", resume_requested: true }]);
+        const original = await getSpecialistAssignmentInput(
+          db,
+          userId,
+          assignment.id,
+          1,
+        );
+        const updated = await getSpecialistAssignmentInput(
+          db,
+          userId,
+          assignment.id,
+          2,
+        );
+
+        expect(updated.snapshot.objectiveInput.input).toContain(
+          "custom-component",
+        );
+        expect(updated.snapshot.standingDefinition).toEqual(
+          original.snapshot.standingDefinition,
+        );
+        expect(updated.snapshot.scheduledRequest).toEqual(
+          original.snapshot.scheduledRequest,
+        );
+        expect(updated.actor).toMatchObject({ kind: "user", id: userId });
+        const credential = await issueCompanyAgentRunToken({ db, runId });
+        const inspection = await inspectExternal(
+          assignment.id,
+          credential.secret,
+        );
+
+        expect(inspection.status).toBe(200);
+        expect(await inspection.json()).toMatchObject({
+          id: assignment.id,
+          inputRevision: 2,
+        });
+        for (const mutation of [
+          "UPDATE hitl_requests SET specialist_answer=jsonb_set(specialist_answer,'{actor,id}',to_jsonb('forged'::text)) WHERE id=$1",
+          'UPDATE hitl_requests SET response=\'{"component":"forged"}\'::jsonb WHERE id=$1',
+          "UPDATE hitl_requests SET specialist_answer_input_revision=NULL WHERE id=$1",
+        ])
+          await expect(
+            database.pool.query(mutation, [first.hitlRequestId]),
+          ).rejects.toMatchObject({
+            code: "23514",
+            constraint: "hitl_specialist_question_immutable",
+          });
+        const currentHost = await localHost({ db, transport: hosts.transport });
+
+        await database.pool.query(
+          "INSERT INTO execution_host_pressure(execution_host_id,pressured_since) VALUES($1,now()) ON CONFLICT DO NOTHING",
+          [currentHost.id],
+        );
+        const { claimAgentResumeSlot } = await import("@/lib/services/hitl");
+
+        expect(await claimAgentResumeSlot(db, receipt.runId, hosts)).toEqual({
+          outcome: "queued",
+        });
+        expect(
+          (
+            await database.pool.query(
+              "SELECT count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind='session.prompt'",
+              [runId],
+            )
+          ).rows,
+        ).toEqual([{ count: 1 }]);
+        await database.pool.query(
+          "DELETE FROM execution_host_pressure WHERE execution_host_id=$1",
+          [currentHost.id],
+        );
+        continuation = startAgentContinuationWorker({
+          db,
+          executionHosts: hosts,
+        });
+        await expect
+          .poll(
+            async () =>
+              (
+                await database.pool.query(
+                  "SELECT count(*)::int AS count FROM agent_turns WHERE run_id=$1 AND variant='resume' AND state='dispatched' AND command_id IS NOT NULL",
+                  [runId],
+                )
+              ).rows[0].count,
+            { timeout: 30000, interval: 25 },
+          )
+          .toBe(1);
+        const resumedTurns = (
+          await database.pool.query(
+            "SELECT id,variant,state,ordinal,command_id FROM agent_turns WHERE run_id=$1 ORDER BY ordinal",
+            [runId],
+          )
+        ).rows;
+
+        expect(resumedTurns).toHaveLength(2);
+        expect(resumedTurns[1]).toMatchObject({
+          variant: "resume",
+          state: "dispatched",
+        });
+        const resumedCommand = (
+          await db
+            .select()
+            .from(executionCommands)
+            .where(eq(executionCommands.id, String(resumedTurns[1].command_id)))
+        )[0]!;
+        const resumedHost = (
+          await db
+            .select()
+            .from(executionHosts)
+            .where(eq(executionHosts.id, resumedCommand.executionHostId))
+        )[0]!;
+        const resumedPrompt = readPromptRequest(
+          resumedCommand,
+          resumedHost.hostKey,
+        ).payload.prompt;
+
+        expect(resumedPrompt).toContain("custom-component");
+        expect(
+          (
+            await database.pool.query(
+              "SELECT status,company_execution_snapshot->'assignment'->'inputRevision' AS original_input FROM runs WHERE id=$1",
+              [runId],
+            )
+          ).rows,
+        ).toEqual([{ status: "Running", original_input: 1 }]);
+        expect(
+          (
+            await database.pool.query(
+              "SELECT count(*)::int AS count FROM specialist_run_links WHERE assignment_id=$1",
+              [assignment.id],
+            )
+          ).rows,
+        ).toEqual([{ count: 1 }]);
+        const currentAnswerGrant = ownedAnswerGrant!;
+
+        await revokeCompanyGrant(db, administratorId, currentAnswerGrant.id, {
+          expectedRevision: currentAnswerGrant.revision,
+          reason: "Withdraw human answer authority before replay",
+          idempotencyKey: randomUUID(),
+        });
+        ownedAnswerGrant = undefined;
+        expect((await answer("custom-component")).status).toBe(403);
+        const renewedAnswerGrants = await createCompanyGrants(
+          db,
+          administratorId,
+          {
+            principalKind: "user",
+            principalId: userId,
+            actions: ["assignments:answer"],
+            idempotencyKey: randomUUID(),
+          },
+        );
+
+        ownedAnswerGrant = renewedAnswerGrants.page.items.find(
+          (grant) => grant.action === "assignments:answer",
+        );
+        const secondQuestion = await createOrActivateAssignmentQuestion(
+          db,
+          { kind: "user", userId },
+          assignment.id,
+          {
+            ...body,
+            expectedRevision: questionRevision + 2,
+            inputRevision: 2,
+            question: "Which post-inspection health signal should be checked?",
+            idempotencyKey: randomUUID(),
+          },
+          { executionHosts: hosts },
+        );
+
+        expect(secondQuestion).toMatchObject({
+          sourceRunId: runId,
+          inputRevision: 2,
+          activationState: "active",
+        });
+        const secondAnswer = await respondHitlPost(
+          new NextRequest(
+            `http://localhost/api/runs/${runId}/hitl/${secondQuestion.hitlRequestId}/respond`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                response: { component: "health-endpoint" },
+              }),
+            },
+          ),
+          {
+            params: Promise.resolve({
+              runId: receipt.runId,
+              hitlRequestId: secondQuestion.hitlRequestId,
+            }),
+          },
+        );
+
+        expect(secondAnswer.status).toBe(202);
+        expect(
+          (await getSpecialistAssignmentInput(db, userId, assignment.id, 3))
+            .snapshot.objectiveInput.input,
+        ).toContain("health-endpoint");
+        expect(
+          (
+            await database.pool.query(
+              "SELECT count(*)::int AS count FROM specialist_run_links WHERE assignment_id=$1",
+              [assignment.id],
+            )
+          ).rows,
+        ).toEqual([{ count: 1 }]);
+      }
+      if (mode === "cancelled") {
+        const responderId = randomUUID();
+
+        await database.pool.query(
+          "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+          [responderId, `${responderId}@example.test`],
+        );
+        await createCompanyGrants(db, administratorId, {
+          principalKind: "user",
+          principalId: responderId,
+          actions: ["assignments:read", "assignments:answer"],
+          idempotencyKey: randomUUID(),
+        });
+        browserSession.user = await requireActiveUserById(userId);
+        expect(
+          (
+            await stopRunPost(
+              new Request(`http://localhost/api/runs/${runId}/stop`, {
+                method: "POST",
+              }),
+              { params: Promise.resolve({ runId: receipt.runId }) },
+            )
+          ).status,
+        ).toBe(200);
+        await cancelSpecialistAssignment(
+          db,
+          userId,
+          assignment.id,
+          questionRevision + 1,
+          "Cancel before answering the retained clarification",
+        );
+        browserSession.user = await requireActiveUserById(responderId);
+        const late = await respondHitlPost(
+          new NextRequest(
+            `http://localhost/api/runs/${runId}/hitl/${first.hitlRequestId}/respond`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ response: { component: "too-late" } }),
+            },
+          ),
+          {
+            params: Promise.resolve({
+              runId: receipt.runId,
+              hitlRequestId: first.hitlRequestId,
+            }),
+          },
+        );
+
+        expect(late.status).toBe(409);
+        expect(
+          (
+            await database.pool.query(
+              "SELECT count(*)::int AS count FROM specialist_input_revisions WHERE assignment_id=$1",
+              [assignment.id],
+            )
+          ).rows,
+        ).toEqual([{ count: 1 }]);
+        expect(
+          (
+            await database.pool.query(
+              "SELECT response,specialist_answer FROM hitl_requests WHERE id=$1",
+              [first.hitlRequestId],
+            )
+          ).rows,
+        ).toEqual([{ response: null, specialist_answer: null }]);
+      }
     } finally {
       browserSession.user = await requireActiveUserById(userId);
       if (runId) {
@@ -2692,6 +3158,14 @@ it.each(["normal", "activation-recovery", "agent"] as const)(
           )
           .toBe(200);
       }
+      await continuation?.stop();
+      if (ownedAnswerGrant)
+        await revokeCompanyGrant(db, administratorId, ownedAnswerGrant.id, {
+          expectedRevision: ownedAnswerGrant.revision,
+          reason:
+            "Release this clarification fixture's exact temporary authority",
+          idempotencyKey: randomUUID(),
+        });
       abort.abort();
       await supervisor.stop();
       await driver;

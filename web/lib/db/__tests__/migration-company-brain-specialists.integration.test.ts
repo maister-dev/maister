@@ -829,6 +829,33 @@ it("IT-CBX-01 assignment-question migration preserves legacy task decisions with
       specialist_input_revision: null,
       specialist_answer_input_revision: null,
     });
+    const subjectUpgrade = (
+      await legacy.pool.query(
+        "SELECT to_jsonb(question) AS value FROM hitl_requests question WHERE id=$1",
+        [questionId],
+      )
+    ).rows[0]!.value;
+
+    await legacy.db.transaction(async (tx) => {
+      await applyMainMigration(tx, "0263_specialist_question_answer");
+    });
+    expect(
+      (
+        await legacy.pool.query(
+          "SELECT to_jsonb(question) AS value FROM hitl_requests question WHERE id=$1",
+          [questionId],
+        )
+      ).rows[0]!.value,
+    ).toEqual({ ...subjectUpgrade, specialist_answer: null });
+    await expect(
+      legacy.pool.query(
+        "UPDATE hitl_requests SET specialist_answer='{}'::jsonb WHERE id=$1",
+        [questionId],
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "hitl_specialist_question_answer",
+    });
     expect(
       (
         await legacy.pool.query(

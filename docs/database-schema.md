@@ -31,6 +31,10 @@ Main `0262_specialist_question_subject` extends existing HITL rows with nullable
 uniqueness/history indexes and exact source/prompt immutability guards. Legacy
 question bytes survive with NULL native metadata. Answered input and terminal
 unanswered closure remain distinct; no Brain FK or new execution ledger is added.
+Main `0263_specialist_question_answer` adds the nullable immutable native answer
+receipt on that HITL row, exact human/new-input guards, receipt-gated resume state
+and bounded original-to-answered input lineage. Existing task questions keep
+NULL receipt metadata, and the main-only upgrade needs no Brain schema.
 See [native clarification storage](db/specialist-assignments-domain.md#native-clarification-subjects-on-existing-hitl).
 
 

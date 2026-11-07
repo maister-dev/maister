@@ -7281,6 +7281,7 @@ export const hitlRequests = pgTable(
     ),
     specialistInputRevision: integer("specialist_input_revision"),
     specialistAnswerInputRevision: integer("specialist_answer_input_revision"),
+    specialistAnswer: jsonb("specialist_answer"),
     activationState: text("activation_state", {
       enum: ["pending_termination", "active", "failed"],
     }),

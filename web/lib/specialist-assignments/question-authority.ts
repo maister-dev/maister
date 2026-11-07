@@ -10,7 +10,10 @@ import { sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { assignmentQuestionSnapshotSchema } from "./question-types";
-import { readSpecialistAssignmentContextInTransaction } from "./context";
+import {
+  readAuthorizedAssignmentInput,
+  readSpecialistAssignmentContextInTransaction,
+} from "./context";
 import {
   authorizeAssignmentContextUpdate,
   resolveAssignmentContextPrincipal,
@@ -51,7 +54,8 @@ export async function selectAssignmentQuestionRun(
     SELECT appointment.run_id FROM specialist_run_links appointment
     JOIN specialist_assignments assignment ON assignment.id=appointment.assignment_id
     JOIN runs execution ON execution.id=appointment.run_id
-    WHERE appointment.assignment_id=${assignmentId} AND appointment.input_revision=assignment.input_revision
+    JOIN specialist_input_revisions current_input ON current_input.assignment_id=assignment.id AND current_input.revision=assignment.input_revision
+    WHERE appointment.assignment_id=${assignmentId} AND specialist_run_has_input(appointment.run_id,assignment.id,current_input.revision,current_input.digest)
       AND appointment.role IN ('specialist','coordinator','continuation') AND appointment.work_id IS NULL
       AND execution.status IN ('Pending','Running','NeedsInput','NeedsInputIdle','WaitingOnChildren','Review')
     LIMIT 2
@@ -143,9 +147,16 @@ export async function assertPendingAssignmentQuestion(
     subject.contextRevision,
   );
 
+  const currentInput = await readAuthorizedAssignmentInput(
+    tx,
+    principal.source,
+    assignmentId,
+    subject.inputRevision,
+  );
+
   if (
-    context.value.inputRevision !== subject.inputRevision ||
-    context.value.inputSha256 !== subject.inputSha256
+    context.value.currentInputRevision !== subject.inputRevision ||
+    currentInput.digest !== subject.inputSha256
   )
     throw new MaisterError(
       "CONFLICT",
@@ -161,6 +172,6 @@ export async function assertPendingAssignmentQuestion(
     tx,
     principal,
     knowledgeOwner(head),
-    context.input.snapshot.authoritySnapshot.executionPolicy,
+    currentInput.snapshot.authoritySnapshot.executionPolicy,
   );
 }

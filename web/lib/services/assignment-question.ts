@@ -26,7 +26,10 @@ import {
   authorizeAssignmentContextUpdate,
   resolveAssignmentContextPrincipal,
 } from "@/lib/specialist-assignments/context-access";
-import { readSpecialistAssignmentContextInTransaction } from "@/lib/specialist-assignments/context";
+import {
+  readAuthorizedAssignmentInput,
+  readSpecialistAssignmentContextInTransaction,
+} from "@/lib/specialist-assignments/context";
 import {
   beginAssignmentTransaction,
   unavailableAssignment,
@@ -150,11 +153,17 @@ async function persistAssignmentQuestion(
     resolved.source,
     assignmentId,
   );
+  const currentInput = await readAuthorizedAssignmentInput(
+    tx,
+    resolved.source,
+    assignmentId,
+    Number(head.input_revision),
+  );
   const actor = await authorizeAssignmentContextUpdate(
     tx,
     resolved,
     knowledgeOwner(head),
-    context.input.snapshot.authoritySnapshot.executionPolicy,
+    currentInput.snapshot.authoritySnapshot.executionPolicy,
   );
   const principalKey = contentDigest(actor);
   const requestDigest = contentDigest(input);
@@ -208,7 +217,7 @@ async function persistAssignmentQuestion(
     source.status !== "Running" ||
     head.revision !== input.expectedRevision ||
     head.input_revision !== input.inputRevision ||
-    context.value.inputRevision !== input.inputRevision
+    context.value.currentInputRevision !== input.inputRevision
   )
     throw new MaisterError(
       "CONFLICT",
@@ -238,7 +247,16 @@ async function persistAssignmentQuestion(
   const access = await authorizeSourceRestrictions(
     tx,
     resolved.source,
-    capture.data.restrictions,
+    [
+      ...capture.data.restrictions,
+      ...currentInput.snapshot.sourceRestrictions,
+      {
+        kind: "assignment_input",
+        assignmentId,
+        inputRevision: currentInput.revision,
+        inputSha256: currentInput.digest,
+      },
+    ],
     context.access,
   );
   const consumer = await lockKnowledgeReadConsumer(tx, {
@@ -271,7 +289,7 @@ async function persistAssignmentQuestion(
     schemaVersion: 1,
     assignmentId,
     inputRevision: input.inputRevision,
-    inputSha256: context.value.inputSha256,
+    inputSha256: currentInput.digest,
     contextRevision: context.value.revision,
     expectedRevision: input.expectedRevision,
     principalKey,

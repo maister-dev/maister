@@ -69,7 +69,7 @@ function contextConflict(message: string): MaisterError {
 }
 
 /** Source policy includes current assignment authority and the exact execution appointment, without user impersonation. */
-async function readContextInput(
+export async function readAuthorizedAssignmentInput(
   tx: SqlTransaction,
   principal: KnowledgePrincipal,
   assignmentId: string,
@@ -148,7 +148,12 @@ export async function readSpecialistAssignmentContextInTransaction(
     );
   const assignment = parsedHead.data;
 
-  await readContextInput(tx, principal, assignmentId, assignment.inputRevision);
+  await readAuthorizedAssignmentInput(
+    tx,
+    principal,
+    assignmentId,
+    assignment.inputRevision,
+  );
   const revision = selectedRevision ?? assignment.contextRevision;
 
   if (
@@ -174,7 +179,7 @@ export async function readSpecialistAssignmentContextInTransaction(
       "CONFIG",
       "The retained context head has no matching history; inspect migration and transaction integrity",
     );
-  const input = await readContextInput(
+  const input = await readAuthorizedAssignmentInput(
     tx,
     principal,
     assignmentId,
@@ -424,7 +429,7 @@ async function appendContext(
           principal.source.userId,
           assignmentId,
         );
-      const currentInput = await readContextInput(
+      const currentInput = await readAuthorizedAssignmentInput(
         tx,
         principal.source,
         assignmentId,

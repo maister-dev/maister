@@ -1,0 +1,113 @@
+{
+  "task": "T24",
+  "date": "2026-11-07",
+  "baseCommit": "57f5930b8",
+  "slice": "Native standalone human clarification answer, immutable input receipt and same-Run continuation",
+  "status": "Standalone company answer/continuation qualified; T24 remains open",
+  "red": [
+    {
+      "case": "Real native Inbox answer requires a task and rejects valid native subject",
+      "log": "cb-assignment-answer-red.log.gz",
+      "exitCode": 1
+    },
+    {
+      "case": "Zod record normalization silently removes raw unsafe __proto__ and accepts an answer",
+      "log": "cb-assignment-answer-unsafe-red.log.gz",
+      "exitCode": 1
+    },
+    {
+      "case": "Second clarification incorrectly requires a historical context input to equal the current assignment input",
+      "log": "cb-assignment-answer-context-red.log.gz",
+      "exitCode": 1
+    }
+  ],
+  "gates": {
+    "owningIntegration": {
+      "tests": 232,
+      "files": 10,
+      "durationSeconds": 84.11,
+      "exitCode": 0
+    },
+    "webUnit": {
+      "tests": 9322,
+      "files": 889,
+      "durationSeconds": 28.49,
+      "exitCode": 0
+    },
+    "types": {
+      "exitCode": 0
+    },
+    "lintAndFormat": {
+      "exitCode": 0
+    },
+    "contractsAndCoverage": {
+      "requirements": 84,
+      "exitCode": 0
+    },
+    "docsAndErd": {
+      "tables": 173,
+      "exitCode": 0
+    },
+    "migrationDrift": {
+      "newMigration": false,
+      "exitCode": 0
+    },
+    "publicEnRuBuildAndLinks": {
+      "brokenLinks": 0,
+      "exitCode": 0
+    }
+  },
+  "migration": {
+    "main": "0248_specialist_question_answer",
+    "newTables": 0,
+    "receiptColumn": "hitl_requests.specialist_answer",
+    "legacyMetadata": null,
+    "noBrainForeignKey": true,
+    "boundedAnswerLineage": 32
+  },
+  "qualified": [
+    "Existing Inbox response route accepts exact native standalone assignment questions without a task or repository",
+    "Current human answer authority, source policy and existing human claim are enforced independently of model attribution",
+    "Raw structural unsafe-key/depth checks precede Zod normalization; required whitespace, missing fields, request and combined-input bounds refuse",
+    "Exact business/input CAS and question provenance bind one immutable answer receipt and next attributed input",
+    "Standing definition and scheduled snapshot retain original bytes; new answer authority is recorded separately",
+    "Injected audit failure rolls back input, answer, assignment head, human-work completion, capture and resume intent",
+    "Concurrent identical responses retain one input/answer; exact authorized replay is safe, changed payload conflicts and revocation refuses",
+    "Existing host-pressure/pool claim queues without a new prompt; continuation worker resumes the same Run with execution epoch two and an evidence-retained answer prompt",
+    "Two successive clarifications advance input 1 to 2 to 3 on one original Run/root link while preserving historical working context and original Run input witness",
+    "Receipt/input/author/response edits are database refused; actual stop and business cancellation reject late input without fabricating an answer",
+    "Populated main-only upgrade preserves legacy task question bytes and NULL receipt metadata, rejects invented native receipts and permits ordinary project deletion"
+  ],
+  "corrections": [
+    "Unsafe raw answer refusal retains the existing 422 field-error classification",
+    "Cancellation fixture uses an independent actual human instead of requesting an already live grant",
+    "The first complete run exposed temporary shared-user answer authority leaking from the new fixture; exact owned grant tracking/revocation fixes the root fixture leak and all existing denial assertions remain unchanged"
+  ],
+  "limitations": [
+    "No native question HTTP/MCP adapter is enabled by this checkpoint",
+    "Project standalone and Flow subjects/public adapters remain T24 qualification work",
+    "No actual companion-package clarification or stand-pilot readiness, complete Phase 5 compatibility, remote publication or deployment claim"
+  ],
+  "sourceSha256": {
+    "docs/api/web.openapi.yaml": "3ef8d93911d021aaf34f2e58e66772546d00facc55aea0517ee23cada80c0956",
+    "docs/database-schema.md": "ee9b53ffd31016fdc9e78b7324a735edd0ed592bee0e0ffc6c3c03da94efbc7c",
+    "docs/db/erd.dbml": "54f52673b697c408cf356234cb4a12c9a3d3197e2913a29b6a8d8d5bff13b908",
+    "docs/db/specialist-assignments-domain.md": "18fa9f51a89a7ff4d3bbb7ec828a28cb1649e6b3e53a53e915a9d4856b09ec2f",
+    "docs/system-analytics/specialist-assignments.md": "85ddb4ce4fad2797604d09695fd9978820dc9a7ae761d66e2bcb7be856f07b3d",
+    "site-docs/guides/company-specialist-webhooks.md": "f5efa283589cc57bc0979231d57f0b8e15dee3e53d8de870dbc838ca9565524d",
+    "site-docs/ru/guides/company-specialist-webhooks.md": "85261a6d379a4a9ec8c2cf603cd29c01586365ab81668399165209e78531da34",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "56535868fc8d3c4d80074ae4ba872866fac0ca8826da2adfd602e9650a1656d1",
+    "web/lib/brain/knowledge-assignment-policy.ts": "73ff21d3c8816febccf6bd1dfc966aa340943222283a1c46d5cb6acf70c56e58",
+    "web/lib/db/__tests__/migration-company-brain-specialists.integration.test.ts": "fcd8b32dbe40564a8adef56543cf63c3b998331c39c08f2ec955cbcb3709da65",
+    "web/lib/db/migrations/0248_specialist_question_answer.sql": "37b857119fb5acb08bcd966590369cb2799ae9e215cfab6d8e3114f05c85f96e",
+    "web/lib/db/migrations/meta/0248_snapshot.json": "0ec6d671e5e0bbeb8f97d04ce3e3c4cbbacb8f4a72aa61014daf6f3a768078c1",
+    "web/lib/db/migrations/meta/_journal.json": "5a69df2ad91749f30fe876a445dec9325a57c42904f37b70916384d9f91df226",
+    "web/lib/db/schema.ts": "b44e381ecc98b900cf5b980ee3d6a9a7814d4d978747aeeb01f88361c9eb03bd",
+    "web/lib/services/assignment-question-response.ts": "9a701f144deda005024ad2eca230dd139f756c59f6689821a333c40788887fdd",
+    "web/lib/services/assignment-question.ts": "9f011002bb306f9d0a450dc33fa066ea24efe7da03c5a5e0464b709d32107132",
+    "web/lib/services/hitl.ts": "fd484543fbbdefa023b6d5817280d6bdc80ae8bdcdd370967a0484fcc97b1777",
+    "web/lib/specialist-assignments/context.ts": "896c05e76cb0df81a625ec574578bdc9ca7f95c7d6df65007181fe7f22af106b",
+    "web/lib/specialist-assignments/question-authority.ts": "6aebd98c604d0c754b01854adacbb95d8308e25ee43e24209849293787d05ea0",
+    "web/lib/specialist-assignments/question-types.ts": "9dabf12a3978fd25745e6faee1477d94f31944d19590caff58c6a7e4c9d0f7be"
+  }
+}

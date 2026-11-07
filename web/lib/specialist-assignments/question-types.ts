@@ -64,3 +64,42 @@ export const assignmentQuestionReceiptSchema = z
 export type AssignmentQuestionReceipt = z.infer<
   typeof assignmentQuestionReceiptSchema
 >;
+
+/** Human answers use exact assignment/input CAS and never accept caller provenance. */
+export const assignmentQuestionResponseSchema = z
+  .object({
+    expectedRevision: knowledgeRevisionSchema,
+    inputRevision: knowledgeRevisionSchema,
+    response: z
+      .record(z.string(), z.unknown())
+      .refine((value) => Object.keys(value).length <= 64),
+    idempotencyKey: knowledgeDeliveryKeySchema,
+  })
+  .strict();
+
+export const assignmentQuestionAnswerSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    assignmentId: postgresTextSchema.min(1).max(128),
+    questionId: postgresTextSchema.min(1).max(128),
+    sourceRunId: postgresTextSchema.min(1).max(128),
+    sourceInputRevision: knowledgeRevisionSchema,
+    answeredInputRevision: knowledgeRevisionSchema,
+    expectedRevision: knowledgeRevisionSchema,
+    inputSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    responseSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    principalKey: z.string().regex(/^[a-f0-9]{64}$/),
+    requestKey: knowledgeDeliveryKeySchema,
+    requestDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    actor: knowledgeActorSchema.safeExtend({
+      kind: z.literal("user"),
+      id: postgresTextSchema.min(1).max(192),
+      runId: z.null(),
+      attemptId: z.null(),
+    }),
+    acceptedAt: z.string().datetime(),
+  })
+  .strict();
+export type AssignmentQuestionAnswer = z.infer<
+  typeof assignmentQuestionAnswerSchema
+>;

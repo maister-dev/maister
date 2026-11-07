@@ -48,7 +48,7 @@ export function assignmentInputReadPolicy(
   if (identity.kind === "company_agent")
     return sql`((${assignmentId}=${identity.execution.assignment.id}
       AND (${revision})::text=${String(identity.execution.assignment.inputRevision)}
-      AND ${digest}=${identity.execution.assignment.inputSha256}) OR (${companyEventInputReadPolicy(identity, assignmentId, revision, digest)}))`;
+      AND ${digest}=${identity.execution.assignment.inputSha256}) OR (${assignmentId}=${identity.execution.assignment.id} AND specialist_run_has_input(${identity.actor.runId},(${assignmentId})::text,(${revision})::integer,(${digest})::text)) OR (${companyEventInputReadPolicy(identity, assignmentId, revision, digest)}))`;
 
   return sql`EXISTS (
     SELECT 1 FROM specialist_assignments source_assignment
@@ -122,7 +122,7 @@ function projectAssignmentInputReadPolicy(
       JOIN package_installs pin ON pin.id=attachment.package_install_id
       JOIN users initiator ON initiator.id=original.actor->>'id'
       WHERE appointment.run_id=${identity.actor.runId} AND (${appointmentKind})
-        AND appointment.assignment_id=${assignmentId} AND appointment.input_revision::text=(${revision})::text AND original.digest=${digest}
+        AND appointment.assignment_id=${assignmentId} AND specialist_run_has_input(execution.id,appointment.assignment_id,(${revision})::integer,(${digest})::text)
         AND requested.project_id=${identity.projectId} AND requested.company_id IS NULL
         AND requested.status IN ('active','waiting_input','waiting_children','waiting_resource','reconciling','awaiting_acceptance')
         AND (requested.origin->>'kind'<>'event' OR EXISTS (

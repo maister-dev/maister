@@ -27,6 +27,11 @@ import {
 import { NextResponse } from "next/server";
 import pino from "pino";
 
+import { answerAssignmentQuestion } from "./assignment-question-response";
+
+import { decodeAssignmentQuestionSubject } from "@/lib/specialist-assignments/question-authority";
+import { parseScheduledRequestSnapshot } from "@/lib/agents/scheduled-request";
+import { assertScheduledRequestMatches } from "@/lib/agents/scheduled-request-store";
 import { requireProjectAction } from "@/lib/authz";
 import {
   claimAssignment,
@@ -7115,6 +7120,43 @@ export async function respondToHitl(
   }
 
   if (hitlRow.kind === "agent_question") {
+    if (typeof hitlRow.specialistAssignmentId === "string") {
+      if (actor.kind !== "user")
+        throw new MaisterError(
+          "UNAUTHORIZED",
+          "Assignment clarification requires its actual human responder",
+        );
+      if (bodyKeys.length !== 1 || bodyKeys[0] !== "response")
+        throw new MaisterError(
+          "CONFIG",
+          "Assignment Inbox clarification accepts only its exact response field",
+        );
+      const subject = decodeAssignmentQuestionSubject(hitlRow.schema);
+      const result = await answerAssignmentQuestion(
+        db,
+        actor.userId,
+        hitlRow.specialistAssignmentId,
+        hitlRequestId,
+        {
+          expectedRevision: subject.expectedRevision + 1,
+          inputRevision: subject.inputRevision,
+          response: body.response,
+          idempotencyKey: `hitl:${hitlRequestId}`,
+        },
+        recordSuccessAudit,
+      );
+
+      return NextResponse.json(
+        {
+          ok: true,
+          runStatus: runRow.status,
+          state: "resume-queued",
+          idempotent: result.idempotent,
+          inputRevision: result.inputRevision,
+        },
+        { status: result.idempotent ? 200 : 202 },
+      );
+    }
     log.debug({ runId, hitlRequestId, branch: "agent_question" }, "dispatch");
 
     return await handleAgentQuestionResponse({
