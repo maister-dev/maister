@@ -2314,3 +2314,162 @@ it("IT-CBX-01 context upgrade preserves populated input/attribution, rolls back 
     await legacy.stop();
   }
 }, 180000);
+
+it("IT-CBA-06 refuses a foreign Inbox destination before assignment, input or outbox persistence", async () => {
+  const origin = { kind: "manual" as const, interactionId: randomUUID() };
+  const before = (
+    await database.pool.query(
+      "SELECT (SELECT count(*)::int FROM specialist_assignments) AS assignments,(SELECT count(*)::int FROM specialist_input_revisions) AS inputs,(SELECT count(*)::int FROM domain_events WHERE kind='specialist.assignment_changed') AS events",
+    )
+  ).rows[0];
+
+  await expect(
+    createSpecialistAssignment(database.db, requesterId, {
+      ...prepared,
+      origin,
+      destination: { kind: "inbox", userId: administratorId },
+    }),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "assignment_destination_unavailable" },
+  });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT (SELECT count(*)::int FROM specialist_assignments) AS assignments,(SELECT count(*)::int FROM specialist_input_revisions) AS inputs,(SELECT count(*)::int FROM domain_events WHERE kind='specialist.assignment_changed') AS events",
+      )
+    ).rows[0],
+  ).toEqual(before);
+  const accepted = await createSpecialistAssignment(database.db, requesterId, {
+    ...prepared,
+    origin,
+  });
+
+  expect(accepted.destination).toEqual({ kind: "inbox", userId: requesterId });
+});
+
+it("IT-CBA-06 binds task replies to the actual project and thread without disclosing company work into a task", async () => {
+  const project = await seedProjectRow(database.db);
+  const taskId = randomUUID();
+  const otherTaskId = randomUUID();
+  const commentId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'member')",
+    [randomUUID(), project.id, requesterId],
+  );
+  await database.pool.query(
+    "INSERT INTO tasks(id,project_id,number,title,prompt) VALUES($1,$2,1,'Reply target','Research'),($3,$2,2,'Other thread','Research')",
+    [taskId, project.id, otherTaskId],
+  );
+  await database.pool.query(
+    "INSERT INTO task_comments(id,project_id,task_id,actor_type,actor_id,body) VALUES($1,$2,$3,'user',$4,'Request bounded research')",
+    [commentId, project.id, taskId, requesterId],
+  );
+  const destination = {
+    kind: "task_comment" as const,
+    projectId: project.id,
+    taskId,
+    threadCommentId: commentId,
+  };
+  const projectInput: PreparedSpecialistAssignment = {
+    ...prepared,
+    owner: { kind: "project", projectId: project.id },
+    destination,
+  };
+
+  expect(
+    (await createSpecialistAssignment(database.db, requesterId, projectInput))
+      .destination,
+  ).toEqual(destination);
+  for (const rejected of [
+    { ...prepared, destination },
+    {
+      ...projectInput,
+      destination: { ...destination, projectId: randomUUID() },
+    },
+    { ...projectInput, destination: { ...destination, taskId: randomUUID() } },
+    { ...projectInput, destination: { ...destination, taskId: otherTaskId } },
+    {
+      ...projectInput,
+      destination: { ...destination, threadCommentId: randomUUID() },
+    },
+  ]) {
+    await expect(
+      createSpecialistAssignment(database.db, requesterId, rejected),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "assignment_destination_unavailable" },
+    });
+  }
+  expect(
+    (
+      await createSpecialistAssignment(database.db, requesterId, {
+        ...projectInput,
+        destination: { ...destination, threadCommentId: null },
+      })
+    ).destination,
+  ).toEqual({ ...destination, threadCommentId: null });
+});
+
+it("IT-CBA-06 requires a current enabled requester-owned outbound subscription rather than a platform or foreign target", async () => {
+  const subscriptionId = randomUUID();
+  const destination = {
+    kind: "outbound_subscription" as const,
+    subscriptionId,
+    correlationId: randomUUID(),
+  };
+
+  await database.pool.query(
+    "INSERT INTO webhook_subscriptions(id,owner_user_id,name,url,event_types,signing_secret_ref) VALUES($1,$2,'Assignment result reply','https://example.invalid/reply','[\"*\"]','env:ASSIGNMENT_REPLY_TEST_SECRET')",
+    [subscriptionId, requesterId],
+  );
+  expect(
+    (
+      await createSpecialistAssignment(database.db, requesterId, {
+        ...prepared,
+        destination,
+      })
+    ).destination,
+  ).toEqual(destination);
+  for (const owner of [administratorId, null]) {
+    await database.pool.query(
+      "UPDATE webhook_subscriptions SET owner_user_id=$2 WHERE id=$1",
+      [subscriptionId, owner],
+    );
+    await expect(
+      createSpecialistAssignment(database.db, requesterId, {
+        ...prepared,
+        destination,
+      }),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "assignment_destination_unavailable" },
+    });
+  }
+  await database.pool.query(
+    "UPDATE webhook_subscriptions SET owner_user_id=$2,enabled=false WHERE id=$1",
+    [subscriptionId, requesterId],
+  );
+  await expect(
+    createSpecialistAssignment(database.db, requesterId, {
+      ...prepared,
+      destination,
+    }),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "assignment_destination_unavailable" },
+  });
+  await database.pool.query("DELETE FROM webhook_subscriptions WHERE id=$1", [
+    subscriptionId,
+  ]);
+  await expect(
+    createSpecialistAssignment(database.db, requesterId, {
+      ...prepared,
+      destination,
+    }),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "assignment_destination_unavailable" },
+  });
+});

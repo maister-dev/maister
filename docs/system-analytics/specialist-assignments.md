@@ -718,12 +718,63 @@ writers; finishing the foundation alone does not qualify accepted cooperation.
 This ordering removes the T23-to-T28 dependency cycle without removing any result,
 evidence-preservation or acceptance requirement.
 
+### Durable origin-delivery contract (Designed — T25)
+
+**Implemented destination admission; receipt capture and delivery remain designed.**
+The shared assignment store validates the destination under the same transaction
+as current requester/owner authority and before creating any assignment, input or
+event. Inbox delivery is private to the actual requester. Task/thread selectors
+must identify that assignment's current unarchived project and actual task/comment.
+Company assignments cannot target a task. Outbound selectors require an enabled,
+requester-owned user subscription (no project/platform recipient), subscribed to
+`assignment.result_available` or `*`. The endpoint and credentials remain server
+configuration. Missing, foreign, disabled or unsupported targets refuse with safe
+`PRECONDITION` reason `assignment_destination_unavailable`; no fallback target is
+chosen. Native store integration proves refusal/rollback and valid targets. Future
+dispatch must repeat validation rather than treating this snapshot as authority.
+
+
+Result availability and accepted completion are distinct signals. T25 may notify
+that an exact validated result is available from a settled root appointment; it
+cannot create an acceptance or complete an assignment. T28 adds accepted-outcome
+capture in the actual acceptance transaction and reuses these adapters with a
+distinct signal identity. A child ending or an agent's prose cannot trigger either.
+
+| Boundary | Required observable behavior |
+| --- | --- |
+| Destination admission | Server-prepared typed target; Inbox recipient is the actual requester, task/thread belongs to the assignment's project, outbound subscription is enabled and currently owned by that requester. Missing/foreign/disabled targets refuse before assignment/input/event persistence. Company work cannot reply into an unrelated project. |
+| Signal identity | Assignment, exact effective input revision, root Run, exact validated result revision/schema digest, signal kind and frozen destination identify one business delivery receipt. Repeated domain-event dispatch adopts it. No model-provided result or acceptance identity. |
+| Internal delivery | Existing Inbox item or fixed control-only task comment and its delivered receipt commit together. Retrying after a lost response returns that receipt, never another comment/item or Run. Source-derived findings remain behind an authorized Run link. |
+| Inbox authorization | Native Inbox rows retain assignment/result/source linkage. Current recipient ownership, assignment read and full source access filter both content and count before pagination; project-only queries exclude company rows. Source revocation hides existing retained rows without deleting evidence. |
+| Outbound reply | Exactly one configured requester-owned subscription receives a stable event/delivery identity using existing signing, egress, lease, attempts and backoff. Platform or sibling subscriptions cannot broaden the destination. Every send/retry rechecks current recipient/source authority; lost ACK repeats only delivery and retains at-least-once semantics. |
+| Failure/recovery | Persist pending intent before dispatch. All channels reuse the existing delivery lease, bounded attempt budget/backoff and append-only attempt history (default eight attempts). Source/destination denial creates an inspectable blocked outcome. Authorized replay preserves attempt history and rechecks the exact frozen target; it cannot choose a fallback destination or rerun work. No second delivery-attempt ledger is added. |
+| Quiet checks | T39 applies the configured quiet/incident policy before routine result publication. Unchanged checks do not manufacture repeated alerts; required action and requested delivery remain durable. |
+
+The owning migration extends `inbox_items` with an exclusive company/project
+native-assignment branch while preserving every legacy project/task row and
+recipient-owned read mutation. A delivery-receipt table records business routing
+and idempotency, not execution or transport attempts. The existing webhook
+delivery engine gains an internal assignment target for Inbox/task adapters;
+its current HTTP sender serves a configured outbound reply. Internal delivery
+remains available when external webhooks are disabled; configured outbound
+replies pause under that setting without losing their native intent.
+Immutable receipt identity includes the
+retained result witness; mutable delivery status cannot rewrite the target or
+source. Existing main/Brain lineage boundaries remain separate. No Brain FK is
+introduced, and logical evidence references do not block project deletion.
+
+Qualification starts at destination admission (real Postgres creation/rollback),
+then exact-result event capture, internal duplicate/concurrent dispatch, current
+read revocation, native Inbox count/list/read, real local HTTP lost-ACK retry,
+changed recipient and bounded failure/recovery. Actual installed-package delivery
+remains T40. The platform task cannot be marked complete before these adapters
+and their current-authority/recovery paths pass.
+
 ### Delivery and cancellation windows
 
 Destinations are a task/comment thread, current user Inbox, or existing configured outbound subscription/event reply. Endpoint/credentials come from server configuration, not model-supplied URL. Internal comment/Inbox delivery has a unique receipt key and is idempotent. External delivery carries a stable ID and is at-least-once unless the peer proves stronger semantics. Lost delivery ACK retries delivery only; never reruns the assignment/effect. Current access gates content before delivery, including changed recipients.
 
 Crash before intake commit leaves no assignment orphan; after commit reuses source receipt/reserved run. Crash after answer intent but before ACK leaves delivery retryable under its exact binding. Crash after acceptance but before message delivery is owned by the existing outbox. Cancelling the assignment never deletes its operation/accepted evidence; reconciliation can continue under a dedicated current recovery grant without reviving the cancelled agent. Missing access results in a safe blocker and actionable authorized-owner incident.
-
 
 ## Expectations
 

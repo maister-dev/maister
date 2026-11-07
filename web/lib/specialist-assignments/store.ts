@@ -21,6 +21,7 @@ import pino from "pino";
 
 import { authorizeAssignment } from "./access";
 import { assertAssignmentAppointment } from "./appointment";
+import { validateAssignmentDestination } from "./destination";
 import {
   assignmentDestinationSchema,
   assignmentObjectiveInputSchema,
@@ -350,6 +351,7 @@ export async function createSpecialistAssignmentInTransaction(
     "assignments:read",
     policy.data,
   );
+  await validateAssignmentDestination(tx, userId, owner.data, destination.data);
   let access = await authorizeSourceRestrictions(
     tx,
     { kind: "user", userId },

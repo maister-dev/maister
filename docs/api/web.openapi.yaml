@@ -36967,9 +36967,12 @@ components:
               minLength: 1
               maxLength: 128
     CBAssignmentDestination:
-      description: Server-frozen delivery destination. Configured subscription identity resolves endpoint and
-        credentials; arbitrary URLs are never accepted. Content delivery still requires current recipient/source
-        access.
+      description: Server-frozen delivery destination validated before assignment persistence. Inbox recipient
+        is the actual requester. Task and optional thread belong to the assignment project; company work cannot
+        target a task. An outbound target is an enabled requester-owned user subscription matching
+        assignment.result_available or wildcard. Configured subscription identity resolves endpoint and credentials;
+        arbitrary URLs are never accepted. Missing or foreign destinations refuse with PRECONDITION and reason
+        assignment_destination_unavailable. Content delivery still requires current recipient/source access.
       oneOf:
         - type: object
           additionalProperties: false
