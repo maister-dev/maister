@@ -1,0 +1,75 @@
+{
+  "task": "T22",
+  "slice": "Authenticated company manual HTTP submission and exact assignment inspection",
+  "date": "2026-11-07",
+  "baseCommit": "ca61d2e9a",
+  "status": "Company HTTP checkpoint qualified; full T22 and T21 phase exit remain open",
+  "red": {
+    "testsFailed": 1,
+    "testsPassed": 44,
+    "case": "Actual session POST returned 503 instead of a new assignment receipt"
+  },
+  "gates": {
+    "nativeIntegration": {
+      "tests": 45,
+      "files": 1,
+      "durationSeconds": 31.81,
+      "exitCode": 0
+    },
+    "projectEvidenceReads": {
+      "tests": 15,
+      "files": 1,
+      "durationSeconds": 3.22,
+      "exitCode": 0
+    },
+    "unit": {
+      "tests": 9318,
+      "files": 889,
+      "durationSeconds": 25.57,
+      "exitCode": 0
+    },
+    "types": {
+      "exitCode": 0
+    },
+    "lint": {
+      "exitCode": 0
+    },
+    "format": {
+      "exitCode": 0
+    },
+    "contracts": {
+      "exitCode": 0
+    },
+    "docs": {
+      "exitCode": 0
+    }
+  },
+  "qualified": [
+    "Actual session POST and internal concurrent delivery converge to one assignment and reserved Run",
+    "Strict assignment DTO, 201/new and 200/replay, private/no-store response headers",
+    "Actual existing scheduler wake respects real stored host pressure; no session create/prompt while Pending",
+    "Exact current owner/source-authorized company GET and explicit missing/unauthenticated/unauthorized responses",
+    "Forged client authority and changed payload under the same delivery identity refuse",
+    "Completed exact HTTP replay works with the supervisor stopped and installed provider schema temporarily unavailable",
+    "The existing native driver executes the same admitted work once after the test removes its host fence and explicitly admits it"
+  ],
+  "limits": [
+    "Session principal resolution is the existing controlled test seam; DB, installed fixture package, route handlers, admission, scheduler, supervisor and ACP process are real",
+    "The final native command accidentally included an unmatched Brain path filter; the actual project reader file was discovered and separately executed with 15 passing tests",
+    "The HTTP runtime fixture deliberately exercises queued admission; fresh HTTP-to-scheduler driver execution requires an isolated dispatch qualification, not inferred from manual driving",
+    "Project create, bearer adapters, mentions/schedules/events/webhooks and agent delegation remain Designed or pending under T22/T22.1/T27",
+    "This is not pilot or release qualification"
+  ],
+  "sourceSha256": {
+    "web/app/api/specialist-assignments/route.ts": "4383923ffc81f74c62b83f5c356929a7f4be59eb572ca9d512ccc1a275213340",
+    "web/app/api/specialist-assignments/[assignmentId]/route.ts": "35b67aa0db4f8bd66315abea15fe13776cb394140b600c73cde320c8c12515a9",
+    "web/lib/specialist-assignments/company-manual-intake.ts": "8d461fb21d02f31bf0ba3a9e7249b46f647a508ab86cdb80cf58946419d39600",
+    "web/lib/brain/knowledge-http.ts": "16e6ec8d5cf955cb609797f3c8fb7708cc9961bae845eac90b12cefe856617dc",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "ee2981857e82adcfe48e950e50c5cf59b6bc0d023b94007c1c517d765bdccb6a",
+    "docs/api/web.openapi.yaml": "cbfe53cf7bd1f8580caca5098ce7ef81435bd6989fed0becc56f472f633cf886",
+    "docs/system-analytics/specialist-assignments.md": "716e7016758ad615b46115b98995d0e2c9003a4cf8d90cc01ae0e0f617ccf595",
+    "AGENTS.md": "43350a6bef875c02b2287f949cd0ae013220b1b576f7dd77a1b51281212f323e",
+    ".ai-factory/ARCHITECTURE.md": "ddaa3165e085d2647b4f57751e7c39b9e9a5f1116387b584767f7f8700687955",
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "6d798881ac07d1cf1af1a11fa5dd4a4c60273709a415448acbadec65600ba56e"
+  }
+}

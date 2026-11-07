@@ -54,6 +54,7 @@ export function knowledgeErrorResponse(
     const status =
       httpStatusForAuthz(error.code) ??
       (reason === "knowledge_reference_unavailable" ||
+      reason === "assignment_reference_unavailable" ||
       reason === "company_binding_reference_unavailable"
         ? 404
         : reason === "knowledge_body_too_large"

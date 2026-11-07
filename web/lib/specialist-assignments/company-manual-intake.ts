@@ -47,6 +47,7 @@ import { MaisterError } from "@/lib/errors";
 import { createExecutionHosts, localHost } from "@/lib/execution-host";
 import { knowledgeDeliveryKeySchema } from "@/lib/brain/knowledge-types";
 import { resolveFlowExportContract } from "@/lib/run-results/flow-export";
+import { promoteNextPending } from "@/lib/scheduler";
 
 export const companyManualAssignmentRequestSchema =
   specialistIntakeRequestSchema
@@ -376,4 +377,38 @@ export async function reserveCompanyManualAssignment(
   } catch (error) {
     throw redactQueryError(error);
   }
+}
+
+/** Wake the existing scheduler after durable intake, including a replay of interrupted admission. */
+export async function submitCompanyManualAssignment(
+  db: Db,
+  userId: string,
+  value: unknown,
+): Promise<SpecialistIntakeReceipt> {
+  const receipt = await reserveCompanyManualAssignment(db, userId, value);
+
+  if (receipt.assignment.status === "active") {
+    const row = (
+      await db.execute(
+        sql`SELECT execution.run_kind,execution.status
+            FROM specialist_run_links link JOIN runs execution ON execution.id=link.run_id
+            WHERE link.assignment_id=${receipt.assignment.id} AND link.input_revision=${receipt.inputRevision}
+              AND link.role IN ('coordinator','specialist')
+            ORDER BY link.linked_at,link.run_id LIMIT 1`,
+      )
+    ).rows[0];
+
+    if (!row || (row.run_kind !== "agent" && row.run_kind !== "flow"))
+      throw new MaisterError(
+        "CONFIG",
+        "The reserved specialist assignment has no valid initial execution",
+      );
+    if (row.status === "Pending")
+      await promoteNextPending({
+        db,
+        pool: row.run_kind === "agent" ? "agent" : "flow",
+      });
+  }
+
+  return receipt;
 }

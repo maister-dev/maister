@@ -238,8 +238,11 @@ web/lib/supervisor-client ──HTTP──► supervisor/src/http-api  ──►
   and emits content-free facts on the existing domain outbox. Current action
   and source access are checked in the transaction; historical grants never
   authorize current operations. Company assignment storage has no repository
-  dependency. Native company execution and verified acceptance are later
-  slices of this module.
+  dependency. Company manual intake composes the existing native reservation
+  transaction bodies, then wakes the existing pool scheduler after commit.
+  Session API handlers only parse bounded input and return currently authorized
+  DTOs. Project manual admission and verified assignment acceptance remain later
+  slices; native company agent/coordinator execution is implemented.
 - ✅ Server Action (`app/.../actions.ts`) imports from `lib/*`.
 - ✅ `lib/supervisor-client.ts` imports the wire error taxonomy plus a small set
   of client-safe pure modules (the execution-host lag predicate and default,

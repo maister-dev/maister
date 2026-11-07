@@ -96,6 +96,9 @@ import { runFlow } from "@/lib/flows/runner";
 import { prepareFlowPermissionResponse } from "@/lib/flows/graph/prompt-permission";
 import { MaisterError } from "@/lib/errors";
 import { requireActiveUserById } from "@/lib/authz";
+import { GET as assignmentGet } from "@/app/api/specialist-assignments/[assignmentId]/route";
+import { POST as assignmentPost } from "@/app/api/specialist-assignments/route";
+import { specialistAssignmentSchema } from "@/lib/specialist-assignments/types";
 import { POST as stopRunPost } from "@/app/api/runs/[runId]/stop/route";
 import { POST as respondHitlPost } from "@/app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route";
 import { GET as retainedResultGet } from "@/app/api/runs/[runId]/results/[revision]/route";
@@ -162,6 +165,7 @@ const administratorId = randomUUID();
 const requesterId = randomUUID();
 const outsiderId = randomUUID();
 let browserUserId = requesterId;
+let browserAuthenticated = true;
 let browserLocale: "en" | "ru" = "en";
 const result = {
   schema: "./schemas/evidence-findings.v1.json",
@@ -273,7 +277,12 @@ vi.mock("next-intl/server", () => ({
 }));
 vi.mock("@/lib/authz", async (original) => ({
   ...(await original<typeof import("@/lib/authz")>()),
-  requireActiveSession: async () => requireActiveUserById(browserUserId),
+  requireActiveSession: async () => {
+    if (!browserAuthenticated)
+      throw new MaisterError("UNAUTHENTICATED", "Login required");
+
+    return requireActiveUserById(browserUserId);
+  },
 }));
 
 function useEngineVersion(version: string) {
@@ -2044,13 +2053,29 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
         ]),
       },
     });
+    const submitManual = (value: unknown): Promise<Response> =>
+      assignmentPost(
+        new NextRequest("http://localhost/api/specialist-assignments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(value),
+        }),
+      );
+    await database.pool.query(
+      "INSERT INTO execution_host_pressure(execution_host_id,pressured_since) SELECT id,now() FROM execution_hosts WHERE kind='local_direct' AND retired_at IS NULL ON CONFLICT DO NOTHING",
+    );
     const deliveries = await Promise.all([
-      reserveCompanyManualAssignment(
-        database.db,
-        requesterId,
-        manualRequest,
-        hosts,
-      ),
+      (async () => {
+        const response = await submitManual(manualRequest);
+
+        expect([200, 201]).toContain(response.status);
+        expect(response.headers.get("cache-control")).toBe("private, no-store");
+        const assignment = specialistAssignmentSchema.parse(
+          await response.json(),
+        );
+
+        return { assignment, duplicate: response.status === 200 };
+      })(),
       reserveCompanyManualAssignment(
         database.db,
         requesterId,
@@ -2063,14 +2088,76 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
       false,
       true,
     ]);
-    expect(new Set(deliveries.map((delivery) => delivery.receiptId)).size).toBe(
-      1,
-    );
+    expect(
+      new Set(deliveries.map((delivery) => delivery.assignment.id)).size,
+    ).toBe(1);
     const assignment = deliveries[0]!.assignment;
 
     expect(assignment.runIds).toHaveLength(1);
     expect(deliveries[1]!.assignment.runIds).toEqual(assignment.runIds);
     const receipt = { runId: assignment.runIds[0]! };
+    const inspect = (assignmentId: string): Promise<Response> =>
+      assignmentGet(
+        new NextRequest(
+          "http://localhost/api/specialist-assignments/" + assignmentId,
+        ),
+        {
+          params: Promise.resolve({ assignmentId }),
+        },
+      );
+    expect(
+      (
+        await database.pool.query("SELECT status FROM runs WHERE id=$1", [
+          receipt.runId,
+        ])
+      ).rows,
+    ).toEqual([{ status: "Pending" }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt')",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toEqual([{ count: 0 }]);
+    const inspected = await inspect(assignment.id);
+
+    expect(inspected.status).toBe(200);
+    expect(inspected.headers.get("cache-control")).toBe("private, no-store");
+    expect(specialistAssignmentSchema.parse(await inspected.json())).toEqual(
+      assignment,
+    );
+    expect((await inspect(randomUUID())).status).toBe(404);
+    browserUserId = outsiderId;
+    try {
+      expect((await inspect(assignment.id)).status).toBe(403);
+    } finally {
+      browserUserId = requesterId;
+    }
+    expect(
+      (
+        await submitManual({
+          ...manualRequest,
+          authority: { action: "assignments:update" },
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await submitManual({
+          ...manualRequest,
+          objective: "Different HTTP work under the same key",
+        })
+      ).status,
+    ).toBe(409);
+    browserAuthenticated = false;
+    try {
+      expect((await submitManual(manualRequest)).status).toBe(401);
+      expect((await inspect(assignment.id)).status).toBe(401);
+    } finally {
+      browserAuthenticated = true;
+    }
+    await database.pool.query("DELETE FROM execution_host_pressure");
 
     expect(await tryStartRun(receipt.runId, { db: database.db })).toMatchObject(
       { started: true },
@@ -2488,17 +2575,14 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
 
     await rename(schemaPath, originalSchema);
     try {
-      await expect(
-        reserveCompanyManualAssignment(
-          database.db,
-          requesterId,
-          manualRequest,
-          hosts,
-        ),
-      ).resolves.toMatchObject({
-        duplicate: true,
-        receiptId: deliveries[0]!.receiptId,
-        assignment: { id: assignment.id, runIds: [receipt.runId] },
+      const replay = await submitManual(manualRequest);
+
+      expect(replay.status).toBe(200);
+      expect(
+        specialistAssignmentSchema.parse(await replay.json()),
+      ).toMatchObject({
+        id: assignment.id,
+        runIds: [receipt.runId],
       });
     } finally {
       await rename(originalSchema, schemaPath);

@@ -208,6 +208,17 @@ Destinations are a task/comment thread, current user Inbox, or existing configur
 
 Crash before intake commit leaves no assignment orphan; after commit reuses source receipt/reserved run. Crash after answer intent but before ACK leaves delivery retryable under its exact binding. Crash after acceptance but before message delivery is owned by the existing outbox. Cancelling the assignment never deletes its operation/accepted evidence; reconciliation can continue under a dedicated current recovery grant without reviving the cancelled agent. Missing access results in a safe blocker and actionable authorized-owner incident.
 
+The session `POST /api/specialist-assignments` exposes company-owned manual
+submission with the bounded original request and idempotency key. It returns the
+existing assignment DTO (201 for new work, 200 for exact replay), then uses the
+existing pool scheduler after the reservation commits. Host pressure/capacity can
+leave execution Pending. A replay can signal interrupted pending admission without
+allocating another execution. `GET /api/specialist-assignments/{id}` supports
+currently authorized company/project inspection; both responses are private and
+no-store. The create operation's project branch and external bearer adapters remain
+Designed; this checkpoint does not qualify a fresh public request's full dispatch
+or the stand pilot.
+
 ## Expectations
 
 - **CBA-01:** Assignment responsibility and all required request/result/origin fields survive retries/cancellation with existing run links, enforced by the assignment store and versioned input rows (`IT-CBA-01`).
