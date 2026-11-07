@@ -4,7 +4,7 @@ import { buildLeftRailSections } from "@/components/chrome/left-rail-sections";
 
 const label = (key: string): string => key;
 
-// Native Knowledge (ADR-200) extends the ADR-172 spine after Inbox;
+// Native Knowledge (ADR-202) extends the ADR-172 spine after Inbox;
 // administrator-only destinations remain in the tail.
 describe("buildLeftRailSections", () => {
   it("projects every member-permitted section, including Observatory", () => {

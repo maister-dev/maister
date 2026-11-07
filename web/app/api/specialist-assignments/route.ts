@@ -2,6 +2,8 @@ import "server-only";
 
 import { type NextRequest, type NextResponse } from "next/server";
 
+import { interactiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
+import { assertInteractiveLaunchOrigin } from "@/lib/tasks/launch-http";
 import { requireActiveSession } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import {
@@ -15,10 +17,14 @@ import { getSpecialistAssignment } from "@/lib/specialist-assignments/store";
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     const user = await requireActiveSession();
+
+    assertInteractiveLaunchOrigin(request);
+    const principal = await interactiveTaskLaunchPrincipal();
     const receipt = await submitManualSpecialistAssignment(
       getDb(),
       user.id,
       await readKnowledgeJson(request),
+      principal,
     );
     const assignment = await getSpecialistAssignment(
       getDb(),

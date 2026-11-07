@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: MAIster configured stand helper
   version: 1.0.0
-  description: Designed — ADR-203. Narrow configured systemd helper. mTLS and target-bound service credentials
+  description: Designed — ADR-205. Narrow configured systemd helper. mTLS and target-bound service credentials
     are required. Accepted/pending HTTP status is not restart or health proof.
 servers:
   - url: https://127.0.0.1:7443

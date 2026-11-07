@@ -6033,9 +6033,15 @@ paths:
     post:
       operationId: extSpecialistAssignmentCreate
       summary: Submit scoped specialist manual work
-      description: Implemented for personal user tokens with current owner/source authority. Uses the same strict
+      description: >-
+        Implemented for personal user tokens with current owner/source authority. Uses the same strict
         company/project manual request and canonical idempotency identity as the session endpoint. Company
-        specialists and project operational specialists/coordinators reuse the existing native Run admission.
+        specialists and project operational specialists reuse their existing native Run admission.
+        A project coordinator instead enters the existing durable task-launch intent. A bearer request
+        has no interactive session authority: its automatic root requires a current accepted positive
+        qualification for the carrier's exact private-input source version. Missing/stale qualification
+        returns PRECONDITION/409 while preserving the queued assignment and carrier; no assessment or
+        manual authority is fabricated. Accepted work may remain queued before a Run exists.
         Project/agent/librarian tokens cannot impersonate a requesting user; governed agent delegation is
         a separate adapter. Token scope alone grants no company or project authority. Exact replay requires
         current read, submit and source access; changed payload conflicts without repeating work. CONFIG,
@@ -13677,173 +13683,6 @@ components:
           minLength: 1
           maxLength: 2048
           nullable: true
-    ExecutionPolicy:
-      type: object
-      properties:
-        preset:
-          type: string
-          enum:
-            - supervised
-            - assisted
-            - unattended
-        overrides:
-          $ref: "#/components/schemas/ExecutionPolicyOverrides"
-      required:
-        - preset
-      additionalProperties: false
-    ExecutionPolicyOverrides:
-      type: object
-      properties:
-        reworkExhaustion:
-          type: string
-          enum:
-            - escalate
-            - ship_with_warning
-            - fail
-        crashRetry:
-          type: string
-          enum:
-            - fail
-            - ralph_loop
-            - auto_retry
-        checks:
-          type: string
-          enum:
-            - strict
-            - advisory
-            - skip
-        permissions:
-          type: string
-          enum:
-            - ask
-            - auto_approve
-        humanGate:
-          type: string
-          enum:
-            - stop
-            - auto_pass
-        onStuck:
-          type: string
-          enum:
-            - escalate
-            - ship_with_warning
-            - notify_only
-        promotion:
-          type: string
-          enum:
-            - manual
-            - auto_on_ready
-        commits:
-          type: string
-          enum:
-            - keep_all
-            - squash_rework
-            - squash_on_promote
-            - defer
-        dirtyResolve:
-          type: string
-          enum:
-            - ask
-            - commit
-            - proceed
-        budget:
-          type: object
-          properties:
-            run:
-              type: object
-              properties:
-                maxTokens:
-                  nullable: true
-                  type: integer
-                  minimum: 1
-                  maximum: 9007199254740991
-                hardMaxTokens:
-                  nullable: true
-                  type: integer
-                  minimum: 1
-                  maximum: 9007199254740991
-                consecutiveFailures:
-                  nullable: true
-                  type: integer
-                  minimum: 1
-                  maximum: 9007199254740991
-                wallClockMinutes:
-                  nullable: true
-                  type: integer
-                  minimum: 1
-                  maximum: 9007199254740991
-                warnAtPct:
-                  nullable: true
-                  type: integer
-                  minimum: 1
-                  maximum: 100
-              additionalProperties: false
-            task:
-              type: object
-              properties:
-                maxTokens:
-                  nullable: true
-                  type: integer
-                  minimum: 1
-                  maximum: 9007199254740991
-                hardMaxTokens:
-                  nullable: true
-                  type: integer
-                  minimum: 1
-                  maximum: 9007199254740991
-                consecutiveFailures:
-                  nullable: true
-                  type: integer
-                  minimum: 1
-                  maximum: 9007199254740991
-                wallClockMinutes:
-                  nullable: true
-                  type: integer
-                  minimum: 1
-                  maximum: 9007199254740991
-                warnAtPct:
-                  nullable: true
-                  type: integer
-                  minimum: 1
-                  maximum: 100
-              additionalProperties: false
-            tree:
-              type: object
-              properties:
-                maxTokens:
-                  nullable: true
-                  type: integer
-                  minimum: 1
-                  maximum: 9007199254740991
-                hardMaxTokens:
-                  nullable: true
-                  type: integer
-                  minimum: 1
-                  maximum: 9007199254740991
-                consecutiveFailures:
-                  nullable: true
-                  type: integer
-                  minimum: 1
-                  maximum: 9007199254740991
-                wallClockMinutes:
-                  nullable: true
-                  type: integer
-                  minimum: 1
-                  maximum: 9007199254740991
-                warnAtPct:
-                  nullable: true
-                  type: integer
-                  minimum: 1
-                  maximum: 100
-              additionalProperties: false
-          additionalProperties: false
-        onBudgetBreach:
-          type: string
-          enum:
-            - escalate
-            - terminate
-            - terminate_restorable
-      additionalProperties: false
     CBSpecialist:
       type: object
       properties:

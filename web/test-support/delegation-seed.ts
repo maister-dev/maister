@@ -46,15 +46,10 @@ const execFileAsync = promisify(execFile);
 export async function enrollNativeDelegationParent(
   ctx: DelegationSeedCtx,
   runId: string,
+  agentId: string,
 ): Promise<void> {
-  const parent = (
-    await ctx.pool.query<{ agent_id: string }>(
-      "SELECT agent_id FROM runs WHERE id=$1",
-      [runId],
-    )
-  ).rows[0]!;
   const effective = await resolveEffectiveAgentDefinition(
-    { agentId: parent.agent_id, projectId: ctx.projectId },
+    { agentId: agentId, projectId: ctx.projectId },
     ctx.db,
   );
 
@@ -62,8 +57,8 @@ export async function enrollNativeDelegationParent(
     "UPDATE runs SET source_agent_id=$2,agent_activity_snapshot=$3::jsonb,knowledge_access=$4::jsonb,launched_at=now(),activity_sort_at=now(),activity_timestamp_provenance='launch' WHERE id=$1",
     [
       runId,
-      parent.agent_id,
-      JSON.stringify(buildAgentActivitySnapshot(parent.agent_id, effective)),
+      agentId,
+      JSON.stringify(buildAgentActivitySnapshot(agentId, effective)),
       JSON.stringify({
         schemaVersion: 1,
         state: "complete",

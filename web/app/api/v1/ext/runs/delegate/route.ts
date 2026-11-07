@@ -1,9 +1,17 @@
 import "server-only";
 
+import type { NativeDelegationInput } from "@/lib/orchestrator/native-input-types";
+
 import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
+import {
+  captureNativeDelegationInput,
+  inspectNativeDelegationInput,
+} from "@/lib/orchestrator/native-input";
+import { authorizeRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
+import { nativeSharedWorkspaceRefusal } from "@/lib/brain/knowledge-workspace-policy";
 import { launchAgentRun } from "@/lib/agents/launch";
 import { resolveEffectiveAgentDefinition } from "@/lib/agents/effective";
 import { getDb } from "@/lib/db/client";
@@ -288,6 +296,21 @@ export async function POST(
                 ctx.projectId,
                 parent.id,
               );
+              const [retainedTask] = await tx
+                .select({ delegationSpec: tasks.delegationSpec })
+                .from(tasks)
+                .where(eq(tasks.id, existing[0].id));
+              const retainedInput = retainedTask?.delegationSpec?.nativeInput;
+
+              if (retainedInput) {
+                const native = inspectNativeDelegationInput(retainedInput);
+
+                await authorizeRunKnowledgeDisclosure(
+                  tx,
+                  { kind: "token", tokenId: ctx.actor.tokenId },
+                  native.sourceRunId,
+                );
+              }
               await recordRequiredTokenAudit(
                 {
                   ...tokenAuditIdentity(ctx.actor),
@@ -368,6 +391,7 @@ export async function POST(
         // target — presence and linkage are unconditional; it is only recorded
         // in the delegation snapshot.
         let childTaskId: string | undefined = existing[0]?.id;
+        let nativeInput: NativeDelegationInput | null = null;
 
         try {
           // ADR-163 D8: admission and the child task share ONE transaction, so
@@ -382,6 +406,20 @@ export async function POST(
                 parent.id,
               );
             await lockDelegationParent(tx, parent.id);
+            nativeInput = await captureNativeDelegationInput(
+              tx,
+              { kind: "token", tokenId: ctx.actor.tokenId },
+              {
+                sourceRunId: parent.id,
+                target: resolvedFlow
+                  ? { kind: "flow", id: resolvedFlow.flowId }
+                  : { kind: "agent", id: body.target.agentId! },
+                title: body.title ?? titleFromPrompt(body.prompt),
+                prompt: body.prompt,
+              },
+            );
+            if (nativeInput && body.workspaceMode === "shared")
+              throw nativeSharedWorkspaceRefusal();
             if (operation) {
               const replayed = await findDelegationOperationTasks(
                 tx,
@@ -392,6 +430,25 @@ export async function POST(
 
               if (replayed[0]) {
                 childTaskId = replayed[0].id;
+                const [retainedTask] = await tx
+                  .select({ delegationSpec: tasks.delegationSpec })
+                  .from(tasks)
+                  .where(eq(tasks.id, childTaskId));
+                const retainedInput = retainedTask?.delegationSpec?.nativeInput;
+
+                if (Boolean(nativeInput) !== Boolean(retainedInput))
+                  throw new MaisterError(
+                    "PRECONDITION",
+                    "The retained delegation input no longer matches its source classification",
+                    {
+                      details: {
+                        reason: "native_delegation_input_binding_required",
+                      },
+                    },
+                  );
+                nativeInput = retainedInput
+                  ? inspectNativeDelegationInput(retainedInput)
+                  : null;
 
                 return;
               }
@@ -417,8 +474,12 @@ export async function POST(
 
             const created = await createTask(
               {
-                title: body.title ?? titleFromPrompt(body.prompt),
-                prompt: body.prompt,
+                title: nativeInput
+                  ? (resolvedFlow?.flowRefId ?? nativeInput.target.id)
+                  : (body.title ?? titleFromPrompt(body.prompt)),
+                prompt: nativeInput
+                  ? (resolvedFlow?.flowRefId ?? nativeInput.target.id)
+                  : body.prompt,
                 flowId: childFlowId,
               },
               { projectId: ctx.projectId, actorUserId: null },
@@ -466,6 +527,7 @@ export async function POST(
                     ? {
                         kind: "flow",
                         flowId: resolvedFlow.flowId,
+                        ...(nativeInput ? { nativeInput } : {}),
                         ...(body.runnerOverride
                           ? { runnerOverride: body.runnerOverride }
                           : {}),
@@ -473,6 +535,7 @@ export async function POST(
                     : {
                         kind: "agent",
                         agentId: body.target.agentId!,
+                        ...(nativeInput ? { nativeInput } : {}),
                         ...(body.workspace
                           ? { workspace: body.workspace }
                           : {}),
@@ -579,6 +642,7 @@ export async function POST(
               );
               const result = await launchAgentRun({
                 agentId: body.target.agentId as string,
+                ...(nativeInput ? { nativeInput } : {}),
                 resultContract,
                 projectId: ctx.projectId,
                 taskId: childTaskId ?? null,
@@ -719,7 +783,11 @@ export async function POST(
         } catch (err) {
           if (isMaisterError(err)) {
             return NextResponse.json(
-              { code: err.code, message: err.message },
+              {
+                code: err.code,
+                message: err.message,
+                ...(err.details ? { details: err.details } : {}),
+              },
               { status: httpStatusForExtCode(err.code) },
             );
           }

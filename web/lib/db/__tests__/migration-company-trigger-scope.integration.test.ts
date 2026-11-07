@@ -7,9 +7,11 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { claimCronAgentAttempt } from "@/lib/agents/trigger-attempts";
 import { parseAgentTriggerBindingSnapshot } from "@/lib/agents/trigger-attempt-types";
 import { parseScheduledRequestSnapshot } from "@/lib/agents/scheduled-request";
+import { upgradeMainTestDb } from "@/test-support/migration-upgrade";
 import { seedProjectRow } from "@/test-support/execution-host-seed";
 import {
   applyMainMigration,
+  declareCurrentTestDatabaseWriter,
   startMainPostgresTestDbUpTo,
 } from "@/test-support/pg-container";
 
@@ -119,6 +121,8 @@ it("preserves existing project identity, v1 request/binding bytes and unknown at
       [sourceId],
     ),
   ).rejects.toMatchObject({ code: "23514" });
+  await upgradeMainTestDb(database, "0238_company_trigger_scope");
+  await declareCurrentTestDatabaseWriter(database);
   const claim = await claimCronAgentAttempt(
     database.db,
     sourceId,

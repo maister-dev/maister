@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { InteractiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
 import type { Db } from "@/lib/execution-host/db";
 import type { SqlTransaction } from "@/lib/db/sql-types";
 import type {
@@ -22,7 +23,8 @@ import {
   inspectSpecialistIntakeReplayInTransaction,
   intakeSpecialistAssignmentInTransaction,
 } from "./intake";
-import { getSpecialistAssignment } from "./store";
+import { getSpecialistAssignment, getSpecialistAssignmentInput } from "./store";
+import { acceptProjectCoordinatorAssignmentLaunch } from "./project-flow-launch";
 import { wakePendingSpecialistAssignment } from "./admission-wake";
 import { loadProjectCoordinatorProvider } from "./project-flow-provider";
 
@@ -40,6 +42,7 @@ import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence"
 
 export type ProjectRequestInvocation = Readonly<{
   origin: AssignmentOrigin;
+  launchPrincipal?: InteractiveTaskLaunchPrincipal;
   destination: AssignmentDestination;
   trigger: LaunchAgentRunInput["trigger"];
   scheduledRequest: PreparedSpecialistAssignment["scheduledRequest"];
@@ -258,7 +261,7 @@ export async function submitProjectUserRequest(
       "project request work entering existing admission",
     );
     try {
-      await launchAgentRun({
+      const launchInput: LaunchAgentRunInput = {
         db,
         projectId: request.owner.projectId,
         agentId,
@@ -282,7 +285,32 @@ export async function submitProjectUserRequest(
           userId,
           ...(invocation.source ? { source: invocation.source } : {}),
         },
-      });
+      };
+      const retainedInput = await getSpecialistAssignmentInput(
+        db,
+        userId,
+        receipt.assignment.id,
+        receipt.inputRevision,
+      );
+
+      if (retainedInput.snapshot.standingDefinition.schemaVersion === 2) {
+        await acceptProjectCoordinatorAssignmentLaunch(
+          db,
+          launchInput,
+          retainedInput.snapshot.standingDefinition.coordinatorFlow,
+          invocation.launchPrincipal,
+        );
+
+        return {
+          ...receipt,
+          assignment: await getSpecialistAssignment(
+            db,
+            userId,
+            receipt.assignment.id,
+          ),
+        };
+      }
+      await launchAgentRun(launchInput);
     } catch (error) {
       if (
         !isMaisterError(error) ||

@@ -1,4 +1,3 @@
-import type { OperationalResourceKind } from "@/lib/run-results/operational-types";
 import "server-only";
 
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
@@ -8,7 +7,10 @@ import type {
   ContextRepoDecl,
 } from "@/lib/context-mounts/types";
 import type { RunResultContract } from "@/lib/run-results/types";
-import type { OperationalIntegrityBaseline } from "@/lib/run-results/operational-types";
+import type {
+  OperationalIntegrityBaseline,
+  OperationalResourceKind,
+} from "@/lib/run-results/operational-types";
 import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import type { AgentTurn, Run, ExecutionAssignment } from "@/lib/db/schema";
 import type { AgentRetryClaim } from "@/lib/agents/retry-types";
@@ -90,9 +92,7 @@ import {
   taskLaunchClarificationsForRun,
 } from "@/lib/tasks/launch-execution-input";
 import { activateInitialSpecialistAssignmentRunInTransaction } from "@/lib/specialist-assignments/store";
-import { reserveProjectAssignmentTask } from "@/lib/specialist-assignments/project-task";
 import { appendSpecialistAssignmentContextPrompt } from "@/lib/specialist-assignments/projection";
-import { requireProjectActionForUser } from "@/lib/authz";
 import {
   prepareProjectAssignmentAdmission,
   loadProjectAssignmentExecutionInput,
@@ -173,7 +173,6 @@ import {
   executeRepositoryGit,
   withoutGitOwnership,
 } from "@/lib/project-config-persistence/git-process";
-import { operationalWorkspace } from "@/lib/agents/operational-context";
 import {
   buildOperationalContract,
   frozenOperationalDefinition,
@@ -990,34 +989,13 @@ async function launchAgentDrivenFlowRun(
     : null;
   let taskId = input.taskId ?? null;
   let carrierAdmission: TasklessAgentFlowCarrierAdmission | null = null;
-  let specialistAssignment = input.specialistAssignment;
 
-  if (specialistAssignment) {
-    const reference = specialistAssignment;
-    const { createTask } = await import("@/lib/services/tasks");
-    const carrier = await reserveProjectAssignmentTask(
-      _db,
-      input.projectId,
-      reference,
-      async (tx) => {
-        const created = await createTask(
-          {
-            title: `${ctx.effective.parsed.name} (${input.trigger.source})`,
-            prompt: input.agentId,
-            flowId: flow.id as string,
-            agentId: input.agentId,
-          },
-          { projectId: input.projectId, actorUserId: reference.userId },
-          tx,
-        );
-
-        return created.taskId;
-      },
+  if (input.specialistAssignment)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Project coordinator assignments require their canonical accepted task launch intent",
+      { details: { reason: "launch_source_authority_required" } },
     );
-
-    taskId = carrier.taskId;
-    specialistAssignment = carrier.admission;
-  }
 
   if (!taskId) {
     const created = await createTasklessAgentFlowCarrier(
@@ -1077,20 +1055,19 @@ async function launchAgentDrivenFlowRun(
     taskId,
     flowId: flow.id as string,
     agentId: input.agentId,
-    specialistAssignment,
-      ...(nativeFlow && input.nativeInput
-        ? {
-            parentRunId: input.parentRunId ?? undefined,
-            rootRunId: input.rootRunId ?? undefined,
-            launchMode: input.launchMode,
-            delegationSnapshot: flowDelegationSnapshot(nativeFlow, {
-              carrierTaskId: taskId,
-              mode: "task",
-              runnerOverride: input.launchOverrideRunnerId ?? null,
-              nativeInput: input.nativeInput,
-            }),
-          }
-        : {}),
+    ...(nativeFlow && input.nativeInput
+      ? {
+          parentRunId: input.parentRunId ?? undefined,
+          rootRunId: input.rootRunId ?? undefined,
+          launchMode: input.launchMode,
+          delegationSnapshot: flowDelegationSnapshot(nativeFlow, {
+            carrierTaskId: taskId,
+            mode: "task",
+            runnerOverride: input.launchOverrideRunnerId ?? null,
+            nativeInput: input.nativeInput,
+          }),
+        }
+      : {}),
     agentActivity: buildAgentActivitySnapshot(input.agentId, ctx.effective),
     // Trigger provenance carries the (agent_id, trigger_event_id) dedup claim
     // onto the flow run so an at-least-once redelivery converges to one run.
@@ -1152,6 +1129,29 @@ async function adoptExistingTreeOwner(
   return existing?.runId ?? fallbackRunId;
 }
 
+/** Validate retained private intent before accepting a new task launch decision. */
+async function nativeAgentLaunchInput(
+  db: Db,
+  input: LaunchAgentRunInput,
+): Promise<NativeDelegationInput | null> {
+  const [task] = input.taskId
+    ? await db
+        .select({ delegationSpec: tasks.delegationSpec })
+        .from(tasks)
+        .where(
+          and(eq(tasks.id, input.taskId), eq(tasks.projectId, input.projectId)),
+        )
+    : [];
+
+  return assertNativeAgentInputBinding({
+    taskId: input.taskId ?? null,
+    taskInput: task?.delegationSpec?.nativeInput,
+    launchInput: input.nativeInput,
+    parentRunId: input.parentRunId ?? null,
+    agentId: input.agentId,
+  });
+}
+
 export function launchAgentRun(
   input: LaunchAgentRunInput & Readonly<{ taskId?: null | undefined }>,
 ): Promise<AllocatedAgentRunResult>;
@@ -1164,6 +1164,7 @@ export async function launchAgentRun(
   const db = input.db ?? getDb();
 
   if (input.taskId) {
+    await nativeAgentLaunchInput(db, input);
     const context = await loadAgentContext(db, input);
 
     if (context.effective.parsed.kind === "code_delivery") {
@@ -1300,6 +1301,10 @@ export async function launchAcceptedTaskAgentRun(
     persistent: provenance?.persistent,
     addressableKey: provenance?.addressableKey,
     workspaceMode: provenance?.workspaceMode,
+    ...(provenance?.nativeInput ? { nativeInput: provenance.nativeInput } : {}),
+    ...(provenance?.specialistAssignment
+      ? { specialistAssignment: provenance.specialistAssignment }
+      : {}),
     trigger: {
       source: source as AgentTriggerSource,
       eventId: provenance?.triggerEventId ?? null,
@@ -1447,26 +1452,7 @@ async function launchAgentRunWithAdmission(
   const launchInput = { ...input, scheduledRequestSnapshot };
   const currentContext =
     acceptedExecution?.runtime ?? (await loadAgentContext(_db, input));
-  const taskIntent = input.taskId
-    ? (
-        await _db
-          .select({ delegationSpec: tasks.delegationSpec })
-          .from(tasks)
-          .where(
-            and(
-              eq(tasks.id, input.taskId),
-              eq(tasks.projectId, input.projectId),
-            ),
-          )
-      )[0]
-    : null;
-  const nativeInput = assertNativeAgentInputBinding({
-    taskId: input.taskId ?? null,
-    taskInput: taskIntent?.delegationSpec?.nativeInput,
-    launchInput: input.nativeInput,
-    parentRunId: input.parentRunId ?? null,
-    agentId: input.agentId,
-  });
+  const nativeInput = await nativeAgentLaunchInput(_db, input);
 
   if (input.specialistAssignment && (input.parentRunId || nativeInput))
     throw new MaisterError(
@@ -4520,11 +4506,14 @@ async function driveAgentSession(
       const ownedWorkspace = run.taskLaunchIntentId
         ? await taskAgentPreparationWorkspace(_db, run)
         : await operationalWorkspace(_db, run);
+
       preparationWorkspace = {
         ...ownedWorkspace,
-        repoPath: "ownerKind" in ownedWorkspace && ownedWorkspace.ownerKind === "company"
-          ? null
-          : ownedWorkspace.repoPath,
+        repoPath:
+          "ownerKind" in ownedWorkspace &&
+          ownedWorkspace.ownerKind === "company"
+            ? null
+            : ownedWorkspace.repoPath,
       };
       preparation = await openAgentPreparation(_db, {
         runId,
@@ -4953,9 +4942,21 @@ async function driveAgentSession(
           assertPreparationCommit(preparationCommit, integrityBaseline.head);
           integrityBaseline = {
             ...integrityBaseline,
-            owner: companyWorkspace?.ownerKind === "company"
-              ? {kind:"company",companyId:companyWorkspace.companyId,runId,cwd,runtimePath:companyWorkspace.runtimePath}
-              : {cwd,repoPath:preparationWorkspace?.repoPath ?? project.repoPath,projectSlug:project.slug},
+            owner:
+              companyWorkspace?.ownerKind === "company"
+                ? {
+                    kind: "company",
+                    companyId: companyWorkspace.companyId,
+                    runId,
+                    cwd,
+                    runtimePath: companyWorkspace.runtimePath,
+                  }
+                : {
+                    cwd,
+                    repoPath:
+                      preparationWorkspace?.repoPath ?? project.repoPath,
+                    projectSlug: project.slug,
+                  },
             contextMounts: await captureOperationalContextMounts(contextMounts),
           };
           await preparation?.publishBaseline(integrityBaseline);
@@ -4987,48 +4988,59 @@ async function driveAgentSession(
       // record provenance for a prompt that carried no memory).
       operationalSpawnStage = "prompt";
       const issuedToken = companyContext
-        ? await issueCompanyAgentRunToken({runId,db:_db})
-        : await issueAgentRunToken({agentId:agent.id,projectId:project.id,runId,db:_db});
+        ? await issueCompanyAgentRunToken({ runId, db: _db })
+        : await issueAgentRunToken({
+            agentId: agent.id,
+            projectId: project.id,
+            runId,
+            db: _db,
+          });
+
       if (usesStructuredKnowledgeContext(run))
         await assertNativeRunKnowledgeInputs(_db, runId);
-      const memoryText = companyContext ? null : await applyAgentMemoryForLaunch(
-        _db,
-        run,
-        project.slug as string,
-        overridePrompt != null,
-      );
-      const basePrompt = companyContext ? buildCompanyAgentPrompt(companyContext) : await buildAgentPrompt(
-        _db,
-        effective.parsed,
-        run,
-        memoryText,
-      );
+      const memoryText = companyContext
+        ? null
+        : await applyAgentMemoryForLaunch(
+            _db,
+            run,
+            project.slug as string,
+            overridePrompt != null,
+          );
+      const basePrompt = companyContext
+        ? buildCompanyAgentPrompt(companyContext)
+        : await buildAgentPrompt(_db, effective.parsed, run, memoryText);
       const completionPrompt = nativeFindingsCompletionPrompt(
         run.resultContract,
         operationalCompletionPrompt(
-        run,
-        overridePrompt ??
-          (draftPayload
-            ? consensusAgentDraftPrompt(basePrompt, draftPayload)
-            : basePrompt),
+          run,
+          overridePrompt ??
+            (draftPayload
+              ? consensusAgentDraftPrompt(basePrompt, draftPayload)
+              : basePrompt),
         ),
       );
-
 
       // RD7: the agent's capability_profile.mcps resolve through the existing
       // platform/project catalog (precedence + exec-trust stdio gate) and ride
       // createSession alongside the facade.
       const prompt = usesStructuredKnowledgeContext(run)
-        ? await appendSpecialistAssignmentContextPrompt(_db,runId,null,completionPrompt)
+        ? await appendSpecialistAssignmentContextPrompt(
+            _db,
+            runId,
+            null,
+            completionPrompt,
+          )
         : completionPrompt;
-      const profileMcpServers = companyContext ? [] : await resolveAgentProfileMcpServers({
-        db: _db,
-        projectId: project.id as string,
-        capabilityProfile: effective.parsed.capabilityProfile ?? undefined,
-        capabilityAgent: snapshot.capabilityAgent as string,
-        execTrust: effective.execTrust,
-        runId,
-      });
+      const profileMcpServers = companyContext
+        ? []
+        : await resolveAgentProfileMcpServers({
+            db: _db,
+            projectId: project.id as string,
+            capabilityProfile: effective.parsed.capabilityProfile ?? undefined,
+            capabilityAgent: snapshot.capabilityAgent as string,
+            execTrust: effective.execTrust,
+            runId,
+          });
 
       // ADR-108 (M40): explicit agent guardrail hooks. Agent runs carry no
       // execution-policy preset, so there is no `unattended` auto-arm — only what
@@ -5058,7 +5070,8 @@ async function driveAgentSession(
         {
           runId,
           agentId: agent.id,
-          projectId: project.id,
+          projectId: project?.id ?? null,
+          companyId: run.companyId ?? null,
           packageInstallId: effective.packageInstallId,
           installedPath: effective.installedPath,
           skillRoots: packageSkillRoots,
@@ -5073,7 +5086,8 @@ async function driveAgentSession(
         getAdapterSupportById(snapshot.adapter as AdapterId)?.materialization
           ?.mode === "home-redirect";
       const capabilityRoot = redirectsHome
-        ? (companyWorkspace?.runtimePath ?? operationalAgentRuntimePath(project.slug, runId))
+        ? (companyWorkspace?.runtimePath ??
+          operationalAgentRuntimePath(project.slug, runId))
         : cwd;
 
       if (packageSkillRoots.length > 0 && redirectsHome)

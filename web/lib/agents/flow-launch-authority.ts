@@ -27,6 +27,10 @@ import {
   flows,
   projects,
 } from "@/lib/db/schema";
+import {
+  resolveDelegatableFlow,
+  flowDelegationSnapshot,
+} from "@/lib/flows/delegatable-flow";
 import { createTaskLaunchServerSource } from "@/lib/tasks/launch-server-source";
 import { launchRefusal } from "@/lib/tasks/launch-resolution";
 import { agentTargetMetadataToken } from "@/lib/tasks/launch-agent-resolution";
@@ -140,7 +144,28 @@ async function agentTaskSourceSnapshot(
     flow && scheduledRequestSnapshot?.requestAtLaunch
       ? await resolveScheduledRequestFlowRevision(db, flow)
       : undefined;
+  const nativeFlow =
+    flow && input.nativeInput
+      ? await resolveDelegatableFlow(
+          { projectId: input.projectId, flowId: flow.id },
+          db,
+        )
+      : null;
   const execution = {
+    ...(input.nativeInput ? { nativeInput: input.nativeInput } : {}),
+    ...(input.specialistAssignment
+      ? { specialistAssignment: input.specialistAssignment }
+      : {}),
+    ...(nativeFlow && input.nativeInput
+      ? {
+          delegationSnapshot: flowDelegationSnapshot(nativeFlow, {
+            carrierTaskId: input.taskId,
+            mode: "task",
+            runnerOverride: input.launchOverrideRunnerId ?? null,
+            nativeInput: input.nativeInput,
+          }),
+        }
+      : {}),
     ...(flow ? { flowId: flow.id } : {}),
     agentId: input.agentId,
     agentActivity: buildAgentActivitySnapshot(input.agentId, context.effective),

@@ -16,7 +16,10 @@ import {
   vi,
 } from "vitest";
 
-import { bindQueuedDelegationResponse } from "@/test-support/queued-delegation";
+import {
+  bindQueuedDelegationResponse,
+  bindPendingPlanIntentsForRunChecks,
+} from "@/test-support/queued-delegation";
 import {
   countRows,
   enrollNativeDelegationParent,
@@ -134,7 +137,11 @@ afterEach(() => {
 
 describe("run_plan flow targets (ADR-163)", () => {
   it("IT-CBE-06 native mixed plans retain source-bound input privately for immediate and queued work", async () => {
-    await enrollNativeDelegationParent(ctx, parentRunId);
+    await enrollNativeDelegationParent(
+      ctx,
+      parentRunId,
+      "test-pkg:orchestrator",
+    );
     const privatePrompt =
       "Private source finding reserved for delegated execution";
     const privateTitle = "Private diagnostic assertion";
@@ -216,6 +223,9 @@ describe("run_plan flow targets (ADR-163)", () => {
     const consumer = buildAutoLaunchRunPlanConsumer({ db });
 
     await consumer.handle(events);
+    await bindPendingPlanIntentsForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
+    );
     const [launched] = await db
       .select()
       .from(runs)

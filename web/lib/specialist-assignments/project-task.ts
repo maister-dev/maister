@@ -68,7 +68,7 @@ export async function reserveProjectAssignmentTask(
     )
       throw new MaisterError(
         "CONFIG",
-        "Project assignment task linkage requires main migration 0239",
+        "Project assignment task linkage requires main migration 0252",
       );
     const taskId =
       typeof head.project_task_id === "string"
@@ -88,6 +88,9 @@ export async function reserveProjectAssignmentTask(
       );
     if (typeof head.project_task_id === "string")
       return { taskId, admission: reference };
+    await tx.execute(
+      sql`UPDATE tasks SET qualification_source_version=${`specialist-assignment:v1:${reference.assignmentId}:${reference.inputRevision}:${input.digest}`} WHERE id=${taskId} AND project_id=${projectId}`,
+    );
     const changed = await tx.execute(sql`
       UPDATE specialist_assignments SET project_task_id=${taskId},revision=revision+1,updated_at=clock_timestamp()
       WHERE id=${reference.assignmentId} AND revision=${reference.expectedRevision} AND status='queued' AND project_task_id IS NULL

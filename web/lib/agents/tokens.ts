@@ -8,9 +8,9 @@ import { randomUUID } from "node:crypto";
 import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
-import { ACTIVE_AGENT_RUN_STATUSES } from "./activity-status";
 import { COMPANY_FLOW_TOKEN_SCOPES } from "../../../runtime/company-flow-tools";
 
+import { ACTIVE_AGENT_RUN_STATUSES } from "./activity-status";
 import {
   requireCompanyRunCredentialOwner,
   requireCompanyFlowNodeKnowledgeOwner,
@@ -24,7 +24,6 @@ import * as schemaModule from "@/lib/db/schema";
 import { redactQueryError, queryErrorDiagnostics } from "@/lib/db/pg-error";
 import { MaisterError } from "@/lib/errors";
 import { generateToken } from "@/lib/tokens/secret";
-import { MaisterError } from "@/lib/errors";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { projectTokens, runs } = schemaModule as unknown as Record<string, any>;
@@ -34,7 +33,7 @@ type Db = any;
 export type RunTokenRow = typeof schemaModule.projectTokens.$inferSelect;
 type TokenParent = Pick<
   typeof schemaModule.runs.$inferSelect,
-  "projectId" | "agentId" | "runKind" | "status"
+  "projectId" | "companyId" | "agentId" | "runKind" | "status"
 >;
 type RunBinding = Readonly<{
   projectId: string;
@@ -66,6 +65,7 @@ async function lockMintingRun(db: Db, binding: RunBinding): Promise<void> {
   const rows: TokenParent[] = await db
     .select({
       projectId: runs.projectId,
+      companyId: runs.companyId,
       agentId: runs.agentId,
       runKind: runs.runKind,
       status: runs.status,
@@ -520,6 +520,7 @@ async function currentRunForRevocation(
   const rows: TokenParent[] = await db
     .select({
       projectId: runs.projectId,
+      companyId: runs.companyId,
       agentId: runs.agentId,
       runKind: runs.runKind,
       status: runs.status,
@@ -541,6 +542,30 @@ export async function revokeAgentRunTokensForRun(
   await database.transaction(async (tx: Db) => {
     const parent = await currentRunForRevocation(tx, runId);
 
+    if (parent?.companyId) {
+      const revoked: Array<{ id: string }> = await tx
+        .update(projectTokens)
+        .set({
+          revoked_at: sql`coalesce(${projectTokens.revoked_at},clock_timestamp())`,
+          revocation_reason: "revoked",
+        })
+        .where(
+          and(
+            eq(projectTokens.token_kind, "agent"),
+            eq(projectTokens.company_id, parent.companyId),
+            eq(projectTokens.company_run_id, runId),
+            sql`${projectTokens.revocation_reason} IS DISTINCT FROM 'revoked'`,
+          ),
+        )
+        .returning({ id: projectTokens.id });
+
+      log.info(
+        { runId, companyId: parent.companyId, revoked: revoked.length },
+        "company execution credential family retired",
+      );
+
+      return;
+    }
     if (!parent?.projectId || !parent.agentId) return;
     const binding: RunBinding = {
       projectId: parent.projectId,

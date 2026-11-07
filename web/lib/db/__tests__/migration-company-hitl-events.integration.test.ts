@@ -8,6 +8,7 @@ import { seedProjectRow } from "@/test-support/execution-host-seed";
 import {
   startMainPostgresTestDbUpTo,
   applyMainMigration,
+  declareCurrentTestDatabaseWriter,
 } from "@/test-support/pg-container";
 
 let database: StartedPostgresTestDb;
@@ -20,6 +21,7 @@ beforeAll(async () => {
     { databaseName: "company_hitl_event_upgrade" },
     "0245_human_work_owner_guards",
   );
+  await declareCurrentTestDatabaseWriter(database);
   const project = await seedProjectRow(database.db);
 
   companyId = (await database.pool.query("SELECT id FROM companies")).rows[0]

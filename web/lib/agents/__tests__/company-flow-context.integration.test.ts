@@ -164,6 +164,7 @@ import * as engine from "@/lib/flows/engine-version";
 import { git, initRepo } from "@/test-support/git-fixture";
 import {
   startMainPostgresTestDbUpTo,
+  declareCurrentTestDatabaseWriter,
   applyMainMigration,
 } from "@/test-support/pg-container";
 import { seedProjectRow } from "@/test-support/execution-host-seed";
@@ -339,6 +340,7 @@ beforeAll(async () => {
     },
     "0247_company_operational_attention",
   );
+  await declareCurrentTestDatabaseWriter(database);
   root = await mkdtemp(join(os.tmpdir(), "company-flow-context-"));
   vi.spyOn(os, "homedir").mockReturnValue(root);
   vi.stubEnv("MAISTER_WORKTREES_ROOT", join(root, "worktrees"));
@@ -2194,7 +2196,11 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
       assignmentPost(
         new NextRequest("http://localhost/api/specialist-assignments", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Origin: "http://localhost",
+            "Sec-Fetch-Site": "same-origin",
+          },
           body: JSON.stringify(value),
         }),
       );
@@ -4243,8 +4249,8 @@ it("CBS-03 recovers a published native result after terminal preparation interru
   let interrupted = false;
   const transport: typeof direct = {
     ...direct,
-    async listSessions() {
-      const sessions = await direct.listSessions();
+    async listSessionsForRun(runId) {
+      const sessions = await direct.listSessionsForRun(runId);
 
       if (targetRunId && !interrupted) {
         const closed = await database.pool.query<{ count: number }>(

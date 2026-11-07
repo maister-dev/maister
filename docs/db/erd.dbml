@@ -2504,6 +2504,8 @@ table project_tokens {
     owner_user_id [name: 'project_tokens_owner_idx']
     agent_id [name: 'project_tokens_agent_idx']
     (project_id, origin_kind, bound_run_id) [name: 'project_tokens_run_origin_idx']
+    knowledge_node_attempt_id [name: 'project_tokens_knowledge_node_attempt_idx']
+
     (owner_user_id, created_at) [name: 'project_tokens_owner_created_idx']
 
 
@@ -4766,8 +4768,9 @@ ref run_transcript_states_run_id_runs_id_fk: run_transcript_states.run_id > runs
 
 ref run_transcript_states_node_attempt_id_node_attempts_id_fk: run_transcript_states.node_attempt_id > node_attempts.id [delete: cascade, update: no action]
 
-ref runs_task_launch_intent_id_task_launch_intents_id_fk: runs.task_launch_intent_id > task_launch_intents.id [delete: restrict, update: no action]
 ref runs_company_id_companies_id_fk: runs.company_id > companies.id [delete: restrict, update: no action]
+
+ref runs_task_launch_intent_id_task_launch_intents_id_fk: runs.task_launch_intent_id > task_launch_intents.id [delete: restrict, update: no action]
 
 ref runs_agent_id_agents_id_fk: runs.agent_id > agents.id [delete: set null, update: no action]
 

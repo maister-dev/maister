@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { ExecutionAssignment, RunnerSnapshot } from "@/lib/db/schema";
+import type { ExecutionAssignment, RunnerSnapshot, Run } from "@/lib/db/schema";
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -520,6 +520,7 @@ async function recoverPendingGateChatCreates(
         db,
         hosts,
         run: { status: row.run.status, runnerSnapshot: active.runnerSnapshot },
+        source: { ...row.run, authorUserId: row.userMessage.authorUserId },
         activeAcpSessionId: active.acpSessionId,
         admitted: {
           turnId: row.turn.id,
@@ -1006,6 +1007,7 @@ export async function sendGateChatTurn(args: {
     db: d,
     hosts,
     run,
+    source: { ...baseRun, authorUserId: args.actorUserId ?? null },
     activeAcpSessionId: activeAcpSessionId as string,
     admitted,
     createCommandId: null,
@@ -1026,6 +1028,8 @@ async function driveGateChatTurn(
     db: Db;
     hosts: ExecutionHosts;
     run: Readonly<{ status: string; runnerSnapshot: RunnerSnapshot | null }>;
+    source: Pick<Run, "knowledgeAccess" | "resultContract"> &
+      Readonly<{ authorUserId: string | null }>;
     activeAcpSessionId: string;
     admitted: AdmittedGateChatTurn;
     createCommandId: string | null;
@@ -1249,10 +1253,15 @@ async function driveGateChatTurn(
   let promptResult: PromptResult | null;
 
   try {
-    if (nativeContext) {
+    if (usesStructuredKnowledgeContext(args.source)) {
+      if (!args.source.authorUserId)
+        throw new MaisterError(
+          "UNAUTHORIZED",
+          "Native gate chat requires its current retained human recipient",
+        );
       await assertRunKnowledgeDisclosure(
         d,
-        { kind: "user", userId: args.actorUserId! },
+        { kind: "user", userId: args.source.authorUserId },
         args.runId,
       );
       await assertNativeRunKnowledgeInputs(d, args.runId);

@@ -31,7 +31,6 @@ import { createExecutionHosts } from "@/lib/execution-host/client";
 import { projectCanonicalSessionLifecycle } from "@/lib/execution-host/events/lifecycle-projector";
 import { lockCurrentSessionAssignment } from "@/lib/execution-host/session-binding";
 import { readCreateIntent } from "@/lib/execution-host/create-intent";
-import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
 
 const log = pino({
   name: "execution-quiescence",

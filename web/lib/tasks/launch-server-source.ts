@@ -55,7 +55,12 @@ export type TaskLaunchEngineExtras = Readonly<
   > &
     Pick<
       LaunchAgentRunInput,
-      "resultContract" | "persistent" | "addressableKey" | "workspaceMode"
+      | "resultContract"
+      | "persistent"
+      | "addressableKey"
+      | "workspaceMode"
+      | "nativeInput"
+      | "specialistAssignment"
     >
 >;
 export type TaskLaunchFixedAllocation = Readonly<{

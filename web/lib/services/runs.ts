@@ -34,7 +34,10 @@ import {
   resolveAgentChainDepth,
   resolveProjectEventChainDepth,
 } from "@/lib/agents/chain-depth";
-import { prepareProjectCoordinatorAssignmentAdmission } from "@/lib/specialist-assignments/project-admission";
+import {
+  prepareProjectCoordinatorAssignmentAdmission,
+  assertProjectAssignmentTaskInput,
+} from "@/lib/specialist-assignments/project-admission";
 import { activateInitialSpecialistAssignmentRunInTransaction } from "@/lib/specialist-assignments/store";
 import { contentDigest } from "@/lib/evaluations/digest";
 import { loadFlowScheduledRequestSource } from "@/lib/agents/scheduled-request-lineage";
@@ -650,6 +653,12 @@ async function* executeFlowLaunch(
   // classification detail (incl. blocker KEY-N refs) must not leak to
   // callers without project access. AuthzError propagates untouched.
   await ctx.authorize(project.id);
+  await assertProjectAssignmentTaskInput(
+    _db as unknown as ExecutionDb,
+    project.id,
+    task.id,
+    input.specialistAssignment,
+  );
   const nativeInput = assertNativeFlowInputBinding({
     taskId: task.id,
     taskInput: task.delegationSpec?.nativeInput,

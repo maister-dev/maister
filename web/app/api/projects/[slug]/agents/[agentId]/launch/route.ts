@@ -92,6 +92,7 @@ export async function POST(
         project.id,
         agentId,
         body,
+        await interactiveTaskLaunchPrincipal(),
       );
 
       return knowledgeJson(receipt.assignment, receipt.duplicate ? 200 : 201);

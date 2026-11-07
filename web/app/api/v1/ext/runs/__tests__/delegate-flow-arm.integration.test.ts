@@ -209,7 +209,11 @@ async function childRun(runId: string) {
 it.each(["message", "rework"] as const)(
   "IT-CBE-06 native %s admits newly consumed sources only to a currently authorized child role",
   async (action) => {
-    await enrollNativeDelegationParent(ctx, parentRunId);
+    await enrollNativeDelegationParent(
+      ctx,
+      parentRunId,
+      "test-pkg:orchestrator",
+    );
     const agentId = await seedAgent(ctx, { id: `input-${action}` });
     const delegated = await delegatePost(
       delegateRequest(secret, {
@@ -392,7 +396,11 @@ it.each(["message", "rework"] as const)(
 it.each(["task", "run"] as const)(
   "IT-CBE-06 native agent mode:%s preserves its private objective through canonical prompt composition",
   async (mode) => {
-    await enrollNativeDelegationParent(ctx, parentRunId);
+    await enrollNativeDelegationParent(
+      ctx,
+      parentRunId,
+      "test-pkg:orchestrator",
+    );
     const agentId = await seedAgent(ctx, { id: "diagnostic" });
     const privatePrompt = `Inspect a restricted source ${randomUUID()}`;
     const response = await delegatePost(
@@ -450,15 +458,25 @@ it.each(["task", "run"] as const)(
 it.each(["task", "run"] as const)(
   "IT-CBE-06 a native Flow-driving specialist mode:%s retains its delegated input and actual parent binding",
   async (mode) => {
-    await enrollNativeDelegationParent(ctx, parentRunId);
+    await enrollNativeDelegationParent(
+      ctx,
+      parentRunId,
+      "test-pkg:orchestrator",
+    );
     const agentId = await seedAgent(ctx, { id: "driver" });
+
+    await seedFlow(ctx, {
+      flowRefId: "native-driver-flow",
+      installedPath: agentsRoot,
+      resolvedRevision: "rev-pkg-1",
+    });
     const sourcePath = path.join(agentsRoot, "maister-agents", "driver.md");
 
     await writeFile(
       sourcePath,
       (await readFile(sourcePath, "utf8")).replace(
         "risk_tier:",
-        "flow: delegated-flow\nrisk_tier:",
+        "flow: native-driver-flow\nrisk_tier:",
       ),
       "utf8",
     );
@@ -468,6 +486,29 @@ it.each(["task", "run"] as const)(
       {},
     );
 
+    if (mode === "run") {
+      expect(response.status).toBe(422);
+      expect(await response.json()).toMatchObject({
+        code: "CONFIG",
+        details: { reason: "delegation_facade_requires_task" },
+      });
+      expect(
+        (
+          await pool.query("SELECT id FROM runs WHERE parent_run_id=$1", [
+            parentRunId,
+          ])
+        ).rows,
+      ).toHaveLength(0);
+      expect(
+        (
+          await pool.query("SELECT id FROM tasks WHERE id<>$1", [
+            orchestratorTaskId,
+          ])
+        ).rows,
+      ).toHaveLength(0);
+
+      return;
+    }
     expect(response.status).toBe(202);
     const result = await response.json();
     const child = await childRun(result.childRunId);
@@ -486,7 +527,7 @@ it.each(["task", "run"] as const)(
 );
 
 it("IT-CBE-06 native shared-workspace delegation refuses before creating a carrier or child", async () => {
-  await enrollNativeDelegationParent(ctx, parentRunId);
+  await enrollNativeDelegationParent(ctx, parentRunId, "test-pkg:orchestrator");
   const agentId = await seedAgent(ctx, { id: "shared-diagnostic" });
   const response = await delegatePost(
     delegateRequest(secret, {
@@ -522,7 +563,11 @@ it("IT-CBE-06 native shared-workspace delegation refuses before creating a carri
 it.each(["unknown_capture", "oversized_input", "revoked_origin"] as const)(
   "IT-CBE-06 native delegation refuses %s before creating a shared carrier",
   async (failure) => {
-    await enrollNativeDelegationParent(ctx, parentRunId);
+    await enrollNativeDelegationParent(
+      ctx,
+      parentRunId,
+      "test-pkg:orchestrator",
+    );
     if (failure === "unknown_capture")
       await pool.query(
         "UPDATE runs SET knowledge_access=jsonb_set(knowledge_access,'{state}','\"unknown\"') WHERE id=$1",
@@ -530,7 +575,7 @@ it.each(["unknown_capture", "oversized_input", "revoked_origin"] as const)(
       );
     if (failure === "revoked_origin")
       await pool.query(
-        "UPDATE agents SET enabled=false WHERE id=(SELECT agent_id FROM runs WHERE id=$1)",
+        "UPDATE agents SET enabled=false WHERE id=(SELECT source_agent_id FROM runs WHERE id=$1)",
         [parentRunId],
       );
     const response = await delegatePost(
@@ -572,7 +617,7 @@ it.each(["unknown_capture", "oversized_input", "revoked_origin"] as const)(
 );
 
 it("IT-CBE-06 native Flow delegation keeps original input out of shared carrier text and preserves its private launch snapshot", async () => {
-  await enrollNativeDelegationParent(ctx, parentRunId);
+  await enrollNativeDelegationParent(ctx, parentRunId, "test-pkg:orchestrator");
   const privatePrompt = `Source-controlled diagnostic request ${randomUUID()}`;
   const privateTitle = `Private finding ${randomUUID()}`;
   const response = await delegatePost(
@@ -645,7 +690,10 @@ it("IT-CBE-06 native Flow delegation keeps original input out of shared carrier 
       { actorUserId: null, authorize: async () => {} },
       db,
     ),
-  ).rejects.toMatchObject({ code: "CRASH" });
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "task_launch_intent_required" },
+  });
 
   await expect(
     launchRun(
@@ -655,7 +703,7 @@ it("IT-CBE-06 native Flow delegation keeps original input out of shared carrier 
     ),
   ).rejects.toMatchObject({
     code: "PRECONDITION",
-    details: { reason: "native_delegation_input_binding_required" },
+    details: { reason: "task_launch_intent_required" },
   });
   expect(
     (

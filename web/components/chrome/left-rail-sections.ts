@@ -21,7 +21,7 @@ export function buildLeftRailSections(
   label: (key: RailNavigationLabelKey) => string,
   userRole: GlobalRole | undefined,
 ): LeftRailNavSection[] {
-  // The ADR-172 spine gains native Knowledge (ADR-200) after Inbox;
+  // The ADR-172 spine gains native Knowledge (ADR-202) after Inbox;
   // the administrator-only destinations remain in the tail.
   const sections: LeftRailNavSection[] = [
     { id: "home", label: label("home"), href: "/", ready: true },

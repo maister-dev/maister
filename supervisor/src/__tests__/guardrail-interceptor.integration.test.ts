@@ -49,7 +49,6 @@ type SessionOpts = {
   enforcementProfile?: unknown;
   autoApprovePermissions?: boolean;
   resumeSessionId?: string;
-  readOnlySession?: boolean;
   mcpServers?: McpServerInput[];
   // The directory adopted as the session workspace (cwd + path-guard root).
   cwd: string;

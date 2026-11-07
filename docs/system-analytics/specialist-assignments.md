@@ -478,13 +478,17 @@ enabled provider and mandatory public-result contract are checked separately fro
 physical runner availability. A provider change refuses admission instead of
 silently selecting a different graph.
 
+New carriers set the existing `qualification_source_version` to `specialist-assignment:v1:<assignmentId>:<inputRevision>:<inputSha256>` in the same transaction. The source digest seals the private immutable input in the ordinary task qualification and launch snapshots without copying its prose to the shared task. Historical carriers and accepted snapshots are not rewritten. Automatic admission must obtain a current assessment for that exact source version.
+
 The assignment retains its initial existing Task identity once. Task creation and
 that link commit under the assignment lock; retries reuse it. Its shared title is
 the role name and its stored prompt is only the role identity. The runtime overlays
 the private original assignment input without copying it to the task board. The
 existing Flow reservation transaction binds the exact task/provider/input, source
 role/configuration and result contract, then links and activates the assignment.
-A duplicate arriving between task retention and Run reservation can observe the
+The carrier enters the canonical task-launch intent before any repository or session allocation. An actual same-origin session action may carry the opaque interactive principal, whose user must equal the retained requester. Personal bearer calls, mentions, schedules, events and webhooks do not acquire manual authority from their trigger label or frozen requester: a project coordinator root requires the existing current accepted positive task qualification. A missing or stale assessment refuses admission while preserving the queued assignment and its original carrier. No assessment, human attestation or manual launch basis is fabricated. Current membership, source authority and provider witnesses are checked again when the intent binds its Run. Launch options and receipts expose control metadata only; they never serialize the private assignment or server execution snapshot.
+
+An accepted intent may remain queued before its Run exists; intake returns the retained assignment without inventing a Run link. Existing task-launch wake, claim, recovery and preparation workers own allocation. A duplicate arriving between task retention and Run reservation can observe the
 same queued assignment; it cannot mint a second task. Later continuations retain
 separate work/Run links rather than replacing this initial identity.
 

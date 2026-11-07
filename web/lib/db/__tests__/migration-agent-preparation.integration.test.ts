@@ -66,11 +66,25 @@ it("DB01 populated upgrade and journal replay preserve historical run bytes with
   expect(
     (
       await database.pool.query(
-        "SELECT to_jsonb(r)-'task_launch_intent_id' AS value FROM runs r WHERE id=$1",
+        "SELECT to_jsonb(r)-ARRAY['task_launch_intent_id','knowledge_access','company_id','company_execution_snapshot','company_cancellation_intent'] AS value FROM runs r WHERE id=$1",
         [runId],
       )
     ).rows[0].value,
   ).toEqual(before);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT task_launch_intent_id,knowledge_access,company_id,company_execution_snapshot,company_cancellation_intent FROM runs WHERE id=$1",
+        [runId],
+      )
+    ).rows[0],
+  ).toEqual({
+    task_launch_intent_id: null,
+    knowledge_access: null,
+    company_id: null,
+    company_execution_snapshot: null,
+    company_cancellation_intent: null,
+  });
   expect(
     (
       await database.pool.query(

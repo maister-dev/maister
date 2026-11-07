@@ -358,15 +358,6 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       ],
     ),
     ...classified(
-      "scripts/generate-ask-human-json.ts",
-      "build-tooling",
-      "Build-time generated public schema; never reads execution-host runtime",
-      [
-        ["<module>", "node:fs/promises.readFile", "read"],
-        ["<module>", "node:fs/promises.writeFile", "write"],
-      ],
-    ),
-    ...classified(
       "lib/agents/preparation-ownership.ts",
       "repository-worktree",
       "Preparation resolves only server-owned repository identity under the physical fence",

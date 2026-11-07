@@ -942,7 +942,7 @@ export async function prepareQualificationPublication(
         const routingApplication = await acceptTaskQualification(tx, candidate);
 
         await recordTaskActivity(tx, {
-          projectId: run.projectId,
+          projectId,
           taskId: candidate.taskId,
           actor:
             run.sourceAgentId || run.agentId

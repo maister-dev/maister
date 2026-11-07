@@ -73,7 +73,10 @@ import { getCompanyAgentRunHistory } from "../activity-queries";
 
 import { answerAssignmentQuestion } from "@/lib/services/assignment-question-response";
 import { assignmentQuestionReceiptSchema } from "@/lib/specialist-assignments/question-types";
-import { getSpecialistAssignmentInput } from "@/lib/specialist-assignments/store";
+import {
+  getSpecialistAssignment,
+  getSpecialistAssignmentInput,
+} from "@/lib/specialist-assignments/store";
 import {
   acknowledgeOperationalAttention,
   retryOperationalCleanup,
@@ -279,6 +282,11 @@ const inspectExternal = (
   );
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => database.db }));
+vi.mock("next/server", async (original) => ({
+  ...(await original<typeof import("next/server")>()),
+  after: vi.fn(),
+}));
+
 vi.mock("@/lib/authz", async (original) => {
   const actual = await original<typeof import("@/lib/authz")>();
 
@@ -966,7 +974,11 @@ it("IT-CBS-04 completes company HTTP and registered cron intake through the exis
       assignmentPost(
         new NextRequest("http://localhost/api/specialist-assignments", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Origin: "http://localhost",
+            "Sec-Fetch-Site": "same-origin",
+          },
           body: JSON.stringify(manualRequest),
         }),
       );
@@ -2689,7 +2701,11 @@ it.each(["normal", "activation-recovery", "agent", "cancelled"] as const)(
                 `http://localhost/api/specialist-assignments/${assignment.id}/questions`,
                 {
                   method: "POST",
-                  headers: { "content-type": "application/json" },
+                  headers: {
+                    "content-type": "application/json",
+                    Origin: "http://localhost",
+                    "Sec-Fetch-Site": "same-origin",
+                  },
                   body: JSON.stringify(value),
                 },
               ),
@@ -2909,7 +2925,11 @@ it.each(["normal", "activation-recovery", "agent", "cancelled"] as const)(
               `http://localhost/api/runs/${runId}/hitl/${first.hitlRequestId}/respond`,
               {
                 method: "POST",
-                headers: { "content-type": "application/json" },
+                headers: {
+                  "content-type": "application/json",
+                  Origin: "http://localhost",
+                  "Sec-Fetch-Site": "same-origin",
+                },
                 body: JSON.stringify({ response }),
               },
             ),
@@ -3016,7 +3036,11 @@ it.each(["normal", "activation-recovery", "agent", "cancelled"] as const)(
               `http://localhost/api/specialist-assignments/${assignment.id}/questions/${first.hitlRequestId}/respond`,
               {
                 method: "POST",
-                headers: { "content-type": "application/json" },
+                headers: {
+                  "content-type": "application/json",
+                  Origin: "http://localhost",
+                  "Sec-Fetch-Site": "same-origin",
+                },
                 body: JSON.stringify(value),
               },
             ),
@@ -3305,7 +3329,11 @@ it.each(["normal", "activation-recovery", "agent", "cancelled"] as const)(
             `http://localhost/api/runs/${runId}/hitl/${secondQuestion.hitlRequestId}/respond`,
             {
               method: "POST",
-              headers: { "content-type": "application/json" },
+              headers: {
+                "content-type": "application/json",
+                Origin: "http://localhost",
+                "Sec-Fetch-Site": "same-origin",
+              },
               body: JSON.stringify({
                 response: { component: "health-endpoint" },
               }),
@@ -3464,7 +3492,11 @@ it.each(["normal", "activation-recovery", "agent", "cancelled"] as const)(
             `http://localhost/api/runs/${runId}/hitl/${first.hitlRequestId}/respond`,
             {
               method: "POST",
-              headers: { "content-type": "application/json" },
+              headers: {
+                "content-type": "application/json",
+                Origin: "http://localhost",
+                "Sec-Fetch-Site": "same-origin",
+              },
               body: JSON.stringify({ response: { component: "too-late" } }),
             },
           ),
@@ -3485,7 +3517,11 @@ it.each(["normal", "activation-recovery", "agent", "cancelled"] as const)(
               `http://localhost/api/specialist-assignments/${assignment.id}/questions/${questionId}/respond`,
               {
                 method: "POST",
-                headers: { "content-type": "application/json" },
+                headers: {
+                  "content-type": "application/json",
+                  Origin: "http://localhost",
+                  "Sec-Fetch-Site": "same-origin",
+                },
                 body: JSON.stringify({
                   expectedRevision: questionRevision + 1,
                   inputRevision: 1,
@@ -3657,7 +3693,11 @@ it("IT-CBA-05 resumes a repository-admitted project assignment after its actual 
     const response = await assignmentPost(
       new NextRequest("http://localhost/api/specialist-assignments", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          Origin: "http://localhost",
+          "Sec-Fetch-Site": "same-origin",
+        },
         body: JSON.stringify({
           ...objective,
           owner: { kind: "project", projectId: project.id },
@@ -3755,7 +3795,11 @@ it("IT-CBA-05 resumes a repository-admitted project assignment after its actual 
           `http://localhost/api/runs/${runId}/hitl/${question.hitlRequestId}/respond`,
           {
             method: "POST",
-            headers: { "content-type": "application/json" },
+            headers: {
+              "content-type": "application/json",
+              Origin: "http://localhost",
+              "Sec-Fetch-Site": "same-origin",
+            },
             body: JSON.stringify({
               response: { component: "custom-project-component" },
             }),
@@ -3946,7 +3990,11 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
       assignmentPost(
         new NextRequest("http://localhost/api/specialist-assignments", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Origin: "http://localhost",
+            "Sec-Fetch-Site": "same-origin",
+          },
           body: JSON.stringify(request),
         }),
       );
@@ -3985,7 +4033,11 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
           `http://localhost/api/projects/${project.slug}/agents/${agentId}/launch`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              Origin: "http://localhost",
+              "Sec-Fetch-Site": "same-origin",
+            },
             body: JSON.stringify({
               schemaVersion: 1,
               assignment,
@@ -4306,7 +4358,11 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
         `http://localhost/api/projects/${project.slug}/agents/rah:wire-observer`,
         {
           method: "PATCH",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Origin: "http://localhost",
+            "Sec-Fetch-Site": "same-origin",
+          },
           body: JSON.stringify({
             schedulesRevision: mentionRevision,
             schedules: [
@@ -4374,7 +4430,11 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
         `http://localhost/api/projects/${project.slug}/agents/rah:wire-observer`,
         {
           method: "PATCH",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Origin: "http://localhost",
+            "Sec-Fetch-Site": "same-origin",
+          },
           body: JSON.stringify({
             schedulesRevision: mentionRevision + 1,
             schedules: [
@@ -4421,7 +4481,11 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
           `http://localhost/api/projects/${project.slug}/tasks/9001/comments`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              Origin: "http://localhost",
+              "Sec-Fetch-Site": "same-origin",
+            },
             body: JSON.stringify({ body: text }),
           },
         ),
@@ -4604,8 +4668,58 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
       status: 201,
       body: expect.objectContaining({ id: expect.any(String) }),
     });
-    const coordinated = specialistAssignmentSchema.parse(
+    const queuedCoordinator = specialistAssignmentSchema.parse(
       await coordinatedResponse.json(),
+    );
+
+    expect(queuedCoordinator.status).toBe("queued");
+    expect(queuedCoordinator.runIds).toEqual([]);
+    const acceptedIntents = (
+      await database.pool.query<{
+        id: string;
+        basis: unknown;
+        settings_snapshot: unknown;
+        input_snapshot: { sourceVersion: string | null };
+      }>(
+        "SELECT id,basis,settings_snapshot,input_snapshot FROM task_launch_intents WHERE settings_snapshot->'serverExecution'->'execution'->'specialistAssignment'->>'assignmentId'=$1",
+        [queuedCoordinator.id],
+      )
+    ).rows;
+
+    expect(acceptedIntents).toHaveLength(1);
+    expect(acceptedIntents[0].basis).toMatchObject({ kind: "manual", userId });
+    expect(acceptedIntents[0].settings_snapshot).toMatchObject({
+      serverExecution: {
+        execution: {
+          specialistAssignment: {
+            assignmentId: queuedCoordinator.id,
+            inputRevision: 1,
+            userId,
+          },
+        },
+      },
+    });
+    const originalCoordinatorInput = await getSpecialistAssignmentInput(
+      db,
+      userId,
+      queuedCoordinator.id,
+      1,
+    );
+
+    expect(acceptedIntents[0].input_snapshot.sourceVersion).toBe(
+      `specialist-assignment:v1:${queuedCoordinator.id}:1:${originalCoordinatorInput.digest}`,
+    );
+    const { prepareTaskLaunchIntent, dispatchTaskLaunchIntent } =
+      await import("@/lib/tasks/launch-dispatch");
+
+    expect(
+      await prepareTaskLaunchIntent(db, acceptedIntents[0].id),
+    ).toMatchObject({ state: "run_bound" });
+    await dispatchTaskLaunchIntent(db, acceptedIntents[0].id);
+    const coordinated = await getSpecialistAssignment(
+      db,
+      userId,
+      queuedCoordinator.id,
     );
 
     expect(coordinated.runIds).toHaveLength(1);
@@ -4702,7 +4816,11 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
         `http://localhost/api/projects/${project.slug}/agents/rah:flow-coordinator`,
         {
           method: "PATCH",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Origin: "http://localhost",
+            "Sec-Fetch-Site": "same-origin",
+          },
           body: JSON.stringify({
             schedulesRevision: coordinatorMentionRevision,
             schedules: [{ triggerType: "mention", enabled: true }],
@@ -4724,7 +4842,11 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
         `http://localhost/api/projects/${project.slug}/tasks/9001/comments`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Origin: "http://localhost",
+            "Sec-Fetch-Site": "same-origin",
+          },
           body: JSON.stringify({
             body: "@rah:flow-coordinator Coordinate an independent evidence-linked diagnostic result.",
           }),
@@ -4884,7 +5006,11 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
         `http://localhost/api/projects/${project.slug}/tasks/9001/comments`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Origin: "http://localhost",
+            "Sec-Fetch-Site": "same-origin",
+          },
           body: JSON.stringify({
             body: "@rah:wire-observer Inspect a request whose author loses launch authority before dispatch.",
           }),
@@ -4932,7 +5058,11 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
         `http://localhost/api/projects/${project.slug}/tasks/9001/comments`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Origin: "http://localhost",
+            "Sec-Fetch-Site": "same-origin",
+          },
           body: JSON.stringify({
             body: "@rah:wire-observer " + "x".repeat(8100),
           }),
@@ -5093,7 +5223,11 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
         `http://localhost/api/projects/${project.slug}/agents/rah:wire-observer`,
         {
           method: "PATCH",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Origin: "http://localhost",
+            "Sec-Fetch-Site": "same-origin",
+          },
           body: JSON.stringify({
             schedulesRevision: sourceRevision,
             schedules: [
@@ -5457,7 +5591,11 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
           `http://localhost/api/projects/${project.slug}/agents/${agentId}`,
           {
             method: "PATCH",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              Origin: "http://localhost",
+              "Sec-Fetch-Site": "same-origin",
+            },
             body: JSON.stringify({ schedulesRevision: revision, schedules }),
           },
         ),
@@ -6008,7 +6146,11 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
         `http://localhost/api/projects/${project.slug}/tasks/9001/comments`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Origin: "http://localhost",
+            "Sec-Fetch-Site": "same-origin",
+          },
           body: JSON.stringify({
             body: "A bounded project fact without a producing agent Run.",
           }),
@@ -6614,7 +6756,11 @@ it.each(["live", "checkpointed", "cancelled"] as const)(
           `http://localhost/api/runs/${receipt.runId}/hitl/${hitl.id}/respond`,
           {
             method: "POST",
-            headers: { "content-type": "application/json" },
+            headers: {
+              "content-type": "application/json",
+              Origin: "http://localhost",
+              "Sec-Fetch-Site": "same-origin",
+            },
             body: JSON.stringify({ optionId: "allow" }),
           },
         ),
@@ -6855,7 +7001,11 @@ it.each(["live", "checkpointed", "cancelled"] as const)(
           `http://localhost/api/runs/${receipt.runId}/hitl/${hitl.id}/respond`,
           {
             method: "POST",
-            headers: { "content-type": "application/json" },
+            headers: {
+              "content-type": "application/json",
+              Origin: "http://localhost",
+              "Sec-Fetch-Site": "same-origin",
+            },
             body: JSON.stringify({ optionId: "allow" }),
           },
         ),
@@ -10796,7 +10946,11 @@ it("CBS-02 governs company operational acknowledgement and exhausted cleanup rea
         `http://localhost/api/runs/${runId}/operational/acknowledge`,
         {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: {
+            "content-type": "application/json",
+            Origin: "http://localhost",
+            "Sec-Fetch-Site": "same-origin",
+          },
           body: JSON.stringify({ reason: "operation_failure", revision: 1 }),
         },
       ),
@@ -10880,7 +11034,11 @@ it("CBS-02 governs company operational acknowledgement and exhausted cleanup rea
           `http://localhost/api/runs/${runId}/operational/cleanup/retry`,
           {
             method: "POST",
-            headers: { "content-type": "application/json" },
+            headers: {
+              "content-type": "application/json",
+              Origin: "http://localhost",
+              "Sec-Fetch-Site": "same-origin",
+            },
             body: JSON.stringify({ expectedRevision: revision }),
           },
         ),

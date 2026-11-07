@@ -3239,7 +3239,7 @@ paths:
     post:
       tags: [projects]
       summary: (M34 — Implemented) Manually launch an agent run
-      description: "Project membership `member`+ (`launchRun`). Identifiers: `slug` and\n`agentId` are url-params; body `taskId` (optional task-bound context)\nis validated to belong to the project; body `runnerId` (optional\nlaunch override, tier 1 of the standalone chain) is validated against\nthe enabled runner catalog; body `workspace` (optional launch override)\nis the workspace used for runner compatibility, cwd selection, and\npersisted `runs.agent_workspace`. Every fresh session launch, including taskless\noperational agents, requires canonical same-origin authorization before parsing or allocation.\nRefusals: disabled/quarantined agent,\n`risk_tier=destructive` (ADR-041 gate), `manual` missing from the\nagent's `triggers`, or a dirty `repo_read` baseline → `409\nPRECONDITION`; runner resolution/incompatibility → `503\nEXECUTOR_UNAVAILABLE`. Operational and taskless agents retain their\ndirect launch receipt. Task-bound code-delivery agents use the same\none-shot manual task-launch contract as POST /api/task-launch-intents:\nfirst read /api/task-launch-intents/options with taskId and agentId,\nthen send expectedTaskRevision, expectedSettingsToken and a stable\nIdempotency-Key from an actual same-origin session action. A selected\nstandalone agent remains an agent target; a Flow-driving agent selects\nits real declared Flow and retains its driving-agent provenance. No\naccepted qualification is required for this manual decision. The 202\nTaskLaunchReceipt can wait for capacity and its Location is recoverable;\nselecting options alone does not execute or arm automation. A code-delivery\nrequest missing the optimistic fields is refused with\nlaunch_request_upgrade_required. Operational runs still queue as Pending\nwhen execution capacity is unavailable.\n\n\nA closed `CBProjectManualAssignmentEnvelope` instead submits durable\nspecialist work. Owner and attachment derive only from this authenticated\npath, the result contract derives from the pinned specialist/coordinator,\nand caller runner/workspace/authority overrides are refused. The\nuser/idempotency identity and content digest match the native manual\nassignment endpoint, so concurrent entry points adopt one assignment and\nRun. New work returns 201, exact replay 200, both private/no-store. Current\nproject/source access is required on replay; completed history does not\nrequire current provider readiness or attachment enablement.\n"
+      description: "Project membership `member`+ (`launchRun`). Identifiers: `slug` and\n`agentId` are url-params; body `taskId` (optional task-bound context)\nis validated to belong to the project; body `runnerId` (optional\nlaunch override, tier 1 of the standalone chain) is validated against\nthe enabled runner catalog; body `workspace` (optional launch override)\nis the workspace used for runner compatibility, cwd selection, and\npersisted `runs.agent_workspace`. Every fresh session launch, including taskless\noperational agents, requires canonical same-origin authorization before parsing or allocation.\nRefusals: disabled/quarantined agent,\n`risk_tier=destructive` (ADR-041 gate), `manual` missing from the\nagent's `triggers`, or a dirty `repo_read` baseline → `409\nPRECONDITION`; runner resolution/incompatibility → `503\nEXECUTOR_UNAVAILABLE`. Operational and taskless agents retain their\ndirect launch receipt. Task-bound code-delivery agents use the same\none-shot manual task-launch contract as POST /api/task-launch-intents:\nfirst read /api/task-launch-intents/options with taskId and agentId,\nthen send expectedTaskRevision, expectedSettingsToken and a stable\nIdempotency-Key from an actual same-origin session action. A selected\nstandalone agent remains an agent target; a Flow-driving agent selects\nits real declared Flow and retains its driving-agent provenance. No\naccepted qualification is required for this manual decision. The 202\nTaskLaunchReceipt can wait for capacity and its Location is recoverable;\nselecting options alone does not execute or arm automation. A code-delivery\nrequest missing the optimistic fields is refused with\nlaunch_request_upgrade_required. Operational runs still queue as Pending\nwhen execution capacity is unavailable.\n\n\nA closed `CBProjectManualAssignmentEnvelope` instead submits durable\nspecialist work. Owner and attachment derive only from this authenticated\npath, the result contract derives from the pinned specialist/coordinator,\nand caller runner/workspace/authority overrides are refused. The\nuser/idempotency identity and content digest match the native manual\nassignment endpoint, so concurrent entry points adopt one assignment and\ndurable launch intent. A coordinator may remain queued without a Run until the existing worker binds its intent. New work returns 201, exact replay 200, both private/no-store. Current\nproject/source access is required on replay; completed history does not\nrequire current provider readiness or attachment enablement.\n"
       operationId: postProjectAgentLaunch
       parameters:
         - name: Idempotency-Key
@@ -20900,22 +20900,34 @@ paths:
     post:
       operationId: specialistAssignmentCreate
       summary: Submit scoped specialist manual work
-      description: Company-owned and project operational-specialist/coordinator manual submission are
-        implemented. Project coordinator input freezes its exact configured Flow witness and reuses one initial
-        existing project task; the shared task prompt contains only the role identity. Project ownership
-        resolves the exact current agent attachment and retains existing repository/workspace admission. The
-        original request remains queued if repository/runner admission fails; retrying the same identity reuses it.
-        New company reservation requires current assignments:read, assignments:submit
-        and assignments:update; exact replay requires current read, submit and source access without resolving
-        mutable provider settings. Receipt, assignment, frozen input and the existing Pending Run commit atomically;
-        the existing scheduler is signaled after commit and may leave the Run queued under its capacity/host fence.
-        Source-specific and external bearer invocation adapters remain Designed. URL identifiers are
-        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
-        target endpoint and execution ownership are derived from authenticated context/server state. Writes
-        compare canonical payload digest and expected revision; exact replay returns the original currently
-        accessible receipt, changed payload conflicts.
+      description: >-
+        Company-owned and project operational-specialist/coordinator manual submission are implemented.
+        Requires an active session and canonical same-origin Origin; Sec-Fetch-Site cross-site is refused
+        before parsing or allocation. The actual opaque session principal owns a project coordinator's
+        manual task-launch basis. Project coordinator input freezes its exact configured Flow witness
+        and reuses one initial project task whose shared prompt contains only the role identity.
+        Its existing qualification source version binds the exact private assignment input digest.
+        The existing durable task-launch intent commits before repository/session allocation and may
+        remain queued without a Run; the returned assignment then has no fabricated Run link.
+        Current project/source access, provider and repository/workspace rules still apply.
+        Company and standalone operational reservation keep their existing atomic Run admission.
+        Unavailable repository/runner admission preserves the queued assignment and original input.
+        New work requires current read, submit and update authority; exact replay requires current
+        read, submit and source access without resolving mutable provider settings. Existing workers
+        own dispatch and recovery. Actors, grants, source witnesses and execution ownership derive
+        from authenticated context/server state. Exact payload replay returns currently accessible
+        work; changed payload conflicts. Responses are private/no-store. Technical terminal results
+        do not imply assignment acceptance or knowledge confirmation.
       x-implementation-status: Implemented
       x-required-scope: assignments:submit
+      parameters:
+        - name: Origin
+          in: header
+          required: true
+          description: Canonical configured public origin, or request transport origin when not configured.
+          schema:
+            type: string
+            format: uri
       requestBody:
         required: true
         content:

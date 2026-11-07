@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { InteractiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
 import type { Db } from "@/lib/execution-host/db";
 import type { SpecialistIntakeReceipt } from "./intake-types";
 
@@ -20,6 +21,7 @@ export async function submitProjectRoutedManualAssignment(
   projectId: string,
   agentId: string,
   value: unknown,
+  launchPrincipal?: InteractiveTaskLaunchPrincipal,
 ): Promise<SpecialistIntakeReceipt> {
   const parsed = projectRoutedManualAssignmentRequestSchema.safeParse(value);
 
@@ -52,12 +54,17 @@ export async function submitProjectRoutedManualAssignment(
       return binding.id;
     });
 
-    return await submitProjectManualAssignment(db, userId, {
-      ...parsed.data.assignment,
-      owner,
-      specialistBindingId: bindingId,
-      idempotencyKey: parsed.data.idempotencyKey,
-    });
+    return await submitProjectManualAssignment(
+      db,
+      userId,
+      {
+        ...parsed.data.assignment,
+        owner,
+        specialistBindingId: bindingId,
+        idempotencyKey: parsed.data.idempotencyKey,
+      },
+      launchPrincipal,
+    );
   } catch (error) {
     throw redactQueryError(error);
   }

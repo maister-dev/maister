@@ -1,0 +1,280 @@
+{
+  "master": "f38053b3192a24738c8b0920852cfd229c56721f",
+  "oldBranch": "backup/company-brain-pre-master-20261107-2308a37f5",
+  "mapping": {
+    "0215_company_ownership": "0228_company_ownership",
+    "0216_company_knowledge_events": "0229_company_knowledge_events",
+    "0217_company_grant_requests": "0230_company_grant_requests",
+    "0218_native_knowledge_execution": "0231_native_knowledge_execution",
+    "0219_specialist_assignments": "0232_specialist_assignments",
+    "0220_specialist_metadata": "0233_specialist_metadata",
+    "0221_company_specialist_bindings": "0234_company_specialist_bindings",
+    "0222_company_flow_bindings": "0235_company_flow_bindings",
+    "0223_company_trigger_scope": "0236_company_trigger_scope",
+    "0224_company_retry_scope": "0237_company_retry_scope",
+    "0225_company_agent_execution": "0238_company_agent_execution",
+    "0226_company_agent_credentials": "0239_company_agent_credentials",
+    "0227_company_run_terminal_events": "0240_company_run_terminal_events",
+    "0228_native_source_array_planning": "0241_native_source_array_planning",
+    "0229_company_human_work_ownership": "0242_company_human_work_ownership",
+    "0230_human_work_owner_guards": "0243_human_work_owner_guards",
+    "0231_company_hitl_wait_events": "0244_company_hitl_wait_events",
+    "0232_company_operational_attention": "0245_company_operational_attention",
+    "0233_company_flow_execution": "0246_company_flow_execution",
+    "0234_company_flow_node_credentials": "0247_company_flow_node_credentials",
+    "0235_company_flow_workspace_witness": "0248_company_flow_workspace_witness",
+    "0236_company_flow_runtime": "0249_company_flow_runtime",
+    "0237_company_run_cancellation": "0250_company_run_cancellation",
+    "0238_specialist_intake_receipts": "0251_specialist_intake_receipts",
+    "0239_specialist_project_flow_input": "0252_specialist_project_flow_input",
+    "0240_company_event_admission": "0253_company_event_admission",
+    "0241_project_source_review": "0254_project_source_review",
+    "0242_project_trigger_review": "0255_project_trigger_review",
+    "0243_project_event_context": "0256_project_event_context",
+    "0244_specialist_context_revisions": "0257_specialist_context_revisions",
+    "0245_specialist_context_credentials": "0258_specialist_context_credentials",
+    "0246_specialist_context_mutation_credentials": "0259_specialist_context_mutation_credentials",
+    "0247_specialist_question_subject": "0260_specialist_question_subject",
+    "0248_specialist_question_answer": "0261_specialist_question_answer",
+    "0249_specialist_flow_question": "0262_specialist_flow_question",
+    "0250_specialist_result_delivery": "0263_specialist_result_delivery",
+    "0251_specialist_delivery_targets": "0264_specialist_delivery_targets"
+  },
+  "sql": {
+    "0228_company_ownership": {
+      "originalSha256": "48ba07ab8b521b65a49f874cab9526dc095a2d5ccd5d555e30aba44b773f5124",
+      "rebasedSha256": "48ba07ab8b521b65a49f874cab9526dc095a2d5ccd5d555e30aba44b773f5124",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0229_company_knowledge_events": {
+      "originalSha256": "08ce6c2d520e73f02a203762bf8bc7a4853ff0f8c2c8ab046f331a2bde9ebafe",
+      "rebasedSha256": "a07f175e19d03b8334b3bea1885d17fc3cb520fcfc6482806bd2af90db9da4b7",
+      "sharedConstraintReconciled": true,
+      "changedFromOriginal": true
+    },
+    "0230_company_grant_requests": {
+      "originalSha256": "3df5e159b2d4f4e53eb6c4216f60b5c3092ab7898be9b4cbf06840a37d292aca",
+      "rebasedSha256": "3df5e159b2d4f4e53eb6c4216f60b5c3092ab7898be9b4cbf06840a37d292aca",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0231_native_knowledge_execution": {
+      "originalSha256": "8b00f5edfc71032293b747ebb97a3d22d4c610ac0e64530b021e036193db176b",
+      "rebasedSha256": "8b00f5edfc71032293b747ebb97a3d22d4c610ac0e64530b021e036193db176b",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0232_specialist_assignments": {
+      "originalSha256": "64b37c3d09116631d2e696e7a52e7bfd721c70bc2ec0d5499d38247247821d13",
+      "rebasedSha256": "b489ddc4a203576b31ee1bf3188fc4f1791ef1c7788ceb66eb5f104fadbb1211",
+      "sharedConstraintReconciled": true,
+      "changedFromOriginal": true
+    },
+    "0233_specialist_metadata": {
+      "originalSha256": "82ebf3c6d74fa437f323309554b12165940c0cfe61a602c785dfa8a80d83a228",
+      "rebasedSha256": "82ebf3c6d74fa437f323309554b12165940c0cfe61a602c785dfa8a80d83a228",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0234_company_specialist_bindings": {
+      "originalSha256": "56660d5a03d7f31a4e025a61019e580fc6de7d9ca28e963d31a3a86d71a0f442",
+      "rebasedSha256": "56660d5a03d7f31a4e025a61019e580fc6de7d9ca28e963d31a3a86d71a0f442",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0235_company_flow_bindings": {
+      "originalSha256": "db8d20a6f31d8b73ed2e111ec93fcfddc0e968502b6e5ede1735012c90d6444b",
+      "rebasedSha256": "db8d20a6f31d8b73ed2e111ec93fcfddc0e968502b6e5ede1735012c90d6444b",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0236_company_trigger_scope": {
+      "originalSha256": "11b9a6fb76b12276fc261655efc2e7ff0b4fe6f15a277905000cafa8962efed8",
+      "rebasedSha256": "772dc136892564658ab82fd573ead061b5a012caf7ea3782709270730a812943",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": true
+    },
+    "0237_company_retry_scope": {
+      "originalSha256": "9d2f5d6feb56ce5b2daa5f2f9676d94daf4f884e2e0cad00109ec716c30a1b91",
+      "rebasedSha256": "9d2f5d6feb56ce5b2daa5f2f9676d94daf4f884e2e0cad00109ec716c30a1b91",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0238_company_agent_execution": {
+      "originalSha256": "2f1b909bbb016b2e5068f8d4a1ad048826274bf86e3bf8928f28d91f9df1a728",
+      "rebasedSha256": "2f1b909bbb016b2e5068f8d4a1ad048826274bf86e3bf8928f28d91f9df1a728",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0239_company_agent_credentials": {
+      "originalSha256": "8be6045a29f407bb2968d7f6e19275321c3fe51d165435cc655ddcd5b84ccab0",
+      "rebasedSha256": "8be6045a29f407bb2968d7f6e19275321c3fe51d165435cc655ddcd5b84ccab0",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0240_company_run_terminal_events": {
+      "originalSha256": "0da433719e2a3ae6f445a0eeac7efc0d6b5023071d066ee91cfe1fa2a8c7b8c3",
+      "rebasedSha256": "0da433719e2a3ae6f445a0eeac7efc0d6b5023071d066ee91cfe1fa2a8c7b8c3",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0241_native_source_array_planning": {
+      "originalSha256": "c0b6d379705cc65f31ef42f62a1f10af1a55c0f4253a8771f7e48e8fea815677",
+      "rebasedSha256": "c0b6d379705cc65f31ef42f62a1f10af1a55c0f4253a8771f7e48e8fea815677",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0242_company_human_work_ownership": {
+      "originalSha256": "979a6f39cea5377ac127e49781c863be30b426f38f86f02e98a0337a96da2c0a",
+      "rebasedSha256": "979a6f39cea5377ac127e49781c863be30b426f38f86f02e98a0337a96da2c0a",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0243_human_work_owner_guards": {
+      "originalSha256": "cd539ec425516e3642177bb83d788a9bcde5c5a024da195b2fa3201de166f49b",
+      "rebasedSha256": "cd539ec425516e3642177bb83d788a9bcde5c5a024da195b2fa3201de166f49b",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0244_company_hitl_wait_events": {
+      "originalSha256": "5c14ce3dd1256cba121b91e3624683f392f373ca483448125e7b61b8f5a6e4f5",
+      "rebasedSha256": "5c14ce3dd1256cba121b91e3624683f392f373ca483448125e7b61b8f5a6e4f5",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0245_company_operational_attention": {
+      "originalSha256": "74b9e8b3868175b17ead71a3786c7673e5a2bcedee34ffa4480be9d77a2249c2",
+      "rebasedSha256": "74b9e8b3868175b17ead71a3786c7673e5a2bcedee34ffa4480be9d77a2249c2",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0246_company_flow_execution": {
+      "originalSha256": "b56f2dc2ee0f24a1c48d22ada8854ed083cff44eb3008cb56645784c23d60567",
+      "rebasedSha256": "b56f2dc2ee0f24a1c48d22ada8854ed083cff44eb3008cb56645784c23d60567",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0247_company_flow_node_credentials": {
+      "originalSha256": "c5abf603276beb242096263a3e876b6fa62538da7f9b1f20188e27d953f9361f",
+      "rebasedSha256": "c5abf603276beb242096263a3e876b6fa62538da7f9b1f20188e27d953f9361f",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0248_company_flow_workspace_witness": {
+      "originalSha256": "562790a5595bc52e2ac959a82de543885c36ec42e55f65994317a7646df6a265",
+      "rebasedSha256": "4558fcd62c2590cbaf385ff517480caea17a90a69092ea037a40bbf022ff3922",
+      "sharedConstraintReconciled": true,
+      "changedFromOriginal": true
+    },
+    "0249_company_flow_runtime": {
+      "originalSha256": "2763f53c6affcb49fc31e97416d0d724d06fb157d5d4d6e39a233f8832e7e2f0",
+      "rebasedSha256": "2763f53c6affcb49fc31e97416d0d724d06fb157d5d4d6e39a233f8832e7e2f0",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0250_company_run_cancellation": {
+      "originalSha256": "d1cae43d22357f81fd6fd2287137a6c286eb8c361f4096b5057a7eaca636bbd5",
+      "rebasedSha256": "d1cae43d22357f81fd6fd2287137a6c286eb8c361f4096b5057a7eaca636bbd5",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0251_specialist_intake_receipts": {
+      "originalSha256": "2c73460f0ffba0047fd0bae546731b2ad4a86c40f4718bd911d5b4f88d5bdb62",
+      "rebasedSha256": "2c73460f0ffba0047fd0bae546731b2ad4a86c40f4718bd911d5b4f88d5bdb62",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0252_specialist_project_flow_input": {
+      "originalSha256": "e02d77ebd24d5fc6cacf9116fa482aee04877ee820f5dbdeac590def87eca812",
+      "rebasedSha256": "e02d77ebd24d5fc6cacf9116fa482aee04877ee820f5dbdeac590def87eca812",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0253_company_event_admission": {
+      "originalSha256": "6e917cddd49d0821a9400ab0589836dca851da53c12c304bcaf715d5b9256d71",
+      "rebasedSha256": "6e917cddd49d0821a9400ab0589836dca851da53c12c304bcaf715d5b9256d71",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0254_project_source_review": {
+      "originalSha256": "4d6450422a6666b4711a9f4ff3e26fc80302b70feb93ebd02e2cb0415b1548fa",
+      "rebasedSha256": "4d6450422a6666b4711a9f4ff3e26fc80302b70feb93ebd02e2cb0415b1548fa",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0255_project_trigger_review": {
+      "originalSha256": "c2cb56a682cf243dd2236d4ad3c2a802e95f71d7726a2f6a044849298e9f4ca0",
+      "rebasedSha256": "c2cb56a682cf243dd2236d4ad3c2a802e95f71d7726a2f6a044849298e9f4ca0",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0256_project_event_context": {
+      "originalSha256": "2fd0642924135d03dc0960d845d77a22a3f680480abe98cbb9a14818ef291e9d",
+      "rebasedSha256": "2fd0642924135d03dc0960d845d77a22a3f680480abe98cbb9a14818ef291e9d",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0257_specialist_context_revisions": {
+      "originalSha256": "cf8c74efbb2eb0e2612649e263817858dd84810a0026a40785075aff7b1a6dfd",
+      "rebasedSha256": "cf8c74efbb2eb0e2612649e263817858dd84810a0026a40785075aff7b1a6dfd",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0258_specialist_context_credentials": {
+      "originalSha256": "8bca0c34392798e0a24b4b620e527153a4559a948835bde3a1b098a3aec15500",
+      "rebasedSha256": "8bca0c34392798e0a24b4b620e527153a4559a948835bde3a1b098a3aec15500",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0259_specialist_context_mutation_credentials": {
+      "originalSha256": "65da5de68b621d69f69f0a22d952cf8ec3a1655e609792f886682f451949b0c1",
+      "rebasedSha256": "65da5de68b621d69f69f0a22d952cf8ec3a1655e609792f886682f451949b0c1",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0260_specialist_question_subject": {
+      "originalSha256": "24ecad87677ed8a91f49a9b08fd96a65decc239225be1a02ef7cc50b393ecb54",
+      "rebasedSha256": "24ecad87677ed8a91f49a9b08fd96a65decc239225be1a02ef7cc50b393ecb54",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0261_specialist_question_answer": {
+      "originalSha256": "37b857119fb5acb08bcd966590369cb2799ae9e215cfab6d8e3114f05c85f96e",
+      "rebasedSha256": "37b857119fb5acb08bcd966590369cb2799ae9e215cfab6d8e3114f05c85f96e",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0262_specialist_flow_question": {
+      "originalSha256": "4d816f87307ace1991f80dec2ad0d3601fc5aca08149e1477ff739cd0bafd0ce",
+      "rebasedSha256": "4d816f87307ace1991f80dec2ad0d3601fc5aca08149e1477ff739cd0bafd0ce",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0263_specialist_result_delivery": {
+      "originalSha256": "34f96e303bd95e88bcb86aca94f183b2150f7a4e148e17b44053d305f1c2f42a",
+      "rebasedSha256": "34f96e303bd95e88bcb86aca94f183b2150f7a4e148e17b44053d305f1c2f42a",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    },
+    "0264_specialist_delivery_targets": {
+      "originalSha256": "284ee53a25952b75d901ef3c83dd030e7fabe642cd054f1e660015a71fde2aa2",
+      "rebasedSha256": "284ee53a25952b75d901ef3c83dd030e7fabe642cd054f1e660015a71fde2aa2",
+      "sharedConstraintReconciled": false,
+      "changedFromOriginal": false
+    }
+  },
+  "finalMigration": {
+    "idx": 264,
+    "version": "7",
+    "when": 1794065447126,
+    "tag": "0264_specialist_delivery_targets",
+    "breakpoints": true
+  },
+  "reviewedReconciliations": {
+    "0229_company_knowledge_events": "Retain master task.launch_changed in the event-kind CHECK.",
+    "0232_specialist_assignments": "Retain master task.launch_changed in the event-kind CHECK.",
+    "0236_company_trigger_scope": "Preserve master queued reserved-Run handoff only for exact project-owned canonical intents; preserve company identity immutability.",
+    "0248_company_flow_workspace_witness": "Retain master accepted task-agent operational baseline branch alongside company Flow baselines."
+  }
+}

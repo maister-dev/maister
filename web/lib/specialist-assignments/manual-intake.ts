@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { InteractiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
 import type { Db } from "@/lib/execution-host/db";
 import type { SpecialistIntakeReceipt } from "./intake-types";
 
@@ -14,6 +15,7 @@ export async function submitManualSpecialistAssignment(
   db: Db,
   userId: string,
   value: unknown,
+  launchPrincipal?: InteractiveTaskLaunchPrincipal,
 ): Promise<SpecialistIntakeReceipt> {
   const parsed = manualSpecialistAssignmentRequestSchema.safeParse(value);
 
@@ -24,6 +26,6 @@ export async function submitManualSpecialistAssignment(
     );
 
   return parsed.data.owner.kind === "project"
-    ? submitProjectManualAssignment(db, userId, parsed.data)
+    ? submitProjectManualAssignment(db, userId, parsed.data, launchPrincipal)
     : submitCompanyManualAssignment(db, userId, parsed.data);
 }

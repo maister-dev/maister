@@ -604,8 +604,8 @@ uses the opaque workspace handle and inherits its cwd and log namespace.
 
 The supervisor accepts this owner only for an isolated directory, validates the
 managed company/run path witness and refuses owner retargeting on replay.
-SQLite schema 16 adds nullable `workspaces.company_id` with exclusive namespace,
-directory, repository and mount constraints. Migration from populated schema 15
+SQLite schema 17 adds nullable `workspaces.company_id` with exclusive namespace,
+directory, repository and mount constraints. Migration from populated schemas 15 and 16
 preserves old workspace bytes and leaves company ownership absent; no historical
 authority is inferred. Reopening the host retains a new company owner and
 `GET /workspaces/{id}` returns it without source paths. Existing project and

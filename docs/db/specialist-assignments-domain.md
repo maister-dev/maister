@@ -183,7 +183,7 @@ All new entity IDs are server-generated; timestamps UTC. Versioned closed JSON c
 | `specialist_work` | Stable work identity, assignment/input/work revision, digest, parent/child run, constraints/result requirements/state | UNIQUE assignment/input/logical-work/revision; existing parent/root lock admits one child; terminal work keeps old result |
 | `specialist_work_decisions` | id/work revision/actor/input/result revision, decision/reason/evidence, owner epoch, digest/key/time | Unique work/idempotency key; exact result references RESTRICT; append-only decision history |
 | `specialist_acceptances` | id/assignment/input/context/exact result revision, policy/actor/evidence/verification decision, key/digest/time | Unique content-guarded key, acceptance/terminal state/outbox one transaction; cross-row obligations checked transactionally |
-| `specialist_delivery_receipts` (0250; qualification in progress) | Server ID, assignment/effective input/root Run/exact result revision, result-available signal, source event ID, frozen source/target/versioned witness and private outbox ID | Unique assignment/Run/result/signal and outbox; exact input FK; immutable witness equals the server-captured event; deferred private-outbox coherence. Transport status and attempts remain solely on existing webhook delivery rows |
+| `specialist_delivery_receipts` (0263; qualification in progress) | Server ID, assignment/effective input/root Run/exact result revision, result-available signal, source event ID, frozen source/target/versioned witness and private outbox ID | Unique assignment/Run/result/signal and outbox; exact input FK; immutable witness equals the server-captured event; deferred private-outbox coherence. Transport status and attempts remain solely on existing webhook delivery rows |
 
 ## Backfill, guards and lifetime
 
@@ -276,7 +276,7 @@ are rewritten. Native question submission uses the current own appointment and s
 human answers use exact input/business revisions and personal-token authority.
 Public routes add no persistence ledger.
 
-### Native result-event and delivery target extensions (0250–0251; qualification in progress)
+### Native result-event and delivery target extensions (0263–0264; qualification in progress)
 
 `domain_events.assignment_result` is NULL for historical/unenrolled events. Its
 server trigger captures only a real native root appointment's exact effective

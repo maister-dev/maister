@@ -16,6 +16,7 @@ import {
 import { projectSourceContentDigest } from "@/lib/agents/project-source-review";
 import {
   startMainPostgresTestDb,
+  declareCurrentTestDatabaseWriter,
   applyMainMigration,
   startMainPostgresTestDbUpTo,
   type StartedPostgresTestDb,
@@ -418,6 +419,7 @@ it("IT-CBX-01 company migration preserves existing project data and identity acr
     ],
   );
   await migrate(database.db, { migrationsFolder: "./lib/db/migrations" });
+  await declareCurrentTestDatabaseWriter(database);
   const company = await database.pool.query<{ id: string }>(
     "SELECT id FROM companies",
   );
@@ -464,6 +466,7 @@ it("IT-CBX-01 company migration preserves existing project data and identity acr
   ).rows[0]!.value;
 
   expect(after).toMatchObject(before.rows[0]!.value as Record<string, unknown>);
+  expect(after.task_launch_intent_id).toBeNull();
   expect(after.knowledge_access).toBeNull();
   expect(after.company_id).toBeNull();
   expect(after.company_execution_snapshot).toBeNull();
@@ -486,10 +489,14 @@ it("IT-CBX-01 company migration preserves existing project data and identity acr
     knowledge_node_attempt_id: null,
     company_id: null,
     company_run_id: null,
+    bound_run_id: null,
+    origin_kind: null,
+    revocation_reason: null,
   });
   expect(Object.keys(after).sort()).toEqual(
     [
       ...Object.keys(before.rows[0]!.value as Record<string, unknown>),
+      "task_launch_intent_id",
       "knowledge_access",
       "company_id",
       "company_execution_snapshot",
@@ -506,7 +513,7 @@ it("IT-CBX-01 company migration preserves existing project data and identity acr
         [oldEvent.id],
       )
     ).rows[0]?.value,
-  ).toEqual({ ...oldEvent.value, company_id: null });
+  ).toEqual({ ...oldEvent.value, company_id: null, assignment_result: null });
   await expect(
     database.pool.query(
       "INSERT INTO domain_events(kind,project_id,company_id,payload,occurred_at) VALUES('knowledge.record_changed',$1,$2,'{}',now())",
@@ -794,6 +801,7 @@ it("IT-CBX-01 assignment-question migration preserves legacy task decisions with
       fields: [{ name: "component", type: "string", required: true }],
     };
 
+    await declareCurrentTestDatabaseWriter(legacy);
     await legacy.pool.query(
       "INSERT INTO tasks(id,project_id,number,title,prompt) VALUES($1,$2,1,'Existing clarification','Preserve the historical task question')",
       [taskId, project.id],

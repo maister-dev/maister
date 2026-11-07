@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { InteractiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
 import type { Db } from "@/lib/execution-host/db";
 import type { AssignmentOrigin } from "./types";
 import type { SpecialistIntakeReceipt } from "./intake-types";
@@ -21,6 +22,7 @@ export async function submitProjectManualAssignment(
   db: Db,
   userId: string,
   value: unknown,
+  launchPrincipal?: InteractiveTaskLaunchPrincipal,
 ): Promise<SpecialistIntakeReceipt> {
   const parsed = projectManualAssignmentRequestSchema.safeParse(value);
 
@@ -47,5 +49,6 @@ export async function submitProjectManualAssignment(
     trigger: { source: "manual" },
     scheduledRequest: null,
     taskId: null,
+    ...(launchPrincipal ? { launchPrincipal } : {}),
   });
 }

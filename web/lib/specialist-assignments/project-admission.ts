@@ -74,6 +74,27 @@ export type ProjectAssignmentLaunchContext = Readonly<{
   agentChainDepth?: number | null;
 }>;
 
+/** A private assignment carrier cannot be reinterpreted as an ordinary incoming task. */
+export async function assertProjectAssignmentTaskInput(
+  tx: SqlTransaction,
+  projectId: string,
+  taskId: string,
+  reference: ProjectAssignmentAdmission | undefined,
+): Promise<void> {
+  const carrier = (
+    await tx.execute(
+      sql`SELECT id FROM specialist_assignments WHERE project_id=${projectId} AND project_task_id=${taskId} FOR SHARE`,
+    )
+  ).rows[0];
+
+  if (carrier && carrier.id !== reference?.assignmentId)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Continue the retained project assignment through its original intake so its private input remains bound to the launch",
+      { details: { reason: "project_assignment_input_binding_required" } },
+    );
+}
+
 /** Hold responsibility and compare the exact frozen input before the existing Run insert. */
 export async function prepareProjectAssignmentAdmission(
   tx: SqlTransaction,

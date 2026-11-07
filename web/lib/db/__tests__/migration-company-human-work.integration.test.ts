@@ -7,6 +7,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { seedProjectRow } from "@/test-support/execution-host-seed";
 import {
   applyMainMigration,
+  declareCurrentTestDatabaseWriter,
   startMainPostgresTestDbUpTo,
 } from "@/test-support/pg-container";
 
@@ -32,6 +33,7 @@ beforeAll(async () => {
     { databaseName: "company_human_work_upgrade" },
     "0243_native_source_array_planning",
   );
+  await declareCurrentTestDatabaseWriter(database);
   projectId = (await seedProjectRow(database.db)).id;
   userId = randomUUID();
   actorId = randomUUID();

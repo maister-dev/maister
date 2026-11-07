@@ -94,6 +94,7 @@ async function flowSnapshot(
         carrierTaskId: facts.task.id,
         mode: "task",
         runnerOverride: spec.runnerOverride ?? null,
+        ...(spec.nativeInput ? { nativeInput: spec.nativeInput } : {}),
       }),
       triggerSource: "domain_event",
       triggerPayload: {
@@ -130,6 +131,7 @@ async function agentSnapshot(
       agentId: spec.agentId,
       projectId: facts.task.projectId,
       taskId: facts.task.id,
+      ...(spec.nativeInput ? { nativeInput: spec.nativeInput } : {}),
       launchOverrideRunnerId: spec.runnerOverride ?? null,
       parentRunId: facts.parent.id,
       rootRunId: facts.parent.rootRunId ?? facts.parent.id,
@@ -169,6 +171,7 @@ async function agentSnapshot(
     agentWorkspace: workspace,
     execution: {
       agentId: spec.agentId,
+      ...(spec.nativeInput ? { nativeInput: spec.nativeInput } : {}),
       parentRunId: facts.parent.id,
       rootRunId: facts.parent.rootRunId ?? facts.parent.id,
       launchMode: "auto",

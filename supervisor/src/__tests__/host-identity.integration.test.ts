@@ -328,7 +328,7 @@ describe("execution-host identity", () => {
     migrated.close();
   });
 
-  it("CBS-02 upgrades populated v15 workspaces without inventing company ownership and retains new company owners", async () => {
+  it.each([15,16])("CBS-02 upgrades populated v%s workspaces without inventing company ownership and retains new company owners", async (version) => {
     const root = await tempRoot();
     const stateDir = join(root, "s");
     const initial = openHostState({ stateDir });
@@ -351,7 +351,8 @@ describe("execution-host identity", () => {
     const prior = new DatabaseSync(join(stateDir, HOST_STATE_FILE));
 
     prior.exec("ALTER TABLE workspaces DROP COLUMN company_id");
-    prior.exec("PRAGMA user_version = 15");
+    if (version === 15) prior.exec("DROP TABLE session_process_obligations");
+    prior.exec(`PRAGMA user_version = ${version}`);
     prior.close();
     const migrated = openHostState({ stateDir });
 
@@ -527,7 +528,7 @@ describe("durable session process obligations", () => {
         .all();
 
       legacy.exec(
-        "DROP TABLE session_process_obligations; PRAGMA user_version=15;",
+        "ALTER TABLE workspaces DROP COLUMN company_id; DROP TABLE session_process_obligations; PRAGMA user_version=15;",
       );
       legacy.close();
       state = openHostState({ stateDir, now: () => new Date(clock) });
@@ -720,7 +721,7 @@ describe("durable session process obligations", () => {
     const legacy = new DatabaseSync(join(stateDir, HOST_STATE_FILE));
 
     legacy.exec(
-      "DROP TABLE session_process_obligations; DELETE FROM command_receipts; PRAGMA user_version=15;",
+      "ALTER TABLE workspaces DROP COLUMN company_id; DROP TABLE session_process_obligations; DELETE FROM command_receipts; PRAGMA user_version=15;",
     );
     legacy.close();
     expect(() => openHostState({ stateDir })).toThrow(HostStateUnwritableError);
@@ -892,7 +893,7 @@ describe("durable session process obligations", () => {
     const legacy = new DatabaseSync(join(stateDir, HOST_STATE_FILE));
 
     legacy.exec(
-      "DROP TABLE session_process_obligations; PRAGMA user_version=15;",
+      "ALTER TABLE workspaces DROP COLUMN company_id; DROP TABLE session_process_obligations; PRAGMA user_version=15;",
     );
     legacy.close();
     state = openHostState({ stateDir });

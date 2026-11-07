@@ -7,6 +7,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { seedProjectRow } from "@/test-support/execution-host-seed";
 import {
   applyMainMigration,
+  declareCurrentTestDatabaseWriter,
   startMainPostgresTestDbUpTo,
 } from "@/test-support/pg-container";
 
@@ -21,6 +22,7 @@ beforeAll(async () => {
     { databaseName: "company_agent_execution_upgrade" },
     "0239_company_retry_scope",
   );
+  await declareCurrentTestDatabaseWriter(database);
   projectId = (await seedProjectRow(database.db)).id;
   await database.pool.query(
     "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
