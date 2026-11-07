@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-07T19:04:18.101238+00:00",
+  "baseline": "cf06767e6",
+  "status": "qualified-local-checkpoint-T25-remains-open",
+  "red": "260 actual native deliveries succeed but their authorized unread count exhausts one shared source resolution budget.",
+  "gates": {
+    "integration": {
+      "passed": 20,
+      "files": 2,
+      "seconds": 39.49
+    },
+    "unit": {
+      "passed": 9312,
+      "files": 891
+    },
+    "types": "passed",
+    "lintAndFormat": "passed",
+    "contracts": "passed;84 requirements;45 tasks",
+    "docs": "passed"
+  },
+  "verified": [
+    "260-result native Inbox unread count, bounded page and project badge count",
+    "one over-budget source root still fails explicitly",
+    "current recipient and source revocation regression",
+    "authenticated native consumer retains the complete combined source cap",
+    "two individually bounded source Runs exceeding combined capture refuse atomically",
+    "recipient capture unchanged after refusal",
+    "existing delivery idempotency, task reply and local HTTP lost-ACK retry"
+  ],
+  "remaining": [
+    "T25 authorized delivery inspection/replay APIs",
+    "remaining delivery rollback and revocation checks",
+    "T22 diagnostics/order/cancellation checks",
+    "T26-T43 implementation and actual stand-pilot qualification"
+  ],
+  "effects": "Local owned database and fixture HTTP peer only; no production delivery or remote push.",
+  "sources": [
+    {
+      "path": ".ai-factory/plans/codex-company-brain-specialist-assignments.md",
+      "sha256": "204716a388e4450d11376e3065ab26c377ef699774ce2df35563283aa230e344"
+    },
+    {
+      "path": "docs/system-analytics/evidence-findings.md",
+      "sha256": "ddeb71807aa60a371dd3c849aeccc32fa2e5ffd0fe9957a721b60298248b3a66"
+    },
+    {
+      "path": "web/lib/brain/knowledge-run-disclosure.ts",
+      "sha256": "b62a9d5eb3c31f531c96064e1d6c48fd6ee79384b211d538254471eeaf3632e5"
+    },
+    {
+      "path": "web/lib/run-results/__tests__/findings-access.integration.test.ts",
+      "sha256": "95ed14d10e1db1de3f6ab6c5682c58a92dfb7d884bd1c2e00e77dde69ba6fbc6"
+    },
+    {
+      "path": "web/lib/specialist-assignments/__tests__/delivery.integration.test.ts",
+      "sha256": "6a87093db34cc63dfabaca1a7a5de31d1edaa6ba831b0afff5426522cd4d0602"
+    }
+  ],
+  "logs": [
+    "red.log.gz",
+    "owning-green.log.gz",
+    "unit-green.log.gz",
+    "types-green.log.gz",
+    "contracts-green.log.gz",
+    "docs-green.log.gz",
+    "lint-green.log.gz"
+  ]
+}

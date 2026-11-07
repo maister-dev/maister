@@ -36,7 +36,11 @@ import {
   installPackageRevision,
   trustPackageRevision,
 } from "@/lib/packages/attach";
-import { getInboxItems, getUnreadInboxCount } from "@/lib/queries/inbox";
+import {
+  getInboxItems,
+  getUnreadInboxCount,
+  getUnreadInboxCountsByProject,
+} from "@/lib/queries/inbox";
 import { buildFlowExportContract } from "@/lib/run-results/contract";
 import { publishRunResult } from "@/lib/run-results/ledger";
 import { runWebhookDeliveryJob } from "@/lib/scheduler/handlers/webhook-delivery";
@@ -262,6 +266,9 @@ async function readyResult(
 ): Promise<{ assignmentId: string; runId: string; deliveryId: string }> {
   const work = await createSpecialistAssignment(database.db, target.userId, {
     ...preparedBase,
+    sourceRestrictions: [
+      { kind: "project_context", projectId: target.projectId },
+    ],
     owner: { kind: "project", projectId: target.projectId },
     origin: { kind: "manual", interactionId: randomUUID() },
     destination,
@@ -601,3 +608,69 @@ it("IT-CBA-06 sends a frozen result only to its configured peer and retries a lo
     ).rows,
   ).toEqual([{ status: "active", acceptance_id: null }]);
 });
+
+it("IT-CBA-06 reads a large authorized native Inbox without combining independent source budgets and still rejects one oversized root", async () => {
+  const target = await recipient();
+  const work: Awaited<ReturnType<typeof readyResult>>[] = [];
+
+  vi.stubEnv("MAISTER_WEBHOOK_DELIVERY_BATCH", "100");
+  for (let index = 0; index < 260; index++)
+    work.push(
+      await readyResult(target, { kind: "inbox", userId: target.userId }),
+    );
+  for (let batch = 0; batch < 3; batch++)
+    await runWebhookDeliveryJob({ db: database.db });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS count FROM inbox_items WHERE recipient_id=$1 AND event_kind='assignment_result_available'",
+        [target.userId],
+      )
+    ).rows,
+  ).toEqual([{ count: 260 }]);
+  expect(await getUnreadInboxCount(target.userId, "member")).toBe(260);
+  expect(
+    await getInboxItems(target.userId, "member", { limit: 100 }),
+  ).toHaveLength(100);
+  expect(
+    (
+      await getUnreadInboxCountsByProject(target.userId, "member", [
+        target.projectId,
+      ])
+    ).get(target.projectId),
+  ).toBe(260);
+  const inputs = (
+    await database.pool.query<{
+      assignment_id: string;
+      revision: number;
+      digest: string;
+    }>(
+      "SELECT assignment_id,revision,digest FROM specialist_input_revisions WHERE assignment_id=ANY($1::text[]) AND revision=1",
+      [work.slice(0, 256).map((row) => row.assignmentId)],
+    )
+  ).rows;
+
+  expect(inputs).toHaveLength(256);
+  const overBudget: KnowledgeAccessCapture = {
+    schemaVersion: 1,
+    generation: 2,
+    state: "complete",
+    restrictions: inputs.map((input) => ({
+      kind: "assignment_input",
+      assignmentId: input.assignment_id,
+      inputRevision: input.revision,
+      inputSha256: input.digest,
+    })),
+  };
+
+  await database.pool.query(
+    "UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1",
+    [work[0].runId, JSON.stringify(overBudget)],
+  );
+  await expect(
+    getUnreadInboxCount(target.userId, "member"),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "knowledge_reference_budget_exceeded" },
+  });
+}, 120000);

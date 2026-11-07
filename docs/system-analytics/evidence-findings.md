@@ -299,8 +299,22 @@ execution or attempt ledger is introduced.
 
 
 Execution read admission batches a page's run classifications and captures in one
-transaction (at most 256 run identities), then authorizes the combined bounded
-source closure. It does not issue one result-body query per run. Source-controlled
+transaction (at most 256 run identities). Each independently captured Run root
+has a separate 256-identity dependency-resolution budget, including the receiving
+execution's already retained sources when applicable. A human Inbox or badge
+aggregating more than 256 independent results must not spend one shared source
+budget across the history or across its pages. Every root still receives its
+complete current source check; one over-budget root fails explicitly rather than
+being hidden as denied or silently truncated.
+
+A receiving agent remains subject to the combined consumption contract: after
+independent root authorization, the complete resolved union of every consumed
+root and its prior sources is recorded before disclosure. Its 256-restriction
+and 64-KiB capture limits remain unchanged; per-root resolution never allows a
+receiving execution to discard earlier roots. Personal users and personal tokens
+have no executing consumer capture to update. Current owner/source access still
+controls each item, title, count and final page. Read admission does not issue
+one result-body query per run. Source-controlled
 stream wrappers apply backpressure, recheck after each asynchronous read, and
 cancel/release upstream readers on denial or consumer cancellation. They never
 hold PostgreSQL locks while waiting for upstream chunks; deleting a project can

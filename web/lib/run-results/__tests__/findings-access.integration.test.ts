@@ -952,3 +952,104 @@ it("IT-CBX-02 preserves supported long catalog role identities across grant inpu
     runId: execution.runId,
   });
 });
+
+it("IT-CBE-06 retains the combined native consumer capture limit across independently bounded source Runs", async () => {
+  const execution = await seedNativeFindingsExecution(database, contract);
+  const principal = { kind: "user" as const, userId: execution.submitterId };
+  const proposalIds: string[] = [];
+
+  for (let index = 0; index < 257; index++) {
+    const proposal = await createKnowledgeProposal(database.db, {
+      kind: "knowledge_add",
+      owner: { kind: "company", companyId: execution.companyId },
+      principal,
+      idempotencyKey: `capture-bound:${execution.runId}:${index}`,
+      draft: {
+        title: `Capture-bound claim ${index}`,
+        kind: "observation",
+        assertion: `Bounded access claim ${index} refers to the same observed source.`,
+        basis: "observed",
+        evidence: [
+          {
+            relation: "supports",
+            reference: { kind: "witness", id: execution.witness.id },
+          },
+        ],
+        limitations: [
+          "All claims share one witness and do not independently corroborate one another.",
+        ],
+        missingEvidence: [],
+      },
+    });
+
+    await reviewKnowledgeProposal(database.db, {
+      proposalId: proposal.id,
+      principal,
+      expectedRevision: proposal.revision,
+      decision: "accept",
+      reason:
+        "Retain a distinct source identity for bounded disclosure qualification.",
+      idempotencyKey: `capture-bound-review:${execution.runId}:${index}`,
+    });
+    proposalIds.push(proposal.id);
+  }
+  const records = (
+    await database.pool.query<{ published_record_id: string }>(
+      "SELECT published_record_id FROM brain_proposals WHERE id=ANY($1::text[]) ORDER BY published_record_id",
+      [proposalIds],
+    )
+  ).rows;
+
+  expect(records).toHaveLength(257);
+  const sourceRuns: string[] = [];
+
+  for (const group of [records.slice(0, 128), records.slice(128)]) {
+    const sourceRun = await seedRun(database.db, {
+      projectId: execution.projectId,
+      runKind: "agent",
+      agentWorkspace: "none",
+      workspaceMode: "own",
+    });
+    const capture: KnowledgeAccessCapture = {
+      schemaVersion: 1,
+      generation: 1,
+      state: "complete",
+      restrictions: group.map((row) => ({
+        kind: "record",
+        recordId: row.published_record_id,
+      })),
+    };
+
+    await database.pool.query(
+      "UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1",
+      [sourceRun, JSON.stringify(capture)],
+    );
+    sourceRuns.push(sourceRun);
+  }
+  const before = (
+    await database.pool.query("SELECT knowledge_access FROM runs WHERE id=$1", [
+      execution.runId,
+    ])
+  ).rows;
+
+  await expect(
+    database.db.transaction((tx) =>
+      authorizeRunsKnowledgeDisclosure(
+        tx,
+        { kind: "token", tokenId: execution.tokenId },
+        sourceRuns,
+      ),
+    ),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "knowledge_capture_limit" },
+  });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT knowledge_access FROM runs WHERE id=$1",
+        [execution.runId],
+      )
+    ).rows,
+  ).toEqual(before);
+}, 120000);

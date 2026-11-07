@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { SqlDatabase, SqlTransaction } from "@/lib/db/sql-types";
+import type { KnowledgeAccessRestriction } from "@/lib/company/types";
 import type { KnowledgePrincipal } from "./knowledge-types";
 
 import { sql } from "drizzle-orm";
@@ -83,7 +84,16 @@ export async function authorizeRunsKnowledgeDisclosure(
   ).rows;
 
   if (rows.length !== governed.length) throw unavailableKnowledgeReference();
-  const restrictions = rows.flatMap((row) => {
+  await resolveKnowledgePrincipal(tx, recipient, "knowledge:read");
+  const baseline = await authorizeSourceRestrictions(
+    tx,
+    recipient,
+    consumer?.capture.restrictions ?? [],
+  );
+  const disclosed: KnowledgeAccessRestriction[] = [];
+  let sourceChecks = 0;
+
+  for (const row of rows) {
     assertNativeWorkspaceMode(row.workspace_mode);
     const capture = knowledgeAccessCaptureSchema.safeParse(
       row.knowledge_access,
@@ -91,26 +101,22 @@ export async function authorizeRunsKnowledgeDisclosure(
 
     if (!capture.success || capture.data.state !== "complete")
       throw unavailableKnowledgeReference();
+    const access = await authorizeSourceRestrictions(
+      tx,
+      recipient,
+      capture.data.restrictions,
+      baseline,
+    );
 
-    return capture.data.restrictions;
-  });
-
-  await resolveKnowledgePrincipal(tx, recipient, "knowledge:read");
-  const access = await authorizeSourceRestrictions(tx, recipient, [
-    ...(consumer?.capture.restrictions ?? []),
-    ...restrictions,
-  ]);
-
-  await recordKnowledgeDisclosure(
-    tx,
-    consumer,
-    restrictionsForKnowledgeAccess(access),
-  );
+    sourceChecks += access.visited.length;
+    if (consumer) disclosed.push(...restrictionsForKnowledgeAccess(access));
+  }
+  await recordKnowledgeDisclosure(tx, consumer, disclosed);
   log.debug(
     {
       runCount: governed.length,
       recipientKind: recipient.kind,
-      sourceCount: access.visited.length,
+      sourceChecks,
     },
     "execution source authority checked before derived disclosure",
   );
@@ -130,12 +136,13 @@ export async function readableKnowledgeRunIds(
     const consumer = await lockKnowledgeReadConsumer(tx, recipient);
 
     await resolveKnowledgePrincipal(tx, recipient, "knowledge:read");
-    let access = await authorizeSourceRestrictions(
+    const baseline = await authorizeSourceRestrictions(
       tx,
       recipient,
       consumer?.capture.restrictions ?? [],
     );
     const readable = new Set<string>();
+    const disclosed: KnowledgeAccessRestriction[] = [];
 
     for (let offset = 0; offset < ids.length; offset += 256) {
       const page = ids.slice(offset, offset + 256);
@@ -155,13 +162,16 @@ export async function readableKnowledgeRunIds(
 
         if (!capture.success || capture.data.state !== "complete") continue;
         try {
-          access = await authorizeSourceRestrictions(
+          const access = await authorizeSourceRestrictions(
             tx,
             recipient,
             capture.data.restrictions,
-            access,
+            baseline,
           );
+
           readable.add(String(row.id));
+          if (consumer)
+            disclosed.push(...restrictionsForKnowledgeAccess(access));
         } catch (error) {
           if (
             !isRunKnowledgeUnavailable(error) ||
@@ -179,11 +189,7 @@ export async function readableKnowledgeRunIds(
         }
       }
     }
-    await recordKnowledgeDisclosure(
-      tx,
-      consumer,
-      restrictionsForKnowledgeAccess(access),
-    );
+    await recordKnowledgeDisclosure(tx, consumer, disclosed);
 
     return readable;
   });
