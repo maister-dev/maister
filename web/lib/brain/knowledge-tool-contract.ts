@@ -31,6 +31,7 @@ const record = z
 /** Generated facade schemas and native handlers share these nested input definitions. */
 export const knowledgeToolInputSchemas = {
   // The native facade shares validation; assignment context remains a separate durable store.
+  assignment_get: assignmentContextReadSchema.omit({ revision: true }),
   assignment_context_get: assignmentContextReadSchema,
   assignment_context_update: assignmentContextUpdateSchema.safeExtend({
     assignmentId: assignmentContextReadSchema.shape.assignmentId,

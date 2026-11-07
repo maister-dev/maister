@@ -1,4 +1,20 @@
 {
+  "assignment_get": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "assignmentId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^(?:[^\\u0000\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+      }
+    },
+    "required": [
+      "assignmentId"
+    ],
+    "additionalProperties": false
+  },
   "assignment_context_get": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "type": "object",

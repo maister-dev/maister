@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { KnowledgePrincipal } from "@/lib/brain/knowledge-types";
+import type { KnowledgeAccessWalk } from "@/lib/brain/knowledge-restrictions";
 import type { SqlDatabase, SqlTransaction } from "@/lib/db/sql-types";
 import type {
   PreparedSpecialistAssignment,
@@ -18,6 +20,7 @@ import { sql } from "drizzle-orm";
 import pino from "pino";
 
 import { authorizeAssignment } from "./access";
+import { assertAssignmentAppointment } from "./appointment";
 import {
   assignmentDestinationSchema,
   assignmentObjectiveInputSchema,
@@ -164,14 +167,18 @@ async function validateStandingDefinition(
   }
 }
 
-/** All bytes returned here have passed current assignment and inherited-source policy. */
-export async function getSpecialistAssignmentInTransaction(
+/** Shared projection keeps human and executing principals distinct throughout source authorization. */
+async function inspectAssignmentInTransaction(
   tx: SqlTransaction,
-  userId: string,
+  principal: Extract<KnowledgePrincipal, { kind: "user" | "execution" }>,
   assignmentId: string,
-): Promise<SpecialistAssignment> {
+): Promise<
+  Readonly<{ value: SpecialistAssignment; access: KnowledgeAccessWalk }>
+> {
   if (!identitySchema.safeParse(assignmentId).success)
     throw new MaisterError("CONFIG", "Invalid assignment identity");
+  if (principal.kind === "execution")
+    await assertAssignmentAppointment(tx, principal.runId, assignmentId);
   const head = (
     await tx.execute(
       sql`SELECT * FROM specialist_assignments WHERE id=${assignmentId} FOR SHARE`,
@@ -179,16 +186,17 @@ export async function getSpecialistAssignmentInTransaction(
   ).rows[0];
 
   if (!head) throw unavailableAssignment();
-  await authorizeAssignment(
-    tx,
-    userId,
-    knowledgeOwner(head),
-    "assignments:read",
-    { preset: "supervised" },
-  );
+  if (principal.kind === "user")
+    await authorizeAssignment(
+      tx,
+      principal.userId,
+      knowledgeOwner(head),
+      "assignments:read",
+      { preset: "supervised" },
+    );
   const input = (
     await tx.execute(
-      sql`SELECT objective_input,source_restrictions FROM specialist_input_revisions WHERE assignment_id=${assignmentId} AND revision=${head.input_revision} FOR SHARE`,
+      sql`SELECT objective_input,source_restrictions,digest FROM specialist_input_revisions WHERE assignment_id=${assignmentId} AND revision=${head.input_revision} FOR SHARE`,
     )
   ).rows[0];
 
@@ -197,11 +205,15 @@ export async function getSpecialistAssignmentInTransaction(
       "CONFIG",
       "Assignment input head is missing; inspect migration and transaction integrity",
     );
-  await authorizeSourceRestrictions(
-    tx,
-    { kind: "user", userId },
-    input.source_restrictions,
-  );
+  const access = await authorizeSourceRestrictions(tx, principal, [
+    ...knowledgeRestrictionsSchema.parse(input.source_restrictions),
+    {
+      kind: "assignment_input",
+      assignmentId,
+      inputRevision: Number(head.input_revision),
+      inputSha256: String(input.digest),
+    },
+  ]);
   const objective = assignmentObjectiveInputSchema.safeParse(
     input.objective_input,
   );
@@ -248,7 +260,33 @@ export async function getSpecialistAssignmentInTransaction(
       "Stored assignment does not match its native read contract",
     );
 
-  return value.data;
+  return { value: value.data, access };
+}
+
+/** Human reads retain current owner and inherited-source authorization. */
+export async function getSpecialistAssignmentInTransaction(
+  tx: SqlTransaction,
+  userId: string,
+  assignmentId: string,
+): Promise<SpecialistAssignment> {
+  return (
+    await inspectAssignmentInTransaction(
+      tx,
+      { kind: "user", userId },
+      assignmentId,
+    )
+  ).value;
+}
+
+/** Execution reads require their exact appointment and current input/source policy. */
+export async function inspectExecutingAssignmentInTransaction(
+  tx: SqlTransaction,
+  principal: Extract<KnowledgePrincipal, { kind: "execution" }>,
+  assignmentId: string,
+): Promise<
+  Readonly<{ value: SpecialistAssignment; access: KnowledgeAccessWalk }>
+> {
+  return inspectAssignmentInTransaction(tx, principal, assignmentId);
 }
 
 export async function getSpecialistAssignment(

@@ -7844,6 +7844,23 @@ it("IT-CBA-04 discloses only the appointed company context through a scoped actu
         },
       ],
     });
+    const inspection = await inspectExternal(
+      appointment.assignmentId,
+      credential.secret,
+    );
+
+    expect(inspection.status).toBe(200);
+    expect(inspection.headers.get("cache-control")).toBe("private, no-store");
+    expect(await inspection.json()).toMatchObject({
+      id: appointment.assignmentId,
+      revision: 4,
+      inputRevision: 1,
+      contextRevision: 1,
+      runIds: [appointment.runId],
+    });
+    expect(
+      (await inspectExternal(foreign.assignmentId, credential.secret)).status,
+    ).toBe(404);
     const withheld = await read(foreign.assignmentId);
 
     expect(withheld.status).toBe(404);
@@ -7866,6 +7883,10 @@ it("IT-CBA-04 discloses only the appointed company context through a scoped actu
       "UPDATE project_tokens SET revoked_at=now() WHERE id=$1",
       [credential.tokenId],
     );
+    expect(
+      (await inspectExternal(appointment.assignmentId, credential.secret))
+        .status,
+    ).toBe(401);
     expect((await read(appointment.assignmentId)).status).toBe(401);
   } finally {
     await revokeAgentRunTokensForRun(appointment.runId, database.db);
@@ -7943,6 +7964,16 @@ it("IT-CBE-06 captures context sources before disclosure and retains revocation 
         ],
       },
     );
+    const inspection = await inspectExternal(
+      appointment.assignmentId,
+      appointment.credential.secret,
+    );
+
+    expect(inspection.status).toBe(200);
+    expect(await inspection.json()).toMatchObject({
+      id: appointment.assignmentId,
+      contextRevision: 1,
+    });
     const response = await read();
 
     expect(response.status).toBe(200);
@@ -7989,6 +8020,15 @@ it("IT-CBE-06 captures context sources before disclosure and retains revocation 
       reason: "Withdraw access after context disclosure",
       idempotencyKey: randomUUID(),
     });
+    const deniedInspection = await inspectExternal(
+      appointment.assignmentId,
+      appointment.credential.secret,
+    );
+
+    expect(deniedInspection.status).toBe(404);
+    expect(JSON.stringify(await deniedInspection.json())).not.toContain(
+      "inferred diagnosis",
+    );
     const denied = await read();
 
     expect(denied.status).toBe(404);

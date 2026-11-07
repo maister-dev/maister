@@ -150,3 +150,11 @@ context. Company roles need the reviewed `assignments:read` limit. If a source i
 unavailable, the new dispatch refuses; it does not supply a partial summary.
 Recovering an already retained prompt keeps its original context snapshot. Use
 `assignment_context_get` to inspect the current revision during ongoing work.
+
+Use `assignment_get` with `assignmentId` to inspect your appointed assignment's
+responsibility, expected result and current revisions. The same read scope uses
+`GET /api/v1/ext/specialist-assignments/{assignmentId}`. Its `revision` is the
+business revision; `inputRevision` and `contextRevision` identify separate
+histories. Preserve the appropriate exact values for each update. Current source
+access applies to the entire assignment and its working context. Sharing another
+Run's input does not expose that Run's assignment or later working notes.

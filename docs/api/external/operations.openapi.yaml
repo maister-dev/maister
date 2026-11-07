@@ -6083,11 +6083,18 @@ paths:
     get:
       operationId: extSpecialistAssignmentGet
       summary: Inspect durable responsibility and progress
-      description: Implemented for personal user tokens with assignments:read and current owner/source authority.
-        Project/agent/librarian tokens cannot impersonate a human reader. URL identities are untrusted
-        selectors; the shared assignment reader checks current membership or explicit company grants and
-        inherited source access. Missing references return 404, validation returns 422, and responses are
-        private and no-store. The existing required token audit records authenticated reads/refusals.
+      description: >-
+        Implemented for global personal user tokens and current appointed execution credentials
+        with assignments:read. Personal clients retain current owner/source authority.
+        Executions may inspect only their exact root appointment under current input and complete
+        working-context source access; sharing a producing Run input does not grant inspection
+        of its assignment. The complete disclosure closure commits before response bytes.
+        Business revision, inputRevision and contextRevision are distinct CAS coordinates.
+        Missing and inaccessible execution references are withheld identically. This operation
+        grants no general Brain access, work acceptance or confirmation authority.
+        URL identities are untrusted selectors. Global personal tokens retain their actual user identity;
+        other credentials never impersonate that user. Missing references return 404, validation returns
+        422, and responses are private and no-store. Required token audit records authenticated reads/refusals.
       x-implementation-status: Implemented
       x-required-scope: assignments:read
       responses:

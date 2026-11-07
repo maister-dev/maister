@@ -24,6 +24,7 @@ import {
   resolveAssignmentContextPrincipal,
   authorizeAssignmentContextUpdate,
 } from "./context-access";
+import { assertAssignmentAppointment } from "./appointment";
 import { SPECIALIST_ASSIGNMENT_STATUSES } from "./types";
 import { decodeAssignmentInput } from "./input-snapshot";
 import {
@@ -39,7 +40,6 @@ import { recordKnowledgeDisclosure } from "@/lib/brain/knowledge-disclosure";
 import {
   authorizeSourceRestrictions,
   restrictionsForKnowledgeAccess,
-  unavailableKnowledgeReference,
 } from "@/lib/brain/knowledge-restrictions";
 import { inspectKnowledgeEvidenceReference } from "@/lib/brain/knowledge-reference";
 import { contentDigest } from "@/lib/evaluations/digest";
@@ -117,16 +117,8 @@ export async function readSpecialistAssignmentContextInTransaction(
       principal.userId,
       assignmentId,
     );
-  if (
-    principal.kind === "execution" &&
-    (
-      await tx.execute(sql`
-    SELECT 1 FROM specialist_run_links WHERE run_id=${principal.runId} AND assignment_id=${assignmentId}
-      AND role IN ('specialist','coordinator','continuation') AND work_id IS NULL
-  `)
-    ).rows.length !== 1
-  )
-    throw unavailableKnowledgeReference();
+  if (principal.kind === "execution")
+    await assertAssignmentAppointment(tx, principal.runId, assignmentId);
   const head = (
     await tx.execute(
       sql`SELECT company_id,project_id,input_revision,context_revision FROM specialist_assignments WHERE id=${assignmentId} FOR SHARE`,

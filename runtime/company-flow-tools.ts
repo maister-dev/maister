@@ -9,6 +9,7 @@ export const COMPANY_FLOW_TOOL_CONTRACT = [
   { name: "knowledge_proposal_get", scope: "knowledge:read" },
   { name: "knowledge_capture_source", scope: "knowledge:propose" },
   { name: "knowledge_propose", scope: "knowledge:propose" },
+  { name: "assignment_get", scope: "assignments:read" },
   { name: "assignment_context_get", scope: "assignments:read" },
   { name: "assignment_context_update", scope: "assignments:update" },
 ] as const;

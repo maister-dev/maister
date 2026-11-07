@@ -492,6 +492,51 @@ describe("MCP stdio wire contract", () => {
     expect(requests).toHaveLength(count);
   });
 
+  it("inspects appointed assignment revisions through the built company facade and refuses forged selectors locally", async () => {
+    const company = await connectClient({
+      token: "mai_assignment_wire",
+      toolset: "company",
+    });
+
+    try {
+      const listed = await company.listTools();
+
+      expect(
+        listed.tools.find((tool) => tool.name === "assignment_get")?.annotations
+          ?.readOnlyHint,
+      ).toBe(true);
+      const result = await company.callTool({
+        name: "assignment_get",
+        arguments: { assignmentId: "assignment / exact" },
+      });
+
+      expect(result.isError).not.toBe(true);
+      expect(requests.at(-1)).toEqual({
+        method: "GET",
+        url: "/api/v1/ext/specialist-assignments/assignment%20%2F%20exact",
+        authorization: "Bearer mai_assignment_wire",
+        body: {},
+      });
+      const before = requests.length;
+
+      for (const arguments_ of [
+        { assignmentId: "assignment", actor: { kind: "user", id: "forged" } },
+        { assignmentId: "" },
+        { assignmentId: "assignment", revision: 1 },
+      ]) {
+        const refused = await company.callTool({
+          name: "assignment_get",
+          arguments: arguments_,
+        });
+
+        expect(refused.isError).toBe(true);
+      }
+      expect(requests).toHaveLength(before);
+    } finally {
+      await closeClient(company);
+    }
+  });
+
   it("serves assignment context through the real company facade with exact selectors and local closed-schema refusal", async () => {
     const company = await connectClient({
       token: "mai_context_wire",
@@ -791,6 +836,7 @@ describe("MCP stdio wire contract", () => {
           "knowledge_proposal_get",
           "knowledge_capture_source",
           "knowledge_propose",
+          "assignment_get",
           "assignment_context_get",
           "assignment_context_update",
         ].sort(),

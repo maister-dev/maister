@@ -580,6 +580,16 @@ patches against one base have one winner and one actionable conflict.
 
 The native facade exposes `assignment_context_get` with the same closed assignment/revision selector as HTTP. The external route authenticates and audits the real token, then resolves its current native principal without requiring a knowledge token scope. Company credentials include `assignments:read` only when the reviewed role permits it. A machine reads through its exact Run/node appointment and frozen input, never through the initiating user's identity; arbitrary foreign assignment selectors are withheld. Context source closure is recorded on the existing Run capture before returning content, so omitted citations do not remove downstream restrictions. Human authorization preserves its existing current company/project policy. Agent writes use the current professional authority described below. Governed child/result lineage remains unqualified until T27/T28.
 
+The implemented `assignment_get` facade and existing external assignment GET also
+accept a current executing principal with `assignments:read`. Inspection retains
+the actual Run/node identity, exact root appointment and all current input/context
+source dependencies; an event's input sharing does not authorize producer
+assignment inspection. Source disclosure commits before the DTO leaves the
+transaction. The DTO's `revision` is the business CAS coordinate, while
+`inputRevision` and `contextRevision` identify independent retained histories.
+Reading these values grants neither human answer authority nor work acceptance.
+
+
 Executing-agent context updates require a current credential carrying both context read and update scopes, an active Run (queued/reviewed executions refuse), exact assignment/input appointment and current source access. A company role additionally needs its reviewed `assignments:update` limit, an explicit current professional update grant and current initiating-user update authority. Project appointments retain current initiating membership/launch authority independently from Brain flags. The author is always the server-resolved Run/node role. Every new snapshot inherits the consuming Run's complete source closure, including sources omitted from submitted citations. Replay and response disclosure retain current access checks. Ownership epoch remains NULL until the business owner-claim writer is introduced in T29; a host epoch is not substituted. T29 must add current business-fence checks at this same persistence boundary before owner recovery is qualified.
 
 ### Runtime projection and cooperation boundary

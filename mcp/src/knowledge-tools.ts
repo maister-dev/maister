@@ -7,6 +7,8 @@ import { NATIVE_KNOWLEDGE_TOOL_EFFECTS } from "../../runtime/knowledge-tool-effe
 
 export type KnowledgeToolName = keyof typeof schemas;
 const descriptions: Readonly<Record<KnowledgeToolName, string>> = {
+  assignment_get:
+    "Inspect your appointed assignment, its business/input/context revisions, responsibility and expected result under current source access. These revisions are distinct; preserve the exact business/input values for clarification CAS. Inspection does not accept work or confirm Brain facts.",
   assignment_context_update:
     "Append bounded working context under exact context/input revisions and a stable idempotencyKey. Server records your current Run/node authorship and inherited sources. Use explicit supersession; conflicts require inspection and deliberate rebase. This cannot accept child work or confirm a Brain fact. Never supply actor, grants or ownership epochs.",
   assignment_context_get:
@@ -72,6 +74,11 @@ export function knowledgeToolRouting(
   name: KnowledgeToolName,
   args: Record<string, unknown>,
 ): { method: "GET" | "POST" | "PATCH"; path: string; body?: unknown } {
+  if (name === "assignment_get")
+    return {
+      method: "GET",
+      path: `/api/v1/ext/specialist-assignments/${encodeURIComponent(String(args.assignmentId))}`,
+    };
   if (name === "assignment_context_update") {
     const { assignmentId, ...body } = args;
 
