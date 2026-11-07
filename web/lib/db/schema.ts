@@ -1,3 +1,9 @@
+import type {
+  AssignmentWorkDefinition,
+  AssignmentWorkBounds,
+  AssignmentWorkWitness,
+  SpecialistWorkDecisionState,
+} from "@/lib/specialist-assignments/work-types";
 import type { ProjectSourceHandoff } from "@/lib/specialist-assignments/project-source-types";
 import type { CoordinatorChildLaunchContext } from "@/lib/orchestrator/child-launch-context";
 import type { AssignmentResultWitness } from "@/lib/specialist-assignments/delivery-types";
@@ -10787,6 +10793,136 @@ export const specialistContextRevisions = pgTable(
   }),
 );
 
+/** Logical request revisions and business decisions; execution attempts remain on Runs. */
+export const specialistWork = pgTable(
+  "specialist_work",
+  {
+    id: text("id")
+      .notNull()
+      .default(sql`gen_random_uuid()::text`),
+    workRevision: integer("work_revision").notNull(),
+    assignmentId: text("assignment_id").notNull(),
+    inputRevision: integer("input_revision").notNull(),
+    inputSha256: text("input_sha256").notNull(),
+    logicalWorkId: text("logical_work_id").notNull(),
+    revision: integer("revision").notNull().default(1),
+    decisionState: text("decision_state")
+      .$type<SpecialistWorkDecisionState>()
+      .notNull()
+      .default("open"),
+    parentRunId: text("parent_run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "restrict" }),
+    definition: jsonb("definition").$type<AssignmentWorkDefinition>().notNull(),
+    definitionSha256: text("definition_sha256").notNull(),
+    actor: jsonb("actor").$type<KnowledgeAttribution>().notNull(),
+    authoritySnapshot: jsonb("authority_snapshot")
+      .$type<AssignmentAuthoritySnapshot>()
+      .notNull(),
+    bounds: jsonb("bounds").$type<AssignmentWorkBounds>().notNull(),
+    sourceRestrictions: jsonb("source_restrictions")
+      .$type<readonly KnowledgeAccessRestriction[]>()
+      .notNull(),
+    requestSha256: text("request_sha256").notNull(),
+    sourceKey: text("source_key").notNull(),
+    reservedRunId: text("reserved_run_id").notNull(),
+    childRunId: text("child_run_id").references(() => runs.id, {
+      onDelete: "restrict",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    primary: primaryKey({ columns: [t.id, t.workRevision] }),
+    logicalRevision: unique("specialist_work_logical_revision_uq").on(
+      t.assignmentId,
+      t.logicalWorkId,
+      t.workRevision,
+    ),
+    sourceIdentity: unique("specialist_work_source_uq").on(t.sourceKey),
+    reservation: unique("specialist_work_reserved_run_uq").on(t.reservedRunId),
+    childIdentity: uniqueIndex("specialist_work_child_run_uq")
+      .on(t.childRunId)
+      .where(sql`${t.childRunId} IS NOT NULL`),
+    input: foreignKey({
+      name: "specialist_work_input_fk",
+      columns: [t.assignmentId, t.inputRevision],
+      foreignColumns: [
+        specialistInputRevisions.assignmentId,
+        specialistInputRevisions.revision,
+      ],
+    }).onDelete("restrict"),
+    shape: check(
+      "specialist_work_shape_check",
+      sql`(
+      char_length(${t.id}) BETWEEN 1 AND 128 AND ${t.workRevision}>0 AND ${t.inputRevision}>0 AND ${t.revision}>0
+      AND char_length(${t.logicalWorkId}) BETWEEN 1 AND 128 AND ${t.logicalWorkId} ~ '^[A-Za-z0-9._:-]+$'
+      AND ${t.decisionState} IN ('open','clarification_requested','accepted','rework_requested','cancelled')
+      AND ${t.inputSha256} ~ '^[a-f0-9]{64}$' AND ${t.definitionSha256} ~ '^[a-f0-9]{64}$'
+      AND ${t.requestSha256} ~ '^[a-f0-9]{64}$' AND ${t.sourceKey} ~ '^[a-f0-9]{64}$'
+      AND char_length(${t.reservedRunId}) BETWEEN 1 AND 128 AND ${t.reservedRunId}<>${t.parentRunId}
+      AND (${t.childRunId} IS NULL OR ${t.childRunId}=${t.reservedRunId})
+    ) IS TRUE`,
+    ),
+    actor: check(
+      "specialist_work_actor_check",
+      sql`(${specialistActorShape(t.actor)} AND ${t.actor}->>'kind'='agent' AND ${t.actor}->>'runId'=${t.parentRunId}) IS TRUE`,
+    ),
+    definition: check(
+      "specialist_work_definition_check",
+      sql`(
+      jsonb_typeof(${t.definition})='object' AND ${t.definition}->'schemaVersion'='1'::jsonb
+      AND ${t.definition} ?& ARRAY['schemaVersion','objectiveInput','target','context','parent']
+      AND ${t.definition}-ARRAY['schemaVersion','objectiveInput','target','context','parent']='{}'::jsonb
+      AND jsonb_typeof(${t.definition}->'objectiveInput')='object' AND jsonb_typeof(${t.definition}->'target')='object'
+      AND ${t.definition}->'target'->>'kind' IN ('project_agent','project_flow','company_agent','company_flow')
+      AND jsonb_typeof(${t.definition}->'context')='object' AND jsonb_typeof(${t.definition}->'parent')='object'
+      AND ${t.definition}->'parent'->>'runId'=${t.parentRunId}
+      AND ${t.definition}->'parent'->'nodeAttemptId'=${t.actor}->'attemptId'
+      AND octet_length(${t.definition}::text)<=131072
+    ) IS TRUE`,
+    ),
+    authority: check(
+      "specialist_work_authority_check",
+      sql`(
+      jsonb_typeof(${t.authoritySnapshot})='object' AND ${t.authoritySnapshot}->'schemaVersion'='1'::jsonb
+      AND ${t.authoritySnapshot}->'actor'=${t.actor} AND jsonb_typeof(${t.authoritySnapshot}->'witnesses')='array'
+      AND jsonb_typeof(${t.authoritySnapshot}->'executionPolicy')='object'
+      AND jsonb_typeof(${t.authoritySnapshot}->'capturedAt')='string' AND octet_length(${t.authoritySnapshot}::text)<=32768
+      AND jsonb_typeof(${t.sourceRestrictions})='array' AND octet_length(${t.sourceRestrictions}::text)<=65536
+    ) IS TRUE`,
+    ),
+    bounds: check(
+      "specialist_work_bounds_check",
+      sql`(
+      jsonb_typeof(${t.bounds})='object' AND ${t.bounds}->'schemaVersion'='1'::jsonb
+      AND ${t.bounds} ?& ARRAY['schemaVersion','maxDepth','maxFanout','maxActiveChildren','maxChildRuns','maxTokens','wallClockMinutes','consecutiveFailures']
+      AND ${t.bounds}-ARRAY['schemaVersion','maxDepth','maxFanout','maxActiveChildren','maxChildRuns','maxTokens','wallClockMinutes','consecutiveFailures']='{}'::jsonb
+      AND CASE WHEN jsonb_typeof(${t.bounds}->'maxDepth')='number' THEN (${t.bounds}->>'maxDepth')::numeric BETWEEN 1 AND 2147483647 AND trunc((${t.bounds}->>'maxDepth')::numeric)=(${t.bounds}->>'maxDepth')::numeric ELSE false END
+      AND CASE WHEN jsonb_typeof(${t.bounds}->'maxFanout')='number' THEN (${t.bounds}->>'maxFanout')::numeric BETWEEN 1 AND 2147483647 AND trunc((${t.bounds}->>'maxFanout')::numeric)=(${t.bounds}->>'maxFanout')::numeric ELSE false END
+      AND CASE WHEN jsonb_typeof(${t.bounds}->'maxActiveChildren')='number' THEN (${t.bounds}->>'maxActiveChildren')::numeric BETWEEN 1 AND 2147483647 AND trunc((${t.bounds}->>'maxActiveChildren')::numeric)=(${t.bounds}->>'maxActiveChildren')::numeric ELSE false END
+      AND CASE WHEN jsonb_typeof(${t.bounds}->'maxChildRuns')='number' THEN (${t.bounds}->>'maxChildRuns')::numeric BETWEEN 1 AND 2147483647 AND trunc((${t.bounds}->>'maxChildRuns')::numeric)=(${t.bounds}->>'maxChildRuns')::numeric ELSE false END
+      AND CASE WHEN jsonb_typeof(${t.bounds}->'maxTokens')='number' THEN (${t.bounds}->>'maxTokens')::numeric BETWEEN 1 AND 9007199254740991 AND trunc((${t.bounds}->>'maxTokens')::numeric)=(${t.bounds}->>'maxTokens')::numeric ELSE false END
+      AND CASE WHEN jsonb_typeof(${t.bounds}->'wallClockMinutes')='number' THEN (${t.bounds}->>'wallClockMinutes')::numeric BETWEEN 1 AND 2147483647 AND trunc((${t.bounds}->>'wallClockMinutes')::numeric)=(${t.bounds}->>'wallClockMinutes')::numeric ELSE false END
+      AND CASE WHEN jsonb_typeof(${t.bounds}->'consecutiveFailures')='number' THEN (${t.bounds}->>'consecutiveFailures')::numeric BETWEEN 1 AND 2147483647 AND trunc((${t.bounds}->>'consecutiveFailures')::numeric)=(${t.bounds}->>'consecutiveFailures')::numeric ELSE false END
+      AND octet_length(${t.bounds}::text)<=8192
+    ) IS TRUE`,
+    ),
+    assignmentHistory: index("specialist_work_assignment_idx").on(
+      t.assignmentId,
+      t.createdAt,
+      t.id,
+      t.workRevision,
+    ),
+    parentWork: index("specialist_work_parent_idx").on(
+      t.parentRunId,
+      t.id,
+      t.workRevision,
+    ),
+  }),
+);
+
 export const specialistRunLinks = pgTable(
   "specialist_run_links",
   {
@@ -10800,6 +10936,7 @@ export const specialistRunLinks = pgTable(
     role: text("role").$type<SpecialistRunRole>().notNull(),
     workId: text("work_id"),
     workRevision: integer("work_revision"),
+    workWitness: jsonb("work_witness").$type<AssignmentWorkWitness>(),
     linkedAt: timestamp("linked_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -10818,6 +10955,16 @@ export const specialistRunLinks = pgTable(
     shape: check(
       "specialist_run_links_shape_check",
       sql`(${t.inputRevision}>0 AND ${t.role} IN ('coordinator','specialist','child','continuation') AND ((${t.workId} IS NULL AND ${t.workRevision} IS NULL) OR (${t.workId} IS NOT NULL AND ${t.workRevision} IS NOT NULL AND char_length(${t.workId}) BETWEEN 1 AND 128 AND ${t.workRevision}>0))) IS TRUE`,
+    ),
+    nativeWork: check(
+      "specialist_run_links_work_witness_check",
+      sql`(${t.workWitness} IS NULL OR (
+      jsonb_typeof(${t.workWitness})='object' AND ${t.workWitness}->'schemaVersion'='1'::jsonb
+      AND ${t.workWitness}-ARRAY['schemaVersion','id','workRevision','definitionSha256']='{}'::jsonb
+      AND ${t.workWitness}->>'id'=${t.workId} AND ${t.workWitness}->'workRevision'=to_jsonb(${t.workRevision})
+      AND ${t.workWitness}->>'definitionSha256' ~ '^[a-f0-9]{64}$'
+      AND ${t.role} IN ('child','continuation') AND octet_length(${t.workWitness}::text)<=1024
+    )) IS TRUE`,
     ),
     assignmentInput: index("specialist_run_links_input_idx").on(
       t.assignmentId,
@@ -10839,12 +10986,14 @@ export const specialistIntakeReceipts = pgTable(
     sourceKey: text("source_key").notNull(),
     requestDigest: text("request_digest").notNull(),
     disposition: text("disposition")
-      .$type<"created">()
+      .$type<"created" | "delegated">()
       .notNull()
       .default("created"),
     assignmentId: text("assignment_id").notNull(),
     inputRevision: integer("input_revision").notNull(),
     actor: jsonb("actor").$type<KnowledgeAttribution>().notNull(),
+    workId: text("work_id"),
+    workRevision: integer("work_revision"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -10864,8 +11013,13 @@ export const specialistIntakeReceipts = pgTable(
     }).onDelete("restrict"),
     shape: check(
       "specialist_intake_receipts_shape_check",
-      sql`(${t.sourceKind} IN ('manual','task_comment','schedule','event','webhook','delegation') AND ${t.sourceKey} ~ '^[a-f0-9]{64}$' AND ${t.requestDigest} ~ '^[a-f0-9]{64}$' AND ${t.disposition}='created' AND ${t.inputRevision}>0 AND char_length(${t.assignmentId}) BETWEEN 1 AND 128) IS TRUE`,
+      sql`(${t.sourceKind} IN ('manual','task_comment','schedule','event','webhook','delegation') AND ${t.sourceKey} ~ '^[a-f0-9]{64}$' AND ${t.requestDigest} ~ '^[a-f0-9]{64}$' AND ((${t.disposition}='created' AND ${t.workId} IS NULL AND ${t.workRevision} IS NULL) OR (${t.disposition}='delegated' AND ${t.sourceKind}='delegation' AND ${t.workId} IS NOT NULL AND ${t.workRevision}>0)) AND ${t.inputRevision}>0 AND char_length(${t.assignmentId}) BETWEEN 1 AND 128) IS TRUE`,
     ),
+    work: foreignKey({
+      name: "specialist_intake_receipts_work_fk",
+      columns: [t.workId, t.workRevision],
+      foreignColumns: [specialistWork.id, specialistWork.workRevision],
+    }).onDelete("restrict"),
     attribution: check(
       "specialist_intake_receipts_actor_check",
       specialistActorShape(t.actor),

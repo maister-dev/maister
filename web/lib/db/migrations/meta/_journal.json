@@ -1856,6 +1856,13 @@
       "when": 1794606477971,
       "tag": "0268_project_source_recovery",
       "breakpoints": true
+    },
+    {
+      "idx": 269,
+      "version": "7",
+      "when": 1794606477972,
+      "tag": "0269_specialist_logical_work",
+      "breakpoints": true
     }
   ]
 }

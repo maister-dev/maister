@@ -19,6 +19,7 @@ import {
   cancelSpecialistAssignment,
   recoverSpecialistAssignment,
   linkSpecialistAssignmentRun,
+  activateInitialSpecialistAssignmentRunInTransaction,
 } from "../store";
 import {
   getSpecialistAssignmentContext,
@@ -26,7 +27,9 @@ import {
 } from "../context";
 import { intakeSpecialistAssignmentInTransaction } from "../intake";
 import { assignmentContextSchema } from "../context-types";
+import { assignmentWorkDefinitionSchema } from "../work-types";
 
+import { contentDigest } from "@/lib/evaluations/digest";
 import {
   GET as contextGet,
   PATCH as contextPatch,
@@ -35,7 +38,11 @@ import { issueUserAccessToken } from "@/lib/tokens/issue";
 import { PATCH as externalContextPatch } from "@/app/api/v1/ext/specialist-assignments/[assignmentId]/context/route";
 import { seedProjectRow } from "@/test-support/execution-host-seed";
 import { MaisterError } from "@/lib/errors";
-import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
+import {
+  agentDefinitionSha256,
+  buildAgentActivitySnapshot,
+} from "@/lib/agents/activity-snapshot";
+import { resolveEffectiveAgentDefinition } from "@/lib/agents/effective";
 import { parseAgentDefinition } from "@/lib/agents/definition";
 import { createCompanyGrants, revokeCompanyGrant } from "@/lib/company/grants";
 import { readFormSchemaDocWithBytes } from "@/lib/config";
@@ -196,6 +203,341 @@ afterAll(async () => {
   } finally {
     vi.restoreAllMocks();
   }
+});
+
+it("IT-CBC-01 retains immutable work and attributed intake without inventing execution or acceptance", async () => {
+  const project = await seedProjectRow(database.db);
+  const membershipId = randomUUID();
+  const attachmentId = randomUUID();
+  const parentRunId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'owner')",
+    [membershipId, project.id, requesterId],
+  );
+  await database.pool.query(
+    "INSERT INTO project_package_attachments(id,project_id,package_install_id,package_name) VALUES($1,$2,$3,$4)",
+    [
+      randomUUID(),
+      project.id,
+      prepared.standingDefinition.packageInstallId,
+      prepared.standingDefinition.packageName,
+    ],
+  );
+  await database.pool.query(
+    "INSERT INTO agent_project_links(id,project_id,agent_id,enabled,can_read_brain) VALUES($1,$2,$3,true,true)",
+    [attachmentId, project.id, prepared.responsibleAgentId],
+  );
+  const assignment = await createSpecialistAssignment(
+    database.db,
+    requesterId,
+    {
+      ...prepared,
+      owner: { kind: "project", projectId: project.id },
+      specialistBindingId: attachmentId,
+    },
+  );
+
+  const effective = await resolveEffectiveAgentDefinition(
+    { projectId: project.id, agentId: prepared.responsibleAgentId },
+    database.db,
+  );
+
+  await database.pool.query(
+    "INSERT INTO runs(id,project_id,run_kind,status,flow_version,flow_revision,agent_id,source_agent_id,created_by_user_id,agent_workspace,knowledge_access,agent_activity_snapshot,launched_at,activity_sort_at,activity_timestamp_provenance) VALUES($1,$2,'agent','Running','agent','manual',$3,$3,$4,'none',$5::jsonb,$6::jsonb,now(),now(),'launch')",
+    [
+      parentRunId,
+      project.id,
+      prepared.responsibleAgentId,
+      requesterId,
+      JSON.stringify({
+        schemaVersion: 1,
+        state: "complete",
+        generation: 1,
+        restrictions: [],
+      }),
+      JSON.stringify(
+        buildAgentActivitySnapshot(prepared.responsibleAgentId, effective),
+      ),
+    ],
+  );
+  await database.db.transaction((tx) =>
+    activateInitialSpecialistAssignmentRunInTransaction(
+      tx,
+      requesterId,
+      assignment.id,
+      {
+        expectedRevision: 1,
+        inputRevision: 1,
+        runId: parentRunId,
+        role: "coordinator",
+      },
+    ),
+  );
+  const input = await getSpecialistAssignmentInput(
+    database.db,
+    requesterId,
+    assignment.id,
+    1,
+  );
+  const context = await getSpecialistAssignmentContext(
+    database.db,
+    requesterId,
+    assignment.id,
+  );
+  const definition = assignmentWorkDefinitionSchema.parse({
+    schemaVersion: 1,
+    objectiveInput: prepared.objectiveInput,
+    target: {
+      kind: "project_agent",
+      projectId: project.id,
+      attachmentId,
+      configurationSha256: contentDigest(null),
+      role: {
+        agentId: prepared.responsibleAgentId,
+        packageInstallId: prepared.standingDefinition.packageInstallId,
+        packageRevision: prepared.standingDefinition.packageRevision,
+        definitionSha256: prepared.standingDefinition.definitionSha256,
+      },
+    },
+    context: {
+      revision: context.revision,
+      inputRevision: context.inputRevision,
+      inputSha256: context.inputSha256,
+      contentSha256: context.digest,
+    },
+    parent: { runId: parentRunId, nodeAttemptId: null, rootRunId: parentRunId },
+  });
+  const actor = {
+    kind: "agent",
+    id: prepared.responsibleAgentId,
+    runId: parentRunId,
+    attemptId: null,
+  };
+  const authority = {
+    schemaVersion: 1,
+    capturedAt: new Date().toISOString(),
+    actor,
+    executionPolicy: prepared.executionPolicy,
+    witnesses: [
+      {
+        kind: "project_membership",
+        projectId: project.id,
+        membershipId,
+        role: "owner",
+      },
+    ],
+  };
+  const bounds = {
+    schemaVersion: 1,
+    maxDepth: 2,
+    maxFanout: 4,
+    maxActiveChildren: 2,
+    maxChildRuns: 8,
+    maxTokens: 100000,
+    wallClockMinutes: 30,
+    consecutiveFailures: 3,
+  };
+  const workId = randomUUID();
+  const reservedRunId = randomUUID();
+  const sourceKey = contentDigest({
+    assignmentId: assignment.id,
+    inputRevision: 1,
+    logicalWorkId: "diagnose",
+    workRevision: 1,
+  });
+  const requestSha256 = contentDigest({
+    logicalWorkId: "diagnose",
+    definition,
+  });
+
+  await expect(
+    database.db.transaction(async (tx) => {
+      await tx.execute(sql`INSERT INTO specialist_work(id,work_revision,assignment_id,input_revision,input_sha256,logical_work_id,parent_run_id,definition,definition_sha256,actor,authority_snapshot,bounds,source_restrictions,request_sha256,source_key,reserved_run_id)
+      VALUES(${workId},1,${assignment.id},1,${input.digest},'diagnose',${parentRunId},${JSON.stringify(definition)}::jsonb,${contentDigest(definition)},${JSON.stringify(actor)}::jsonb,${JSON.stringify(authority)}::jsonb,${JSON.stringify(bounds)}::jsonb,'[]'::jsonb,${requestSha256},${sourceKey},${reservedRunId})`);
+      await tx.execute(sql`INSERT INTO specialist_intake_receipts(source_kind,source_key,request_digest,assignment_id,input_revision,actor,disposition,work_id,work_revision)
+      VALUES('delegation',${sourceKey},${requestSha256},${assignment.id},1,${JSON.stringify(actor)}::jsonb,'delegated',${workId},1)`);
+    }),
+  ).resolves.toBeUndefined();
+  const retained = (
+    await database.pool.query(
+      "SELECT revision,decision_state,actor,definition,child_run_id,reserved_run_id FROM specialist_work WHERE id=$1 AND work_revision=1",
+      [workId],
+    )
+  ).rows;
+
+  expect(retained).toEqual([
+    {
+      revision: 1,
+      decision_state: "open",
+      actor,
+      definition,
+      child_run_id: null,
+      reserved_run_id: reservedRunId,
+    },
+  ]);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS count FROM runs WHERE id=$1",
+        [reservedRunId],
+      )
+    ).rows,
+  ).toEqual([{ count: 0 }]);
+  await expect(
+    database.pool.query(
+      "UPDATE specialist_work SET definition=jsonb_set(definition,'{objectiveInput,objective}',to_jsonb('Changed work'::text)),revision=revision+1 WHERE id=$1",
+      [workId],
+    ),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "specialist_work_definition_immutable",
+  });
+  await expect(
+    database.pool.query("DELETE FROM specialist_work WHERE id=$1", [workId]),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "specialist_work_retained",
+  });
+  await expect(
+    database.pool.query(
+      "UPDATE specialist_work SET decision_state='accepted',revision=revision+1 WHERE id=$1",
+      [workId],
+    ),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "specialist_work_decision_required",
+  });
+  await expect(
+    database.pool.query(
+      "INSERT INTO specialist_intake_receipts(source_kind,source_key,request_digest,assignment_id,input_revision,actor,disposition,work_id,work_revision) VALUES('delegation',repeat('f',64),$1,$2,1,$3::jsonb,'delegated',$4,1)",
+      [
+        requestSha256,
+        assignment.id,
+        JSON.stringify({
+          ...actor,
+          kind: "user",
+          id: requesterId,
+          runId: null,
+        }),
+        workId,
+      ],
+    ),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "specialist_intake_receipts_binding",
+  });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT revision,definition_sha256 FROM specialist_work WHERE id=$1",
+        [workId],
+      )
+    ).rows,
+  ).toEqual([{ revision: 1, definition_sha256: contentDigest(definition) }]);
+
+  const orphanId = randomUUID();
+
+  await expect(
+    database.db.transaction(async (tx) => {
+      await tx.execute(sql`INSERT INTO specialist_work SELECT (jsonb_populate_record(NULL::specialist_work,
+      (SELECT to_jsonb(work) FROM specialist_work work WHERE id=${workId}) ||
+      jsonb_build_object('id',${orphanId}::text,'logical_work_id','orphan','source_key',${contentDigest(orphanId)}::text,'reserved_run_id',${randomUUID()}::text))).*`);
+    }),
+  ).rejects.toMatchObject({
+    cause: { code: "23514", constraint: "specialist_work_intake_required" },
+  });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS count FROM specialist_work WHERE id=$1",
+        [orphanId],
+      )
+    ).rows,
+  ).toEqual([{ count: 0 }]);
+
+  const witness = {
+    schemaVersion: 1,
+    id: workId,
+    workRevision: 1,
+    definitionSha256: contentDigest(definition),
+  };
+
+  await expect(
+    database.db.transaction(async (tx) => {
+      await tx.execute(sql`INSERT INTO runs(id,project_id,run_kind,status,flow_version,flow_revision,agent_id,source_agent_id,created_by_user_id,agent_workspace,knowledge_access,agent_activity_snapshot,launched_at,activity_sort_at,activity_timestamp_provenance,parent_run_id,root_run_id)
+      SELECT ${reservedRunId},project_id,run_kind,status,flow_version,flow_revision,agent_id,source_agent_id,created_by_user_id,agent_workspace,knowledge_access,
+        jsonb_set(agent_activity_snapshot,'{packageRevision}',to_jsonb('unrelated-revision'::text)),launched_at,activity_sort_at,activity_timestamp_provenance,id,id FROM runs WHERE id=${parentRunId}`);
+      await tx.execute(sql`INSERT INTO specialist_run_links(run_id,assignment_id,input_revision,role,work_id,work_revision,work_witness)
+      VALUES(${reservedRunId},${assignment.id},1,'child',${workId},1,${JSON.stringify(witness)}::jsonb)`);
+      await tx.execute(
+        sql`UPDATE specialist_work SET child_run_id=${reservedRunId},revision=revision+1 WHERE id=${workId}`,
+      );
+    }),
+  ).rejects.toMatchObject({
+    cause: { code: "23514", constraint: "specialist_work_child_binding" },
+  });
+  await database.pool.query(
+    "INSERT INTO runs(id,project_id,run_kind,status,flow_version,flow_revision,agent_id,source_agent_id,created_by_user_id,agent_workspace,knowledge_access,agent_activity_snapshot,launched_at,activity_sort_at,activity_timestamp_provenance,parent_run_id,root_run_id) SELECT $1,project_id,run_kind,status,flow_version,flow_revision,agent_id,source_agent_id,created_by_user_id,agent_workspace,knowledge_access,agent_activity_snapshot,launched_at,activity_sort_at,activity_timestamp_provenance,id,id FROM runs WHERE id=$2",
+    [reservedRunId, parentRunId],
+  );
+  await expect(
+    database.db.transaction(async (tx) => {
+      await tx.execute(sql`INSERT INTO specialist_run_links(run_id,assignment_id,input_revision,role,work_id,work_revision)
+      VALUES(${reservedRunId},${assignment.id},1,'child',${workId},1)`);
+      await tx.execute(
+        sql`UPDATE specialist_work SET child_run_id=${reservedRunId},revision=revision+1 WHERE id=${workId}`,
+      );
+    }),
+  ).rejects.toMatchObject({
+    cause: {
+      code: "23514",
+      constraint: "specialist_work_child_appointment_required",
+    },
+  });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT specialist_run_has_input($1,$2,1,$3) AS appointed",
+        [reservedRunId, assignment.id, input.digest],
+      )
+    ).rows,
+  ).toEqual([{ appointed: false }]);
+
+  await database.db.transaction(async (tx) => {
+    await tx.execute(sql`INSERT INTO specialist_run_links(run_id,assignment_id,input_revision,role,work_id,work_revision,work_witness)
+      VALUES(${reservedRunId},${assignment.id},1,'child',${workId},1,${JSON.stringify(witness)}::jsonb)`);
+    await tx.execute(
+      sql`UPDATE specialist_work SET child_run_id=${reservedRunId},revision=revision+1 WHERE id=${workId}`,
+    );
+  });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT specialist_run_has_input($1,$2,1,$3) AS appointed",
+        [reservedRunId, assignment.id, input.digest],
+      )
+    ).rows,
+  ).toEqual([{ appointed: true }]);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT revision,decision_state,child_run_id FROM specialist_work WHERE id=$1",
+        [workId],
+      )
+    ).rows,
+  ).toEqual([
+    { revision: 2, decision_state: "open", child_run_id: reservedRunId },
+  ]);
+  await expect(
+    database.pool.query(
+      "UPDATE specialist_work SET decision_state='cancelled',revision=revision+1 WHERE id=$1",
+      [workId],
+    ),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "specialist_work_child_live",
+  });
 });
 
 it("IT-CBA-04 refuses a context head without its exact immutable retained revision", async () => {
@@ -1013,6 +1355,12 @@ it("IT-CBA-04 exposes bounded private session context and refuses anonymous, for
 });
 
 it("IT-CBA-01 persists company responsibility, separate request/result planes and origin without a project or execution carrier", async () => {
+  const projectsBefore = (
+    await database.pool.query("SELECT id FROM projects ORDER BY id")
+  ).rows;
+  const runsBefore = (
+    await database.pool.query("SELECT id FROM runs ORDER BY id")
+  ).rows;
   const assignment = await createSpecialistAssignment(
     database.db,
     requesterId,
@@ -1044,10 +1392,12 @@ it("IT-CBA-01 persists company responsibility, separate request/result planes an
   expect(
     await getSpecialistAssignment(database.db, requesterId, assignment.id),
   ).toEqual(assignment);
-  expect((await database.pool.query("SELECT id FROM projects")).rows).toEqual(
-    [],
-  );
-  expect((await database.pool.query("SELECT id FROM runs")).rows).toEqual([]);
+  expect(
+    (await database.pool.query("SELECT id FROM projects ORDER BY id")).rows,
+  ).toEqual(projectsBefore);
+  expect(
+    (await database.pool.query("SELECT id FROM runs ORDER BY id")).rows,
+  ).toEqual(runsBefore);
   const input = (
     await database.pool.query(
       "SELECT * FROM specialist_input_revisions WHERE assignment_id=$1",
@@ -2472,4 +2822,143 @@ it("IT-CBA-06 requires a current enabled requester-owned outbound subscription r
     code: "PRECONDITION",
     details: { reason: "assignment_destination_unavailable" },
   });
+});
+
+it("IT-CBX-01 logical-work upgrade preserves old intake and opaque child labels without Brain or invented appointments", async () => {
+  const legacy = await startMainPostgresTestDbUpTo(
+    { databaseName: "logical_work_upgrade" },
+    "0268_project_source_recovery",
+  );
+
+  try {
+    await legacy.pool.query(
+      "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+      [requesterId, `${requesterId}@example.test`],
+    );
+    const pin = (
+      await database.pool.query(
+        "SELECT to_jsonb(pin) AS value FROM package_installs pin WHERE id=$1",
+        [prepared.standingDefinition.packageInstallId],
+      )
+    ).rows[0]!.value;
+
+    await legacy.pool.query(
+      "INSERT INTO package_installs SELECT (jsonb_populate_record(NULL::package_installs,$1::jsonb)).*",
+      [JSON.stringify(pin)],
+    );
+    const project = await seedProjectRow(legacy.db);
+
+    await legacy.pool.query(
+      "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'owner')",
+      [randomUUID(), project.id, requesterId],
+    );
+    const assignment = await createSpecialistAssignment(
+      legacy.db,
+      requesterId,
+      { ...prepared, owner: { kind: "project", projectId: project.id } },
+    );
+    const runId = randomUUID();
+    const oldWorkLabel = randomUUID();
+    const sourceKey = contentDigest(randomUUID());
+
+    await legacy.db.transaction(async (tx) => {
+      await tx.execute(sql`SET LOCAL maister.task_launch_writer='v3'`);
+      await tx.execute(sql`INSERT INTO runs(id,project_id,run_kind,status,flow_version,flow_revision)
+        VALUES(${runId},${project.id},'scratch','Pending','scratch','manual')`);
+    });
+    await legacy.pool.query(
+      "INSERT INTO specialist_run_links(assignment_id,run_id,input_revision,role,work_id,work_revision) VALUES($1,$2,1,'child',$3,1)",
+      [assignment.id, runId, oldWorkLabel],
+    );
+    await legacy.pool.query(
+      "INSERT INTO specialist_intake_receipts(source_kind,source_key,request_digest,assignment_id,input_revision,actor) SELECT 'manual',$1,$2,assignment_id,revision,actor FROM specialist_input_revisions WHERE assignment_id=$3 AND revision=1",
+      [sourceKey, contentDigest(prepared.objectiveInput), assignment.id],
+    );
+    const before = (
+      await legacy.pool.query(
+        `SELECT to_jsonb(head) AS head,
+      (SELECT to_jsonb(input) FROM specialist_input_revisions input WHERE input.assignment_id=head.id) AS input,
+      (SELECT to_jsonb(link) FROM specialist_run_links link WHERE link.assignment_id=head.id) AS link,
+      (SELECT to_jsonb(receipt) FROM specialist_intake_receipts receipt WHERE receipt.assignment_id=head.id) AS receipt
+      FROM specialist_assignments head WHERE id=$1`,
+        [assignment.id],
+      )
+    ).rows;
+
+    await legacy.db.transaction((tx) =>
+      applyMainMigration(tx, "0269_specialist_logical_work"),
+    );
+    expect(
+      (
+        await legacy.pool.query(
+          `SELECT to_jsonb(head) AS head,
+      (SELECT to_jsonb(input) FROM specialist_input_revisions input WHERE input.assignment_id=head.id) AS input,
+      (SELECT to_jsonb(link)-'work_witness' FROM specialist_run_links link WHERE link.assignment_id=head.id) AS link,
+      (SELECT to_jsonb(receipt)-ARRAY['work_id','work_revision'] FROM specialist_intake_receipts receipt WHERE receipt.assignment_id=head.id) AS receipt
+      FROM specialist_assignments head WHERE id=$1`,
+          [assignment.id],
+        )
+      ).rows,
+    ).toEqual(before);
+    expect(
+      (
+        await legacy.pool.query(
+          "SELECT count(*)::int AS count FROM specialist_work",
+        )
+      ).rows,
+    ).toEqual([{ count: 0 }]);
+    const input = await getSpecialistAssignmentInput(
+      legacy.db,
+      requesterId,
+      assignment.id,
+      1,
+    );
+
+    expect(
+      (
+        await legacy.pool.query(
+          "SELECT specialist_run_has_input($1,$2,1,$3) AS appointed",
+          [runId, assignment.id, input.digest],
+        )
+      ).rows,
+    ).toEqual([{ appointed: false }]);
+    await expect(
+      legacy.pool.query(
+        "UPDATE specialist_run_links SET work_witness=$2::jsonb WHERE run_id=$1",
+        [
+          runId,
+          JSON.stringify({
+            schemaVersion: 1,
+            id: oldWorkLabel,
+            workRevision: 1,
+            definitionSha256: contentDigest(null),
+          }),
+        ],
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "specialist_run_links_immutable",
+    });
+    expect(
+      (
+        await legacy.pool.query(
+          "SELECT to_regclass('public.knowledge_records') AS brain",
+        )
+      ).rows,
+    ).toEqual([{ brain: null }]);
+    const disposable = await seedProjectRow(legacy.db);
+
+    await legacy.pool.query("DELETE FROM projects WHERE id=$1", [
+      disposable.id,
+    ]);
+    expect(
+      (
+        await legacy.pool.query("SELECT id FROM projects WHERE id=$1", [
+          disposable.id,
+        ])
+      ).rows,
+    ).toEqual([]);
+  } finally {
+    await legacy.stop();
+  }
 });

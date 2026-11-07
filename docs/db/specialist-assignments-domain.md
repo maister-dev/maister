@@ -4,9 +4,9 @@
 
 ## Migration reservations
 
-Main `0232_company_grant_requests` and `0233_native_knowledge_execution` are implemented. Implemented base unit `0234_specialist_assignments` contains assignment heads, immutable inputs, existing-run links and state facts. Specialist bindings use `0236_company_specialist_bindings`; reviewed company Flow bindings use `0237_company_flow_bindings`. Trigger scope uses `0238_company_trigger_scope` on existing scheduler tables. Retry scope uses `0239_company_retry_scope` on the existing retry ledger. Native run ownership and internal credentials use `0240_company_agent_execution` and `0241_company_agent_credentials`. Context history uses `0259_specialist_context_revisions`. Assignment clarification subjects extend existing HITL storage through `0262_specialist_question_subject`; native answer receipts use `0263_specialist_question_answer`; `0264_specialist_flow_question` extends the existing node resume grammar and native source guards. Native session/bearer question and human-answer adapters reuse these existing rows and guards. Result-availability witnesses and immutable business delivery receipts use `0265_specialist_result_delivery`; `0266_specialist_delivery_targets` extends existing webhook deliveries and Inbox rows. Native delivery inspection and replay are locally qualified under T25; accepted-outcome publication remains T28. Cooperation/acceptance/ownership and stand operations follow as generated logical units in their owning tasks. Allocate each numeric prefix from the then-current journal; later tables are not precreated as a prerequisite for the base store. Existing head/input/run-link rows survive each additive migration. The main migration units never FK a new Brain table; knowledge pointers store typed record/revision/witness/digest values and the owning service validates them after both lineages are ready. `runs.flow_revision_id` and existing immutable installed revision schema remain runtime truth.
+Main `0232_company_grant_requests` and `0233_native_knowledge_execution` are implemented. Implemented base unit `0234_specialist_assignments` contains assignment heads, immutable inputs, existing-run links and state facts. Specialist bindings use `0236_company_specialist_bindings`; reviewed company Flow bindings use `0237_company_flow_bindings`. Trigger scope uses `0238_company_trigger_scope` on existing scheduler tables. Retry scope uses `0239_company_retry_scope` on the existing retry ledger. Native run ownership and internal credentials use `0240_company_agent_execution` and `0241_company_agent_credentials`. Context history uses `0259_specialist_context_revisions`. Assignment clarification subjects extend existing HITL storage through `0262_specialist_question_subject`; native answer receipts use `0263_specialist_question_answer`; `0264_specialist_flow_question` extends the existing node resume grammar and native source guards. Native session/bearer question and human-answer adapters reuse these existing rows and guards. Result-availability witnesses and immutable business delivery receipts use `0265_specialist_result_delivery`; `0266_specialist_delivery_targets` extends existing webhook deliveries and Inbox rows. Native delivery inspection and replay are locally qualified under T25; accepted-outcome publication remains T28. Logical-work storage uses `0269_specialist_logical_work`: immutable request definitions, canonical delegated intake receipts and explicit native child witnesses. Current-authorized delegation dispatch remains T27; acceptance/ownership and stand operations follow as generated logical units in their owning tasks. Allocate each numeric prefix from the then-current journal; later tables are not precreated as a prerequisite for the base store. Existing head/input/run-link rows survive each additive migration. The main migration units never FK a new Brain table; knowledge pointers store typed record/revision/witness/digest values and the owning service validates them after both lineages are ready. `runs.flow_revision_id` and existing immutable installed revision schema remain runtime truth.
 
-The base business structures link existing execution records rather than duplicating attempts. Work, acceptance and claim entities in this diagram remain designed until their owning slices land; context history and specialist/Flow binding configuration are implemented.
+The base business structures link existing execution records rather than duplicating attempts. Work persistence is implemented; its native delegation service remains T27. Acceptance and claim entities remain designed until their owning slices land; context history and specialist/Flow binding configuration are implemented.
 
 ```mermaid
 erDiagram
@@ -110,6 +110,8 @@ erDiagram
         text assignment_id FK
         integer input_revision FK
         jsonb actor
+        text work_id FK "NULL on created receipts"
+        integer work_revision FK "exact delegated work revision"
         timestamptz created_at
     }
     SPECIALIST_CONTEXT_REVISIONS {
@@ -130,15 +132,25 @@ erDiagram
     }
     SPECIALIST_WORK {
         text id PK
+        integer work_revision PK
         text assignment_id FK
-        integer input_revision
-        integer work_revision
+        integer input_revision FK
+        text input_sha256
         text logical_work_id
-        text request_digest
+        integer revision "business CAS"
+        text decision_state
+        text request_sha256
+        text source_key UK
         text parent_run_id FK
-        text child_run_id FK
-        text state
-        jsonb requirements
+        text reserved_run_id UK "intent only"
+        text child_run_id FK,UK "actual existing Run"
+        jsonb definition
+        text definition_sha256
+        jsonb actor
+        jsonb authority_snapshot
+        jsonb bounds
+        jsonb source_restrictions
+        timestamptz created_at
     }
 ```
 
@@ -178,9 +190,9 @@ All new entity IDs are server-generated; timestamps UTC. Versioned closed JSON c
 | `specialist_input_revisions` (Implemented) | PK assignment/revision; objective/input/targets/refs/constraints/exact result/verification in objective_input; separate authority, standing, recurring request and source restrictions; digest, actor/time | Assignment FK RESTRICT; creation or input append and parent CAS commit together. UPDATE/DELETE refused; current access governs historical reads |
 | `specialist_context_revisions` (Implemented human and execution boundaries, 0257) | PK assignment/revision; exact base/input revision, versioned structured context, inherited restrictions, server actor/time, nullable owner epoch, principal/key/request/content digests | Unique assignment/principal/key; exact input composite FK RESTRICT; parent row lock and context/input CAS; immutable history and deferred head/history coherence; retained entries preserve original attribution, supersession is explicit; human epoch NULL; no last-writer merge |
 | `specialist_owner_claims` | Assignment PK, owner/run, positive epoch, renewed_at and expires_at, explicit claim state | Owner+epoch+fresh-expiry in every write predicate; lease 120s/renew 40s, not an in-memory mutex; no slot from lease alone |
-| `specialist_intake_receipts` (Implemented native intake, 0251) | Server ID, source kind and owner/origin-scoped key hash, original request digest, closed created disposition, exact assignment/input, server actor/time | UNIQUE source kind/key; owner derives from immutable assignment and is included in the key; exact input FK RESTRICT; source/actor binding guard and immutable receipt; same-key lock, creation and state event commit together |
-| `specialist_run_links` (Implemented) | assignment/run PK, input/work revision and role; existing run pointer | Unique run, exact input composite FK, immutable links; owning admission validates scope. No independent attempt counter/ledger |
-| `specialist_work` | Stable work identity, assignment/input/work revision, digest, parent/child run, constraints/result requirements/state | UNIQUE assignment/input/logical-work/revision; existing parent/root lock admits one child; terminal work keeps old result |
+| `specialist_intake_receipts` (Implemented native intake, 0251) | Server ID, source kind and owner/origin-scoped key hash, original request digest, created or delegated disposition, exact assignment/input and nullable exact work revision, server actor/time | UNIQUE source kind/key; owner derives from immutable assignment and is included in the key; exact input FK RESTRICT; source/actor binding guard and immutable receipt; same-key lock, creation and state event commit together |
+| `specialist_run_links` (Implemented) | assignment/run PK, input/work revision and role; existing run pointer and nullable exact native work witness | Unique run, exact input composite FK, immutable links; 0267 native work witness requires exact work reservation, actual direct child and pinned role/Flow. Old opaque labels remain unenrolled; owning admission validates current authority. No independent attempt counter/ledger |
+| `specialist_work` (Implemented storage, 0267; native dispatch Designed) | Composite PK stable server ID/request revision; assignment/input/logical key, independent business CAS revision, actual parent/Run-node actor, pinned target, context/input/result/bounds/source witnesses and content digest; reserved/actual existing Run references | Unique assignment/logical-work/request revision; immutable definition and first reservation/binding; initial request revision only until T28 decision-owned rework; business decisions separate from projected existing Run/result state; no synthetic legacy work |
 | `specialist_work_decisions` | id/work revision/actor/input/result revision, decision/reason/evidence, owner epoch, digest/key/time | Unique work/idempotency key; exact result references RESTRICT; append-only decision history |
 | `specialist_acceptances` | id/assignment/input/context/exact result revision, policy/actor/evidence/verification decision, key/digest/time | Unique content-guarded key, acceptance/terminal state/outbox one transaction; cross-row obligations checked transactionally |
 | `specialist_delivery_receipts` (0263; locally qualified result availability) | Server ID, assignment/effective input/root Run/exact result revision, result-available signal, source event ID, frozen source/target/versioned witness and private outbox ID | Unique assignment/Run/result/signal and outbox; exact input FK; immutable witness equals the server-captured event; deferred private-outbox coherence. Transport status and attempts remain solely on existing webhook delivery rows |

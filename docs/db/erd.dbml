@@ -3285,10 +3285,13 @@ table specialist_intake_receipts {
   assignment_id text [not null]
   input_revision integer [not null]
   actor jsonb [not null]
+  work_id text
+  work_revision integer
   created_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
     (source_kind, source_key) [name: 'specialist_intake_receipts_delivery_uq', unique]
+
 
 
 
@@ -3303,6 +3306,7 @@ table specialist_run_links {
   role text [not null]
   work_id text
   work_revision integer
+  work_witness jsonb
   linked_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
@@ -3310,7 +3314,47 @@ table specialist_run_links {
     run_id [name: 'specialist_run_links_run_uq', unique]
 
 
+
     (assignment_id, input_revision, linked_at, run_id) [name: 'specialist_run_links_input_idx']
+  }
+}
+
+table specialist_work {
+  id text [not null, default: `gen_random_uuid()::text`]
+  work_revision integer [not null]
+  assignment_id text [not null]
+  input_revision integer [not null]
+  input_sha256 text [not null]
+  logical_work_id text [not null]
+  revision integer [not null, default: 1]
+  decision_state text [not null, default: 'open']
+  parent_run_id text [not null]
+  definition jsonb [not null]
+  definition_sha256 text [not null]
+  actor jsonb [not null]
+  authority_snapshot jsonb [not null]
+  bounds jsonb [not null]
+  source_restrictions jsonb [not null]
+  request_sha256 text [not null]
+  source_key text [not null]
+  reserved_run_id text [not null]
+  child_run_id text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (id, work_revision) [pk]
+    (assignment_id, logical_work_id, work_revision) [name: 'specialist_work_logical_revision_uq', unique]
+    source_key [name: 'specialist_work_source_uq', unique]
+    reserved_run_id [name: 'specialist_work_reserved_run_uq', unique]
+    child_run_id [name: 'specialist_work_child_run_uq', unique]
+
+
+
+
+
+
+    (assignment_id, created_at, id, work_revision) [name: 'specialist_work_assignment_idx']
+    (parent_run_id, id, work_revision) [name: 'specialist_work_parent_idx']
   }
 }
 
@@ -4850,11 +4894,19 @@ ref specialist_input_revisions_assignment_fk: specialist_input_revisions.assignm
 
 ref specialist_intake_receipts_input_fk: specialist_intake_receipts.(assignment_id, input_revision) > specialist_input_revisions.(assignment_id, revision) [delete: restrict, update: no action]
 
+ref specialist_intake_receipts_work_fk: specialist_intake_receipts.(work_id, work_revision) > specialist_work.(id, work_revision) [delete: restrict, update: no action]
+
 ref specialist_run_links_assignment_id_specialist_assignments_id_fk: specialist_run_links.assignment_id > specialist_assignments.id [delete: restrict, update: no action]
 
 ref specialist_run_links_run_id_runs_id_fk: specialist_run_links.run_id > runs.id [delete: restrict, update: no action]
 
 ref specialist_run_links_input_fk: specialist_run_links.(assignment_id, input_revision) > specialist_input_revisions.(assignment_id, revision) [delete: restrict, update: no action]
+
+ref specialist_work_parent_run_id_runs_id_fk: specialist_work.parent_run_id > runs.id [delete: restrict, update: no action]
+
+ref specialist_work_child_run_id_runs_id_fk: specialist_work.child_run_id > runs.id [delete: restrict, update: no action]
+
+ref specialist_work_input_fk: specialist_work.(assignment_id, input_revision) > specialist_input_revisions.(assignment_id, revision) [delete: restrict, update: no action]
 
 ref task_activity_task_id_tasks_id_fk: task_activity.task_id > tasks.id [delete: cascade, update: no action]
 

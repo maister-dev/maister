@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-07T21:56:31.553926+00:00",
+  "baseline": "acb4dbfae093ce5ba352dd6b6f68e20ac83d2f34",
+  "status": "T27-logical-work-storage-qualified-local-task-open",
+  "red": [
+    {
+      "cause": "Logical work table is absent",
+      "sqlState": "42P01"
+    },
+    {
+      "cause": "An unrelated package revision can acquire a native child appointment",
+      "observed": "transaction committed instead of refusing"
+    }
+  ],
+  "fixtureCorrections": [
+    "Actual installed activity snapshot required by existing Run CHECK",
+    "Wrong snapshot must be inserted in a rollback transaction because existing snapshots are immutable",
+    "Populated upgrade uses current writer capability and a non-running historical scratch fixture",
+    "Company-only creation asserts no new project/Run relative to the current database baseline"
+  ],
+  "contractCorrection": "The existing parity gate refused an unsynchronized external planned CBWork/CBWorkDecision schema; both mirrors now match.",
+  "gates": {
+    "integration": {
+      "passed": 118,
+      "files": 8,
+      "seconds": 96.27
+    },
+    "webUnit": {
+      "passed": 9312,
+      "files": 891,
+      "seconds": 28.89
+    },
+    "types": "passed",
+    "lintAndFormat": "passed",
+    "webBuild": "passed with offline DB_URL",
+    "contracts": "passed;84 requirements/45 tasks",
+    "docs": "passed;177 tables"
+  },
+  "verified": [
+    "Work and canonical delegated intake commit atomically; orphan writes roll back",
+    "Exact actual agent/Run attribution is retained independently from the initiating user",
+    "A reservation alone is not an execution or acceptance",
+    "Definition/history are immutable; bare acceptance/rework and live-child cancellation refuse",
+    "Explicit native enrollment binds the reserved direct child to exact role/Flow pins",
+    "Populated 0266 to 0267 upgrade retains old values and does not invent native appointments",
+    "Main-only upgrade works without Brain; owning Brain deletion regression passes"
+  ],
+  "remaining": [
+    "T27 current-authorized canonical creation/replay, receiving-role/source checks and decisive fences",
+    "Native company/project child dispatch and assignment budget accounting",
+    "T28-T43 acceptance, recovery, connector, UI and installed-package/global qualification"
+  ],
+  "effects": "Owned local PostgreSQL and controlled execution fixtures only; no production or remote action.",
+  "sources": [
+    {
+      "path": ".ai-factory/plans/codex-company-brain-specialist-assignments.md",
+      "sha256": "31733575aefb18b95f55e018be99a162967ae2373fbd6b5d14ab0724aead1c94"
+    },
+    {
+      "path": "docs/system-analytics/specialist-cooperation.md",
+      "sha256": "22acc6eed75115218b17a2d81f7c547918026c54bf50078b3546dd7c42b475d0"
+    },
+    {
+      "path": "docs/db/specialist-assignments-domain.md",
+      "sha256": "842bf317fb796a9853ad7c60851009098dc06e0d6298cc607bd1e2476b1f9ae1"
+    },
+    {
+      "path": "docs/api/web.openapi.yaml",
+      "sha256": "79c6e552c1172e586b13d3a4d32134a39df4a74aaea9b095cf3535c038826aff"
+    },
+    {
+      "path": "docs/api/external/operations.openapi.yaml",
+      "sha256": "58d0599ee56cdbf99c3226533a482d57a477c5a9cdabcaacdec6359e1accdec1"
+    },
+    {
+      "path": "docs/api/company-brain-examples.yaml",
+      "sha256": "b510e0f0e56a2ddc48bf401f8c27f16dfdba22fcbf888d368f880ff15881392a"
+    },
+    {
+      "path": "web/lib/db/schema.ts",
+      "sha256": "f75bc2f3613736c6573b137c82b614b190e65d4d6ad183b805ba2a310c3fce7a"
+    },
+    {
+      "path": "web/lib/db/migrations/0267_specialist_logical_work.sql",
+      "sha256": "36893ab5016f1f68a6e07de40c56ff59d2cda1cd438f29c6713da30a13ab0395"
+    },
+    {
+      "path": "web/lib/db/migrations/meta/0267_snapshot.json",
+      "sha256": "247763ed93ba71f21e358a5664cd72e5434d6b323be765dcf2c246a11fa50a15"
+    },
+    {
+      "path": "web/lib/db/migrations/meta/_journal.json",
+      "sha256": "de52d4422ca33b9d6e0dba6e9ba4021e4752a98356fc2d4dae6cfa3f512825de"
+    },
+    {
+      "path": "web/lib/specialist-assignments/work-types.ts",
+      "sha256": "c6e2a2122fb4f6dc5c07cf6365c547f6263843092ddb40f17fc550b533d83b78"
+    },
+    {
+      "path": "web/lib/specialist-assignments/__tests__/store.integration.test.ts",
+      "sha256": "23b555ef43a6004e2d079fb430e64f791bd03d4be726e3635666f15b3a8b7d57"
+    }
+  ],
+  "logs": [
+    "creation-red.log.gz",
+    "child-pin-red.log.gz",
+    "fixture-activity-snapshot.log.gz",
+    "fixture-immutable-snapshot.log.gz",
+    "fixture-global-baseline.log.gz",
+    "fixture-writer-capability.log.gz",
+    "store-green.log.gz",
+    "integration-green.log.gz",
+    "unit-green.log.gz",
+    "types-green.log.gz",
+    "lint-green.log.gz",
+    "build-green.log.gz",
+    "contract-mirror-red.log.gz",
+    "contracts-green.log.gz",
+    "docs-green.log.gz"
+  ]
+}

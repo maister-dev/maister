@@ -89,6 +89,58 @@ Designed default maxima are depth 2 (absolute from root), fanout 4, active child
 
 Usage projects from existing run/session/turn usage with stable identity, including all coordinator replacements/rework attempts. Cumulative updates charge only the monotonic delta once; replay cannot double-charge. Assignment budget projection is not a new attempt ledger. Existing global pool locks/counters gate new and resumed work, including company rows. Parent WaitingOnChildren/Review/NeedsInputIdle release capacity as existing run predicates specify; continuation reacquires capacity rather than directly writing Running.
 
+### Logical-work persistence and revision axes (storage Implemented; dispatch/decisions Designed — T27/T28)
+
+A work subject has a server-generated `id` scoped to its assignment and one
+caller-supplied bounded `logicalWorkId`. `workRevision` identifies an immutable
+request definition; `revision` is the optimistic state/decision counter for that
+exact definition. These counters are independent. A child starting or publishing
+through the existing execution ledger does not rewrite either request definition.
+Decision requests name the expected business `revision`, `workRevision`, exact
+assignment input and, when required, exact result revision. A newer request
+revision makes an old definition historical; inspecting it never authorizes a
+new decision on it.
+
+`specialist_work` uses the composite key `(id, work_revision)`, with a unique
+assignment/logical-work/request-revision key. Each revision retains the actual
+parent/Run-node actor, exact assignment input/digest and context witness, bounded
+objective/constraints/targets/evidence references, pinned receiving role and
+optional Flow, required result contract witness, effective bounds, inherited
+source policy and original content digest. Rework appends the next request
+revision under the same stable subject; it cannot overwrite the old child,
+result, actor or definition. No guessed legacy work subject or author is backfilled.
+
+Persist only business decision state. Queued/running/interrupted/result-ready
+views derive from the retained reservation and existing Run/result facts; a
+second execution status or attempt ledger is not introduced. A reserved Run
+identity is an admission intent, not an executed child. Binding requires that
+same owned reservation and actual direct parent relation. A result-ready view
+requires an exact validated result; it does not accept the work or complete the
+assignment.
+
+Delegated requests extend the existing canonical intake receipt with a distinct
+`delegated` disposition and exact work/request revision. Its source identity binds
+assignment, input, logical work and request revision, independently of ephemeral
+token rotation. The first receipt retains the actual originating agent/Run/node;
+no initiating human is substituted as its author. Same identity and content
+adopts the original subject/reservation after current authority checks; changed
+content returns a conflict. Replaying historical work does not reapply assignment
+CAS, re-reserve a child or reset a budget. New work requires the current assignment,
+input and context witnesses. Receipt, definition and business state fact commit
+atomically; incomplete writes roll back.
+
+Historical run links with only unqualified work labels remain historical unknown
+references. New native work enrollment uses an explicit exact work witness;
+an old label or an inherited assignment selector cannot manufacture a current
+appointment. Main-store reference guards validate available identities and version
+witnesses without a Brain FK. Source access, receiving-role authority and current
+coordinator ownership remain required checks in the T27 native service. Storage
+alone grants no delegation capability. Main migration `0267` requires atomic work
+and attributed intake retention, refuses bare acceptance/rework decisions, and
+binds any executed child to its exact role/Flow pin and native Run link. T28 will
+enable later request revisions and decisions through their actual receipt writer;
+the storage foundation refuses them until then.
+
 ### Ownership, rework and acceptance
 
 Assignment executor lease is 120 seconds, renewed every 40 seconds by one fenced owner; each claim/renew/write checks current epoch, owner ID and fresh expiry in a transaction. A stable assignment-row CAS increments epoch when replacing an owner. Execution-host assignment epoch remains a separate lower boundary. Current permissions are checked in addition to both fences. A stale owner yields with a typed conflict; it cannot finalize another run's current work or classify itself as a new failure.

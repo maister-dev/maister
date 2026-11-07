@@ -216,6 +216,7 @@ cases:
     valid: true
     value:
       expectedRevision: 1
+      workRevision: 1
       inputRevision: 1
       decision: clarify
       reason: Resolve the target before executing diagnostic work.
@@ -226,6 +227,7 @@ cases:
     valid: false
     value:
       expectedRevision: 1
+      workRevision: 1
       inputRevision: 1
       decision: accept
       reason: No ready result has been identified.

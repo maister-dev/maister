@@ -17045,6 +17045,8 @@ components:
       additionalProperties: false
       required:
         - id
+        - logicalWorkId
+        - revision
         - inputRevision
         - workRevision
         - state
@@ -17056,6 +17058,17 @@ components:
           type: string
           minLength: 1
           maxLength: 128
+        logicalWorkId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+          description: Assignment-scoped caller work key; distinct from the server-generated subject ID.
+        revision:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+          description: Business state/decision CAS for this exact immutable workRevision.
         inputRevision:
           type: integer
           minimum: 1
@@ -17097,6 +17110,7 @@ components:
       additionalProperties: false
       required:
         - expectedRevision
+        - workRevision
         - inputRevision
         - decision
         - reason
@@ -17106,6 +17120,11 @@ components:
           type: integer
           minimum: 1
           maximum: 2147483647
+        workRevision:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+          description: Exact immutable logical-work request revision; a superseded definition cannot accept a new decision.
         inputRevision:
           type: integer
           minimum: 1
