@@ -74,6 +74,24 @@ The implementation acquires the physical fence before the short claim transactio
 
 Resource mutex key is stable for the canonical host/path across all epochs. Incarnation is receipt data, not a changing lock key for one path. It lives outside removable trees. Separate physical paths can use separate locks, with shared parent-Git mutations still fenced. Context locks are sorted and acquired after resource ownership; common-Git mutation exclusion follows the documented acquisition graph. Never wait for physical exclusion/Git inside a SQL transaction. Recheck DB ownership after acquiring physical exclusion and after awaits before publishing/adopting/dispatching.
 
+`preparation-resource.ts` resolves ancestor aliases through the nearest existing
+directory before hashing, without creating a missing workspace suffix. Creation
+does not change that identity. Existing leaf symlinks, non-directories, dangling
+ancestor links and non-ENOENT filesystem failures refuse. Plain mutexes and durable
+preparation operations use this shared canonical path. Actual preparation uses
+its frozen workspace descriptor, including after a worktree-root alias changes.
+Task-agent first dispatch derives that physical operation identity outside its
+transaction from the frozen descriptor; the immutable allocation hash remains a
+separate witness. Flow V1 allocation/cleanup hashes retain their original contract.
+
+No historical identity is rewritten. A same-Run journal with a different physical
+resource hash is an explicit `operational_preparation_identity_changed` hold;
+the old hash alone cannot reconstruct an aliased path or authorize adoption.
+Preserve that workspace for diagnosis and use a fresh attempt after remediation.
+The existing maintenance cutover must stop and quiesce every old manager before
+starting canonical-lock writers. Maintenance mode alone does not retire an
+in-flight physical owner; mixed old/new lexical-lock writers are unsupported.
+
 Lease expiry fences writes but never authorizes a competing actor over still-active filesystem work. Renew slow capture. A new owner waits for physical exclusion/quiescence or allocates a truly distinct physical incarnation. Manager death can release SQLite while a Git child survives: takeover is disabled until a lock-owning helper/host lifetime or proven cancellation/reaping protects the full child-operation interval. Real-process SIGKILL/restart qualification is required; neither a local mutex nor pre-operation DB check establishes this guarantee.
 
 The reused Git gate registers its detached process group durably before acknowledging permission to start Git. A manager killed before acknowledgement cannot start Git; after acknowledgement, recovery refuses the recorded live group until completion or bounded group termination. Checkout add/remove, integrity probes and cleanup preservation use this executor. Unknown/corrupt ownership evidence remains an actionable refusal, never a lease-based steal. The existing `IT-CPC-10` real-process tests own this invariant; preparation/cleanup integration verifies these paths actually enter that fence.
@@ -146,6 +164,7 @@ data. Retry is explicit after remediation; no historical diagnosis is invented.
 - TB01: real Postgres/Git driver-plus-continuation tests establish operation owners and actual interference; log ordering alone never establishes historical causation.
 - TB02: durable one-active-resource-owner constraints and token/epoch publication CAS make re-entry idempotent and prevent stale owners writing successor state.
 - TB03: stable cross-process physical exclusion plus verified child lifetime prevents destructive overlap across leases, epochs and restart; real-process regression covers manager SIGKILL during Git.
+- TB03a: the preparation integration suite holds a plain directory across an ancestor alias before creation and after assignment replacement; SIGKILL/restart retains its canonical resource/incarnation. Actual terminal cleanup through that alias defers until owner release. Unsafe leaves refuse and unprovable historical identities remain unchanged.
 - TB04: terminal transaction, shared disposal fence and fresh quiescence prevent deletion of an active tree and recreation after release; disposition/finalization integration covers both race orderings.
 - TB05: integrity/launch diagnostic boundaries preserve original safe operation/cause and block all create/prompt commands on real probe failure; secrets and typed-fence controls are executable.
 - TB06: baseline and trusted generation validation retain source/index/ref/symlink checks and existing bounds; missing or indeterminate integrity never becomes clean.

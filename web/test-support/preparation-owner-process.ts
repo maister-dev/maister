@@ -20,7 +20,7 @@ import {
 import { isMaisterError } from "@/lib/errors";
 
 const action = z
-  .enum(["capture", "owned-remove", "unfenced-remove"])
+  .enum(["capture", "owned-remove", "unfenced-remove", "hold-plain"])
   .parse(process.argv[2]);
 const input = z
   .object({
@@ -125,7 +125,24 @@ async function capture(): Promise<number> {
 }
 
 try {
-  if (action === "capture") {
+  if (action === "hold-plain") {
+    const owner = await openAgentPreparation(getDb(), {
+      ...resource,
+      resourceKind: "plain_directory",
+      runId: input.runId,
+      assignmentId: input.assignmentId,
+    });
+
+    try {
+      const resumed = once(process, "message");
+
+      await send({ type: "probe-paused" });
+      await resumed;
+    } finally {
+      await owner.release();
+    }
+    await send({ type: "result", ok: true });
+  } else if (action === "capture") {
     const entries = await capture();
 
     await send({ type: "result", ok: true, entries });

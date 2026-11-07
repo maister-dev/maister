@@ -4,12 +4,12 @@ import type { Db } from "@/lib/execution-host/db";
 import type { OperationalFailureDiagnostic } from "./operational-diagnostics";
 import type { OperationalIntegrityBaseline } from "@/lib/run-results/operational-types";
 
-import { createHash, randomUUID } from "node:crypto";
-import { realpath } from "node:fs/promises";
-import path from "node:path";
+import { randomUUID } from "node:crypto";
 
 import { and, eq, exists, inArray, isNull, sql, or, ne } from "drizzle-orm";
 import pino from "pino";
+
+import { agentPreparationResourceId } from "./preparation-resource";
 
 import { agentPreparationOperations, runs } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -143,10 +143,7 @@ export async function claimAgentPreparation(
   previous: Preparation | null;
   run: typeof runs.$inferSelect;
 }> {
-  const canonicalRepo = await realpath(input.repoPath);
-  const resourceId = createHash("sha256")
-    .update(`${canonicalRepo}\0${path.resolve(input.cwd)}`)
-    .digest("hex");
+  const resourceId = await agentPreparationResourceId(input);
 
   return db.transaction(async (tx) => {
     const assignment = await lockCurrentSessionAssignment(tx, input);
@@ -159,6 +156,29 @@ export async function claimAgentPreparation(
       run.operationalCleanup?.removedAt
     )
       throw preparationFenced(input.runId);
+    const [unknownIdentity] = await tx
+      .select({ id: agentPreparationOperations.id })
+      .from(agentPreparationOperations)
+      .where(
+        and(
+          eq(agentPreparationOperations.runId, run.id),
+          ne(agentPreparationOperations.resourceId, resourceId),
+        ),
+      )
+      .limit(1);
+
+    if (unknownIdentity)
+      throw new MaisterError(
+        "PRECONDITION",
+        "The historical preparation identity does not prove this physical workspace; preserve it and start a fresh attempt after diagnosis",
+        {
+          details: {
+            reason: "operational_preparation_identity_changed",
+            runId: run.id,
+            preparationId: unknownIdentity.id,
+          },
+        },
+      );
     const [previous] = await tx
       .select()
       .from(agentPreparationOperations)

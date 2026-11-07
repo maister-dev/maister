@@ -178,6 +178,14 @@ allocated task attempt, branch, managed worktree path, canonical parent reposito
 resource/incarnation IDs, exact base commit and input/settings digests. The identity
 is immutable once written and is not part of the public source-free receipt.
 
+The agent V2 allocation `resourceId` remains an immutable allocation witness,
+including historical path spellings. Agent first dispatch separately derives the
+canonical physical resource ID from the frozen descriptor and binds the actual
+`agent_preparation_operations` row. The dispatch receipt records that operation's
+resource ID. This distinction changes no stored shape, requires no migration and
+does not rewrite allocation history. The [preparation contract](../system-analytics/agent-preparation.md#ownership-and-locking)
+owns canonicalization and incompatible-writer cutover.
+
 Preparation phases are `reserved`, `checkout_ready`, `materializing`, `materialized`
 and `run_bound`. Advancement requires the current unexpired intent lease; an expired
 owner cannot publish a phase. A successor retains the same identity. A completed

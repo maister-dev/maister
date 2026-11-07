@@ -2,7 +2,7 @@ import type { ProjectAction } from "@/lib/authz";
 import type { FakeExecutionHost } from "@/test-support/fake-execution-host";
 
 import { randomUUID } from "node:crypto";
-import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { NextRequest } from "next/server";
@@ -250,7 +250,20 @@ it.each(["none", "repo_read", "worktree"] as const)(
       body,
       randomUUID(),
     );
-    const bound = await prepareTaskLaunchIntent(database.db, receipt.intentId);
+    const allocationRoot = process.env.MAISTER_WORKTREES_ROOT!;
+    const allocationAlias = path.join(root, `allocation-alias-${randomUUID()}`);
+
+    if (workspace === "none") {
+      await mkdir(allocationRoot, { recursive: true });
+      await symlink(allocationRoot, allocationAlias, "dir");
+      process.env.MAISTER_WORKTREES_ROOT = allocationAlias;
+    }
+    const bound = await prepareTaskLaunchIntent(
+      database.db,
+      receipt.intentId,
+    ).finally(() => {
+      process.env.MAISTER_WORKTREES_ROOT = allocationRoot;
+    });
 
     expect(bound.runId).toBeTruthy();
     const { tryStartRun } = await import("@/lib/scheduler");

@@ -364,13 +364,50 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "lib/agents/preparation-ownership.ts",
       "repository-worktree",
       "Preparation resolves only server-owned repository identity under the physical fence",
-      [["claimAgentPreparation", "node:fs/promises.realpath", "stat"]],
+      [
+        [
+          "claimAgentPreparation",
+          "lib/agents/preparation-resource.ts#agentPreparationResourceId",
+          "wrapper",
+        ],
+      ],
+    ),
+    ...classified(
+      "lib/agents/preparation-resource.ts",
+      "repository-worktree",
+      "Read-only canonical server-owned workspace identity, including missing suffixes; no directory creation or execution-host runtime access",
+      [
+        ["canonicalAncestor", "node:fs/promises.lstat", "stat"],
+        ["canonicalAncestor", "node:fs/promises.realpath", "stat"],
+        ["canonicalPreparationPath", "node:fs/promises.lstat", "stat"],
+        ["canonicalPreparationPath", "node:fs/promises.realpath", "stat"],
+        ["agentPreparationResourceId", "node:fs/promises.realpath", "stat"],
+      ],
+    ),
+    ...classified(
+      "lib/tasks/launch-first-dispatch.ts",
+      "repository-worktree",
+      "Physical identity derives only from the frozen accepted workspace before the dispatch transaction",
+      [
+        [
+          "commitTaskAgentLaunchFirstDispatch",
+          "lib/agents/preparation-resource.ts#agentPreparationResourceId",
+          "wrapper",
+        ],
+      ],
     ),
     ...classified(
       "lib/agents/preparation-workspace.ts",
       "repository-worktree",
       "Stable physical mutex outside disposable operational trees",
-      [["acquirePreparationWorkspace", "node:fs/promises.mkdir", "write"]],
+      [
+        ["acquirePreparationWorkspace", "node:fs/promises.mkdir", "write"],
+        [
+          "acquirePreparationWorkspace",
+          "lib/agents/preparation-resource.ts#canonicalPreparationPath",
+          "wrapper",
+        ],
+      ],
     ),
     ...classified(
       "lib/agents/retry-allocation.ts",
@@ -2783,8 +2820,9 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["sendAgentMessage", false],
     ["startAgentSession", false],
   ]),
-  ...wrappers("lib/agents/preparation-ownership.ts", "repository-worktree", [
-    ["claimAgentPreparation", false],
+  ...wrappers("lib/agents/preparation-resource.ts", "repository-worktree", [
+    ["canonicalPreparationPath", true],
+    ["agentPreparationResourceId", true],
   ]),
   ...wrappers("lib/agents/preparation-workspace.ts", "repository-worktree", [
     ["acquirePreparationWorkspace", false],

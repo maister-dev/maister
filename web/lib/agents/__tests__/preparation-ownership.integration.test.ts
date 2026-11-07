@@ -1,9 +1,17 @@
 import type { Db } from "@/lib/execution-host/db";
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { fork, type ChildProcess } from "node:child_process";
-import { access, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  rename,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 
 import { eq, sql } from "drizzle-orm";
@@ -181,7 +189,7 @@ const preparationProcessMessage = z.discriminatedUnion("type", [
 ]);
 
 function preparationProcess(
-  action: "capture" | "owned-remove" | "unfenced-remove",
+  action: "capture" | "owned-remove" | "unfenced-remove" | "hold-plain",
   input: Readonly<{
     runId: string;
     assignmentId: string;
@@ -297,6 +305,21 @@ function preparationProcess(
   };
 
   return { child, close, wait };
+}
+
+async function expectPreparationRefusal<
+  Owner extends { release: () => Promise<void> },
+>(pending: Promise<Owner>, reason: string): Promise<void> {
+  const outcome = await pending.then(
+    (owner) => ({ owner }),
+    (error: unknown) => ({ error }),
+  );
+
+  try {
+    expect(outcome).toMatchObject({ error: { details: { reason } } });
+  } finally {
+    if ("owner" in outcome) await outcome.owner.release();
+  }
 }
 
 beforeAll(async () => {
@@ -1460,6 +1483,239 @@ it("TB06 refuses a checkout whose HEAD changes away from the frozen preparation 
   expect(run.operationalTerminal?.reasonCodes).toContain(
     "operational_source_revision_changed",
   );
+}, 60_000);
+
+it("TB03 plain preparation excludes ancestor aliases before creation across epochs and process restart", async () => {
+  await fakeExecutionHosts(db);
+  const fixture = await seedReadOnlyPreparation();
+  const [run] = await db.select().from(runs).where(eq(runs.id, fixture.runId));
+  const alias = path.join(root, `alias-${randomUUID()}`);
+  const physicalRoot = path.join(root, `physical-${randomUUID()}`);
+
+  await mkdir(physicalRoot);
+  await mkdir(process.env.MAISTER_RUNTIME_ROOT!, { recursive: true });
+  await symlink(physicalRoot, alias, "dir");
+  const cwd = path.join(physicalRoot, "missing-project", run.id);
+  const aliasedCwd = path.join(alias, "missing-project", run.id);
+  const input = {
+    runId: run.id,
+    assignmentId: run.executionAssignmentId!,
+    repoPath: fixture.project.repoPath,
+    cwd,
+    source: fixture.source,
+  };
+  const child = preparationProcess("hold-plain", input);
+
+  try {
+    await child.wait("probe-paused");
+    const [original] = await db
+      .select()
+      .from(agentPreparationOperations)
+      .where(eq(agentPreparationOperations.runId, run.id));
+
+    await expect(access(cwd)).rejects.toMatchObject({ code: "ENOENT" });
+    const assertBusy = (): Promise<void> =>
+      expectPreparationRefusal(
+        acquirePreparationWorkspace({
+          repoPath: input.repoPath,
+          cwd: aliasedCwd,
+          resourceKind: "plain_directory",
+        }),
+        "operation_busy",
+      );
+
+    await assertBusy();
+    const [oldAssignment] = await db
+      .select()
+      .from(executionAssignments)
+      .where(eq(executionAssignments.id, run.executionAssignmentId!));
+    const assignment = await db.transaction((tx) =>
+      mintAssignment(tx, {
+        runId: run.id,
+        hostId: oldAssignment.executionHostId,
+        reason: "recover",
+      }),
+    );
+
+    await assertBusy();
+    child.child.kill("SIGKILL");
+    await child.close();
+    await mkdir(cwd, { recursive: true });
+    const recovered = await openAgentPreparation(db, {
+      ...input,
+      cwd: aliasedCwd,
+      assignmentId: assignment.id,
+      resourceKind: "plain_directory",
+    });
+
+    try {
+      expect(recovered.operation.resourceId).toBe(original.resourceId);
+      expect(recovered.operation.incarnation).toBe(original.incarnation);
+      expect(recovered.operation.assignmentEpoch).toBeGreaterThan(
+        original.assignmentEpoch,
+      );
+      expect(recovered.previous?.id).toBe(original.id);
+    } finally {
+      await recovered.release();
+    }
+    const unsafeLeaf = path.join(physicalRoot, "unsafe-leaf");
+
+    await symlink(cwd, unsafeLeaf, "dir");
+    await expectPreparationRefusal(
+      acquirePreparationWorkspace({
+        repoPath: input.repoPath,
+        cwd: unsafeLeaf,
+        resourceKind: "plain_directory",
+      }),
+      "operational_preparation_path_unsafe",
+    );
+    await rm(unsafeLeaf);
+    await writeFile(unsafeLeaf, "not a directory\n");
+    await expectPreparationRefusal(
+      acquirePreparationWorkspace({
+        repoPath: input.repoPath,
+        cwd: unsafeLeaf,
+        resourceKind: "plain_directory",
+      }),
+      "operational_preparation_path_unsafe",
+    );
+  } finally {
+    if (child.child.exitCode === null && child.child.signalCode === null)
+      child.child.kill("SIGKILL");
+    await child.close();
+  }
+}, 60_000);
+
+it("TB02 holds an unprovable legacy alias identity without rewriting its receipt", async () => {
+  const { hosts } = await fakeExecutionHosts(db);
+  const fixture = await seedReadOnlyPreparation();
+  const [run] = await db.select().from(runs).where(eq(runs.id, fixture.runId));
+  const [assignment] = await db
+    .select()
+    .from(executionAssignments)
+    .where(eq(executionAssignments.id, run.executionAssignmentId!));
+  const alias = path.join(root, `legacy-alias-${randomUUID()}`);
+  const physicalRoot = path.join(root, `legacy-physical-${randomUUID()}`);
+
+  await mkdir(physicalRoot);
+  await mkdir(process.env.MAISTER_RUNTIME_ROOT!, { recursive: true });
+  await symlink(physicalRoot, alias, "dir");
+  const cwd = path.join(physicalRoot, run.id);
+  const [legacy] = await db
+    .insert(agentPreparationOperations)
+    .values({
+      id: randomUUID(),
+      runId: run.id,
+      assignmentId: assignment.id,
+      assignmentEpoch: assignment.epoch,
+      resourceId: createHash("sha256")
+        .update(`${fixture.project.repoPath}\0${path.join(alias, run.id)}`)
+        .digest("hex"),
+      incarnation: randomUUID(),
+      phase: "claimed",
+      leaseExpiresAt: new Date(Date.now() + 60_000),
+    })
+    .returning();
+
+  await expectPreparationRefusal(
+    openAgentPreparation(db, {
+      runId: run.id,
+      assignmentId: assignment.id,
+      repoPath: fixture.project.repoPath,
+      cwd,
+      resourceKind: "plain_directory",
+    }),
+    "operational_preparation_identity_changed",
+  );
+  await expect(
+    launch.startAgentSession(run.id, { db, executionHosts: hosts }),
+  ).rejects.toMatchObject({
+    details: { reason: "operational_preparation_identity_changed" },
+  });
+  expect(
+    await db
+      .select()
+      .from(agentPreparationOperations)
+      .where(eq(agentPreparationOperations.runId, run.id)),
+  ).toEqual([legacy]);
+  expect(
+    (await db.select().from(runs).where(eq(runs.id, run.id)))[0].status,
+  ).toBe("Running");
+  expect(
+    await db
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.runId, run.id)),
+  ).toEqual([]);
+  await expect(access(cwd)).rejects.toMatchObject({ code: "ENOENT" });
+}, 60_000);
+
+it("TB04 plain terminal cleanup through an ancestor alias waits for its physical owner", async () => {
+  const { hosts } = await fakeExecutionHosts(db);
+  const runId = await seedAgentRun(db, {
+    runtimeRoot: root,
+    definition:
+      "---\nname: Plain probe\ndescription: preparation fixture\nkind: operational\ncompletion: {contract: operational_v1}\nworkspace: none\nmode: session\nplatform_mcp: false\ntriggers: [manual]\nrisk_tier: read_only\n---\nRead supplied context.",
+    workspace: "none",
+    resultContract: null,
+    operational: true,
+  });
+  const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+  const [project] = await db
+    .select()
+    .from(projects)
+    .where(eq(projects.id, run.projectId!));
+  const currentRoot = process.env.MAISTER_WORKTREES_ROOT!;
+  const alias = path.join(root, `cleanup-alias-${randomUUID()}`);
+
+  await mkdir(currentRoot, { recursive: true });
+  await mkdir(process.env.MAISTER_RUNTIME_ROOT!, { recursive: true });
+  await symlink(currentRoot, alias, "dir");
+  const cwd = path.join(currentRoot, project.slug, runId);
+
+  await mkdir(cwd, { recursive: true });
+  await writeFile(path.join(cwd, "sentinel.txt"), "owned preparation\n");
+  const owner = await openAgentPreparation(db, {
+    runId,
+    assignmentId: run.executionAssignmentId!,
+    cwd,
+    repoPath: project.repoPath,
+    resourceKind: "plain_directory",
+  });
+
+  try {
+    process.env.MAISTER_WORKTREES_ROOT = alias;
+    const terminal = await prepareAgentRunFinalization(runId, "Abandoned", {
+      db,
+      reason: "fixture_alias_cleanup",
+    });
+    const application = await db.transaction(terminal.apply);
+
+    await terminal.afterCommit(application);
+    const [retained] = await db.select().from(runs).where(eq(runs.id, runId));
+
+    expect(retained.operationalCleanup).toMatchObject({
+      state: "retry",
+      errorCode: "operation_busy",
+    });
+    await expect(
+      access(path.join(cwd, "sentinel.txt")),
+    ).resolves.toBeUndefined();
+  } finally {
+    try {
+      await owner.release();
+    } finally {
+      process.env.MAISTER_WORKTREES_ROOT = currentRoot;
+    }
+  }
+  expect(
+    await disposeOperationalRun(runId, {
+      db,
+      hosts,
+      now: new Date(Date.now() + 120_000),
+    }),
+  ).toBe("released");
+  await expect(access(cwd)).rejects.toMatchObject({ code: "ENOENT" });
 }, 60_000);
 
 it("TB03 real processes preserve an owned slow baseline; disabling the guard reproduces checkout interference", async () => {

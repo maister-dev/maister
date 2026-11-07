@@ -151,6 +151,7 @@ import {
 } from "@/lib/flows/graph/consensus/admission";
 import { nodeAttempts } from "@/lib/db/schema";
 import { assertPreparationCommit } from "@/lib/agents/preparation-ownership";
+import { isPreparationIdentityRefusal } from "@/lib/agents/preparation-resource";
 import {
   executeRepositoryGit,
   withoutGitOwnership,
@@ -3825,6 +3826,13 @@ export async function startAgentSession(
       executionHosts,
     });
   } catch (err) {
+    if (isPreparationIdentityRefusal(err)) {
+      log.error(
+        { runId, reason: "operational_preparation_identity_changed" },
+        "[FIX:preparation-identity] preserve the historical workspace and start a fresh attempt after diagnosis",
+      );
+      throw err;
+    }
     if (err instanceof AgentPromptQuarantined) {
       await endQuarantinedAgentRun(db, executionHosts, err.commandId);
 
@@ -4377,6 +4385,7 @@ async function driveAgentSession(
     if (
       (run.agentKind !== "operational" && !run.taskLaunchIntentId) ||
       isFencedError(error) ||
+      isPreparationIdentityRefusal(error) ||
       (isMaisterError(error) && error.details?.reason === "operation_busy")
     ) {
       await releaseAgentPreparationAfterFailure(preparation, error, {
@@ -4434,7 +4443,9 @@ async function driveAgentSession(
     if (workspace === "repo_read" && effective.parsed.workspaceRef) {
       // ADR-090 rework: ephemeral detached checkout at the trigger-derived ref
       // — the user's checkout is never switched; removed at the terminal choke.
-      cwd = agentReadOnlyWorkdirPath(project.slug, runId);
+      cwd =
+        preparationWorkspace?.cwd ??
+        agentReadOnlyWorkdirPath(project.slug, runId);
 
       try {
         if (!(
@@ -4551,24 +4562,29 @@ async function driveAgentSession(
         return;
       }
     } else if (workspace === "repo_read") {
-      cwd = project.repoPath;
+      cwd = preparationWorkspace?.cwd ?? project.repoPath;
     } else if (workspace === "worktree") {
       // M37 Phase 10 (ADR-099): a shared-mode child resolves the tree from its
       // root_run_id (a reusing sibling has NO workspaces row of its own — the
       // allocator owns it under the UNIQUE worktree_path), so the shared path is
       // computed deterministically rather than read back.
       if (run.workspaceMode === "shared" && run.rootRunId) {
-        cwd = sharedAgentWorktreePath(project.slug, run.rootRunId as string);
+        cwd =
+          preparationWorkspace?.cwd ??
+          sharedAgentWorktreePath(project.slug, run.rootRunId as string);
       } else {
         const wsRows = await _db
           .select({ worktreePath: workspaces.worktreePath })
           .from(workspaces)
           .where(eq(workspaces.runId, runId));
 
-        cwd = wsRows[0]?.worktreePath ?? agentWorkdirPath(project.slug, runId);
+        cwd =
+          preparationWorkspace?.cwd ??
+          wsRows[0]?.worktreePath ??
+          agentWorkdirPath(project.slug, runId);
       }
     } else {
-      cwd = agentWorkdirPath(project.slug, runId);
+      cwd = preparationWorkspace?.cwd ?? agentWorkdirPath(project.slug, runId);
       await mkdir(cwd, { recursive: true });
     }
 

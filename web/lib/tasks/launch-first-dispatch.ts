@@ -8,6 +8,7 @@ import { isAutomaticTaskLaunchDrain } from "./launch-capacity";
 import {
   assertFrozenTaskAgentCurrent,
   assertFrozenTaskAgentRepository,
+  taskAgentPreparationWorkspace,
 } from "./launch-agent-execution";
 import {
   assertFrozenTaskLaunchCurrent,
@@ -21,6 +22,7 @@ import { emitTaskLaunchChanged } from "./launch-events";
 
 import { takeSchedulerLock } from "@/lib/scheduler";
 import { retryDigest } from "@/lib/agents/retry-guards";
+import { agentPreparationResourceId } from "@/lib/agents/preparation-resource";
 import {
   runs,
   taskLaunchIntents,
@@ -248,6 +250,10 @@ export async function commitTaskAgentLaunchFirstDispatch(
     await assertFrozenTaskAgentCurrent(db, accepted);
     await assertFrozenTaskAgentRepository(db, accepted);
   }
+  const physicalResourceId = await agentPreparationResourceId(
+    await taskAgentPreparationWorkspace(db, initial),
+  );
+
   await db.transaction(async (tx) => {
     await takeSchedulerLock(tx);
     if (!accepted.dispatchCommittedAt)
@@ -300,7 +306,7 @@ export async function commitTaskAgentLaunchFirstDispatch(
 
     if (
       intent.preparationIdentity?.version !== 2 ||
-      intent.preparationIdentity.resourceId !== operation.resourceId ||
+      physicalResourceId !== operation.resourceId ||
       (intent.settingsSnapshot.workspace !== "none" &&
         !(
           intent.settingsSnapshot.version === 2 &&

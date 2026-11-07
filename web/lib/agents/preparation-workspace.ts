@@ -29,6 +29,7 @@ import {
   reportPreparationCleanupFailure,
 } from "./preparation-trace";
 import { operationalFailureDiagnostic } from "./operational-diagnostics";
+import { canonicalPreparationPath } from "./preparation-resource";
 
 import { acquireRepositoryMutationFence } from "@/lib/project-config-persistence/repository-lock";
 import { runtimeRoot } from "@/lib/runtime-root";
@@ -121,7 +122,7 @@ export async function acquirePreparationWorkspace(input: {
     };
   }
   const key = createHash("sha256")
-    .update(path.resolve(input.cwd))
+    .update(await canonicalPreparationPath(input.cwd))
     .digest("hex");
   const relative = `.maister/preparation-locks/${key}`;
   const root = await assertSafeAgentMaterializationPath(
