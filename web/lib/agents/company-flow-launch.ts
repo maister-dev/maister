@@ -1,6 +1,8 @@
 import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
+import type { ExecutionHost } from "@/lib/db/schema";
+import type { CompanyRunReservation } from "./company-execution-types";
 import type { ExecutionHosts } from "@/lib/execution-host";
 import type { CompanyFlowContextInput } from "./company-flow-context";
 import type { RunSessionResolution } from "@/lib/acp-runners/resolve";
@@ -50,14 +52,7 @@ export async function reserveCompanyFlowRun(
   userId: string,
   input: CompanyFlowContextInput,
   hosts: ExecutionHosts = createExecutionHosts({ db }),
-): Promise<
-  Readonly<{
-    runId: string;
-    assignmentId: string;
-    assignmentRevision: number;
-    status: "Pending";
-  }>
-> {
+): Promise<CompanyRunReservation> {
   const parsed = companyFlowContextInputSchema.safeParse(input);
 
   if (!parsed.success)
@@ -76,173 +71,9 @@ export async function reserveCompanyFlowRun(
       prepareCompanyFlowContext(tx, userId, request),
     );
     const host = await localHost({ db, transport: hosts.transport });
-    const executionDataPlaneMode = executionDataPlaneModeForHost(host);
-    const receipt = await db.transaction(async (tx) => {
-      const context = await prepareCompanyFlowContext(tx, userId, request);
-      const [runtime] = await tx
-        .select()
-        .from(platformRuntimeSettings)
-        .where(eq(platformRuntimeSettings.id, "singleton"))
-        .for("share");
-      const runners = await tx.select().from(platformAcpRunners).for("share");
-      const catalog = runners.map(runnerCatalogEntry);
-      const overrideRunnerId =
-        context.binding.snapshot.runnerId ?? context.effective.parsed.runner;
-      const inspection = inspectFlowRunners({
-        manifest: context.coordinator.snapshot.manifest,
-        bindings: [],
-        launchOverrideRunnerId: overrideRunnerId,
-        projectFlow: {},
-        platformFlow: { defaultRunnerId: context.flowDefaultRunnerId },
-        project: {},
-        platform: { defaultRunnerId: runtime?.defaultRunnerId ?? null },
-        runners: catalog,
-      });
-      const sessions = inspection.sessions.map(
-        (session): RunSessionResolution => {
-          if (session.status === "unresolved") throw session.error;
-
-          const resolution = session.resolution;
-
-          if (resolution.runnerResolutionTier !== "launchOverride")
-            return resolution;
-
-          return {
-            ...resolution,
-            runnerResolutionTier: context.binding.snapshot.runnerId
-              ? "binding"
-              : "agentDefault",
-            resolutionSource: context.binding.snapshot.runnerId
-              ? "company-specialist-binding"
-              : "specialist-definition",
-          };
-        },
-      );
-      const primary = sessions.find(
-        (session) => session.sessionName === inspection.primarySessionName,
-      );
-
-      if (!primary)
-        throw new MaisterError(
-          "CONFIG",
-          "Company Flow requires a resolved primary session",
-        );
-      for (const session of sessions) {
-        // Validate the exact selected runner through the shared company read-only
-        // gate. This does not replace the Flow resolver's original provenance.
-        resolveCompanyAgentRunner({
-          bindingRunnerId: session.runnerId,
-          agent: { runnerId: null, mode: "session", workspace: "none" },
-          platform: { defaultRunnerId: null },
-          runners: catalog,
-        });
-        await assertReadOnlySessionEvidence({
-          hosts,
-          adapterId: session.runnerSnapshot.adapter,
-          runnerId: session.runnerId,
-          workspace: "none",
-        });
-      }
-      const runId = randomUUID();
-      const definition = context.effective.parsed;
-
-      await tx.insert(runs).values({
-        id: runId,
-        runKind: "flow",
-        companyId: context.owner.companyId,
-        companyExecutionSnapshot: captureCompanyFlowExecution(context),
-        agentId: definition.id,
-        sourceAgentId: definition.id,
-        agentWorkspace: "none",
-        flowRevisionId: context.coordinator.snapshot.flowRevisionId,
-        flowVersion: context.flowVersion,
-        flowRevision: context.coordinator.snapshot.packageRevision,
-        status: "Pending",
-        createdByUserId: userId,
-        triggerSource: request.triggerSource,
-        agentConfig: context.binding.snapshot.effectiveConfiguration,
-        executionPolicy: context.binding.snapshot.executionPolicy,
-        scheduledRequestSnapshot: context.input.snapshot.scheduledRequest,
-        resultContract: context.resultContract,
-        launchedAt: sql`CURRENT_TIMESTAMP`,
-        activitySortAt: sql`CURRENT_TIMESTAMP`,
-        activityTimestampProvenance: "launch",
-        agentActivitySnapshot: withAgentComparisonScopes(
-          buildAgentActivitySnapshot(definition.id, context.effective),
-          {
-            configuration: context.binding.snapshot.effectiveConfiguration,
-            trigger: { source: request.triggerSource },
-            taskId: null,
-            runner: primary.runnerSnapshot,
-            workspace: "none",
-            hostId: host.id,
-          },
-        ),
-        executionDataPlaneMode,
-        knowledgeAccess: {
-          schemaVersion: 1,
-          state: "complete",
-          generation: 1,
-          restrictions: [
-            {
-              kind: "assignment_input",
-              assignmentId: context.assignment.id,
-              inputRevision: context.input.revision,
-              inputSha256: context.input.digest,
-            },
-          ],
-        },
-      });
-      await tx.insert(runSessions).values(
-        sessions.map((session) => ({
-          id: randomUUID(),
-          runId,
-          sessionName: session.sessionName,
-          runnerId: session.runnerId,
-          runnerResolutionTier: session.runnerResolutionTier,
-          capabilityAgent: capabilityAgentSchema.parse(session.capabilityAgent),
-          runnerSnapshot: session.runnerSnapshot,
-          acpSessionId: null,
-          resolutionSource: session.resolutionSource,
-          resolutionWarning: session.resolutionWarning ?? null,
-        })),
-      );
-      await mintPlacement(tx as unknown as Db, {
-        runId,
-        reason: "launch",
-        host,
-      });
-      const assignmentRevision =
-        await activateInitialSpecialistAssignmentRunInTransaction(
-          tx,
-          userId,
-          context.assignment.id,
-          {
-            runId,
-            inputRevision: context.input.revision,
-            expectedRevision: context.assignment.revision,
-            role: "coordinator",
-          },
-        );
-
-      log.debug(
-        {
-          runId,
-          companyId: context.owner.companyId,
-          flowRevisionId: context.coordinator.snapshot.flowRevisionId,
-          sessionCount: sessions.length,
-          primarySessionName: inspection.primarySessionName,
-        },
-        "company Flow session snapshots reserved",
-      );
-
-      return {
-        runId,
-        assignmentId: context.assignment.id,
-        assignmentRevision,
-        status: "Pending" as const,
-      };
-    });
+    const receipt = await db.transaction((tx) =>
+      reserveCompanyFlowRunInTransaction(tx, userId, request, hosts, host),
+    );
 
     log.info(
       {
@@ -267,4 +98,178 @@ export async function reserveCompanyFlowRun(
     );
     throw redactQueryError(error);
   }
+}
+
+/** Reserve on the caller's transaction after host activation on a stable pooled database. */
+export async function reserveCompanyFlowRunInTransaction(
+  tx: Db,
+  userId: string,
+  input: CompanyFlowContextInput,
+  hosts: ExecutionHosts,
+  host: ExecutionHost,
+): Promise<CompanyRunReservation> {
+  assertUpgradeMaintenanceAllows("run_admission");
+  const executionDataPlaneMode = executionDataPlaneModeForHost(host);
+  const request = input;
+  const context = await prepareCompanyFlowContext(tx, userId, request);
+  const [runtime] = await tx
+    .select()
+    .from(platformRuntimeSettings)
+    .where(eq(platformRuntimeSettings.id, "singleton"))
+    .for("share");
+  const runners = await tx.select().from(platformAcpRunners).for("share");
+  const catalog = runners.map(runnerCatalogEntry);
+  const overrideRunnerId =
+    context.binding.snapshot.runnerId ?? context.effective.parsed.runner;
+  const inspection = inspectFlowRunners({
+    manifest: context.coordinator.snapshot.manifest,
+    bindings: [],
+    launchOverrideRunnerId: overrideRunnerId,
+    projectFlow: {},
+    platformFlow: { defaultRunnerId: context.flowDefaultRunnerId },
+    project: {},
+    platform: { defaultRunnerId: runtime?.defaultRunnerId ?? null },
+    runners: catalog,
+  });
+  const sessions = inspection.sessions.map((session): RunSessionResolution => {
+    if (session.status === "unresolved") throw session.error;
+
+    const resolution = session.resolution;
+
+    if (resolution.runnerResolutionTier !== "launchOverride") return resolution;
+
+    return {
+      ...resolution,
+      runnerResolutionTier: context.binding.snapshot.runnerId
+        ? "binding"
+        : "agentDefault",
+      resolutionSource: context.binding.snapshot.runnerId
+        ? "company-specialist-binding"
+        : "specialist-definition",
+    };
+  });
+  const primary = sessions.find(
+    (session) => session.sessionName === inspection.primarySessionName,
+  );
+
+  if (!primary)
+    throw new MaisterError(
+      "CONFIG",
+      "Company Flow requires a resolved primary session",
+    );
+  for (const session of sessions) {
+    // Validate the exact selected runner through the shared company read-only
+    // gate. This does not replace the Flow resolver's original provenance.
+    resolveCompanyAgentRunner({
+      bindingRunnerId: session.runnerId,
+      agent: { runnerId: null, mode: "session", workspace: "none" },
+      platform: { defaultRunnerId: null },
+      runners: catalog,
+    });
+    await assertReadOnlySessionEvidence({
+      hosts,
+      adapterId: session.runnerSnapshot.adapter,
+      runnerId: session.runnerId,
+      workspace: "none",
+    });
+  }
+  const runId = randomUUID();
+  const definition = context.effective.parsed;
+
+  await tx.insert(runs).values({
+    id: runId,
+    runKind: "flow",
+    companyId: context.owner.companyId,
+    companyExecutionSnapshot: captureCompanyFlowExecution(context),
+    agentId: definition.id,
+    sourceAgentId: definition.id,
+    agentWorkspace: "none",
+    flowRevisionId: context.coordinator.snapshot.flowRevisionId,
+    flowVersion: context.flowVersion,
+    flowRevision: context.coordinator.snapshot.packageRevision,
+    status: "Pending",
+    createdByUserId: userId,
+    triggerSource: request.triggerSource,
+    agentConfig: context.binding.snapshot.effectiveConfiguration,
+    executionPolicy: context.binding.snapshot.executionPolicy,
+    scheduledRequestSnapshot: context.input.snapshot.scheduledRequest,
+    resultContract: context.resultContract,
+    launchedAt: sql`CURRENT_TIMESTAMP`,
+    activitySortAt: sql`CURRENT_TIMESTAMP`,
+    activityTimestampProvenance: "launch",
+    agentActivitySnapshot: withAgentComparisonScopes(
+      buildAgentActivitySnapshot(definition.id, context.effective),
+      {
+        configuration: context.binding.snapshot.effectiveConfiguration,
+        trigger: { source: request.triggerSource },
+        taskId: null,
+        runner: primary.runnerSnapshot,
+        workspace: "none",
+        hostId: host.id,
+      },
+    ),
+    executionDataPlaneMode,
+    knowledgeAccess: {
+      schemaVersion: 1,
+      state: "complete",
+      generation: 1,
+      restrictions: [
+        {
+          kind: "assignment_input",
+          assignmentId: context.assignment.id,
+          inputRevision: context.input.revision,
+          inputSha256: context.input.digest,
+        },
+      ],
+    },
+  });
+  await tx.insert(runSessions).values(
+    sessions.map((session) => ({
+      id: randomUUID(),
+      runId,
+      sessionName: session.sessionName,
+      runnerId: session.runnerId,
+      runnerResolutionTier: session.runnerResolutionTier,
+      capabilityAgent: capabilityAgentSchema.parse(session.capabilityAgent),
+      runnerSnapshot: session.runnerSnapshot,
+      acpSessionId: null,
+      resolutionSource: session.resolutionSource,
+      resolutionWarning: session.resolutionWarning ?? null,
+    })),
+  );
+  await mintPlacement(tx, {
+    runId,
+    reason: "launch",
+    host,
+  });
+  const assignmentRevision =
+    await activateInitialSpecialistAssignmentRunInTransaction(
+      tx,
+      userId,
+      context.assignment.id,
+      {
+        runId,
+        inputRevision: context.input.revision,
+        expectedRevision: context.assignment.revision,
+        role: "coordinator",
+      },
+    );
+
+  log.debug(
+    {
+      runId,
+      companyId: context.owner.companyId,
+      flowRevisionId: context.coordinator.snapshot.flowRevisionId,
+      sessionCount: sessions.length,
+      primarySessionName: inspection.primarySessionName,
+    },
+    "company Flow session snapshots reserved",
+  );
+
+  return {
+    runId,
+    assignmentId: context.assignment.id,
+    assignmentRevision,
+    status: "Pending" as const,
+  };
 }

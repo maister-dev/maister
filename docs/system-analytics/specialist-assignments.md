@@ -167,6 +167,33 @@ event and webhook dispatch (T22.1), clarification continuation (T24) and native
 agent delegation (T27). A matching source identity alone never authorizes an
 adapter to act as another principal.
 
+### Company manual reservation
+
+The server accepts the original bounded request and manual idempotency key. It
+derives the interaction identity and requester from the authenticated user,
+resolves the exact current owned specialist binding and its declared coordinator,
+and builds the expected result from the actual pinned provider. Caller-supplied
+actors, grants, result schemas, package pins and origin/destination are refused.
+New reservations require current company read, submit and update authority;
+exact duplicate inspection requires current read/submit and source access and
+performs no new reservation. A changed/disabled provider is not re-resolved for
+duplicate work.
+
+Receipt creation, the assignment/input and the existing agent or Flow reservation
+share one outer database transaction, reusing the existing launchers' transaction
+helpers. Host/event-consumer activation uses a stable pooled database before that
+transaction; a background consumer must never retain a transaction handle after
+commit. Exact replay is inspected before any host/provider preflight. Reconnect
+diagnostics retain sanitized error type, SQLSTATE and constraint, without query
+parameters, raw database causes or input content. Failure rolls back Run/session/placement/link/state/receipt
+data together. The returned assignment includes the actual retained Run links.
+Business responsibility becomes active at reservation; the existing Run remains
+Pending until its existing scheduler pool grants capacity. This does not grant
+an execution slot or start an agent process inside the intake transaction.
+Actual source/API adapters wake existing dispatch after commit and never repeat
+reservation for an exact duplicate. Project repository admission remains its own
+existing project boundary.
+
 ### Clarification and context
 
 Existing agent-question/HITL services gain an assignment subject without a task requirement. Human `assignments` retains claim/answer ownership; company actor scope and role mapping come from the company Flow binding. A question stores assignment, expected input revision, coordinator epoch, prompt/turn and source principal. Same answer replay is inert; changed/late/wrong-assignment/terminal answer returns 409. Persist answer intent before delivery and mark delivered only after ACK. Failed DB/delivery handling explicitly cancels/releases the supervisor's owned permission deferred; no hidden promise waits.

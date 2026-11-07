@@ -16,6 +16,7 @@ import {
   mkdtemp,
   readFile,
   realpath,
+  rename,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -88,6 +89,7 @@ import {
 } from "@/lib/execution-host/adoption";
 import { createExecutionHosts } from "@/lib/execution-host";
 import { insertCommand } from "@/lib/execution-host/commands";
+import { TERMINAL_COMMAND_STATES } from "@/lib/execution-host/types";
 import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
 import { startProjectionWorker } from "@/lib/execution-host/events/projection-worker";
 import { runFlow } from "@/lib/flows/runner";
@@ -98,11 +100,13 @@ import { POST as stopRunPost } from "@/app/api/runs/[runId]/stop/route";
 import { POST as respondHitlPost } from "@/app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route";
 import { GET as retainedResultGet } from "@/app/api/runs/[runId]/results/[revision]/route";
 import { loadRetainedResultForUser } from "@/lib/run-results/retained-result";
+import { reserveCompanyManualAssignment } from "@/lib/specialist-assignments/company-manual-intake";
 import { loadNativeInputForUser } from "@/lib/orchestrator/native-input-read";
 import { NativeInputInspectionPanel } from "@/components/runs/native-input-inspection";
 import enMessages from "@/messages/en.json";
 import ruMessages from "@/messages/ru.json";
 import { tryStartRun } from "@/lib/scheduler";
+import { disposeOperationalRun } from "@/lib/gc/operational-disposition";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { resumeRun } from "@/lib/runs/resume";
 import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-worker";
@@ -618,6 +622,24 @@ async function counts(): Promise<AllocationCounts> {
   return (
     await database.pool.query<AllocationCounts>(
       "SELECT (SELECT count(*)::int FROM projects) AS projects,(SELECT count(*)::int FROM tasks) AS tasks,(SELECT count(*)::int FROM runs) AS runs,(SELECT count(*)::int FROM run_sessions) AS sessions,(SELECT count(*)::int FROM specialist_run_links) AS links",
+    )
+  ).rows[0]!;
+}
+
+async function intakeBusinessCounts(db: StartedPostgresTestDb): Promise<{
+  assignments: number;
+  inputs: number;
+  receipts: number;
+  events: number;
+}> {
+  return (
+    await db.pool.query<{
+      assignments: number;
+      inputs: number;
+      receipts: number;
+      events: number;
+    }>(
+      "SELECT (SELECT count(*)::int FROM specialist_assignments) AS assignments,(SELECT count(*)::int FROM specialist_input_revisions) AS inputs,(SELECT count(*)::int FROM specialist_intake_receipts) AS receipts,(SELECT count(*)::int FROM domain_events) AS events",
     )
   ).rows[0]!;
 }
@@ -1989,25 +2011,21 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
       knowledgeProposals: [],
       selection: [],
     };
-    const assignment = await createSpecialistAssignment(
-      database.db,
-      requesterId,
-      {
-        ...preparedAssignment,
-        origin: { kind: "manual", interactionId: randomUUID() },
-        objectiveInput: {
-          ...preparedAssignment.objectiveInput,
-          input:
-            "\nfixture-output:" +
-            JSON.stringify({
-              bytes: 0,
-              text:
-                "```json maister:output\n" + JSON.stringify(output) + "\n```",
-            }) +
-            "\n",
-        },
-      },
-    );
+    const { expectedResult: _expectedResult, ...objective } =
+      preparedAssignment.objectiveInput;
+    const manualRequest = {
+      ...objective,
+      owner: preparedAssignment.owner,
+      specialistBindingId: preparedAssignment.specialistBindingId,
+      input:
+        "\nfixture-output:" +
+        JSON.stringify({
+          bytes: 0,
+          text: "```json maister:output\n" + JSON.stringify(output) + "\n```",
+        }) +
+        "\n",
+      idempotencyKey: randomUUID(),
+    };
     const hosts = createExecutionHosts({
       db: database.db,
       transport: createLocalDirectTransport(),
@@ -2026,17 +2044,33 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
         ]),
       },
     });
-    const receipt = await reserveCompanyFlowRun(
-      database.db,
-      requesterId,
-      {
-        ...request,
-        assignmentId: assignment.id,
-        assignmentRevision: assignment.revision,
-        inputRevision: assignment.inputRevision,
-      },
-      hosts,
+    const deliveries = await Promise.all([
+      reserveCompanyManualAssignment(
+        database.db,
+        requesterId,
+        manualRequest,
+        hosts,
+      ),
+      reserveCompanyManualAssignment(
+        database.db,
+        requesterId,
+        manualRequest,
+        hosts,
+      ),
+    ]);
+
+    expect(deliveries.map((delivery) => delivery.duplicate).sort()).toEqual([
+      false,
+      true,
+    ]);
+    expect(new Set(deliveries.map((delivery) => delivery.receiptId)).size).toBe(
+      1,
     );
+    const assignment = deliveries[0]!.assignment;
+
+    expect(assignment.runIds).toHaveLength(1);
+    expect(deliveries[1]!.assignment.runIds).toEqual(assignment.runIds);
+    const receipt = { runId: assignment.runIds[0]! };
 
     expect(await tryStartRun(receipt.runId, { db: database.db })).toMatchObject(
       { started: true },
@@ -2094,6 +2128,64 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
         )
       ).rows,
     ).toMatchObject([{ validity: "valid", value: output }]);
+    const beforeRefusal = await counts();
+    const businessBeforeRefusal = await intakeBusinessCounts(database);
+
+    await expect(
+      reserveCompanyManualAssignment(
+        database.db,
+        requesterId,
+        { ...manualRequest, authority: { action: "assignments:update" } },
+        hosts,
+      ),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+    await expect(
+      reserveCompanyManualAssignment(
+        database.db,
+        requesterId,
+        {
+          ...manualRequest,
+          objective: "Changed work under the same manual delivery",
+        },
+        hosts,
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "specialist_intake_payload_conflict" },
+    });
+    const submitOnly = await createCompanyGrants(database.db, administratorId, {
+      principalKind: "user",
+      principalId: outsiderId,
+      actions: ["assignments:read", "assignments:submit"],
+      idempotencyKey: randomUUID(),
+    });
+
+    try {
+      await expect(
+        reserveCompanyManualAssignment(
+          database.db,
+          outsiderId,
+          { ...manualRequest, idempotencyKey: randomUUID() },
+          hosts,
+        ),
+      ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    } finally {
+      for (const grant of submitOnly.page.items.filter(
+        (entry) =>
+          entry.principalKind === "user" &&
+          entry.principalId === outsiderId &&
+          entry.revokedAt === null &&
+          ["assignments:read", "assignments:submit"].includes(entry.action),
+      )) {
+        await revokeCompanyGrant(database.db, administratorId, grant.id, {
+          expectedRevision: grant.revision,
+          reason: "Restore the isolated unauthorized intake fixture",
+          idempotencyKey: randomUUID(),
+        });
+      }
+    }
+    expect(await counts()).toEqual(beforeRefusal);
+    expect(await intakeBusinessCounts(database)).toEqual(businessBeforeRefusal);
     const selector = { runId: receipt.runId, revision: 1 };
     const resultBeforeInspection = (
       await database.pool.query("SELECT * FROM run_results WHERE run_id=$1", [
@@ -2386,6 +2478,33 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
         )
       ).rows,
     ).toEqual([{ count: 0 }]);
+    await stopRuntimeEventConsumers();
+    await supervisor.stop();
+    resetResolverForTests();
+    resetRegistrarStateForTests();
+    const originalSchema = `${schemaPath}.manual-replay-${randomUUID()}`;
+    const beforeOfflineReplay = await counts();
+    const businessBeforeReplay = await intakeBusinessCounts(database);
+
+    await rename(schemaPath, originalSchema);
+    try {
+      await expect(
+        reserveCompanyManualAssignment(
+          database.db,
+          requesterId,
+          manualRequest,
+          hosts,
+        ),
+      ).resolves.toMatchObject({
+        duplicate: true,
+        receiptId: deliveries[0]!.receiptId,
+        assignment: { id: assignment.id, runIds: [receipt.runId] },
+      });
+    } finally {
+      await rename(originalSchema, schemaPath);
+    }
+    expect(await counts()).toEqual(beforeOfflineReplay);
+    expect(await intakeBusinessCounts(database)).toEqual(businessBeforeReplay);
   } finally {
     if (previousCap === undefined)
       delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
@@ -2549,6 +2668,38 @@ it("CBS-03 cancels live native graph work once without allowing its completed ou
       .toBe("abandoned");
     expect(await driver).toEqual({ error: null });
     expect((await stop()).status).toBe(200);
+    const cleanup = (
+      await database.pool.query<{
+        state: string;
+        due_at: string | null;
+        error_code: string | null;
+      }>(
+        "SELECT operational_cleanup->>'state' AS state,operational_cleanup->>'dueAt' AS due_at,operational_cleanup->>'errorCode' AS error_code FROM runs WHERE id=$1",
+        [receipt.runId],
+      )
+    ).rows[0]!;
+
+    if (cleanup.state === "retry") {
+      expect(cleanup.error_code).toBe("operational_execution_not_quiescent");
+      expect(cleanup.due_at).not.toBeNull();
+      // Advance only the existing backoff clock; physical and ledger quiescence are still checked by recovery.
+      const outcome = await disposeOperationalRun(receipt.runId, {
+        db: database.db,
+        hosts,
+        now: new Date(cleanup.due_at!),
+      });
+      const openCommands = (
+        await database.pool.query(
+          "SELECT id,kind,state FROM execution_commands WHERE run_id=$1 AND state<>ALL($2::text[]) ORDER BY created_at,id",
+          [receipt.runId, [...TERMINAL_COMMAND_STATES]],
+        )
+      ).rows;
+
+      expect({ outcome, openCommands }).toEqual({
+        outcome: "released",
+        openCommands: [],
+      });
+    }
     expect(
       (
         await database.pool.query(

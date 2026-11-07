@@ -17,6 +17,7 @@ import { runEventWakeBus } from "./run-wake";
 
 import { MaisterError } from "@/lib/errors";
 import { executionEventStreams } from "@/lib/db/schema";
+import { queryErrorDiagnostics } from "@/lib/db/pg-error";
 import { eventIngestBatchRows } from "@/lib/instance-config";
 import { isApplicationStopping } from "@/lib/server-lifecycle";
 
@@ -616,6 +617,7 @@ export function startRuntimeEventConsumer(input: {
             delayMs,
             reason:
               error instanceof MaisterError ? error.code : "transport_failure",
+            ...queryErrorDiagnostics(error),
           },
           "runtime-event-consumer-reconnect",
         );

@@ -1,0 +1,86 @@
+{
+  "task": "T22",
+  "slice": "Company manual reservation on canonical intake and existing native launchers",
+  "date": "2026-11-07",
+  "baseCommit": "44a48d106",
+  "status": "Internal reservation qualified; T22 public and project adapters remain open; T21 full gate pending",
+  "red": [
+    {
+      "case": "Missing company manual reservation service",
+      "testsFailed": 1,
+      "testsPassed": 44
+    },
+    {
+      "case": "Nested launcher transaction activated a long-lived event consumer on a transaction handle",
+      "testsFailed": 7,
+      "testsPassed": 38,
+      "fix": "Activate the existing host data plane on the stable pooled database; share the existing reservation transaction bodies without nested lifecycle activation."
+    },
+    {
+      "case": "Sibling cancellation assumed immediate cleanup despite a guarded quiescence deferral",
+      "testsFailed": 1,
+      "testsPassed": 57,
+      "fix": "Respect the stored operational_execution_not_quiescent retry, retain actual quiescence checks and use the canonical terminal command states."
+    }
+  ],
+  "gates": {
+    "integration": {
+      "tests": 94,
+      "files": 3,
+      "durationSeconds": 76.66,
+      "exitCode": 0
+    },
+    "consumer": {
+      "tests": 3,
+      "files": 1,
+      "durationSeconds": 10.13,
+      "exitCode": 0
+    },
+    "unit": {
+      "tests": 9318,
+      "files": 889,
+      "durationSeconds": 29.02
+    },
+    "types": {
+      "exitCode": 0
+    },
+    "lint": {
+      "exitCode": 0
+    },
+    "format": {
+      "exitCode": 0
+    },
+    "contracts": {
+      "exitCode": 0
+    },
+    "docs": {
+      "exitCode": 0
+    }
+  },
+  "qualified": [
+    "Concurrent original requests reserve one assignment, receipt, Run, session and placement before existing capacity admission",
+    "Actual native coordinator execution uses the server-resolved exact result contract and retained separate input planes",
+    "Forged authority, changed same-key payload and missing new-reservation update authority refuse without dependent writes",
+    "Exact currently authorized replay works after supervisor stop and removal of the provider schema file",
+    "Existing standalone reservation lifecycle remains green after extracting its transaction body",
+    "Populated main-only migrations through 0238 retain historical bytes and nonblocking project deletion"
+  ],
+  "limits": [
+    "Controlled ACP/pinned fixture Git package; actual installable specialist/Flow pilot qualification remains later",
+    "No public HTTP or project manual entry point, source schedule/event/webhook dispatcher or agent delegation is qualified by this slice",
+    "The optional cleanup-retry assertion branch was not deterministically triggered in the final successful sequence; T29 owns recovery fault-matrix qualification",
+    "The consumer diagnostics addition was checked by its owning batching integration after the 94-test runtime gate; no raw SQL, request content or causes are logged",
+    "The first sandboxed repeat of contract/docs validators failed at tsx local IPC EPERM; the same validators passed with scoped escalation"
+  ],
+  "sourceSha256": {
+    "web/lib/specialist-assignments/company-manual-intake.ts": "a9dfe1b379215cd2d6ce01f5d0baebea5605d42ec96292fc90abbf5e257d1b67",
+    "web/lib/specialist-assignments/intake.ts": "4d9f95c22827db0da7ce8cdf7f7d3ecc2449144daab882e41ee7d325336ec8db",
+    "web/lib/agents/company-agent-launch.ts": "0934efd048b434684343a453545e3ab2ef4d677eb5da7a6dd7a901b9cec756c2",
+    "web/lib/agents/company-flow-launch.ts": "a1927ae73f225ecd377702f527caf4954a0d71cf256c210568ae8ecfa1300a7d",
+    "web/lib/agents/company-execution-types.ts": "bd928bcac2ae5418aba0757b40caf9c327da9a63506d47700b64c73806e951a1",
+    "web/lib/execution-host/events/consumer.ts": "dbcccd62aa0af5ae2e34402a523ec1a6561993436d9de290f42cd0b78e03e17a",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "0734b8e24c2e232ea98b8c74a04003e510a919fc7191af07abc0e77153e4cdb7",
+    "docs/system-analytics/specialist-assignments.md": "6bbc0b901c1d0a6dcb9c08631099c9170af1eedba4b56a34c57507ef30e28569",
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "d5f7b4b4063131c4a8e73509b8227c25d993e7a4961cdfb75fa12d98a7e75896"
+  }
+}

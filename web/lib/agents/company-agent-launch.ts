@@ -1,6 +1,8 @@
 import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
+import type { ExecutionHost } from "@/lib/db/schema";
+import type { CompanyRunReservation } from "./company-execution-types";
 import type { ExecutionHosts } from "@/lib/execution-host";
 import type { CompanyAgentContextInput } from "./company-agent-context";
 
@@ -53,140 +55,15 @@ export async function reserveCompanyAgentRun(
   userId: string,
   input: CompanyAgentContextInput,
   hosts: ExecutionHosts = createExecutionHosts({ db }),
-): Promise<
-  Readonly<{
-    runId: string;
-    assignmentId: string;
-    assignmentRevision: number;
-    status: "Pending";
-  }>
-> {
+): Promise<CompanyRunReservation> {
   try {
     assertUpgradeMaintenanceAllows("run_admission");
     await db.transaction((tx) => prepareCompanyAgentContext(tx, userId, input));
     const host = await localHost({ db, transport: hosts.transport });
-    const executionDataPlaneMode = executionDataPlaneModeForHost(host);
 
-    const receipt = await db.transaction(async (tx) => {
-      const context = await prepareCompanyAgentContext(tx, userId, input);
-      const definition = context.effective.parsed;
-
-      const [runtime] = await tx
-        .select()
-        .from(platformRuntimeSettings)
-        .where(eq(platformRuntimeSettings.id, "singleton"))
-        .for("share");
-
-      const runners = await tx.select().from(platformAcpRunners).for("share");
-      const resolution = resolveCompanyAgentRunner({
-        bindingRunnerId: context.binding.snapshot.runnerId,
-        agent: {
-          runnerId: definition.runner,
-          mode: definition.mode,
-          workspace: definition.workspace,
-        },
-        platform: { defaultRunnerId: runtime?.defaultRunnerId ?? null },
-        runners: runners.map(runnerCatalogEntry),
-      });
-
-      await assertReadOnlySessionEvidence({
-        hosts,
-        adapterId: resolution.runnerSnapshot.adapter,
-        runnerId: resolution.runnerId,
-        workspace: definition.workspace,
-      });
-      const runId = randomUUID();
-      const snapshot = captureCompanyAgentExecution(context);
-      const trigger = { source: input.triggerSource };
-
-      await tx.insert(runs).values({
-        id: runId,
-        runKind: "agent",
-        companyId: context.owner.companyId,
-        companyExecutionSnapshot: snapshot,
-        agentId: definition.id,
-        sourceAgentId: definition.id,
-        agentKind: "operational",
-        agentWorkspace: "none",
-        currentStepId: "agent",
-        status: "Pending",
-        flowVersion: "agent",
-        flowRevision: "manual",
-        createdByUserId: userId,
-        triggerSource: input.triggerSource,
-        agentConfig: context.binding.snapshot.effectiveConfiguration,
-        executionPolicy: context.binding.snapshot.executionPolicy,
-        scheduledRequestSnapshot: context.input.snapshot.scheduledRequest,
-        resultContract: buildOperationalContract(context.effective),
-        launchedAt: sql`CURRENT_TIMESTAMP`,
-        activitySortAt: sql`CURRENT_TIMESTAMP`,
-        activityTimestampProvenance: "launch",
-        agentActivitySnapshot: withAgentComparisonScopes(
-          buildAgentActivitySnapshot(definition.id, context.effective),
-          {
-            configuration: context.binding.snapshot.effectiveConfiguration,
-            trigger,
-            taskId: null,
-            runner: resolution.runnerSnapshot,
-            workspace: "none",
-            hostId: host.id,
-          },
-        ),
-        executionDataPlaneMode,
-        knowledgeAccess: {
-          schemaVersion: 1,
-          state: "complete",
-          generation: 1,
-          restrictions: [
-            {
-              kind: "assignment_input",
-              assignmentId: context.assignment.id,
-              inputRevision: context.input.revision,
-              inputSha256: context.input.digest,
-            },
-          ],
-        },
-      });
-      await tx.insert(runSessions).values({
-        id: randomUUID(),
-        ...defaultRunSessionValues(runId, resolution),
-        capabilityAgent: capabilityAgentSchema.parse(
-          resolution.capabilityAgent,
-        ),
-      });
-      await mintPlacement(tx as unknown as Db, {
-        runId,
-        reason: "launch",
-        host,
-      });
-      const assignmentRevision =
-        await activateInitialSpecialistAssignmentRunInTransaction(
-          tx,
-          userId,
-          context.assignment.id,
-          {
-            runId,
-            inputRevision: context.input.revision,
-            expectedRevision: context.assignment.revision,
-            role: "specialist",
-          },
-        );
-
-      await assertNativeRunKnowledgeInputsInTransaction(tx, runId);
-      for (const reference of context.input.snapshot.objectiveInput.inputRefs)
-        await inspectKnowledgeEvidenceReference(
-          tx,
-          { kind: "execution", runId, nodeAttemptId: null },
-          reference,
-        );
-
-      return {
-        runId,
-        assignmentId: context.assignment.id,
-        assignmentRevision,
-        status: "Pending" as const,
-      };
-    });
+    const receipt = await db.transaction((tx) =>
+      reserveCompanyAgentRunInTransaction(tx, userId, input, hosts, host),
+    );
 
     log.info(
       {
@@ -210,4 +87,132 @@ export async function reserveCompanyAgentRun(
     );
     throw redactQueryError(error);
   }
+}
+
+/** Reserve on the caller's transaction after host activation on a stable pooled database. */
+export async function reserveCompanyAgentRunInTransaction(
+  tx: Db,
+  userId: string,
+  input: CompanyAgentContextInput,
+  hosts: ExecutionHosts,
+  host: ExecutionHost,
+): Promise<CompanyRunReservation> {
+  assertUpgradeMaintenanceAllows("run_admission");
+  const executionDataPlaneMode = executionDataPlaneModeForHost(host);
+  const context = await prepareCompanyAgentContext(tx, userId, input);
+  const definition = context.effective.parsed;
+
+  const [runtime] = await tx
+    .select()
+    .from(platformRuntimeSettings)
+    .where(eq(platformRuntimeSettings.id, "singleton"))
+    .for("share");
+
+  const runners = await tx.select().from(platformAcpRunners).for("share");
+  const resolution = resolveCompanyAgentRunner({
+    bindingRunnerId: context.binding.snapshot.runnerId,
+    agent: {
+      runnerId: definition.runner,
+      mode: definition.mode,
+      workspace: definition.workspace,
+    },
+    platform: { defaultRunnerId: runtime?.defaultRunnerId ?? null },
+    runners: runners.map(runnerCatalogEntry),
+  });
+
+  await assertReadOnlySessionEvidence({
+    hosts,
+    adapterId: resolution.runnerSnapshot.adapter,
+    runnerId: resolution.runnerId,
+    workspace: definition.workspace,
+  });
+  const runId = randomUUID();
+  const snapshot = captureCompanyAgentExecution(context);
+  const trigger = { source: input.triggerSource };
+
+  await tx.insert(runs).values({
+    id: runId,
+    runKind: "agent",
+    companyId: context.owner.companyId,
+    companyExecutionSnapshot: snapshot,
+    agentId: definition.id,
+    sourceAgentId: definition.id,
+    agentKind: "operational",
+    agentWorkspace: "none",
+    currentStepId: "agent",
+    status: "Pending",
+    flowVersion: "agent",
+    flowRevision: "manual",
+    createdByUserId: userId,
+    triggerSource: input.triggerSource,
+    agentConfig: context.binding.snapshot.effectiveConfiguration,
+    executionPolicy: context.binding.snapshot.executionPolicy,
+    scheduledRequestSnapshot: context.input.snapshot.scheduledRequest,
+    resultContract: buildOperationalContract(context.effective),
+    launchedAt: sql`CURRENT_TIMESTAMP`,
+    activitySortAt: sql`CURRENT_TIMESTAMP`,
+    activityTimestampProvenance: "launch",
+    agentActivitySnapshot: withAgentComparisonScopes(
+      buildAgentActivitySnapshot(definition.id, context.effective),
+      {
+        configuration: context.binding.snapshot.effectiveConfiguration,
+        trigger,
+        taskId: null,
+        runner: resolution.runnerSnapshot,
+        workspace: "none",
+        hostId: host.id,
+      },
+    ),
+    executionDataPlaneMode,
+    knowledgeAccess: {
+      schemaVersion: 1,
+      state: "complete",
+      generation: 1,
+      restrictions: [
+        {
+          kind: "assignment_input",
+          assignmentId: context.assignment.id,
+          inputRevision: context.input.revision,
+          inputSha256: context.input.digest,
+        },
+      ],
+    },
+  });
+  await tx.insert(runSessions).values({
+    id: randomUUID(),
+    ...defaultRunSessionValues(runId, resolution),
+    capabilityAgent: capabilityAgentSchema.parse(resolution.capabilityAgent),
+  });
+  await mintPlacement(tx, {
+    runId,
+    reason: "launch",
+    host,
+  });
+  const assignmentRevision =
+    await activateInitialSpecialistAssignmentRunInTransaction(
+      tx,
+      userId,
+      context.assignment.id,
+      {
+        runId,
+        inputRevision: context.input.revision,
+        expectedRevision: context.assignment.revision,
+        role: "specialist",
+      },
+    );
+
+  await assertNativeRunKnowledgeInputsInTransaction(tx, runId);
+  for (const reference of context.input.snapshot.objectiveInput.inputRefs)
+    await inspectKnowledgeEvidenceReference(
+      tx,
+      { kind: "execution", runId, nodeAttemptId: null },
+      reference,
+    );
+
+  return {
+    runId,
+    assignmentId: context.assignment.id,
+    assignmentRevision,
+    status: "Pending" as const,
+  };
 }

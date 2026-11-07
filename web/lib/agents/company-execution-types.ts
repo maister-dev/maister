@@ -29,3 +29,11 @@ export type CompanyFlowExecutionSnapshot = z.infer<
 export type CompanyExecutionSnapshot = z.infer<
   typeof companyExecutionSnapshotSchema
 >;
+
+/** Existing native reservation receipt; a Pending Run still needs scheduler capacity. */
+export type CompanyRunReservation = Readonly<{
+  runId: string;
+  assignmentId: string;
+  assignmentRevision: number;
+  status: "Pending";
+}>;
