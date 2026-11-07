@@ -89,6 +89,26 @@ Designed default maxima are depth 2 (absolute from root), fanout 4, active child
 
 Usage projects from existing run/session/turn usage with stable identity, including all coordinator replacements/rework attempts. Cumulative updates charge only the monotonic delta once; replay cannot double-charge. Assignment budget projection is not a new attempt ledger. Existing global pool locks/counters gate new and resumed work, including company rows. Parent WaitingOnChildren/Review/NeedsInputIdle release capacity as existing run predicates specify; continuation reacquires capacity rather than directly writing Running.
 
+### Decisive execution fences (T27)
+
+Tree-root-then-parent advisory keys serialize admission counts. Before deciding,
+lock each actual Run from root toward parent with `FOR NO KEY UPDATE NOWAIT`,
+then reread the complete ancestry, bounds and statuses. These non-key fences stay
+held until the carrier/child transaction commits and remain compatible with
+execution-event foreign-key locks. A terminal ancestor refuses new admission with
+`PRECONDITION/delegation_ancestor_inactive`. An already held execution row yields
+`CONFLICT/delegation_execution_busy`; the transaction rolls back rather than
+waiting while holding the tree key and creating a root/nested-writer deadlock.
+After the competing writer settles, the caller must re-enter current admission;
+a stale snapshot or guessed child outcome is not used.
+
+Task-parent qualification acquires the same rooted fence before its parent row.
+Input/source classification locks use non-key mode as well, retaining existing
+source and current-authority validation without foreign-key lock upgrades.
+These fences protect the admission decision. They do not replace current token,
+assignment-owner, receiving-role or source authorization, and do not qualify the
+full cancellation/recovery protocol reserved for T27/T29.
+
 ### Logical-work persistence and revision axes (storage Implemented; dispatch/decisions Designed — T27/T28)
 
 A work subject has a server-generated `id` scoped to its assignment and one

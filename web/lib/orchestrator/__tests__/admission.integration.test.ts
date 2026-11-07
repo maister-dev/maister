@@ -120,6 +120,24 @@ async function expectRefused(promise: Promise<unknown>): Promise<string> {
 }
 
 describe("admitDelegatedChild (ADR-163 REQ-15)", () => {
+  it.each(["Done", "Failed", "Crashed", "Abandoned"] as const)(
+    "IT-CBC-02 refuses a terminal parent or ancestor at decisive child admission: %s",
+    async (status) => {
+      const root = await seedRun({ status });
+      const nested = await seedRun({ parentRunId: root });
+
+      for (const parentRunId of [root, nested])
+        await expect(admit(parentRunId)).rejects.toMatchObject({
+          code: "PRECONDITION",
+          details: {
+            reason: "delegation_ancestor_inactive",
+            ancestorRunId: root,
+            status,
+          },
+        });
+    },
+  );
+
   it.each(["missing", "self_cycle", "two_run_cycle"] as const)(
     "IT-CBC-02 refuses incomplete or cyclic delegation ancestry: %s",
     async (shape) => {

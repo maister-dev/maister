@@ -485,6 +485,7 @@ it("IT-CBE-06 run-bound disclosure captures are durable, serialized and refuse u
   const runId = await seedRun(database.db, {
     projectId: project.id,
     status: "Running",
+    runKind: "flow",
   });
   const issued = await issueOrchestratorRunToken({
     projectId: project.id,

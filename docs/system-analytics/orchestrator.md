@@ -639,8 +639,15 @@ waits at the root; it cannot hold that nested key and create an inverted cycle.
 The actual chain and bounds are reread after locking. Changed ancestry refuses
 with `CONFLICT/delegation_lineage_changed`; a missing, cyclic or over-64 chain
 refuses with `CONFIG/delegation_lineage_invalid`. When parent and root coincide,
-one reentrant key suffices. These advisory locks do not replace current source
-checks or the decisive Run/assignment row locks.
+one reentrant key suffices. The helper also takes root-to-parent Run fences with
+`FOR NO KEY UPDATE NOWAIT` and rereads statuses and bounds before admission.
+Terminal ancestors refuse with `PRECONDITION/delegation_ancestor_inactive`;
+contention with an existing execution writer returns
+`CONFLICT/delegation_execution_busy` and rolls back rather than waiting under the
+tree key. Task-parent qualification uses this order as well. Non-key source locks
+remain compatible with event foreign keys. These fences do not replace current
+source/receiving-role permission checks or assignment ownership; full native
+cooperation and cancellation/recovery remain T27/T29.
 
 ### Active-children concurrency is a queue, not a refusal
 

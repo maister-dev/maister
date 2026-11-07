@@ -7,11 +7,15 @@ import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { pgErrorOf } from "@/lib/db/pg-error";
 import {
   orchestratorMaxDepth,
   orchestratorMaxFanout,
 } from "@/lib/instance-config";
-import { TERMINAL_RUN_STATUSES } from "@/lib/runs/run-status-sets";
+import {
+  TERMINAL_RUN_STATUSES,
+  isTerminalRunStatus,
+} from "@/lib/runs/run-status-sets";
 
 // ADR-163 D8: ONE admission helper, called from every edge that creates a
 // delegated child — `run_delegate`, `run_plan`'s source launch, and
@@ -49,7 +53,11 @@ async function lockDelegationKey(tx: Db, runId: string): Promise<void> {
 }
 
 /** One link of the ancestor chain: the run id and its bounds snapshot. */
-type AncestorLink = { id: string; bounds: DelegationBounds | null };
+type AncestorLink = {
+  id: string;
+  bounds: DelegationBounds | null;
+  status: string;
+};
 const MAX_DELEGATION_ANCESTORS = 64;
 
 function invalidDelegationLineage(
@@ -96,18 +104,24 @@ async function walkAncestorChain(
       .select({
         parentRunId: runs.parentRunId,
         delegationBounds: runs.delegationBounds,
+        status: runs.status,
       })
       .from(runs)
       .where(eq(runs.id, currentId))) as {
       parentRunId: string | null;
       delegationBounds: DelegationBounds | null;
+      status: string;
     }[];
     const row = rows[0];
 
     if (!row)
       throw invalidDelegationLineage(startId, "missing_run", chain.length);
     visited.add(currentId);
-    chain.push({ id: currentId, bounds: row.delegationBounds ?? null });
+    chain.push({
+      id: currentId,
+      bounds: row.delegationBounds ?? null,
+      status: row.status,
+    });
 
     if (!row.parentRunId) break;
     currentId = row.parentRunId;
@@ -126,6 +140,31 @@ async function lockDelegationTree(
 
   await lockDelegationKey(tx, rootRunId);
   if (rootRunId !== parentRunId) await lockDelegationKey(tx, parentRunId);
+  // Keep status and bounds stable until the child/reservation transaction commits.
+  // NO KEY UPDATE remains compatible with child foreign-key KEY SHARE locks.
+  for (const ancestor of [...observed].reverse()) {
+    try {
+      await tx.execute(
+        sql`SELECT id FROM runs WHERE id=${ancestor.id} FOR NO KEY UPDATE NOWAIT`,
+      );
+    } catch (error) {
+      if (pgErrorOf(error)?.code !== "55P03") throw error;
+      log.warn(
+        { parentRunId, ancestorRunId: ancestor.id },
+        "delegation yielded to an existing execution writer",
+      );
+      throw new MaisterError(
+        "CONFLICT",
+        "The execution tree is being updated; retry the same work identity after the current writer settles",
+        {
+          details: {
+            reason: "delegation_execution_busy",
+            ancestorRunId: ancestor.id,
+          },
+        },
+      );
+    }
+  }
   const current = await walkAncestorChain(tx, parentRunId);
 
   if (
@@ -140,6 +179,25 @@ async function lockDelegationTree(
       "CONFLICT",
       "Delegation ancestry changed while waiting for admission; inspect the current parent tree before resubmitting the same work",
       { details: { reason: "delegation_lineage_changed" } },
+    );
+  }
+
+  for (const ancestor of current) {
+    if (!isTerminalRunStatus(ancestor.status)) continue;
+    log.warn(
+      { parentRunId, ancestorRunId: ancestor.id, status: ancestor.status },
+      "delegation refused under a terminal execution ancestor",
+    );
+    throw new MaisterError(
+      "PRECONDITION",
+      "Delegation requires a current nonterminal execution tree; inspect the completed or cancelled ancestor",
+      {
+        details: {
+          reason: "delegation_ancestor_inactive",
+          ancestorRunId: ancestor.id,
+          status: ancestor.status,
+        },
+      },
     );
   }
 

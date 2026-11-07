@@ -21,7 +21,7 @@ export async function captureNativeChildInput(
   await db.transaction(async (tx) => {
     const source = (
       await tx.execute(
-        sql`SELECT project_id,knowledge_access,result_contract->>'nativeContract' AS native_contract FROM runs WHERE id=${input.sourceRunId} FOR UPDATE`,
+        sql`SELECT project_id,knowledge_access,result_contract->>'nativeContract' AS native_contract FROM runs WHERE id=${input.sourceRunId} FOR NO KEY UPDATE`,
       )
     ).rows[0];
 
@@ -60,7 +60,7 @@ export async function captureNativeChildInput(
       throw unavailableKnowledgeReference();
     const child = (
       await tx.execute(
-        sql`SELECT project_id,parent_run_id,run_kind,knowledge_access FROM runs WHERE id=${input.childRunId} FOR UPDATE`,
+        sql`SELECT project_id,parent_run_id,run_kind,knowledge_access FROM runs WHERE id=${input.childRunId} FOR NO KEY UPDATE`,
       )
     ).rows[0];
 

@@ -135,7 +135,7 @@ export async function assertNativeRunKnowledgeInputsInTransaction(
 ): Promise<void> {
   const row = (
     await tx.execute(
-      sql`SELECT result_contract->>'nativeContract' AS native_contract,knowledge_access,status,context_mounts,workspace_mode FROM runs WHERE id=${runId} FOR UPDATE`,
+      sql`SELECT result_contract->>'nativeContract' AS native_contract,knowledge_access,status,context_mounts,workspace_mode FROM runs WHERE id=${runId} FOR NO KEY UPDATE`,
     )
   ).rows[0];
 
@@ -203,7 +203,7 @@ export async function recordNativeRunSourcesInTransaction(
 ): Promise<void> {
   const row = (
     await tx.execute(
-      sql`SELECT result_contract->>'nativeContract' AS native_contract,knowledge_access,workspace_mode FROM runs WHERE id=${runId} FOR UPDATE`,
+      sql`SELECT result_contract->>'nativeContract' AS native_contract,knowledge_access,workspace_mode FROM runs WHERE id=${runId} FOR NO KEY UPDATE`,
     )
   ).rows[0];
 

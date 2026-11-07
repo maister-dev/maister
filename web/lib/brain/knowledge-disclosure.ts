@@ -114,7 +114,7 @@ async function lockRunKnowledgeReadConsumer(
       ? undefined
       : (
           await tx.execute(
-            sql`SELECT knowledge_access,workspace_mode FROM runs WHERE id=${runId} AND status IN ('Pending','Running','NeedsInput','NeedsInputIdle','WaitingOnChildren','Review') FOR UPDATE`,
+            sql`SELECT knowledge_access,workspace_mode FROM runs WHERE id=${runId} AND status IN ('Pending','Running','NeedsInput','NeedsInputIdle','WaitingOnChildren','Review') FOR NO KEY UPDATE`,
           )
         ).rows[0];
   const capture = knowledgeAccessCaptureSchema.safeParse(run?.knowledge_access);

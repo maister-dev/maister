@@ -41,7 +41,7 @@ export async function captureNativeDelegationInput(
 ): Promise<NativeDelegationInput | null> {
   const row = (
     await tx.execute(
-      sql`SELECT project_id,knowledge_access,result_contract->>'nativeContract' AS native_contract FROM runs WHERE id=${input.sourceRunId} FOR UPDATE`,
+      sql`SELECT project_id,knowledge_access,result_contract->>'nativeContract' AS native_contract FROM runs WHERE id=${input.sourceRunId} FOR NO KEY UPDATE`,
     )
   ).rows[0];
 
