@@ -240,6 +240,49 @@ Current project permission loss refuses routed replay, while an encoded role ID
 and disabled current attachment preserve authorized completed-history replay.
 Existing legacy workspace/runner launch overrides retain their original contract.
 
+### Native task-comment intake
+
+**Implemented native platform intake; correlated clarification and result delivery remain their explicit later contracts.**
+
+A user-authored stored task comment addressing a pinned professional is an
+independent source `{kind:task_comment,projectId,taskId,commentId}` for each
+addressed attachment. The registered consumer retains its existing mention
+configuration, actual event claim/fence and reserved Run; canonical source identity
+additionally includes the addressed binding. A native professional receives an
+assignment before execution. Ordinary agents retain their legacy summon behavior.
+An active native assignment never silently suppresses independent comment work.
+
+The server validates the actual event, stored comment/author/task, current project
+membership, enabled mention source, exact claim selector and installed professional.
+A human comment cannot be supplied by claiming another actor in event payload.
+Agent-authored native requests require governed principal admission (T27); they
+cannot impersonate the human requester. Input retains the canonical stored comment
+text without truncation, with a stable original source identity and immutable
+input digest. An oversized native objective is refused explicitly. The expected
+result is the reviewed specialist's mandatory contract; required-result verification
+is server-injected. Destination is the originating task comment, frozen separately
+from the work input. Actual durable result delivery remains T25.
+
+New work uses the common project request transaction and existing native launch,
+repository admission and pool. A server-only source appointment binds existing
+attempt/event/source/reserved Run identities to the actual comment origin during
+Run insertion; current source selectors and authority are rechecked. Redelivery
+adopts the original receipt and never creates a second Run. Source/configuration
+conflict is explicit, not resolved by selecting another provider or caller. Manual
+source identities and legacy project v1 trigger snapshots remain unchanged.
+Clarification and updates use explicit assignment correlation (T23–T26); the
+adapter does not guess another assignment from prose or current busy status.
+
+Actual settings/comment HTTP routes and the registered consumer qualify independent
+queued work, default standalone/coordinator execution and same-comment replay.
+A source probe uses the real existing claim in a rolled-back transaction: forged
+reserved Run identity and selector changes explicitly refuse. Current author
+permission loss creates no unauthorized assignment or ACP work. Native input over
+8,000 stored characters keeps its posted source and records the safe reason token
+`project_comment_input_too_large`, with localized incident remediation. The
+ordinary 38-case trigger suite retains its existing summon semantics. No new
+migration, scheduler or attempt ledger is introduced.
+
 ### Project manual admission
 
 Project manual work resolves `specialistBindingId` through the current project

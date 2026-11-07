@@ -2203,6 +2203,10 @@ async function launchAgentRunWithAdmission(
               input.specialistAssignment,
               {
                 projectId: input.projectId,
+                runId,
+                triggerSource: input.trigger.source,
+                triggerEventId: input.trigger.eventId ?? null,
+                agentScheduleId: input.agentScheduleId ?? null,
                 bindingId: ctx.link.id,
                 effective: ctx.effective,
                 configuration: agentConfig,

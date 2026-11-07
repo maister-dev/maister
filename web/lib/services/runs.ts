@@ -1064,6 +1064,7 @@ async function* executeFlowLaunch(
   const runId =
     accepted?.claim.identity.runId ??
     input.agentTriggerReservation?.runId ??
+    input.specialistAssignment?.source?.runId ??
     scheduledReservation?.runId ??
     randomUUID();
   // ADR-150: set inside the run-insert tx when a controlled-launch re-drive
@@ -1965,6 +1966,10 @@ async function* executeFlowLaunch(
                 input.specialistAssignment,
                 {
                   projectId: project.id,
+                  runId,
+                  triggerSource: input.triggerSource ?? null,
+                  triggerEventId: input.triggerEventId ?? null,
+                  agentScheduleId: input.agentScheduleId ?? null,
                   agentId,
                   taskId: task.id,
                   executionPolicy,

@@ -21,6 +21,14 @@ export const specialistIntakeRequestSchema = assignmentObjectiveInputSchema
   })
   .strict();
 
+export const projectSpecialistIntakeRequestSchema =
+  specialistIntakeRequestSchema
+    .extend({ owner: ownerSchema.options[1] })
+    .strict();
+export type ProjectSpecialistIntakeRequest = z.infer<
+  typeof projectSpecialistIntakeRequestSchema
+>;
+
 export const manualSpecialistAssignmentRequestSchema =
   specialistIntakeRequestSchema
     .extend({

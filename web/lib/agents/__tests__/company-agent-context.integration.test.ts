@@ -131,6 +131,8 @@ import { POST as assignmentPost } from "@/app/api/specialist-assignments/route";
 import { POST as externalAssignmentPost } from "@/app/api/v1/ext/specialist-assignments/route";
 import { POST as inboundAgentEventPost } from "@/app/api/agents/[agentId]/event/route";
 import { POST as routedProjectLaunchPost } from "@/app/api/projects/[slug]/agents/[agentId]/launch/route";
+import { PATCH as projectAgentPatch } from "@/app/api/projects/[slug]/agents/[agentId]/route";
+import { POST as taskCommentPost } from "@/app/api/projects/[slug]/tasks/[number]/comments/route";
 import { GET as externalAssignmentGet } from "@/app/api/v1/ext/specialist-assignments/[assignmentId]/route";
 import { issueUserAccessToken, issueToken } from "@/lib/tokens/issue";
 import { createCompanyCronSchedule } from "@/lib/agents/company-schedules";
@@ -144,10 +146,12 @@ import {
 import { DOMAIN_EVENT_CONSUMERS } from "@/lib/domain-events/consumers";
 import {
   claimCronAgentAttempt,
+  claimEventAgentAttempt,
   reconcileAgentTriggerAttempts,
   settleCompanyAgentTriggerAttempt,
 } from "@/lib/agents/trigger-attempts";
 import { MaisterError } from "@/lib/errors";
+import { loadProjectCommentAppointment } from "@/lib/specialist-assignments/project-comment-appointment";
 import { prepareCompanySpecialistAssignment } from "@/lib/specialist-assignments/company-intake";
 import { reserveCompanyCronAssignment } from "@/lib/specialist-assignments/company-cron-intake";
 import { wakePendingSpecialistAssignment } from "@/lib/specialist-assignments/admission-wake";
@@ -2306,6 +2310,140 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
         )
       ).rows,
     ).toEqual(countsBeforeRefusals);
+    const mentionRevision = (
+      await database.pool.query<{ schedules_revision: number }>(
+        "SELECT schedules_revision FROM agent_project_links WHERE id=$1",
+        [link.linkId],
+      )
+    ).rows[0]!.schedules_revision;
+
+    browserSession.user = await requireActiveUserById(administratorId);
+    const mentionConfiguration = await projectAgentPatch(
+      new NextRequest(
+        `http://localhost/api/projects/${project.slug}/agents/rah:wire-observer`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            schedulesRevision: mentionRevision,
+            schedules: [{ triggerType: "mention", enabled: true }],
+          }),
+        },
+      ),
+      {
+        params: Promise.resolve({
+          slug: project.slug,
+          agentId: "rah:wire-observer",
+        }),
+      },
+    );
+
+    expect(mentionConfiguration.status).toBe(200);
+    browserSession.user = await requireActiveUserById(userId);
+    const commentTaskId = randomUUID();
+
+    await database.pool.query(
+      "INSERT INTO tasks(id,project_id,number,title,prompt) VALUES($1,$2,9001,'Inspect component diagnostics','Inspect the authorized component without mutation')",
+      [commentTaskId, project.id],
+    );
+    await ensureConsumerRows(db, DOMAIN_EVENT_CONSUMERS);
+    await database.pool.query(
+      "UPDATE domain_event_consumers SET cursor_event_id=(SELECT coalesce(max(id),0) FROM domain_events) WHERE consumer_id='agent_triggers'",
+    );
+    await database.pool.query(
+      "INSERT INTO execution_host_pressure(execution_host_id,pressured_since) SELECT id,now() FROM execution_hosts WHERE kind='local_direct' AND retired_at IS NULL ON CONFLICT DO NOTHING",
+    );
+    const commentIds: string[] = [];
+
+    for (const text of [
+      "@rah:wire-observer Inspect the configured component state.",
+      "@rah:wire-observer Independently inspect the configured diagnostic limits.",
+    ]) {
+      const response = await taskCommentPost(
+        new NextRequest(
+          `http://localhost/api/projects/${project.slug}/tasks/9001/comments`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ body: text }),
+          },
+        ),
+        { params: Promise.resolve({ slug: project.slug, number: "9001" }) },
+      );
+
+      expect(response.status).toBe(201);
+      const body: { comment: { id: string } } = await response.json();
+
+      commentIds.push(body.comment.id);
+      expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+    }
+    const commentWork = (
+      await database.pool.query<{
+        id: string;
+        run_id: string;
+        origin: { kind: string; commentId: string };
+        actor: { kind: string; id: string };
+        objective_input: { input: string };
+        source_body: string;
+      }>(
+        "SELECT assignment.id,link.run_id,assignment.origin,input.actor,input.objective_input,comment.body AS source_body FROM specialist_assignments assignment JOIN specialist_input_revisions input ON input.assignment_id=assignment.id AND input.revision=1 JOIN specialist_run_links link ON link.assignment_id=assignment.id JOIN task_comments comment ON comment.id=assignment.origin->>'commentId' WHERE assignment.project_id=$1 AND assignment.origin->>'kind'='task_comment' AND assignment.origin->>'commentId'=ANY($2::text[]) ORDER BY comment.created_at,comment.id",
+        [project.id, commentIds],
+      )
+    ).rows;
+
+    expect(commentWork).toHaveLength(2);
+    for (const work of commentWork) {
+      expect(work.origin).toMatchObject({
+        kind: "task_comment",
+        projectId: project.id,
+        taskId: commentTaskId,
+      });
+      expect(work.actor).toMatchObject({ kind: "user", id: userId });
+      expect(work.objective_input.input).toBe(work.source_body);
+      expect(
+        (
+          await database.pool.query(
+            "SELECT status,(SELECT count(*)::int FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt')) AS effects FROM runs WHERE id=$1",
+            [work.run_id],
+          )
+        ).rows,
+      ).toEqual([{ status: "Pending", effects: 0 }]);
+    }
+    await database.pool.query(
+      "DELETE FROM execution_host_pressure WHERE execution_host_id IN (SELECT id FROM execution_hosts WHERE kind='local_direct' AND retired_at IS NULL)",
+    );
+    await database.pool.query(
+      "UPDATE scheduler_jobs SET next_run_at=clock_timestamp()-interval '1 second' WHERE id='agent_tick.dispatcher'",
+    );
+    expect(await runSchedulerTick({ jobKind: "agent_tick" })).toMatchObject({
+      succeededCount: 1,
+      failedCount: 0,
+    });
+    for (const work of commentWork) {
+      await vi.waitFor(
+        async () => {
+          expect(
+            (
+              await database.pool.query("SELECT status FROM runs WHERE id=$1", [
+                work.run_id,
+              ])
+            ).rows,
+          ).toEqual([{ status: "Done" }]);
+        },
+        { timeout: 30000, interval: 25 },
+      );
+      expect(
+        (
+          await database.pool.query(
+            "SELECT kind,count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt') GROUP BY kind ORDER BY kind",
+            [work.run_id],
+          )
+        ).rows,
+      ).toEqual([
+        { kind: "session.create", count: 1 },
+        { kind: "session.prompt", count: 1 },
+      ]);
+    }
     const queuedRequest = {
       ...value,
       idempotencyKey: randomUUID(),
@@ -2494,6 +2632,285 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
       code: "23514",
       constraint: "specialist_assignments_project_task_immutable",
     });
+    const coordinatorMentionRevision = (
+      await database.pool.query<{ schedules_revision: number }>(
+        "SELECT schedules_revision FROM agent_project_links WHERE id=$1",
+        [coordinator.linkId],
+      )
+    ).rows[0]!.schedules_revision;
+
+    browserSession.user = await requireActiveUserById(administratorId);
+    const coordinatorMention = await projectAgentPatch(
+      new NextRequest(
+        `http://localhost/api/projects/${project.slug}/agents/rah:flow-coordinator`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            schedulesRevision: coordinatorMentionRevision,
+            schedules: [{ triggerType: "mention", enabled: true }],
+          }),
+        },
+      ),
+      {
+        params: Promise.resolve({
+          slug: project.slug,
+          agentId: "rah:flow-coordinator",
+        }),
+      },
+    );
+
+    expect(coordinatorMention.status).toBe(200);
+    browserSession.user = await requireActiveUserById(userId);
+    const coordinatorCommentResponse = await taskCommentPost(
+      new NextRequest(
+        `http://localhost/api/projects/${project.slug}/tasks/9001/comments`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            body: "@rah:flow-coordinator Coordinate an independent evidence-linked diagnostic result.",
+          }),
+        },
+      ),
+      { params: Promise.resolve({ slug: project.slug, number: "9001" }) },
+    );
+
+    expect(coordinatorCommentResponse.status).toBe(201);
+    const coordinatorComment: { comment: { id: string } } =
+      await coordinatorCommentResponse.json();
+    const coordinatorEvent = (
+      await database.pool.query<{ id: string }>(
+        "SELECT id FROM domain_events WHERE project_id=$1 AND kind='task.comment_added' AND payload->>'commentId'=$2",
+        [project.id, coordinatorComment.comment.id],
+      )
+    ).rows[0]!;
+    const coordinatorSource = (
+      await database.pool.query<{ id: string }>(
+        "SELECT id FROM agent_schedules WHERE project_id=$1 AND agent_id='rah:flow-coordinator' AND trigger_type='mention'",
+        [project.id],
+      )
+    ).rows[0]!;
+    const rollbackAppointmentProbe = new Error(
+      "Rollback owned comment source qualification",
+    );
+
+    await expect(
+      db.transaction(async (tx) => {
+        const claim = await claimEventAgentAttempt(
+          tx,
+          coordinatorSource.id,
+          new Date(),
+          Number(coordinatorEvent.id),
+        );
+
+        expect(claim).not.toBeNull();
+        const appointment = {
+          schemaVersion: 1 as const,
+          kind: "task_comment" as const,
+          attemptId: claim!.id,
+          scheduleId: claim!.scheduleId,
+          runId: claim!.reservedRunId,
+          eventId: Number(coordinatorEvent.id),
+        };
+
+        expect(
+          await loadProjectCommentAppointment(tx, appointment),
+        ).toMatchObject({
+          projectId: project.id,
+          taskId: commentTaskId,
+          commentId: coordinatorComment.comment.id,
+          userId,
+        });
+        await expect(
+          loadProjectCommentAppointment(tx, {
+            ...appointment,
+            runId: randomUUID(),
+          }),
+        ).rejects.toMatchObject({ code: "PRECONDITION" });
+        await tx.execute(
+          sql`UPDATE agent_schedules SET cron_expr='owned-selector-change' WHERE id=${coordinatorSource.id}`,
+        );
+        await expect(
+          loadProjectCommentAppointment(tx, appointment),
+        ).rejects.toMatchObject({
+          code: "CONFLICT",
+          details: { reason: "project_comment_source_changed" },
+        });
+        throw rollbackAppointmentProbe;
+      }),
+    ).rejects.toBe(rollbackAppointmentProbe);
+    expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+    const coordinatorCommentWork = (
+      await database.pool.query<{
+        id: string;
+        run_id: string;
+        reserved_run_id: string;
+        status: string;
+        origin: { commentId: string };
+      }>(
+        "SELECT assignment.id,link.run_id,invocation.reserved_run_id,assignment.status,assignment.origin FROM specialist_assignments assignment JOIN specialist_run_links link ON link.assignment_id=assignment.id JOIN agent_trigger_attempts invocation ON invocation.run_id=link.run_id WHERE assignment.project_id=$1 AND assignment.origin->>'commentId'=$2",
+        [project.id, coordinatorComment.comment.id],
+      )
+    ).rows;
+
+    expect(coordinatorCommentWork).toHaveLength(1);
+    expect(coordinatorCommentWork[0].run_id).toBe(
+      coordinatorCommentWork[0].reserved_run_id,
+    );
+    await vi.waitFor(
+      async () => {
+        expect(
+          (
+            await database.pool.query(
+              "SELECT status,run_kind,trigger_source,trigger_event_id,agent_schedule_id FROM runs WHERE id=$1",
+              [coordinatorCommentWork[0].run_id],
+            )
+          ).rows,
+        ).toEqual([
+          {
+            status: "Done",
+            run_kind: "flow",
+            trigger_source: "domain_event",
+            trigger_event_id: coordinatorEvent.id,
+            agent_schedule_id: coordinatorSource.id,
+          },
+        ]);
+      },
+      { timeout: 30000, interval: 25 },
+    );
+    expect(
+      (
+        await database.pool.query(
+          "SELECT validity FROM run_results WHERE run_id=$1",
+          [coordinatorCommentWork[0].run_id],
+        )
+      ).rows,
+    ).toEqual([{ validity: "valid" }]);
+    const firstCommentEvent = (
+      await database.pool.query<{ id: string }>(
+        "SELECT min(id)::text AS id FROM domain_events WHERE project_id=$1 AND kind='task.comment_added' AND payload->>'commentId'=ANY($2::text[])",
+        [project.id, commentIds],
+      )
+    ).rows[0]!;
+
+    await database.pool.query(
+      "UPDATE domain_event_consumers SET cursor_event_id=$1::bigint-1 WHERE consumer_id='agent_triggers'",
+      [firstCommentEvent.id],
+    );
+    expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM specialist_assignments WHERE project_id=$1 AND origin->>'kind'='task_comment'",
+          [project.id],
+        )
+      ).rows,
+    ).toEqual([{ count: 3 }]);
+    for (const runId of [
+      ...commentWork.map((work) => work.run_id),
+      coordinatorCommentWork[0].run_id,
+    ])
+      expect(
+        (
+          await database.pool.query(
+            "SELECT kind,count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt') GROUP BY kind ORDER BY kind",
+            [runId],
+          )
+        ).rows,
+      ).toEqual([
+        { kind: "session.create", count: 1 },
+        { kind: "session.prompt", count: 1 },
+      ]);
+    const deniedCommentResponse = await taskCommentPost(
+      new NextRequest(
+        `http://localhost/api/projects/${project.slug}/tasks/9001/comments`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            body: "@rah:wire-observer Inspect a request whose author loses launch authority before dispatch.",
+          }),
+        },
+      ),
+      { params: Promise.resolve({ slug: project.slug, number: "9001" }) },
+    );
+
+    expect(deniedCommentResponse.status).toBe(201);
+    const deniedComment: { comment: { id: string } } =
+      await deniedCommentResponse.json();
+
+    await database.pool.query(
+      "UPDATE project_members SET role='viewer' WHERE project_id=$1 AND user_id=$2",
+      [project.id, userId],
+    );
+    try {
+      expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+      expect(
+        (
+          await database.pool.query(
+            "SELECT count(*)::int AS count FROM specialist_assignments WHERE project_id=$1 AND origin->>'commentId'=$2",
+            [project.id, deniedComment.comment.id],
+          )
+        ).rows,
+      ).toEqual([{ count: 0 }]);
+      expect(
+        (
+          await database.pool.query(
+            "SELECT invocation.outcome,invocation.reason_code,invocation.run_id FROM agent_trigger_attempts invocation JOIN domain_events event ON event.id=invocation.trigger_event_id WHERE event.project_id=$1 AND event.payload->>'commentId'=$2",
+            [project.id, deniedComment.comment.id],
+          )
+        ).rows,
+      ).toEqual([
+        { outcome: "refused", reason_code: "UNAUTHORIZED", run_id: null },
+      ]);
+    } finally {
+      await database.pool.query(
+        "UPDATE project_members SET role='member' WHERE project_id=$1 AND user_id=$2",
+        [project.id, userId],
+      );
+    }
+    const oversizedCommentResponse = await taskCommentPost(
+      new NextRequest(
+        `http://localhost/api/projects/${project.slug}/tasks/9001/comments`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            body: "@rah:wire-observer " + "x".repeat(8100),
+          }),
+        },
+      ),
+      { params: Promise.resolve({ slug: project.slug, number: "9001" }) },
+    );
+
+    expect(oversizedCommentResponse.status).toBe(201);
+    const oversizedComment: { comment: { id: string } } =
+      await oversizedCommentResponse.json();
+
+    expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM specialist_assignments WHERE project_id=$1 AND origin->>'commentId'=$2",
+          [project.id, oversizedComment.comment.id],
+        )
+      ).rows,
+    ).toEqual([{ count: 0 }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT invocation.outcome,invocation.reason_code,invocation.run_id FROM agent_trigger_attempts invocation JOIN domain_events event ON event.id=invocation.trigger_event_id WHERE event.project_id=$1 AND event.payload->>'commentId'=$2",
+          [project.id, oversizedComment.comment.id],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        outcome: "refused",
+        reason_code: "project_comment_input_too_large",
+        run_id: null,
+      },
+    ]);
     const deferredFlowRequest = {
       ...flowRequest,
       idempotencyKey: randomUUID(),
@@ -2565,7 +2982,7 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
           [project.id],
         )
       ).rows,
-    ).toEqual([{ count: 2 }]);
+    ).toEqual([{ count: 3 }]);
     expect((await submit(flowRequest)).status).toBe(200);
     expect(
       (

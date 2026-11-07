@@ -20,6 +20,8 @@ import {
   lockSpecialistAssignment,
 } from "./store";
 import { authorizeAssignment } from "./access";
+import { projectCommentAppointmentSchema } from "./project-source-types";
+import { loadProjectCommentAppointment } from "./project-comment-appointment";
 import { assertProjectCoordinatorProvider } from "./project-flow-provider";
 
 import { resolveAgentConfig } from "@/lib/agents/config";
@@ -46,6 +48,7 @@ export const projectAssignmentAdmissionSchema = z
     inputRevision: knowledgeRevisionSchema,
     expectedRevision: knowledgeRevisionSchema,
     userId: identity,
+    source: projectCommentAppointmentSchema.optional(),
   })
   .strict();
 export type ProjectAssignmentAdmission = z.infer<
@@ -60,6 +63,10 @@ export type ProjectAssignmentLaunchContext = Readonly<{
   resultContract: RunResultContract | null;
   coordinatorFlow?: ProjectCoordinatorFlowSnapshot;
   taskId?: string;
+  runId?: string;
+  triggerSource?: string | null;
+  triggerEventId?: number | null;
+  agentScheduleId?: string | null;
 }>;
 
 /** Hold responsibility and compare the exact frozen input before the existing Run insert. */
@@ -190,6 +197,45 @@ export async function prepareProjectAssignmentAdmission(
       { details: { reason: "project_assignment_launch_mismatch" } },
     );
 
+  if (assignment.origin.kind === "task_comment") {
+    if (
+      !reference.source ||
+      reference.source.runId !== context.runId ||
+      context.triggerSource !== "domain_event" ||
+      context.triggerEventId !== reference.source.eventId ||
+      context.agentScheduleId !== reference.source.scheduleId
+    )
+      throw new MaisterError(
+        "CONFIG",
+        "Native comment admission requires its exact reserved source Run",
+        {
+          details: { reason: "project_comment_appointment_required" },
+        },
+      );
+    const source = await loadProjectCommentAppointment(tx, reference.source);
+
+    if (
+      source.projectId !== context.projectId ||
+      source.bindingId !== context.bindingId ||
+      source.agentId !== context.effective.parsed.id ||
+      source.userId !== reference.userId ||
+      source.taskId !== assignment.origin.taskId ||
+      source.commentId !== assignment.origin.commentId ||
+      snapshot.objectiveInput.input !== source.body
+    )
+      throw new MaisterError(
+        "CONFLICT",
+        "Native comment admission no longer matches its actual source and original input",
+        {
+          details: { reason: "project_comment_appointment_mismatch" },
+        },
+      );
+  } else if (reference.source)
+    throw new MaisterError(
+      "CONFIG",
+      "A native comment appointment cannot authorize another origin",
+    );
+
   const retainedCoordinator =
     standing.schemaVersion === 2 ? standing.coordinatorFlow : null;
 
@@ -240,6 +286,10 @@ export async function prepareProjectCoordinatorAssignmentAdmission(
     coordinatorFlow: ProjectCoordinatorFlowSnapshot;
     executionPolicy: ExecutionPolicy;
     resultContract: RunResultContract | null;
+    runId?: string;
+    triggerSource?: string | null;
+    triggerEventId?: number | null;
+    agentScheduleId?: string | null;
   }>,
 ): Promise<
   Readonly<{

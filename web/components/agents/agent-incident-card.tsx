@@ -17,7 +17,8 @@ const button =
 
 function causeKey(
   reason: string,
-): "cleanup" | "authorization" | "qualification" | "execution" {
+): "input" | "cleanup" | "authorization" | "qualification" | "execution" {
+  if (reason === "project_comment_input_too_large") return "input";
   if (reason.includes("cleanup") || reason.includes("preserv"))
     return "cleanup";
   if (

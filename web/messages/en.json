@@ -6523,12 +6523,14 @@
       "taskRevision": "Task input revision"
     },
     "cause": {
+      "input": "The specialist request is too long",
       "cleanup": "Workspace cleanup needs attention",
       "authorization": "Access to the operation was denied",
       "qualification": "Task assessment could not be published",
       "execution": "Agent execution did not complete"
     },
     "remediation": {
+      "input": "Post a new mention within 8000 stored characters, or use bounded input references. The original comment remains available.",
       "cleanup": "Open the specific run, inspect preserved evidence and retry its workspace cleanup when the blocker is resolved.",
       "authorization": "Restore the required access, then preview a safe new attempt. Uncertain prior effects require reconciliation first.",
       "qualification": "Review the current task input and assessment evidence. Requalify changed or incomplete requests before delivery.",

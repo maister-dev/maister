@@ -26,10 +26,15 @@ import { pgErrorOf } from "@/lib/db/pg-error";
 import { isAgentTriggerEventKind } from "@/lib/domain-events/taxonomy";
 import { isGraphOnlyCutoverFailure } from "@/lib/domain-events/cutover";
 import * as schemaModule from "@/lib/db/schema";
-import { isMaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 import { nextFireAt } from "@/lib/run-schedules/cron";
 import { promoteNextPending } from "@/lib/scheduler";
 import { recordTaskActivityOnce } from "@/lib/social/activity";
+import { PROJECT_COMMENT_REASON_CODES } from "@/lib/specialist-assignments/project-source-types";
+import {
+  isNativeProjectCommentSpecialist,
+  submitProjectCommentAssignment,
+} from "@/lib/specialist-assignments/project-comment-intake";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { agents, agentProjectLinks, agentSchedules, runs } =
@@ -426,6 +431,63 @@ async function summonMentionedAgents(input: {
     if (!fence) continue;
 
     try {
+      if (await isNativeProjectCommentSpecialist(_db, fence)) {
+        if (await chainDepthExhausted(_db, event.id, agentId)) {
+          await recordAgentScheduleOutcome({
+            db: _db,
+            scheduleId: binding.scheduleId,
+            fence,
+            outcome: "refused",
+            errorCode: "chain_depth_exhausted",
+            now: new Date(),
+          });
+          continue;
+        }
+        const native = await submitProjectCommentAssignment(_db, fence);
+        const runId = native.assignment.runIds[0];
+
+        if (typeof runId !== "string")
+          throw new MaisterError(
+            "CRASH",
+            "Native comment intake returned without its retained Run",
+          );
+        const [execution] = await _db
+          .select({ status: runs.status })
+          .from(runs)
+          .where(eq(runs.id, runId));
+
+        if (!execution)
+          throw new MaisterError(
+            "PRECONDITION",
+            "The native comment's retained execution is unavailable",
+            {
+              details: { reason: "project_comment_appointment_unavailable" },
+            },
+          );
+        await recordAgentScheduleOutcome({
+          db: _db,
+          scheduleId: binding.scheduleId,
+          fence,
+          outcome: native.duplicate
+            ? "deduplicated"
+            : execution?.status === "Pending"
+              ? "queued"
+              : "launched",
+          runId: runId === fence.reservedRunId ? runId : null,
+          now: new Date(),
+        });
+        log.info(
+          {
+            eventId: event.id,
+            agentId,
+            assignmentId: native.assignment.id,
+            runId,
+            duplicate: native.duplicate,
+          },
+          "native comment assignment retained",
+        );
+        continue;
+      }
       // Read-then-launch, serialized ONLY by the singleton dispatcher
       // (`domainEventDispatch: 1` + the per-consumer CAS lease): it holds
       // summon-vs-summon, NOT summon-vs-manual/cron/flow. No launch path has
@@ -541,7 +603,11 @@ async function summonMentionedAgents(input: {
         scheduleId: binding.scheduleId,
         fence,
         outcome: isMaisterError(err) ? "refused" : "failed",
-        errorCode: isMaisterError(err) ? err.code : "CRASH",
+        errorCode: isMaisterError(err)
+          ? (PROJECT_COMMENT_REASON_CODES.find(
+              (reason) => reason === err.details?.reason,
+            ) ?? err.code)
+          : "CRASH",
         errorMessage: "Agent mention summon was refused",
         now: new Date(),
       });

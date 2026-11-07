@@ -4021,6 +4021,19 @@ paths:
         `(agent, comment event)`; see
         `docs/system-analytics/agent-mentions.md`.
 
+        A pinned professional role with specialist metadata uses native assignment
+        intake. Each human comment/recipient retains independent work even while
+        another assignment is active. The actual stored author, task, event,
+        mention selector and reserved Run are validated under current project
+        authority; original source text is retained in immutable input, with its
+        mandatory specialist result and required-result verification. Native input
+        is limited to 8000 stored characters without truncation; a longer comment
+        remains posted but invocation refuses with reason
+        `project_comment_input_too_large`. This asynchronous acceptance does not
+        change the comment response or make its write-time flag an assignment
+        receipt. Agent-authored native work requires governed principal admission.
+        Ordinary summons keep their existing busy policy.
+
         Source: `web/app/api/projects/[slug]/tasks/[number]/comments/route.ts`.
       operationId: postTaskComment
       parameters:

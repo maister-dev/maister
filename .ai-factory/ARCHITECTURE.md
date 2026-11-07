@@ -248,6 +248,10 @@ web/lib/supervisor-client ──HTTP──► supervisor/src/http-api  ──►
   Browser, personal-token and versioned existing project launch handlers reuse
   the same canonical intake/reader. Project route owner/attachment identity is
   server-resolved; late atomic receipt adoption cannot re-enter completed admission.
+  Human task mentions of actual pinned professionals use that same project request
+  service before the legacy busy check. A versioned internal source appointment
+  revalidates the stored author/comment, existing claim/selector and reserved Run
+  inside standalone/coordinator insertion; independent requests remain queued.
   Registered company cron dispatch extends the existing agent tick and trigger
   claim/reconciliation ledger; no new scheduler or attempt store is introduced.
   Native cron source enablement requires declared triggers, current creator

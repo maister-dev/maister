@@ -116,6 +116,32 @@ Saving settings never starts retries: inspect the preview and confirm separately
 Large histories are processed in successive batches. If a response is lost,
 recover that batch before starting another; accepted items are not duplicated.
 
+## Address a professional in a task comment
+
+Enable the professional's **Mention summon** invocation in its project attachment, then
+address its qualified handle in a task comment, for example
+`@operations:diagnostician Inspect this component without mutation.` The pinned
+role must declare specialist responsibilities and its invocation trigger, with an
+operational result contract or a coordinator's mandatory result export.
+
+For these professional roles, each stored human comment and addressed attachment
+retains its own assignment and original input. An independent request is queued
+even while another assignment is active. Redelivery of the same comment reuses
+its existing work. The author must still have current project launch authority
+when dispatch and admission occur; a mention never grants permission.
+
+Keep the stored comment within 8,000 characters for native assignment input. A
+longer comment remains posted, but invocation is refused with
+`project_comment_input_too_large`; post a shorter request or use bounded input
+references. The server preserves the source text, author and evidence identity
+without truncation. Agent-authored professional requests require governed
+principal admission instead of impersonating the human author.
+
+Open agent history to inspect the retained Run and its required result. A new
+mention represents independent work. Assignment acceptance and confirmation of a
+Brain fact remain separate decisions. Ordinary agent summons retain their
+existing behavior.
+
 ## Submit a structured project assignment
 
 For a declared specialist with an operational result contract or a coordinator
