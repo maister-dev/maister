@@ -60,6 +60,7 @@ import {
   type FlowPermissionOwner,
 } from "./graph/prompt-permission";
 
+import { appendSpecialistAssignmentContextPrompt } from "@/lib/specialist-assignments/projection";
 import {
   isResultProducerNode,
   usesStructuredKnowledgeContext,
@@ -1445,9 +1446,17 @@ async function dispatchAgentStep(
       ctx.promptOwner.promptOrdinal > 0)
       ? PERMISSION_RESUME_PROMPT
       : ordinaryPrompt;
-  const resolvedPrompt = ctx.resumeSessionId
-    ? RESUME_READONLY_LIFT + actionPrompt
+  const contextualPrompt = usesStructuredKnowledgeContext(ctx)
+    ? await appendSpecialistAssignmentContextPrompt(
+        ctx.db ?? getDb(),
+        ctx.runId,
+        ctx.nodeAttemptId ?? null,
+        actionPrompt,
+      )
     : actionPrompt;
+  const resolvedPrompt = ctx.resumeSessionId
+    ? RESUME_READONLY_LIFT + contextualPrompt
+    : contextualPrompt;
 
   log.info(
     {

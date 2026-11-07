@@ -31,7 +31,10 @@ import {
   getSpecialistAssignmentInTransaction,
 } from "./store";
 
-import { knowledgeOwner } from "@/lib/brain/knowledge-access";
+import {
+  authorizeKnowledge,
+  knowledgeOwner,
+} from "@/lib/brain/knowledge-access";
 import { recordKnowledgeDisclosure } from "@/lib/brain/knowledge-disclosure";
 import {
   authorizeSourceRestrictions,
@@ -52,7 +55,7 @@ const retainedRevision = z.number().int().min(0).max(2147483647);
 const MAX_CONTEXT_BYTES = 131072;
 const MAX_UPDATE_BYTES = 32768;
 
-type ContextRead = Readonly<{
+export type AssignmentContextRead = Readonly<{
   value: AssignmentContext;
   input: AssignmentInputRevision;
   access: KnowledgeAccessWalk;
@@ -99,12 +102,12 @@ async function readContextInput(
 }
 
 /** A historical revision is disclosed only under current assignment and complete inherited-source access. */
-async function readContextInTransaction(
+export async function readSpecialistAssignmentContextInTransaction(
   tx: SqlTransaction,
   principal: KnowledgePrincipal,
   assignmentId: string,
   selectedRevision?: number,
-): Promise<ContextRead> {
+): Promise<AssignmentContextRead> {
   if (!z.string().min(1).max(128).safeParse(assignmentId).success)
     throw new MaisterError("CONFIG", "Invalid assignment identity");
   if (principal.kind === "user")
@@ -248,7 +251,7 @@ export async function getSpecialistAssignmentContext(
       await beginAssignmentTransaction(tx);
 
       return (
-        await readContextInTransaction(
+        await readSpecialistAssignmentContextInTransaction(
           tx,
           { kind: "user", userId },
           assignmentId,
@@ -283,6 +286,16 @@ async function inspectEntrySources(
         "Context result lineage requires its governed exact-result appointment",
         { details: { reason: "context_result_reference_unavailable" } },
       );
+    for (const proposal of entry.findings.knowledgeProposals) {
+      if (proposal.change !== "add") continue;
+      await authorizeKnowledge(tx, principal, proposal.owner, "knowledge:read");
+      access = await authorizeSourceRestrictions(
+        tx,
+        principal,
+        [proposal.owner],
+        access,
+      );
+    }
     references.push(
       ...entry.findings.findings.flatMap((finding) => [
         ...finding.supporting,
@@ -445,7 +458,7 @@ async function appendContext(
           "working context replay adopted its retained revision",
         );
 
-        const replay = await readContextInTransaction(
+        const replay = await readSpecialistAssignmentContextInTransaction(
           tx,
           principal.source,
           assignmentId,
@@ -474,7 +487,7 @@ async function appendContext(
         throw contextConflict(
           "Assignment input or context changed; inspect the current revisions before rebasing this edit",
         );
-      const current = await readContextInTransaction(
+      const current = await readSpecialistAssignmentContextInTransaction(
         tx,
         principal.source,
         assignmentId,
@@ -594,7 +607,7 @@ async function appendContext(
         "working context revision retained",
       );
 
-      const result = await readContextInTransaction(
+      const result = await readSpecialistAssignmentContextInTransaction(
         tx,
         principal.source,
         assignmentId,
@@ -640,7 +653,7 @@ export async function getSpecialistAssignmentTokenContext(
         { kind: "token", tokenId },
         "assignments:read",
       );
-      const result = await readContextInTransaction(
+      const result = await readSpecialistAssignmentContextInTransaction(
         tx,
         principal.source,
         assignmentId,

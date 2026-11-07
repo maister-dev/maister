@@ -144,3 +144,9 @@ keep their current project appointment and initiating membership. Queued and
 reviewed Runs cannot write context. The server records the actual Run/node author
 and carries forward all sources the Run consumed, including omitted citations.
 Read access and working notes never accept work or confirm a Brain assertion.
+
+New standalone generations and Flow-node prompts include the authorized working
+context. Company roles need the reviewed `assignments:read` limit. If a source is
+unavailable, the new dispatch refuses; it does not supply a partial summary.
+Recovering an already retained prompt keeps its original context snapshot. Use
+`assignment_context_get` to inspect the current revision during ongoing work.

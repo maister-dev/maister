@@ -621,6 +621,85 @@ it("IT-CBA-04 retains source restrictions after supersession and gates current, 
     code: "PRECONDITION",
     details: { reason: "knowledge_reference_unavailable" },
   });
+  const suggestionAssignment = await createSpecialistAssignment(
+    database.db,
+    requesterId,
+    prepared,
+  );
+  const draft = {
+    change: "add",
+    owner: { kind: "company", companyId: randomUUID() },
+    title: "Working suggestion",
+    kind: "observation",
+    assertion: "A proposed observation still needs evidence",
+    basis: "unknown",
+    evidence: [],
+    missingEvidence: [
+      { state: "missing", reason: "No supporting observation yet" },
+    ],
+    limitations: ["Working suggestion only"],
+  };
+  const suggestion = {
+    expectedRevision: 0,
+    expectedInputRevision: 1,
+    idempotencyKey: randomUUID(),
+    updates: [
+      {
+        id: "proposed-addition",
+        kind: "finding",
+        text: "A proposed addition must name an accessible owner",
+        state: "open",
+        references: [],
+        findings: {
+          schemaVersion: 1,
+          findings: [],
+          selection: [],
+          knowledgeProposals: [draft],
+        },
+      },
+    ],
+  };
+
+  await expect(
+    appendSpecialistAssignmentContext(
+      database.db,
+      requesterId,
+      suggestionAssignment.id,
+      suggestion,
+    ),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  const beforeProposals = (
+    await database.pool.query<{ count: number }>(
+      "SELECT count(*)::int AS count FROM brain_proposals",
+    )
+  ).rows[0]!.count;
+
+  await expect(
+    appendSpecialistAssignmentContext(
+      database.db,
+      requesterId,
+      suggestionAssignment.id,
+      {
+        ...suggestion,
+        updates: [
+          {
+            ...suggestion.updates[0]!,
+            findings: {
+              ...suggestion.updates[0]!.findings,
+              knowledgeProposals: [{ ...draft, owner: prepared.owner }],
+            },
+          },
+        ],
+      },
+    ),
+  ).resolves.toMatchObject({ revision: 1 });
+  expect(
+    (
+      await database.pool.query<{ count: number }>(
+        "SELECT count(*)::int AS count FROM brain_proposals",
+      )
+    ).rows[0]!.count,
+  ).toBe(beforeProposals);
   const first = {
     expectedRevision: 0,
     expectedInputRevision: 1,

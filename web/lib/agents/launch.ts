@@ -91,6 +91,7 @@ import {
 } from "@/lib/tasks/launch-execution-input";
 import { activateInitialSpecialistAssignmentRunInTransaction } from "@/lib/specialist-assignments/store";
 import { reserveProjectAssignmentTask } from "@/lib/specialist-assignments/project-task";
+import { appendSpecialistAssignmentContextPrompt } from "@/lib/specialist-assignments/projection";
 import { requireProjectActionForUser } from "@/lib/authz";
 import {
   prepareProjectAssignmentAdmission,
@@ -5002,7 +5003,7 @@ async function driveAgentSession(
         run,
         memoryText,
       );
-      const prompt = nativeFindingsCompletionPrompt(
+      const completionPrompt = nativeFindingsCompletionPrompt(
         run.resultContract,
         operationalCompletionPrompt(
         run,
@@ -5017,6 +5018,9 @@ async function driveAgentSession(
       // RD7: the agent's capability_profile.mcps resolve through the existing
       // platform/project catalog (precedence + exec-trust stdio gate) and ride
       // createSession alongside the facade.
+      const prompt = usesStructuredKnowledgeContext(run)
+        ? await appendSpecialistAssignmentContextPrompt(_db,runId,null,completionPrompt)
+        : completionPrompt;
       const profileMcpServers = companyContext ? [] : await resolveAgentProfileMcpServers({
         db: _db,
         projectId: project.id as string,

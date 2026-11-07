@@ -512,7 +512,7 @@ Context changes lock the stable assignment, check expected context revision/epoc
 
 ### Versioned context persistence and attribution
 
-**Implemented: retained history, session-user and scoped execution read/update; T23 result-lineage/runtime integration remains in progress.**
+**Implemented: retained history, session-user and scoped execution read/update, and authorized runtime projection. Governed child/result acceptance remains Designed (T27/T28).**
 
 Context has its own CAS revision and an exact assignment input revision. An update
 must name both the expected context revision and expected input revision; an
@@ -557,9 +557,37 @@ cannot erase inherited restrictions. Same actor/key/payload returns its original
 currently accessible revision; changed payload conflicts. Concurrent distinct
 patches against one base have one winner and one actionable conflict.
 
-The native facade exposes `assignment_context_get` with the same closed assignment/revision selector as HTTP. The external route authenticates and audits the real token, then resolves its current native principal without requiring a knowledge token scope. Company credentials include `assignments:read` only when the reviewed role permits it. A machine reads through its exact Run/node appointment and frozen input, never through the initiating user's identity; arbitrary foreign assignment selectors are withheld. Context source closure is recorded on the existing Run capture before returning content, so omitted citations do not remove downstream restrictions. Human authorization preserves its existing current company/project policy. Agent writes use the current professional authority described below. Result lineage and automatic runtime prompt projection remain unqualified.
+The native facade exposes `assignment_context_get` with the same closed assignment/revision selector as HTTP. The external route authenticates and audits the real token, then resolves its current native principal without requiring a knowledge token scope. Company credentials include `assignments:read` only when the reviewed role permits it. A machine reads through its exact Run/node appointment and frozen input, never through the initiating user's identity; arbitrary foreign assignment selectors are withheld. Context source closure is recorded on the existing Run capture before returning content, so omitted citations do not remove downstream restrictions. Human authorization preserves its existing current company/project policy. Agent writes use the current professional authority described below. Governed child/result lineage remains unqualified until T27/T28.
 
 Executing-agent context updates require a current credential carrying both context read and update scopes, an active Run (queued/reviewed executions refuse), exact assignment/input appointment and current source access. A company role additionally needs its reviewed `assignments:update` limit, an explicit current professional update grant and current initiating-user update authority. Project appointments retain current initiating membership/launch authority independently from Brain flags. The author is always the server-resolved Run/node role. Every new snapshot inherits the consuming Run's complete source closure, including sources omitted from submitted citations. Replay and response disclosure retain current access checks. Ownership epoch remains NULL until the business owner-claim writer is introduced in T29; a host epoch is not substituted. T29 must add current business-fence checks at this same persistence boundary before owner recovery is qualified.
+
+### Runtime projection and cooperation boundary
+
+**Implemented: authorized context projection through the existing agent and Flow prompt paths.**
+
+A native execution resolves its own immutable assignment link from server state.
+No link means no assignment context is injected or fabricated. A company role
+without its reviewed context-read limit retains the existing assigned-input
+prompt and receives no additional context bytes. This is an explicit enrollment
+state, not a fallback after a source refusal. An enrolled projection requires the
+exact current Run/node professional, current appointment/input and every inherited
+source permission; an unavailable source refuses dispatch rather than returning a
+partial summary. The complete source union commits to the existing Run capture
+before context enters a newly assembled standalone-generation or Flow-node prompt.
+This includes newly assembled override and resume prompts. Reattachment of an
+existing owner request preserves its original immutable prompt bytes; ongoing
+executions can retrieve current context through the authorized native tool. The
+version-one DTO preserves evidence references and original authors. Standing
+instructions, current input, working context and permissions remain separate.
+
+The T23 foundation does not manufacture bounded child work or acceptance records.
+T27 supplies authorized child appointments and context sharing; T28 enables exact
+collected/sourceFinding and accepted-work references through those real records,
+using the existing result ledger and reduction validator. Until then the context
+writer explicitly refuses result-lineage and accepted entries. CBA-04 spans these
+writers; finishing the foundation alone does not qualify accepted cooperation.
+This ordering removes the T23-to-T28 dependency cycle without removing any result,
+evidence-preservation or acceptance requirement.
 
 ### Delivery and cancellation windows
 

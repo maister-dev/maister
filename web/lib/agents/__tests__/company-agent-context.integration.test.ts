@@ -26,7 +26,7 @@ import { Writable } from "node:stream";
 import { parse, stringify } from "yaml";
 import pino from "pino";
 import Ajv from "ajv";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -88,6 +88,8 @@ import { authorizeRuntimeObjectContentActor } from "@/lib/execution-host/runtime
 import {
   runs,
   runSessions,
+  executionCommands,
+  executionHosts,
   platformAcpRunners,
   platformRuntimeSettings,
 } from "@/lib/db/schema";
@@ -117,6 +119,7 @@ import { disposeOperationalRun } from "@/lib/gc/operational-disposition";
 import { operationalSuccessFixture } from "@/test-support/operational-agent";
 import { getKnowledgeRecord } from "@/lib/brain/knowledge-records";
 import { resolveKnowledgePrincipal } from "@/lib/brain/knowledge-access";
+import { readPromptRequest } from "@/lib/execution-host/command-request";
 import { appendSpecialistAssignmentContext } from "@/lib/specialist-assignments/context";
 import {
   GET as externalContextGet,
@@ -221,6 +224,28 @@ let request: {
 const administratorId = randomUUID();
 const userId = randomUUID();
 const agentId = "rah:evidence-researcher";
+
+async function retainedPrompt(runId: string): Promise<string> {
+  const command = (
+    await database.db
+      .select()
+      .from(executionCommands)
+      .where(
+        and(
+          eq(executionCommands.runId, runId),
+          eq(executionCommands.kind, "session.prompt"),
+        ),
+      )
+  )[0]!;
+  const host = (
+    await database.db
+      .select()
+      .from(executionHosts)
+      .where(eq(executionHosts.id, command.executionHostId))
+  )[0]!;
+
+  return readPromptRequest(command, host.hostKey).payload.prompt;
+}
 
 const submitExternal = (
   value: unknown,
@@ -396,6 +421,16 @@ beforeAll(async () => {
     join(source, "maister-agents/wire-observer.md"),
     join(source, "maister-agents/event-observer.md"),
   );
+  for (const role of [
+    "projection-reader",
+    "projection-disabled",
+    "projection-denied",
+  ])
+    await cp(
+      join(source, "maister-agents/wire-observer.md"),
+      join(source, `maister-agents/${role}.md`),
+    );
+
   await writeFile(
     join(source, "maister-agents/webhook-observer.md"),
     (
@@ -2042,6 +2077,199 @@ it("IT-CBS-04 admits company webhook deliveries through the actual authenticated
   }
 }, 90000);
 
+it.each([
+  {
+    roleId: "rah:projection-reader",
+    actions: ["assignments:read"],
+    expectedStatus: "Done",
+    recorded: true,
+    privateSource: false,
+  },
+  {
+    roleId: "rah:projection-disabled",
+    actions: ["knowledge:read", "knowledge:propose"],
+    expectedStatus: "Done",
+    recorded: false,
+    privateSource: false,
+  },
+  {
+    roleId: "rah:projection-denied",
+    actions: ["assignments:read"],
+    expectedStatus: "Failed",
+    recorded: false,
+    privateSource: true,
+  },
+] as const)(
+  "IT-CBA-04 projects native working context before real standalone dispatch under current role/source policy ($roleId)",
+  async (scenario) => {
+    const db: Db = database.db;
+    const supervisor = await startRealSupervisor({
+      runtimeRoot: join(root, scenario.roleId.replace(":", "-")),
+      workspaceRoots: [join(root, "worktrees")],
+      fixtureArgs: ["--hang"],
+    });
+    const restoreUrl = useRealSupervisorUrl(supervisor.url);
+    const worker = startProjectionWorker({
+      db,
+      projectors: canonicalProjectors,
+    });
+
+    setDefaultTransportForTests(null);
+    resetResolverForTests();
+    resetRegistrarStateForTests();
+    let sourceGrant:
+      Awaited<ReturnType<typeof createCompanyGrants>> | undefined;
+
+    try {
+      const effective = await resolveInstalledAgentDefinition(db, {
+        agentId: scenario.roleId,
+        packageInstallId: assignmentInput.standingDefinition.packageInstallId,
+      });
+      const runnerId = randomUUID();
+
+      await db.insert(platformAcpRunners).values({
+        id: runnerId,
+        adapter: "claude",
+        capabilityAgent: "claude",
+        model: "context-projection-fixture",
+        provider: { kind: "anthropic" },
+        readinessStatus: "Ready",
+      });
+      const binding = await createCompanySpecialistBinding(
+        db,
+        userId,
+        scenario.roleId,
+        {
+          owner: { kind: "company", companyId: request.companyId },
+          packageInstallId: effective.packageInstallId,
+          packageRevision: effective.resolvedRevision!,
+          definitionSha256: agentDefinitionSha256(effective.parsed),
+          enabled: true,
+          configuration: {},
+          grantActions: [...scenario.actions],
+          runnerId,
+          idempotencyKey: randomUUID(),
+        },
+      );
+      const assignment = await createSpecialistAssignment(db, userId, {
+        ...assignmentInput,
+        specialistBindingId: binding.specialist.bindingId,
+        responsibleAgentId: scenario.roleId,
+        standingDefinition: {
+          ...assignmentInput.standingDefinition,
+          agentId: scenario.roleId,
+          definition: effective.parsed,
+          definitionSha256: agentDefinitionSha256(effective.parsed),
+        },
+      });
+      const hosts = createExecutionHosts({
+        db,
+        transport: createLocalDirectTransport(),
+      });
+      const receipt = await reserveCompanyAgentRun(
+        db,
+        userId,
+        {
+          ...request,
+          assignmentId: assignment.id,
+          bindingId: binding.specialist.bindingId,
+        },
+        hosts,
+      );
+      const references: { kind: "knowledge"; id: string; revision: number }[] =
+        [];
+
+      if (scenario.privateSource) {
+        sourceGrant = await createCompanyGrants(db, administratorId, {
+          principalKind: "user",
+          principalId: userId,
+          actions: ["knowledge:read"],
+          idempotencyKey: randomUUID(),
+        });
+        const recordId = randomUUID();
+
+        await database.pool.query(
+          "INSERT INTO brain_items(id,company_id,kind,title,content,confidence,content_hash) VALUES($1,$2,'observation','Private projected source','This source is not shared with the executing role',0.9,$3)",
+          [recordId, request.companyId, randomUUID()],
+        );
+        references.push({ kind: "knowledge", id: recordId, revision: 1 });
+      }
+      const text = `Working context for ${scenario.roleId} must respect its reviewed read limit`;
+      const context = await appendSpecialistAssignmentContext(
+        db,
+        userId,
+        assignment.id,
+        {
+          expectedRevision: 0,
+          expectedInputRevision: 1,
+          idempotencyKey: randomUUID(),
+          updates: [
+            {
+              id: "working-question",
+              kind: "question",
+              text,
+              state: "open",
+              references,
+            },
+          ],
+        },
+      );
+
+      expect(await tryStartRun(receipt.runId, { db })).toMatchObject({
+        started: true,
+      });
+      await startAgentSession(receipt.runId, { db, executionHosts: hosts });
+      await vi.waitFor(
+        async () => {
+          const [run] = await db
+            .select()
+            .from(runs)
+            .where(eq(runs.id, receipt.runId));
+
+          expect(run?.status).toBe(scenario.expectedStatus);
+        },
+        { timeout: 30000, interval: 25 },
+      );
+      const creates = (
+        await database.pool.query<{ count: number }>(
+          "SELECT count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt')",
+          [receipt.runId],
+        )
+      ).rows[0]!.count;
+
+      if (scenario.expectedStatus === "Failed") expect(creates).toBe(0);
+      else {
+        expect(creates).toBe(2);
+        const prompt = await retainedPrompt(receipt.runId);
+
+        if (scenario.recorded)
+          expect(prompt).toContain(JSON.stringify(context));
+        else expect(prompt).not.toContain(text);
+      }
+    } finally {
+      if (sourceGrant) {
+        const grant = sourceGrant.page.items.find(
+          (item) => item.action === "knowledge:read",
+        )!;
+
+        await revokeCompanyGrant(db, administratorId, grant.id, {
+          expectedRevision: grant.revision,
+          reason: "Release owned context projection authority",
+          idempotencyKey: randomUUID(),
+        });
+      }
+      await worker.stop();
+      await stopRuntimeEventConsumers();
+      await supervisor.stop();
+      restoreUrl();
+      resetResolverForTests();
+      resetRegistrarStateForTests();
+      setDefaultTransportForTests(null);
+    }
+  },
+  45000,
+);
+
 it("IT-CBA-02 submits project specialist work through its actual attachment, original input and existing agent admission", async () => {
   const db: Db = database.db;
   const repo = await initRepo(join(root, "project-manual-repo"));
@@ -2326,6 +2554,26 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
         )
       ).rows,
     ).toEqual([{ count: 0 }]);
+    const projectWorkingContext = await appendSpecialistAssignmentContext(
+      db,
+      userId,
+      assignment.id,
+      {
+        expectedRevision: 0,
+        expectedInputRevision: 1,
+        idempotencyKey: randomUUID(),
+        updates: [
+          {
+            id: "project-runtime-question",
+            kind: "question",
+            text: "Retain the original project question through deferred execution",
+            state: "open",
+            references: [],
+          },
+        ],
+      },
+    );
+
     await database.pool.query("DELETE FROM execution_host_pressure");
     const resumedPending = await submit();
 
@@ -2345,6 +2593,9 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
         });
       },
       { timeout: 30000, interval: 25 },
+    );
+    expect(await retainedPrompt(runId)).toContain(
+      JSON.stringify(projectWorkingContext),
     );
     const input = await database.pool.query(
       "SELECT objective_input,actor FROM specialist_input_revisions WHERE assignment_id=$1 AND revision=1",
@@ -3136,6 +3387,26 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
         )
       ).rows,
     ).toEqual([]);
+    const coordinatorWorkingContext = await appendSpecialistAssignmentContext(
+      db,
+      userId,
+      deferredCoordinator[0].id,
+      {
+        expectedRevision: 0,
+        expectedInputRevision: 1,
+        idempotencyKey: randomUUID(),
+        updates: [
+          {
+            id: "coordinator-runtime-question",
+            kind: "question",
+            text: "Preserve the deferred coordinator question in its exact current node prompt",
+            state: "open",
+            references: [],
+          },
+        ],
+      },
+    );
+
     await database.pool.query(
       "UPDATE flows SET enablement_state='Disabled' WHERE id=$1",
       [coordinatedRun!.flowId],
@@ -3171,6 +3442,9 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
         expect(retained.status).toBe("Done");
       },
       { timeout: 30000, interval: 25 },
+    );
+    expect(await retainedPrompt(resumedCoordinator.runIds[0]!)).toContain(
+      JSON.stringify(coordinatorWorkingContext),
     );
     expect(
       (

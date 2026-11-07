@@ -42,14 +42,14 @@
 | CBA-01 | [specialist-assignments](./specialist-assignments.md) | T18,T22 | `IT-CBA-01` — `web/lib/specialist-assignments/__tests__/store.integration.test.ts` (web integration) | Planned |
 | CBA-02 | [specialist-assignments](./specialist-assignments.md) | T22,T22.1,T24,T26,T27 | `IT-CBA-02` — `web/lib/specialist-assignments/__tests__/intake.integration.test.ts` (web integration) | Planned |
 | CBA-03 | [specialist-assignments](./specialist-assignments.md) | T18,T19,T20,T22.1 | `IT-CBA-03` — `web/lib/specialist-assignments/__tests__/store.integration.test.ts` (web integration) | Planned |
-| CBA-04 | [specialist-assignments](./specialist-assignments.md) | T23 | `IT-CBA-04` — `web/lib/specialist-assignments/__tests__/context.integration.test.ts` (web integration) | Planned |
+| CBA-04 | [specialist-assignments](./specialist-assignments.md) | T23,T27,T28 | `IT-CBA-04` — `web/lib/specialist-assignments/__tests__/store.integration.test.ts` and execution/context/work integration (web integration) | Planned |
 | CBA-05 | [specialist-assignments](./specialist-assignments.md) | T24 | `IT-CBA-05` — `web/lib/services/__tests__/agent-question.integration.test.ts` (web integration) | Planned |
 | CBA-06 | [specialist-assignments](./specialist-assignments.md) | T25 | `IT-CBA-06` — `web/lib/specialist-assignments/__tests__/delivery.integration.test.ts` (web integration) | Planned |
 | CBA-07 | [specialist-assignments](./specialist-assignments.md) | T18,T28,T38 | `IT-CBA-07` — `web/lib/specialist-assignments/__tests__/acceptance.integration.test.ts` (web integration) | Planned |
 | CBU-02 | [specialist-assignments](./specialist-assignments.md) | T24,T25,T37,T39 | `E2E-CBU-02` — `web/e2e/specialist-assignments.spec.ts` (Playwright) | Planned |
 | EDGE-CBA-01 | [specialist-assignments](./specialist-assignments.md) | T22,T22.1,T26 | `IT-CBA-02` — `web/lib/specialist-assignments/__tests__/intake.integration.test.ts` (web integration) | Planned |
 | EDGE-CBA-02 | [specialist-assignments](./specialist-assignments.md) | T24 | `IT-CBA-05` — `web/lib/services/__tests__/agent-question.integration.test.ts` (web integration) | Planned |
-| EDGE-CBA-03 | [specialist-assignments](./specialist-assignments.md) | T23 | `IT-CBA-04` — `web/lib/specialist-assignments/__tests__/context.integration.test.ts` (web integration) | Planned |
+| EDGE-CBA-03 | [specialist-assignments](./specialist-assignments.md) | T23 | `IT-CBA-04` — `web/lib/specialist-assignments/__tests__/store.integration.test.ts` (web integration; `T23/runtime-projection/evidence.json`) | Implemented |
 | EDGE-CBA-04 | [specialist-assignments](./specialist-assignments.md) | T18,T28,T38 | `IT-CBA-07` — `web/lib/specialist-assignments/__tests__/acceptance.integration.test.ts` (web integration) | Planned |
 | EDGE-CBA-05 | [specialist-assignments](./specialist-assignments.md) | T25 | `IT-CBA-06` — `web/lib/specialist-assignments/__tests__/delivery.integration.test.ts` (web integration) | Planned |
 | CBC-01 | [specialist-cooperation](./specialist-cooperation.md) | T27,T28 | `IT-CBC-01` — `web/lib/specialist-assignments/__tests__/cooperation.integration.test.ts` (web integration) | Planned |
