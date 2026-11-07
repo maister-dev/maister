@@ -571,6 +571,27 @@ The response body carries `response` as a bounded object validated against the e
 
 Context changes lock the stable assignment, check expected context revision/epoch and current source grants, then append one immutable revision and attributed decision. A losing patch returns 409 and must be explicitly rebased; no automatic last-writer merge. Accepted findings refer to exact child result revisions. Server-derived source restrictions propagate through summaries and context even if a model omits citations. Current permission is rechecked at read/share/accept/action; snapshots are history, not grants.
 
+### Global Inbox projection for company clarification
+
+The canonical decision queue and its count include company-owned native assignment
+questions and other native company HITL without project membership or repository rows.
+Pending or superseded questions remain absent until activation. The shared HITL query
+requires a retained native company Run/input binding, current explicit human
+`assignments:read` and `assignments:answer` grants, and access to every retained
+source. Read-only recipients and administrators without explicit grants do not
+receive actionable cards. Revocation removes the card and its count together.
+An explicit project scope never includes company work. Existing external HITL
+and decisions DTOs retain their project-only populations; native question APIs
+provide company interaction. Private assistant and librarian questions remain
+outside this population.
+
+Company cards use the localized Company/Компания group and ordinary Run links.
+Only the actual form schema reaches the browser: server question, prompt,
+checkpoint and supervisor metadata are excluded for native project and company
+questions. Expanded context uses current company Run read/source authority both
+before and after assembly, returns private/no-store data, and has no repository
+diff. Unavailable company ownership or read authority is concealed as 404.
+
 ### Flow-node clarification contract (native platform checkpoint — T24)
 
 A native graph question uses the same assignment subject and HITL row, with

@@ -401,10 +401,37 @@ export function mapRowsToHitlItems(
       // supervisorSessionId, toolCall) written by runner-agent — NEVER serialize
       // them to the browser. Mirrors the ext-API DTO guard; the actionable
       // surface for permission is `options` (already projected above).
-      schema: row.kind === "permission" ? null : row.rawSchema,
+      schema:
+        row.kind === "permission"
+          ? null
+          : projectQuestionForm(row.kind, row.rawSchema),
       criticality: row.criticality,
     };
   });
+}
+
+/** Browser form data excludes the native question's server-owned execution witnesses. */
+function projectQuestionForm(kind: string, schema: unknown): unknown {
+  if (
+    kind !== "agent_question" ||
+    schema === null ||
+    typeof schema !== "object" ||
+    Array.isArray(schema)
+  )
+    return schema;
+
+  return Object.fromEntries(
+    Object.entries(schema).filter(
+      ([key]) =>
+        ![
+          "kind",
+          "assignmentQuestion",
+          "agentPrompt",
+          "flowQuestion",
+          "supervisorSessionId",
+        ].includes(key),
+    ),
+  );
 }
 
 export function isInboxVisibleHitlRow(

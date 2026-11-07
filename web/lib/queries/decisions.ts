@@ -102,7 +102,11 @@ export type DecisionItem =
       kind: "operational";
       operational: OperationalAttention | AgentIncidentGroupRecord;
     })
-  | (DecisionBase & { kind: "hitl"; hitl: CrossProjectHitlItem })
+  | (Omit<DecisionBase, "projectId" | "projectSlug" | "projectName"> &
+      Pick<
+        CrossProjectHitlItem,
+        "projectId" | "projectSlug" | "projectName"
+      > & { kind: "hitl"; companyId?: string; hitl: CrossProjectHitlItem })
   | (DecisionBase & { kind: "crashed"; crashed: CrashedDecisionItem })
   | (DecisionBase & { kind: "promotable"; promotable: ClassifiedPromotable })
   | (DecisionBase & { kind: "flagged"; flagged: FlaggedDecisionItem })
@@ -125,6 +129,8 @@ export interface DecisionsQueue {
 export interface DecisionsScope {
   /** Narrows to one project, intersected with reach — never widens it. */
   projectId?: string;
+  /** Explicit owner narrowing used by project-only compatibility readers. */
+  companyIds?: readonly string[];
 }
 
 const CRITICALITY_RANK = {
@@ -237,7 +243,17 @@ async function readDecisionContext(
       ? actionableIds
       : actionableIds.filter((id) => id === scope.projectId);
 
-  if (projectIds.length === 0)
+  const companyIds =
+    scope.projectId !== undefined
+      ? []
+      : (scope.companyIds ??
+        (
+          await client
+            .select({ id: schema.companies.id })
+            .from(schema.companies)
+        ).map((row) => row.id));
+
+  if (projectIds.length === 0 && companyIds.length === 0)
     return {
       client,
       userId,
@@ -261,7 +277,12 @@ async function readDecisionContext(
       // resolve its own — wider — visibility set, which is what made a
       // project-scoped count include every other project's HITL and a viewer's
       // count include projects they cannot act in.
-      getCrossProjectHitlInbox(userId, globalRole, { projectIds }, client),
+      getCrossProjectHitlInbox(
+        userId,
+        globalRole,
+        { projectIds, companyIds },
+        client,
+      ),
       listPromotableForProjects(projectIds, { db: client }),
       listCrashedForProjects(projectIds, { db: client }),
       listFlaggedForProjects(projectIds, { db: client }),
@@ -316,7 +337,12 @@ export async function computeLegacyDecisionsQueue(
     typeof schema
   >,
 ): Promise<DecisionsQueue> {
-  const context = await readDecisionContext(userId, globalRole, scope, client);
+  const context = await readDecisionContext(
+    userId,
+    globalRole,
+    { ...scope, companyIds: [] },
+    client,
+  );
   const operational = await listOperationalAttention(
     context.client,
     userId,
@@ -374,6 +400,7 @@ async function assembleDecisionsQueue(
       projectId: item.projectId,
       projectSlug: item.projectSlug,
       projectName: item.projectName,
+      ...(item.projectId === null ? { companyId: item.companyId } : {}),
       taskId: item.taskId,
       taskKey: item.taskRef,
       taskTitle: item.taskTitle,

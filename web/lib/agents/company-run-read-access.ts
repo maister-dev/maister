@@ -117,10 +117,8 @@ export async function authorizeCompanyRunUserAction(
   });
 }
 
-/** Filter company history before pagination without disclosing rows with unavailable source closure. */
-export function companyRunHistoryReadPolicy(
-  identity: Extract<KnowledgePrincipalIdentity, { kind: "user" }>,
-): SQL {
+/** Reuse the retained company Run/input ownership witness without requiring Brain SQL functions. */
+export function companyRunOwnershipReadPolicy(): SQL {
   return sql`runs.company_id IS NOT NULL AND runs.project_id IS NULL
     AND runs.knowledge_access->>'schemaVersion'='1'
     AND runs.knowledge_access->>'state'='complete'
@@ -137,7 +135,14 @@ export function companyRunHistoryReadPolicy(
           'kind','assignment_input','assignmentId',link.assignment_id,
           'inputRevision',link.input_revision,'inputSha256',input.digest))
       FOR SHARE OF link,assignment,input
-    )
+    )`;
+}
+
+/** Filter company history including current source authorization before pagination. */
+export function companyRunHistoryReadPolicy(
+  identity: Extract<KnowledgePrincipalIdentity, { kind: "user" }>,
+): SQL {
+  return sql`${companyRunOwnershipReadPolicy()}
     AND NOT EXISTS (
       SELECT 1 FROM native_knowledge_source_restrictions(runs.knowledge_access->'restrictions') source
       WHERE NOT (${knowledgeSourceReadPolicy(identity, sql`source`)})

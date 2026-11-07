@@ -21,6 +21,7 @@ import {
   inArray,
   isNotNull,
   isNull,
+  ne,
   or,
   sql,
 } from "drizzle-orm";
@@ -33,6 +34,9 @@ import { ACTIVE_AGENT_RUN_STATUSES } from "@/lib/agents/activity-status";
 import { hasReadyPlatformRunner } from "@/lib/acp-runners/ready-runner";
 import { acceptedBacklogPredicate } from "@/lib/tasks/qualification-predicates";
 import { getDb } from "@/lib/db/client";
+import { companyRunOwnershipReadPolicy } from "@/lib/agents/company-run-read-access";
+import { authorizeCompanyUserAction } from "@/lib/company/authority";
+import { MaisterError } from "@/lib/errors";
 import { getVisibleProjectIds } from "@/lib/queries/visible-projects";
 import { isProjectFlowLaunchable } from "@/lib/flows/project-flow-launchability";
 import { deriveTtlInfo } from "@/lib/gc/ttl";
@@ -58,10 +62,7 @@ import {
 import * as schema from "@/lib/db/schema";
 import { computeReadinessByRun } from "@/lib/queries/readiness-batch";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
-import {
-  requireRunProjectId,
-  withProjectRunKind,
-} from "@/lib/runs/run-kind-invariants";
+import { withProjectRunKind } from "@/lib/runs/run-kind-invariants";
 import { worktreePresence } from "@/lib/workbench-git/presence";
 import {
   deriveWorkbenchLifecycleActions,
@@ -1219,7 +1220,18 @@ export async function getRailWorkspaces(
   );
 }
 
-export type CrossProjectHitlItem = HitlItem & {
+export type CrossProjectHitlItem = HitlItem &
+  (ProjectHitlOwner | CompanyHitlOwner);
+
+type CompanyHitlOwner = {
+  companyId: string;
+  projectId: null;
+  projectSlug: null;
+  projectName: null;
+  taskId: null;
+};
+
+type ProjectHitlOwner = {
   projectId: string;
   projectSlug: string;
   projectName: string;
@@ -1259,6 +1271,8 @@ function critRank(c: string | null): number {
 export interface CrossProjectHitlScope {
   recipient?: KnowledgeRecipient;
   projectIds?: readonly string[];
+  /** Explicit project scopes never implicitly widen to company-owned work. */
+  companyIds?: readonly string[];
 }
 
 export async function getCrossProjectHitlInbox(
@@ -1287,11 +1301,41 @@ export async function getCrossProjectHitlInbox(
           .from(projects)
           .where(inArray(projects.id, visibleIds));
 
-  if (visibleProjects.length === 0) {
-    return { items: [], count: 0 };
-  }
-
   const projectIds = visibleProjects.map((p) => p.id);
+  const companyIds =
+    scope.companyIds ??
+    (scope.projectIds === undefined
+      ? (
+          await client
+            .select({ id: schema.companies.id })
+            .from(schema.companies)
+        ).map((row) => row.id)
+      : []);
+
+  if (projectIds.length === 0 && companyIds.length === 0)
+    return { items: [], count: 0 };
+
+  const companyScope = and(
+    companyIds.length === 0
+      ? sql`false`
+      : inArray(runs.companyId, [...companyIds]),
+    inArray(runs.runKind, ["flow", "agent"]),
+    or(
+      ne(hitlRequests.kind, "agent_question"),
+      and(
+        eq(hitlRequests.activationState, "active"),
+        isNotNull(hitlRequests.specialistAssignmentId),
+        isNull(hitlRequests.supersededAt),
+      ),
+    ),
+    companyRunOwnershipReadPolicy(),
+    sql`EXISTS (SELECT 1 FROM company_grants authority
+      WHERE authority.company_id=runs.company_id AND authority.principal_type='user'
+        AND authority.principal_id=${userId} AND authority.action='assignments:read' AND authority.revoked_at IS NULL)`,
+    sql`EXISTS (SELECT 1 FROM company_grants authority
+      WHERE authority.company_id=runs.company_id AND authority.principal_type='user'
+        AND authority.principal_id=${userId} AND authority.action='assignments:answer' AND authority.revoked_at IS NULL)`,
+  );
 
   // One batched query: ordinary HITL rows follow their awaiting run; an active
   // task-bound agent question follows its own lifecycle because its source run
@@ -1314,6 +1358,7 @@ export async function getCrossProjectHitlInbox(
       branch: sql<string>`coalesce(${workspaces.branch}, ${runs.agentId}, ${projects.mainBranch})`,
       flowRef: sql<string>`coalesce(${flows.flowRefId}, 'scratch')`,
       projectId: runs.projectId,
+      companyId: runs.companyId,
       runKind: runs.runKind,
       agentKind: runs.agentKind,
       runStatus: runs.status,
@@ -1333,12 +1378,17 @@ export async function getCrossProjectHitlInbox(
     .from(hitlRequests)
     .innerJoin(runs, eq(runs.id, hitlRequests.runId))
     .leftJoin(tasks, eq(tasks.id, runs.taskId))
-    .innerJoin(projects, eq(projects.id, runs.projectId))
+    .leftJoin(projects, eq(projects.id, runs.projectId))
     .leftJoin(workspaces, eq(workspaces.runId, runs.id))
     .leftJoin(flows, eq(flows.id, runs.flowId))
     .where(
       and(
-        inArray(runs.projectId, projectIds),
+        or(
+          projectIds.length === 0
+            ? sql`false`
+            : inArray(runs.projectId, projectIds),
+          companyScope,
+        ),
         isNull(hitlRequests.respondedAt),
         or(
           inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
@@ -1419,11 +1469,29 @@ export async function getCrossProjectHitlInbox(
   );
 
   const items: CrossProjectHitlItem[] = baseItems.map((item, idx) => {
-    // The HITL query inner-joins projects + filters inArray(projectIds), so
-    // projectId is non-null. Project-less local-package assistant HITL stays
-    // private to the scratch conversation because it has no project scope.
-    const projId = requireRunProjectId(visibleRows[idx].projectId);
-    const proj = projectById.get(projId) ?? { slug: projId, name: projId };
+    const row = visibleRows[idx];
+
+    if (row.projectId === null) {
+      if (row.companyId === null)
+        throw new MaisterError("CONFIG", "Inbox company ownership is missing");
+
+      return {
+        ...item,
+        companyId: row.companyId,
+        projectId: null,
+        projectSlug: null,
+        projectName: null,
+        taskId: null,
+      };
+    }
+    const projId = row.projectId;
+    const proj = projectById.get(projId);
+
+    if (!proj)
+      throw new MaisterError(
+        "CONFIG",
+        "Inbox project ownership is unavailable",
+      );
 
     return {
       ...item,
@@ -1446,11 +1514,35 @@ export async function getCrossProjectHitlInbox(
   // getPortfolio.totalNeeds (the actionable-ASSIGNMENT total, which also counts
   // HumanWorking/Review runs): the home "needs you" headline reflects
   // totalNeeds, while this `count` titles the HITL inbox block specifically.
-  await assertRunsKnowledgeDisclosure(
-    client,
-    recipient,
-    visibleRows.filter((row) => row.nativeKnowledge).map((row) => row.runId),
-  );
+  await client.transaction(async (tx) => {
+    const owners = new Set(
+      visibleRows
+        .filter((row) => row.projectId === null)
+        .map((row) => row.companyId),
+    );
+
+    for (const companyId of owners) {
+      if (companyId === null)
+        throw new MaisterError("CONFIG", "Inbox company ownership is missing");
+      await authorizeCompanyUserAction(
+        tx,
+        userId,
+        companyId,
+        "assignments:read",
+      );
+      await authorizeCompanyUserAction(
+        tx,
+        userId,
+        companyId,
+        "assignments:answer",
+      );
+    }
+    await assertRunsKnowledgeDisclosure(
+      tx,
+      recipient,
+      visibleRows.filter((row) => row.nativeKnowledge).map((row) => row.runId),
+    );
+  });
 
   return { items, count: items.length };
 }

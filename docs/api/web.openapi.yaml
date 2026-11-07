@@ -7269,9 +7269,13 @@ paths:
         progress. For `budget_breach` cards the same DTO also carries the
         computed `budgetProgress`, server-derived `availableOptions`, and
         `claimStage` read by the unified decision controls. Gated `readBoard` on
-        the run's project (project derived from the run row; `runId` is the only
-        input). Every field degrades to `null` when its source cannot be read —
-        the route never 500s for a missing peek.
+        the run's project. Company-only native assignment Runs instead require
+        current explicit assignments:read authority and complete retained source
+        access, checked again after asynchronous assembly. Unavailable company
+        ownership/read authority is concealed as 404. Company context has no Git
+        diff and needs no repository. Private assistants remain private.
+        Responses use Cache-Control: private, no-store. Optional absent peeks
+        return null; authorization failure withholds the complete response.
       operationId: getRunInboxContext
       parameters:
         - name: runId

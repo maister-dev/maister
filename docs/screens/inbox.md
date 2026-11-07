@@ -8,6 +8,14 @@
   `components/inbox/{hitl-card,hitl-inbox-list}.tsx` (shared with the
   per-project board); the unchanged `components/portfolio/inbox-panel.tsx`.
 
+Company-owned native assignment HITL appears in the **Company / Компания** group
+under current explicit assignment read and answer grants plus retained-source
+access. It uses ordinary Run links and expanded context without a repository
+or Git diff. Pending/superseded questions stay hidden; read-only recipients and
+ungranted administrators receive no actionable company card. Form data excludes
+server prompt, checkpoint and supervisor metadata. The badge and cards derive
+from the same canonical queue; project-scoped queues exclude company work.
+
 ## JTBD
 
 When several things across my projects are waiting on me, I want one full-width,

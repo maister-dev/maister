@@ -42,6 +42,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           owner.role,
           {
             recipient: { kind: "token", tokenId: ctx.actor.tokenId },
+            companyIds: [],
           },
           db,
         );

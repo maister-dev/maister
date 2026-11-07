@@ -1,5 +1,14 @@
 # Attention
 
+Company-owned native assignment clarification also contributes to the canonical
+HITL population: current explicit read and answer grants plus complete source
+access determine both card visibility and count. Project-scoped queues exclude
+company work. Company ownership never grants access by itself; read-only users
+and ungranted administrators receive no actionable company card. The retained
+native assignment/input binding excludes private assistants. The legacy external
+HITL/decisions DTOs remain project-only. See the
+[company Inbox contract](specialist-assignments.md#global-inbox-projection-for-company-clarification).
+
 ## Purpose
 
 The **attention plane**: the two canonical counters a reader is shown

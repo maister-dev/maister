@@ -91,7 +91,7 @@ export interface InboxCardContext {
 
 export interface InboxContextRun {
   id: string;
-  projectId: string;
+  projectId: string | null;
   currentStepId: string | null;
   flowRevisionId: string | null;
   flowId: string | null;
@@ -260,6 +260,8 @@ async function loadDiffSummary(
   client: Db,
   run: InboxContextRun,
 ): Promise<InboxCardContext["diff"]> {
+  if (run.projectId === null) return null;
+
   try {
     const wsRows = await client
       .select()

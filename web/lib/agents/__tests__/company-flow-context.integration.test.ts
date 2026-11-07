@@ -72,6 +72,8 @@ import {
 } from "../operational-integrity";
 
 import { recoverPendingAgentQuestions } from "@/lib/services/agent-question";
+import { computeDecisionsQueue } from "@/lib/queries/decisions";
+import { GET as inboxContextGet } from "@/app/api/runs/[runId]/inbox-context/route";
 import { readPromptRequest } from "@/lib/execution-host/command-request";
 import { createOrActivateAssignmentQuestion } from "@/lib/services/assignment-question";
 import { assignmentQuestionReceiptSchema } from "@/lib/specialist-assignments/question-types";
@@ -3411,6 +3413,129 @@ it("IT-CBA-05 parks and resumes the same native company Flow node after an assig
     ).toEqual([{ step_id: original.node_id }]);
     await driver;
     browserUserId = operatorId;
+    const inbox = await computeDecisionsQueue(
+      operatorId,
+      "member",
+      {},
+      database.db,
+    );
+    const decision = inbox.items.find(
+      (item) =>
+        item.kind === "hitl" &&
+        item.hitl.hitlRequestId === question.hitlRequestId,
+    );
+
+    expect(decision).toMatchObject({
+      kind: "hitl",
+      runId,
+      projectId: null,
+      companyId: request.companyId,
+      taskId: null,
+    });
+    expect(inbox.count).toBe(inbox.items.length);
+    if (decision?.kind !== "hitl")
+      throw new Error(
+        "The native company question is missing from the actual Inbox",
+      );
+    expect(decision.hitl.schema).toEqual(questionBody.schema);
+    expect(
+      (
+        await computeDecisionsQueue(
+          operatorId,
+          "member",
+          { projectId: randomUUID() },
+          database.db,
+        )
+      ).items,
+    ).toEqual([]);
+    expect(
+      (
+        await computeDecisionsQueue(requesterId, "member", {}, database.db)
+      ).items.some(
+        (item) =>
+          item.kind === "hitl" &&
+          item.hitl.hitlRequestId === question.hitlRequestId,
+      ),
+    ).toBe(false);
+    const answerGrant = grants.page.items.find(
+      (grant) => grant.action === "assignments:answer",
+    );
+
+    if (!answerGrant)
+      throw new Error("The fixture's exact human answer grant is missing");
+    await revokeCompanyGrant(db, administratorId, answerGrant.id, {
+      expectedRevision: answerGrant.revision,
+      reason: "Qualify current Inbox answer authority",
+      idempotencyKey: randomUUID(),
+    });
+    expect(
+      (
+        await computeDecisionsQueue(operatorId, "member", {}, database.db)
+      ).items.some(
+        (item) =>
+          item.kind === "hitl" &&
+          item.hitl.hitlRequestId === question.hitlRequestId,
+      ),
+    ).toBe(false);
+    await createCompanyGrants(db, administratorId, {
+      principalKind: "user",
+      principalId: operatorId,
+      actions: ["assignments:answer"],
+      idempotencyKey: randomUUID(),
+    });
+    browserUserId = administratorId;
+    const concealed = await inboxContextGet(
+      new Request(`http://localhost/api/runs/${runId}/inbox-context`),
+      { params: Promise.resolve({ runId }) },
+    );
+
+    expect(concealed.status).toBe(404);
+    const readGrant = grants.page.items.find(
+      (grant) => grant.action === "assignments:read",
+    );
+
+    if (!readGrant)
+      throw new Error("The fixture's exact human read grant is missing");
+    await revokeCompanyGrant(db, administratorId, readGrant.id, {
+      expectedRevision: readGrant.revision,
+      reason: "Qualify current Inbox source reader authority",
+      idempotencyKey: randomUUID(),
+    });
+    browserUserId = operatorId;
+    const revokedContext = await inboxContextGet(
+      new Request(`http://localhost/api/runs/${runId}/inbox-context`),
+      { params: Promise.resolve({ runId }) },
+    );
+
+    expect(revokedContext.status).toBe(404);
+    expect(
+      (
+        await computeDecisionsQueue(operatorId, "member", {}, database.db)
+      ).items.some(
+        (item) =>
+          item.kind === "hitl" &&
+          item.hitl.hitlRequestId === question.hitlRequestId,
+      ),
+    ).toBe(false);
+    await createCompanyGrants(db, administratorId, {
+      principalKind: "user",
+      principalId: operatorId,
+      actions: ["assignments:read"],
+      idempotencyKey: randomUUID(),
+    });
+    const context = await inboxContextGet(
+      new Request(`http://localhost/api/runs/${runId}/inbox-context`),
+      { params: Promise.resolve({ runId }) },
+    );
+
+    expect(context.status, JSON.stringify(await context.clone().json())).toBe(
+      200,
+    );
+    expect(context.headers.get("cache-control")).toBe("private, no-store");
+    expect(await context.json()).toMatchObject({
+      diff: null,
+      progress: { done: 0, total: 1 },
+    });
     const answer = await respondHitlPost(
       new NextRequest(
         `http://localhost/api/runs/${runId}/hitl/${question.hitlRequestId}/respond`,
@@ -3590,6 +3715,14 @@ it("IT-CBA-05 parks and resumes the same native company Flow node after an assig
     });
     expect(
       (
+        await computeDecisionsQueue(operatorId, "member", {}, database.db)
+      ).items.some(
+        (item) =>
+          item.kind === "hitl" && item.hitl.hitlRequestId === pending[0]?.id,
+      ),
+    ).toBe(false);
+    expect(
+      (
         await database.pool.query(
           "SELECT action_prompt_ordinal,action_resume->>'questionId' AS question_id FROM node_attempts WHERE id=$1",
           [original.id],
@@ -3696,7 +3829,14 @@ it("IT-CBA-05 parks and resumes the same native company Flow node after an assig
       await db
         .delete(platformRuntimeSettings)
         .where(eq(platformRuntimeSettings.id, "singleton"));
-    for (const grant of grants.page.items)
+    const retainedGrants = (
+      await database.pool.query<{ id: string; revision: number }>(
+        "SELECT id,revision FROM company_grants WHERE principal_type='user' AND principal_id=$1 AND revoked_at IS NULL",
+        [operatorId],
+      )
+    ).rows;
+
+    for (const grant of retainedGrants)
       await revokeCompanyGrant(db, administratorId, grant.id, {
         expectedRevision: grant.revision,
         reason: "Release this Flow clarification fixture's exact authority",
@@ -4780,6 +4920,24 @@ it("CBS-03 retains native permission consent, refuses revoked replay and deliver
     });
 
     browserUserId = responderId;
+    const permissionQueue = await computeDecisionsQueue(
+      responderId,
+      "member",
+      {},
+      database.db,
+    );
+    const permissionDecision = permissionQueue.items.find(
+      (item) => item.kind === "hitl" && item.hitl.hitlRequestId === hitl.id,
+    );
+
+    expect(permissionDecision).toMatchObject({
+      kind: "hitl",
+      companyId: request.companyId,
+      projectId: null,
+      runId: receipt.runId,
+      hitl: { kind: "permission", schema: null },
+    });
+    expect(permissionQueue.count).toBe(permissionQueue.items.length);
     const response = await respondHitlPost(
       new NextRequest(
         `http://localhost/api/runs/${receipt.runId}/hitl/${hitl.id}/respond`,

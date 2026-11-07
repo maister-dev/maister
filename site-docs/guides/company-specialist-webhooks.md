@@ -159,6 +159,8 @@ histories. Preserve the appropriate exact values for each update. Current source
 access applies to the entire assignment and its working context. Sharing another
 Run's input does not expose that Run's assignment or later working notes.
 
+Company-only clarification appears under **Company** in Inbox when you currently hold explicit assignment read and answer grants and can access its sources. Losing either grant removes the card and its count. A project-scoped queue does not include company work. Expanded context and the Run link work without a repository.
+
 When a specialist assignment clarification appears in Inbox, answer its displayed
 form under your current answer authority. Suggested text choices permit your own
 answer. The accepted answer becomes a new attributed input revision; the Run's

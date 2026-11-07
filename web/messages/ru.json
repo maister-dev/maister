@@ -823,6 +823,7 @@
     "motto": "Ship Happens."
   },
   "inbox": {
+    "company": "Компания",
     "eyebrow": "По всем проектам",
     "title": "Входящие",
     "subtitle": "{count} задач ждут вас по всем проектам.",

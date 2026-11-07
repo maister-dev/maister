@@ -1,0 +1,83 @@
+{
+  "task": "T24",
+  "date": "2026-11-07",
+  "baseCommit": "516067508",
+  "slice": "Native company Inbox projection, safe forms and expanded context",
+  "status": "Native platform clarification complete; browser and installed-package completion remain T37/T40",
+  "gates": {
+    "owningIntegration": {
+      "tests": 94,
+      "files": 7,
+      "durationSeconds": 65.35,
+      "exitCode": 0
+    },
+    "webUnit": {
+      "tests": 9322,
+      "files": 889,
+      "durationSeconds": 28.76,
+      "exitCode": 0
+    },
+    "typesLintFormat": {
+      "exitCode": 0
+    },
+    "contracts": {
+      "requirements": 84,
+      "exitCode": 0
+    },
+    "docsErd": {
+      "tables": 173,
+      "exitCode": 0
+    },
+    "publicEnglishRussianBuildAndLinks": {
+      "exitCode": 0
+    }
+  },
+  "redToGreen": [
+    "Actual active company question omitted by project-only canonical queue",
+    "Pending post-checkpoint activation-failure question incorrectly visible before activation"
+  ],
+  "qualified": [
+    "Actual native company Flow clarification and permission prompts appear with current read and answer grants",
+    "Count and cards derive from the same canonical queue",
+    "Explicit project scope excludes company work",
+    "Current answer/read revocation removes actionable cards",
+    "Ungranted administrator and revoked company reader cannot fetch expanded Run context",
+    "Expanded context returns private/no-store and no repository diff",
+    "Actual form schema excludes native server prompt/question/checkpoint metadata",
+    "Same native question/node resumes under the existing C3 dispatcher with original input and owner history retained",
+    "Main-only company fixture requires no Brain SQL function for Inbox reads",
+    "Existing project and external HITL/decisions populations and DTO tests pass"
+  ],
+  "harnessNotes": [
+    "Focused permission probe requires the suite established default runner; complete owning suite executes and qualifies the permission case",
+    "First contract run encountered sandbox tsx IPC EPERM; escalated retry passed"
+  ],
+  "limitations": [
+    "No new schema or migration",
+    "No stand/pilot or actual-package readiness claim",
+    "Browser end-to-end remains T37/T40",
+    "Complete Phase 5 global integration and build remain the phase exit requirement"
+  ],
+  "sourceSha256": {
+    "docs/api/web.openapi.yaml": "bdcee1e34e0a1d42b9ae81c13c06713ffebe01c4ea9ffc8e7c13797beb7ff436",
+    "docs/screens/inbox.md": "b064ad97063c1e8e7fb0466dcccf4baf93da2b3822e193cf72a66ec5b6ece1bb",
+    "docs/system-analytics/attention.md": "314ca2e6d17e115ef4c2ac7d1224db58ae1db4e04d924a8d76f1a79b83884ca8",
+    "docs/system-analytics/specialist-assignments.md": "9a5b892c73507ebc4d942cbada33c576cc452d525f7acb9ae1581b71d5d9f4d7",
+    "site-docs/guides/company-specialist-webhooks.md": "4cabb45e841181488b7ed0c7aa2f1851a12604a2eabfb9b2d09a36cf931a408b",
+    "site-docs/ru/guides/company-specialist-webhooks.md": "7e68e83a323be056fc92a8ff5f2151ffa3c01e58e863766a96836485f9c753e6",
+    "web/app/(app)/projects/page.tsx": "4e246b81a9027ad6ae738a4d1564c08940ad41cf7ac3683b1ba6c7d2df345835",
+    "web/app/api/runs/[runId]/inbox-context/route.ts": "7e5b7adf13a18a77ff930c282e8d7dae85c644763733fd8c825583f56eea03c2",
+    "web/app/api/v1/ext/decisions/route.ts": "b4a1b7c576d55db24838188f1ecc89a41d9859ee11e569e69e3dae773c36366b",
+    "web/app/api/v1/ext/hitl/route.ts": "f668f8d034cad8e701af8d4dc81e527294d38ca885c220ac8d1ad4b4f3c21fbc",
+    "web/components/inbox/hitl-inbox-list.tsx": "77c0513715debd03d58667277840698b3dd0e03a6fb38cb269e4b57872f1c487",
+    "web/components/portfolio/decisions-summary.tsx": "69e672b8296b2af5160a677ced64d41d06dabde1b88d6e1479668b3f08a70fe8",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "d4bc230ff9d1be74868af9928c6b86e4b68b7efa25eb680c02ed4f3f6da2c972",
+    "web/lib/agents/company-run-read-access.ts": "db077a365102568e8fd5e45898fd781a3a361629441fd871e4a74c155320ba7e",
+    "web/lib/queries/decisions.ts": "801e19d2a7a7f03cd45b18551e9a7ab58a06cc30630070d727092463187523c8",
+    "web/lib/queries/hitl.ts": "ea94ac4b7055dbc5a0e305a8e07224bedc5e8f66fdd42a22e46681165084984c",
+    "web/lib/queries/inbox-context.ts": "04d59b0e81bc74042266aa656c1b5393f4499c97ea125478a88c13cb857e7512",
+    "web/lib/queries/portfolio.ts": "046b0fc80dbf2f8955b2dd56b8f70f4323e21d9fe1a70701ea20c553856e8837",
+    "web/messages/en.json": "af56e94d69b3912627f873acf2ceeb9a911034ffb48f67dd14a23cc5767e94f1",
+    "web/messages/ru.json": "fbf279cfd9019b0b20b44e78cc2a3f57acf6198736383318c15937ef6aa43c4b"
+  }
+}

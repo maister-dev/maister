@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import pino from "pino";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import { assertCompanyRunReadAccess } from "@/lib/agents/company-run-read-access";
 import { getDb } from "@/lib/db/client";
 import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import * as schemaModule from "@/lib/db/schema";
@@ -43,7 +44,13 @@ function errorResponse(err: unknown, runId: string): NextResponse {
   if (isMaisterError(err)) {
     return NextResponse.json(
       { code: err.code, message: err.message },
-      { status: httpStatusForCode(err.code) },
+      {
+        status:
+          err.details?.reason === "run_unavailable"
+            ? 404
+            : httpStatusForCode(err.code),
+        headers: { "Cache-Control": "private, no-store" },
+      },
     );
   }
   const message = err instanceof Error ? err.message : String(err);
@@ -73,7 +80,9 @@ export async function GET(
       return NextResponse.json({ message: "not found" }, { status: 404 });
     }
 
-    await requireProjectAction(run.projectId, "readBoard");
+    if (run.projectId === null)
+      await assertCompanyRunReadAccess(getDb(), user.id, runId);
+    else await requireProjectAction(run.projectId, "readBoard");
     const recipient = { kind: "user" as const, userId: user.id };
 
     await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
@@ -86,9 +95,13 @@ export async function GET(
       flowId: run.flowId ?? null,
     });
 
-    await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
+    if (run.projectId === null)
+      await assertCompanyRunReadAccess(getDb(), user.id, runId);
+    else await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
 
-    return NextResponse.json(context);
+    return NextResponse.json(context, {
+      headers: { "Cache-Control": "private, no-store" },
+    });
   } catch (err) {
     return errorResponse(err, runId);
   }
