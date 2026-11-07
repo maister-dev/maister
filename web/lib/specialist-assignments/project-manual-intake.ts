@@ -17,6 +17,7 @@ import {
 } from "./intake";
 import { getSpecialistAssignment } from "./store";
 import { wakePendingSpecialistAssignment } from "./admission-wake";
+import { loadProjectCoordinatorProvider } from "./project-flow-provider";
 
 import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
 import { resolveAgentConfig } from "@/lib/agents/config";
@@ -80,14 +81,27 @@ async function prepareProjectManualAssignment(
 
   if (
     !effective.parsed.specialist ||
-    effective.parsed.flow !== null ||
-    effective.parsed.kind !== "operational"
+    (effective.parsed.flow === null && effective.parsed.kind !== "operational")
   )
     throw new MaisterError(
       "PRECONDITION",
       "Project manual standalone assignments require a declared operational specialist; coordinator admission requires its declared Flow",
     );
-  const contract = buildOperationalContract(effective);
+  if (typeof effective.resolvedRevision !== "string")
+    throw new MaisterError(
+      "PRECONDITION",
+      "The specialist's exact package revision is unavailable",
+    );
+  const coordinator =
+    effective.parsed.flow === null
+      ? null
+      : await loadProjectCoordinatorProvider(
+          tx,
+          request.owner.projectId,
+          effective.parsed.flow,
+        );
+  const contract =
+    coordinator?.resultContract ?? buildOperationalContract(effective);
   const resolvedConfiguration = z
     .record(z.string(), z.json())
     .safeParse(
@@ -121,11 +135,13 @@ async function prepareProjectManualAssignment(
       },
     },
     standingDefinition: {
-      schemaVersion: 1,
+      ...(coordinator
+        ? { schemaVersion: 2 as const, coordinatorFlow: coordinator.snapshot }
+        : { schemaVersion: 1 as const }),
       agentId: effective.parsed.id,
       packageInstallId: effective.packageInstallId,
       packageName: effective.packageName,
-      packageRevision: contract.provenance.resolvedRevision,
+      packageRevision: effective.resolvedRevision,
       definitionSha256: agentDefinitionSha256(effective.parsed),
       definition: effective.parsed,
       configuration:
@@ -252,7 +268,18 @@ export async function submitProjectManualAssignment(
         receipt.assignment.id,
       );
 
-      if (winner.runIds.length === 0) throw error;
+      if (winner.runIds.length === 0) {
+        const retainedCarrier = (
+          await db.execute(sql`
+          SELECT id FROM specialist_assignments
+          WHERE id=${receipt.assignment.id} AND project_id=${request.owner.projectId}
+            AND status='queued' AND input_revision=${receipt.inputRevision}
+            AND revision=${receipt.assignment.revision + 1} AND project_task_id IS NOT NULL
+        `)
+        ).rows[0];
+
+        if (!retainedCarrier) throw error;
+      }
       log.info(
         {
           assignmentId: winner.id,

@@ -3145,6 +3145,7 @@ table specialist_assignments {
   company_id text
   project_id text
   specialist_binding_id text [not null]
+  project_task_id text
   requester jsonb [not null]
   responsible jsonb [not null]
   status text [not null, default: 'queued']
@@ -3167,6 +3168,8 @@ table specialist_assignments {
 
 
 
+
+    project_task_id [name: 'specialist_assignments_project_task_idx']
 
 
 
@@ -4748,6 +4751,8 @@ ref sessions_user_id_users_id_fk: sessions.user_id > users.id [delete: cascade, 
 ref specialist_assignments_company_id_companies_id_fk: specialist_assignments.company_id > companies.id [delete: restrict, update: no action]
 
 ref specialist_assignments_project_id_projects_id_fk: specialist_assignments.project_id > projects.id [delete: restrict, update: no action]
+
+ref specialist_assignments_project_task_id_tasks_id_fk: specialist_assignments.project_task_id > tasks.id [delete: restrict, update: no action]
 
 ref specialist_input_revisions_assignment_fk: specialist_input_revisions.assignment_id > specialist_assignments.id [delete: restrict, update: no action]
 

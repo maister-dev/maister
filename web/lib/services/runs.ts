@@ -3,6 +3,7 @@ import "server-only";
 import type { TasklessAgentFlowCarrierAdmission } from "@/lib/agents/carrier-launch-authority";
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 import type { AgentTriggerReservation } from "@/lib/agents/scheduled-request-store";
+import type { ProjectAssignmentAdmission } from "@/lib/specialist-assignments/project-admission";
 import type { AgentActivitySnapshot } from "@/lib/agents/activity-types";
 import type { CapabilityAgent } from "@/lib/config.schema";
 import type { ProjectAction } from "@/lib/authz";
@@ -29,6 +30,9 @@ import {
   queryErrorDiagnostics,
   redactQueryError,
 } from "@/lib/db/pg-error";
+import { prepareProjectCoordinatorAssignmentAdmission } from "@/lib/specialist-assignments/project-admission";
+import { activateInitialSpecialistAssignmentRunInTransaction } from "@/lib/specialist-assignments/store";
+import { contentDigest } from "@/lib/evaluations/digest";
 import { loadFlowScheduledRequestSource } from "@/lib/agents/scheduled-request-lineage";
 import { assertScheduledRequestMatches } from "@/lib/agents/scheduled-request-store";
 import { assertScheduledRequestConsumer } from "@/lib/agents/scheduled-request-flow";
@@ -303,6 +307,7 @@ const log = pino({
 
 export type LaunchRunInput = {
   taskId: string;
+  specialistAssignment?: ProjectAssignmentAdmission;
   flowId?: string;
   runnerId?: string;
   baseBranch?: string;
@@ -1948,6 +1953,33 @@ async function* executeFlowLaunch(
 
       await _db.transaction(async (tx: any) => {
         await accepted?.beginBinding(tx);
+        if (input.specialistAssignment && !agentId)
+          throw new MaisterError(
+            "CONFIG",
+            "Project assignment coordinator admission requires its responsible professional role",
+          );
+        const assignmentAdmission =
+          input.specialistAssignment && agentId
+            ? await prepareProjectCoordinatorAssignmentAdmission(
+                tx,
+                input.specialistAssignment,
+                {
+                  projectId: project.id,
+                  agentId,
+                  taskId: task.id,
+                  executionPolicy,
+                  resultContract,
+                  coordinatorFlow: {
+                    flowId: flow.id,
+                    flowRefId: flow.flowRefId,
+                    flowRevisionId: revision.id,
+                    resolvedRevision: revision.resolvedRevision,
+                    manifestSha256: contentDigest(revision.manifest),
+                  },
+                },
+              )
+            : null;
+
         await ctx.assertLaunchOwnership?.(tx);
         await taskAdmission.apply(tx);
 
@@ -1982,16 +2014,14 @@ async function* executeFlowLaunch(
             projectId: project.id,
             reservation: input.agentTriggerReservation,
           });
-        const knowledgeAccess = await nativeKnowledgeCaptureAtLaunch(
-          tx,
-          resultContract,
-          {
+        const knowledgeAccess =
+          assignmentAdmission?.capture ??
+          (await nativeKnowledgeCaptureAtLaunch(tx, resultContract, {
             parentRunId: input.parentRunId ?? null,
             sourceRestrictions: [
               { kind: "project_context", projectId: project.id },
             ],
-          },
-        );
+          }));
         const insertedRun = await tx
           .insert(runs)
           .values({
@@ -2033,7 +2063,11 @@ async function* executeFlowLaunch(
             launchedAt: agentActivity ? sql`CURRENT_TIMESTAMP` : null,
             activitySortAt: agentActivity ? sql`CURRENT_TIMESTAMP` : null,
             activityTimestampProvenance: agentActivity ? "launch" : null,
-            agentActivitySnapshot: agentActivity,
+            agentActivitySnapshot:
+              assignmentAdmission?.activity ?? agentActivity,
+            ...(assignmentAdmission
+              ? { agentConfig: assignmentAdmission.configuration }
+              : {}),
             // M39 (ADR-106): trigger provenance for an agent-driven flow run. The
             // partial unique (agent_id, trigger_event_id) index is the race backstop
             // for a CONCURRENT redelivery (the sequential one is caught by
@@ -2277,6 +2311,18 @@ async function* executeFlowLaunch(
         });
 
         await accepted?.bindRun(tx);
+        if (input.specialistAssignment)
+          await activateInitialSpecialistAssignmentRunInTransaction(
+            tx,
+            input.specialistAssignment.userId,
+            input.specialistAssignment.assignmentId,
+            {
+              runId,
+              inputRevision: input.specialistAssignment.inputRevision,
+              expectedRevision: input.specialistAssignment.expectedRevision,
+              role: "coordinator",
+            },
+          );
         await ctx.recordSuccessAudit?.(tx, runId);
       });
     } catch (err) {

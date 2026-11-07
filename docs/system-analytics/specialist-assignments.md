@@ -194,7 +194,7 @@ Actual source/API adapters wake existing dispatch after commit and never repeat
 reservation for an exact duplicate. Project repository admission remains its own
 existing project boundary.
 
-### Project standalone manual admission
+### Project manual admission
 
 Project manual work resolves `specialistBindingId` through the current project
 agent attachment, with current read/launch authority and the actual trusted
@@ -215,18 +215,35 @@ server-appointed input with the active role and initiating user; it grants no
 general Brain read access or confirmation authority. Later input heads cannot
 rewrite the retained prompt. Technical Done leaves business acceptance separate.
 
-The session `POST /api/specialist-assignments` exposes company-owned and project standalone operational-specialist manual
+A declared project coordinator additionally retains standing snapshot v2 with the
+exact project Flow ID/ref, installed revision ID, resolved revision and manifest
+witness. Existing v1 snapshots remain byte-for-byte unchanged. The current trusted,
+enabled provider and mandatory public-result contract are checked separately from
+physical runner availability. A provider change refuses admission instead of
+silently selecting a different graph.
+
+The assignment retains its initial existing Task identity once. Task creation and
+that link commit under the assignment lock; retries reuse it. Its shared title is
+the role name and its stored prompt is only the role identity. The runtime overlays
+the private original assignment input without copying it to the task board. The
+existing Flow reservation transaction binds the exact task/provider/input, source
+role/configuration and result contract, then links and activates the assignment.
+A duplicate arriving between task retention and Run reservation can observe the
+same queued assignment; it cannot mint a second task. Later continuations retain
+separate work/Run links rather than replacing this initial identity.
+
+The session `POST /api/specialist-assignments` exposes company-owned and project operational-specialist/coordinator manual
 submission with the bounded original request and idempotency key. It returns the
 existing assignment DTO (201 for new work, 200 for exact replay), then uses the
 existing pool scheduler after the reservation commits. Host pressure/capacity can
 leave execution Pending. A replay can signal interrupted pending admission without
 allocating another execution. `GET /api/specialist-assignments/{id}` supports
 currently authorized company/project inspection; both responses are private and
-no-store. Project coordinator and external bearer adapters remain Designed. Fresh company standalone submission is qualified through the actual
+no-store. External bearer and source-specific adapters remain Designed. Fresh company standalone submission is qualified through the actual
 session route, default scheduler dispatch, real supervisor/ACP process, validated
 operational result and physical cleanup. Completed HTTP replay issues no second
 create/prompt command. Coordinator intake is qualified through queued HTTP
-admission and its existing driver; the stand pilot remains unqualified.
+admission and its existing driver. Project coordinator intake uses the actual attached Flow, repository admission and native result-only terminal path; the stand pilot remains unqualified.
 
 
 ### Clarification and context

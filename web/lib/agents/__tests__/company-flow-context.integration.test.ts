@@ -154,6 +154,13 @@ let storedFlowRunId: string;
 let nativeFlowRunId: string;
 let nativeNodeAttemptId: string;
 let retainedCompanyCredential: IssuedAgentToken;
+let migrationInputsBefore: { value: JsonValue }[];
+let migrationInputsAfter: { value: JsonValue }[];
+let migrationAssignmentsBefore: { value: JsonValue }[];
+let migrationAssignmentsAfter: {
+  value: JsonValue;
+  project_task_id: string | null;
+}[];
 let migrationTokensBefore: { value: JsonValue }[];
 let migrationTokensAfter: { value: JsonValue }[];
 let baselineCounts: AllocationCounts;
@@ -584,6 +591,16 @@ beforeAll(async () => {
       "SELECT to_jsonb(r) AS value FROM runs r ORDER BY id",
     )
   ).rows;
+  migrationInputsBefore = (
+    await database.pool.query<{ value: JsonValue }>(
+      "SELECT to_jsonb(input) AS value FROM specialist_input_revisions input ORDER BY assignment_id,revision",
+    )
+  ).rows;
+  migrationAssignmentsBefore = (
+    await database.pool.query<{ value: JsonValue }>(
+      "SELECT to_jsonb(assignment) AS value FROM specialist_assignments assignment ORDER BY id",
+    )
+  ).rows;
   await applyMainMigration(database.db, "0248_company_flow_execution");
   migrationTokensBefore = (
     await database.pool.query<{ value: JsonValue }>(
@@ -595,6 +612,20 @@ beforeAll(async () => {
   await applyMainMigration(database.db, "0251_company_flow_runtime");
   await applyMainMigration(database.db, "0252_company_run_cancellation");
   await applyMainMigration(database.db, "0253_specialist_intake_receipts");
+  await applyMainMigration(database.db, "0254_specialist_project_flow_input");
+  migrationAssignmentsAfter = (
+    await database.pool.query<{
+      value: JsonValue;
+      project_task_id: string | null;
+    }>(
+      "SELECT to_jsonb(assignment)-'project_task_id' AS value,project_task_id FROM specialist_assignments assignment ORDER BY id",
+    )
+  ).rows;
+  migrationInputsAfter = (
+    await database.pool.query<{ value: JsonValue }>(
+      "SELECT to_jsonb(input) AS value FROM specialist_input_revisions input ORDER BY assignment_id,revision",
+    )
+  ).rows;
   migrationTokensAfter = (
     await database.pool.query<{ value: JsonValue }>(
       "SELECT to_jsonb(t) AS value FROM project_tokens t ORDER BY id",
@@ -771,7 +802,17 @@ async function seedRetainedStandalone(): Promise<void> {
   });
 }
 
-it("preserves populated standalone/project/private Run and credential bytes through 0233–0238 and keeps project deletion independent of Brain", async () => {
+it("preserves populated standalone/project/private Run and credential bytes through 0233–0239 and keeps project deletion independent of Brain", async () => {
+  expect(migrationInputsBefore.length).toBeGreaterThan(0);
+  expect(migrationInputsAfter).toEqual(migrationInputsBefore);
+  expect(migrationAssignmentsAfter.map(({ value }) => ({ value }))).toEqual(
+    migrationAssignmentsBefore,
+  );
+  expect(
+    migrationAssignmentsAfter.every(
+      ({ project_task_id }) => project_task_id === null,
+    ),
+  ).toBe(true);
   expect(migrationTokensAfter).toEqual(migrationTokensBefore);
   expect(migrationTokensBefore).toHaveLength(3);
   await expect(
@@ -2061,6 +2102,7 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
           body: JSON.stringify(value),
         }),
       );
+
     await database.pool.query(
       "INSERT INTO execution_host_pressure(execution_host_id,pressured_since) SELECT id,now() FROM execution_hosts WHERE kind='local_direct' AND retired_at IS NULL ON CONFLICT DO NOTHING",
     );
@@ -2105,6 +2147,7 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
           params: Promise.resolve({ assignmentId }),
         },
       );
+
     expect(
       (
         await database.pool.query("SELECT status FROM runs WHERE id=$1", [

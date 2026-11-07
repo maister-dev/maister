@@ -7,6 +7,8 @@ import pino from "pino";
 
 import { resolveCompanyFlowPersona } from "./company-flow-persona";
 
+import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
+import { loadProjectAssignmentExecutionInput } from "@/lib/specialist-assignments/project-admission";
 import { materializeSubagentDefinition } from "@/lib/capabilities/adapter-home";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -83,6 +85,9 @@ export async function resolveFlowBoundAgent(args: {
     .select({
       projectId: runs.projectId,
       companyId: runs.companyId,
+      flowId: runs.flowId,
+      flowRevisionId: runs.flowRevisionId,
+      flowRevision: runs.flowRevision,
       sourceAgentId: runs.sourceAgentId,
       resultContract: runs.resultContract,
       knowledgeAccess: runs.knowledgeAccess,
@@ -142,6 +147,27 @@ export async function resolveFlowBoundAgent(args: {
       _db,
     ));
   const parsed = effective.parsed;
+  const assignedInput =
+    typeof projectId === "string" && args.agentId === runRows[0]?.sourceAgentId
+      ? await loadProjectAssignmentExecutionInput(_db, {
+          ...runRows[0],
+          id: args.runId,
+          projectId,
+        })
+      : null;
+
+  if (
+    assignedInput &&
+    (assignedInput.snapshot.standingDefinition.agentId !== args.agentId ||
+      assignedInput.snapshot.standingDefinition.packageInstallId !==
+        effective.packageInstallId ||
+      assignedInput.snapshot.standingDefinition.definitionSha256 !==
+        agentDefinitionSha256(parsed))
+  )
+    throw new MaisterError(
+      "CONFLICT",
+      "The project coordinator persona differs from its frozen original assignment",
+    );
 
   if (parsed.kind === "operational")
     throw new MaisterError(
@@ -205,9 +231,13 @@ export async function resolveFlowBoundAgent(args: {
     return { mode: "subagent", materializedPath: targetPath };
   }
 
-  const prompt = companyPersona
-    ? `${parsed.prompt.trim()}\n\n## Specialist configuration\n${JSON.stringify(companyPersona.configuration)}`
-    : parsed.prompt.trim();
+  const configuration =
+    companyPersona?.configuration ??
+    assignedInput?.snapshot.standingDefinition.configuration;
+  const prompt =
+    configuration !== undefined
+      ? `${parsed.prompt.trim()}\n\n## Specialist configuration\n${JSON.stringify(configuration)}`
+      : parsed.prompt.trim();
 
   return { mode: "session", prompt };
 }

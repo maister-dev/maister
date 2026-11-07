@@ -90,6 +90,8 @@ import {
   taskLaunchClarificationsForRun,
 } from "@/lib/tasks/launch-execution-input";
 import { activateInitialSpecialistAssignmentRunInTransaction } from "@/lib/specialist-assignments/store";
+import { reserveProjectAssignmentTask } from "@/lib/specialist-assignments/project-task";
+import { requireProjectActionForUser } from "@/lib/authz";
 import {
   prepareProjectAssignmentAdmission,
   loadProjectAssignmentExecutionInput,
@@ -980,6 +982,34 @@ async function launchAgentDrivenFlowRun(
     : null;
   let taskId = input.taskId ?? null;
   let carrierAdmission: TasklessAgentFlowCarrierAdmission | null = null;
+  let specialistAssignment = input.specialistAssignment;
+
+  if (specialistAssignment) {
+    const reference = specialistAssignment;
+    const { createTask } = await import("@/lib/services/tasks");
+    const carrier = await reserveProjectAssignmentTask(
+      _db,
+      input.projectId,
+      reference,
+      async (tx) => {
+        const created = await createTask(
+          {
+            title: `${ctx.effective.parsed.name} (${input.trigger.source})`,
+            prompt: input.agentId,
+            flowId: flow.id as string,
+            agentId: input.agentId,
+          },
+          { projectId: input.projectId, actorUserId: reference.userId },
+          tx,
+        );
+
+        return created.taskId;
+      },
+    );
+
+    taskId = carrier.taskId;
+    specialistAssignment = carrier.admission;
+  }
 
   if (!taskId) {
     const created = await createTasklessAgentFlowCarrier(
@@ -1039,6 +1069,7 @@ async function launchAgentDrivenFlowRun(
     taskId,
     flowId: flow.id as string,
     agentId: input.agentId,
+    specialistAssignment,
       ...(nativeFlow && input.nativeInput
         ? {
             parentRunId: input.parentRunId ?? undefined,
@@ -1429,12 +1460,7 @@ async function launchAgentRunWithAdmission(
     agentId: input.agentId,
   });
 
-  if (
-    input.specialistAssignment &&
-    (input.parentRunId ||
-      nativeInput ||
-      currentContext.effective.parsed.flow !== null)
-  )
+  if (input.specialistAssignment && (input.parentRunId || nativeInput))
     throw new MaisterError(
       "CONFIG",
       "Project assignment admission requires its explicit standalone entry; delegation and coordinator Flows use their own bounded admission",

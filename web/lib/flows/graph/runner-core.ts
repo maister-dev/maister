@@ -19,6 +19,10 @@ import { eq } from "drizzle-orm";
 import { taskLaunchFlowAssetsPathForRun } from "@/lib/tasks/launch-flow-assets";
 import { taskLaunchInputForRun } from "@/lib/tasks/launch-execution-input";
 import { MaisterError, isMaisterError } from "@/lib/errors";
+import {
+  loadProjectAssignmentExecutionInput,
+  projectAssignmentInputPrompt,
+} from "@/lib/specialist-assignments/project-admission";
 import { nativeDelegationExecutionInput } from "@/lib/orchestrator/native-input";
 import { assertNativeWorkspaceMode } from "@/lib/brain/knowledge-workspace-policy";
 import { isNativeFindingsContract } from "@/lib/run-results/contract";
@@ -464,10 +468,19 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
     flowInstallPath = systemCachePath(flow.flowRefId, run.flowRevision);
   }
 
+  const assignmentInput = await loadProjectAssignmentExecutionInput(db, run);
+  const privateTask = assignmentInput
+    ? {
+        ...task,
+        title: assignmentInput.snapshot.objectiveInput.objective,
+        prompt: projectAssignmentInputPrompt(assignmentInput),
+      }
+    : executionTaskInput(run, task);
+
   return {
     // project_id is guaranteed (a flow run always has a project; ADR-097).
     run: { ...run, projectId: requireRunProjectId(run.projectId, runId) },
-    task: executionTaskInput(run, task),
+    task: privateTask,
     flow,
     manifest,
     executor,

@@ -178,7 +178,7 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | `web/lib/agents/company-flow-materialization.ts` | Current company/frozen-session policy through shared capability evidence, file ownership and materialization contracts |
 | `web/lib/agents/company-flow-workspace.ts` | Empty native source baseline, current integrity and existing lease-owned platform generations |
 | `web/lib/run-results/company-flow-terminal.ts` | Required result, current driver/result witnesses and physical quiescence before native company graph settlement/disposition |
-| `web/app/api/specialist-assignments/` | Company/project operational manual submission and currently authorized inspection; project coordinator intake remains designed |
+| `web/app/api/specialist-assignments/` | Company/project specialist and coordinator manual submission with current authority and exact input inspection |
 | `web/lib/specialist-assignments/store.ts` | Durable company/project assignment heads, frozen input history, current authority, CAS and existing-run links |
 | `web/lib/run-results/operational-projection.ts` | Shared operational diagnostic projection for run details, collect and automation history |
 | `web/lib/gc/operational-disposition.ts` | Durable operational cleanup through existing workspace lifecycle claims |

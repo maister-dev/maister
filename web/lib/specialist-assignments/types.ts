@@ -154,8 +154,20 @@ export type AssignmentAuthoritySnapshot = Readonly<{
   witnesses: readonly AssignmentAuthorityWitness[];
   executionPolicy: ExecutionPolicy;
 }>;
-export type AssignmentStandingSnapshot = Readonly<{
-  schemaVersion: 1;
+export const projectCoordinatorFlowSnapshotSchema = z
+  .object({
+    flowId: identity,
+    flowRefId: identity,
+    flowRevisionId: identity,
+    resolvedRevision: postgresTextSchema.min(1).max(192),
+    manifestSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+export type ProjectCoordinatorFlowSnapshot = z.infer<
+  typeof projectCoordinatorFlowSnapshotSchema
+>;
+
+type AssignmentStandingBase = Readonly<{
   agentId: string;
   packageInstallId: string;
   packageName: string;
@@ -164,6 +176,14 @@ export type AssignmentStandingSnapshot = Readonly<{
   definition: ParsedAgentDefinition;
   configuration: Readonly<Record<string, JsonValue>> | null;
 }>;
+export type AssignmentStandingSnapshot = AssignmentStandingBase &
+  (
+    | Readonly<{ schemaVersion: 1 }>
+    | Readonly<{
+        schemaVersion: 2;
+        coordinatorFlow: ProjectCoordinatorFlowSnapshot;
+      }>
+  );
 export type AssignmentInputSnapshot = Readonly<{
   schemaVersion: 1;
   objectiveInput: AssignmentObjectiveInput;

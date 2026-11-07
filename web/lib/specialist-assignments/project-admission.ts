@@ -5,7 +5,11 @@ import type { KnowledgeAccessCapture } from "@/lib/company/types";
 import type { EffectiveAgentDefinition } from "@/lib/agents/effective";
 import type { RunResultContract } from "@/lib/run-results/types";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
-import type { AssignmentInputRevision } from "./types";
+import type {
+  AssignmentInputRevision,
+  ProjectCoordinatorFlowSnapshot,
+} from "./types";
+import type { AgentActivitySnapshot } from "@/lib/agents/activity-types";
 
 import { sql } from "drizzle-orm";
 import { z } from "zod";
@@ -16,12 +20,17 @@ import {
   lockSpecialistAssignment,
 } from "./store";
 import { authorizeAssignment } from "./access";
+import { assertProjectCoordinatorProvider } from "./project-flow-provider";
 
 import { resolveAgentConfig } from "@/lib/agents/config";
 import { recommendedExecutionPolicySchema } from "@/lib/agents/definition";
 import { resolveAgentLaunchExecutionPolicy } from "@/lib/agents/execution-policy";
 import { executionPolicySchema } from "@/lib/runs/execution-policy";
-import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
+import {
+  agentDefinitionSha256,
+  buildAgentActivitySnapshot,
+} from "@/lib/agents/activity-snapshot";
+import { resolveEffectiveAgentDefinition } from "@/lib/agents/effective";
 import { knowledgeRevisionSchema } from "@/lib/brain/knowledge-types";
 import { contentDigest } from "@/lib/evaluations/digest";
 import { MaisterError } from "@/lib/errors";
@@ -49,6 +58,8 @@ export type ProjectAssignmentLaunchContext = Readonly<{
   configuration: Readonly<Record<string, unknown>> | null;
   executionPolicy: ExecutionPolicy;
   resultContract: RunResultContract | null;
+  coordinatorFlow?: ProjectCoordinatorFlowSnapshot;
+  taskId?: string;
 }>;
 
 /** Hold responsibility and compare the exact frozen input before the existing Run insert. */
@@ -66,7 +77,7 @@ export async function prepareProjectAssignmentAdmission(
     );
   const reference = parsed.data;
 
-  await lockSpecialistAssignment(
+  const head = await lockSpecialistAssignment(
     tx,
     reference.assignmentId,
     reference.expectedRevision,
@@ -179,6 +190,28 @@ export async function prepareProjectAssignmentAdmission(
       { details: { reason: "project_assignment_launch_mismatch" } },
     );
 
+  const retainedCoordinator =
+    standing.schemaVersion === 2 ? standing.coordinatorFlow : null;
+
+  if (
+    contentDigest(retainedCoordinator) !==
+      contentDigest(context.coordinatorFlow ?? null) ||
+    (context.coordinatorFlow !== undefined &&
+      (typeof context.taskId !== "string" ||
+        head.project_task_id !== context.taskId))
+  )
+    throw new MaisterError(
+      "CONFLICT",
+      "Project coordinator admission must preserve the exact retained Flow and initial task",
+      { details: { reason: "project_assignment_provider_changed" } },
+    );
+  if (standing.schemaVersion === 2)
+    await assertProjectCoordinatorProvider(
+      tx,
+      context.projectId,
+      standing.coordinatorFlow,
+    );
+
   return {
     schemaVersion: 1,
     state: "complete",
@@ -196,6 +229,62 @@ export async function prepareProjectAssignmentAdmission(
   };
 }
 
+/** Bind an existing repository-backed graph reservation to its responsible role and frozen assignment. */
+export async function prepareProjectCoordinatorAssignmentAdmission(
+  tx: SqlTransaction,
+  reference: ProjectAssignmentAdmission,
+  actual: Readonly<{
+    projectId: string;
+    agentId: string;
+    taskId: string;
+    coordinatorFlow: ProjectCoordinatorFlowSnapshot;
+    executionPolicy: ExecutionPolicy;
+    resultContract: RunResultContract | null;
+  }>,
+): Promise<
+  Readonly<{
+    capture: KnowledgeAccessCapture;
+    configuration: Record<string, unknown> | null;
+    activity: AgentActivitySnapshot;
+  }>
+> {
+  const row = (
+    await tx.execute(
+      sql`SELECT id,config FROM agent_project_links WHERE project_id=${actual.projectId} AND agent_id=${actual.agentId} AND enabled FOR SHARE`,
+    )
+  ).rows[0];
+  const parsed = z
+    .object({ id: identity, config: z.record(z.string(), z.json()).nullable() })
+    .safeParse(row);
+
+  if (!parsed.success)
+    throw new MaisterError(
+      "PRECONDITION",
+      "The responsible project coordinator attachment is unavailable",
+    );
+  const effective = await resolveEffectiveAgentDefinition(
+    { projectId: actual.projectId, agentId: actual.agentId },
+    tx,
+  );
+  const values = resolveAgentConfig(
+    effective.parsed.config,
+    parsed.data.config,
+  );
+  const configuration = Object.keys(values).length === 0 ? null : values;
+  const capture = await prepareProjectAssignmentAdmission(tx, reference, {
+    ...actual,
+    bindingId: parsed.data.id,
+    effective,
+    configuration,
+  });
+
+  return {
+    capture,
+    configuration,
+    activity: buildAgentActivitySnapshot(actual.agentId, effective),
+  };
+}
+
 /** Read the Run's retained appointment; later input heads cannot rewrite its prompt. */
 export async function loadProjectAssignmentExecutionInput(
   db: SqlDatabase,
@@ -203,6 +292,9 @@ export async function loadProjectAssignmentExecutionInput(
     id?: string;
     projectId?: string | null;
     knowledgeAccess?: KnowledgeAccessCapture | null;
+    flowId?: string | null;
+    flowRevisionId?: string | null;
+    flowRevision?: string;
   }>,
 ): Promise<AssignmentInputRevision | null> {
   const references =
@@ -221,6 +313,7 @@ export async function loadProjectAssignmentExecutionInput(
       "Project execution must have one exact original assignment input",
     );
   const reference = references[0]!;
+  const projectId = run.projectId;
 
   return db.transaction(async (tx) => {
     const link = (
@@ -242,12 +335,40 @@ export async function loadProjectAssignmentExecutionInput(
         "The execution's exact assignment appointment is unavailable",
       );
 
-    return getSpecialistAssignmentInputInTransaction(
+    const input = await getSpecialistAssignmentInputInTransaction(
       tx,
       link.user_id,
       reference.assignmentId,
       reference.inputRevision,
     );
+
+    await authorizeAssignment(
+      tx,
+      link.user_id,
+      { kind: "project", projectId },
+      "assignments:update",
+      input.snapshot.authoritySnapshot.executionPolicy,
+    );
+    const standing = input.snapshot.standingDefinition;
+
+    if (standing.schemaVersion === 2) {
+      if (
+        run.flowId !== standing.coordinatorFlow.flowId ||
+        run.flowRevisionId !== standing.coordinatorFlow.flowRevisionId ||
+        run.flowRevision !== standing.coordinatorFlow.resolvedRevision
+      )
+        throw new MaisterError(
+          "CONFLICT",
+          "The retained project coordinator Run differs from its original provider witness",
+        );
+      await assertProjectCoordinatorProvider(
+        tx,
+        projectId,
+        standing.coordinatorFlow,
+      );
+    }
+
+    return input;
   });
 }
 

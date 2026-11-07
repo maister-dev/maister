@@ -27,6 +27,7 @@ import {
   specialistRunLinkInputSchema,
 } from "./types";
 import { decodeAssignmentInput, retainAssignmentInput } from "./input-snapshot";
+import { assertProjectCoordinatorProvider } from "./project-flow-provider";
 
 import { companyExecutionSnapshotSchema } from "@/lib/agents/company-execution-types";
 import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
@@ -81,7 +82,7 @@ async function validateStandingDefinition(
 
   if (
     !role ||
-    standing.schemaVersion !== 1 ||
+    (standing.schemaVersion !== 1 && standing.schemaVersion !== 2) ||
     standing.agentId !== input.responsibleAgentId ||
     standing.packageName !== role[1]
   )
@@ -146,6 +147,21 @@ async function validateStandingDefinition(
   );
 
   if (configurationError) throw new MaisterError("CONFIG", configurationError);
+  if (standing.schemaVersion === 2) {
+    if (
+      input.owner.kind !== "project" ||
+      standing.definition.flow !== standing.coordinatorFlow.flowRefId
+    )
+      throw new MaisterError(
+        "CONFIG",
+        "An exact project coordinator witness requires its project owner and declared Flow",
+      );
+    await assertProjectCoordinatorProvider(
+      tx,
+      input.owner.projectId,
+      standing.coordinatorFlow,
+    );
+  }
 }
 
 /** All bytes returned here have passed current assignment and inherited-source policy. */

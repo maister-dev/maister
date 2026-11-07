@@ -109,6 +109,9 @@ erDiagram
 
 Generated main `0253_specialist_intake_receipts` adds one immutable source-delivery receipt per canonical owner/source key. It references the exact existing assignment input, retains the server actor and original request digest, and indexes assignment history. Source keys include the owner and canonical origin, manual requester identity, and the addressed specialist binding for task comments. A unique `(source_kind,source_key)` plus a bounded transaction advisory lock serializes concurrent deliveries; content conflicts do not repeat dependent writes. Insert validation binds source kind and actor to the retained assignment/input. UPDATE and DELETE refuse. No Brain table is referenced; existing rows are not rewritten. Source dispatch and continuation remain their owning slices.
 
+Generated main `0254_specialist_project_flow_input` permits an explicit standing snapshot v2 only for newly retained project coordinator inputs. Its closed Flow witness names the project provider/ref, exact installed revision and resolved revision, plus the manifest SHA-256; v1 input bytes and existing assignment fields remain unchanged. A nullable `specialist_assignments.project_task_id` references the initial existing project task, with an owner CHECK, same-project reference guard, immutable non-null link and partial index. Its first CAS write and ordinary task creation commit together. No legacy task identity is invented; company assignments retain NULL. Existing input/history guards and the existing Run/node-attempt ledgers remain authoritative. No Brain FK or new execution ledger is introduced.
+
+
 ## Exact persistence contract
 
 All new entity IDs are server-generated; timestamps UTC. Versioned closed JSON contains typed fields specified in the owning API/native schemas. Absence/null/legacy variants are explicit, not generic empty objects.

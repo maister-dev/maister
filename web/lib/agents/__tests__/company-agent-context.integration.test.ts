@@ -20,7 +20,7 @@ import os from "node:os";
 import { join, resolve, sep } from "node:path";
 import { Writable } from "node:stream";
 
-import { parse } from "yaml";
+import { parse, stringify } from "yaml";
 import pino from "pino";
 import Ajv from "ajv";
 import { eq, sql } from "drizzle-orm";
@@ -152,6 +152,7 @@ import {
 } from "@/lib/packages/attach";
 import { loadNativeInputForUser } from "@/lib/orchestrator/native-input-read";
 import { attachAgent } from "@/lib/agents/project-links";
+import { enableRevision } from "@/lib/flows/lifecycle";
 import { startMainAndBrainPostgresTestDb } from "@/test-support/pg-container";
 import { seedProjectRow } from "@/test-support/execution-host-seed";
 import { git, initRepo } from "@/test-support/git-fixture";
@@ -302,6 +303,52 @@ beforeAll(async () => {
         "\n",
     );
   }
+  await writeFile(
+    join(source, "flows/rah-control/flow.yaml"),
+    stringify({
+      schemaVersion: 1,
+      name: "rah-control",
+      compat: { engine_min: "3.12.0" },
+      result: {
+        export: {
+          schema: "./schemas/evidence-findings.v1.json",
+          native_contract: "evidence_findings_v1",
+          from: ["research"],
+          required: true,
+        },
+      },
+      nodes: [
+        {
+          id: "research",
+          type: "ai_coding",
+          action: {
+            prompt:
+              "Investigate the original assigned request: {{ task.prompt }}\nfixture-output:" +
+              JSON.stringify({
+                bytes: 0,
+                text:
+                  "```json maister:output\n" +
+                  JSON.stringify({
+                    schemaVersion: 1,
+                    findings: [],
+                    knowledgeProposals: [],
+                    selection: [],
+                  }) +
+                  "\n```",
+              }) +
+              "\n",
+          },
+          output: {
+            result: {
+              schema: "./schemas/evidence-findings.v1.json",
+              required: true,
+            },
+          },
+          transitions: { success: "done" },
+        },
+      ],
+    }),
+  );
   await initRepo(source);
   await git(
     source,
@@ -966,6 +1013,220 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
       },
       { timeout: 30000, interval: 25 },
     );
+    const coordinatorProvider = (
+      await database.pool.query(
+        "SELECT enabled_revision_id FROM flows WHERE project_id=$1 AND flow_ref_id='rah-control'",
+        [project.id],
+      )
+    ).rows[0];
+
+    await enableRevision({
+      projectId: project.id,
+      flowRefId: "rah-control",
+      revisionId: coordinatorProvider.enabled_revision_id,
+      db,
+    });
+    const coordinator = await attachAgent(
+      {
+        projectId: project.id,
+        agentId: "rah:flow-coordinator",
+        runnerOverrideId: runnerId,
+      },
+      db,
+    );
+    const flowRequest = {
+      ...value,
+      specialistBindingId: coordinator.linkId,
+      idempotencyKey: randomUUID(),
+      objective: "Coordinate the original project evidence request",
+      input:
+        "PRIVATE PROJECT FLOW REQUEST\nInspect this original assignment input.",
+    };
+    const coordinatedResponses = await Promise.all([
+      submit(flowRequest),
+      submit(flowRequest),
+    ]);
+
+    expect(
+      coordinatedResponses.map((response) => response.status).sort(),
+    ).toEqual([200, 201]);
+    const coordinatedResponse = coordinatedResponses.find(
+      (response) => response.status === 201,
+    )!;
+
+    expect({
+      status: coordinatedResponse.status,
+      body: await coordinatedResponse.clone().json(),
+    }).toMatchObject({
+      status: 201,
+      body: expect.objectContaining({ id: expect.any(String) }),
+    });
+    const coordinated = specialistAssignmentSchema.parse(
+      await coordinatedResponse.json(),
+    );
+
+    expect(coordinated.runIds).toHaveLength(1);
+    const coordinatedRunId = coordinated.runIds[0]!;
+
+    await vi.waitFor(
+      async () => {
+        const [completed] = await db
+          .select()
+          .from(runs)
+          .where(eq(runs.id, coordinatedRunId));
+
+        expect(completed).toMatchObject({
+          status: "Done",
+          runKind: "flow",
+          projectId: project.id,
+          companyId: null,
+        });
+      },
+      { timeout: 30000, interval: 25 },
+    );
+    const [coordinatedRun] = await db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, coordinatedRunId));
+
+    expect(
+      await loadNativeInputForUser(database.db, userId, coordinatedRunId),
+    ).toMatchObject({
+      kind: "assignment_input",
+      input: {
+        assignmentId: coordinated.id,
+        revision: 1,
+        snapshot: {
+          standingDefinition: {
+            schemaVersion: 2,
+            coordinatorFlow: { flowRevisionId: coordinatedRun!.flowRevisionId },
+          },
+        },
+      },
+    });
+    expect(
+      (
+        await database.pool.query("SELECT prompt FROM tasks WHERE id=$1", [
+          coordinatedRun!.taskId,
+        ])
+      ).rows,
+    ).toEqual([{ prompt: "rah:flow-coordinator" }]);
+    expect(
+      JSON.stringify(
+        (
+          await readTranscriptPage(userId, coordinatedRunId, {
+            node: "research",
+            limit: "20",
+          })
+        ).messages,
+      ),
+    ).toContain("PRIVATE PROJECT FLOW REQUEST");
+    expect(
+      (
+        await database.pool.query(
+          "SELECT project_task_id FROM specialist_assignments WHERE id=$1",
+          [coordinated.id],
+        )
+      ).rows,
+    ).toEqual([{ project_task_id: coordinatedRun!.taskId }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM tasks WHERE project_id=$1 AND agent_id='rah:flow-coordinator'",
+          [project.id],
+        )
+      ).rows,
+    ).toEqual([{ count: 1 }]);
+    await expect(
+      database.pool.query(
+        "UPDATE specialist_assignments SET project_task_id=NULL,revision=revision+1 WHERE id=$1",
+        [coordinated.id],
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "specialist_assignments_project_task_immutable",
+    });
+    const deferredFlowRequest = {
+      ...flowRequest,
+      idempotencyKey: randomUUID(),
+      objective: "Retain coordinator work during a runner outage",
+    };
+
+    await db
+      .update(platformAcpRunners)
+      .set({ enabled: false })
+      .where(eq(platformAcpRunners.id, runnerId));
+    expect((await submit(deferredFlowRequest)).status).toBe(503);
+    const deferredCoordinator = (
+      await database.pool.query(
+        "SELECT assignment.id,assignment.revision,assignment.input_revision,assignment.project_task_id FROM specialist_assignments assignment JOIN specialist_input_revisions input ON input.assignment_id=assignment.id AND input.revision=1 WHERE assignment.project_id=$1 AND input.objective_input->>'objective'=$2",
+        [project.id, deferredFlowRequest.objective],
+      )
+    ).rows;
+
+    expect(deferredCoordinator).toHaveLength(1);
+    expect(deferredCoordinator[0]).toMatchObject({ input_revision: 1 });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT run_id FROM specialist_run_links WHERE assignment_id=$1",
+          [deferredCoordinator[0].id],
+        )
+      ).rows,
+    ).toEqual([]);
+    await database.pool.query(
+      "UPDATE flows SET enablement_state='Disabled' WHERE id=$1",
+      [coordinatedRun!.flowId],
+    );
+    await db
+      .update(platformAcpRunners)
+      .set({ enabled: true })
+      .where(eq(platformAcpRunners.id, runnerId));
+    expect((await submit(deferredFlowRequest)).status).toBe(409);
+    await enableRevision({
+      projectId: project.id,
+      flowRefId: "rah-control",
+      revisionId: coordinatedRun!.flowRevisionId!,
+      db,
+    });
+    const resumedCoordinatorResponse = await submit(deferredFlowRequest);
+
+    expect(resumedCoordinatorResponse.status).toBe(200);
+    const resumedCoordinator = specialistAssignmentSchema.parse(
+      await resumedCoordinatorResponse.json(),
+    );
+
+    expect(resumedCoordinator.id).toBe(deferredCoordinator[0].id);
+    expect(resumedCoordinator.inputRevision).toBe(1);
+    expect(resumedCoordinator.runIds).toHaveLength(1);
+    await vi.waitFor(
+      async () => {
+        const [retained] = await db
+          .select()
+          .from(runs)
+          .where(eq(runs.id, resumedCoordinator.runIds[0]!));
+
+        expect(retained.status).toBe("Done");
+      },
+      { timeout: 30000, interval: 25 },
+    );
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM tasks WHERE project_id=$1 AND agent_id='rah:flow-coordinator'",
+          [project.id],
+        )
+      ).rows,
+    ).toEqual([{ count: 2 }]);
+    expect((await submit(flowRequest)).status).toBe(200);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status FROM specialist_assignments WHERE id=$1",
+          [coordinated.id],
+        )
+      ).rows,
+    ).toEqual([{ status: "active" }]);
   } finally {
     browserSession.user = null;
     await worker.stop();

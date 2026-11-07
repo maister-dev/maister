@@ -42,8 +42,16 @@ export function assignmentInputReadPolicy(
   digest: SQL,
 ): SQL {
   if (identity.kind === "agent") {
-    if (identity.actor.runId === null || identity.actor.attemptId !== null)
-      return sql`false`;
+    if (identity.actor.runId === null) return sql`false`;
+    const appointmentKind =
+      identity.actor.attemptId === null
+        ? sql`execution.run_kind='agent' AND appointment.role='specialist' AND binding.id=${identity.bindingId} AND role.id=${identity.actor.id}`
+        : sql`execution.run_kind='flow' AND appointment.role='coordinator'
+          AND original.standing_definition->'schemaVersion'='2'::jsonb
+          AND original.standing_definition->'coordinatorFlow'->>'flowId'=execution.flow_id
+          AND original.standing_definition->'coordinatorFlow'->>'flowRevisionId'=execution.flow_revision_id
+          AND original.standing_definition->'coordinatorFlow'->>'resolvedRevision'=execution.flow_revision
+          AND requested.project_task_id=execution.task_id`;
 
     return sql`EXISTS (
       SELECT 1 FROM specialist_run_links appointment
@@ -55,12 +63,12 @@ export function assignmentInputReadPolicy(
       JOIN project_package_attachments attachment ON attachment.project_id=binding.project_id AND attachment.package_name=role.package_name
       JOIN package_installs pin ON pin.id=attachment.package_install_id
       JOIN users initiator ON initiator.id=original.actor->>'id'
-      WHERE appointment.run_id=${identity.actor.runId} AND appointment.role='specialist'
+      WHERE appointment.run_id=${identity.actor.runId} AND (${appointmentKind})
         AND appointment.assignment_id=${assignmentId} AND appointment.input_revision::text=(${revision})::text AND original.digest=${digest}
         AND requested.project_id=${identity.projectId} AND requested.company_id IS NULL
         AND requested.status IN ('active','waiting_input','waiting_children','waiting_resource','reconciling','awaiting_acceptance')
-        AND binding.id=${identity.bindingId} AND binding.enabled AND role.enabled AND role.quarantined_at IS NULL
-        AND role.id=${identity.actor.id} AND execution.source_agent_id=role.id
+        AND binding.enabled AND role.enabled AND role.quarantined_at IS NULL
+        AND execution.source_agent_id=role.id
         AND execution.project_id=requested.project_id AND execution.company_id IS NULL
         AND execution.created_by_user_id=initiator.id AND original.actor->>'kind'='user'
         AND requested.requester->>'kind'='user' AND requested.requester->>'id'=initiator.id

@@ -1,0 +1,126 @@
+{
+  "task": "T22",
+  "slice": "Project coordinator manual intake through existing project Flow admission",
+  "date": "2026-11-07",
+  "baseCommit": "4f539d12c4532bfddc757174f9c39d656471169b",
+  "status": "Coordinator checkpoint qualified; T22 full invocation adapters remain open",
+  "red": [
+    {
+      "case": "Project declared-Flow HTTP admission refused",
+      "observedStatus": 409,
+      "expectedStatus": 201,
+      "testsFailed": 1,
+      "testsPassed": 36
+    },
+    {
+      "case": "Concurrent duplicate before Flow Run reservation returned a conflict",
+      "observedStatuses": [
+        201,
+        409
+      ],
+      "expectedStatuses": [
+        200,
+        201
+      ],
+      "testsFailed": 1,
+      "testsPassed": 36
+    }
+  ],
+  "corrections": [
+    "The actual project Flow requires explicit enablement through the existing lifecycle; fixture installation alone is not enablement.",
+    "Controlled output belongs in the installed fixture graph prompt; JSON-encoded assignment input must not become fixture transport.",
+    "Flow transcript inspection must name the actual research node.",
+    "The outage regression must inspect objective_input in specialist_input_revisions, not invent an objective column on the assignment head.",
+    "The existing full lint script applies formatting; an unrelated prompt-owner whitespace hunk was removed and the final owning lint is read-only."
+  ],
+  "gates": {
+    "nativeRuntimeAndPopulatedMigration": {
+      "tests": 82,
+      "files": 2,
+      "durationSeconds": 85.16,
+      "exitCode": 0
+    },
+    "currentCoordinatorAndAdmissionRegression": {
+      "tests": 68,
+      "files": 5,
+      "durationSeconds": 43.98,
+      "exitCode": 0
+    },
+    "webUnit": {
+      "tests": 9318,
+      "files": 889,
+      "durationSeconds": 32.71,
+      "exitCode": 0
+    },
+    "types": {
+      "exitCode": 0
+    },
+    "lint": {
+      "exitCode": 0,
+      "existingWarnings": 14
+    },
+    "format": {
+      "exitCode": 0
+    },
+    "contracts": {
+      "exitCode": 0
+    },
+    "docs": {
+      "exitCode": 0
+    },
+    "schemaDrift": {
+      "exitCode": 0,
+      "changes": 0
+    },
+    "erd": {
+      "exitCode": 0,
+      "tables": 172
+    }
+  },
+  "qualified": [
+    "Actual installed Git fixture package, current project attachment, trusted/enabled Flow and mandatory public result, existing repository/workspace launch, native scheduler/driver and controlled ACP process.",
+    "Exact provider revision/manifest witness is frozen in standing snapshot v2; standing instructions, configuration, original request and authority remain separate.",
+    "Concurrent identical HTTP deliveries return 201/200 and reserve one initial existing Task and one Run. A narrow CAS loser can observe the same already retained queued task without allocating another.",
+    "The shared task contains only the professional role identity; the actual research-node prompt and original-input reader retain the private assignment request.",
+    "Changing a retained initial task is refused by its PostgreSQL guard.",
+    "Disabled selected runner returns 503 with one queued assignment/input and no Run; disabled provider returns 409; repair resumes the same assignment/input and produces a valid native result.",
+    "Technical Flow Done leaves the assignment active for separate business evaluation/acceptance.",
+    "Populated main-only upgrade through 0239 preserves old v1 input bytes, original assignment fields and existing Run/token bytes; newly added initial task metadata stays NULL; project deletion succeeds without Brain tables."
+  ],
+  "limits": [
+    "Native ACP here is a controlled fixture, not actual stand pilot qualification or a newly released companion package.",
+    "Legacy manual launch, mention/event/webhook/schedule/bearer adapters and agent-principal governed delegation remain their open tasks.",
+    "The source-wide T21 full integration gate is still active on the frozen primary checkout; one retry authority case has failed there and passes in its standalone diagnostic. No full-green claim or T21 closure.",
+    "No primary branch integration, remote publication, deployment or external stand mutation occurred.",
+    "The 82-test run preceded the additional outage assertions; the final 68-test run includes those assertions. These gates overlap the 37-case native agent file and are not summed as independent coverage.",
+    "The first schema generation lacked the required DB_URL; the rerun uses a nonroutable dummy URL, reads local schemas only and reports no changes. The first contracts gate lacked local tsx IPC permission; the permitted rerun passed."
+  ],
+  "sourceSha256": {
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "3122411d340f0333784372d330f67559a8c05da193c7359b03b2cb4fe3dcba31",
+    "AGENTS.md": "f89dbab9d53e0e899a166280c50a02800efc603e83b2cc46efc778ff31cbea40",
+    "docs/api/web.openapi.yaml": "54fd2a70d0d3adc6628e89758c6d1d538c90bcfbcad5fdd95f068d79d50dc7a8",
+    "docs/database-schema.md": "d4af9d068b0fd2f7f987312a221e5549cb16a249e87906360351056d5afe3fb9",
+    "docs/db/erd.dbml": "24cd138a6afe08c2e382f5a7a76144b050aa1e3457788fd89d71598c58b95289",
+    "docs/db/specialist-assignments-domain.md": "6e1f025e8ffd5849cfd59a499211c8efbde072fdb040ba7642dff07a502c7057",
+    "docs/system-analytics/specialist-assignments.md": "7354d12ee06943ecfb1db6b15a0dccb2cc4411bc8f69c685b95f56b16f54f1c1",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "dec5094cd89f202794c6b385a1216570abdee2e0d14e74271e4f942045be2934",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "4840b449c937f3198dece40e09065969dfba512f2205dba0bb5536f2b408b8fd",
+    "web/lib/agents/flow-binding.ts": "5e824487eef60932776556098cdf85552e8ca047a9baa83c7eb0c60148469f9e",
+    "web/lib/agents/launch.ts": "481920e71ba8a3d0ec3e46d7a1628042e22fc6dc43459620356aeb4520c3dcdf",
+    "web/lib/brain/knowledge-assignment-policy.ts": "63dff5d46f754d305b6072bc9fd7b80fbbeea7a21d50d60632994951aae3530a",
+    "web/lib/db/migrations/0239_specialist_project_flow_input.sql": "e02d77ebd24d5fc6cacf9116fa482aee04877ee820f5dbdeac590def87eca812",
+    "web/lib/db/migrations/meta/0239_snapshot.json": "d0331b4f49c52529bb34d69352fc4bb15d405063615eae0a3b43374e83697400",
+    "web/lib/db/migrations/meta/_journal.json": "114d6e6e657b6e713c8dfd9c2fd0178ecb6a32a36ba1a3db33b67d9af04ec4af",
+    "web/lib/db/schema.ts": "17d10edad1aad9eaba862e994945f1251aeb8af9530ceee9f5eb802578995c83",
+    "web/lib/flows/graph/runner-core.ts": "9827eee9f816732afb1ab9c79111e523ef19147e4d6f0c436ef1841128acb119",
+    "web/lib/services/runs.ts": "b1850e9d71fb463e2965a71c327b40263383309c85db3ffc5968ee4bab440b40",
+    "web/lib/specialist-assignments/input-snapshot.ts": "4a658ba3dfc6a5d4a14110f1f2196674ef9f7cd45efb71b0bc53c3230f154d64",
+    "web/lib/specialist-assignments/project-admission.ts": "3a1aea7bd6ce2346f309868e4d96dfc7577d676d2b0a65b475748c9cb7facd20",
+    "web/lib/specialist-assignments/project-flow-provider.ts": "7a0fc19ac1805f8935166dd7c910eecc9da05af7e27ded995da5bb0bf0383be1",
+    "web/lib/specialist-assignments/project-manual-intake.ts": "7f0f8320d71fc44a70290e0f2623ec1c30964fdf4cf5babb3618f0da9955a24c",
+    "web/lib/specialist-assignments/project-task.ts": "81cf36101c1b72d537179d3004274c6b8709dfec7fa170ae25fb12d4d484f4f8",
+    "web/lib/specialist-assignments/schema.ts": "528bd8e9362726c2652029c87a49fa3957668fd60caf4aaccbb8a2c5307e73c5",
+    "web/lib/specialist-assignments/store.ts": "31523eba6d066c0c93c97eed6835ca6d6a6691ab20a06b9d123ce15ff57c31cb",
+    "web/lib/specialist-assignments/types.ts": "21e60e851bbf3ca53acd102e69ad251620d66fc32be386d82b4e3da6f32094eb"
+  }
+}

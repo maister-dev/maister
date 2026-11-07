@@ -10464,6 +10464,9 @@ export const specialistAssignments = pgTable(
       onDelete: "restrict",
     }),
     specialistBindingId: text("specialist_binding_id").notNull(),
+    projectTaskId: text("project_task_id").references(() => tasks.id, {
+      onDelete: "restrict",
+    }),
     requester: jsonb("requester").$type<KnowledgeAttribution>().notNull(),
     responsible: jsonb("responsible").$type<KnowledgeAttribution>().notNull(),
     status: text("status", { enum: SPECIALIST_ASSIGNMENT_STATUSES })
@@ -10516,6 +10519,13 @@ export const specialistAssignments = pgTable(
       "specialist_assignments_binding_check",
       sql`char_length(${t.specialistBindingId}) BETWEEN 1 AND 128`,
     ),
+    projectTaskOwner: check(
+      "specialist_assignments_project_task_owner_check",
+      sql`${t.projectTaskId} IS NULL OR ${t.projectId} IS NOT NULL`,
+    ),
+    projectTask: index("specialist_assignments_project_task_idx")
+      .on(t.projectTaskId)
+      .where(sql`${t.projectTaskId} IS NOT NULL`),
     metadata: check(
       "specialist_assignments_metadata_check",
       sql`(jsonb_typeof(${t.origin})='object' AND jsonb_typeof(${t.destination})='object' AND jsonb_typeof(${t.blockers})='array' AND pg_column_size(${t.origin})<=8192 AND pg_column_size(${t.destination})<=8192 AND pg_column_size(${t.blockers})<=131072) IS TRUE`,

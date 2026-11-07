@@ -6,7 +6,10 @@ import type { SqlTransaction } from "@/lib/db/sql-types";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
 
-import { assignmentObjectiveInputSchema } from "./types";
+import {
+  assignmentObjectiveInputSchema,
+  projectCoordinatorFlowSnapshotSchema,
+} from "./types";
 
 import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
 import { frozenAgentDefinitionSchema } from "@/lib/agents/frozen-definition";
@@ -54,22 +57,33 @@ const witnesses = z.array(
       .strict(),
   ]),
 );
+const standingFields = {
+  agentId: identity,
+  packageInstallId: identity,
+  packageName: identity,
+  packageRevision: identity,
+  definitionSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  definition: frozenAgentDefinitionSchema,
+  configuration: z.record(z.string(), z.json()).nullable(),
+};
 const standingSchema = z
-  .object({
-    schemaVersion: z.literal(1),
-    agentId: identity,
-    packageInstallId: identity,
-    packageName: identity,
-    packageRevision: identity,
-    definitionSha256: z.string().regex(/^[a-f0-9]{64}$/),
-    definition: frozenAgentDefinitionSchema,
-    configuration: z.record(z.string(), z.json()).nullable(),
-  })
-  .strict()
+  .discriminatedUnion("schemaVersion", [
+    z.object({ schemaVersion: z.literal(1), ...standingFields }).strict(),
+    z
+      .object({
+        schemaVersion: z.literal(2),
+        ...standingFields,
+        coordinatorFlow: projectCoordinatorFlowSnapshotSchema,
+      })
+      .strict(),
+  ])
   .refine(
     (standing) =>
       standing.agentId === standing.definition.id &&
-      standing.definitionSha256 === agentDefinitionSha256(standing.definition),
+      standing.definitionSha256 ===
+        agentDefinitionSha256(standing.definition) &&
+      (standing.schemaVersion === 1 ||
+        standing.definition.flow === standing.coordinatorFlow.flowRefId),
   );
 const authoritySchema = z
   .object({
