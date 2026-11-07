@@ -2,7 +2,7 @@ import type { IssuedAgentToken } from "../tokens";
 import type { Db } from "@/lib/execution-host/db";
 import type { NativeKnowledgeActor } from "@/lib/company/types";
 import type { JsonValue } from "@/lib/hitl-response-contract";
-import type { SqlTransaction } from "@/lib/db/sql-types";
+import type { SqlDatabase, SqlTransaction } from "@/lib/db/sql-types";
 import type { CompanyFlowExecutionSnapshot } from "../company-execution-types";
 import type { CompanyFlowContextInput } from "../company-flow-context";
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
@@ -26,6 +26,8 @@ import { eq, sql, getTableColumns } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { stringify } from "yaml";
 import { NextRequest } from "next/server";
+import { createTranslator } from "next-intl";
+import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   agentDefinitionSha256,
@@ -94,6 +96,12 @@ import { MaisterError } from "@/lib/errors";
 import { requireActiveUserById } from "@/lib/authz";
 import { POST as stopRunPost } from "@/app/api/runs/[runId]/stop/route";
 import { POST as respondHitlPost } from "@/app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route";
+import { GET as retainedResultGet } from "@/app/api/runs/[runId]/results/[revision]/route";
+import { loadRetainedResultForUser } from "@/lib/run-results/retained-result";
+import { loadNativeInputForUser } from "@/lib/orchestrator/native-input-read";
+import { NativeInputInspectionPanel } from "@/components/runs/native-input-inspection";
+import enMessages from "@/messages/en.json";
+import ruMessages from "@/messages/ru.json";
 import { tryStartRun } from "@/lib/scheduler";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { resumeRun } from "@/lib/runs/resume";
@@ -115,6 +123,7 @@ import {
 } from "@/lib/db/schema";
 import {
   createSpecialistAssignment,
+  getSpecialistAssignmentInput,
   linkSpecialistAssignmentRunInTransaction,
 } from "@/lib/specialist-assignments/store";
 import { createCompanyGrants, revokeCompanyGrant } from "@/lib/company/grants";
@@ -149,6 +158,7 @@ const administratorId = randomUUID();
 const requesterId = randomUUID();
 const outsiderId = randomUUID();
 let browserUserId = requesterId;
+let browserLocale: "en" | "ru" = "en";
 const result = {
   schema: "./schemas/evidence-findings.v1.json",
   required: true,
@@ -249,6 +259,14 @@ async function writeCompanyCapabilityCache(hostRoot: string): Promise<void> {
 }
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => database.db }));
+vi.mock("next-intl/server", () => ({
+  getTranslations: async (namespace: "run.originalInput") =>
+    createTranslator({
+      locale: browserLocale,
+      messages: browserLocale === "ru" ? ruMessages : enMessages,
+      namespace,
+    }),
+}));
 vi.mock("@/lib/authz", async (original) => ({
   ...(await original<typeof import("@/lib/authz")>()),
   requireActiveSession: async () => requireActiveUserById(browserUserId),
@@ -2075,6 +2093,158 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
         )
       ).rows,
     ).toMatchObject([{ validity: "valid", value: output }]);
+    const selector = { runId: receipt.runId, revision: 1 };
+    const resultBeforeInspection = (
+      await database.pool.query("SELECT * FROM run_results WHERE run_id=$1", [
+        receipt.runId,
+      ])
+    ).rows;
+
+    await expect(
+      loadRetainedResultForUser(database.db, requesterId, selector),
+    ).resolves.toMatchObject({
+      ...selector,
+      value: output,
+      validity: "valid",
+      collectedAt: null,
+      findings: output,
+    });
+    const inspectionRequest = new Request(
+      `http://localhost/api/runs/${receipt.runId}/results/1`,
+    );
+    const inspectionParams = {
+      params: Promise.resolve({ runId: receipt.runId, revision: "1" }),
+    };
+    const inspection = await retainedResultGet(
+      inspectionRequest,
+      inspectionParams,
+    );
+
+    expect(inspection.status).toBe(200);
+    expect(inspection.headers.get("Cache-Control")).toBe("no-store");
+    expect(await inspection.json()).toMatchObject({
+      ...selector,
+      value: output,
+    });
+    const originalInput = await getSpecialistAssignmentInput(
+      database.db,
+      requesterId,
+      assignment.id,
+      1,
+    );
+
+    await expect(
+      loadNativeInputForUser(database.db, requesterId, receipt.runId),
+    ).resolves.toEqual({
+      kind: "assignment_input",
+      input: originalInput,
+    });
+    for (const locale of ["en", "ru"] as const) {
+      browserLocale = locale;
+      const catalog = locale === "ru" ? ruMessages : enMessages;
+      const markup = renderToStaticMarkup(
+        await NativeInputInspectionPanel({
+          input: { kind: "assignment_input", input: originalInput },
+        }),
+      );
+
+      expect(markup).toContain('data-testid="assignment-input-inspection"');
+      expect(markup).toContain(catalog.run.originalInput.assignmentTitle);
+      expect(markup).toContain(catalog.run.originalInput.objectiveSnapshot);
+      expect(markup).toContain(catalog.run.originalInput.standingSnapshot);
+      expect(markup).toContain(catalog.run.originalInput.authoritySnapshot);
+      expect(markup).toContain(catalog.run.originalInput.notScheduled);
+      expect(markup).toContain(originalInput.digest);
+      expect(markup).toContain(originalInput.assignmentId);
+      expect(markup).not.toContain("/runs/undefined");
+    }
+    browserLocale = "en";
+    await expect(
+      loadRetainedResultForUser(database.db, requesterId, {
+        ...selector,
+        revision: 2,
+      }),
+    ).resolves.toBeNull();
+    browserUserId = outsiderId;
+    expect(
+      (await retainedResultGet(inspectionRequest, inspectionParams)).status,
+    ).toBe(404);
+    let reviewerGrant = await createCompanyGrants(
+      database.db,
+      administratorId,
+      {
+        principalKind: "user",
+        principalId: outsiderId,
+        actions: ["assignments:read"],
+        idempotencyKey: randomUUID(),
+      },
+    );
+
+    await expect(
+      loadRetainedResultForUser(database.db, outsiderId, selector),
+    ).resolves.toMatchObject({ value: output });
+    const racedDb: SqlDatabase = {
+      execute: database.db.execute.bind(database.db),
+      async transaction<T>(
+        action: (tx: SqlTransaction) => Promise<T>,
+      ): Promise<T> {
+        const assembled = await database.db.transaction(action);
+
+        if (
+          assembled !== null &&
+          typeof assembled === "object" &&
+          ("publishedAt" in assembled ||
+            ("kind" in assembled && assembled.kind === "assignment_input"))
+        ) {
+          await revokeCompanyGrant(
+            database.db,
+            administratorId,
+            reviewerGrant.page.items[0]!.id,
+            {
+              expectedRevision: reviewerGrant.page.items[0]!.revision,
+              reason:
+                "Revoke company inspection after assembly and before delivery",
+              idempotencyKey: randomUUID(),
+            },
+          );
+        }
+
+        return assembled;
+      },
+    };
+
+    await expect(
+      loadRetainedResultForUser(racedDb, outsiderId, selector),
+    ).resolves.toBeNull();
+    expect(
+      (await retainedResultGet(inspectionRequest, inspectionParams)).status,
+    ).toBe(404);
+    await expect(
+      loadNativeInputForUser(database.db, outsiderId, receipt.runId),
+    ).resolves.toBeNull();
+    reviewerGrant = await createCompanyGrants(database.db, administratorId, {
+      principalKind: "user",
+      principalId: outsiderId,
+      actions: ["assignments:read"],
+      idempotencyKey: randomUUID(),
+    });
+    await expect(
+      loadNativeInputForUser(database.db, outsiderId, receipt.runId),
+    ).resolves.toEqual({
+      kind: "assignment_input",
+      input: originalInput,
+    });
+    await expect(
+      loadNativeInputForUser(racedDb, outsiderId, receipt.runId),
+    ).resolves.toBeNull();
+    browserUserId = requesterId;
+    expect(
+      (
+        await database.pool.query("SELECT * FROM run_results WHERE run_id=$1", [
+          receipt.runId,
+        ])
+      ).rows,
+    ).toEqual(resultBeforeInspection);
     expect(
       (
         await database.pool.query(

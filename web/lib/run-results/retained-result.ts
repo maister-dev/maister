@@ -11,6 +11,10 @@ import { evidenceFindingsV1Schema } from "./findings-types";
 
 import { requireProjectActionForUser } from "@/lib/authz";
 import {
+  assertCompanyRunReadAccess,
+  assertCompanyRunReadAccessInTransaction,
+} from "@/lib/agents/company-run-read-access";
+import {
   authorizeRunKnowledgeDisclosure,
   assertRunKnowledgeDisclosure,
 } from "@/lib/brain/knowledge-run-disclosure";
@@ -96,17 +100,24 @@ export async function loadRetainedResultForUser(
   try {
     const metadata = (
       await db.execute(
-        sql`SELECT project_id,result_contract FROM runs WHERE id=${runId}`,
+        sql`SELECT project_id,company_id,result_contract FROM runs WHERE id=${runId}`,
       )
     ).rows[0];
 
-    if (!metadata || typeof metadata.project_id !== "string") return null;
-    const projectId = metadata.project_id;
+    if (!metadata) return null;
+    const projectId =
+      typeof metadata.project_id === "string" ? metadata.project_id : null;
+
+    if (projectId === null && typeof metadata.company_id !== "string")
+      return null;
     const recipient = { kind: "user" as const, userId };
 
-    await requireProjectActionForUser(userId, projectId, "readBoard");
+    if (projectId !== null)
+      await requireProjectActionForUser(userId, projectId, "readBoard");
     const result = await db.transaction(async (tx) => {
-      await authorizeRunKnowledgeDisclosure(tx, recipient, runId);
+      if (projectId === null)
+        await assertCompanyRunReadAccessInTransaction(tx, userId, runId);
+      else await authorizeRunKnowledgeDisclosure(tx, recipient, runId);
       const row = (
         await tx.execute(sql`SELECT r.validity,r.schema_ref,r.schema_sha256,r.schema_version,r.producer_kind,r.producer_ref,r.node_attempt_id,r.value,r.value_bytes,r.invalid_reason,r.created_at,r.first_collected_at,next.revision AS superseded_by_revision
         FROM run_results r LEFT JOIN run_results next ON next.id=r.superseded_by_id AND next.run_id=r.run_id
@@ -146,12 +157,21 @@ export async function loadRetainedResultForUser(
       return parsed.data;
     });
 
-    await requireProjectActionForUser(userId, projectId, "readBoard");
-    await assertRunKnowledgeDisclosure(db, recipient, runId);
+    if (projectId === null) await assertCompanyRunReadAccess(db, userId, runId);
+    else {
+      await requireProjectActionForUser(userId, projectId, "readBoard");
+      await assertRunKnowledgeDisclosure(db, recipient, runId);
+    }
 
     return result;
   } catch (error) {
-    if (isMaisterError(error) && error.code === "UNAUTHORIZED") return null;
+    if (
+      isMaisterError(error) &&
+      (error.code === "UNAUTHORIZED" ||
+        (error.code === "PRECONDITION" &&
+          error.details?.reason === "run_unavailable"))
+    )
+      return null;
     throw redactQueryError(error);
   }
 }

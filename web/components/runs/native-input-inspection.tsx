@@ -11,6 +11,51 @@ export async function NativeInputInspectionPanel({
 }): Promise<ReactElement> {
   const t = await getTranslations("run.originalInput");
 
+  if ("kind" in input) {
+    const retained = input.input;
+    const snapshot = retained.snapshot;
+    const sections = [
+      ["objectiveSnapshot", snapshot.objectiveInput],
+      ["standingSnapshot", snapshot.standingDefinition],
+      ["scheduledSnapshot", snapshot.scheduledRequest],
+      ["authoritySnapshot", snapshot.authoritySnapshot],
+    ] as const;
+
+    return (
+      <details
+        className="my-2 rounded-lg border border-line p-2"
+        data-testid="assignment-input-inspection"
+      >
+        <summary className="text-sm">{t("assignmentTitle")}</summary>
+        <p className="mt-2 text-sm font-medium">
+          {snapshot.objectiveInput.objective}
+        </p>
+        <p className="mt-2 text-sm">
+          {snapshot.objectiveInput.expectedOutcome}
+        </p>
+        <p className="mt-2 break-all text-xs">
+          {t("assignment")}: <code>{retained.assignmentId}</code>
+        </p>
+        <p className="mt-1 text-xs">
+          {t("revision")}: {retained.revision}
+        </p>
+        <p className="mt-1 break-all text-xs text-mute">
+          {t("witness")}: <code>{retained.digest}</code>
+        </p>
+        {sections.map(([label, value]) => (
+          <details key={label} className="mt-3 rounded border border-line p-2">
+            <summary className="text-sm">{t(label)}</summary>
+            <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap wrap-anywhere text-xs">
+              {value === null
+                ? t("notScheduled")
+                : JSON.stringify(value, null, 2)}
+            </pre>
+          </details>
+        ))}
+      </details>
+    );
+  }
+
   return (
     <details
       className="my-2 rounded-lg border border-line p-2"

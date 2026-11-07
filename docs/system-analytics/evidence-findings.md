@@ -382,7 +382,7 @@ Project/cross-project HITL lists filter enrolled rows through current receiving-
 
 Native result inspection uses the frozen `evidence_findings_v1` discriminator and the validated findings schema. Matching generic JSON remains an ordinary result. The EN/RU findings panel preserves observed/inferred/unknown basis, supporting and contradicting references, missing proof, limitations, open questions, source findings and coordinator selection/omission reasons. It displays proposed knowledge as drafts subject to the separate submission/review policy; viewing a finding cannot confirm a Brain record.
 
-Evidence links name exact record revisions, immutable witnesses and exact run-result revisions. `/knowledge/results/{runId}/{revision}` and the session-only `GET /api/runs/{runId}/results/{revision}` inspect the requested existing ledger row under current project/source authority. Superseded or stale history keeps its value and explicit current validity; invalid publication attempts keep their reason and no value. The original schema digest, publication time, producer reference and first-collected timestamp remain attributable. Inspection never stamps collection or changes acceptance. Current source denial returns no retained payload; this human inspection path does not widen bearer/MCP direct-child collection.
+Evidence links name exact record revisions, immutable witnesses and exact run-result revisions. `/knowledge/results/{runId}/{revision}` and the session-only `GET /api/runs/{runId}/results/{revision}` inspect the requested existing ledger row under current project/source authority or explicit company `assignments:read` authority. Company inspection validates the actual Run-to-assignment link, exact retained input revision/digest and complete captured-source closure; it does not depend on current execution eligibility. Missing company bindings, revoked read grants and unbound private assistants remain existence-hidden. Authority is rechecked after assembly. Superseded or stale history keeps its value and explicit current validity; invalid publication attempts keep their reason and no value. The original schema digest, publication time, producer reference and first-collected timestamp remain attributable. Inspection never stamps collection or changes acceptance. Current source denial returns no retained payload; this human inspection path does not widen bearer/MCP direct-child collection.
 
 
 ### Carrier input boundary
@@ -417,8 +417,16 @@ title/prompt, source-run link and input digest. It rechecks authority after
 assembly. Absent historical input renders no section; malformed or unavailable
 native input is explicit and never reconstructed from a public placeholder.
 No private input is added to cached shared run/task DTOs. Company-only assignment
-inspection extends this reader's owner admission in CB1 rather than fabricating
-a project.
+inspection uses a distinct `assignment_input` projection with the exact
+Run-linked `AssignmentInputRevision`, including its original attribution, time,
+digest and separately frozen objective, standing definition, scheduled request
+and authority planes. It uses current explicit `assignments:read` plus the
+Run's complete source closure, validates retained bytes and binding, and
+rechecks access before delivery. Later assignment input revisions do not replace
+the Run's original input. Unbound private assistants remain unavailable.
+The existing exact-result RSC shows this separate read-only EN/RU inspection;
+the session result API keeps its existing payload and does not include private
+input. No additional input API, fabricated project or shared DTO is introduced.
 
 ### Cross-recipient input and steering
 

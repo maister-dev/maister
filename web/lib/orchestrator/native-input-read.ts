@@ -1,26 +1,90 @@
 import "server-only";
 
 import type { SqlDatabase } from "@/lib/db/sql-types";
+import type { AssignmentInputRevision } from "@/lib/specialist-assignments/types";
 
 import { sql } from "drizzle-orm";
 
 import { nativeDelegationExecutionInput } from "./native-input";
 
+import {
+  assertCompanyRunReadAccess,
+  assertCompanyRunReadAccessInTransaction,
+} from "@/lib/agents/company-run-read-access";
+import { companyExecutionSnapshotSchema } from "@/lib/agents/company-execution-types";
 import { requireProjectActionForUser } from "@/lib/authz";
 import {
   authorizeRunKnowledgeDisclosure,
   assertRunKnowledgeDisclosure,
 } from "@/lib/brain/knowledge-run-disclosure";
 import { unavailableKnowledgeReference } from "@/lib/brain/knowledge-restrictions";
-import { isMaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 import { redactQueryError } from "@/lib/db/pg-error";
+import { getSpecialistAssignmentInputInTransaction } from "@/lib/specialist-assignments/store";
 
-export type NativeInputInspection = Readonly<{
-  title: string;
-  prompt: string;
-  sourceRunId: string;
-  inputDigest: string;
+export type CompanyAssignmentInputInspection = Readonly<{
+  kind: "assignment_input";
+  input: AssignmentInputRevision;
 }>;
+
+export type NativeInputInspection =
+  | CompanyAssignmentInputInspection
+  | Readonly<{
+      title: string;
+      prompt: string;
+      sourceRunId: string;
+      inputDigest: string;
+    }>;
+
+/** Inspect the exact Run-bound company input; snapshots describe history and never grant current authority. */
+export async function loadCompanyAssignmentInputForUser(
+  db: SqlDatabase,
+  userId: string,
+  runId: string,
+): Promise<CompanyAssignmentInputInspection | null> {
+  try {
+    const inspection = await db.transaction(async (tx) => {
+      await assertCompanyRunReadAccessInTransaction(tx, userId, runId);
+      const row = (
+        await tx.execute(
+          sql`SELECT company_execution_snapshot FROM runs WHERE id=${runId} FOR SHARE`,
+        )
+      ).rows[0];
+      const snapshot = companyExecutionSnapshotSchema.safeParse(
+        row?.company_execution_snapshot,
+      );
+
+      if (!snapshot.success)
+        throw new MaisterError("PRECONDITION", "Run is unavailable", {
+          details: { reason: "run_unavailable" },
+        });
+      const input = await getSpecialistAssignmentInputInTransaction(
+        tx,
+        userId,
+        snapshot.data.assignment.id,
+        snapshot.data.assignment.inputRevision,
+      );
+
+      if (input.digest !== snapshot.data.assignment.inputSha256)
+        throw unavailableKnowledgeReference();
+
+      return { kind: "assignment_input" as const, input };
+    });
+
+    await assertCompanyRunReadAccess(db, userId, runId);
+
+    return inspection;
+  } catch (error) {
+    if (
+      isMaisterError(error) &&
+      (error.code === "UNAUTHORIZED" ||
+        (error.code === "PRECONDITION" &&
+          error.details?.reason === "run_unavailable"))
+    )
+      return null;
+    throw redactQueryError(error);
+  }
+}
 
 /** Inspect original delegated input without adding it to shared task/run DTOs. */
 export async function loadNativeInputForUser(
@@ -30,10 +94,16 @@ export async function loadNativeInputForUser(
 ): Promise<NativeInputInspection | null> {
   try {
     const metadata = (
-      await db.execute(sql`SELECT project_id FROM runs WHERE id=${runId}`)
+      await db.execute(
+        sql`SELECT project_id,company_id FROM runs WHERE id=${runId}`,
+      )
     ).rows[0];
 
-    if (!metadata || typeof metadata.project_id !== "string") return null;
+    if (!metadata) return null;
+    if (typeof metadata.project_id !== "string")
+      return typeof metadata.company_id === "string"
+        ? loadCompanyAssignmentInputForUser(db, userId, runId)
+        : null;
     const projectId = metadata.project_id;
     const recipient = { kind: "user" as const, userId };
 

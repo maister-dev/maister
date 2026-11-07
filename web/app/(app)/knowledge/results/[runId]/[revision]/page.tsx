@@ -9,9 +9,11 @@ import {
   knowledgePanelClass,
 } from "@/components/brain/knowledge-view";
 import { RunFindingsPanel } from "@/components/runs/run-findings-panel";
+import { NativeInputInspectionPanel } from "@/components/runs/native-input-inspection";
 import { requireActiveSession } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { knowledgeReferenceView } from "@/lib/brain/knowledge-ui";
+import { loadCompanyAssignmentInputForUser } from "@/lib/orchestrator/native-input-read";
 import {
   loadRetainedResultForUser,
   retainedResultRevision,
@@ -26,16 +28,24 @@ export default async function RetainedResultPage({
   const { runId, revision } = await params;
   const t = await getTranslations("findings");
   const run = await getTranslations("run");
-  const view = await knowledgeReferenceView(() =>
-    loadRetainedResultForUser(getDb(), user.id, {
+  const view = await knowledgeReferenceView(async () => {
+    const input = await loadCompanyAssignmentInputForUser(
+      getDb(),
+      user.id,
+      runId,
+    );
+    // Final result admission rechecks company input/source authority after assembling both views.
+    const result = await loadRetainedResultForUser(getDb(), user.id, {
       runId,
       revision: retainedResultRevision(revision),
-    }),
-  );
+    });
+
+    return result ? { result, input } : null;
+  });
 
   if (view.state === "unavailable" || view.value === null)
     return <KnowledgeUnavailable />;
-  const result = view.value;
+  const { result, input } = view.value;
 
   return (
     <div className="space-y-5">
@@ -90,6 +100,7 @@ export default async function RetainedResultPage({
           </dd>
         </div>
       </dl>
+      {input ? <NativeInputInspectionPanel input={input} /> : null}
       {result.invalidReason ? (
         <p className={`${knowledgePanelClass} text-sm`} role="status">
           {run("publicResultFailureReason")}: {result.invalidReason}

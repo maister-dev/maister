@@ -1,0 +1,67 @@
+{
+  "task": "T21",
+  "slice": "Exact company assignment input and retained result inspection",
+  "date": "2026-11-07",
+  "baseCommit": "997f207985014c2ff16d104bbd8c30904ea47565",
+  "status": "Read checkpoint qualified; T21 phase exit remains pending",
+  "migrations": [],
+  "red": [
+    "Authorized completed company result returns null: 1 failed / 44 passed, 27.90 seconds",
+    "Authorized frozen company assignment input returns null: 1 failed / 44 passed, 27.45 seconds"
+  ],
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "files": 2,
+      "tests": 60,
+      "durationSeconds": 49.39
+    },
+    "unit": {
+      "exitCode": 0,
+      "files": 889,
+      "tests": 9318,
+      "durationSeconds": 26.79
+    },
+    "types": {
+      "exitCode": 0
+    },
+    "lint": {
+      "exitCode": 0
+    },
+    "format": {
+      "exitCode": 0
+    },
+    "contracts": {
+      "exitCode": 0
+    },
+    "docs": {
+      "exitCode": 0
+    }
+  },
+  "qualified": [
+    "Current explicit assignment read grant and exact Run/input binding authorize company result and input inspection without repository records",
+    "Post-assembly read-grant revocation withholds both result and input; unauthorized HTTP response remains 404",
+    "Exact HTTP result payload/no-store and missing revision handling; no collection or result ledger mutation",
+    "EN/RU server-rendered separate company input inspection using actual retained snapshot and actual catalogs",
+    "Existing project result/private-input source authorization tests remain green",
+    "Populated 0237 migration fixture keeps Brain-independent project deletion and historical standalone/project/private bytes"
+  ],
+  "fixtureCorrections": [
+    "Filtered native runtime test lacked its existing earlier host-directory setup; complete owning sequence used for RED/GREEN",
+    "Appending input to an active assignment is correctly refused by the existing lifecycle; invalid test setup removed. Later clarification qualification remains T24."
+  ],
+  "qualificationBoundary": "Real disposable PostgreSQL and owned supervisor with controlled ACP and pinned fixture Git package. EN/RU checks render the actual input server component with actual catalogs through a request-context translation seam. Full phase integration/build and later actual companion/stand/browser qualification are not claimed here.",
+  "sourceSha256": {
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "83eea324b82b18e6c8973a27ea8fe9ada3d689ea9d0b69ab6d13eb016d067fcb",
+    "docs/api/web.openapi.yaml": "37c3c12cfedaac2f998fb8bdb1adc31796043e930d7f8641a60d29854015dd55",
+    "docs/screens/company-brain.md": "5b34ab82a1203cdfb5da539d74eb949ce6602bf829baba822f1284390dbf87fb",
+    "docs/system-analytics/evidence-findings.md": "5623c28bf1bd07836fa61961f86b576df5279cbf60d7802db6865f09cb6630e4",
+    "web/app/(app)/knowledge/results/[runId]/[revision]/page.tsx": "eaecefb2f472a5aab13e4b947ba43168890934ebe7663942444043d5e5ac082a",
+    "web/components/runs/native-input-inspection.tsx": "0c6a13688da7ba1e91fc42ee2b20238a150bbc8bd9242233e8c8f79a1bb2ca83",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "dd7d0206a2ef0d30729e05933257bee80c98b6accdef53c028347b512e9d1a3c",
+    "web/lib/orchestrator/native-input-read.ts": "f0796a998ac047d5bb222935c43d055e8c4adefbebb65c5494ba70ff544c6925",
+    "web/lib/run-results/retained-result.ts": "cb2c17653827ee699ec947ed8344aa2b7832e5eba3dad89f717afe0cc769039a",
+    "web/messages/en.json": "c2c37629f1d2056d65d9daa3ae45d873a3fd3eb5c079917824fb23dca6254612",
+    "web/messages/ru.json": "11f6b2fabe2af827c08eaa5df1ce94577849acc7fa2b8cdd4b46c2601df3e1d7"
+  }
+}

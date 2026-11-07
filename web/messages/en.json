@@ -2508,6 +2508,14 @@
     "originalInput": {
       "title": "Original delegated input",
       "origin": "Originating execution",
+      "assignmentTitle": "Original assignment input",
+      "assignment": "Assignment",
+      "revision": "Input revision",
+      "objectiveSnapshot": "Requested work and verification",
+      "standingSnapshot": "Standing specialist instructions",
+      "scheduledSnapshot": "Recurring request",
+      "authoritySnapshot": "Captured authority and constraints",
+      "notScheduled": "This input did not originate from a recurring request.",
       "witness": "Input witness"
     },
     "sourceUnavailableTitle": "Source access required",

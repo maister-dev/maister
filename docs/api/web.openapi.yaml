@@ -9571,14 +9571,16 @@ paths:
       summary: Inspect an exact retained result revision
       description: |
         Session-authenticated human inspection under current project readBoard
-        authority and the run's complete captured-source closure. Returns the
+        authority, or explicit company assignments:read authority bound to the
+        run's exact retained assignment input, and the run's complete captured-source closure. Returns the
         requested existing ledger revision, including superseded/stale or invalid
         publication attempts, with current validity and original schema/producer
         metadata. Inspection does not mark a result collected, accept child work,
         confirm knowledge or change a run. Native findings are projected only from
         the frozen evidence_findings_v1 discriminator; matching generic JSON is
         never upgraded. Current grants are rechecked before return. Missing and
-        foreign-project rows return the same 404; unavailable native sources
+        foreign-project rows, unavailable company bindings/read grants and unbound
+        private assistants return the same 404; unavailable native sources
         return PRECONDITION/409 without result content. Response is no-store.
         This session route is not a bearer/MCP direct-grandchild collection path.
       parameters:
