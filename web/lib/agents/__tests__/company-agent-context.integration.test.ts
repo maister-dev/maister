@@ -73,6 +73,7 @@ import { getCompanyAgentRunHistory } from "../activity-queries";
 
 import { answerAssignmentQuestion } from "@/lib/services/assignment-question-response";
 import { assignmentQuestionReceiptSchema } from "@/lib/specialist-assignments/question-types";
+import { getSpecialistAssignmentAdmission } from "@/lib/specialist-assignments/admission-read";
 import {
   getSpecialistAssignment,
   getSpecialistAssignmentInput,
@@ -5068,6 +5069,21 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
           )
         ).rows,
       ).toEqual([{ project_task_id: null, input_revision: 1 }]);
+      const interrupted = (
+        await database.pool.query<{ id: string }>(
+          "SELECT id FROM specialist_assignments WHERE project_id=$1 AND origin->>'commentId'=$2",
+          [project.id, coordinatorComment.comment.id],
+        )
+      ).rows[0]!;
+
+      expect(
+        await getSpecialistAssignmentAdmission(db, userId, interrupted.id),
+      ).toMatchObject({
+        kind: "project_flow",
+        carrier: null,
+        status: "queued",
+        inputRevision: 1,
+      });
     } finally {
       await database.pool.query("DROP TRIGGER cb_owned_carrier_fault ON tasks");
       await database.pool.query("DROP FUNCTION cb_owned_carrier_fault()");
@@ -5171,6 +5187,44 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
     ).rows;
 
     expect(waitingComment).toHaveLength(1);
+    const admissionState = async () =>
+      (
+        await database.pool.query(
+          `SELECT head.revision,head.input_revision,head.context_revision,head.project_task_id,
+      carrier.qualification_input_revision,carrier.current_qualification_id,
+      (SELECT count(*)::int FROM task_launch_intents WHERE task_id=carrier.id) AS intents,
+      (SELECT count(*)::int FROM specialist_run_links WHERE assignment_id=head.id) AS links,
+      (SELECT count(*)::int FROM specialist_input_revisions WHERE assignment_id=head.id) AS inputs,
+      (SELECT count(*)::int FROM domain_events WHERE payload->>'assignmentId'=head.id OR task_id=carrier.id) AS events
+      FROM specialist_assignments head JOIN tasks carrier ON carrier.id=head.project_task_id WHERE head.id=$1`,
+          [waitingComment[0].assignment_id],
+        )
+      ).rows;
+    const beforeInspection = await admissionState();
+    const admissionBefore = await getSpecialistAssignmentAdmission(
+      db,
+      userId,
+      waitingComment[0].assignment_id,
+    );
+
+    expect(admissionBefore).toMatchObject({
+      schemaVersion: 1,
+      assignmentId: waitingComment[0].assignment_id,
+      inputRevision: 1,
+      kind: "project_flow",
+      status: "queued",
+      limitations: ["repository_evidence_not_checked"],
+      carrier: {
+        taskId: waitingComment[0].task_id,
+        input: { revision: 1, sha256: expect.stringMatching(/^[a-f0-9]{64}$/) },
+        qualification: { freshness: "unassessed" },
+        activeLaunch: null,
+      },
+    });
+    expect(admissionBefore.carrier?.taskHref).toBe(
+      `/projects/${project.slug}/tasks/${admissionBefore.carrier?.taskNumber}`,
+    );
+
     expect(waitingComment[0]).toMatchObject({
       outcome: "queued",
       run_id: null,
@@ -5180,6 +5234,22 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
         source: { kind: "task_comment", eventId: Number(coordinatorEvent.id) },
       },
     });
+    await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`SELECT id FROM tasks WHERE id=${waitingComment[0].task_id} FOR UPDATE`,
+      );
+      expect(
+        await getSpecialistAssignmentAdmission(
+          db,
+          userId,
+          waitingComment[0].assignment_id,
+        ),
+      ).toMatchObject({
+        carrier: { taskId: waitingComment[0].task_id },
+        kind: "project_flow",
+      });
+    });
+    expect(await admissionState()).toEqual(beforeInspection);
     const commentReservation = (
       await database.pool.query<{ id: string }>(
         "SELECT id FROM agent_trigger_attempts WHERE trigger_event_id=$1 AND schedule_id=$2",
@@ -5244,6 +5314,19 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
       [waitingComment[0].task_id],
     );
     try {
+      expect(
+        await getSpecialistAssignmentAdmission(
+          db,
+          userId,
+          retainedCommentHead.id,
+        ),
+      ).toMatchObject({
+        carrier: { taskId: waitingComment[0].task_id, input: null },
+        limitations: [
+          "repository_evidence_not_checked",
+          "carrier_input_unavailable",
+        ],
+      });
       await expect(
         reserveProjectAssignmentTask(
           db,
@@ -5274,6 +5357,20 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
       );
     }
     await qualifyCoordinatorTask(waitingComment[0].task_id, userId);
+    expect(
+      await getSpecialistAssignmentAdmission(
+        db,
+        userId,
+        waitingComment[0].assignment_id,
+      ),
+    ).toMatchObject({
+      carrier: {
+        input: { revision: 1 },
+        qualification: { freshness: "current", decision: "ready" },
+      },
+      limitations: ["repository_evidence_not_checked"],
+    });
+
     expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
     const coordinatorCommentWork = (
       await database.pool.query<{
@@ -5472,6 +5569,18 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
     ).rows;
 
     expect(deferredCoordinator).toHaveLength(1);
+    expect(
+      await getSpecialistAssignmentAdmission(
+        db,
+        userId,
+        deferredCoordinator[0].id,
+      ),
+    ).toMatchObject({
+      kind: "project_flow",
+      status: "queued",
+      inputRevision: 1,
+    });
+
     expect(deferredCoordinator[0]).toMatchObject({ input_revision: 1 });
     expect(
       (

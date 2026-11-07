@@ -121,6 +121,27 @@ reuses its assignment and Run. Use a new key only for intentionally independent
 work. Revocation applies to subsequent reads and actions even when older input
 and authority snapshots remain inspectable.
 
+## Find a queued coordinator's qualification task
+
+Use `GET /api/specialist-assignments/{assignmentId}/admission` with your browser
+session, or add `/v1/ext` after `/api` for a global personal token with
+`assignments:read`. No query parameters are accepted. Current assignment and
+source access are required; other credential kinds cannot act as a human reader.
+
+For a project coordinator, `carrier.taskHref` opens the retained task and its
+existing qualification controls. The view shows the original input revision and
+digest, qualification summary and active launch when present. The current
+assignment input revision remains separate from that original carrier input.
+`carrier_input_unavailable` means its original linkage cannot be verified; inspect
+that conflict before continuing. A queued `project_flow` with no carrier is still
+waiting for intake recovery. Preserve the original request key.
+
+Company work and standalone project specialists have no carrier. Inspection
+creates no task, assessment or Run and remains available when a provider is
+disabled, subject to current access. `repository_evidence_not_checked` means a
+ready assessment does not guarantee launch: actual dispatch rechecks repository
+evidence, permissions and execution readiness.
+
 ## Inspect result delivery and replay a failed cycle
 
 Use `GET /api/specialist-assignments/{assignmentId}/delivery?runId={runId}`

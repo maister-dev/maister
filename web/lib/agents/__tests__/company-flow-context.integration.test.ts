@@ -75,6 +75,7 @@ import { recoverPendingAgentQuestions } from "@/lib/services/agent-question";
 import { computeDecisionsQueue } from "@/lib/queries/decisions";
 import { getInboxItems, getUnreadInboxCount } from "@/lib/queries/inbox";
 import { runWebhookDeliveryJob } from "@/lib/scheduler/handlers/webhook-delivery";
+import { getSpecialistAssignmentAdmission } from "@/lib/specialist-assignments/admission-read";
 import {
   getSpecialistAssignmentDelivery,
   replaySpecialistAssignmentDelivery,
@@ -2483,6 +2484,18 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
         ).rows,
       ).toEqual([{ count: 1 }]);
       expect(await counts()).toEqual(allocationBeforeDelivery);
+      expect(
+        await getSpecialistAssignmentAdmission(
+          database.db,
+          requesterId,
+          assignment.id,
+        ),
+      ).toMatchObject({
+        kind: "company",
+        carrier: null,
+        limitations: [],
+        assignmentId: assignment.id,
+      });
       const inspection = await getSpecialistAssignmentDelivery(
         database.db,
         requesterId,

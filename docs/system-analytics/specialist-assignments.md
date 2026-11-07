@@ -891,6 +891,54 @@ mapping remains 400 for session schema failures, 422 for external schema failure
 409 for stale/busy/superseded recovery and 413 for body size. No fixture-only result
 establishes installed stand-pilot readiness.
 
+### Read-only assignment admission inspection (Implemented — T22 ordering qualification pending)
+
+`GET /api/specialist-assignments/{assignmentId}/admission` and the external
+`/api/v1/ext` counterpart expose a closed v1 control view under current human
+`assignments:read` and complete current assignment/source authority. The external
+surface requires a global personal token and its existing required audit; it
+never impersonates a human through a project, execution or librarian token.
+There are no query parameters. Invalid selectors return 400 for sessions or 422
+externally, current authentication/authority returns 401/403, and unavailable
+assignments return 404. Responses remain private/no-store.
+
+The view distinguishes `company`, `project_agent` and `project_flow` admission
+without requiring a repository for company work. It includes assignment identity,
+business revision, current input revision and status. Only an actual project
+coordinator can expose its retained carrier. Before that retention commits,
+`project_flow` with null carrier explicitly means intake still needs recovery.
+A retained carrier includes its actual task identity/number and project task URL,
+the original exact assignment input revision/SHA if its stored source-version
+witness still resolves, and the existing qualification/active-launch projections.
+Current head input and original carrier input remain separate after clarification
+or correction. Historical carrier input receives its own current source check.
+Missing or changed source-version linkage is explicit through null input and
+`carrier_input_unavailable`, never a fabricated replacement witness.
+
+Qualification reuses `getTaskQualificationSummaries`; active launch reuses
+`taskLaunchPreviewState`. No assessment, input, source reservation, launch intent,
+Run, event or permission is written by inspection. Carrier/qualification metadata
+uses non-locking reads beneath existing assignment/source authority locks, so an
+inspection cannot invert canonical task-before-assignment mutation ordering.
+Returned revisions describe an observation; subsequent actions still require
+current authority and their exact CAS coordinates. The view explicitly reports
+`repository_evidence_not_checked` for a retained project carrier: an accepted
+ready assessment is not a claim that live repository evidence, provider/host,
+current permissions and original trigger are admitted for execution. Canonical
+launch remains the only authority and may require requalification. Actual task
+controls supply assessment/review; this surface makes the retained carrier
+reachable without creating a second qualification mechanism or exposing private
+input/authority snapshots. Inspection remains available when a provider is
+disabled, provided current reader/source permissions remain valid.
+
+Qualification covers actual queued comment/cron/event/webhook coordinator work,
+carrier absence after an interrupted intake, original input and direct task link,
+assessment change and current canonical intent after launch, source-version
+mismatch without mutation, current access revocation, personal bearer audit and
+company/standalone work with no carrier. Reads must leave all business and
+execution allocation counts unchanged. Ordering/cancellation qualification and
+full Phase 5 exit remain separate gates.
+
 ### Qualified project coordinator source handoff (Partial — reopened T22)
 
 An automatic project coordinator request first retains its original assignment,

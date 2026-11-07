@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-07T20:03:02.482049+00:00",
+  "baseline": "2c6b1c85eefea25e2fe1df1ff0be193234474539",
+  "status": "qualified-local-admission-inspection-T22-ordering-open",
+  "red": [
+    "Actual retained queued project coordinator cannot be inspected by the initial unavailable reader scaffold.",
+    "Read-only carrier inspection fails while another real transaction holds the canonical task row mutation lock."
+  ],
+  "fixtureNotes": [
+    "The initial test patch anchor did not apply; that command is retained as baseline-green, not RED.",
+    "Focused company execution omits the earlier explicit runner binding fixture and refuses with 503 before the new reader. Complete owning company-Flow suite passes unchanged admission policy."
+  ],
+  "gates": {
+    "projectSourceComposite": {
+      "passed": 1,
+      "skipped": 48,
+      "seconds": 63.17
+    },
+    "companyFlowAndDelivery": {
+      "passed": 60,
+      "files": 2,
+      "seconds": 75.24
+    },
+    "unit": {
+      "passed": 9312,
+      "files": 891,
+      "seconds": 27.61
+    },
+    "types": "passed",
+    "lintAndFormat": "passed",
+    "contracts": "passed;84 requirements;45 tasks",
+    "docs": "passed;176 tables",
+    "publicBuild": "passed",
+    "publicLinks": "passed"
+  },
+  "verified": [
+    "Actual retained carrier task link and original private input digest",
+    "Explicit missing carrier after failed intake before task retention",
+    "Current accepted qualification remains distinct from unchecked live repository evidence",
+    "Changed stored source-version linkage returns explicit unavailable witness without mutation",
+    "Read succeeds while canonical task mutation lock is held",
+    "Read-only scoped assignment/input/qualification/intent/event/Run counts",
+    "History remains readable while a runner is disabled",
+    "Company and standalone project work require no carrier",
+    "Session and personal-token HTTP/current authority",
+    "No-query contract, missing assignment and project bearer impersonation refusal",
+    "Required personal-token read audit records success and refusals",
+    "Current source/membership revocation hides admission metadata"
+  ],
+  "remaining": [
+    "T22 exhaustive qualification/replay ordering and cancellation checks",
+    "T26 full Phase 5 qualification",
+    "T27-T43 governed cooperation, connector, UI and actual installed-package pilot"
+  ],
+  "effects": "Owned local databases, controlled ACP/supervisor and local fixture peer only; no production action, publication or push.",
+  "sources": [
+    {
+      "path": ".ai-factory/plans/codex-company-brain-specialist-assignments.md",
+      "sha256": "e21ba0e77b0a0d73b3609907afb09bcef05fe2b4b9e785ffc9d98085fbd99208"
+    },
+    {
+      "path": "docs/api/external/operations.openapi.yaml",
+      "sha256": "a82493270d115d8a015edb55e1d8814cfa517a811834b82d24e803821d1e78a6"
+    },
+    {
+      "path": "docs/api/web.openapi.yaml",
+      "sha256": "b2121b983008d2e53842d9f5cf2d8496c59061bda7984755d11f63624e1dedf3"
+    },
+    {
+      "path": "docs/system-analytics/specialist-assignments.md",
+      "sha256": "53ab355520596dd087752b30f83e8ae549526942b2fb8cfc420cbb98627588b5"
+    },
+    {
+      "path": "site-docs/guides/company-specialist-webhooks.md",
+      "sha256": "80e998a6885bdd8d6678abd96361c16ab5cfffd780345e067dbd276ec44fcb7c"
+    },
+    {
+      "path": "site-docs/ru/guides/company-specialist-webhooks.md",
+      "sha256": "848225fe17361ac88b07fc69c899b385b32f0ac041aed87f296911f7a2c48199"
+    },
+    {
+      "path": "web/app/api/specialist-assignments/[assignmentId]/admission/route.ts",
+      "sha256": "c4f81619a7056a38c83520ca84b9ad044d777ff4cf84b6f8106c7ee83fbd77b6"
+    },
+    {
+      "path": "web/app/api/v1/ext/specialist-assignments/[assignmentId]/admission/route.ts",
+      "sha256": "55138e365cc20b85077e941eb45f31a0408499129b638a502c4e498d7aa5606b"
+    },
+    {
+      "path": "web/lib/agents/__tests__/company-agent-context.integration.test.ts",
+      "sha256": "b71501477c5c0d74644afabb8449bbdb7bdcd68d3c9c2f063688164570ff363f"
+    },
+    {
+      "path": "web/lib/agents/__tests__/company-flow-context.integration.test.ts",
+      "sha256": "07e0f81f574694f23956d01c13065b806fb3c550a4e9e7aecd4a764034d95380"
+    },
+    {
+      "path": "web/lib/specialist-assignments/__tests__/delivery.integration.test.ts",
+      "sha256": "71ff6934c5321e749be62a551c8e2254caa3fa67314e604d89bae262bbd92316"
+    },
+    {
+      "path": "web/lib/specialist-assignments/admission-read.ts",
+      "sha256": "c7e3fd2bd2516b9fafc53fbb9dba585f1f66faafe1c0854155e6fd0a6cc25c1d"
+    }
+  ],
+  "logs": [
+    "baseline-green.log.gz",
+    "unavailable-reader-red.log.gz",
+    "task-lock-red.log.gz",
+    "project-green.log.gz",
+    "boundary-owning-green.log.gz",
+    "focused-fixture-refusal.log.gz",
+    "unit-green.log.gz",
+    "types-green.log.gz",
+    "contracts-green.log.gz",
+    "docs-green.log.gz",
+    "lint-green.log.gz",
+    "public-build-green.log.gz",
+    "public-links-green.log.gz"
+  ]
+}

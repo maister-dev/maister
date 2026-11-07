@@ -36,6 +36,8 @@ import {
   replaySpecialistAssignmentDelivery,
 } from "../delivery-read";
 
+import { GET as admissionGet } from "@/app/api/specialist-assignments/[assignmentId]/admission/route";
+import { GET as externalAdmissionGet } from "@/app/api/v1/ext/specialist-assignments/[assignmentId]/admission/route";
 import { GET as deliveryGet } from "@/app/api/specialist-assignments/[assignmentId]/delivery/route";
 import { POST as deliveryReplay } from "@/app/api/specialist-assignments/[assignmentId]/delivery/[deliveryId]/replay/route";
 import { GET as externalDeliveryGet } from "@/app/api/v1/ext/specialist-assignments/[assignmentId]/delivery/route";
@@ -1608,4 +1610,104 @@ it("IT-CBA-06 keeps outbound history visible while disabled target authority ref
 
   expect(responses).toHaveLength(received + 1);
   expect(responses[0]!.key).toBe(responses[1]!.key);
+});
+
+it("IT-CBA-02 inspects standalone admission through current session and personal bearer authority without allocating work", async () => {
+  const target = await recipient();
+  const work = await readyResult(target, {
+    kind: "inbox",
+    userId: target.userId,
+  });
+  const url = `http://localhost/api/specialist-assignments/${work.assignmentId}/admission`;
+  const params = {
+    params: Promise.resolve({ assignmentId: work.assignmentId }),
+  };
+  const counts = (
+    await database.pool.query(
+      "SELECT (SELECT count(*)::int FROM runs) AS runs,(SELECT count(*)::int FROM tasks) AS tasks,(SELECT count(*)::int FROM task_qualifications) AS qualifications,(SELECT count(*)::int FROM task_launch_intents) AS intents,(SELECT count(*)::int FROM domain_events) AS events",
+    )
+  ).rows;
+
+  deliverySession.userId = null;
+  expect((await admissionGet(new NextRequest(url), params)).status).toBe(401);
+  deliverySession.userId = target.userId;
+  try {
+    const response = await admissionGet(new NextRequest(url), params);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(await response.json()).toMatchObject({
+      schemaVersion: 1,
+      assignmentId: work.assignmentId,
+      kind: "project_agent",
+      carrier: null,
+      limitations: [],
+    });
+    expect(
+      (await admissionGet(new NextRequest(url + "?actorId=forged"), params))
+        .status,
+    ).toBe(400);
+    expect(
+      (
+        await admissionGet(new NextRequest(url), {
+          params: Promise.resolve({ assignmentId: randomUUID() }),
+        })
+      ).status,
+    ).toBe(404);
+    const personal = await issueUserAccessToken(
+      {
+        ownerUserId: target.userId,
+        name: "admission-read",
+        scopes: ["assignments:read"],
+      },
+      database.db,
+    );
+    const project = await issueToken(
+      {
+        projectId: target.projectId,
+        name: "admission-project-refusal",
+        scopes: ["assignments:read"],
+      },
+      database.db,
+    );
+    const extUrl = url.replace("/api/", "/api/v1/ext/");
+    const inspect = (secret: string, query = "") =>
+      externalAdmissionGet(
+        new NextRequest(extUrl + query, {
+          headers: { authorization: `Bearer ${secret}` },
+        }),
+        params,
+      );
+
+    expect((await inspect(project.secret)).status).toBe(403);
+    expect((await inspect(personal.secret)).status).toBe(200);
+    expect((await inspect(personal.secret, "?revision=1")).status).toBe(422);
+    await database.pool.query(
+      "DELETE FROM project_members WHERE project_id=$1 AND user_id=$2",
+      [target.projectId, target.userId],
+    );
+    expect((await admissionGet(new NextRequest(url), params)).status).toBe(403);
+    expect((await inspect(personal.secret)).status).toBe(403);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status_code,scope_used FROM token_audit_log WHERE token_id=$1 ORDER BY created_at,id",
+          [personal.tokenId],
+        )
+      ).rows,
+    ).toEqual([
+      { status_code: 200, scope_used: "assignments:read" },
+      { status_code: 422, scope_used: "assignments:read" },
+      { status_code: 403, scope_used: "assignments:read" },
+    ]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT (SELECT count(*)::int FROM runs) AS runs,(SELECT count(*)::int FROM tasks) AS tasks,(SELECT count(*)::int FROM task_qualifications) AS qualifications,(SELECT count(*)::int FROM task_launch_intents) AS intents,(SELECT count(*)::int FROM domain_events) AS events",
+        )
+      ).rows,
+    ).toEqual(counts);
+  } finally {
+    deliverySession.userId = null;
+  }
 });

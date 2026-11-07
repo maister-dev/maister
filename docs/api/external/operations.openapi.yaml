@@ -6137,6 +6137,48 @@ paths:
             minLength: 1
             maxLength: 128
           description: URL selector resolved and authorized against server state; no filesystem path.
+  /api/v1/ext/specialist-assignments/{assignmentId}/admission:
+    get:
+      operationId: extSpecialistAssignmentAdmissionGet
+      summary: Inspect retained assignment admission and qualification
+      description: >-
+        Current human assignment read and complete source authority apply. The external
+        surface admits global personal tokens only and requires token audit. No query
+        parameters are accepted. Company and project-agent work have no carrier.
+        Project coordinator work exposes its actual retained task and original input witness,
+        canonical qualification summary and active launch receipt. Missing original linkage
+        is explicit. Live repository evidence is not checked; this read neither writes nor
+        authorizes execution. Disabled providers do not prevent otherwise authorized history.
+        Responses are private and no-store.
+      x-implementation-status: Implemented
+      x-required-scope: assignments:read
+      security:
+        - projectToken: []
+      parameters:
+        - name: assignmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+      responses:
+        "200":
+          description: Authorized read-only admission observation; never an execution grant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBAssignmentAdmissionView"
+        "422":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
   /api/v1/ext/specialist-assignments/{assignmentId}/delivery:
     get:
       operationId: extSpecialistAssignmentDeliveryGet
@@ -14307,6 +14349,90 @@ components:
               type: string
               minLength: 1
               maxLength: 128
+    CBAssignmentAdmissionView:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, assignmentId, revision, inputRevision, status, kind, carrier, limitations]
+      properties:
+        schemaVersion:
+          type: integer
+          enum: [1]
+        assignmentId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        revision:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        inputRevision:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        status:
+          type: string
+          enum: [queued, active, waiting_input, waiting_children, waiting_resource, reconciling, awaiting_acceptance, completed, failed, cancelled]
+        kind:
+          type: string
+          enum: [company, project_agent, project_flow]
+        limitations:
+          type: array
+          uniqueItems: true
+          maxItems: 2
+          items:
+            type: string
+            enum: [repository_evidence_not_checked, carrier_input_unavailable]
+        carrier:
+          oneOf:
+            - $ref: "#/components/schemas/CBAssignmentAdmissionCarrier"
+            - type: object
+              nullable: true
+              enum: [null]
+    CBAssignmentAdmissionCarrier:
+      type: object
+      additionalProperties: false
+      required: [taskId, taskNumber, taskHref, input, qualification, activeLaunch]
+      properties:
+        taskId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        taskNumber:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        taskHref:
+          type: string
+          minLength: 1
+          maxLength: 2048
+        input:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [revision, sha256]
+              properties:
+                revision:
+                  type: integer
+                  minimum: 1
+                  maximum: 2147483647
+                sha256:
+                  type: string
+                  pattern: "^[a-f0-9]{64}$"
+            - type: object
+              nullable: true
+              enum: [null]
+        qualification:
+          oneOf:
+            - $ref: "#/components/schemas/TaskQualificationSummary"
+            - type: object
+              nullable: true
+              enum: [null]
+        activeLaunch:
+          oneOf:
+            - $ref: "#/components/schemas/TaskLaunchReceipt"
+            - type: object
+              nullable: true
+              enum: [null]
     CBAssignmentDeliveryReplay:
       type: object
       additionalProperties: false
