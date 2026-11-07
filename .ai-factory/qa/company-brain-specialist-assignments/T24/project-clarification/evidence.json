@@ -1,0 +1,55 @@
+{
+  "task": "T24",
+  "date": "2026-11-07",
+  "baseCommit": "ffa779c3d",
+  "slice": "Actual project standalone clarification and current membership qualification",
+  "status": "Company/project standalone clarification qualified; T24 remains open",
+  "implementationChange": false,
+  "gates": {
+    "projectFocused": {
+      "tests": 1,
+      "exitCode": 0
+    },
+    "sharedCompanyProjectIntegration": {
+      "tests": 49,
+      "files": 1,
+      "durationSeconds": 87.57,
+      "exitCode": 0
+    },
+    "types": {
+      "exitCode": 0
+    },
+    "lintAndFormat": {
+      "exitCode": 0
+    },
+    "contractsAndCoverage": {
+      "requirements": 84,
+      "exitCode": 0
+    },
+    "docsAndErd": {
+      "tables": 173,
+      "exitCode": 0
+    }
+  },
+  "qualified": [
+    "Actual package attachment, configured runner and repository project admission create one existing Run under the native assignment",
+    "The actual appointed project professional asks with its own scoped credential while general Brain read/write flags remain disabled",
+    "Current project membership gates the human answer; an unassigned responder refuses, a current member succeeds and revoked membership refuses replay",
+    "Next input records the distinct answering human and exact membership witness while retaining the original admitted request",
+    "The existing continuation worker resumes the same Run and exact original root link; current specialist inspection authorizes the answered input without Brain grants"
+  ],
+  "fixtureCorrections": [
+    "The initial run correctly required the existing platform default runner; the fixture now supplies it rather than bypassing admission",
+    "The existing seed helper retains its actual unbound database type rather than a cast to the runtime Db alias"
+  ],
+  "limitations": [
+    "This checkpoint changes qualification and docs only; RED/GREEN production implementation evidence is the preceding answer-continuation receipt",
+    "Full web unit and 232-check owning compatibility proof remain the unchanged-production predecessor ffa779c3d receipt; this checkpoint reruns the affected shared 49-test file",
+    "Native question HTTP/MCP adapters, graph clarification and actual companion-package/pilot qualification remain open"
+  ],
+  "sourceSha256": {
+    "docs/db/specialist-assignments-domain.md": "ea4fa249dad893772a739b64249771cc518e393f9fda223d3a515cf630e511ac",
+    "docs/system-analytics/specialist-assignments.md": "f4325ccea60a2701c7e82a36997f150679df3d630ca5ff877d72f0af4dce8113",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "931e74a2855e2f7bab4e5a193ebf01fefa9ae5892dde8c96d34da6ae8c3b0c2b"
+  }
+}

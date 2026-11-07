@@ -432,6 +432,7 @@ beforeAll(async () => {
     "question-recovery-observer",
     "question-agent-observer",
     "question-cancelled-observer",
+    "question-project-observer",
   ])
     await cp(
       join(source, "maister-agents/wire-observer.md"),
@@ -3180,6 +3181,311 @@ it.each(["normal", "activation-recovery", "agent", "cancelled"] as const)(
   },
   60000,
 );
+
+it("IT-CBA-05 resumes a repository-admitted project assignment after its actual specialist clarification under current project membership", async () => {
+  const db: Db = database.db;
+  const repo = await initRepo(join(root, "project-question-repo"));
+  const project = await seedProjectRow(database.db, { repoPath: repo });
+  const responderId = randomUUID();
+  const responderMembershipId = randomUUID();
+  const roleId = "rah:question-project-observer";
+  const runnerId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+    [responderId, `${responderId}@example.test`],
+  );
+  await database.pool.query(
+    "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'member')",
+    [randomUUID(), project.id, userId],
+  );
+  await attachPackage({
+    projectId: project.id,
+    projectSlug: project.slug,
+    packageInstallId: assignmentInput.standingDefinition.packageInstallId,
+    db,
+  });
+  await db.insert(platformAcpRunners).values({
+    id: runnerId,
+    adapter: "claude",
+    capabilityAgent: "claude",
+    model: "project-question-fixture",
+    provider: { kind: "anthropic" },
+    readinessStatus: "Ready",
+  });
+  await db
+    .insert(platformRuntimeSettings)
+    .values({ id: "singleton", defaultRunnerId: runnerId })
+    .onConflictDoUpdate({
+      target: platformRuntimeSettings.id,
+      set: { defaultRunnerId: runnerId },
+    });
+  const binding = await attachAgent(
+    { projectId: project.id, agentId: roleId, runnerOverrideId: runnerId },
+    db,
+  );
+
+  await updateAgentLink(
+    {
+      projectId: project.id,
+      agentId: roleId,
+      patch: { canReadBrain: false, canWriteBrain: false },
+    },
+    db,
+  );
+  const supervisor = await startRealSupervisor({
+    runtimeRoot: join(root, "project-question-host"),
+    workspaceRoots: [join(root, "worktrees"), repo],
+    fixtureArgs: ["--hang", "--controlled-prompt", "--supports-resume"],
+  });
+  const restoreUrl = useRealSupervisorUrl(supervisor.url);
+  const worker = startProjectionWorker({ db, projectors: canonicalProjectors });
+  const abort = new AbortController();
+  let runId: string | undefined;
+  let driver: Promise<unknown> | undefined;
+  let continuation: ReturnType<typeof startAgentContinuationWorker> | undefined;
+
+  setDefaultTransportForTests(null);
+  resetResolverForTests();
+  resetRegistrarStateForTests();
+  try {
+    const hosts = createExecutionHosts({
+      db,
+      transport: createLocalDirectTransport(),
+    });
+    const host = await localHost({ db, transport: hosts.transport });
+
+    await database.pool.query(
+      "INSERT INTO execution_host_pressure(execution_host_id,pressured_since) VALUES($1,now()) ON CONFLICT DO NOTHING",
+      [host.id],
+    );
+    browserSession.user = await requireActiveUserById(userId);
+    const { expectedResult: _expectedResult, ...objective } =
+      assignmentInput.objectiveInput;
+    const response = await assignmentPost(
+      new NextRequest("http://localhost/api/specialist-assignments", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ...objective,
+          owner: { kind: "project", projectId: project.id },
+          specialistBindingId: binding.linkId,
+          input:
+            "Preserve this original repository-admitted diagnostic request",
+          idempotencyKey: randomUUID(),
+        }),
+      }),
+    );
+
+    expect(response.status, JSON.stringify(await response.clone().json())).toBe(
+      201,
+    );
+    const assignment = specialistAssignmentSchema.parse(await response.json());
+
+    expect(assignment.runIds).toHaveLength(1);
+    runId = assignment.runIds[0]!;
+    await database.pool.query(
+      "DELETE FROM execution_host_pressure WHERE execution_host_id=$1",
+      [host.id],
+    );
+    expect(await tryStartRun(runId, { db })).toMatchObject({ started: true });
+    driver = startAgentSession(runId, {
+      db,
+      executionHosts: hosts,
+      signal: abort.signal,
+    }).catch((error: unknown) => error);
+    await expect
+      .poll(
+        async () =>
+          (
+            await database.pool.query(
+              "SELECT count(*)::int AS count FROM agent_turns WHERE run_id=$1 AND state='dispatched' AND command_id IS NOT NULL",
+              [runId],
+            )
+          ).rows[0].count,
+        { timeout: 30000, interval: 25 },
+      )
+      .toBe(1);
+    const credential = await issueAgentRunToken({
+      db,
+      projectId: project.id,
+      agentId: roleId,
+      runId,
+    });
+    const metadata = await inspectExternal(assignment.id, credential.secret);
+
+    expect(metadata.status).toBe(200);
+    const current = specialistAssignmentSchema.parse(await metadata.json());
+    const { createOrActivateAssignmentQuestion } =
+      await import("@/lib/services/assignment-question");
+    const question = await createOrActivateAssignmentQuestion(
+      db,
+      { kind: "token", tokenId: credential.tokenId },
+      assignment.id,
+      {
+        expectedRevision: current.revision,
+        inputRevision: 1,
+        question: "Which repository component needs diagnosis?",
+        schema: {
+          schemaVersion: 1,
+          fields: [
+            {
+              name: "component",
+              type: "string",
+              required: true,
+              options: ["web", "supervisor"],
+            },
+          ],
+        },
+        reTriggerMode: "agent",
+        idempotencyKey: randomUUID(),
+      },
+      { executionHosts: hosts },
+    );
+
+    expect(question).toMatchObject({
+      assignmentId: assignment.id,
+      sourceRunId: runId,
+      activationState: "active",
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT company_id,project_id,task_id FROM assignments WHERE hitl_request_id=$1",
+          [question.hitlRequestId],
+        )
+      ).rows,
+    ).toEqual([{ company_id: null, project_id: project.id, task_id: null }]);
+    browserSession.user = await requireActiveUserById(responderId);
+    const answer = () =>
+      respondHitlPost(
+        new NextRequest(
+          `http://localhost/api/runs/${runId}/hitl/${question.hitlRequestId}/respond`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              response: { component: "custom-project-component" },
+            }),
+          },
+        ),
+        {
+          params: Promise.resolve({
+            runId: runId!,
+            hitlRequestId: question.hitlRequestId,
+          }),
+        },
+      );
+
+    expect((await answer()).status).toBe(403);
+    await database.pool.query(
+      "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'member')",
+      [responderMembershipId, project.id, responderId],
+    );
+    expect((await answer()).status).toBe(202);
+    const updated = await getSpecialistAssignmentInput(
+      db,
+      userId,
+      assignment.id,
+      2,
+    );
+
+    expect(updated.actor).toMatchObject({ kind: "user", id: responderId });
+    expect(updated.snapshot.authoritySnapshot.witnesses).toContainEqual({
+      kind: "project_membership",
+      projectId: project.id,
+      membershipId: responderMembershipId,
+      role: "member",
+    });
+    expect(updated.snapshot.objectiveInput.input).toContain(
+      "Preserve this original repository-admitted diagnostic request",
+    );
+    expect(updated.snapshot.objectiveInput.input).toContain(
+      "custom-project-component",
+    );
+    await database.pool.query("DELETE FROM project_members WHERE id=$1", [
+      responderMembershipId,
+    ]);
+    expect((await answer()).status).toBe(403);
+    continuation = startAgentContinuationWorker({ db, executionHosts: hosts });
+    await expect
+      .poll(
+        async () =>
+          (
+            await database.pool.query(
+              "SELECT count(*)::int AS count FROM agent_turns WHERE run_id=$1 AND variant='resume' AND state='dispatched' AND command_id IS NOT NULL",
+              [runId],
+            )
+          ).rows[0].count,
+        { timeout: 30000, interval: 25 },
+      )
+      .toBe(1);
+    const rotated = await issueAgentRunToken({
+      db,
+      projectId: project.id,
+      agentId: roleId,
+      runId,
+    });
+    const inspection = await inspectExternal(assignment.id, rotated.secret);
+
+    expect(inspection.status).toBe(200);
+    expect(await inspection.json()).toMatchObject({
+      id: assignment.id,
+      owner: { kind: "project", projectId: project.id },
+      inputRevision: 2,
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM specialist_run_links WHERE assignment_id=$1",
+          [assignment.id],
+        )
+      ).rows,
+    ).toEqual([{ count: 1 }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM specialist_input_revisions WHERE assignment_id=$1",
+          [assignment.id],
+        )
+      ).rows,
+    ).toEqual([{ count: 2 }]);
+  } finally {
+    await database.pool.query(
+      "DELETE FROM execution_host_pressure WHERE execution_host_id IN (SELECT id FROM execution_hosts WHERE kind='local_direct' AND retired_at IS NULL)",
+    );
+    browserSession.user = await requireActiveUserById(userId);
+    if (runId) {
+      const retainedRunId = runId;
+
+      await expect
+        .poll(
+          async () =>
+            (
+              await stopRunPost(
+                new Request(`http://localhost/api/runs/${retainedRunId}/stop`, {
+                  method: "POST",
+                }),
+                { params: Promise.resolve({ runId: retainedRunId }) },
+              )
+            ).status,
+          { timeout: 10000, interval: 25 },
+        )
+        .toBe(200);
+    }
+    await continuation?.stop();
+    abort.abort();
+    await supervisor.stop();
+    await driver;
+    await worker.stop();
+    await stopRuntimeEventConsumers();
+    restoreUrl();
+    browserSession.user = null;
+    resetResolverForTests();
+    resetRegistrarStateForTests();
+    setDefaultTransportForTests(null);
+  }
+}, 60000);
 
 it("IT-CBA-02 submits project specialist work through its actual attachment, original input and existing agent admission", async () => {
   const db: Db = database.db;

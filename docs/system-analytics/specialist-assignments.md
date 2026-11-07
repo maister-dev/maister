@@ -524,8 +524,8 @@ process is already stopped, and recovery adopts the exact successful checkpoint
 receipt instead of issuing another checkpoint. An answer requires its exact new
 input revision; terminal lifecycle closure with NULL response is a distinct
 unanswered closure and creates no invented answer or input revision. Public
-question routes and project/graph subjects remain Designed until their owning
-T24 runtime checks pass. Native standalone Inbox answer and same-Run continuation
+question routes and graph subjects remain Designed until their owning
+T24 runtime checks pass. Native standalone company/project Inbox answer and same-Run continuation
 are implemented through the existing human-work, immutable-input and continuation
 services. The answer transaction retains exact user authority and response/input
 witnesses, completes the human work item, advances the assignment input and queues
@@ -541,7 +541,12 @@ owner. Host pressure leaves a durable resume request without a prompt. The old
 Run snapshot and root link keep their original input; current read policy follows
 at most 32 guarded answer receipts, always with current source and professional
 access. A historical context/input witness is preserved independently of the new
-question input, including through repeated clarification on the same Run.
+question input, including through repeated clarification on the same Run. Project
+appointments retain actual repository admission, current attachment/initiating
+membership and the original root input. Human project answer authority is checked
+at acceptance and replay; a formerly authorized responder cannot replay after
+membership revocation. A resumed specialist reads the exact answered input under
+its own current credential even with general Brain permissions disabled.
 
 The response body carries `response` as a bounded object validated against the exact stored native question FormSchema, not a replacement free-text-only grammar or caller-supplied schema. Required string answers are nonblank; human question suggestions permit custom text as the existing contract specifies, while permission/transition enums stay closed. Work `clarify` decisions may omit resultRevision when no result exists; accept/reject/rework of a result require the exact ready result revision at the service boundary. Context entry IDs are assignment/revision-local logical keys, not caller-authoritative global database row IDs.
 
