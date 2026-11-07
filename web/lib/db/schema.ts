@@ -10643,6 +10643,9 @@ export const specialistAssignments = pgTable(
       t.updatedAt,
       t.id,
     ),
+    projectQueued: index("specialist_assignments_project_queued_idx")
+      .on(t.updatedAt, t.id)
+      .where(sql`${t.projectId} IS NOT NULL AND ${t.status}='queued'`),
     projectStatus: index("specialist_assignments_project_status_idx").on(
       t.projectId,
       t.status,

@@ -3197,6 +3197,7 @@ table specialist_assignments {
 
 
     (company_id, status, updated_at, id) [name: 'specialist_assignments_company_status_idx']
+    (updated_at, id) [name: 'specialist_assignments_project_queued_idx']
     (project_id, status, updated_at, id) [name: 'specialist_assignments_project_status_idx']
     (responsible, updated_at, id) [name: 'specialist_assignments_responsible_idx']
   }

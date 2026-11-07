@@ -5042,6 +5042,88 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
 
     expect(concurrentCommentClaim).not.toBeNull();
     assertProjectAgentTriggerClaim(concurrentCommentClaim!);
+    const { runAutoLaunchTriagedJob: recoverProjectIntake } =
+      await import("@/lib/scheduler/handlers/auto-launch-triaged");
+
+    await database.pool
+      .query(`CREATE FUNCTION cb_owned_carrier_fault() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.agent_id='rah:flow-coordinator' THEN
+        RAISE EXCEPTION 'Owned intake interruption before carrier retention' USING ERRCODE='23514',CONSTRAINT='cb_owned_carrier_fault';
+      END IF; RETURN NEW; END $$`);
+    await database.pool.query(
+      "CREATE TRIGGER cb_owned_carrier_fault BEFORE INSERT ON tasks FOR EACH ROW EXECUTE FUNCTION cb_owned_carrier_fault()",
+    );
+    try {
+      await expect(
+        submitProjectCommentAssignment(db, concurrentCommentClaim!),
+      ).rejects.toMatchObject({
+        code: "CRASH",
+        details: { sqlState: "23514", constraint: "cb_owned_carrier_fault" },
+      });
+      expect(
+        (
+          await database.pool.query(
+            "SELECT project_task_id,input_revision FROM specialist_assignments WHERE project_id=$1 AND origin->>'commentId'=$2",
+            [project.id, coordinatorComment.comment.id],
+          )
+        ).rows,
+      ).toEqual([{ project_task_id: null, input_revision: 1 }]);
+    } finally {
+      await database.pool.query("DROP TRIGGER cb_owned_carrier_fault ON tasks");
+      await database.pool.query("DROP FUNCTION cb_owned_carrier_fault()");
+    }
+    await database.pool
+      .query(`CREATE FUNCTION cb_owned_pointer_fault() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.specialist_assignment IS NOT NULL THEN
+        RAISE EXCEPTION 'Owned intake interruption before source handoff commit' USING ERRCODE='23514',CONSTRAINT='cb_owned_pointer_fault';
+      END IF; RETURN NEW; END $$`);
+    await database.pool.query(
+      "CREATE TRIGGER cb_owned_pointer_fault BEFORE UPDATE ON agent_trigger_attempts FOR EACH ROW EXECUTE FUNCTION cb_owned_pointer_fault()",
+    );
+    try {
+      await expect(recoverProjectIntake({ db })).rejects.toMatchObject({
+        cause: { code: "23514", constraint: "cb_owned_pointer_fault" },
+      });
+      expect(
+        (
+          await database.pool.query(
+            "SELECT project_task_id FROM specialist_assignments WHERE project_id=$1 AND origin->>'commentId'=$2",
+            [project.id, coordinatorComment.comment.id],
+          )
+        ).rows[0].project_task_id,
+      ).toEqual(expect.any(String));
+    } finally {
+      await database.pool.query(
+        "DROP TRIGGER cb_owned_pointer_fault ON agent_trigger_attempts",
+      );
+      await database.pool.query("DROP FUNCTION cb_owned_pointer_fault()");
+    }
+    await database.pool.query(
+      "UPDATE agent_trigger_attempts SET due_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+      [concurrentCommentClaim!.id],
+    );
+    expect(await reconcileAgentTriggerAttempts(db, new Date())).toEqual({
+      adopted: 0,
+      unknown: 1,
+    });
+
+    await recoverProjectIntake({ db });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT outcome,run_id,specialist_assignment IS NOT NULL AS retained FROM agent_trigger_attempts WHERE id=$1",
+          [concurrentCommentClaim!.id],
+        )
+      ).rows,
+    ).toEqual([{ outcome: "queued", run_id: null, retained: true }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT source_resolved_at IS NOT NULL AS resolved FROM agent_incident_occurrences WHERE source_fact_key='attempt:'||$1 AND channel='admission_refusal'",
+          [concurrentCommentClaim!.id],
+        )
+      ).rows,
+    ).toEqual([{ resolved: true }]);
     const concurrentCommentReceipts = await Promise.all([
       submitProjectCommentAssignment(db, concurrentCommentClaim!),
       submitProjectCommentAssignment(db, concurrentCommentClaim!),

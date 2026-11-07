@@ -2,9 +2,10 @@ import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 
 import { afterAll, beforeAll, expect, it } from "vitest";
 
-import { seedProjectRow } from "@/test-support/execution-host-seed";
+import { seedRun, seedProjectRow } from "@/test-support/execution-host-seed";
 import {
   applyMainMigration,
+  declareCurrentTestDatabaseWriter,
   startMainPostgresTestDbUpTo,
 } from "@/test-support/pg-container";
 
@@ -15,6 +16,7 @@ beforeAll(async () => {
     { databaseName: "specialist_source_upgrade" },
     "0266_specialist_delivery_targets",
   );
+  await declareCurrentTestDatabaseWriter(database);
 }, 180000);
 afterAll(async () => {
   await database?.stop();
@@ -106,4 +108,49 @@ it("preserves populated legacy source attempts without inventing native assignme
       )
     ).rows,
   ).toEqual(before);
+  await database.pool.query(
+    "UPDATE agent_trigger_attempts SET outcome='unknown',settled_at=now(),reason_code='agent_trigger_outcome_unknown' WHERE id='legacy-attempt'",
+  );
+  const unknownBefore = (
+    await database.pool.query(
+      "SELECT to_jsonb(invocation) AS value FROM agent_trigger_attempts invocation",
+    )
+  ).rows;
+
+  await database.db.transaction((tx) =>
+    applyMainMigration(tx, "0268_project_source_recovery"),
+  );
+  expect(
+    (
+      await database.pool.query(
+        "SELECT to_jsonb(invocation) AS value FROM agent_trigger_attempts invocation",
+      )
+    ).rows,
+  ).toEqual(unknownBefore);
+  await expect(
+    database.pool.query(
+      "UPDATE agent_trigger_attempts SET specialist_assignment=$1::jsonb,outcome='queued',settled_at=now(),reason_code=NULL WHERE id='legacy-attempt'",
+      [JSON.stringify(pointer)],
+    ),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "project_source_handoff_assignment",
+  });
+  await seedRun(database.db, { projectId: project.id, id: "legacy-run" });
+  await expect(
+    database.pool.query(
+      "UPDATE agent_trigger_attempts SET specialist_assignment=$1::jsonb,outcome='queued',settled_at=now(),reason_code=NULL WHERE id='legacy-attempt'",
+      [JSON.stringify(pointer)],
+    ),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "project_source_handoff_reference",
+  });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT to_jsonb(invocation) AS value FROM agent_trigger_attempts invocation",
+      )
+    ).rows,
+  ).toEqual(unknownBefore);
 });

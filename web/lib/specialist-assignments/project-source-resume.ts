@@ -162,6 +162,7 @@ export async function resumeQualifiedProjectAssignments(
       if (
         !isMaisterError(error) ||
         ![
+          "CONFIG",
           "PRECONDITION",
           "CONFLICT",
           "UNAUTHORIZED",

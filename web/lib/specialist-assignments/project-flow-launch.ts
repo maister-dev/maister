@@ -10,12 +10,11 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 
 import { assertProjectCoordinatorProvider } from "./project-flow-provider";
 import { retainProjectSourceHandoff } from "./project-source-handoff";
-import { reserveProjectAssignmentTask } from "./project-task";
+import { reserveProjectCoordinatorTask } from "./project-flow-task";
 
 import { createAgentFlowTaskLaunchSource } from "@/lib/agents/flow-launch-authority";
 import { taskLaunchIntents } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
-import { createTask } from "@/lib/services/tasks";
 import { assertInteractiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
 import {
   acceptInteractiveSourceTaskLaunch,
@@ -59,25 +58,12 @@ export async function acceptProjectCoordinatorAssignmentLaunch(
         { details: { reason: "launch_manual_authority_required" } },
       );
   }
-  const carrier = await reserveProjectAssignmentTask(
-    db,
-    input.projectId,
+  const carrier = await reserveProjectCoordinatorTask(db, {
+    projectId: input.projectId,
+    agentId: input.agentId,
     reference,
-    async (tx) => {
-      const created = await createTask(
-        {
-          title: input.agentId,
-          prompt: input.agentId,
-          flowId: flow.flowId,
-          agentId: input.agentId,
-        },
-        { projectId: input.projectId, actorUserId: reference.userId },
-        tx,
-      );
-
-      return created.taskId;
-    },
-  );
+    flow,
+  });
   const [existing] = await db
     .select()
     .from(taskLaunchIntents)

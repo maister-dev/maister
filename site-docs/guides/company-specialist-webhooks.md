@@ -78,6 +78,10 @@ qualification controls. Qualification events and the existing scheduler resume
 the same assignment; preserve the original delivery key. A personal API token
 does not grant one-shot interactive launch authority.
 
+Interrupted intake preserves the original input. The existing scheduler recovers
+unused carrier and source reservations; a Run receipt or launch intent prevents
+that reservation from being reused.
+
 Original input is retained before repository/workspace admission. If readiness
 refuses execution, repair the named prerequisite and repeat the same body/key to
 admit that queued input. An exact retained delivery is inspected under current

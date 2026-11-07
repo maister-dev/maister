@@ -315,3 +315,10 @@ non-NULL handoff assignment IDs. Bounded resumption reuses this lookup and skips
 carriers already owned by canonical launch intents; their existing worker owns
 further dispatch and recovery. Historical attempts incur no invented pointer or
 additional owner constraint.
+
+Main `0268_project_source_recovery` preserves existing pointer bytes and extends
+only first capture from an expired open or unknown invocation. Original Run
+receipts, existing Run/intent identity or assignment Run links prohibit reuse;
+current source checks and the exact original intake/input proof remain mandatory.
+The queued-project partial index supports the existing job's bounded recovery and
+qualification passes. It adds no scheduler or attempt ledger.

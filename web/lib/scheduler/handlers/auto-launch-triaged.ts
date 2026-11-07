@@ -3,6 +3,7 @@ import "server-only";
 import { inArray } from "drizzle-orm";
 import pino from "pino";
 
+import { recoverInterruptedProjectIntakes } from "@/lib/specialist-assignments/project-source-recovery";
 import { resumeQualifiedProjectAssignments } from "@/lib/specialist-assignments/project-source-resume";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -127,6 +128,7 @@ export async function runAutoLaunchTriagedJob(
         );
       }
     }
+    await recoverInterruptedProjectIntakes(db);
     await resumeQualifiedProjectAssignments(db);
     await reconcileTaskLaunchIntents(db);
 

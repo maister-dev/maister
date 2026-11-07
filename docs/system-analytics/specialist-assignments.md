@@ -902,3 +902,47 @@ provides this shared predicate for current input disclosure and context updates.
 The initiating account, current project membership, attachment and package gates
 still apply. An arbitrary system Run, source selector or model-supplied user ID
 cannot satisfy this binding; no historical creator is invented.
+
+#### Interrupted intake recovery (Partial — T22 qualification)
+
+Main `0268_project_source_recovery` extends only the existing once-only
+handoff guard. An expired open claim or `unknown` invocation can acquire its
+original assignment pointer only while its reserved Run, original Run receipt,
+any canonical launch intent for the reservation/carrier, and assignment Run links
+are all absent. The exact immutable intake receipt, attributed original input,
+current queued head, source owner/kind/origin and private carrier witness must
+match. A settled known outcome or previously used reservation remains immutable.
+This proves unused execution identity; it is not an external-operation retry.
+
+The existing automatic-launch job first recovers a bounded page of at most 100
+queued native coordinator intakes missing a carrier or source pointer. It reuses
+`reserveProjectAssignmentTask`, the original source attempt and the actual
+comment/cron/event intake adapters. Original source identity comes from the real
+stored invocation joined to the immutable assignment origin, never from a model.
+Company work is excluded. Current requester/update authority and the frozen
+provider are checked before retention; source/review/author checks run in the
+same pointer/queued-ack transaction. Their failure rolls back that transaction.
+A current ready assessment remains necessary before any automatic Run is bound.
+Manual/webhook work may retain its missing carrier without inventing a source
+attempt or interactive principal. Existing canonical intents keep ownership of
+their own recovery and are excluded from this intake pass.
+
+Recovery closes only the matching existing admission incident after unused
+reservation proof and a committed queued handoff; it emits existing activity
+facts. It never clears unrelated incidents or rewrites original input. Tests
+must inject actual transaction failures before carrier insertion and before
+pointer capture, retain the same input/receipt through both, expire/reconcile
+the source to `unknown`, and use the existing job to recover it without a Run or
+ACP command. Then actual human qualification must execute its original reserved
+Run exactly once. Foreign input, any used reservation, revocation and cancellation
+must still prevent effects.
+
+The real owning scenario injects both database transaction failures, recovers its
+missing carrier through the existing job under a second injected fault, then
+reconciles the same source to `unknown`. A later job retains its queued pointer
+without a Run, closes that exact admission incident and reuses the actual intake
+adapter. Concurrent replay and actual qualification then produce one original
+reserved Run and one create/prompt pair. The populated migration test separately
+preserves the unknown row and rejects both a forged assignment and an existing
+reserved Run. Remaining cancellation/order/diagnostic qualification keeps T22
+open. No stand-pilot readiness is implied.
