@@ -248,7 +248,9 @@ web/lib/supervisor-client ──HTTP──► supervisor/src/http-api  ──►
   Browser and personal-token handlers reuse the same canonical intake/reader.
   Registered company cron dispatch extends the existing agent tick and trigger
   claim/reconciliation ledger; no new scheduler or attempt store is introduced.
-  Public cron enablement and verified assignment acceptance retain their gates;
+  Native cron source enablement requires declared triggers, current creator
+  authority, enabled reviewed bindings and a nonempty recurring request.
+  Event/webhook adapters and verified assignment acceptance retain their gates;
   native company agent/coordinator execution is implemented.
 - ✅ Server Action (`app/.../actions.ts`) imports from `lib/*`.
 - ✅ `lib/supervisor-client.ts` imports the wire error taxonomy plus a small set

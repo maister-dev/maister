@@ -2630,13 +2630,13 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
         cronExpr: "*/5 * * * *",
         timezone: "UTC",
         requestAtLaunch: cronRequest,
-        enabled: false,
+        enabled: true,
         idempotencyKey: randomUUID(),
       },
     );
 
     await database.pool.query(
-      "UPDATE agent_schedules SET enabled=true,company_config_revision=company_config_revision+1,next_fire_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+      "UPDATE agent_schedules SET next_fire_at=clock_timestamp()-interval '1 second' WHERE id=$1",
       [graphCron.scheduleId],
     );
     expect(await runSchedulerTick({ jobKind: "agent_tick" })).toMatchObject({

@@ -39069,8 +39069,10 @@ components:
         - idempotencyKey
       additionalProperties: false
       description: Reviewed company cron source on the existing schedule table.
-        Internal storage creation is implemented; public creation/dispatch remains
-        Designed. The server validates exact owned binding references and current
-        management/read authority. Source configuration cannot mint execution
-        permissions. Current runtime capability is checked before enabling.
+        Native source creation and registered cron dispatch are implemented; public
+        source configuration routes remain Designed. Enabling requires a declared
+        cron trigger, enabled reviewed role/coordinator, nonempty normalized request
+        and current management/read plus assignment read/submit/update authority
+        for the server-recorded creator. Each invocation rechecks current authority.
+        Source configuration cannot mint execution permissions.
       x-implementation-status: Designed

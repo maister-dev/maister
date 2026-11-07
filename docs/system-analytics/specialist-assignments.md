@@ -201,8 +201,10 @@ reservation as manual work, with its existing source claim/fence and reserved Ru
 identity. Its complete scheduled request stays in the existing v1 input plane.
 Current source/configuration/creator authority is checked before reservation;
 replay preserves the original assignment/input. Shared recovery adopts a committed
-exact Run or records unknown without blind redispatch. Public enablement remains
-gated while T22.1 qualification continues. See the [runtime contract](specialist-runtime.md#native-company-cron-intake-checkpoint).
+exact Run or records unknown without blind redispatch. Native source creation can
+enable qualified cron work only with current creator authority, declared cron
+trigger, enabled reviewed bindings and a nonempty recurring request. Event/webhook
+adapters and assignment clarification remain open. See the [runtime contract](specialist-runtime.md#native-company-cron-intake-checkpoint).
 
 ### Project manual admission
 

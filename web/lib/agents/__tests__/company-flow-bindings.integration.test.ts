@@ -591,7 +591,7 @@ it("retains company cron sources and one existing invocation reservation per fir
       }),
     ).rejects.toMatchObject({
       code: "PRECONDITION",
-      details: { reason: "company_scheduler_contract_unavailable" },
+      details: { reason: "company_flow_binding_disabled" },
     });
     await expect(
       createCompanyCronSchedule(database.db, requesterId, {

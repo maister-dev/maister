@@ -57,7 +57,7 @@ Accepted revisions are immutable and retain exact configuration and attribution 
 
 Company Flow binding storage freezes a closed version-1 configuration: company, exact installed Flow/package and manifest digest, exact responsible specialist binding/revision with its frozen configuration, reviewed `workspace:none/completion:result` intent, enablement and explicit human role mappings. It retains immutable configuration/authority/request receipts separately from execution history. A live company/Flow reference is unique; replacing it requires CAS and explicit mappings, and retirement preserves accepted history. Each mapped user must currently hold `assignments:answer`; labels only route existing authority. Main `0237_company_flow_bindings` persists stable heads and immutable configuration/authority/routing receipts. Current Flow/package/specialist foreign keys protect providers; retirement releases those current keys while retained snapshots keep their logical identities. The existing removal/GC services check both direct Flow bindings and specialist pins under the Flow revision lock. A staged disabled binding may review a legacy installed Flow, but enablement requires the actual company execution declaration and capability floor 3.12.0. Internal create, full replacement, current/history inspection and content-free retirement services are implemented. The native runtime preflight and declaration grammar are implemented below; public Flow-binding interfaces remain their later UI slice. Storage alone does not activate execution. Existing v1 scheduled request snapshots remain unchanged.
 
-Existing `agent_schedules` and `agent_trigger_attempts` now support explicit exclusive company/project owners in migration `0238_company_trigger_scope`. Company cron source configuration uses the existing cron validator and request normalizer, server creation identity/content key and a separate configuration revision. Exact replay returns the original source receipt; another key creates independent configuration. Old project attribution remains unknown. A v2 binding snapshot captures exact accepted professional/coordinator configuration references; the protected scheduled request remains v1. References are server-generated configuration witnesses and carry no grants. The project dispatcher and legacy backfill still exclude company rows, and project-only settlement explicitly refuses them. The registered agent tick now includes a separately bounded native company cron selection. Shared reconciliation resolves the explicit owner before receipt lookup; company settlement cannot enter the project incident namespace. Public company cron enablement remains gated while T22.1 qualification and source adapters are completed. No parallel scheduler or invocation ledger is introduced.
+Existing `agent_schedules` and `agent_trigger_attempts` now support explicit exclusive company/project owners in migration `0238_company_trigger_scope`. Company cron source configuration uses the existing cron validator and request normalizer, server creation identity/content key and a separate configuration revision. Exact replay returns the original source receipt; another key creates independent configuration. Old project attribution remains unknown. A v2 binding snapshot captures exact accepted professional/coordinator configuration references; the protected scheduled request remains v1. References are server-generated configuration witnesses and carry no grants. The project dispatcher and legacy backfill still exclude company rows, and project-only settlement explicitly refuses them. The registered agent tick now includes a separately bounded native company cron selection. Shared reconciliation resolves the explicit owner before receipt lookup; company settlement cannot enter the project incident namespace. Native company cron source creation can enable qualified standalone or coordinator work under current authority; event/webhook source adapters remain T22.1. No parallel scheduler or invocation ledger is introduced.
 
 ### Company agent admission preflight
 
@@ -118,8 +118,24 @@ independent fires, replay, lost settlement adoption and unknown refusal. The nat
 coordinator checkpoint also reaches its required structured result through the
 registered tick and default Flow driver. Early current-authority refusal terminalizes
 the stale Run and wakes the existing pool after the terminal CAS, preserving the
-host seam while binding a new execution for the next Run. Public enablement and
-remaining refusal/capacity/poison and source qualification stay open.
+host seam while binding a new execution for the next Run. Host-pressure qualification
+retains the original Pending reservation with no ACP create/prompt, then dispatches
+the same Run after admission is re-signalled. A damaged earlier source receives the
+CAS retry deadline while later valid work is reserved. Revoking the creating user
+after reservation refuses initial dispatch without ACP effects and leaves business
+acceptance outstanding.
+
+Enabled source creation requires a current enabled reviewed specialist declaring
+`cron`, its enabled reviewed coordinator when configured, a nonempty normalized
+recurring request, current source-management/read authority and current
+`assignments:read`, `assignments:submit` and `assignments:update` grants for its
+server-recorded creator. Unsupported trigger is CONFIG, disabled role/coordinator
+is PRECONDITION, absent request is NEEDS_INPUT (`company_scheduled_request_missing`)
+and missing current grants is UNAUTHORIZED. Disabled drafts retain the existing
+configuration contract. Each fire rechecks current authority and exact binding
+witnesses; source creation grants no execution permission. Native create/dispatch
+is qualified through the registered scheduler. Public source settings/routes and
+event/webhook adapters retain their respective T37/T22.1 work.
 
 ### Company agent credentials
 
@@ -189,7 +205,7 @@ Initial company graph tool execution is MCP-only. The existing `MAISTER_MCP_TOOL
 | Resume/terminal | Exact stored definition/Flow/result and current actor grants | Revoked capability blocks new action; historical snapshot remains read subject to current content access |
 | UI/history/Inbox | Owner-aware direct reads and scope predicates | Company rows do not disappear through project INNER JOIN or leak to platform viewers |
 
-Company human role labels map in the reviewed Flow binding to explicit current user IDs with `answer_assignment` authority. Labels route work, never grant permission. Project role routing remains unchanged. Company cron/event sources use existing `agent_tick`/domain-event dispatch; source receipt resolves the pinned specialist entry as agent or result-only Flow. A selected row's owner, enabled/trust state and input are rechecked under claim. Company cron sources can currently be retained only disabled: engine 3.12.0 alone does not establish dispatcher readiness. Company scheduled/event/webhook dispatch remains T22.1; enabling a source before that runtime exists refuses with `company_scheduler_contract_unavailable`.
+Company human role labels map in the reviewed Flow binding to explicit current user IDs with `answer_assignment` authority. Labels route work, never grant permission. Project role routing remains unchanged. Company cron/event sources use existing `agent_tick`/domain-event dispatch; source receipt resolves the pinned specialist entry as agent or result-only Flow. A selected row's owner, enabled/trust state and input are rechecked under claim. Native company cron sources can be created enabled under the qualified policy above; engine 3.12.0 alone never grants execution authority. Event/webhook source dispatch remains T22.1, and public source configuration surfaces remain T37.
 
 ### Authority vocabulary
 

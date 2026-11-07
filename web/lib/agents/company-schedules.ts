@@ -17,7 +17,6 @@ import {
   decodeCompanyBindingHead,
   loadCompanyBindingRevision,
 } from "./company-bindings";
-import { COMPANY_EXECUTION_ENGINE_MIN } from "./company-flow-binding-types";
 import {
   lockCompanyFlowBindingConfiguration,
   loadCompanyFlowBindingRevision,
@@ -35,7 +34,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-/** Retain a reviewed source; public enablement remains gated until native dispatcher qualification completes. */
+/** Retain a reviewed source; enabled work requires the creator's current execution authority. */
 export async function createCompanyCronSchedule(
   db: SqlDatabase,
   userId: string,
@@ -171,18 +170,44 @@ export async function createCompanyCronSchedule(
           "CONFLICT",
           "The selected coordinator Flow no longer matches the current professional role revision",
         );
+      if (input.enabled && !flow.enabled)
+        throw new MaisterError(
+          "PRECONDITION",
+          "Enable the reviewed coordinator Flow before enabling its cron source",
+          { details: { reason: "company_flow_binding_disabled" } },
+        );
     }
-    if (input.enabled)
-      throw new MaisterError(
-        "PRECONDITION",
-        "Company cron enablement requires completed native dispatcher qualification; retain the source disabled",
-        {
-          details: {
-            reason: "company_scheduler_contract_unavailable",
-            engineMin: COMPANY_EXECUTION_ENGINE_MIN,
-          },
-        },
-      );
+    if (input.enabled) {
+      if (!role.definition.triggers.includes("cron"))
+        throw new MaisterError(
+          "CONFIG",
+          "The pinned specialist does not declare cron invocation",
+          { details: { reason: "company_agent_trigger_unsupported" } },
+        );
+      if (!role.enabled)
+        throw new MaisterError(
+          "PRECONDITION",
+          "Enable the reviewed specialist before enabling its cron source",
+          { details: { reason: "company_binding_disabled" } },
+        );
+      if (input.requestAtLaunch === null)
+        throw new MaisterError(
+          "NEEDS_INPUT",
+          "Company scheduled work requires an explicit retained recurring request",
+          { details: { reason: "company_scheduled_request_missing" } },
+        );
+      for (const action of [
+        "assignments:read",
+        "assignments:submit",
+        "assignments:update",
+      ] as const)
+        await authorizeCompanyUserAction(
+          tx,
+          userId,
+          input.owner.companyId,
+          action,
+        );
+    }
     const next = nextFireAt(input.cronExpr, input.timezone, new Date());
     const id = randomUUID();
 

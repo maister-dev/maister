@@ -136,6 +136,7 @@ import { runSchedulerTick } from "@/lib/scheduler/tick-service";
 import {
   claimCronAgentAttempt,
   reconcileAgentTriggerAttempts,
+  settleCompanyAgentTriggerAttempt,
 } from "@/lib/agents/trigger-attempts";
 import { MaisterError } from "@/lib/errors";
 import { prepareCompanySpecialistAssignment } from "@/lib/specialist-assignments/company-intake";
@@ -861,6 +862,20 @@ it("IT-CBS-04 completes company HTTP and registered cron intake through the exis
     );
 
     expect(terminalStop.status).toBe(409);
+    await expect(
+      createCompanyCronSchedule(db, userId, {
+        owner: { kind: "company", companyId: request.companyId },
+        specialistBindingId: binding.specialist.bindingId,
+        cronExpr: "*/5 * * * *",
+        timezone: "UTC",
+        requestAtLaunch: "  \r\n  ",
+        enabled: true,
+        idempotencyKey: randomUUID(),
+      }),
+    ).rejects.toMatchObject({
+      code: "NEEDS_INPUT",
+      details: { reason: "company_scheduled_request_missing" },
+    });
     const cron = await createCompanyCronSchedule(db, userId, {
       owner: { kind: "company", companyId: request.companyId },
       specialistBindingId: binding.specialist.bindingId,
@@ -868,15 +883,29 @@ it("IT-CBS-04 completes company HTTP and registered cron intake through the exis
       timezone: "UTC",
       requestAtLaunch:
         "Inspect this configured company target on the recurring schedule.",
+      enabled: true,
+      idempotencyKey: randomUUID(),
+    });
+    const poisonCron = await createCompanyCronSchedule(db, userId, {
+      owner: { kind: "company", companyId: request.companyId },
+      specialistBindingId: binding.specialist.bindingId,
+      cronExpr: "*/5 * * * *",
+      timezone: "UTC",
+      requestAtLaunch: "This damaged source must not starve valid work.",
       enabled: false,
       idempotencyKey: randomUUID(),
     });
 
-    // Prospective runtime qualification retains the public enablement gate until
-    // the registered dispatcher, exact receipt and recovery contract are green.
     await database.pool.query(
-      "UPDATE agent_schedules SET enabled=true,company_config_revision=company_config_revision+1,next_fire_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+      "UPDATE agent_schedules SET next_fire_at=clock_timestamp()-interval '1 second' WHERE id=$1",
       [cron.scheduleId],
+    );
+    await database.pool.query(
+      "UPDATE agent_schedules SET enabled=true,cron_expr='invalid source',company_config_revision=company_config_revision+1,next_fire_at=clock_timestamp()-interval '1 day' WHERE id=$1",
+      [poisonCron.scheduleId],
+    );
+    await database.pool.query(
+      "INSERT INTO execution_host_pressure(execution_host_id,pressured_since) SELECT id,now() FROM execution_hosts WHERE kind='local_direct' AND retired_at IS NULL ON CONFLICT DO NOTHING",
     );
     const cronTicks = await Promise.all([
       runSchedulerTick({ jobKind: "agent_tick" }),
@@ -907,6 +936,37 @@ it("IT-CBS-04 completes company HTTP and registered cron intake through the exis
           "Inspect this configured company target on the recurring schedule.",
       },
     });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT last_outcome,last_error_code,last_error_message,next_fire_at>clock_timestamp()+interval '4 minutes' AS deferred FROM agent_schedules WHERE id=$1",
+          [poisonCron.scheduleId],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        last_outcome: "refused",
+        last_error_code: "CONFIG",
+        last_error_message: "Company source capture requires attention",
+        deferred: true,
+      },
+    ]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status,(SELECT count(*)::int FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt')) AS dispatches FROM runs WHERE id=$1",
+          [attempt.reserved_run_id],
+        )
+      ).rows,
+    ).toEqual([{ status: "Pending", dispatches: 0 }]);
+    const pendingCron = await reserveCompanyCronAssignment(db, {
+      attemptId: attempt.id,
+      runId: attempt.reserved_run_id,
+    });
+
+    expect(pendingCron.duplicate).toBe(true);
+    await database.pool.query("DELETE FROM execution_host_pressure");
+    await wakePendingSpecialistAssignment(db, pendingCron);
     await vi.waitFor(
       async () => {
         const [scheduled] = await db
@@ -1118,6 +1178,73 @@ it("IT-CBS-04 completes company HTTP and registered cron intake through the exis
       code: "CONFLICT",
       details: { reason: "company_trigger_already_settled" },
     });
+    await database.pool.query(
+      "UPDATE agent_schedules SET next_fire_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+      [cron.scheduleId],
+    );
+    const revokedInvocation = await claimCronAgentAttempt(
+      db,
+      cron.scheduleId,
+      new Date(),
+      new Date(Date.now() + 300000),
+    );
+
+    expect(revokedInvocation).not.toBeNull();
+    const revokedWork = await reserveCompanyCronAssignment(db, {
+      attemptId: revokedInvocation!.id,
+      runId: revokedInvocation!.reservedRunId,
+    });
+
+    await settleCompanyAgentTriggerAttempt(db, revokedInvocation!, {
+      outcome: "queued",
+      runId: revokedInvocation!.reservedRunId,
+      reasonCode: null,
+      now: new Date(),
+    });
+    const readGrant = (
+      await database.pool.query<{ id: string; revision: number }>(
+        "SELECT id,revision FROM company_grants WHERE principal_type='user' AND principal_id=$1 AND action='assignments:read' AND revoked_at IS NULL",
+        [userId],
+      )
+    ).rows[0]!;
+
+    await revokeCompanyGrant(db, administratorId, readGrant.id, {
+      expectedRevision: readGrant.revision,
+      reason:
+        "Qualify current source-creator revocation after cron reservation",
+      idempotencyKey: randomUUID(),
+    });
+    try {
+      await wakePendingSpecialistAssignment(db, revokedWork);
+      await vi.waitFor(
+        async () => {
+          expect(
+            (
+              await database.pool.query(
+                "SELECT status,(SELECT count(*)::int FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt')) AS dispatches FROM runs WHERE id=$1",
+                [revokedInvocation!.reservedRunId],
+              )
+            ).rows,
+          ).toEqual([{ status: "Failed", dispatches: 0 }]);
+        },
+        { timeout: 10000, interval: 25 },
+      );
+    } finally {
+      await createCompanyGrants(db, administratorId, {
+        principalKind: "user",
+        principalId: userId,
+        actions: ["assignments:read"],
+        idempotencyKey: randomUUID(),
+      });
+    }
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status FROM specialist_assignments WHERE id=$1",
+          [revokedWork.assignment.id],
+        )
+      ).rows,
+    ).toEqual([{ status: "active" }]);
     browserSession.user = null;
   } finally {
     browserSession.user = null;
