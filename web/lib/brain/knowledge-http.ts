@@ -55,9 +55,11 @@ export function knowledgeErrorResponse(
       httpStatusForAuthz(error.code) ??
       (reason === "knowledge_reference_unavailable" ||
       reason === "assignment_reference_unavailable" ||
+      reason === "assignment_context_unavailable" ||
       reason === "company_binding_reference_unavailable"
         ? 404
-        : reason === "knowledge_body_too_large"
+        : reason === "knowledge_body_too_large" ||
+            reason === "json_body_too_large"
           ? 413
           : error.code === "CONFIG"
             ? 400

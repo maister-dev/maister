@@ -510,6 +510,53 @@ The response body carries `response` as a bounded object validated against the e
 
 Context changes lock the stable assignment, check expected context revision/epoch and current source grants, then append one immutable revision and attributed decision. A losing patch returns 409 and must be explicitly rebased; no automatic last-writer merge. Accepted findings refer to exact child result revisions. Server-derived source restrictions propagate through summaries and context even if a model omits citations. Current permission is rechecked at read/share/accept/action; snapshots are history, not grants.
 
+### Versioned context persistence and attribution
+
+**Implemented: retained history and session-user read/update; T23 agent/runtime integration remains in progress.**
+
+Context has its own CAS revision and an exact assignment input revision. An update
+must name both the expected context revision and expected input revision; an
+unrelated business-head change is not permission to overwrite newer context.
+Revision zero means no recorded context, including migrated assignments, and projects
+the current input without inventing historical findings, an author, timestamp or
+context digest. Positive history retains its exact input revision;
+`currentInputRevision` exposes the latest input head independently for update CAS. Positive revisions retain a closed
+version-one snapshot, exact base/input references, server actor/time, source
+restrictions, request key/digest and content digest. A deferred database invariant
+requires each positive context head to have its exact immutable history row;
+advancing the head alone is invalid. Existing input/history and execution ledgers
+remain unchanged. The migration adds no Brain foreign key or execution attempt.
+
+The current snapshot includes objective/constraints through its exact frozen input
+reference and bounded entries for sources, findings/hypotheses, questions,
+decisions, work and blockers. Finding entries carry the common
+`evidence_findings_v1` structure; ordinary text cannot declare confirmation or a
+verified work acceptance. Accepted-work entries require the work-decision owner's
+exact result/acceptance receipt (T28), separate from an author's working note.
+Input and standing instructions remain separate planes. A replacement explicitly
+names the current entry it supersedes; old revisions remain inspectable. Duplicate
+entry IDs or two replacements of the same entry refuse instead of choosing a winner.
+
+Public updates contain no actor, grants, timestamps, source restrictions or owner
+epoch. A human edit is attributed to its current user and records no execution
+ownership epoch. Executing-agent attribution comes from the actual current bound
+Run/node appointment and credentials, with source closure inherited independently
+of citations. Assignment owner fencing belongs to T29; a host assignment epoch is
+not silently relabeled as a business ownership epoch, and earlier revisions never
+receive a fabricated epoch. The remaining ownership/agent integration stays
+explicitly unqualified until its owning checks pass.
+
+An update is at most 32 KiB/64 entries; a retained context is at most 128 KiB of
+PostgreSQL `jsonb::text`/256 entries, with per-entry text at most 8,000 characters. Unsupported versions, empty
+updates, malformed/superseded identities and missing/stale/unauthorized evidence
+refuse without partial history. Missing evidence can be expressed as an explicit
+finding limitation or question without inventing a reference. Current source
+access gates the whole context response and retained replay before any text is
+returned; previews do not bypass that policy. Removing or superseding an entry
+cannot erase inherited restrictions. Same actor/key/payload returns its original
+currently accessible revision; changed payload conflicts. Concurrent distinct
+patches against one base have one winner and one actionable conflict.
+
 ### Delivery and cancellation windows
 
 Destinations are a task/comment thread, current user Inbox, or existing configured outbound subscription/event reply. Endpoint/credentials come from server configuration, not model-supplied URL. Internal comment/Inbox delivery has a unique receipt key and is idempotent. External delivery carries a stable ID and is at-least-once unless the peer proves stronger semantics. Lost delivery ACK retries delivery only; never reruns the assignment/effect. Current access gates content before delivery, including changed recipients.

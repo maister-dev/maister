@@ -14558,108 +14558,2202 @@ components:
           pattern: ^[A-Za-z0-9._:-]+$
     CBContext:
       type: object
-      additionalProperties: false
-      required:
-        - assignmentId
-        - revision
-        - entries
       properties:
+        schemaVersion:
+          type: number
+          enum:
+            - 1
         assignmentId:
           type: string
           minLength: 1
           maxLength: 128
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
         revision:
           type: integer
           minimum: 0
           maximum: 2147483647
-        entries:
-          type: array
-          items:
-            type: object
-            additionalProperties: false
-            required:
-              - entry
-              - actor
-              - ownerEpoch
-            properties:
-              entry:
-                $ref: "#/components/schemas/CBContextEntry"
-              actor:
-                $ref: "#/components/schemas/CBActor"
-              ownerEpoch:
-                type: integer
-                minimum: 1
-                maximum: 9007199254740991
-          maxItems: 256
-    CBContextEntry:
-      type: object
-      additionalProperties: false
-      required:
-        - id
-        - kind
-        - text
-        - state
-        - references
-      properties:
-        id:
-          type: string
-          minLength: 1
-          maxLength: 128
-        kind:
+        baseRevision:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+        recording:
           type: string
           enum:
-            - objective
-            - constraint
-            - source
-            - finding
-            - hypothesis
-            - question
-            - accepted
-            - decision
-            - work
-            - blocker
-        text:
+            - unrecorded
+            - recorded
+        inputRevision:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        currentInputRevision:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        inputSha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        objective:
           type: string
           minLength: 1
           maxLength: 8000
-        state:
-          type: string
-          enum:
-            - open
-            - accepted
-            - resolved
-            - withdrawn
-        references:
-          type: array
-          items:
-            $ref: "#/components/schemas/CBRef"
-          maxItems: 64
-        supersedesEntryId:
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        expectedOutcome:
           type: string
           minLength: 1
-          maxLength: 128
+          maxLength: 4000
+          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        constraints:
+          maxItems: 32
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 2000
+            pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+        entries:
+          maxItems: 256
+          type: array
+          items:
+            type: object
+            properties:
+              entry:
+                oneOf:
+                  - type: object
+                    properties:
+                      id:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                        pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                      text:
+                        type: string
+                        minLength: 1
+                        maxLength: 8000
+                        allOf:
+                          - type: string
+                            pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                          - type: string
+                            pattern: \S
+                      state:
+                        type: string
+                        enum:
+                          - open
+                          - accepted
+                          - resolved
+                          - withdrawn
+                      references:
+                        maxItems: 64
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            kind:
+                              type: string
+                              enum:
+                                - knowledge
+                                - witness
+                                - result
+                                - operation
+                                - verification
+                            id:
+                              type: string
+                              minLength: 1
+                              maxLength: 128
+                              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                            revision:
+                              type: integer
+                              minimum: 1
+                              maximum: 2147483647
+                            version:
+                              type: string
+                              minLength: 1
+                              maxLength: 256
+                              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                            sha256:
+                              type: string
+                              pattern: ^[a-f0-9]{64}$
+                          required:
+                            - kind
+                            - id
+                          additionalProperties: false
+                      supersedesEntryId:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                        pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                      kind:
+                        type: string
+                        enum:
+                          - objective
+                          - constraint
+                          - source
+                          - hypothesis
+                          - question
+                          - decision
+                          - work
+                          - blocker
+                          - accepted
+                    required:
+                      - id
+                      - text
+                      - state
+                      - references
+                      - kind
+                    additionalProperties: false
+                  - type: object
+                    properties:
+                      id:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                        pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                      text:
+                        type: string
+                        minLength: 1
+                        maxLength: 8000
+                        allOf:
+                          - type: string
+                            pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                          - type: string
+                            pattern: \S
+                      state:
+                        type: string
+                        enum:
+                          - open
+                          - accepted
+                          - resolved
+                          - withdrawn
+                      references:
+                        maxItems: 64
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            kind:
+                              type: string
+                              enum:
+                                - knowledge
+                                - witness
+                                - result
+                                - operation
+                                - verification
+                            id:
+                              type: string
+                              minLength: 1
+                              maxLength: 128
+                              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                            revision:
+                              type: integer
+                              minimum: 1
+                              maximum: 2147483647
+                            version:
+                              type: string
+                              minLength: 1
+                              maxLength: 256
+                              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                            sha256:
+                              type: string
+                              pattern: ^[a-f0-9]{64}$
+                          required:
+                            - kind
+                            - id
+                          additionalProperties: false
+                      supersedesEntryId:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                        pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                      kind:
+                        type: string
+                        enum:
+                          - finding
+                      findings:
+                        type: object
+                        properties:
+                          schemaVersion:
+                            type: number
+                            enum:
+                              - 1
+                          findings:
+                            maxItems: 32
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                id:
+                                  type: string
+                                  minLength: 1
+                                  maxLength: 128
+                                  pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                assertion:
+                                  type: string
+                                  minLength: 1
+                                  maxLength: 2000
+                                  pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                basis:
+                                  type: string
+                                  enum:
+                                    - observed
+                                    - inferred
+                                    - unknown
+                                supporting:
+                                  maxItems: 64
+                                  type: array
+                                  items:
+                                    type: object
+                                    properties:
+                                      kind:
+                                        type: string
+                                        enum:
+                                          - knowledge
+                                          - witness
+                                          - result
+                                          - operation
+                                          - verification
+                                      id:
+                                        type: string
+                                        minLength: 1
+                                        maxLength: 128
+                                        pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                      revision:
+                                        type: integer
+                                        minimum: 1
+                                        maximum: 2147483647
+                                      version:
+                                        type: string
+                                        minLength: 1
+                                        maxLength: 256
+                                        pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                      sha256:
+                                        type: string
+                                        pattern: ^[a-f0-9]{64}$
+                                    required:
+                                      - kind
+                                      - id
+                                    additionalProperties: false
+                                contradicting:
+                                  maxItems: 64
+                                  type: array
+                                  items:
+                                    type: object
+                                    properties:
+                                      kind:
+                                        type: string
+                                        enum:
+                                          - knowledge
+                                          - witness
+                                          - result
+                                          - operation
+                                          - verification
+                                      id:
+                                        type: string
+                                        minLength: 1
+                                        maxLength: 128
+                                        pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                      revision:
+                                        type: integer
+                                        minimum: 1
+                                        maximum: 2147483647
+                                      version:
+                                        type: string
+                                        minLength: 1
+                                        maxLength: 256
+                                        pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                      sha256:
+                                        type: string
+                                        pattern: ^[a-f0-9]{64}$
+                                    required:
+                                      - kind
+                                      - id
+                                    additionalProperties: false
+                                missingEvidence:
+                                  maxItems: 32
+                                  type: array
+                                  items:
+                                    type: object
+                                    properties:
+                                      state:
+                                        type: string
+                                        enum:
+                                          - absent
+                                          - stale
+                                          - missing
+                                          - inaccessible
+                                          - unknown
+                                      reason:
+                                        type: string
+                                        minLength: 1
+                                        maxLength: 1000
+                                        pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                    required:
+                                      - state
+                                      - reason
+                                    additionalProperties: false
+                                limitations:
+                                  maxItems: 32
+                                  type: array
+                                  items:
+                                    type: string
+                                    minLength: 1
+                                    maxLength: 1000
+                                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                openQuestions:
+                                  maxItems: 32
+                                  type: array
+                                  items:
+                                    type: string
+                                    minLength: 1
+                                    maxLength: 1000
+                                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                sourceFindings:
+                                  maxItems: 64
+                                  type: array
+                                  items:
+                                    type: object
+                                    properties:
+                                      childRunId:
+                                        type: string
+                                        minLength: 1
+                                        maxLength: 128
+                                        pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                      resultRevision:
+                                        type: integer
+                                        minimum: 1
+                                        maximum: 2147483647
+                                      findingId:
+                                        type: string
+                                        minLength: 1
+                                        maxLength: 128
+                                        pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                    required:
+                                      - childRunId
+                                      - resultRevision
+                                      - findingId
+                                    additionalProperties: false
+                              required:
+                                - id
+                                - assertion
+                                - basis
+                                - supporting
+                                - contradicting
+                                - missingEvidence
+                                - limitations
+                                - openQuestions
+                                - sourceFindings
+                              additionalProperties: false
+                          knowledgeProposals:
+                            maxItems: 16
+                            type: array
+                            items:
+                              oneOf:
+                                - type: object
+                                  properties:
+                                    title:
+                                      type: string
+                                      minLength: 1
+                                      maxLength: 256
+                                      pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                    kind:
+                                      type: string
+                                      enum:
+                                        - assertion
+                                        - observation
+                                        - decision
+                                        - procedure
+                                        - lesson
+                                        - state_fact
+                                        - direction
+                                    assertion:
+                                      type: string
+                                      minLength: 1
+                                      maxLength: 32000
+                                      pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                    basis:
+                                      type: string
+                                      enum:
+                                        - observed
+                                        - inferred
+                                        - unknown
+                                    evidence:
+                                      maxItems: 64
+                                      type: array
+                                      items:
+                                        type: object
+                                        properties:
+                                          relation:
+                                            type: string
+                                            enum:
+                                              - supports
+                                              - contradicts
+                                              - derived_from
+                                              - refines
+                                              - references
+                                          reference:
+                                            type: object
+                                            properties:
+                                              kind:
+                                                type: string
+                                                enum:
+                                                  - knowledge
+                                                  - witness
+                                                  - result
+                                                  - operation
+                                                  - verification
+                                              id:
+                                                type: string
+                                                minLength: 1
+                                                maxLength: 128
+                                                pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                              revision:
+                                                type: integer
+                                                minimum: 1
+                                                maximum: 2147483647
+                                              version:
+                                                type: string
+                                                minLength: 1
+                                                maxLength: 256
+                                                pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                              sha256:
+                                                type: string
+                                                pattern: ^[a-f0-9]{64}$
+                                            required:
+                                              - kind
+                                              - id
+                                            additionalProperties: false
+                                        required:
+                                          - relation
+                                          - reference
+                                        additionalProperties: false
+                                    missingEvidence:
+                                      maxItems: 32
+                                      type: array
+                                      items:
+                                        type: object
+                                        properties:
+                                          state:
+                                            type: string
+                                            enum:
+                                              - absent
+                                              - stale
+                                              - missing
+                                              - inaccessible
+                                              - unknown
+                                          reason:
+                                            type: string
+                                            minLength: 1
+                                            maxLength: 1000
+                                            pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                        required:
+                                          - state
+                                          - reason
+                                        additionalProperties: false
+                                    limitations:
+                                      maxItems: 32
+                                      type: array
+                                      items:
+                                        type: string
+                                        minLength: 1
+                                        maxLength: 1000
+                                        pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                    change:
+                                      type: string
+                                      enum:
+                                        - add
+                                    owner:
+                                      oneOf:
+                                        - type: object
+                                          properties:
+                                            kind:
+                                              type: string
+                                              enum:
+                                                - company
+                                            companyId:
+                                              type: string
+                                              minLength: 1
+                                              maxLength: 128
+                                              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                          required:
+                                            - kind
+                                            - companyId
+                                          additionalProperties: false
+                                        - type: object
+                                          properties:
+                                            kind:
+                                              type: string
+                                              enum:
+                                                - project
+                                            projectId:
+                                              type: string
+                                              minLength: 1
+                                              maxLength: 128
+                                              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                          required:
+                                            - kind
+                                            - projectId
+                                          additionalProperties: false
+                                  required:
+                                    - title
+                                    - kind
+                                    - assertion
+                                    - basis
+                                    - evidence
+                                    - missingEvidence
+                                    - limitations
+                                    - change
+                                    - owner
+                                  additionalProperties: false
+                                - type: object
+                                  properties:
+                                    title:
+                                      type: string
+                                      minLength: 1
+                                      maxLength: 256
+                                      pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                    kind:
+                                      type: string
+                                      enum:
+                                        - assertion
+                                        - observation
+                                        - decision
+                                        - procedure
+                                        - lesson
+                                        - state_fact
+                                        - direction
+                                    assertion:
+                                      type: string
+                                      minLength: 1
+                                      maxLength: 32000
+                                      pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                    basis:
+                                      type: string
+                                      enum:
+                                        - observed
+                                        - inferred
+                                        - unknown
+                                    evidence:
+                                      maxItems: 64
+                                      type: array
+                                      items:
+                                        type: object
+                                        properties:
+                                          relation:
+                                            type: string
+                                            enum:
+                                              - supports
+                                              - contradicts
+                                              - derived_from
+                                              - refines
+                                              - references
+                                          reference:
+                                            type: object
+                                            properties:
+                                              kind:
+                                                type: string
+                                                enum:
+                                                  - knowledge
+                                                  - witness
+                                                  - result
+                                                  - operation
+                                                  - verification
+                                              id:
+                                                type: string
+                                                minLength: 1
+                                                maxLength: 128
+                                                pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                              revision:
+                                                type: integer
+                                                minimum: 1
+                                                maximum: 2147483647
+                                              version:
+                                                type: string
+                                                minLength: 1
+                                                maxLength: 256
+                                                pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                              sha256:
+                                                type: string
+                                                pattern: ^[a-f0-9]{64}$
+                                            required:
+                                              - kind
+                                              - id
+                                            additionalProperties: false
+                                        required:
+                                          - relation
+                                          - reference
+                                        additionalProperties: false
+                                    missingEvidence:
+                                      maxItems: 32
+                                      type: array
+                                      items:
+                                        type: object
+                                        properties:
+                                          state:
+                                            type: string
+                                            enum:
+                                              - absent
+                                              - stale
+                                              - missing
+                                              - inaccessible
+                                              - unknown
+                                          reason:
+                                            type: string
+                                            minLength: 1
+                                            maxLength: 1000
+                                            pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                        required:
+                                          - state
+                                          - reason
+                                        additionalProperties: false
+                                    limitations:
+                                      maxItems: 32
+                                      type: array
+                                      items:
+                                        type: string
+                                        minLength: 1
+                                        maxLength: 1000
+                                        pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                    change:
+                                      type: string
+                                      enum:
+                                        - correct
+                                    recordId:
+                                      type: string
+                                      minLength: 1
+                                      maxLength: 128
+                                      pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                    expectedRevision:
+                                      type: integer
+                                      minimum: 1
+                                      maximum: 2147483647
+                                  required:
+                                    - title
+                                    - kind
+                                    - assertion
+                                    - basis
+                                    - evidence
+                                    - missingEvidence
+                                    - limitations
+                                    - change
+                                    - recordId
+                                    - expectedRevision
+                                  additionalProperties: false
+                          selection:
+                            maxItems: 256
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                childRunId:
+                                  type: string
+                                  minLength: 1
+                                  maxLength: 128
+                                  pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                resultRevision:
+                                  type: integer
+                                  minimum: 1
+                                  maximum: 2147483647
+                                findingId:
+                                  type: string
+                                  minLength: 1
+                                  maxLength: 128
+                                  pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                disposition:
+                                  type: string
+                                  enum:
+                                    - retained
+                                    - combined
+                                    - omitted
+                                outputFindingIds:
+                                  maxItems: 32
+                                  type: array
+                                  items:
+                                    type: string
+                                    minLength: 1
+                                    maxLength: 128
+                                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                reason:
+                                  type: string
+                                  minLength: 1
+                                  maxLength: 1000
+                                  pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                              required:
+                                - childRunId
+                                - resultRevision
+                                - findingId
+                                - disposition
+                                - outputFindingIds
+                              additionalProperties: false
+                        required:
+                          - schemaVersion
+                          - findings
+                          - knowledgeProposals
+                          - selection
+                        additionalProperties: false
+                    required:
+                      - id
+                      - text
+                      - state
+                      - references
+                      - kind
+                      - findings
+                    additionalProperties: false
+              actor:
+                type: object
+                properties:
+                  kind:
+                    type: string
+                    enum:
+                      - user
+                      - agent
+                      - system
+                      - legacy_unknown
+                  id:
+                    nullable: true
+                    type: string
+                    minLength: 1
+                    maxLength: 192
+                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                  runId:
+                    nullable: true
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                  attemptId:
+                    nullable: true
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                required:
+                  - kind
+                  - id
+                  - runId
+                  - attemptId
+                additionalProperties: false
+              introducedRevision:
+                type: integer
+                minimum: 1
+                maximum: 2147483647
+              ownerEpoch:
+                nullable: true
+                type: integer
+                minimum: 0
+                exclusiveMinimum: true
+                maximum: 9007199254740991
+            required:
+              - entry
+              - actor
+              - introducedRevision
+              - ownerEpoch
+            additionalProperties: false
+        digest:
+          nullable: true
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        createdAt:
+          nullable: true
+          type: string
+          format: date-time
+          pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z))$
+      required:
+        - schemaVersion
+        - assignmentId
+        - revision
+        - baseRevision
+        - recording
+        - inputRevision
+        - currentInputRevision
+        - inputSha256
+        - objective
+        - expectedOutcome
+        - constraints
+        - entries
+        - digest
+        - createdAt
+      additionalProperties: false
+    CBContextEntry:
+      oneOf:
+        - type: object
+          properties:
+            id:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+            text:
+              type: string
+              minLength: 1
+              maxLength: 8000
+              allOf:
+                - type: string
+                  pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                - type: string
+                  pattern: \S
+            state:
+              type: string
+              enum:
+                - open
+                - accepted
+                - resolved
+                - withdrawn
+            references:
+              maxItems: 64
+              type: array
+              items:
+                type: object
+                properties:
+                  kind:
+                    type: string
+                    enum:
+                      - knowledge
+                      - witness
+                      - result
+                      - operation
+                      - verification
+                  id:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                  revision:
+                    type: integer
+                    minimum: 1
+                    maximum: 2147483647
+                  version:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                  sha256:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                required:
+                  - kind
+                  - id
+                additionalProperties: false
+            supersedesEntryId:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+            kind:
+              type: string
+              enum:
+                - objective
+                - constraint
+                - source
+                - hypothesis
+                - question
+                - decision
+                - work
+                - blocker
+                - accepted
+          required:
+            - id
+            - text
+            - state
+            - references
+            - kind
+          additionalProperties: false
+        - type: object
+          properties:
+            id:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+            text:
+              type: string
+              minLength: 1
+              maxLength: 8000
+              allOf:
+                - type: string
+                  pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                - type: string
+                  pattern: \S
+            state:
+              type: string
+              enum:
+                - open
+                - accepted
+                - resolved
+                - withdrawn
+            references:
+              maxItems: 64
+              type: array
+              items:
+                type: object
+                properties:
+                  kind:
+                    type: string
+                    enum:
+                      - knowledge
+                      - witness
+                      - result
+                      - operation
+                      - verification
+                  id:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                  revision:
+                    type: integer
+                    minimum: 1
+                    maximum: 2147483647
+                  version:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                  sha256:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                required:
+                  - kind
+                  - id
+                additionalProperties: false
+            supersedesEntryId:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+            kind:
+              type: string
+              enum:
+                - finding
+            findings:
+              type: object
+              properties:
+                schemaVersion:
+                  type: number
+                  enum:
+                    - 1
+                findings:
+                  maxItems: 32
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                        pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                      assertion:
+                        type: string
+                        minLength: 1
+                        maxLength: 2000
+                        pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                      basis:
+                        type: string
+                        enum:
+                          - observed
+                          - inferred
+                          - unknown
+                      supporting:
+                        maxItems: 64
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            kind:
+                              type: string
+                              enum:
+                                - knowledge
+                                - witness
+                                - result
+                                - operation
+                                - verification
+                            id:
+                              type: string
+                              minLength: 1
+                              maxLength: 128
+                              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                            revision:
+                              type: integer
+                              minimum: 1
+                              maximum: 2147483647
+                            version:
+                              type: string
+                              minLength: 1
+                              maxLength: 256
+                              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                            sha256:
+                              type: string
+                              pattern: ^[a-f0-9]{64}$
+                          required:
+                            - kind
+                            - id
+                          additionalProperties: false
+                      contradicting:
+                        maxItems: 64
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            kind:
+                              type: string
+                              enum:
+                                - knowledge
+                                - witness
+                                - result
+                                - operation
+                                - verification
+                            id:
+                              type: string
+                              minLength: 1
+                              maxLength: 128
+                              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                            revision:
+                              type: integer
+                              minimum: 1
+                              maximum: 2147483647
+                            version:
+                              type: string
+                              minLength: 1
+                              maxLength: 256
+                              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                            sha256:
+                              type: string
+                              pattern: ^[a-f0-9]{64}$
+                          required:
+                            - kind
+                            - id
+                          additionalProperties: false
+                      missingEvidence:
+                        maxItems: 32
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            state:
+                              type: string
+                              enum:
+                                - absent
+                                - stale
+                                - missing
+                                - inaccessible
+                                - unknown
+                            reason:
+                              type: string
+                              minLength: 1
+                              maxLength: 1000
+                              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                          required:
+                            - state
+                            - reason
+                          additionalProperties: false
+                      limitations:
+                        maxItems: 32
+                        type: array
+                        items:
+                          type: string
+                          minLength: 1
+                          maxLength: 1000
+                          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                      openQuestions:
+                        maxItems: 32
+                        type: array
+                        items:
+                          type: string
+                          minLength: 1
+                          maxLength: 1000
+                          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                      sourceFindings:
+                        maxItems: 64
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            childRunId:
+                              type: string
+                              minLength: 1
+                              maxLength: 128
+                              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                            resultRevision:
+                              type: integer
+                              minimum: 1
+                              maximum: 2147483647
+                            findingId:
+                              type: string
+                              minLength: 1
+                              maxLength: 128
+                              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                          required:
+                            - childRunId
+                            - resultRevision
+                            - findingId
+                          additionalProperties: false
+                    required:
+                      - id
+                      - assertion
+                      - basis
+                      - supporting
+                      - contradicting
+                      - missingEvidence
+                      - limitations
+                      - openQuestions
+                      - sourceFindings
+                    additionalProperties: false
+                knowledgeProposals:
+                  maxItems: 16
+                  type: array
+                  items:
+                    oneOf:
+                      - type: object
+                        properties:
+                          title:
+                            type: string
+                            minLength: 1
+                            maxLength: 256
+                            pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                          kind:
+                            type: string
+                            enum:
+                              - assertion
+                              - observation
+                              - decision
+                              - procedure
+                              - lesson
+                              - state_fact
+                              - direction
+                          assertion:
+                            type: string
+                            minLength: 1
+                            maxLength: 32000
+                            pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                          basis:
+                            type: string
+                            enum:
+                              - observed
+                              - inferred
+                              - unknown
+                          evidence:
+                            maxItems: 64
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                relation:
+                                  type: string
+                                  enum:
+                                    - supports
+                                    - contradicts
+                                    - derived_from
+                                    - refines
+                                    - references
+                                reference:
+                                  type: object
+                                  properties:
+                                    kind:
+                                      type: string
+                                      enum:
+                                        - knowledge
+                                        - witness
+                                        - result
+                                        - operation
+                                        - verification
+                                    id:
+                                      type: string
+                                      minLength: 1
+                                      maxLength: 128
+                                      pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                    revision:
+                                      type: integer
+                                      minimum: 1
+                                      maximum: 2147483647
+                                    version:
+                                      type: string
+                                      minLength: 1
+                                      maxLength: 256
+                                      pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                    sha256:
+                                      type: string
+                                      pattern: ^[a-f0-9]{64}$
+                                  required:
+                                    - kind
+                                    - id
+                                  additionalProperties: false
+                              required:
+                                - relation
+                                - reference
+                              additionalProperties: false
+                          missingEvidence:
+                            maxItems: 32
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                state:
+                                  type: string
+                                  enum:
+                                    - absent
+                                    - stale
+                                    - missing
+                                    - inaccessible
+                                    - unknown
+                                reason:
+                                  type: string
+                                  minLength: 1
+                                  maxLength: 1000
+                                  pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                              required:
+                                - state
+                                - reason
+                              additionalProperties: false
+                          limitations:
+                            maxItems: 32
+                            type: array
+                            items:
+                              type: string
+                              minLength: 1
+                              maxLength: 1000
+                              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                          change:
+                            type: string
+                            enum:
+                              - add
+                          owner:
+                            oneOf:
+                              - type: object
+                                properties:
+                                  kind:
+                                    type: string
+                                    enum:
+                                      - company
+                                  companyId:
+                                    type: string
+                                    minLength: 1
+                                    maxLength: 128
+                                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                required:
+                                  - kind
+                                  - companyId
+                                additionalProperties: false
+                              - type: object
+                                properties:
+                                  kind:
+                                    type: string
+                                    enum:
+                                      - project
+                                  projectId:
+                                    type: string
+                                    minLength: 1
+                                    maxLength: 128
+                                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                required:
+                                  - kind
+                                  - projectId
+                                additionalProperties: false
+                        required:
+                          - title
+                          - kind
+                          - assertion
+                          - basis
+                          - evidence
+                          - missingEvidence
+                          - limitations
+                          - change
+                          - owner
+                        additionalProperties: false
+                      - type: object
+                        properties:
+                          title:
+                            type: string
+                            minLength: 1
+                            maxLength: 256
+                            pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                          kind:
+                            type: string
+                            enum:
+                              - assertion
+                              - observation
+                              - decision
+                              - procedure
+                              - lesson
+                              - state_fact
+                              - direction
+                          assertion:
+                            type: string
+                            minLength: 1
+                            maxLength: 32000
+                            pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                          basis:
+                            type: string
+                            enum:
+                              - observed
+                              - inferred
+                              - unknown
+                          evidence:
+                            maxItems: 64
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                relation:
+                                  type: string
+                                  enum:
+                                    - supports
+                                    - contradicts
+                                    - derived_from
+                                    - refines
+                                    - references
+                                reference:
+                                  type: object
+                                  properties:
+                                    kind:
+                                      type: string
+                                      enum:
+                                        - knowledge
+                                        - witness
+                                        - result
+                                        - operation
+                                        - verification
+                                    id:
+                                      type: string
+                                      minLength: 1
+                                      maxLength: 128
+                                      pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                    revision:
+                                      type: integer
+                                      minimum: 1
+                                      maximum: 2147483647
+                                    version:
+                                      type: string
+                                      minLength: 1
+                                      maxLength: 256
+                                      pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                    sha256:
+                                      type: string
+                                      pattern: ^[a-f0-9]{64}$
+                                  required:
+                                    - kind
+                                    - id
+                                  additionalProperties: false
+                              required:
+                                - relation
+                                - reference
+                              additionalProperties: false
+                          missingEvidence:
+                            maxItems: 32
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                state:
+                                  type: string
+                                  enum:
+                                    - absent
+                                    - stale
+                                    - missing
+                                    - inaccessible
+                                    - unknown
+                                reason:
+                                  type: string
+                                  minLength: 1
+                                  maxLength: 1000
+                                  pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                              required:
+                                - state
+                                - reason
+                              additionalProperties: false
+                          limitations:
+                            maxItems: 32
+                            type: array
+                            items:
+                              type: string
+                              minLength: 1
+                              maxLength: 1000
+                              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                          change:
+                            type: string
+                            enum:
+                              - correct
+                          recordId:
+                            type: string
+                            minLength: 1
+                            maxLength: 128
+                            pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                          expectedRevision:
+                            type: integer
+                            minimum: 1
+                            maximum: 2147483647
+                        required:
+                          - title
+                          - kind
+                          - assertion
+                          - basis
+                          - evidence
+                          - missingEvidence
+                          - limitations
+                          - change
+                          - recordId
+                          - expectedRevision
+                        additionalProperties: false
+                selection:
+                  maxItems: 256
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      childRunId:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                        pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                      resultRevision:
+                        type: integer
+                        minimum: 1
+                        maximum: 2147483647
+                      findingId:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                        pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                      disposition:
+                        type: string
+                        enum:
+                          - retained
+                          - combined
+                          - omitted
+                      outputFindingIds:
+                        maxItems: 32
+                        type: array
+                        items:
+                          type: string
+                          minLength: 1
+                          maxLength: 128
+                          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 1000
+                        pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                    required:
+                      - childRunId
+                      - resultRevision
+                      - findingId
+                      - disposition
+                      - outputFindingIds
+                    additionalProperties: false
+              required:
+                - schemaVersion
+                - findings
+                - knowledgeProposals
+                - selection
+              additionalProperties: false
+          required:
+            - id
+            - text
+            - state
+            - references
+            - kind
+            - findings
+          additionalProperties: false
     CBContextInput:
       type: object
-      additionalProperties: false
-      required:
-        - expectedRevision
-        - updates
-        - idempotencyKey
       properties:
         expectedRevision:
           type: integer
           minimum: 0
           maximum: 2147483647
+        expectedInputRevision:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
         updates:
+          minItems: 1
+          maxItems: 64
           type: array
           items:
-            $ref: "#/components/schemas/CBContextEntry"
-          maxItems: 64
+            oneOf:
+              - type: object
+                properties:
+                  id:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                  text:
+                    type: string
+                    minLength: 1
+                    maxLength: 8000
+                    allOf:
+                      - type: string
+                        pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                      - type: string
+                        pattern: \S
+                  state:
+                    type: string
+                    enum:
+                      - open
+                      - resolved
+                      - withdrawn
+                  references:
+                    maxItems: 64
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kind:
+                          type: string
+                          enum:
+                            - knowledge
+                            - witness
+                            - result
+                            - operation
+                            - verification
+                        id:
+                          type: string
+                          minLength: 1
+                          maxLength: 128
+                          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                        revision:
+                          type: integer
+                          minimum: 1
+                          maximum: 2147483647
+                        version:
+                          type: string
+                          minLength: 1
+                          maxLength: 256
+                          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                        sha256:
+                          type: string
+                          pattern: ^[a-f0-9]{64}$
+                      required:
+                        - kind
+                        - id
+                      additionalProperties: false
+                  supersedesEntryId:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                  kind:
+                    type: string
+                    enum:
+                      - objective
+                      - constraint
+                      - source
+                      - hypothesis
+                      - question
+                      - decision
+                      - work
+                      - blocker
+                required:
+                  - id
+                  - text
+                  - state
+                  - references
+                  - kind
+                additionalProperties: false
+              - type: object
+                properties:
+                  id:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                  text:
+                    type: string
+                    minLength: 1
+                    maxLength: 8000
+                    allOf:
+                      - type: string
+                        pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                      - type: string
+                        pattern: \S
+                  state:
+                    type: string
+                    enum:
+                      - open
+                      - resolved
+                      - withdrawn
+                  references:
+                    maxItems: 64
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kind:
+                          type: string
+                          enum:
+                            - knowledge
+                            - witness
+                            - result
+                            - operation
+                            - verification
+                        id:
+                          type: string
+                          minLength: 1
+                          maxLength: 128
+                          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                        revision:
+                          type: integer
+                          minimum: 1
+                          maximum: 2147483647
+                        version:
+                          type: string
+                          minLength: 1
+                          maxLength: 256
+                          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                        sha256:
+                          type: string
+                          pattern: ^[a-f0-9]{64}$
+                      required:
+                        - kind
+                        - id
+                      additionalProperties: false
+                  supersedesEntryId:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                  kind:
+                    type: string
+                    enum:
+                      - finding
+                  findings:
+                    type: object
+                    properties:
+                      schemaVersion:
+                        type: number
+                        enum:
+                          - 1
+                      findings:
+                        maxItems: 32
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                              minLength: 1
+                              maxLength: 128
+                              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                            assertion:
+                              type: string
+                              minLength: 1
+                              maxLength: 2000
+                              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                            basis:
+                              type: string
+                              enum:
+                                - observed
+                                - inferred
+                                - unknown
+                            supporting:
+                              maxItems: 64
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  kind:
+                                    type: string
+                                    enum:
+                                      - knowledge
+                                      - witness
+                                      - result
+                                      - operation
+                                      - verification
+                                  id:
+                                    type: string
+                                    minLength: 1
+                                    maxLength: 128
+                                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                  revision:
+                                    type: integer
+                                    minimum: 1
+                                    maximum: 2147483647
+                                  version:
+                                    type: string
+                                    minLength: 1
+                                    maxLength: 256
+                                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                  sha256:
+                                    type: string
+                                    pattern: ^[a-f0-9]{64}$
+                                required:
+                                  - kind
+                                  - id
+                                additionalProperties: false
+                            contradicting:
+                              maxItems: 64
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  kind:
+                                    type: string
+                                    enum:
+                                      - knowledge
+                                      - witness
+                                      - result
+                                      - operation
+                                      - verification
+                                  id:
+                                    type: string
+                                    minLength: 1
+                                    maxLength: 128
+                                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                  revision:
+                                    type: integer
+                                    minimum: 1
+                                    maximum: 2147483647
+                                  version:
+                                    type: string
+                                    minLength: 1
+                                    maxLength: 256
+                                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                  sha256:
+                                    type: string
+                                    pattern: ^[a-f0-9]{64}$
+                                required:
+                                  - kind
+                                  - id
+                                additionalProperties: false
+                            missingEvidence:
+                              maxItems: 32
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  state:
+                                    type: string
+                                    enum:
+                                      - absent
+                                      - stale
+                                      - missing
+                                      - inaccessible
+                                      - unknown
+                                  reason:
+                                    type: string
+                                    minLength: 1
+                                    maxLength: 1000
+                                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                required:
+                                  - state
+                                  - reason
+                                additionalProperties: false
+                            limitations:
+                              maxItems: 32
+                              type: array
+                              items:
+                                type: string
+                                minLength: 1
+                                maxLength: 1000
+                                pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                            openQuestions:
+                              maxItems: 32
+                              type: array
+                              items:
+                                type: string
+                                minLength: 1
+                                maxLength: 1000
+                                pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                            sourceFindings:
+                              maxItems: 64
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  childRunId:
+                                    type: string
+                                    minLength: 1
+                                    maxLength: 128
+                                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                  resultRevision:
+                                    type: integer
+                                    minimum: 1
+                                    maximum: 2147483647
+                                  findingId:
+                                    type: string
+                                    minLength: 1
+                                    maxLength: 128
+                                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                required:
+                                  - childRunId
+                                  - resultRevision
+                                  - findingId
+                                additionalProperties: false
+                          required:
+                            - id
+                            - assertion
+                            - basis
+                            - supporting
+                            - contradicting
+                            - missingEvidence
+                            - limitations
+                            - openQuestions
+                            - sourceFindings
+                          additionalProperties: false
+                      knowledgeProposals:
+                        maxItems: 16
+                        type: array
+                        items:
+                          oneOf:
+                            - type: object
+                              properties:
+                                title:
+                                  type: string
+                                  minLength: 1
+                                  maxLength: 256
+                                  pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                kind:
+                                  type: string
+                                  enum:
+                                    - assertion
+                                    - observation
+                                    - decision
+                                    - procedure
+                                    - lesson
+                                    - state_fact
+                                    - direction
+                                assertion:
+                                  type: string
+                                  minLength: 1
+                                  maxLength: 32000
+                                  pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                basis:
+                                  type: string
+                                  enum:
+                                    - observed
+                                    - inferred
+                                    - unknown
+                                evidence:
+                                  maxItems: 64
+                                  type: array
+                                  items:
+                                    type: object
+                                    properties:
+                                      relation:
+                                        type: string
+                                        enum:
+                                          - supports
+                                          - contradicts
+                                          - derived_from
+                                          - refines
+                                          - references
+                                      reference:
+                                        type: object
+                                        properties:
+                                          kind:
+                                            type: string
+                                            enum:
+                                              - knowledge
+                                              - witness
+                                              - result
+                                              - operation
+                                              - verification
+                                          id:
+                                            type: string
+                                            minLength: 1
+                                            maxLength: 128
+                                            pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                          revision:
+                                            type: integer
+                                            minimum: 1
+                                            maximum: 2147483647
+                                          version:
+                                            type: string
+                                            minLength: 1
+                                            maxLength: 256
+                                            pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                          sha256:
+                                            type: string
+                                            pattern: ^[a-f0-9]{64}$
+                                        required:
+                                          - kind
+                                          - id
+                                        additionalProperties: false
+                                    required:
+                                      - relation
+                                      - reference
+                                    additionalProperties: false
+                                missingEvidence:
+                                  maxItems: 32
+                                  type: array
+                                  items:
+                                    type: object
+                                    properties:
+                                      state:
+                                        type: string
+                                        enum:
+                                          - absent
+                                          - stale
+                                          - missing
+                                          - inaccessible
+                                          - unknown
+                                      reason:
+                                        type: string
+                                        minLength: 1
+                                        maxLength: 1000
+                                        pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                    required:
+                                      - state
+                                      - reason
+                                    additionalProperties: false
+                                limitations:
+                                  maxItems: 32
+                                  type: array
+                                  items:
+                                    type: string
+                                    minLength: 1
+                                    maxLength: 1000
+                                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                change:
+                                  type: string
+                                  enum:
+                                    - add
+                                owner:
+                                  oneOf:
+                                    - type: object
+                                      properties:
+                                        kind:
+                                          type: string
+                                          enum:
+                                            - company
+                                        companyId:
+                                          type: string
+                                          minLength: 1
+                                          maxLength: 128
+                                          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                      required:
+                                        - kind
+                                        - companyId
+                                      additionalProperties: false
+                                    - type: object
+                                      properties:
+                                        kind:
+                                          type: string
+                                          enum:
+                                            - project
+                                        projectId:
+                                          type: string
+                                          minLength: 1
+                                          maxLength: 128
+                                          pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                      required:
+                                        - kind
+                                        - projectId
+                                      additionalProperties: false
+                              required:
+                                - title
+                                - kind
+                                - assertion
+                                - basis
+                                - evidence
+                                - missingEvidence
+                                - limitations
+                                - change
+                                - owner
+                              additionalProperties: false
+                            - type: object
+                              properties:
+                                title:
+                                  type: string
+                                  minLength: 1
+                                  maxLength: 256
+                                  pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                kind:
+                                  type: string
+                                  enum:
+                                    - assertion
+                                    - observation
+                                    - decision
+                                    - procedure
+                                    - lesson
+                                    - state_fact
+                                    - direction
+                                assertion:
+                                  type: string
+                                  minLength: 1
+                                  maxLength: 32000
+                                  pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                basis:
+                                  type: string
+                                  enum:
+                                    - observed
+                                    - inferred
+                                    - unknown
+                                evidence:
+                                  maxItems: 64
+                                  type: array
+                                  items:
+                                    type: object
+                                    properties:
+                                      relation:
+                                        type: string
+                                        enum:
+                                          - supports
+                                          - contradicts
+                                          - derived_from
+                                          - refines
+                                          - references
+                                      reference:
+                                        type: object
+                                        properties:
+                                          kind:
+                                            type: string
+                                            enum:
+                                              - knowledge
+                                              - witness
+                                              - result
+                                              - operation
+                                              - verification
+                                          id:
+                                            type: string
+                                            minLength: 1
+                                            maxLength: 128
+                                            pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                          revision:
+                                            type: integer
+                                            minimum: 1
+                                            maximum: 2147483647
+                                          version:
+                                            type: string
+                                            minLength: 1
+                                            maxLength: 256
+                                            pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                          sha256:
+                                            type: string
+                                            pattern: ^[a-f0-9]{64}$
+                                        required:
+                                          - kind
+                                          - id
+                                        additionalProperties: false
+                                    required:
+                                      - relation
+                                      - reference
+                                    additionalProperties: false
+                                missingEvidence:
+                                  maxItems: 32
+                                  type: array
+                                  items:
+                                    type: object
+                                    properties:
+                                      state:
+                                        type: string
+                                        enum:
+                                          - absent
+                                          - stale
+                                          - missing
+                                          - inaccessible
+                                          - unknown
+                                      reason:
+                                        type: string
+                                        minLength: 1
+                                        maxLength: 1000
+                                        pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                    required:
+                                      - state
+                                      - reason
+                                    additionalProperties: false
+                                limitations:
+                                  maxItems: 32
+                                  type: array
+                                  items:
+                                    type: string
+                                    minLength: 1
+                                    maxLength: 1000
+                                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                change:
+                                  type: string
+                                  enum:
+                                    - correct
+                                recordId:
+                                  type: string
+                                  minLength: 1
+                                  maxLength: 128
+                                  pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                                expectedRevision:
+                                  type: integer
+                                  minimum: 1
+                                  maximum: 2147483647
+                              required:
+                                - title
+                                - kind
+                                - assertion
+                                - basis
+                                - evidence
+                                - missingEvidence
+                                - limitations
+                                - change
+                                - recordId
+                                - expectedRevision
+                              additionalProperties: false
+                      selection:
+                        maxItems: 256
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            childRunId:
+                              type: string
+                              minLength: 1
+                              maxLength: 128
+                              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                            resultRevision:
+                              type: integer
+                              minimum: 1
+                              maximum: 2147483647
+                            findingId:
+                              type: string
+                              minLength: 1
+                              maxLength: 128
+                              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                            disposition:
+                              type: string
+                              enum:
+                                - retained
+                                - combined
+                                - omitted
+                            outputFindingIds:
+                              maxItems: 32
+                              type: array
+                              items:
+                                type: string
+                                minLength: 1
+                                maxLength: 128
+                                pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                            reason:
+                              type: string
+                              minLength: 1
+                              maxLength: 1000
+                              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                          required:
+                            - childRunId
+                            - resultRevision
+                            - findingId
+                            - disposition
+                            - outputFindingIds
+                          additionalProperties: false
+                    required:
+                      - schemaVersion
+                      - findings
+                      - knowledgeProposals
+                      - selection
+                    additionalProperties: false
+                required:
+                  - id
+                  - text
+                  - state
+                  - references
+                  - kind
+                  - findings
+                additionalProperties: false
         idempotencyKey:
           type: string
           minLength: 8
           maxLength: 128
           pattern: ^[A-Za-z0-9._:-]+$
+      required:
+        - expectedRevision
+        - expectedInputRevision
+        - updates
+        - idempotencyKey
+      additionalProperties: false
     CBWorkPage:
       type: object
       additionalProperties: false

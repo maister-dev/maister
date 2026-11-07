@@ -1,4 +1,5 @@
 import type { CoordinatorChildLaunchContext } from "@/lib/orchestrator/child-launch-context";
+import type { AssignmentContextSnapshot } from "@/lib/specialist-assignments/context-types";
 import type { CompanyRunCancellationIntent } from "@/lib/runs/cancellation-types";
 import type { CompanyExecutionSnapshot } from "@/lib/agents/company-execution-types";
 import type { CompanyFlowBindingSnapshot } from "@/lib/agents/company-flow-binding-types";
@@ -19,6 +20,7 @@ import type {
 import type { KnowledgeAttribution } from "@/lib/brain/record-types";
 import type {
   KnowledgeAccessCapture,
+  KnowledgeAccessRestriction,
   NativeKnowledgeActor,
 } from "@/lib/company/types";
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
@@ -10633,6 +10635,72 @@ export const specialistInputRevisions = pgTable(
     scheduledRequest: check(
       "specialist_input_revisions_scheduled_check",
       scheduledRequestShape(t.scheduledRequest),
+    ),
+  }),
+);
+
+/** Immutable working context is business evidence, never a parallel execution ledger. */
+export const specialistContextRevisions = pgTable(
+  "specialist_context_revisions",
+  {
+    assignmentId: text("assignment_id")
+      .notNull()
+      .references(() => specialistAssignments.id, { onDelete: "restrict" }),
+    revision: integer("revision").notNull(),
+    baseRevision: integer("base_revision").notNull(),
+    inputRevision: integer("input_revision").notNull(),
+    schemaVersion: integer("schema_version").notNull().default(1),
+    context: jsonb("context").$type<AssignmentContextSnapshot>().notNull(),
+    sourceRestrictions: jsonb("source_restrictions")
+      .$type<readonly KnowledgeAccessRestriction[]>()
+      .notNull(),
+    actor: jsonb("actor").$type<KnowledgeAttribution>().notNull(),
+    ownerEpoch: bigint("owner_epoch", { mode: "number" }),
+    principalKey: text("principal_key").notNull(),
+    requestKey: text("request_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    contentDigest: text("content_digest").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    primary: primaryKey({ columns: [t.assignmentId, t.revision] }),
+    request: unique("specialist_context_request_uq").on(
+      t.assignmentId,
+      t.principalKey,
+      t.requestKey,
+    ),
+    input: foreignKey({
+      name: "specialist_context_input_fk",
+      columns: [t.assignmentId, t.inputRevision],
+      foreignColumns: [
+        specialistInputRevisions.assignmentId,
+        specialistInputRevisions.revision,
+      ],
+    }).onDelete("restrict"),
+    revision: check(
+      "specialist_context_revision_check",
+      sql`(${t.schemaVersion}=1 AND ${t.revision}>0 AND ${t.baseRevision}>=0 AND ${t.revision}=${t.baseRevision}+1 AND ${t.inputRevision}>0 AND (${t.ownerEpoch} IS NULL OR ${t.ownerEpoch} BETWEEN 1 AND 9007199254740991)) IS TRUE`,
+    ),
+    identity: check(
+      "specialist_context_identity_check",
+      sql`(${t.principalKey} ~ '^[a-f0-9]{64}$' AND ${t.requestDigest} ~ '^[a-f0-9]{64}$' AND ${t.contentDigest} ~ '^[a-f0-9]{64}$' AND char_length(${t.requestKey}) BETWEEN 8 AND 128 AND ${t.requestKey} ~ '^[A-Za-z0-9._:-]+$') IS TRUE`,
+    ),
+    actor: check(
+      "specialist_context_actor_check",
+      sql`(${specialistActorShape(t.actor)} AND (${t.actor}->>'kind'<>'user' OR ${t.ownerEpoch} IS NULL)) IS TRUE`,
+    ),
+    snapshot: check(
+      "specialist_context_snapshot_check",
+      sql`(jsonb_typeof(${t.context})='object'
+    AND ${t.context} ?& ARRAY['schemaVersion','inputRevision','inputSha256','entries']
+    AND ${t.context}-ARRAY['schemaVersion','inputRevision','inputSha256','entries']='{}'::jsonb
+    AND ${t.context}->'schemaVersion'='1'::jsonb AND ${t.context}->'inputRevision'=to_jsonb(${t.inputRevision})
+    AND jsonb_typeof(${t.context}->'inputSha256')='string' AND ${t.context}->>'inputSha256' ~ '^[a-f0-9]{64}$'
+    AND CASE WHEN jsonb_typeof(${t.context}->'entries')='array' THEN jsonb_array_length(${t.context}->'entries')<=256 ELSE false END
+    AND octet_length(${t.context}::text)<=131072 AND jsonb_typeof(${t.sourceRestrictions})='array'
+    AND octet_length(${t.sourceRestrictions}::text)<=131072) IS TRUE`,
     ),
   }),
 );

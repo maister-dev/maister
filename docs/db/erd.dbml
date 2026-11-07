@@ -3183,6 +3183,33 @@ table specialist_assignments {
   }
 }
 
+table specialist_context_revisions {
+  assignment_id text [not null]
+  revision integer [not null]
+  base_revision integer [not null]
+  input_revision integer [not null]
+  schema_version integer [not null, default: 1]
+  context jsonb [not null]
+  source_restrictions jsonb [not null]
+  actor jsonb [not null]
+  owner_epoch bigint
+  principal_key text [not null]
+  request_key text [not null]
+  request_digest text [not null]
+  content_digest text [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (assignment_id, revision) [pk]
+    (assignment_id, principal_key, request_key) [name: 'specialist_context_request_uq', unique]
+
+
+
+
+
+  }
+}
+
 table specialist_input_revisions {
   assignment_id text [not null]
   revision integer [not null]
@@ -4757,6 +4784,10 @@ ref specialist_assignments_company_id_companies_id_fk: specialist_assignments.co
 ref specialist_assignments_project_id_projects_id_fk: specialist_assignments.project_id > projects.id [delete: restrict, update: no action]
 
 ref specialist_assignments_project_task_id_tasks_id_fk: specialist_assignments.project_task_id > tasks.id [delete: restrict, update: no action]
+
+ref specialist_context_revisions_assignment_id_specialist_assignments_id_fk: specialist_context_revisions.assignment_id > specialist_assignments.id [delete: restrict, update: no action]
+
+ref specialist_context_input_fk: specialist_context_revisions.(assignment_id, input_revision) > specialist_input_revisions.(assignment_id, revision) [delete: restrict, update: no action]
 
 ref specialist_input_revisions_assignment_fk: specialist_input_revisions.assignment_id > specialist_assignments.id [delete: restrict, update: no action]
 

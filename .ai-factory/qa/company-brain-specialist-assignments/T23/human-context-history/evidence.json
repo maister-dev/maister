@@ -1,0 +1,132 @@
+{
+  "task": "T23",
+  "date": "2026-11-07",
+  "slice": "Immutable versioned human working context and bounded session API",
+  "baseCommit": "3884b23fc076f4fa898e15aa43dda6dd272c1825",
+  "status": "Qualified human persistence and session boundary; T23 remains open for execution-bound context, MCP, result lineage and safe runtime projections",
+  "red": [
+    {
+      "case": "Advancing a context head without exact retained history committed instead of refusing",
+      "log": "cb-context-history-red.log.gz",
+      "exitCode": 1
+    },
+    {
+      "case": "Published context input permitted model-declared acceptance despite runtime refusal",
+      "log": "cb-context-accepted-contract-red2.log.gz",
+      "exitCode": 1
+    }
+  ],
+  "gates": {
+    "integration": {
+      "tests": 199,
+      "files": 9,
+      "durationSeconds": 94.31,
+      "exitCode": 0
+    },
+    "webUnit": {
+      "tests": 9322,
+      "files": 889,
+      "durationSeconds": 37.31,
+      "exitCode": 0
+    },
+    "postContractStore": {
+      "tests": 20,
+      "files": 1,
+      "durationSeconds": 5.94,
+      "exitCode": 0
+    },
+    "types": {
+      "exitCode": 0
+    },
+    "lintAndFormat": {
+      "exitCode": 0
+    },
+    "contractsAndCoverage": {
+      "requirements": 84,
+      "exitCode": 0
+    },
+    "docsAndErd": {
+      "tables": 173,
+      "exitCode": 0
+    },
+    "bilingualPublicBuild": {
+      "exitCode": 0
+    },
+    "bilingualPublicLinks": {
+      "brokenLinks": 0,
+      "exitCode": 0
+    },
+    "migrationDrift": {
+      "newMigration": false,
+      "exitCode": 0
+    }
+  },
+  "migration": {
+    "main": "0244_specialist_context_revisions",
+    "brain": "0011_proposal_source_access",
+    "preservesLegacyHeadInput": true,
+    "inconsistentHeadRollsBack": true,
+    "mainOnlyContextWithoutBrain": true,
+    "inventedHistoricalContext": false
+  },
+  "fixtureCorrections": [
+    "Use native missingEvidence objects rather than strings",
+    "Run project fixture after the existing company-only assertion; preserve the no-project assertion",
+    "Map typed unavailable context to 404",
+    "Dispatch trigger row shape by PL/pgSQL IF rather than SQL CASE over different NEW records"
+  ],
+  "limitations": [
+    "No executing-agent context principal/MCP or runtime projection qualified yet",
+    "No governed child-result context lineage or work acceptance qualified yet",
+    "Human ownership epoch is NULL; no fabricated business fence",
+    "Controlled ACP fixtures qualify platform behavior, not actual installable pilot readiness",
+    "No stand mutation, hosted deployment or remote push"
+  ],
+  "logs": [
+    "cb-context-history-red.log.gz",
+    "cb-context-history-green1.log.gz",
+    "cb-context-history-green2.log.gz",
+    "cb-context-store-green1.log.gz",
+    "cb-context-store-green2.log.gz",
+    "cb-context-http-green1.log.gz",
+    "cb-context-http-green2.log.gz",
+    "cb-context-human-green.log.gz",
+    "cb-context-human-green2.log.gz",
+    "cb-context-upgrade-green1.log.gz",
+    "cb-context-accepted-contract-red2.log.gz",
+    "cb-context-integration-final.log.gz",
+    "cb-context-unit-final.log.gz",
+    "cb-context-types-final.log.gz",
+    "cb-context-types2-final.log.gz",
+    "cb-context-contracts-final.log.gz",
+    "cb-context-contracts2-final.log.gz",
+    "cb-context-docs-final.log.gz",
+    "cb-context-store-final.log.gz",
+    "cb-context-lint-final.log.gz",
+    "cb-context-public-build-final.log.gz",
+    "cb-context-public-links-final.log.gz",
+    "cb-context-drift-final.log.gz"
+  ],
+  "sourceSha256": {
+    "docs/api/company-brain-examples.yaml": "b66da2ae82cd2d55cd59f98027d926b479d96c601416ae88efc17da0ba6fef07",
+    "docs/api/external/operations.openapi.yaml": "f5318fce66030bca785208573b5f722fa07f389e91954d7f1080c89f209e1c87",
+    "docs/api/web.openapi.yaml": "93ebf0ba97b5d1514a0e033751a8e3c69a06cb23788b29cc767d3a3e1eb07997",
+    "docs/database-schema.md": "83f48399179985d09bb7d76b38048a9416e4a7b606f78d0893de7479c6804ad4",
+    "docs/db/erd.dbml": "a68c642590233f46f27f3e3e8431ae60ef8622e64357f9a3beacc01b58ce4ef0",
+    "docs/db/specialist-assignments-domain.md": "dbb9209b090835f1f0a496211a02f088870d3611b97353b2b1ccca0ea1a7fddc",
+    "docs/system-analytics/specialist-assignments.md": "b5ed629483aea58726a559caa15ef1271ae7900647b515d3d4bb5b5889e043cb",
+    "site-docs/guides/company-specialist-webhooks.md": "043a390ddcf63ae131c8de49df6fd651eed205199c35c4c5b56cc9453f1ecb50",
+    "site-docs/ru/guides/company-specialist-webhooks.md": "c864ef0e5101311a1b0e0aee0a6e695d6ac22a5d0776fd23ba72438442ce2937",
+    "web/app/api/specialist-assignments/[assignmentId]/context/route.ts": "abc47f999b9ed4eb05a0cfe08daf58b7d22ccd69965d0eb1651f6d9f0a84cb60",
+    "web/lib/agents/owned-webhook-http.ts": "760505ae9ad46a4d9df9cc0610b0aacc41bb83a2aa4fa7f760a9038e5b590c90",
+    "web/lib/brain/knowledge-http.ts": "5969ded0755d540944a9d16c0c2f55ab704bba331f8f8babb47db914743d422e",
+    "web/lib/db/migrations/0244_specialist_context_revisions.sql": "cf8c74efbb2eb0e2612649e263817858dd84810a0026a40785075aff7b1a6dfd",
+    "web/lib/db/migrations/meta/0244_snapshot.json": "5ee025457618d59da51fe779ccf22b4a90bddd6ea34e31dcdc67876a0933fe87",
+    "web/lib/db/migrations/meta/_journal.json": "27b89f825c53f0f644c892929d15e26a300d3543137ebc784f83d58095c90fbb",
+    "web/lib/db/schema.ts": "4283ca821fad48936c0c1ba260809362246cd1bbb99b783cf59f54ce5bec80cb",
+    "web/lib/http/bounded-json.ts": "837877970f694bc3184dcccd6cfd5ccd8df28e8a1d83aa59f4d330b78daf95e4",
+    "web/lib/specialist-assignments/__tests__/store.integration.test.ts": "ea8a43d6739646efe0c921469683bf975d88d952461436bac1742ad8eb871a0d",
+    "web/lib/specialist-assignments/context-types.ts": "f79d1899d0696371707a4f50d3e763c6f90946e9a438da6f3eed01a812605321",
+    "web/lib/specialist-assignments/context.ts": "29b2c59d2e2fd8b59b0e5e7d56153e8a1964b481f69ed6213dedd01bd2b8cdde"
+  }
+}

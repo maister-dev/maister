@@ -108,3 +108,24 @@ If a response is lost, repeat the exact request and key. A retained reservation
 reuses its assignment and Run. Use a new key only for intentionally independent
 work. Revocation applies to subsequent reads and actions even when older input
 and authority snapshots remain inspectable.
+
+## Inspect and update working context
+
+With an active browser session and current assignment read authority, use
+`GET /api/specialist-assignments/{assignmentId}/context`. An optional `revision`
+selects retained history. Revision zero means no recorded context; its objective
+and constraints come from the current assignment input. Recorded revisions show
+their exact input, original authors and explicit supersession. Access to every
+inherited source is checked before returning context, including historical reads.
+
+Session users with current update authority can send `PATCH` to the same URL.
+Include `expectedRevision`, `expectedInputRevision`, a stable `idempotencyKey` and
+`updates` containing distinct entries with `id`, `kind`, `text`, `state` and
+`references`. Use kinds such as `question`, `hypothesis`, `decision`, `work` or
+`blocker`; finding entries additionally require the structured findings envelope.
+Use `supersedesEntryId` to replace an existing entry with a new identity. Keep the
+JSON body below 32 KiB. A stale revision returns 409: inspect the latest context
+and explicitly rebase. Repeating the exact key and content returns the original
+accessible revision. Notes cannot accept work or confirm a Brain assertion. This
+context endpoint currently uses session authentication; webhook tokens do not
+provide context editing.

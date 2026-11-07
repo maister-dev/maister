@@ -1,12 +1,12 @@
 # Specialist assignment and company runtime persistence
 
-**Implemented: assignment/input/run-link base, reviewed configuration and standalone company execution; Designed: graph dispatch and cooperation — ADR-203.** [Runtime](../system-analytics/specialist-runtime.md), [assignments](../system-analytics/specialist-assignments.md) and [cooperation](../system-analytics/specialist-cooperation.md) own behavior. Existing human `assignments` and host `execution_assignments` are not repurposed.
+**Implemented: assignment/input/run-link base, reviewed configuration, company standalone/graph execution, canonical intake and human context history; Designed: governed cooperation — ADR-203.** [Runtime](../system-analytics/specialist-runtime.md), [assignments](../system-analytics/specialist-assignments.md) and [cooperation](../system-analytics/specialist-cooperation.md) own behavior. Existing human `assignments` and host `execution_assignments` are not repurposed.
 
 ## Migration reservations
 
-Main `0232_company_grant_requests` and `0233_native_knowledge_execution` are implemented. Implemented base unit `0234_specialist_assignments` contains assignment heads, immutable inputs, existing-run links and state facts. Specialist bindings use `0236_company_specialist_bindings`; reviewed company Flow bindings use `0237_company_flow_bindings`. Trigger scope uses `0238_company_trigger_scope` on existing scheduler tables. Retry scope uses `0239_company_retry_scope` on the existing retry ledger. Native run ownership and internal credentials use `0240_company_agent_execution` and `0241_company_agent_credentials`. Context/questions/delivery, cooperation/acceptance/ownership and stand operations follow as generated logical units in their owning tasks. Allocate each numeric prefix from the then-current journal; later tables are not precreated as a prerequisite for the base store. Existing head/input/run-link rows survive each additive migration. The main migration units never FK a new Brain table; knowledge pointers store typed record/revision/witness/digest values and the owning service validates them after both lineages are ready. `runs.flow_revision_id` and existing immutable installed revision schema remain runtime truth.
+Main `0232_company_grant_requests` and `0233_native_knowledge_execution` are implemented. Implemented base unit `0234_specialist_assignments` contains assignment heads, immutable inputs, existing-run links and state facts. Specialist bindings use `0236_company_specialist_bindings`; reviewed company Flow bindings use `0237_company_flow_bindings`. Trigger scope uses `0238_company_trigger_scope` on existing scheduler tables. Retry scope uses `0239_company_retry_scope` on the existing retry ledger. Native run ownership and internal credentials use `0240_company_agent_execution` and `0241_company_agent_credentials`. Context history uses `0259_specialist_context_revisions`. Questions/delivery, cooperation/acceptance/ownership and stand operations follow as generated logical units in their owning tasks. Allocate each numeric prefix from the then-current journal; later tables are not precreated as a prerequisite for the base store. Existing head/input/run-link rows survive each additive migration. The main migration units never FK a new Brain table; knowledge pointers store typed record/revision/witness/digest values and the owning service validates them after both lineages are ready. `runs.flow_revision_id` and existing immutable installed revision schema remain runtime truth.
 
-The base business structures link existing execution records rather than duplicating attempts. Context, work, acceptance, delivery and claim entities in this diagram remain designed until their owning slices land; specialist and Flow binding configuration is implemented.
+The base business structures link existing execution records rather than duplicating attempts. Work, acceptance, delivery and claim entities in this diagram remain designed until their owning slices land; context history and specialist/Flow binding configuration are implemented.
 
 ```mermaid
 erDiagram
@@ -86,10 +86,17 @@ erDiagram
         text assignment_id PK,FK
         integer revision PK
         integer base_revision
+        integer input_revision FK
+        integer schema_version
         jsonb context
         jsonb source_restrictions
         jsonb actor
-        bigint owner_epoch
+        bigint owner_epoch "NULL for human edits"
+        text principal_key
+        text request_key
+        text request_digest
+        text content_digest
+        timestamptz created_at
     }
     SPECIALIST_WORK {
         text id PK
@@ -114,6 +121,12 @@ Generated main `0254_specialist_project_flow_input` permits an explicit standing
 
 Generated main `0255_company_event_admission` leaves project event claims unique on agent/event and scopes company claims to company/professional/subscription/event. A source insertion/reference guard requires its exact existing reserved invocation, owned event and immutable assignment origin. Historical null/unknown triggers, original Run/input bytes and cron v1 snapshots remain unchanged; existing owner CHECKs remain in force. Event source references and inherited restrictions use existing assignment inputs; no Brain FK, clock or execution ledger is added.
 
+## Immutable context history
+
+Generated main `0259_specialist_context_revisions` adds retained version-one context snapshots with exact input references and content-guarded request receipts. The parent lock serializes revision allocation; a deferred invariant requires the context head to equal retained history. Existing heads/inputs remain byte-for-byte unchanged, and revision zero creates no synthetic history or attribution. An inconsistent pre-existing positive head aborts the migration instead of inventing rows. Main-only upgrade and ordinary company context edits work without Brain tables; there is no Brain FK.
+
+New entries are bound to the server actor and introduced revision; unchanged entries retain their exact original attribution. Removed entries require an explicit replacement, and inherited source restrictions cannot shrink. Public human edits record NULL ownership epoch and cannot manufacture accepted work. Each snapshot is bounded to 256 entries/128 KiB of PostgreSQL JSONB text. Executing-agent appointment/fencing and exact child-result acceptance remain their owning runtime slices.
+
 ## Exact persistence contract
 
 All new entity IDs are server-generated; timestamps UTC. Versioned closed JSON contains typed fields specified in the owning API/native schemas. Absence/null/legacy variants are explicit, not generic empty objects.
@@ -129,7 +142,7 @@ All new entity IDs are server-generated; timestamps UTC. Versioned closed JSON c
 | Existing actor/human assignments | Company/project owner union and server principal binding; company role labels resolve reviewed explicit current users | Preserve existing human assignment IDs/claims/events; no fabricated project roles; same current answer authorization |
 | `specialist_assignments` (Implemented) | Exclusive owner, binding, requester/responsible, origin/destination, blockers and state; business revision 1, input revision 1/context 0, terminal fields and timestamps | Immutable identity; next business revision and coherent heads; deferred retained-input-head check; failed/cancelled require reason. Completion is refused until the acceptance-owning migration. Owner/status/activity indexes |
 | `specialist_input_revisions` (Implemented) | PK assignment/revision; objective/input/targets/refs/constraints/exact result/verification in objective_input; separate authority, standing, recurring request and source restrictions; digest, actor/time | Assignment FK RESTRICT; creation or input append and parent CAS commit together. UPDATE/DELETE refused; current access governs historical reads |
-| `specialist_context_revisions` | PK assignment/revision; base revision, structured context and server restrictions, actor/epoch/time | Parent row lock + exact base/epoch CAS; immutable rows, no last-writer merge |
+| `specialist_context_revisions` (Implemented human boundary, 0244) | PK assignment/revision; exact base/input revision, versioned structured context, inherited restrictions, server actor/time, nullable owner epoch, principal/key/request/content digests | Unique assignment/principal/key; exact input composite FK RESTRICT; parent row lock and context/input CAS; immutable history and deferred head/history coherence; retained entries preserve original attribution, supersession is explicit; human epoch NULL; no last-writer merge |
 | `specialist_owner_claims` | Assignment PK, owner/run, positive epoch, renewed_at and expires_at, explicit claim state | Owner+epoch+fresh-expiry in every write predicate; lease 120s/renew 40s, not an in-memory mutex; no slot from lease alone |
 | `specialist_intake_receipts` (Implemented internal core, 0238; source adapters pending) | Server ID, source kind and owner/origin-scoped key hash, original request digest, closed created disposition, exact assignment/input, server actor/time | UNIQUE source kind/key; owner derives from immutable assignment and is included in the key; exact input FK RESTRICT; source/actor binding guard and immutable receipt; same-key lock, creation and state event commit together |
 | `specialist_run_links` (Implemented) | assignment/run PK, input/work revision and role; existing run pointer | Unique run, exact input composite FK, immutable links; owning admission validates scope. No independent attempt counter/ledger |

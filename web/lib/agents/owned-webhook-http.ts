@@ -4,6 +4,7 @@ import type { NextResponse } from "next/server";
 import type { Db } from "@/lib/execution-host/db";
 import type { SpecialistIntakeReceipt } from "@/lib/specialist-assignments/intake-types";
 
+import { readBoundedJson } from "@/lib/http/bounded-json";
 import { handleOwnedExt } from "@/lib/tokens/owned-ext-handler";
 import { tokenHasScope } from "@/lib/tokens/scopes";
 import { requirePersonalAssignmentUser } from "@/lib/specialist-assignments/external";
@@ -17,59 +18,6 @@ import { MaisterError } from "@/lib/errors";
 
 const endpoint = "POST /api/agents/[agentId]/event";
 const MAX_PAYLOAD_BYTES = 32 * 1024;
-
-async function readNativeWebhookJson(request: Request): Promise<unknown> {
-  if (
-    request.headers
-      .get("content-type")
-      ?.split(";", 1)[0]
-      ?.trim()
-      .toLowerCase() !== "application/json" ||
-    !request.body
-  )
-    throw new MaisterError(
-      "CONFIG",
-      "Native assignment webhook intake requires an application/json body",
-    );
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let length = 0;
-  let complete = false;
-
-  try {
-    for (;;) {
-      const next = await reader.read();
-
-      if (next.done) {
-        complete = true;
-        break;
-      }
-      length += next.value.byteLength;
-      if (length > MAX_PAYLOAD_BYTES)
-        throw new MaisterError(
-          "CONFIG",
-          "Native assignment webhook body exceeds 32 KiB",
-          { details: { reason: "native_webhook_body_too_large" } },
-        );
-      chunks.push(next.value);
-    }
-  } finally {
-    if (!complete) await reader.cancel();
-    reader.releaseLock();
-  }
-  try {
-    return JSON.parse(
-      new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)),
-    );
-  } catch (error) {
-    if (error instanceof SyntaxError || error instanceof TypeError)
-      throw new MaisterError(
-        "CONFIG",
-        "Native assignment webhook body must be valid UTF-8 JSON",
-      );
-    throw error;
-  }
-}
 
 type NativeWebhookSubmit = (
   db: Db,
@@ -102,7 +50,7 @@ export async function handleOwnedAgentWebhook(
           "Native assignment webhook intake uses Idempotency-Key rather than a domain-event identity",
         );
       const agentId = decodeRouteParam(rawAgentId, "agentId");
-      const value = await readNativeWebhookJson(request);
+      const value = await readBoundedJson(request, MAX_PAYLOAD_BYTES);
       const receipt = await submit(
         getDb(),
         userId,
@@ -118,7 +66,7 @@ export async function handleOwnedAgentWebhook(
 
       if (
         error instanceof MaisterError &&
-        error.details?.reason === "native_webhook_body_too_large"
+        error.details?.reason === "json_body_too_large"
       )
         return knowledgeJson(
           {

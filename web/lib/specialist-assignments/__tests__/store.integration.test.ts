@@ -6,6 +6,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import { join, resolve } from "node:path";
 
+import { NextRequest } from "next/server";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
 
@@ -19,8 +20,18 @@ import {
   recoverSpecialistAssignment,
   linkSpecialistAssignmentRun,
 } from "../store";
+import {
+  getSpecialistAssignmentContext,
+  appendSpecialistAssignmentContext,
+} from "../context";
 import { intakeSpecialistAssignmentInTransaction } from "../intake";
+import { assignmentContextSchema } from "../context-types";
 
+import {
+  GET as contextGet,
+  PATCH as contextPatch,
+} from "@/app/api/specialist-assignments/[assignmentId]/context/route";
+import { seedProjectRow } from "@/test-support/execution-host-seed";
 import { MaisterError } from "@/lib/errors";
 import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
 import { parseAgentDefinition } from "@/lib/agents/definition";
@@ -31,7 +42,11 @@ import {
   trustPackageRevision,
 } from "@/lib/packages/attach";
 import { buildFlowExportContract } from "@/lib/run-results/contract";
-import { startMainAndBrainPostgresTestDb } from "@/test-support/pg-container";
+import {
+  startMainAndBrainPostgresTestDb,
+  startMainPostgresTestDbUpTo,
+  applyMainMigration,
+} from "@/test-support/pg-container";
 
 let database: StartedPostgresTestDb;
 let root: string;
@@ -39,6 +54,24 @@ let prepared: PreparedSpecialistAssignment;
 const administratorId = randomUUID();
 const requesterId = randomUUID();
 
+const contextSession = vi.hoisted(() => ({ userId: null as string | null }));
+
+vi.mock("@/lib/authz", async (original) => {
+  const actual = await original<typeof import("@/lib/authz")>();
+
+  return {
+    ...actual,
+    requireActiveSession: async () => {
+      if (contextSession.userId === null)
+        throw new MaisterError(
+          "UNAUTHENTICATED",
+          "An authenticated context user is required",
+        );
+
+      return actual.requireActiveUserById(contextSession.userId);
+    },
+  };
+});
 vi.mock("@/lib/db/client", () => ({ getDb: () => database.db }));
 
 beforeAll(async () => {
@@ -163,6 +196,624 @@ afterAll(async () => {
   }
 });
 
+it("IT-CBA-04 refuses a context head without its exact immutable retained revision", async () => {
+  const assignment = await createSpecialistAssignment(
+    database.db,
+    requesterId,
+    prepared,
+  );
+
+  await expect(
+    database.db.transaction(async (tx) => {
+      await tx.execute(
+        sql`UPDATE specialist_assignments SET context_revision=1,revision=revision+1 WHERE id=${assignment.id}`,
+      );
+    }),
+  ).rejects.toMatchObject({
+    cause: { code: "23514", constraint: "specialist_context_head_reference" },
+  });
+  expect(
+    (await getSpecialistAssignment(database.db, requesterId, assignment.id))
+      .contextRevision,
+  ).toBe(0);
+});
+
+it("IT-CBA-04 retains attributed context, native missing-evidence findings, exact replay and explicit supersession", async () => {
+  const assignment = await createSpecialistAssignment(
+    database.db,
+    requesterId,
+    prepared,
+  );
+  const empty = await getSpecialistAssignmentContext(
+    database.db,
+    requesterId,
+    assignment.id,
+  );
+
+  expect(empty).toMatchObject({
+    schemaVersion: 1,
+    revision: 0,
+    recording: "unrecorded",
+    entries: [],
+    digest: null,
+    createdAt: null,
+    objective: prepared.objectiveInput.objective,
+    constraints: prepared.objectiveInput.constraints,
+  });
+  const update = {
+    expectedRevision: 0,
+    expectedInputRevision: 1,
+    idempotencyKey: randomUUID(),
+    updates: [
+      {
+        id: "initial-hypothesis",
+        kind: "hypothesis",
+        text: "Health has not yet been independently observed.",
+        state: "open",
+        references: [],
+      },
+      {
+        id: "missing-health",
+        kind: "finding",
+        text: "Keep the missing health evidence explicit.",
+        state: "open",
+        references: [],
+        findings: {
+          schemaVersion: 1,
+          findings: [
+            {
+              id: "unverified-health",
+              assertion: "Health remains unverified",
+              basis: "inferred",
+              supporting: [],
+              contradicting: [],
+              missingEvidence: [
+                {
+                  state: "missing",
+                  reason: "No post-action health observation",
+                },
+              ],
+              limitations: [],
+              openQuestions: ["Is the configured target reachable?"],
+              sourceFindings: [],
+            },
+          ],
+          knowledgeProposals: [],
+          selection: [],
+        },
+      },
+    ],
+  };
+  const [first, replay] = await Promise.all([
+    appendSpecialistAssignmentContext(
+      database.db,
+      requesterId,
+      assignment.id,
+      update,
+    ),
+    appendSpecialistAssignmentContext(
+      database.db,
+      requesterId,
+      assignment.id,
+      update,
+    ),
+  ]);
+
+  expect(replay).toEqual(first);
+  expect(first).toMatchObject({
+    revision: 1,
+    baseRevision: 0,
+    recording: "recorded",
+    inputRevision: 1,
+  });
+  expect(first.entries).toHaveLength(2);
+  expect(first.entries[0]).toMatchObject({
+    actor: { kind: "user", id: requesterId, runId: null, attemptId: null },
+    ownerEpoch: null,
+    introducedRevision: 1,
+  });
+  expect(first.entries[1]!.entry).toMatchObject({
+    kind: "finding",
+    findings: {
+      findings: [
+        {
+          supporting: [],
+          contradicting: [],
+          missingEvidence: [
+            { state: "missing", reason: "No post-action health observation" },
+          ],
+        },
+      ],
+    },
+  });
+  await expect(
+    appendSpecialistAssignmentContext(database.db, requesterId, assignment.id, {
+      ...update,
+      updates: [
+        { ...update.updates[0], text: "Changed under the same request" },
+      ],
+    }),
+  ).rejects.toMatchObject({
+    code: "CONFLICT",
+    details: { reason: "assignment_context_conflict" },
+  });
+  const outcomes = await Promise.allSettled(
+    ["a", "b"].map((id) =>
+      appendSpecialistAssignmentContext(
+        database.db,
+        requesterId,
+        assignment.id,
+        {
+          expectedRevision: 1,
+          expectedInputRevision: 1,
+          idempotencyKey: randomUUID(),
+          updates: [
+            {
+              id: `decision-${id}`,
+              kind: "decision",
+              text: `Retain decision ${id}`,
+              state: "open",
+              references: [],
+            },
+          ],
+        },
+      ),
+    ),
+  );
+
+  expect(
+    outcomes.filter((result) => result.status === "fulfilled"),
+  ).toHaveLength(1);
+  expect(outcomes.find((result) => result.status === "rejected")).toMatchObject(
+    {
+      reason: {
+        code: "CONFLICT",
+        details: { reason: "assignment_context_conflict" },
+      },
+    },
+  );
+  const replaced = await appendSpecialistAssignmentContext(
+    database.db,
+    requesterId,
+    assignment.id,
+    {
+      expectedRevision: 2,
+      expectedInputRevision: 1,
+      idempotencyKey: randomUUID(),
+      updates: [
+        {
+          id: "revised-hypothesis",
+          kind: "hypothesis",
+          text: "The hypothesis remains a limitation until verification.",
+          state: "resolved",
+          references: [],
+          supersedesEntryId: "initial-hypothesis",
+        },
+      ],
+    },
+  );
+
+  expect(replaced.revision).toBe(3);
+  expect(
+    replaced.entries.some((item) => item.entry.id === "initial-hypothesis"),
+  ).toBe(false);
+  expect(
+    replaced.entries.find((item) => item.entry.id === "missing-health"),
+  ).toEqual(first.entries[1]);
+  expect(
+    await getSpecialistAssignmentContext(
+      database.db,
+      requesterId,
+      assignment.id,
+      1,
+    ),
+  ).toEqual(first);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT revision,base_revision,owner_epoch,actor->>'id' AS actor FROM specialist_context_revisions WHERE assignment_id=$1 ORDER BY revision",
+        [assignment.id],
+      )
+    ).rows,
+  ).toEqual([
+    { revision: 1, base_revision: 0, owner_epoch: null, actor: requesterId },
+    { revision: 2, base_revision: 1, owner_epoch: null, actor: requesterId },
+    { revision: 3, base_revision: 2, owner_epoch: null, actor: requesterId },
+  ]);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT payload->>'cause' AS cause FROM domain_events WHERE kind='specialist.assignment_changed' AND payload->>'assignmentId'=$1 ORDER BY id",
+        [assignment.id],
+      )
+    ).rows,
+  ).toEqual([
+    { cause: "created" },
+    { cause: "context" },
+    { cause: "context" },
+    { cause: "context" },
+  ]);
+});
+
+it("IT-CBA-04 refuses forged authorship, false acceptance, malformed edits, stale input and bounded context overflow without partial history", async () => {
+  const assignment = await createSpecialistAssignment(
+    database.db,
+    requesterId,
+    prepared,
+  );
+  const entry = {
+    id: "first-note",
+    kind: "hypothesis",
+    text: "A bounded working note",
+    state: "open",
+    references: [],
+  };
+  const request = {
+    expectedRevision: 0,
+    expectedInputRevision: 1,
+    idempotencyKey: randomUUID(),
+    updates: [entry],
+  };
+
+  for (const invalid of [
+    { ...request, actor: { kind: "user", id: administratorId } },
+    { ...request, updates: [] },
+    { ...request, updates: [entry, entry] },
+    { ...request, updates: [{ ...entry, kind: "accepted" }] },
+    { ...request, updates: [{ ...entry, state: "accepted" }] },
+    { ...request, updates: [{ ...entry, text: "x".repeat(8001) }] },
+  ])
+    await expect(
+      appendSpecialistAssignmentContext(
+        database.db,
+        requesterId,
+        assignment.id,
+        invalid,
+      ),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+  await appendSpecialistAssignmentInput(
+    database.db,
+    requesterId,
+    assignment.id,
+    { expectedRevision: 1, input: "A revised request", references: [] },
+  );
+  await expect(
+    appendSpecialistAssignmentContext(
+      database.db,
+      requesterId,
+      assignment.id,
+      request,
+    ),
+  ).rejects.toMatchObject({ code: "CONFLICT" });
+  for (let index = 0; index < 4; index++) {
+    await appendSpecialistAssignmentContext(
+      database.db,
+      requesterId,
+      assignment.id,
+      {
+        expectedRevision: index,
+        expectedInputRevision: 2,
+        idempotencyKey: randomUUID(),
+        updates: Array.from({ length: 4 }, (_, item) => ({
+          ...entry,
+          id: `large-${index}-${item}`,
+          text: "x".repeat(7400),
+        })),
+      },
+    );
+  }
+  await expect(
+    appendSpecialistAssignmentContext(database.db, requesterId, assignment.id, {
+      expectedRevision: 4,
+      expectedInputRevision: 2,
+      idempotencyKey: randomUUID(),
+      updates: Array.from({ length: 4 }, (_, item) => ({
+        ...entry,
+        id: `overflow-${item}`,
+        text: "x".repeat(7400),
+      })),
+    }),
+  ).rejects.toMatchObject({
+    code: "CONFIG",
+    details: { reason: "assignment_context_too_large" },
+  });
+  expect(
+    (
+      await getSpecialistAssignmentContext(
+        database.db,
+        requesterId,
+        assignment.id,
+      )
+    ).revision,
+  ).toBe(4);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS count FROM specialist_context_revisions WHERE assignment_id=$1",
+        [assignment.id],
+      )
+    ).rows,
+  ).toEqual([{ count: 4 }]);
+  await expect(
+    database.pool.query(
+      "UPDATE specialist_context_revisions SET request_digest=repeat('a',64) WHERE assignment_id=$1",
+      [assignment.id],
+    ),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "specialist_context_history_immutable",
+  });
+});
+
+it("IT-CBA-04 retains source restrictions after supersession and gates current, historical and replayed context on current access", async () => {
+  const grants = await createCompanyGrants(database.db, administratorId, {
+    principalKind: "user",
+    principalId: requesterId,
+    actions: ["knowledge:read"],
+    idempotencyKey: randomUUID(),
+  });
+  const recordId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO brain_items(id,company_id,kind,title,content,confidence,content_hash) VALUES($1,$2,'observation','Private context source','A source that must remain access guarded.',0.9,$3)",
+    [recordId, grants.page.companyId, randomUUID()],
+  );
+  const witness = (
+    await database.pool.query<{ content_sha256: string }>(
+      "SELECT content_sha256 FROM brain_record_revisions WHERE record_id=$1 AND revision=1",
+      [recordId],
+    )
+  ).rows[0]!;
+  const reference = {
+    kind: "knowledge",
+    id: recordId,
+    revision: 1,
+    sha256: witness.content_sha256,
+  };
+  const assignment = await createSpecialistAssignment(
+    database.db,
+    requesterId,
+    prepared,
+  );
+  const first = {
+    expectedRevision: 0,
+    expectedInputRevision: 1,
+    idempotencyKey: randomUUID(),
+    updates: [
+      {
+        id: "source-note",
+        kind: "source",
+        text: "Keep this private source attached to the working conclusion.",
+        state: "open",
+        references: [reference],
+      },
+    ],
+  };
+
+  await expect(
+    appendSpecialistAssignmentContext(database.db, requesterId, assignment.id, {
+      ...first,
+      idempotencyKey: randomUUID(),
+      updates: [
+        {
+          ...first.updates[0],
+          references: [{ ...reference, sha256: "0".repeat(64) }],
+        },
+      ],
+    }),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "knowledge_reference_unavailable" },
+  });
+  await appendSpecialistAssignmentContext(
+    database.db,
+    requesterId,
+    assignment.id,
+    first,
+  );
+  const second = {
+    expectedRevision: 1,
+    expectedInputRevision: 1,
+    idempotencyKey: randomUUID(),
+    updates: [
+      {
+        id: "derived-note",
+        kind: "hypothesis",
+        text: "The source remains a restriction when its visible citation is removed.",
+        state: "open",
+        references: [],
+        supersedesEntryId: "source-note",
+      },
+    ],
+  };
+
+  await appendSpecialistAssignmentContext(
+    database.db,
+    requesterId,
+    assignment.id,
+    second,
+  );
+  const grant = grants.page.items[0]!;
+
+  await revokeCompanyGrant(database.db, administratorId, grant.id, {
+    expectedRevision: grant.revision,
+    reason: "Withdraw context evidence access",
+    idempotencyKey: randomUUID(),
+  });
+  expect(
+    (await getSpecialistAssignment(database.db, requesterId, assignment.id))
+      .contextRevision,
+  ).toBe(2);
+  for (const revision of [1, 2])
+    await expect(
+      getSpecialistAssignmentContext(
+        database.db,
+        requesterId,
+        assignment.id,
+        revision,
+      ),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "knowledge_reference_unavailable" },
+    });
+  await expect(
+    appendSpecialistAssignmentContext(
+      database.db,
+      requesterId,
+      assignment.id,
+      second,
+    ),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "knowledge_reference_unavailable" },
+  });
+  await expect(
+    appendSpecialistAssignmentContext(database.db, requesterId, assignment.id, {
+      expectedRevision: 2,
+      expectedInputRevision: 1,
+      idempotencyKey: randomUUID(),
+      updates: [
+        {
+          id: "unrestricted-note",
+          kind: "decision",
+          text: "An omitted citation cannot erase inherited access limits.",
+          state: "open",
+          references: [],
+        },
+      ],
+    }),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "knowledge_reference_unavailable" },
+  });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT revision,source_restrictions @> jsonb_build_array(jsonb_build_object('kind','record','recordId',$2::text)) AS retains_source FROM specialist_context_revisions WHERE assignment_id=$1 ORDER BY revision",
+        [assignment.id, recordId],
+      )
+    ).rows,
+  ).toEqual([
+    { revision: 1, retains_source: true },
+    { revision: 2, retains_source: true },
+  ]);
+});
+
+it("IT-CBA-04 exposes bounded private session context and refuses anonymous, forged, stale and unavailable selectors", async () => {
+  const assignment = await createSpecialistAssignment(
+    database.db,
+    requesterId,
+    prepared,
+  );
+  const params = { params: Promise.resolve({ assignmentId: assignment.id }) };
+  const url = `http://localhost/api/specialist-assignments/${assignment.id}/context`;
+  const request = {
+    expectedRevision: 0,
+    expectedInputRevision: 1,
+    idempotencyKey: randomUUID(),
+    updates: [
+      {
+        id: "http-question",
+        kind: "question",
+        text: "Which independent observation is missing?",
+        state: "open",
+        references: [],
+      },
+    ],
+  };
+  const patch = (value: unknown): Promise<Response> =>
+    contextPatch(
+      new NextRequest(url, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(value),
+      }),
+      params,
+    );
+
+  expect((await contextGet(new NextRequest(url), params)).status).toBe(401);
+  contextSession.userId = requesterId;
+  try {
+    const before = await contextGet(new NextRequest(url), params);
+
+    expect(before.status).toBe(200);
+    expect(before.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(assignmentContextSchema.parse(await before.json())).toMatchObject({
+      revision: 0,
+      recording: "unrecorded",
+      currentInputRevision: 1,
+    });
+    const response = await patch(request);
+
+    expect(response.status).toBe(200);
+    const retained = assignmentContextSchema.parse(await response.json());
+
+    expect(retained).toMatchObject({
+      revision: 1,
+      recording: "recorded",
+      entries: [
+        {
+          actor: {
+            kind: "user",
+            id: requesterId,
+            runId: null,
+            attemptId: null,
+          },
+          ownerEpoch: null,
+        },
+      ],
+    });
+    expect(
+      (
+        await patch({
+          ...request,
+          actor: { kind: "user", id: administratorId },
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (await patch({ ...request, idempotencyKey: randomUUID() })).status,
+    ).toBe(409);
+    expect(
+      (await contextGet(new NextRequest(url + "?revision=01"), params)).status,
+    ).toBe(400);
+    expect(
+      (
+        await contextGet(
+          new NextRequest(url + "?revision=1&revision=2"),
+          params,
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (await contextGet(new NextRequest(url + "?revision=2"), params)).status,
+    ).toBe(404);
+    const oversized = await contextPatch(
+      new NextRequest(url, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request) + " ".repeat(32768),
+      }),
+      params,
+    );
+
+    expect(oversized.status).toBe(413);
+    contextSession.userId = administratorId;
+    expect((await contextGet(new NextRequest(url), params)).status).toBe(403);
+    contextSession.userId = requesterId;
+    const historical = await contextGet(
+      new NextRequest(url + "?revision=1"),
+      params,
+    );
+
+    expect(assignmentContextSchema.parse(await historical.json())).toEqual(
+      retained,
+    );
+  } finally {
+    contextSession.userId = null;
+  }
+});
+
 it("IT-CBA-01 persists company responsibility, separate request/result planes and origin without a project or execution carrier", async () => {
   const assignment = await createSpecialistAssignment(
     database.db,
@@ -249,6 +900,99 @@ it("IT-CBA-01 persists company responsibility, separate request/result planes an
       },
     },
   ]);
+});
+
+it("IT-CBA-04 applies real project membership separately to reading and editing retained context", async () => {
+  const projectId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO projects(id,slug,name,repo_path,maister_yaml_path,task_key) VALUES($1,$1,'Project working context',$2,$3,'CXC')",
+    [
+      projectId,
+      join(root, "context-repo"),
+      join(root, "context-repo", "maister.yaml"),
+    ],
+  );
+  await database.pool.query(
+    "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'member')",
+    [randomUUID(), projectId, requesterId],
+  );
+  const assignment = await createSpecialistAssignment(
+    database.db,
+    requesterId,
+    {
+      ...prepared,
+      owner: { kind: "project", projectId },
+      origin: { kind: "manual", interactionId: randomUUID() },
+    },
+  );
+  const context = await appendSpecialistAssignmentContext(
+    database.db,
+    requesterId,
+    assignment.id,
+    {
+      expectedRevision: 0,
+      expectedInputRevision: 1,
+      idempotencyKey: randomUUID(),
+      updates: [
+        {
+          id: "project-decision",
+          kind: "decision",
+          text: "Retain this project's explicit decision.",
+          state: "open",
+          references: [],
+        },
+      ],
+    },
+  );
+
+  expect(context).toMatchObject({
+    revision: 1,
+    inputRevision: 1,
+    currentInputRevision: 1,
+  });
+  await database.pool.query(
+    "UPDATE project_members SET role='viewer' WHERE project_id=$1 AND user_id=$2",
+    [projectId, requesterId],
+  );
+  expect(
+    await getSpecialistAssignmentContext(
+      database.db,
+      requesterId,
+      assignment.id,
+    ),
+  ).toEqual(context);
+  await expect(
+    appendSpecialistAssignmentContext(database.db, requesterId, assignment.id, {
+      expectedRevision: 1,
+      expectedInputRevision: 1,
+      idempotencyKey: randomUUID(),
+      updates: [
+        {
+          id: "unauthorized-decision",
+          kind: "decision",
+          text: "A viewer cannot change the decision.",
+          state: "open",
+          references: [],
+        },
+      ],
+    }),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await database.pool.query(
+    "DELETE FROM project_members WHERE project_id=$1 AND user_id=$2",
+    [projectId, requesterId],
+  );
+  await expect(
+    getSpecialistAssignmentContext(database.db, requesterId, assignment.id),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS count FROM specialist_context_revisions WHERE assignment_id=$1",
+        [assignment.id],
+      )
+    ).rows,
+  ).toEqual([{ count: 1 }]);
 });
 
 it("IT-CBA-03 rejects unresolvable evidence and forged standing instructions atomically without publishing an assignment", async () => {
@@ -1215,3 +1959,160 @@ it("IT-CBA-02 separates canonical comment recipients while manual keys reject re
     details: { reason: "specialist_intake_payload_conflict" },
   });
 });
+
+it("IT-CBX-01 context upgrade preserves populated input/attribution, rolls back invalid heads and works without Brain tables", async () => {
+  const legacy = await startMainPostgresTestDbUpTo(
+    { databaseName: "context_upgrade" },
+    "0258_project_event_context",
+  );
+
+  try {
+    await legacy.pool.query(
+      "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'admin','active'),($3,$4,'member','active')",
+      [
+        administratorId,
+        `${administratorId}@example.test`,
+        requesterId,
+        `${requesterId}@example.test`,
+      ],
+    );
+    const grants = await createCompanyGrants(legacy.db, administratorId, {
+      principalKind: "user",
+      principalId: requesterId,
+      actions: ["assignments:read", "assignments:submit", "assignments:update"],
+      idempotencyKey: randomUUID(),
+    });
+    const pin = (
+      await database.pool.query(
+        "SELECT to_jsonb(pin) AS value FROM package_installs pin WHERE id=$1",
+        [prepared.standingDefinition.packageInstallId],
+      )
+    ).rows[0]!.value;
+
+    await legacy.pool.query(
+      "INSERT INTO package_installs SELECT (jsonb_populate_record(NULL::package_installs,$1::jsonb)).*",
+      [JSON.stringify(pin)],
+    );
+    const assignment = await createSpecialistAssignment(
+      legacy.db,
+      requesterId,
+      {
+        ...prepared,
+        owner: { kind: "company", companyId: grants.page.companyId },
+      },
+    );
+    const before = (
+      await legacy.pool.query(
+        "SELECT to_jsonb(head) AS head,(SELECT to_jsonb(input) FROM specialist_input_revisions input WHERE input.assignment_id=head.id AND input.revision=1) AS input FROM specialist_assignments head WHERE id=$1",
+        [assignment.id],
+      )
+    ).rows;
+
+    await expect(
+      legacy.db.transaction(async (tx) => {
+        await tx.execute(
+          sql`UPDATE specialist_assignments SET context_revision=1,revision=revision+1 WHERE id=${assignment.id}`,
+        );
+        await applyMainMigration(tx, "0259_specialist_context_revisions");
+      }),
+    ).rejects.toMatchObject({
+      cause: { code: "23514", constraint: "specialist_context_head_reference" },
+    });
+    expect(
+      (
+        await legacy.pool.query(
+          "SELECT to_regclass('public.specialist_context_revisions') AS present",
+        )
+      ).rows,
+    ).toEqual([{ present: null }]);
+    expect(
+      (
+        await legacy.pool.query(
+          "SELECT to_jsonb(head) AS head,(SELECT to_jsonb(input) FROM specialist_input_revisions input WHERE input.assignment_id=head.id AND input.revision=1) AS input FROM specialist_assignments head WHERE id=$1",
+          [assignment.id],
+        )
+      ).rows,
+    ).toEqual(before);
+    await legacy.db.transaction((tx) =>
+      applyMainMigration(tx, "0259_specialist_context_revisions"),
+    );
+    expect(
+      (
+        await legacy.pool.query(
+          "SELECT to_jsonb(head) AS head,(SELECT to_jsonb(input) FROM specialist_input_revisions input WHERE input.assignment_id=head.id AND input.revision=1) AS input FROM specialist_assignments head WHERE id=$1",
+          [assignment.id],
+        )
+      ).rows,
+    ).toEqual(before);
+    expect(
+      (
+        await legacy.pool.query(
+          "SELECT count(*)::int AS count FROM specialist_context_revisions",
+        )
+      ).rows,
+    ).toEqual([{ count: 0 }]);
+    const context = await appendSpecialistAssignmentContext(
+      legacy.db,
+      requesterId,
+      assignment.id,
+      {
+        expectedRevision: 0,
+        expectedInputRevision: 1,
+        idempotencyKey: randomUUID(),
+        updates: [
+          {
+            id: "retained-procedure",
+            kind: "hypothesis",
+            text: "No historic verification is inferred by this migration.",
+            state: "open",
+            references: [],
+          },
+        ],
+      },
+    );
+
+    expect(context).toMatchObject({
+      revision: 1,
+      inputRevision: 1,
+      recording: "recorded",
+      entries: [
+        {
+          actor: {
+            kind: "user",
+            id: requesterId,
+            runId: null,
+            attemptId: null,
+          },
+          ownerEpoch: null,
+        },
+      ],
+    });
+    expect(
+      (
+        await legacy.pool.query(
+          "SELECT to_jsonb(input) AS input FROM specialist_input_revisions input WHERE assignment_id=$1 AND revision=1",
+          [assignment.id],
+        )
+      ).rows[0]!.input,
+    ).toEqual(before[0]!.input);
+    const project = await seedProjectRow(legacy.db);
+
+    await legacy.pool.query("DELETE FROM projects WHERE id=$1", [project.id]);
+    expect(
+      (
+        await legacy.pool.query("SELECT id FROM projects WHERE id=$1", [
+          project.id,
+        ])
+      ).rows,
+    ).toEqual([]);
+    expect(
+      (
+        await legacy.pool.query(
+          "SELECT to_regclass('public.brain_items') AS present",
+        )
+      ).rows,
+    ).toEqual([{ present: null }]);
+  } finally {
+    await legacy.stop();
+  }
+}, 180000);
