@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
@@ -8,8 +10,42 @@ import {
   evaluateCoverage,
   matrixRows,
   planTaskIds,
+  repoRoot,
   testIdsInSource,
 } from "./validate-requirement-coverage.mjs";
+
+test("CT-CBX-05 qualification migration units resolve to their actual journal tags", () => {
+  const manifest = readFileSync(
+    join(
+      repoRoot,
+      "docs/system-analytics/company-brain-specialists-qualification.md",
+    ),
+    "utf8",
+  );
+  const units = [
+    ...manifest.matchAll(/^\| (Main|Brain) (\d{4}) ([a-z_]+)(?:\s|\|)/gm),
+  ];
+
+  assert.ok(
+    units.length > 0,
+    "qualification must name concrete migration units",
+  );
+  for (const [, lineage, number, name] of units) {
+    const directory = lineage === "Main" ? "migrations" : "brain-migrations";
+    const journal = JSON.parse(
+      readFileSync(
+        join(repoRoot, "web/lib/db", directory, "meta/_journal.json"),
+        "utf8",
+      ),
+    );
+    const tag = `${number}_${name}`;
+
+    assert.ok(
+      journal.entries.some((entry) => entry.tag === tag),
+      `${lineage} ${tag} must match the actual journal`,
+    );
+  }
+});
 
 const PREFIXES = ["LCV", "LAU"];
 const PHASES = /^T[1-6]\./;

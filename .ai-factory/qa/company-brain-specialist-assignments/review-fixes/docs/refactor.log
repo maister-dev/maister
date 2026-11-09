@@ -1,0 +1,23 @@
+✔ CT-CBX-05 qualification migration units resolve to their actual journal tags (5.776208ms)
+✔ holds when every id and every implementation task is covered (1.157292ms)
+✔ a Planned row's primary test need not exist yet; an Implemented one must (0.270416ms)
+✔ rejects an implementation task no row names, and a row naming an undefined task (0.133333ms)
+✔ rejects a declared id absent from the matrix and a matrix row no document declares (0.0905ms)
+✔ only describe/it/test titles count as resolvable test ids (0.252167ms)
+✔ resolves literal table-driven test titles without counting data as tests (0.107584ms)
+✔ M51 group has complete task and test coverage (176.348333ms)
+✔ flat task headers are non-vacuous and missing enforcement fails (0.209666ms)
+✔ operational group covers all 34 contracts and all 15 implementation tasks (123.773959ms)
+✔ agent activity task namespace is non-vacuous and rejects an orphan (0.306834ms)
+✔ agent activity group names all planned obligations and implementation tasks (126.968875ms)
+✔ const-asserted parameter tables do not swallow following requirement-bearing tests (0.073292ms)
+✔ CT-CBX-05 refuses empty discovery, duplicate identities and unresolvable status claims (0.486583ms)
+✔ CT-CBX-05 company group discovers all 84 contracts and 45 enforcing tasks (118.047542ms)
+ℹ tests 15
+ℹ suites 0
+ℹ pass 15
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 604.521417

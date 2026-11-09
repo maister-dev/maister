@@ -175,7 +175,7 @@ erDiagram
         text status "Pending|Running|NeedsInput|NeedsInputIdle|HumanWorking|WaitingOnChildren|Review|Crashed|Done|Abandoned|Failed"
         text acp_session_id "resume handle (ACP session/resume); Implemented ADR-114 (0082): moved to run_sessions (per session)"
         text current_step_id "runner cursor"
-        jsonb company_cancellation_intent "0237: immutable server stop intent; NULL for legacy/project runs"
+        jsonb company_cancellation_intent "0250: immutable server stop intent; NULL for legacy/project runs"
         text flow_version "tag snapshot; scratch sentinel"
         text flow_revision "git SHA snapshot; manual sentinel"
         text flow_revision_id FK "nullable for scratch"
@@ -703,7 +703,7 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
   [agents-domain.md](agents-domain.md). Company events use
   `runs_company_trigger_event_uq` on company/professional/subscription/event;
   [native source guards](specialist-assignments-domain.md#canonical-intake-receipts)
-  bind the exact existing invocation and preserve historical null triggers (0240).
+  bind the exact existing invocation and preserve historical null triggers (0253).
 - `scratch_runs_project_status_idx` on `(project_id, dialog_status)` — active
   scratch workspace lists. **(migration 0057)** made **partial**
   (`WHERE project_id IS NOT NULL`) so the project-less local-package assistant

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-**Native findings implemented locally — ADR-204; actual package release qualification pending.** Native contracts, reference validation, reduction and the qualified read/UI boundaries below extend one native versioned value for evidence-linked agent/RAH findings through the existing result plane. It applies to coordinator, subordinate researcher and specialist results; [Brain evidence](company-brain-evidence.md) owns source/witness identity.
+**Native findings implemented and locally qualified — ADR-204; CB1 stand qualification remains open.** The [Company Brain qualification](company-brain.md) retains the exact CB0 package/build and depth-two evidence; it is not a claim about later CB1 cooperation or receipt-backed operational results. Native contracts, reference validation, reduction and the qualified read/UI boundaries below extend one native versioned value for evidence-linked agent/RAH findings through the existing result plane. It applies to coordinator, subordinate researcher and specialist results; [Brain evidence](company-brain-evidence.md) owns source/witness identity.
 
 ## Domain entities
 

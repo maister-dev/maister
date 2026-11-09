@@ -325,6 +325,6 @@ harvested lesson survives the deletion of the run/event it was distilled from.
   `web/lib/db/brain-migrations/0001_*.sql` through `0005_*.sql`,
   `web/lib/db/migrations/0088_*.sql`, `web/lib/brain/embedding-index.ts`.
 
-## Company ownership extension (Designed)
+## Company ownership extension (Implemented)
 
-The implemented project-only model above is extended by [Company Brain persistence](company-brain-domain.md). Its exclusive company/project ownership, retained revisions and immutable witnesses are designed, not implemented by the current schema. Existing IDs/proposals remain usable with explicit legacy metadata limitations; source reanchors remain navigation rather than historical verification.
+The Project Brain model above is extended by the implemented [Company Brain persistence](company-brain-domain.md), which owns exclusive company/project ownership, retained revisions and immutable witnesses. Existing IDs/proposals remain usable with explicit legacy metadata limitations; source reanchors remain navigation rather than historical verification.

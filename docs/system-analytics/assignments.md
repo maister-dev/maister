@@ -83,9 +83,9 @@ sequenceDiagram
     W->>DB: record artifacts, flip run Running, complete assignment
 ```
 
-### Company specialist extension (Designed)
+### Company specialist extension (Implemented / Designed)
 
-The [specialist assignments contract](specialist-assignments.md) specifies the owner-aware extension. Existing project/human/RAH behavior remains implemented; company scope and business-assignment behavior are not implied by those existing mechanisms.
+The existing human-work tables support explicit company ownership and current assignment grants. Native business assignments remain separate heads linked to existing Runs, under the [specialist assignment contract](specialist-assignments.md). Company intake, context, clarification and result-availability delivery are implemented; business acceptance and replacement-owner recovery remain Designed.
 
 ## Expectations
 

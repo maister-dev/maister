@@ -35,11 +35,11 @@ column-level narrative.
 > The matching Run-side launch snapshots `runs.agent_chain_depth` and
 > `runs.context_mounts` are drawn in [`runs-domain.md`](runs-domain.md).
 >
-> Main `0241` adds nullable `agent_schedules.project_source_review` for a
+> Main `0254` adds nullable `agent_schedules.project_source_review` for a
 > server-recorded native cron/event review. Legacy rows remain unknown, and no
 > Brain/user FK is added. The [review contract](../system-analytics/specialist-assignments.md#project-automation-review)
-> defines authority and digest semantics; dispatch qualification remains T22.
-> Main `0242` adds reviewed project binding snapshot v3 to the existing claim
+> defines authority and digest semantics; native dispatch qualification is defined in that contract.
+> Main `0255` adds reviewed project binding snapshot v3 to the existing claim
 > contract. Its reference guard refuses v1 capture from a currently reviewed
 > source, keeping old workers from bypassing native review. Existing v1/v2
 > history stays unchanged; the separate scheduled input remains v1.

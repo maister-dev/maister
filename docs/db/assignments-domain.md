@@ -8,7 +8,7 @@ classes.
 
 Flow roles are routing labels. They do not authorize users. Authorization stays
 with `project_members.role` and `requireProjectAction()` for project work.
-Company human work extends these same tables in `0229`/`0230`, with an exclusive
+Company human work extends these same tables in `0242`/`0243`, with an exclusive
 company owner, current explicit assignment grants and retained Run source access.
 See [company human-work ownership](specialist-assignments-domain.md#existing-human-work-ownership-extension)
 for authority and migration compatibility. Existing company system identities

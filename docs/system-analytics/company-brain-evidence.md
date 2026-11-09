@@ -11,7 +11,7 @@ text for inspection and recovery.
 
 ## Purpose
 
-**Implemented locally — ADR-202; actual package release qualification pending.** Indexed-source captures, immutable witnesses, correlated reuse, conflict edges, bounded retrieval, native MCP tools and proposal review are platform-qualified. Launch capture and complete outward source-access guards are platform-qualified. The actual tagged package has completed depth-one evidence research; the full CB0 and separate CB1 pilot gates remain open. This domain owns immutable source/version witnesses, source-observation independence and conflict-preserving retrieval. [Records](company-brain.md) owns publication/confirmation; current repository search anchors remain navigational projections.
+**Implemented and locally qualified — ADR-202.** Indexed-source captures, immutable witnesses, correlated reuse, conflict edges, bounded retrieval, native MCP tools and proposal review are platform-qualified. Launch capture and complete outward source-access guards are platform-qualified. [Company Brain](company-brain.md) owns the retained immutable CB0 package/build qualification, including depth-two research. The separate CB1 cooperation and stand-pilot gates remain open. This domain owns immutable source/version witnesses, source-observation independence and conflict-preserving retrieval. [Records](company-brain.md) owns publication/confirmation; current repository search anchors remain navigational projections.
 
 ## Domain entities
 

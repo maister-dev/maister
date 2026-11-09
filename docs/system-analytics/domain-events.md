@@ -459,9 +459,9 @@ The cause reaches the flow/agent run page, the scratch
 detail, the external `RunDTO.terminalCause` and MCP `run_get`; the webhook
 `data` is unchanged.
 
-### Company knowledge and specialist extension (Designed)
+### Company knowledge and specialist extension (Implemented / Designed)
 
-The [operational lifecycle AsyncAPI](../api/async/operational-lifecycle.asyncapi.yaml) adds content-free `knowledge.record_changed`, `specialist.assignment_changed` and `stand.operation_changed` facts. Emit in the same owner transition transaction and consume through the existing durable dispatcher. These are internal projection facts, excluded from ordinary agent trigger selection to avoid self-invocation loops. `brain_record_projection` consumes accepted knowledge revision invalidation for existing Brain indexing/projection; `specialist_assignment_wake` consumes continuation-ready work under current assignment epoch; `stand_operation_reconcile` consumes intent/effect/probe changes under existing command/recovery claims. Exact revision/epoch and unique receipt guard duplicate delivery. Source/target bodies and credentials never enter payloads. Current project-only events keep their schema; company events carry an explicit owner union. Taxonomy, CHECK, emitters, consumer registration and restart recovery change together in their owning slices.
+The [operational lifecycle AsyncAPI](../api/async/operational-lifecycle.asyncapi.yaml) defines content-free owner-aware facts. Implemented `knowledge.record_changed` and `specialist.assignment_changed` emit in their owning transaction and advance existing durable consumer cursors; they are excluded from ordinary agent trigger selection. Native knowledge reads apply current service access rather than depending on a new projection consumer. The registered `specialist_assignment_delivery` consumer handles exact captured result availability through existing delivery transports. Assignment-owner continuation wakes and `stand.operation_changed` reconciliation remain Designed with their owning cooperation/stand writers; no such consumer is implied by taxonomy or schema presence. Current project events retain their owner and schema. Source/target bodies and credentials never enter metadata payloads.
 
 ## Expectations
 

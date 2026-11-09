@@ -273,9 +273,9 @@ EN label: **Request at launch**. Help: “Optional request for each invocation o
 
 Trigger payload keys do not establish scheduled lineage. Ordinary manual, event and webhook payloads retain their existing meaning; only the explicit internal input contract carries a protected envelope. Source derivation checks project/task/agent ownership, and origin equality includes captured-empty envelopes. Malformed or conflicting evidence is refused rather than reconstructed from a live schedule.
 
-### Company specialist extension (Designed)
+### Company specialist extension (Implemented / Designed)
 
-The [specialist runtime contract](specialist-runtime.md) specifies the owner-aware extension. Existing project/human/RAH behavior remains implemented; company scope and business-assignment behavior are not implied by those existing mechanisms.
+The [specialist runtime contract](specialist-runtime.md) owns implemented company bindings, standalone/result-only graph execution and scoped invocation. Existing project admission remains authoritative for repository work. Assignment-scoped delegation, exact-result acceptance, replacement-owner recovery and the stand pilot remain Designed in the [cooperation contract](specialist-cooperation.md).
 
 ## Expectations
 

@@ -429,9 +429,9 @@ and existing job error reporting apply. A failed blob produces the existing
 explicit source failure. An all-excluded glob remains distinct from no tracked
 match (UX-04A–C).
 
-## Structured company knowledge extension (Designed)
+## Structured company knowledge extension (Implemented)
 
-[Company Brain records](company-brain.md) and [evidence](company-brain-evidence.md) specify repository-free company ownership, independent access grants, immutable assertion/witness revisions and separate confirmation. Existing confidence, reinforcement and mutable source anchors do not establish confirmation. The current implementation remains project-bound until the designed migrations and shared service gates land.
+[Company Brain records](company-brain.md) and [evidence](company-brain-evidence.md) specify repository-free company ownership, independent access grants, immutable assertion/witness revisions and separate confirmation. Existing confidence, reinforcement and mutable source anchors do not establish confirmation. Company-owned records require no repository; native reads and mutations use the shared current-authority services. Repository indexing remains project-only.
 
 
 ## Expectations

@@ -616,9 +616,9 @@ flowchart TD
 
 Per-cron current input and immutable claim/run retention are specified in [scheduled agent requests](scheduled-agent-requests.md). Protected request bodies are stored separately from viewer-safe trigger telemetry; existing admission, completion and permission policies remain authoritative.
 
-### Company specialist extension (Designed)
+### Company specialist extension (Implemented / Designed)
 
-The [specialist runtime contract](specialist-runtime.md) specifies the owner-aware extension. Existing project/human/RAH behavior remains implemented; company scope and business-assignment behavior are not implied by those existing mechanisms.
+The [specialist runtime contract](specialist-runtime.md) owns implemented company bindings, standalone/result-only graph execution and scoped invocation. Existing project admission remains authoritative for repository work. Assignment-scoped delegation, exact-result acceptance, replacement-owner recovery and the stand pilot remain Designed in the [cooperation contract](specialist-cooperation.md).
 
 ## Expectations
 
