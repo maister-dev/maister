@@ -1,0 +1,53 @@
+{
+  "baseline": "7605ebf5967ceb7d9834aa1f5f3a97993175570a",
+  "candidateCheckout": "/private/tmp/maister-late-delegation-7605ebf59",
+  "path": "web/lib/flows/graph/__tests__/orchestrator-park.integration.test.ts",
+  "baselineSha256": "799932b42f42a088f551c0bb60f572fc60bd9832ee1739d34fde4f6081f4da84",
+  "candidateSha256": "14ff738e45bc7997693251f957b1328d376278f0c9c950427424dc0c7aee0308",
+  "patch": "/private/tmp/maister-late-delegation-candidate.patch",
+  "patchSha256": "c48f2baaa13c4ebdac7acd85b970b85f68310e52c83bbd079556f40532b367fb",
+  "cause": {
+    "fullRunRed": "/private/tmp/maister-late-delegation-red-evidence.json",
+    "mechanism": "Unscoped Run row lock barrier can release exact child-insert advisory lock before first-count spy observes it; actual full-run child accepted at1794225538698 before first-count wait times out0to1 at1794225548500",
+    "isolatedUnchangedTarget": {
+      "log": "/private/tmp/maister-late-delegation-baseline-target.log",
+      "verdict": "passed1/1; scheduling-dependent failure was observed in retained primary full run, not isolated exacttarget"
+    }
+  },
+  "fix": [
+    "Current-database exact two-int advisory key identifies blocked acceptance backend",
+    "Coordinator release requires a Run writer blocked by that exact acceptance backend",
+    "Late request reuses genuine scripted-session credential; assert still current and exactlyonefamilyrow",
+    "No timeout increase, product mutation guard change or original safety assertion removal"
+  ],
+  "validation": {
+    "target3Variants": {
+      "log": "/private/tmp/maister-late-delegation-green-target-final.log",
+      "passed": 3,
+      "durationSeconds": 31.47
+    },
+    "owningFullSuite": {
+      "log": "/private/tmp/maister-late-delegation-green-suite.log",
+      "passed": 26,
+      "durationSeconds": 81.13
+    },
+    "independentRepeat": {
+      "log": "/private/tmp/maister-late-delegation-green-repeat.log",
+      "passed": 3,
+      "durationSeconds": 35.07
+    },
+    "typecheck": {
+      "log": "/private/tmp/maister-late-delegation-types.log",
+      "exitCode": 0
+    },
+    "lint": {
+      "log": "/private/tmp/maister-late-delegation-lint-final.log",
+      "exitCode": 0
+    },
+    "diffCheck": 0
+  },
+  "audit": "dispatch_fix_audit no runtime finding; exactDBprecision added; final ack pending",
+  "primarySourceEdited": false,
+  "commitsCreated": false,
+  "jobsComplete": true
+}

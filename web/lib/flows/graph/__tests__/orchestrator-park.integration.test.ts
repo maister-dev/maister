@@ -48,6 +48,7 @@ import {
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { worktreesRoot } from "@/lib/instance-config";
 import { runtimeRoot } from "@/lib/runtime-root";
+import { verifyToken } from "@/lib/tokens/verify";
 import * as workspaceCheckpoint from "@/lib/flows/graph/workspace-checkpoint";
 import { extractSentinelBlock } from "@/lib/flows/graph/node-output";
 import * as agentTokens from "@/lib/agents/tokens";
@@ -550,6 +551,13 @@ async function acceptQueuedChild(runId: string): Promise<{
     projectId,
     runId,
   });
+
+  return acceptQueuedChildWithCredential(secret);
+}
+
+async function acceptQueuedChildWithCredential(
+  secret: string,
+): ReturnType<typeof acceptQueuedChild> {
   const { POST } = await import("@/app/api/v1/ext/runs/delegate/route");
   const response = await POST(
     delegateRequest(secret, {
@@ -804,6 +812,19 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
                 ],
               };
       const { runId } = await seedOrchestratorRun(manifest);
+
+      await seedDelegationTarget();
+      const originalIssueToken = agentTokens.issueOrchestratorRunToken;
+      let issued: Awaited<ReturnType<typeof originalIssueToken>> | undefined;
+      const issuance = vi
+        .spyOn(agentTokens, "issueOrchestratorRunToken")
+        .mockImplementation(async (input) => {
+          const token = await originalIssueToken(input);
+
+          if (input.runId === runId) issued = token;
+
+          return token;
+        });
       const { hosts } = await bindCoordinatorHost(runId);
       const [workspace] = await db
         .select()
@@ -869,7 +890,7 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
       let delegation: ReturnType<typeof acceptQueuedChild> | undefined;
       let parent: Promise<void> | undefined;
       let firstCount = true;
-      let delegationIsHeld = false;
+      let acceptancePid: number | undefined;
       const observed: number[] = [];
       const counts = vi
         .spyOn(childObligations, "childObligationCounts")
@@ -880,21 +901,25 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
           observed.push(result.pending);
           if (firstCount) {
             firstCount = false;
-            delegation = acceptQueuedChild(runId);
+            if (!issued)
+              throw new Error(
+                "The scripted session has no admitted credential",
+              );
+            delegation = acceptQueuedChildWithCredential(issued.secret);
             await expect
-              .poll(
-                async () =>
-                  Number(
-                    (
-                      await pool.query(
-                        `SELECT count(*) FROM pg_stat_activity WHERE wait_event='advisory' AND query ILIKE '%INSERT INTO "task_launch_intents"%'`,
-                      )
-                    ).rows[0].count,
-                  ),
-                RE_ENTRY_POLL,
-              )
+              .poll(async () => {
+                const { rows } = await pool.query<{ pid: number }>(
+                  `SELECT pid FROM pg_locks WHERE locktype='advisory'
+                   AND database=(SELECT oid FROM pg_database WHERE datname=current_database())
+                   AND classid=261104 AND objid=$1 AND objsubid=2 AND NOT granted`,
+                  [lockKey],
+                );
+
+                if (rows.length === 1) acceptancePid = rows[0].pid;
+
+                return rows.length;
+              }, RE_ENTRY_POLL)
               .toBe(1);
-            delegationIsHeld = true;
           }
 
           return result;
@@ -913,19 +938,18 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
           runtimeRoot: process.cwd(),
           executionHosts: hosts,
         });
-        // Other run writers may already be waiting. Only release our barrier
-        // after this delegation is actually waiting at it.
-        await expect.poll(() => delegationIsHeld, RE_ENTRY_POLL).toBe(true);
         await expect
-          .poll(
-            async () =>
-              (
-                await pool.query(
-                  `SELECT count(*)::int AS n FROM pg_stat_activity WHERE wait_event_type='Lock' AND wait_event<>'advisory' AND query LIKE '%runs%'`,
-                )
-              ).rows[0].n,
-            RE_ENTRY_POLL,
-          )
+          .poll(async () => {
+            if (acceptancePid === undefined) return 0;
+            const { rows } = await pool.query<{ pid: number }>(
+              `SELECT pid FROM pg_stat_activity WHERE datname=current_database()
+               AND wait_event_type='Lock' AND query ILIKE '%"runs"%'
+               AND $1=ANY(pg_blocking_pids(pid))`,
+              [acceptancePid],
+            );
+
+            return rows.length;
+          }, RE_ENTRY_POLL)
           .toBeGreaterThan(0);
         await lock.query("SELECT pg_advisory_unlock(261104,$1)", [lockKey]);
         const receipt = await delegation!;
@@ -934,6 +958,15 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
         expect(observed[0]).toBe(0);
         expect(observed).toContain(1);
         expect((await getRun(runId)).status).toBe("WaitingOnChildren");
+        const actor = await verifyToken(issued!.secret, db as never);
+
+        expect(actor.tokenId).toBe(issued!.tokenId);
+        expect(
+          await db
+            .select({ id: fullSchema.projectTokens.id })
+            .from(fullSchema.projectTokens)
+            .where(eq(fullSchema.projectTokens.bound_run_id, runId)),
+        ).toHaveLength(1);
         expect(
           (
             await pool.query(
@@ -977,6 +1010,7 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
           [parent, delegation].filter((value) => value !== undefined),
         );
         counts.mockRestore();
+        issuance.mockRestore();
         await pool.query(`DROP TRIGGER ${trigger} ON task_launch_intents`);
         await pool.query(`DROP FUNCTION ${trigger}()`);
       }

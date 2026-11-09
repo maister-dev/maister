@@ -12,6 +12,7 @@ import {
 // FIXME(any): drizzle-orm dual peer-dep variants — runtime works, cast silences
 // the type-only clash (matches emit-run-status.integration.test.ts).
 import { DOMAIN_EVENT_CONSUMERS } from "@/lib/domain-events/consumers";
+import { closeDb } from "@/lib/db/client";
 import * as fullSchema from "@/lib/db/schema";
 import {
   startMainPostgresTestDb,
@@ -34,6 +35,7 @@ import {
 // =============================================================================
 
 const schema = fullSchema as unknown as Record<string, any>;
+const originalDbUrl = process.env.DB_URL;
 
 let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
@@ -47,6 +49,8 @@ beforeAll(async () => {
 
   pool = testDatabase.pool;
   db = testDatabase.db;
+  // Registered consumers also resolve their runtime connection through getDb().
+  process.env.DB_URL = testDatabase.databaseUrl;
 
   projectId = randomUUID();
   await db.insert(schema.projects).values({
@@ -60,7 +64,16 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await testDatabase?.stop();
+  try {
+    await closeDb();
+  } finally {
+    if (originalDbUrl === undefined) {
+      delete process.env.DB_URL;
+    } else {
+      process.env.DB_URL = originalDbUrl;
+    }
+    await testDatabase?.stop();
+  }
 });
 
 beforeEach(async () => {

@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "testedHead": "7605ebf5967ceb7d9834aa1f5f3a97993175570a",
+  "fullRun": {
+    "files": {
+      "passed": 682,
+      "failed": 4,
+      "skipped": 2,
+      "total": 688
+    },
+    "tests": {
+      "passed": 6257,
+      "failed": 3,
+      "skipped": 2,
+      "total": 6262
+    },
+    "durationSeconds": 2517.81,
+    "verdict": "failed"
+  },
+  "fixes": [
+    {
+      "file": "web/lib/db/__tests__/migration-task-launch-admission.integration.test.ts",
+      "scope": "strict new nullable receipt expectation",
+      "isolatedGreen": 6
+    },
+    {
+      "file": "web/lib/domain-events/__tests__/dispatch.integration.test.ts",
+      "scope": "owned runtime database binding and finally cleanup",
+      "isolatedGreen": 10
+    },
+    {
+      "file": "web/lib/flows/graph/__tests__/orchestrator-park.integration.test.ts",
+      "scope": "exact database/advisory-key/backend lock barrier and admitted credential",
+      "isolatedGreen": 26,
+      "repeatGreen": 3
+    }
+  ],
+  "collectionFailure": {
+    "file": "web/lib/services/__tests__/launch-run-delegated.integration.test.ts",
+    "error": "Cannot find package drizzle-orm",
+    "unchangedIsolatedGreen": 7,
+    "observedPrimaryDependencyLink": "../../../../../../../../private/tmp/maister-migration-triage-7605ebf59/node_modules/.pnpm/drizzle-orm@0.45.4_@opentelemetry+api@1.10.0_@types+pg@8.23.1_pg@8.23.1/node_modules/drizzle-orm",
+    "observedLinkMtimeNs": 1794225691074519020,
+    "cause": "isolated checkout shared node_modules; automatic pnpm dependency repair relinked primary during triage",
+    "remediation": "restore primary from frozen lock/cache; disable implicit dependency repair for isolated test children; no product code change"
+  },
+  "productionRuntimeChanges": false,
+  "retainedSha256": {
+    "primary-green.log.gz": "e9494d5eb45bdcc69469e03b8bf9363aa8128666bcdb4a6082acac7074e94851",
+    "migration-green.log.gz": "509b563b5068c06168d7fd97b9277d993815664d7270bb49128364676d1c1d1e",
+    "dependency-restore.log.gz": "1e268764d9d7bb750df86b2961b7a736dd504a5002c3c7118d696f534c513257",
+    "dispatch-red.log.gz": "9bdde974dc55940746203a10bbd6402e0cb822ef1b2456f24945c9dad123a64a",
+    "primary-lint.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "completed-run-cleanup.log.gz": "36c54d576bc98b640e08f552a8503b4f05141dc9fd064dbed7d5635943aa473f",
+    "late-delegation-red-evidence.json": "0294a3993571ffe471be5751ff0941c826566ecc7317f536a029a7f26e16f051",
+    "dispatch-green.log.gz": "aaa428c7753f1cd36086bcecbe2827f388ae7f899e9389d58bf80810e70206b4",
+    "migration-evidence.json": "5b74b42e559e61677e9e16715caac757ab5ad0e3486e213474473697f2e9a6f6",
+    "late-delegation-green.log.gz": "5640d43dc8ae2b2d406a4e5a7a10a69f0bc17706ece734fbe2db95dba64e2dd7",
+    "complete-run-red.log.gz": "39f59f4abd80b7d5c3e59fb91c01377bc5936dd76d5eaf730ac076f3e50128fe",
+    "primary-types.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "late-delegation-evidence.json": "4534f3e92113b5d3886e5123664c531c71d5762e8627864069c57c2eb6c1542a",
+    "delegated-evidence.json": "34fa9757c44d6890a0f7e50f5b4a6d3ddd8ca2aea6efd8f9e91df2ff96e02235",
+    "migration-red.log.gz": "8afc4ee13388b1c53d131ec54ec57ea100c46a9889b2574d80672518d7fda73a",
+    "late-delegation-repeat.log.gz": "b82d2bb3321dadd641c9f7e3a252491bafcabd471412508e81c5ea0af00bbefb",
+    "late-barrier-primary-final.log.gz": "5bb8529fbca476da0d6204e71a0a84696b86e1831543b4a17af9bff2ce4d6686",
+    "delegated-unchanged-green.log.gz": "2bf9f97a598f5344e019dbd4982cc33ebb8f6e1db4c301b85c74dd186e869fae"
+  },
+  "primaryRecheck": {
+    "files": 5,
+    "passed": 49,
+    "exitCode": 0,
+    "log": "primary-green.log.gz"
+  },
+  "lateBarrierFinal": {
+    "files": 1,
+    "passed": 26,
+    "exitCode": 0,
+    "log": "late-barrier-primary-final.log.gz",
+    "refinement": "at least one exact related blocked writer; no irrelevant single-writer cardinality requirement"
+  },
+  "fixtureSourceSha256": {
+    "web/lib/db/__tests__/migration-task-launch-admission.integration.test.ts": "26e6059cdd45e2297a658c55d6ac5315d8db3b9bb6d34b9f2a937d60debf1533",
+    "web/lib/domain-events/__tests__/dispatch.integration.test.ts": "4adb5268f52e694d5349228def12f18d1bd758ee035b501a03a192cba65bc7c8",
+    "web/lib/flows/graph/__tests__/orchestrator-park.integration.test.ts": "9471b2fbe273d7563d6650f3c43cd212e48bc1580ecb1aa9437f9a10b31e7b66"
+  },
+  "dependencyRestore": {
+    "command": "CI=true pnpm_config_verify_deps_before_run=false pnpm install --frozen-lockfile --offline",
+    "exitCode": 0,
+    "drizzleLink": "../../node_modules/.pnpm/drizzle-orm@0.45.4_@opentelemetry+api@1.10.0_@types+pg@8.23.1_pg@8.23.1/node_modules/drizzle-orm",
+    "lockfileSha256": "93cf58e44b3dad95fafc983dabf86b108cb79d6b979d1bd63242090036822f0d",
+    "matchesQualifiedLockfile": true
+  },
+  "cleanup": {
+    "quiescent": true,
+    "processes": 0,
+    "containers": 0,
+    "roots": 0,
+    "errors": []
+  }
+}

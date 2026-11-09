@@ -706,7 +706,11 @@ it("DB02 upgrades immutable v1 intent history without inventing missing executio
           [historicalTriggerId],
         )
       ).rows[0].value,
-    ).toEqual({ ...historicalTrigger, company_id: null });
+    ).toEqual({
+      ...historicalTrigger,
+      company_id: null,
+      specialist_assignment: null,
+    });
     await expect(
       partial.pool.query(
         "UPDATE agent_trigger_attempts SET run_id=$2,original_run_id=$2 WHERE id=$1",
