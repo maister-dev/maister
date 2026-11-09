@@ -1,0 +1,89 @@
+{
+  "base": "425e8a0e9ca207feee6ed54169ba38b91b02634c",
+  "checkout": "/private/tmp/maister-cbk04-cbe07-425e8a0e9",
+  "runtimeChanged": false,
+  "primaryChanged": false,
+  "commitsCreated": false,
+  "files": {
+    "web/lib/brain/__tests__/recall.integration.test.ts": "6548c0aec94822f85c7ad4364ac1cf870ff786e526b1e15de9dc408715174468",
+    "web/lib/brain/__tests__/private-memory-isolation.integration.test.ts": "911e36d9f21685dac92fadc2a00b42b11dfdaeb340dfcd27a40281e4206ed44a"
+  },
+  "patch": "/private/tmp/cb-cbk04-cbe07-qualification.patch",
+  "patchSha256": "dc0a483aa901ecbeccc2ca3e9a50685f811d5c80aec53ce9b39d0e3a21716465",
+  "environment": {
+    "pnpm_config_verify_deps_before_run": "false",
+    "PATH": "/Users/kaa/.nvm/versions/node/v24.15.0/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
+  },
+  "physicalDependencies": {
+    "node_modules": "/private/tmp/maister-cbk04-cbe07-425e8a0e9/node_modules",
+    "web/node_modules": "/private/tmp/maister-cbk04-cbe07-425e8a0e9/web/node_modules",
+    "web/node_modules/drizzle-orm": "/private/tmp/maister-cbk04-cbe07-425e8a0e9/node_modules/.pnpm/drizzle-orm@0.45.4_@opentelemetry+api@1.10.0_@types+pg@8.23.1_pg@8.23.1/node_modules/drizzle-orm"
+  },
+  "dependencyInstall": {
+    "command": "pnpm install --offline --frozen-lockfile",
+    "log": "/private/tmp/cb-cbk04-cbe07-offline-install.log",
+    "exitCode": 0,
+    "sharedNodeModules": false
+  },
+  "qualification": {
+    "IT-CBK-04": "Real pgvector repeated ranking of confidence1/reinforcement99 record; native read/search remains unconfirmed with unknown applicability/record observation; supporting evidence preserves known2018source/2019observation/2020capture times distinctly; no confirmation ledger writes or retrieval metric changes. Legacy attribution remains unknown.",
+    "IT-CBE-07": "Actual agent private CAS/file and personal memory service populated before Brain migration; migration and replay import neither. Explicit current company grant plus positive company and project native record/search controls. Actual private store identities fail native record/witness lookup while private owner reads remain unchanged."
+  },
+  "verification": {
+    "focusedInitial": {
+      "command": "./node_modules/.bin/vitest run --project integration --maxWorkers=1 lib/brain/__tests__/recall.integration.test.ts lib/brain/__tests__/private-memory-isolation.integration.test.ts -t 'IT-CBK-04|IT-CBE-07'",
+      "passed": 2,
+      "filtered": 11,
+      "log": "/private/tmp/cb-cbk04-cbe07-first-run.log"
+    },
+    "initialOwningFixtureFailure": {
+      "passed": 41,
+      "failed": 1,
+      "cause": "New admin native search omitted exact project owner and matched earlier project fixtures; required cursor signing secret. Fixed test request owner scope; no product change.",
+      "log": "/private/tmp/cb-cbk04-cbe07-owning.log"
+    },
+    "finalOwning": {
+      "command": "./node_modules/.bin/vitest run --project integration --maxWorkers=1 lib/brain/__tests__/recall.integration.test.ts lib/brain/__tests__/retain.integration.test.ts lib/brain/__tests__/company-records.integration.test.ts lib/brain/__tests__/private-memory-isolation.integration.test.ts",
+      "files": 4,
+      "passed": 42,
+      "failed": 0,
+      "durationSeconds": 10.14,
+      "log": "/private/tmp/cb-cbk04-cbe07-owning-final-names.log"
+    },
+    "lint": {
+      "command": "./node_modules/.bin/eslint lib/brain/__tests__/recall.integration.test.ts lib/brain/__tests__/private-memory-isolation.integration.test.ts",
+      "exitCode": 0,
+      "log": "/private/tmp/cb-cbk04-cbe07-lint-final-names.log",
+      "warnings": 0
+    },
+    "diffCheck": {
+      "exitCode": 0
+    },
+    "types": {
+      "command": "./node_modules/.bin/tsc --noEmit --incremental false",
+      "exitCode": 0,
+      "log": "/private/tmp/cb-cbk04-cbe07-types-final-names.log"
+    }
+  },
+  "classification": "Additional qualification against existing correct runtime; no runtime RED-to-GREEN claim. Embedding fixture uses existing deterministic client; actual PostgreSQL ranker/migrations/authorizers and private stores execute. No model/package/pilot readiness claim.",
+  "activeOwnedPackageJobs": 0,
+  "review": {
+    "reviewer": "/root",
+    "result": "Strong minimal tests, no actionable issue. Naming cleanup completed: knowledgeControls does not imply public visibility; recordId shorthand matches style."
+  },
+  "retainedSha256": {
+    "owning-final.log.gz": "93b5bc9c2d6022ed8f51e56f43e27d531da368ab65408423ad222c724616b2ac",
+    "types.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "lint.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "initial-fixture-failure.log.gz": "ef50686c7244708c62c2698c674408fc474a64214ea89976031deb951f8cd87a",
+    "primary-green.log.gz": "c2fb3eda9fc3ef32d752081cb7f3cc475c5b4ce1243095eed1b13cbbc3b31e9c"
+  },
+  "primaryRecheck": {
+    "files": 4,
+    "passed": 42,
+    "failed": 0,
+    "exitCode": 0,
+    "durationSeconds": 41.5,
+    "log": "primary-green.log.gz"
+  }
+}

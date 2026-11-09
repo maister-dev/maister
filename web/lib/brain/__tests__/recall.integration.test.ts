@@ -16,6 +16,10 @@ import {
 
 import { embeddingIndexName } from "@/lib/brain/embedding-index";
 import { recall } from "@/lib/brain/recall";
+import { getKnowledgeRecord } from "@/lib/brain/knowledge-records";
+import { searchKnowledge } from "@/lib/brain/knowledge-search";
+import { sha256 } from "@/lib/brain/codec";
+import { seedActiveUser } from "@/test-support/librarian-seed";
 import { retain } from "@/lib/brain/retain";
 
 // T4.1 — hybrid recall + the default pgvector ranker (real pgvector).
@@ -439,4 +443,117 @@ it("legacy project recall does not disclose a record with narrower grants", asyn
   const results = await recall(projectId, QUERY, { db: ctx.db, client });
 
   expect(results).toEqual([]);
+});
+
+it("IT-CBK-04 ranked high-confidence reinforced knowledge never confirms or invents observation/applicability from retrieval or capture time", async () => {
+  const userId = await seedActiveUser(ctx.db, { role: "admin" });
+  const principal = { kind: "user" as const, userId };
+  const retained = await retain(
+    projectId,
+    { kind: "lesson", content: NEAR },
+    {},
+    { db: ctx.db, client },
+  );
+  const recordId = retained.itemId;
+
+  if (recordId === null)
+    throw new Error("Retain did not create the qualification record");
+  const sourceId = randomUUID();
+  const observationId = randomUUID();
+  const witnessId = randomUUID();
+  const contentHash = sha256(NEAR);
+  const restrictions = [{ kind: "project", projectId }];
+
+  // Historical numeric metrics are retrieval hints, not a factual decision ledger.
+  await ctx.db.execute(
+    sql`UPDATE brain_items SET confidence=1,reinforcement_count=99,last_reinforced_at='2022-01-01T00:00:00Z' WHERE id=${recordId}`,
+  );
+  await ctx.db.execute(
+    sql`INSERT INTO brain_sources(id,project_id,kind,path,source_hash,chunker_id,chunker_version) VALUES(${sourceId},${projectId},'text',${`/qualification/${sourceId}`},${contentHash},'native_submission','1')`,
+  );
+  await ctx.db.execute(
+    sql`INSERT INTO brain_evidence_observations(id,project_id,source_id,source_version,content_sha256,attribution,observed_at,source_at) VALUES(${observationId},${projectId},${sourceId},${`sha256:${contentHash}`},${contentHash},${JSON.stringify({ kind: "user", id: userId, runId: null, attemptId: null })}::jsonb,'2019-01-01T00:00:00Z','2018-01-01T00:00:00Z')`,
+  );
+  await ctx.db.execute(
+    sql`INSERT INTO brain_evidence_witnesses(id,observation_id,source_version,content_sha256,selector,restrictions,capture_locator,captured_at) VALUES(${witnessId},${observationId},${`sha256:${contentHash}`},${contentHash},'qualification:text',${JSON.stringify(restrictions)}::jsonb,${JSON.stringify({ kind: "inline", content: NEAR })}::jsonb,'2020-01-01T00:00:00Z')`,
+  );
+  await ctx.db.execute(
+    sql`INSERT INTO brain_revision_evidence(record_id,revision,witness_id,relation,witness_snapshot) VALUES(${recordId},1,${witnessId},'supports',${JSON.stringify({ restrictions, sha256: contentHash, sourceVersion: `sha256:${contentHash}` })}::jsonb)`,
+  );
+  const before = await getKnowledgeRecord(ctx.db, principal, {
+    recordId,
+  });
+
+  for (let invocation = 0; invocation < 2; invocation += 1) {
+    const ranked = await recall(projectId, QUERY, { db: ctx.db, client });
+
+    expect(ranked[0]).toMatchObject({ id: recordId, confidence: 1 });
+    expect(ranked[0]!.score).toBeGreaterThan(0);
+  }
+  const after = await getKnowledgeRecord(ctx.db, principal, {
+    recordId,
+  });
+
+  expect(after).toMatchObject({
+    confirmation: {
+      state: "unconfirmed",
+      decisionId: null,
+      confirmer: null,
+      witnessIds: [],
+    },
+    attribution: {
+      kind: "legacy_unknown",
+      id: null,
+      runId: null,
+      attemptId: null,
+    },
+    freshness: {
+      state: "unknown",
+      applicability: "unknown",
+      observedAt: null,
+      sourceAt: null,
+    },
+    evidence: [
+      {
+        witness: {
+          id: witnessId,
+          availability: "available",
+          observedAt: "2019-01-01T00:00:00.000Z",
+          sourceAt: "2018-01-01T00:00:00.000Z",
+          capturedAt: "2020-01-01T00:00:00.000Z",
+        },
+      },
+    ],
+  });
+  expect(after.freshness).toEqual(before.freshness);
+  expect(after.freshness.capturedAt).not.toBe("2022-01-01T00:00:00.000Z");
+  const confirmed = await searchKnowledge(ctx.db, principal, {
+    q: NEAR,
+    owner: { kind: "project", projectId },
+    confirmation: "confirmed",
+    limit: 10,
+  });
+  const unconfirmed = await searchKnowledge(ctx.db, principal, {
+    q: NEAR,
+    owner: { kind: "project", projectId },
+    confirmation: "unconfirmed",
+    limit: 10,
+  });
+
+  expect(confirmed.items).toEqual([]);
+  expect(unconfirmed.items.map((item) => item.id)).toEqual([recordId]);
+  expect(
+    (
+      await ctx.db.execute(
+        sql`SELECT id FROM brain_confirmations WHERE record_id=${recordId}`,
+      )
+    ).rows,
+  ).toEqual([]);
+  expect(
+    (
+      await ctx.db.execute(
+        sql`SELECT confidence::float8 AS confidence,reinforcement_count FROM brain_items WHERE id=${recordId}`,
+      )
+    ).rows,
+  ).toEqual([{ confidence: 1, reinforcement_count: 99 }]);
 });
