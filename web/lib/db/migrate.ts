@@ -1,3 +1,4 @@
+import type { PoolClient } from "pg";
 import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 
 import "@/lib/load-env";
@@ -19,7 +20,7 @@ import {
   readMainMigrationJournal,
   assertDatabaseNotAheadOfBinary,
 } from "./check-migrations";
-import { declareWriterCapability } from "./writer-capability";
+import { configureMigrationSession } from "./migration-session";
 import {
   EXECUTION_AB_STAGES,
   EXECUTION_AB_STAGE_NAMES,
@@ -250,12 +251,17 @@ async function main(): Promise<void> {
     connectionString: url,
     onConnect: declareWriterCapability,
   });
-  const db = drizzle(pool);
+
+  let client: PoolClient | undefined;
   let preM43MigrationRoot: string | null = null;
   let preStageBMigrationRoot: string | null = null;
   let m43TelemetryLogged = false;
 
   try {
+    client = await pool.connect();
+    await configureMigrationSession(client);
+    const db = drizzle(client);
+
     await assertDatabaseNotAheadOfBinary(db);
     const pending = await findPendingMigrations(db);
     const m43Pending = pending.includes(M43_CUTOVER_MIGRATION);
@@ -356,13 +362,17 @@ async function main(): Promise<void> {
 
     log.info("migrations done");
   } finally {
-    if (preM43MigrationRoot) {
-      await rm(preM43MigrationRoot, { force: true, recursive: true });
+    try {
+      if (preM43MigrationRoot) {
+        await rm(preM43MigrationRoot, { force: true, recursive: true });
+      }
+      if (preStageBMigrationRoot) {
+        await rm(preStageBMigrationRoot, { force: true, recursive: true });
+      }
+    } finally {
+      client?.release();
+      await pool.end();
     }
-    if (preStageBMigrationRoot) {
-      await rm(preStageBMigrationRoot, { force: true, recursive: true });
-    }
-    await pool.end();
   }
 }
 

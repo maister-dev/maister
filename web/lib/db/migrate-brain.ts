@@ -1,3 +1,5 @@
+import type { PoolClient } from "pg";
+
 import "@/lib/load-env";
 
 import { drizzle } from "drizzle-orm/node-postgres";
@@ -6,6 +8,7 @@ import { Pool } from "pg";
 import pino from "pino";
 
 import { maskDbUrl, resolvePostgresDbUrl } from "./postgres-url";
+import { configureMigrationSession } from "./migration-session";
 
 // Project Brain migration lineage (ADR-122). Runs the HAND-AUTHORED `brain_*` +
 // `CREATE EXTENSION vector` migrations from a SEPARATE folder into a SEPARATE
@@ -24,14 +27,22 @@ async function main(): Promise<void> {
     "running brain-lineage migrations",
   );
   const pool = new Pool({ connectionString: url });
-  const db = drizzle(pool);
+  let client: PoolClient | undefined;
 
-  await migrate(db, {
-    migrationsFolder: "./lib/db/brain-migrations",
-    migrationsTable: "__drizzle_brain_migrations",
-  });
-  log.info("brain migrations done");
-  await pool.end();
+  try {
+    client = await pool.connect();
+    await configureMigrationSession(client);
+    const db = drizzle(client);
+
+    await migrate(db, {
+      migrationsFolder: "./lib/db/brain-migrations",
+      migrationsTable: "__drizzle_brain_migrations",
+    });
+    log.info("brain migrations done");
+  } finally {
+    client?.release();
+    await pool.end();
+  }
 }
 
 main().catch((err) => {
