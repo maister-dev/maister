@@ -197,6 +197,13 @@ never supplies delegation authority to an old ordinary-node credential; every
 retired credential remains unusable as a presented bearer. The existing database
 rotation constraint and immutable Run-family binding remain unchanged.
 
+Flow credentials are minted while preparing a genuinely new owned-session create
+payload. Reattaching an admitted prompt, replaying its canonical create descriptor
+or finishing an already completed action does not rotate the credential held by
+that session. Current role, capability and source checks still run on reentry.
+A new owned session can mint a new credential; terminal cleanup retires the Run
+family even when the final traversal did not mint anything.
+
 Findings validation holds the Run with `FOR NO KEY UPDATE` before inspecting
 or extending its source capture, matching the existing Flow driver's lock.
 The capture update never changes the referenced Run identity. Concurrent event
@@ -420,7 +427,7 @@ Evidence links name exact record revisions, immutable witnesses and exact run-re
 
 ### Carrier input boundary
 
-Flow delegation and agent task-mode delegation create shared carrier tasks from model-supplied title/prompt input. The originating run's captured restrictions must govern that input before any shared task, activity, trigger, template or prompt disclosure. Child-run inheritance alone cannot protect an already visible carrier field. This boundary remains unqualified and keeps native capability disabled; required depth-2 Flow cooperation cannot be replaced with a permanent refusal. Existing legacy task/launcher behavior remains the compatibility baseline. No new execution engine or attempt ledger is required.
+Flow delegation and agent task-mode delegation create shared carrier tasks from model-supplied title/prompt input. The originating run's captured restrictions must govern that input before any shared task, activity, trigger, template or prompt disclosure. Child-run inheritance alone cannot protect an already visible carrier field. The implemented private-input and exact-intent binding below enforce this boundary. Historical CB0 depth-2 qualification is retained by the Company Brain domain; renewed qualification of current changes remains an explicit release gate. Existing legacy task/launcher behavior remains the compatibility baseline. No new execution engine or attempt ledger is required.
 
 The native input contract reuses private `tasks.delegation_spec` for queued intent
 and `runs.delegation_snapshot` for the exact execution input. The shared carrier's

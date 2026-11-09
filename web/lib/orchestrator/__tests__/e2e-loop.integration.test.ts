@@ -37,8 +37,10 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { eq } from "drizzle-orm";
+import pino from "pino";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
@@ -52,6 +54,7 @@ import {
   vi,
 } from "vitest";
 
+import { isTaskLaunchContention } from "@/lib/tasks/launch-contention";
 import * as fullSchema from "@/lib/db/schema";
 import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
 import {
@@ -74,6 +77,7 @@ import {
 
 const schema = fullSchema as unknown as Record<string, any>;
 const execFileAsync = promisify(execFile);
+const fixtureLog = pino({ name: "orchestrator-loop-fixture" });
 
 let testDatabase: StartedPostgresTestDb;
 let projectionWorker: ProjectionWorker;
@@ -135,7 +139,7 @@ const directLaunchHook: DelegateHook = async (req) => {
   if (!parent)
     throw new Error(`orchestrator parent ${req.orchestratorRunId} not found`);
 
-  await launchAgentRun({
+  const input: Parameters<typeof launchAgentRun>[0] = {
     agentId: process.env.MAISTER_TEST_CHILD_AGENT_ID as string,
     projectId: parent.projectId,
     taskId: null,
@@ -148,7 +152,29 @@ const directLaunchHook: DelegateHook = async (req) => {
     workspaceMode: null,
     trigger: { source: "manual" },
     db,
-  });
+  };
+
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await launchAgentRun(input);
+
+      return;
+    } catch (error) {
+      // This exact admission refusal occurs before child creation. The same
+      // request can retry; uncertain outcomes and all other errors propagate.
+      if (
+        !isTaskLaunchContention(error) ||
+        error.details?.reason !== "delegation_execution_busy" ||
+        attempt >= 100
+      )
+        throw error;
+      fixtureLog.warn(
+        { parentRunId: parent.id, attempt, reason: error.details.reason },
+        "fixture delegation yielded to the current execution writer",
+      );
+      await delay(100);
+    }
+  }
 };
 
 beforeAll(async () => {

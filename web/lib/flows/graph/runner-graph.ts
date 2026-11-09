@@ -20,7 +20,7 @@ import type {
   SessionPolicy,
 } from "@/lib/config.schema";
 import type { ExecutionFlowContext, StepResult } from "../types";
-import type { AgentExecution } from "../runner-agent";
+import type { AgentExecution, AgentSessionCapabilities } from "../runner-agent";
 import type { CompiledNode } from "./compile";
 import type { Db, LoadedRun, RunFlowOptions } from "./runner-core";
 import type { FlowDriverClaim } from "./driver-claim";
@@ -1520,6 +1520,7 @@ async function executeNodeAction(
     capabilityInstructionsPath?: string;
     adapterLaunch?: ScratchAdapterLaunch;
     mcpServers?: AgentMcpServer[];
+    prepareSessionCapabilities?: () => Promise<AgentSessionCapabilities>;
     profileDigest?: string;
     // ADR-130: derived capability-enforcement set delivered to the supervisor.
     enforcementProfile?: SessionEnforcementProfile;
@@ -1787,6 +1788,7 @@ async function executeNodeAction(
               ctx.adapterLaunch,
             ),
             mcpServers: ctx.mcpServers,
+            prepareSessionCapabilities: ctx.prepareSessionCapabilities,
             profileDigest: ctx.profileDigest,
             outputObjects: ctx.planReviewOutputBindings
               ? Object.values(ctx.planReviewOutputBindings)
@@ -2744,11 +2746,11 @@ export async function runGraph(
   // B6: the refusal's own token beside its code — what carries e.g.
   // `consensus_no_draft_available` onto the terminal event's cause.
   let runErrorReason: string | undefined;
-  // M37 (ADR-098): set once any orchestrator node in this run is issued its
-  // run-bound facade token. The post-loop terminal section revokes it on a
+  // M37 (ADR-098): native facade nodes require family cleanup even when a
+  // resumed traversal reuses its existing credential. Terminal settlement revokes it on a
   // non-park terminal (Review/Failed/Crashed); the NeedsInput/checkpoint park
   // paths return BEFORE that section, so the token survives WaitingOnChildren.
-  let orchestratorTokenIssued = false;
+  let nativeTokenFamilyNeedsCleanup = false;
 
   // The detached ACP driver persists a completed action before handing back to
   // this runner. Re-enter the node so its normal finish pipeline validates
@@ -3524,6 +3526,8 @@ export async function runGraph(
       // get undefined (no materialization). A resolve/materialize throw is
       // handled here like the enforcement gate above (markNodeFailed + break) so
       // the in-flight attempt never stays stale at Running on the outer catch.
+      let prepareSessionCapabilities:
+        (() => Promise<AgentSessionCapabilities>) | undefined;
       let materialized:
         | {
             capabilityProfilePath: string;
@@ -3563,8 +3567,8 @@ export async function runGraph(
 
           // ADR-165 (T6.1/D6): snapshot the EFFECTIVE delegation bounds on the
           // orchestrator run, keyed by this node ATTEMPT. Written here — beside
-          // the token issuance, which already runs on every start AND every wake
-          // — so admission and the scheduler read a value that cannot drift when
+          // current capability checks, which run on every start and wake — so
+          // admission and the scheduler read a value that cannot drift when
           // an env ceiling is edited mid-tree. Idempotent per attempt: a wake on
           // the same attempt rewrites nothing (W5).
           if (node.nodeType === "orchestrator") {
@@ -3583,8 +3587,8 @@ export async function runGraph(
           }
 
           // M37 (ADR-098): an orchestrator delegates through the maister MCP
-          // facade, so issue its run-bound token and inject the facade server
-          // into the materialized mcpServers handed to createSession.
+          // facade. Mint and inject only when the owned-session create prepares
+          // a new descriptor; replay must preserve the live session credential.
           if (
             materialized &&
             (node.nodeType === "orchestrator" ||
@@ -3594,57 +3598,62 @@ export async function runGraph(
                 "maister",
               ))
           ) {
-            const company = isCompanyFlowRun(loaded);
-            const issued = company
-              ? await issueCompanyFlowNodeRunToken({ runId, nodeAttemptId, db })
-              : await (
-                  node.nodeType === "orchestrator"
-                    ? issueOrchestratorRunToken
-                    : issueNativeNodeRunToken
-                )({
-                  projectId: requireProjectFlowRun(loaded).run.projectId,
-                  runId,
-                  nodeAttemptId,
-                  db,
-                });
+            // Cleanup remains required on completed-action replay, even when
+            // no create payload is prepared during this traversal.
+            nativeTokenFamilyNeedsCleanup = true;
+            const capabilities = materialized;
 
-            orchestratorTokenIssued = true;
-            const facade = agentFacadeMcpServer(issued.secret);
-            const facadeServer =
-              facade && company
-                ? {
-                    ...facade,
-                    env: { ...facade.env, MAISTER_MCP_TOOLSET: "company" },
-                  }
-                : facade;
+            prepareSessionCapabilities = async () => {
+              const company = isCompanyFlowRun(loaded);
+              const issued = company
+                ? await issueCompanyFlowNodeRunToken({
+                    runId,
+                    nodeAttemptId,
+                    db,
+                  })
+                : await (
+                    node.nodeType === "orchestrator"
+                      ? issueOrchestratorRunToken
+                      : issueNativeNodeRunToken
+                  )({
+                    projectId: requireProjectFlowRun(loaded).run.projectId,
+                    runId,
+                    nodeAttemptId,
+                    db,
+                  });
+              const facade = agentFacadeMcpServer(issued.secret);
+              const facadeServer =
+                facade && company
+                  ? {
+                      ...facade,
+                      env: { ...facade.env, MAISTER_MCP_TOOLSET: "company" },
+                    }
+                  : facade;
 
-            if (!facadeServer && usesStructuredKnowledgeContext(loaded.run))
-              throw new MaisterError(
-                "PRECONDITION",
-                "Native Flow execution requires the built MAIster MCP facade before dispatch",
-                { details: { reason: "native_knowledge_facade_unavailable" } },
-              );
+              if (!facadeServer && usesStructuredKnowledgeContext(loaded.run))
+                throw new MaisterError(
+                  "PRECONDITION",
+                  "Native Flow execution requires the built MAIster MCP facade before dispatch",
+                  {
+                    details: { reason: "native_knowledge_facade_unavailable" },
+                  },
+                );
 
-            materialized = {
-              ...materialized,
-              mcpServers: [
-                ...materialized.mcpServers,
-                ...(facadeServer ? [facadeServer] : []),
-              ],
-              // ADR-130: the maister delegation facade is system-injected AFTER
-              // capability derivation. An `enforcement.mcps: strict` orchestrator
-              // would otherwise deny its own `mcp__maister__*` delegation calls and
-              // halt with no author remedy — admit the facade into the mcps
-              // allow-list (governs author intent, not the platform's own channel).
-              // Null when the facade is not runnable in this deployment — then
-              // there is nothing to inject or admit.
-              enforcementProfile:
-                materialized.enforcementProfile && facadeServer
-                  ? admitFacadeServer(
-                      materialized.enforcementProfile,
-                      facadeServer.name,
-                    )
-                  : materialized.enforcementProfile,
+              return {
+                mcpServers: [
+                  ...capabilities.mcpServers,
+                  ...(facadeServer ? [facadeServer] : []),
+                ],
+                // The system-injected facade remains subject to the same
+                // capability enforcement contract as its canonical descriptor.
+                enforcementProfile:
+                  capabilities.enforcementProfile && facadeServer
+                    ? admitFacadeServer(
+                        capabilities.enforcementProfile,
+                        facadeServer.name,
+                      )
+                    : capabilities.enforcementProfile,
+              };
             };
           }
         } catch (err) {
@@ -3743,6 +3752,7 @@ export async function runGraph(
                 materialized?.capabilityInstructionsPath,
               adapterLaunch: materialized?.adapterLaunch,
               mcpServers: materialized?.mcpServers,
+              prepareSessionCapabilities,
               profileDigest: materialized?.plan.profileDigest,
               enforcementProfile: materialized?.enforcementProfile,
               nodeAttemptId,
@@ -6004,7 +6014,7 @@ export async function runGraph(
   // paths returned above, so reaching here means the coordinator finished or
   // died — its token is no longer needed. Best-effort; the 48h TTL backs up any
   // crash path that bypasses this hook (e.g. process kill before this line).
-  if (orchestratorTokenIssued) {
+  if (nativeTokenFamilyNeedsCleanup) {
     await revokeOrchestratorRunTokensForRun(runId, rootDb).catch(() => {});
   }
 

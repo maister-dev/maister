@@ -82,16 +82,19 @@ vi.mock("@/lib/flows/runner-agent", async (importOriginal) => {
   return {
     ...actual,
     runAgentStep: vi.fn(
-      async (...args: Parameters<typeof actual.runAgentStep>) =>
-        actualAgent.enabled
-          ? actual.runAgentStep(...args)
-          : {
-              ok: true,
-              stdout: "",
-              vars: {},
-              durationMs: 1,
-              acpSessionId: "acp-coordinator-1",
-            },
+      async (...args: Parameters<typeof actual.runAgentStep>) => {
+        if (actualAgent.enabled) return actual.runAgentStep(...args);
+        // The scripted step represents a newly admitted owned session.
+        await args[1].prepareSessionCapabilities?.();
+
+        return {
+          ok: true,
+          stdout: "",
+          vars: {},
+          durationMs: 1,
+          acpSessionId: "acp-coordinator-1",
+        };
+      },
     ),
   };
 });
@@ -615,7 +618,8 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
     let driverError: unknown;
 
     vi.mocked(runAgentStep)
-      .mockImplementationOnce(async () => {
+      .mockImplementationOnce(async (_step, ctx) => {
+        await ctx.prepareSessionCapabilities?.();
         await writeFile(
           join(workspace.worktreePath, "base.txt"),
           "coordinator work before rewind\n",
@@ -628,7 +632,8 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
           acpSessionId: "acp-coordinator-1",
         };
       })
-      .mockImplementationOnce(async () => {
+      .mockImplementationOnce(async (_step, ctx) => {
+        await ctx.prepareSessionCapabilities?.();
         const stdout = '```json maister:output\n{"verdict":"ok"}\n```';
 
         return {
@@ -814,7 +819,8 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
         await pinCheckpointFlow(runId);
         const { runAgentStep } = await import("@/lib/flows/runner-agent");
 
-        vi.mocked(runAgentStep).mockImplementationOnce(async () => {
+        vi.mocked(runAgentStep).mockImplementationOnce(async (_step, ctx) => {
+          await ctx.prepareSessionCapabilities?.();
           await writeFile(
             join(workspace.worktreePath, "base.txt"),
             "committed coordinator work\n",
@@ -1387,7 +1393,8 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
     const { runAgentStep } = await import("@/lib/flows/runner-agent");
     let duringHitl: Record<string, unknown> | undefined;
 
-    vi.mocked(runAgentStep).mockImplementationOnce(async () => {
+    vi.mocked(runAgentStep).mockImplementationOnce(async (_step, ctx) => {
+      await ctx.prepareSessionCapabilities?.();
       // A permission request pauses the live turn; a child fails meanwhile.
       await db
         .update(schema.runs)
@@ -1443,7 +1450,8 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
     const promoteRun = vi.fn(async () => {});
     let idle: Record<string, unknown> | undefined;
 
-    vi.mocked(runAgentStep).mockImplementationOnce(async () => {
+    vi.mocked(runAgentStep).mockImplementationOnce(async (_step, ctx) => {
+      await ctx.prepareSessionCapabilities?.();
       // An unanswered permission request idles past its keep-alive window.
       await db
         .update(schema.runs)

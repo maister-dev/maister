@@ -17,10 +17,14 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   executionCommands,
+  executionHosts,
+  projectTokens,
   nodeAttempts,
   runMessages,
   runs,
 } from "@/lib/db/schema";
+import { verifyToken } from "@/lib/tokens/verify";
+import { readCreateIntent } from "@/lib/execution-host/create-intent";
 import { createExecutionHosts } from "@/lib/execution-host/client";
 import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
 import { CANONICAL_PROJECTION_CONSUMERS } from "@/lib/execution-host/events/projection-consumers";
@@ -79,7 +83,7 @@ afterAll(async () => {
   await database?.stop();
 });
 
-async function seedAgentFlow() {
+async function seedPromptFlow(nodes: FlowYamlV1["nodes"]) {
   const name = randomUUID();
   const repoPath = await initRepo(`${supervisor.runtimeRoot}/repo-${name}`);
   const worktreePath = await addWorktree(
@@ -87,21 +91,13 @@ async function seedAgentFlow() {
     `${supervisor.runtimeRoot}/wt-${name}`,
     `maister/${name}`,
   );
-  const nodes: FlowYamlV1["nodes"] = [
-    {
-      id: "work",
-      type: "ai_coding",
-      action: { prompt: "hello" },
-      transitions: { success: "done" },
-    },
-  ] as FlowYamlV1["nodes"];
 
   return seedGraphRun(
     database.db,
     {
       schemaVersion: 1,
       name: "admission-yield",
-      compat: { engine_min: "1.1.0" },
+      compat: { engine_min: "1.6.0" },
       nodes,
     },
     {
@@ -129,7 +125,14 @@ async function commandsOf(runId: string, kind: ExecutionCommand["kind"]) {
 
 describe("prompt admission fence timeout on the flow path", () => {
   it("A2: yields with the attempt Running and its session alive, then the continuation worker re-drives it once", async () => {
-    const seeded = await seedAgentFlow();
+    const seeded = await seedPromptFlow([
+      {
+        id: "work",
+        type: "ai_coding",
+        action: { prompt: "hello" },
+        transitions: { success: "done" },
+      },
+    ]);
     const runId = seeded.runId;
     const release = await holdProjection(database.pool, {
       consumerName: CANONICAL_PROJECTION_CONSUMERS.lifecycle,
@@ -208,4 +211,214 @@ describe("prompt admission fence timeout on the flow path", () => {
       await release();
     }
   }, 360_000);
+
+  it("preserves the live session credential on admission replay and retires it at completion", async () => {
+    const seeded = await seedPromptFlow([
+      {
+        id: "coordinate",
+        type: "orchestrator",
+        action: {
+          prompt:
+            'fixture-output:{"bytes":0,"text":"coordinator turn","terminalDelayMs":10000}',
+        },
+        transitions: { success: "done" },
+      },
+    ]);
+    const runId = seeded.runId;
+    const release = await holdProjection(database.pool, {
+      consumerName: CANONICAL_PROJECTION_CONSUMERS.lifecycle,
+      runId,
+    });
+    const { release: allowIncarnations } = await suppressIncarnations(
+      database.pool,
+      { runId },
+    );
+    let continuation: ReturnType<typeof startFlowContinuationWorker> | null =
+      null;
+
+    try {
+      await runFlow(runId, {
+        db: database.db,
+        runtimeRoot: supervisor.runtimeRoot,
+        executionHosts: createExecutionHosts({
+          db: database.db as unknown as Db,
+        }),
+      });
+      const creates = await commandsOf(runId, "session.create");
+
+      expect(creates).toHaveLength(1);
+      const [host] = await database.db
+        .select({ hostKey: executionHosts.hostKey })
+        .from(executionHosts)
+        .where(eq(executionHosts.id, creates[0].executionHostId));
+      const payload = readCreateIntent(creates[0], host.hostKey).envelope
+        .payload;
+      const secret = payload.mcpServers?.find(
+        (server) => server.name === "maister",
+      )?.env?.MAISTER_PROJECT_TOKEN;
+
+      // Keep the private descriptor and credential out of assertion output.
+      expect(typeof secret).toBe("string");
+      const original = await verifyToken(secret!, database.db as unknown as Db);
+      const frozenDigest = creates[0].createIntent?.requestSha256;
+
+      expect(await commandsOf(runId, "session.prompt")).toHaveLength(0);
+
+      await allowIncarnations();
+      await release();
+      continuation = startFlowContinuationWorker({
+        db: database.db as unknown as Db,
+        executionHosts: createExecutionHosts({
+          db: database.db as unknown as Db,
+        }),
+      });
+      await expect
+        .poll(async () => (await commandsOf(runId, "session.prompt")).length, {
+          timeout: 60_000,
+          interval: 100,
+        })
+        .toBe(1);
+      const current = await verifyToken(secret!, database.db as unknown as Db);
+
+      expect(current.tokenId).toBe(original.tokenId);
+      expect(
+        (await commandsOf(runId, "session.create"))[0].createIntent
+          ?.requestSha256,
+      ).toEqual(frozenDigest);
+      expect(
+        await database.db
+          .select({ id: projectTokens.id })
+          .from(projectTokens)
+          .where(eq(projectTokens.bound_run_id, runId)),
+      ).toHaveLength(1);
+
+      await expect
+        .poll(
+          async () =>
+            (
+              await database.db
+                .select({ status: runs.status })
+                .from(runs)
+                .where(eq(runs.id, runId))
+            )[0]?.status,
+          { timeout: 120_000, interval: 250 },
+        )
+        .toBe("Review");
+      const tokens = await database.db
+        .select({
+          id: projectTokens.id,
+          revokedAt: projectTokens.revoked_at,
+          reason: projectTokens.revocation_reason,
+        })
+        .from(projectTokens)
+        .where(eq(projectTokens.bound_run_id, runId));
+
+      expect(tokens).toHaveLength(1);
+      expect(tokens[0].revokedAt).not.toBeNull();
+      expect(tokens[0].reason).toBe("revoked");
+    } finally {
+      await continuation?.stop();
+      await allowIncarnations();
+      await release();
+    }
+  }, 360_000);
+
+  it("mints a distinct credential for a genuinely new owned node session", async () => {
+    const seeded = await seedPromptFlow([
+      {
+        id: "first",
+        type: "orchestrator",
+        action: {
+          prompt: 'fixture-output:{"bytes":0,"text":"first turn"}',
+        },
+        transitions: { success: "second" },
+      },
+      {
+        id: "second",
+        type: "orchestrator",
+        action: {
+          prompt:
+            'fixture-output:{"bytes":0,"text":"second turn","terminalDelayMs":10000}',
+        },
+        transitions: { success: "done" },
+      },
+    ]);
+    const driving = runFlow(seeded.runId, {
+      db: database.db,
+      runtimeRoot: supervisor.runtimeRoot,
+      executionHosts: createExecutionHosts({
+        db: database.db as unknown as Db,
+      }),
+    });
+
+    try {
+      await expect
+        .poll(
+          async () => (await commandsOf(seeded.runId, "session.prompt")).length,
+          { timeout: 60_000, interval: 100 },
+        )
+        .toBe(2);
+      const tokens = await database.db
+        .select({
+          id: projectTokens.id,
+          nodeAttemptId: projectTokens.knowledge_node_attempt_id,
+          revokedAt: projectTokens.revoked_at,
+          reason: projectTokens.revocation_reason,
+        })
+        .from(projectTokens)
+        .where(eq(projectTokens.bound_run_id, seeded.runId));
+
+      expect(tokens).toHaveLength(2);
+      expect(new Set(tokens.map((token) => token.nodeAttemptId)).size).toBe(2);
+      expect(tokens.filter((token) => token.revokedAt === null)).toHaveLength(
+        1,
+      );
+      // Completing the first coordinator already closed its delegation family.
+      expect(tokens.find((token) => token.revokedAt !== null)?.reason).toBe(
+        "revoked",
+      );
+      const creates = await commandsOf(seeded.runId, "session.create");
+
+      expect(creates).toHaveLength(2);
+      for (const command of creates) {
+        const [host] = await database.db
+          .select({ hostKey: executionHosts.hostKey })
+          .from(executionHosts)
+          .where(eq(executionHosts.id, command.executionHostId));
+        const payload = readCreateIntent(command, host.hostKey).envelope
+          .payload;
+        const secret = payload.mcpServers?.find(
+          (server) => server.name === "maister",
+        )?.env?.MAISTER_PROJECT_TOKEN;
+
+        expect(typeof secret).toBe("string");
+        if (
+          payload.nodeAttemptId ===
+          tokens.find((token) => token.revokedAt === null)?.nodeAttemptId
+        ) {
+          const actor = await verifyToken(
+            secret!,
+            database.db as unknown as Db,
+          );
+
+          expect(actor.tokenId).toBe(
+            tokens.find((token) => token.revokedAt === null)?.id,
+          );
+        } else {
+          await expect(
+            verifyToken(secret!, database.db as unknown as Db),
+          ).rejects.toMatchObject({ kind: "revoked" });
+        }
+      }
+      await driving;
+      const [run] = await database.db
+        .select({ status: runs.status })
+        .from(runs)
+        .where(eq(runs.id, seeded.runId));
+
+      expect(run.status).toBe("Review");
+    } finally {
+      await driving;
+    }
+  }, 120_000);
 });

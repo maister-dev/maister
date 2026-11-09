@@ -153,6 +153,11 @@ export type AgentStepLike = {
 type DbClientLike = any;
 export type { DbClientLike };
 
+export type AgentSessionCapabilities = Pick<
+  CreateSessionPayload,
+  "mcpServers" | "enforcementProfile"
+>;
+
 export type RunAgentStepCtx = {
   resultContract?: RunResultContract | null;
   knowledgeAccess?: KnowledgeAccessCapture | null;
@@ -202,6 +207,9 @@ export type RunAgentStepCtx = {
   outputObjects?: RuntimeObjectOutputBinding[];
   adapterLaunch?: ScratchAdapterLaunch;
   mcpServers?: AgentMcpServer[];
+  // Prepare ephemeral credentials only when a new owned create is admitted.
+  // Reattachment uses the existing canonical descriptor and its credential.
+  prepareSessionCapabilities?: () => Promise<AgentSessionCapabilities>;
   profileDigest?: string;
   // M30 (ADR-081): rework `resume` — respawn the adapter and restore the
   // prior attempt's conversation via the ACP session/resume protocol call.
@@ -1593,6 +1601,13 @@ async function runNewSession(
             })
           : undefined;
 
+      const sessionCapabilities = ctx.prepareSessionCapabilities
+        ? await ctx.prepareSessionCapabilities()
+        : {
+            mcpServers: ctx.mcpServers,
+            enforcementProfile: ctx.enforcementProfile,
+          };
+
       // ADR-166 D7: the handle form — the worktree, repo root, and context
       // mounts are adopted ONCE per assignment (`runs.context_mounts` rides the
       // adopt payload); the session body carries no path.
@@ -1606,10 +1621,10 @@ async function runNewSession(
         capabilityInstructionsObjectId: capabilityBundle?.instructionsObjectId,
         outputObjects: ctx.outputObjects,
         adapterLaunch: ctx.adapterLaunch,
-        mcpServers: ctx.mcpServers,
+        mcpServers: sessionCapabilities.mcpServers,
         autoApprovePermissions: ctx.autoApprovePermissions,
         hooksConfig: ctx.hooksConfig,
-        enforcementProfile: ctx.enforcementProfile,
+        enforcementProfile: sessionCapabilities.enforcementProfile,
       };
     };
 

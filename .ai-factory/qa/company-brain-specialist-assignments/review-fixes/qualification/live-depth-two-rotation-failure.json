@@ -1,0 +1,2454 @@
+{
+  "schemaVersion": 1,
+  "sourceUrl": "https://cb-native-qualification.invalid/maister-plugins",
+  "tag": "rah/v1.0.4",
+  "expectedCommit": "a1ddf140369bbae7fe7efc9db88ff82b0a2289e6",
+  "runner": {
+    "id": "cb-live-claude",
+    "adapter": "claude",
+    "model": "glm-5.1",
+    "permissionPolicy": "default"
+  },
+  "adapter": {
+    "id": "claude",
+    "version": null,
+    "path": "/Users/kaa/.codex/worktrees/2599/mAIster/supervisor/node_modules/.bin/claude-agent-acp",
+    "available": true,
+    "smoke": {
+      "capabilityEnforcement": {
+        "status": "ok"
+      }
+    }
+  },
+  "runIds": [
+    "d88b8d77-2085-4de7-81b0-84f0dbb8ed0f",
+    "5e0aae59-e46d-4a0f-bdaa-6fa14223b626"
+  ],
+  "proofs": [
+    [
+      {
+        "runId": "d88b8d77-2085-4de7-81b0-84f0dbb8ed0f",
+        "parentRunId": null,
+        "depth": 0,
+        "kind": "flow",
+        "status": "Done",
+        "revision": 1,
+        "schemaSha256": "b9b4268990ecd525c2f8e490109a0b171f055499857c031a38f2c65794e04021",
+        "engineVersion": "3.12.0",
+        "collectedAt": null,
+        "sessionIds": [
+          "f72c09ad-f89c-498e-8c89-71c7f99b248f"
+        ],
+        "value": {
+          "schemaVersion": 1,
+          "findings": [
+            {
+              "id": "ev-1",
+              "assertion": "Current record eb315ef9-0986-408b-aaed-a7ce56b696fb revision 2 ('Qualification runbook assertion', procedure, observed) asserts the current runbook requires an independent post-action health check and that process exit alone is insufficient; its sole supporting source is witness 6be96a0f-cf3b-4c35-9a94-f76c1f6abc42 (availability: available, selector submitted:text, captured 2026-11-09T08:51:44.919Z, sha256-bound source version inspected in its evidence view).",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "eb315ef9-0986-408b-aaed-a7ce56b696fb",
+                  "revision": 2
+                },
+                {
+                  "kind": "witness",
+                  "id": "6be96a0f-cf3b-4c35-9a94-f76c1f6abc42"
+                }
+              ],
+              "contradicting": [
+                {
+                  "kind": "knowledge",
+                  "id": "8c652164-39db-4037-987a-bde33ab13754",
+                  "revision": 1
+                }
+              ],
+              "missingEvidence": [],
+              "limitations": [
+                "The record's confirmation state is unconfirmed (decisionId, policyVersion, confirmer all null); retrieval and examination are not fact confirmation.",
+                "Witness 6be96a0f-cf3b-4c35-9a94-f76c1f6abc42 is the only supporting source and is also cited by the opposing record 8c652164-39db-4037-987a-bde33ab13754; repeated citations of it are ONE source, never independent confirmation.",
+                "Record freshness state and applicability are both unknown; capturedAt is not observation time (observedAt and sourceAt are null).",
+                "knowledge_search with query 'runbook health check restart' returned zero items while query 'runbook' returned all three records of this corpus; retrieval rank is not confirmation.",
+                "Two knowledge_conflicts calls failed transiently with 'CRASH: Database operation failed' and succeeded on retry; tool failures did not block examination."
+              ],
+              "openQuestions": [
+                "Should the runbook assertion in eb315ef9-0986-408b-aaed-a7ce56b696fb be confirmed, given its only supporting source is shared with the opposing record?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "336c1428-8f63-48b7-bcef-cdf441383926",
+                  "resultRevision": 1,
+                  "findingId": "current-record-supported-by-single-witness"
+                }
+              ]
+            },
+            {
+              "id": "ev-2",
+              "assertion": "Witness 6be96a0f-cf3b-4c35-9a94-f76c1f6abc42 (sourceId 4090a4b0-2305-4da3-9219-a7ca910b19e7, selector submitted:text, availability available, capturedAt 2026-11-09T08:51:44.919Z) states in its excerpt that the current runbook requires a separate post-restart health check, that an older contradictory note claims a restart alone is sufficient, and that no current service observation is available.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "witness",
+                  "id": "6be96a0f-cf3b-4c35-9a94-f76c1f6abc42"
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "no witness, record, or observation in the corpus captures current real service health; the witness excerpt itself declares no current service observation is available"
+                }
+              ],
+              "limitations": [
+                "The witness is attributed to a single user attribution (user e5ca0c59-eb70-40e0-a33d-6c416226cd42) with no independenceGroupId, so it cannot corroborate itself across the records that cite it.",
+                "Capture time is not observation time: observedAt and sourceAt are null on the witness."
+              ],
+              "openQuestions": [
+                "Is a real post-action health check observation available outside this corpus to substantiate or refute the runbook assertion?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "336c1428-8f63-48b7-bcef-cdf441383926",
+                  "resultRevision": 1,
+                  "findingId": "witness-content-and-corpus-limitation"
+                }
+              ]
+            },
+            {
+              "id": "ev-3",
+              "assertion": "Opposing record 8c652164-39db-4037-987a-bde33ab13754 revision 1 ('Opposing historical note') claims restart completion alone establishes health; this claim remains an unresolved, distinct opposing claim against current record eb315ef9-0986-408b-aaed-a7ce56b696fb revision 2 — each record's conflict view shows a declared_conflict edge to the other (edgeId 5ad1154f-ca21-4cce-8468-c371277d8cc0), and neither is confirmed.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "8c652164-39db-4037-987a-bde33ab13754",
+                  "revision": 1
+                }
+              ],
+              "contradicting": [
+                {
+                  "kind": "knowledge",
+                  "id": "eb315ef9-0986-408b-aaed-a7ce56b696fb",
+                  "revision": 2
+                }
+              ],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "no evidence in the corpus adjudicates between 'restart alone establishes health' and 'independent post-action health check required'; real service health is not observed anywhere in the corpus"
+                }
+              ],
+              "limitations": [
+                "The conflict was not and must not be resolved by score, revision recency, or silent overwrite; both claims stay distinct.",
+                "The opposing record lists witness 4c6846f1-0531-47ed-9e7c-5f781209b5a1 (selector record:eb315ef9-0986-408b-aaed-a7ce56b696fb:2) as contradicting evidence quoting the current record's assertion, and witness 6be96a0f-cf3b-4c35-9a94-f76c1f6abc42 as supporting — the same single witness shared with the current record.",
+                "The opposing record's freshness state and applicability are unknown and its confirmation state is unconfirmed."
+              ],
+              "openQuestions": [
+                "Which claim about post-action health checking is authoritative, and on what non-circular evidence?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "336c1428-8f63-48b7-bcef-cdf441383926",
+                  "resultRevision": 1,
+                  "findingId": "opposing-claim-unresolved"
+                }
+              ]
+            },
+            {
+              "id": "ev-4",
+              "assertion": "Dependent record 07aafae3-f7bf-4a44-8665-3de3f1940414 revision 1 ('Older interpretation', basis inferred) is STALE: it is derived from witness 28978e24-1e7f-4ea0-8aa1-69c342584a71 bound to sourceVersion '1' with selector record:eb315ef9-0986-408b-aaed-a7ce56b696fb:1 and availability stale, i.e. it refers to revision 1 of the current record, not the current head revision 2.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "07aafae3-f7bf-4a44-8665-3de3f1940414",
+                  "revision": 1
+                },
+                {
+                  "kind": "witness",
+                  "id": "28978e24-1e7f-4ea0-8aa1-69c342584a71"
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "stale",
+                  "reason": "the dependent record's derivation witness is bound to revision 1 of eb315ef9-0986-408b-aaed-a7ce56b696fb (availability stale), while the current head is revision 2; no refreshed derivation from revision 2 exists in the corpus"
+                }
+              ],
+              "limitations": [
+                "The dependent record's freshness state and applicability are unknown and its confirmation state is unconfirmed.",
+                "Its conflict state is none_known with no accessible conflicting records, so staleness does not create a second conflict edge."
+              ],
+              "openQuestions": [
+                "Should the dependent interpretation 07aafae3-f7bf-4a44-8665-3de3f1940414 be re-derived from revision 2 of the current record?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "336c1428-8f63-48b7-bcef-cdf441383926",
+                  "resultRevision": 1,
+                  "findingId": "dependent-record-stale-revision"
+                }
+              ]
+            },
+            {
+              "id": "ev-5",
+              "assertion": "Current real service health is absent from the corpus: the witness excerpt explicitly states no current service observation is available, and every retrieved record (eb315ef9 rev 2, 8c652164 rev 1, 07aafae3 rev 1) carries the limitation 'Synthetic research corpus; no real service health is established.' No health status is asserted or fabricated here.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "witness",
+                  "id": "6be96a0f-cf3b-4c35-9a94-f76c1f6abc42"
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "eb315ef9-0986-408b-aaed-a7ce56b696fb",
+                  "revision": 2
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "8c652164-39db-4037-987a-bde33ab13754",
+                  "revision": 1
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "07aafae3-f7bf-4a44-8665-3de3f1940414",
+                  "revision": 1
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "no live or captured health check of any real service exists in the controlled corpus; the runbook record describes the required check but no record or witness records its execution or outcome"
+                }
+              ],
+              "limitations": [
+                "This finding describes the absence of evidence, not evidence of health or unhealthiness; the opposing claim and the current runbook claim both remain unconfirmed against reality.",
+                "The record limitations quoted come from the synthetic research corpus and were copied as returned."
+              ],
+              "openQuestions": [
+                "Can a real post-action health check observation be captured and witnessed to close the runbook assertion and the opposing historical note?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "336c1428-8f63-48b7-bcef-cdf441383926",
+                  "resultRevision": 1,
+                  "findingId": "real-service-health-absent"
+                }
+              ]
+            },
+            {
+              "id": "ct-1",
+              "assertion": "An unresolved declared conflict exists between eb315ef9-0986-408b-aaed-a7ce56b696fb revision 2 (current runbook requires an independent post-action health check; process exit alone is insufficient) and 8c652164-39db-4037-987a-bde33ab13754 revision 1 (older note claims restart completion alone establishes health). Neither side is confirmed and no resolution exists in the corpus; both claims remain distinct and neither was chosen by score.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "eb315ef9-0986-408b-aaed-a7ce56b696fb",
+                  "revision": 2
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "8c652164-39db-4037-987a-bde33ab13754",
+                  "revision": 1
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "No authoritative resolution decision, confirmation, or tie-breaking evidence resolving which runbook rule is in force exists in the corpus; both records have confirmation.state unconfirmed."
+                }
+              ],
+              "limitations": [
+                "Both records carry conflict.state unresolved listing each other as the accessible opposing record.",
+                "knowledge_conflicts for 8c652164-39db-4037-987a-bde33ab13754 returned {code:\"CRASH\",message:\"Database operation failed\"} on first call; the retry succeeded and returned the declared_conflict edge, so the conflict view was eventually retrieved.",
+                "Synthetic research corpus; no real service health is established (stated limitation on both records)."
+              ],
+              "openQuestions": [
+                "Which health-check rule (independent post-action check vs restart-alone-sufficient) is currently authoritative, and who resolves the conflict?",
+                "Is 8c652164-39db-4037-987a-bde33ab13754 still applicable or should it be superseded/revoked?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "9ceff4e8-381c-45f0-b75c-7e54845ba58b",
+                  "resultRevision": 1,
+                  "findingId": "f1-unresolved-conflict"
+                }
+              ]
+            },
+            {
+              "id": "ct-2",
+              "assertion": "The current head record eb315ef9-0986-408b-aaed-a7ce56b696fb revision 2 is unconfirmed with freshness unknown, and its entire evidentiary support is the single witness 6be96a0f-cf3b-4c35-9a94-f76c1f6abc42 (selector submitted:text, availability available, capturedAt 2026-11-09T08:51:44.919Z).",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "eb315ef9-0986-408b-aaed-a7ce56b696fb",
+                  "revision": 2
+                },
+                {
+                  "kind": "witness",
+                  "id": "6be96a0f-cf3b-4c35-9a94-f76c1f6abc42"
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "No independent confirmation of the runbook requirement exists: confirmation.state is unconfirmed and there is no second, independence-distinct source for the current-record claim."
+                }
+              ],
+              "limitations": [
+                "Witness capturedAt 2026-11-09T08:51:44.919Z is a capture time, not an observation time (observedAt and sourceAt are null).",
+                "The witness excerpt itself states no current service observation is available."
+              ],
+              "openQuestions": [
+                "Can the runbook requirement be independently confirmed by a source distinct from witness 6be96a0f?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "9ceff4e8-381c-45f0-b75c-7e54845ba58b",
+                  "resultRevision": 1,
+                  "findingId": "f2-current-record-single-witness"
+                }
+              ]
+            },
+            {
+              "id": "ct-3",
+              "assertion": "The opposing claim of 8c652164-39db-4037-987a-bde33ab13754 revision 1 — that restart completion alone establishes health — is preserved as unresolved and uncontradicted by any confirmation; it remains unconfirmed with freshness unknown. Its recorded 'contradicts' witness 4c6846f1-0531-47ed-9e7c-5f781209b5a1 is bound (selector record:eb315ef9-0986-408b-aaed-a7ce56b696fb:2, sourceVersion 2) to a quotation of the current record's own text, so it points back at the rival claim rather than providing independent proof for either side.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "8c652164-39db-4037-987a-bde33ab13754",
+                  "revision": 1
+                },
+                {
+                  "kind": "witness",
+                  "id": "6be96a0f-cf3b-4c35-9a94-f76c1f6abc42"
+                }
+              ],
+              "contradicting": [
+                {
+                  "kind": "knowledge",
+                  "id": "eb315ef9-0986-408b-aaed-a7ce56b696fb",
+                  "revision": 2
+                },
+                {
+                  "kind": "witness",
+                  "id": "4c6846f1-0531-47ed-9e7c-5f781209b5a1"
+                }
+              ],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "No independent evidence (e.g., the original older note itself) verifying that restart-alone-sufficiency was ever an authoritative rule exists in the corpus; the only support is the shared witness 6be96a0f."
+                }
+              ],
+              "limitations": [
+                "Witness 4c6846f1-0531-47ed-9e7c-5f781209b5a1 excerpts the current record eb315ef9:2 text ('The current runbook requires an independent post-action health check; process exit alone is insufficient.'), making it a reference to the opposing claim, not independent support for restart-alone sufficiency.",
+                "Both records share the same attribution (user e5ca0c59-eb70-40e0-a33d-6c416226cd42) and witness independenceGroupId is null, so no independence between the two claims' authorship is established."
+              ],
+              "openQuestions": [
+                "Does the original older note underlying the restart-alone claim still exist and is it still applicable?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "9ceff4e8-381c-45f0-b75c-7e54845ba58b",
+                  "resultRevision": 1,
+                  "findingId": "f3-opposing-claim-preserved"
+                }
+              ]
+            },
+            {
+              "id": "ct-4",
+              "assertion": "Shared-source dependence: witness 6be96a0f-cf3b-4c35-9a94-f76c1f6abc42 is cited as 'supports' by BOTH sides of the conflict — eb315ef9-0986-408b-aaed-a7ce56b696fb revision 2 and 8c652164-39db-4037-987a-bde33ab13754 revision 1. Its repeated citations are ONE source and cannot serve as independent confirmation of either claim.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "witness",
+                  "id": "6be96a0f-cf3b-4c35-9a94-f76c1f6abc42"
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "eb315ef9-0986-408b-aaed-a7ce56b696fb",
+                  "revision": 2
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "8c652164-39db-4037-987a-bde33ab13754",
+                  "revision": 1
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "No independence-group assignment (witness independenceGroupId is null) or distinct-source evidence separating the two claims exists in the corpus."
+                }
+              ],
+              "limitations": [
+                "The witness excerpt narrates both the current runbook rule and the existence of the older contradictory note in a single submitted text, which structurally explains why both records cite it; it is a single submitted narrative, not two observations."
+              ],
+              "openQuestions": [
+                "Is there any source independent of the single submitted text that attests either the current runbook rule or the older note's claim?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "9ceff4e8-381c-45f0-b75c-7e54845ba58b",
+                  "resultRevision": 1,
+                  "findingId": "f4-shared-source-dependence"
+                }
+              ]
+            },
+            {
+              "id": "ct-5",
+              "assertion": "STALE: dependent record 07aafae3-f7bf-4a44-8665-3de3f1940414 revision 1 ('Older interpretation') is derived from witness 28978e24-1e7f-4ea0-8aa1-69c342584a71, which is bound to eb315ef9-0986-408b-aaed-a7ce56b696fb REVISION 1 (selector record:eb315ef9-0986-408b-aaed-a7ce56b696fb:1, sourceVersion 1, availability stale, sha256 edf16442e3c8ff37214c1f8c475126da431d85d27f6c665f1aacdf4e52f64295) — not the current head revision 2. The interpretation therefore reflects a superseded revision of the runbook assertion.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "07aafae3-f7bf-4a44-8665-3de3f1940414",
+                  "revision": 1
+                },
+                {
+                  "kind": "witness",
+                  "id": "28978e24-1e7f-4ea0-8aa1-69c342584a71"
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "eb315ef9-0986-408b-aaed-a7ce56b696fb",
+                  "revision": 2
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "stale",
+                  "reason": "The dependent record's derived_from witness points at superseded eb315ef9 revision 1; no re-derivation against current head revision 2 exists in the corpus."
+                }
+              ],
+              "limitations": [
+                "Witness 28978e24 availability is 'stale'.",
+                "Record 07aafae3 is unconfirmed with freshness unknown (freshness.state unknown, applicability unknown).",
+                "knowledge_evidence for 07aafae3-f7bf-4a44-8665-3de3f1940414 returned {code:\"CRASH\",message:\"Database operation failed\"} on first call; the retry succeeded, so its evidence view was eventually retrieved."
+              ],
+              "openQuestions": [
+                "Should 07aafae3-f7bf-4a44-8665-3de3f1940414 be re-derived from eb315ef9 revision 2, or withdrawn as an interpretation of a superseded revision?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "9ceff4e8-381c-45f0-b75c-7e54845ba58b",
+                  "resultRevision": 1,
+                  "findingId": "f5-stale-dependent-record"
+                }
+              ]
+            },
+            {
+              "id": "ct-6",
+              "assertion": "The current real service health is absent from the corpus. No record or witness contains a live service health observation; the witness excerpt explicitly states 'No current service observation is available' and every record's limitations state that no real service health is established. No health status is asserted here.",
+              "basis": "observed",
+              "supporting": [],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "No post-restart/post-action health check result or live service observation exists in the controlled corpus; witness 6be96a0f-cf3b-4c35-9a94-f76c1f6abc42 excerpt states 'No current service observation is available' and all record limitations say no real service health is established."
+                }
+              ],
+              "limitations": [
+                "This run is read-only research; performing a real health check was out of scope and was not attempted.",
+                "Retrieval rank and acceptance of this work are not fact confirmation of any health state."
+              ],
+              "openQuestions": [
+                "What is the actual current health of the service, and is anyone authorized to run the post-action health check that the current runbook (eb315ef9 revision 2) requires?"
+              ],
+              "sourceFindings": [
+                {
+                  "childRunId": "9ceff4e8-381c-45f0-b75c-7e54845ba58b",
+                  "resultRevision": 1,
+                  "findingId": "f6-service-health-absent"
+                }
+              ]
+            }
+          ],
+          "knowledgeProposals": [
+            {
+              "title": "Evidence status of controlled corpus dd05f77a: runbook conflict unresolved, single shared witness, stale dependent record, no real service health",
+              "kind": "observation",
+              "assertion": "In controlled company corpus dd05f77a-29ea-4ac0-b80a-bf7949fbdf32, examined 2026-11-09: current record eb315ef9-0986-408b-aaed-a7ce56b696fb revision 2 asserts the runbook requires an independent post-action health check (process exit alone insufficient) and is supported solely by witness 6be96a0f-cf3b-4c35-9a94-f76c1f6abc42; opposing record 8c652164-39db-4037-987a-bde33ab13754 revision 1 claims restart completion alone establishes health, cites the same single witness, and the declared conflict between the two records (edge 5ad1154f-ca21-4cce-8468-c371277d8cc0) remains unresolved with both sides unconfirmed; dependent record 07aafae3-f7bf-4a44-8665-3de3f1940414 revision 1 is stale, derived from witness 28978e24-1e7f-4ea0-8aa1-69c342584a71 bound to revision 1 of eb315ef9-0986-408b-aaed-a7ce56b696fb (current head is revision 2); and no current real service health observation exists anywhere in the corpus. This observation records evidence status only; it confirms no fact and does not resolve the conflict.",
+              "basis": "observed",
+              "evidence": [
+                {
+                  "relation": "references",
+                  "reference": {
+                    "kind": "knowledge",
+                    "id": "eb315ef9-0986-408b-aaed-a7ce56b696fb",
+                    "revision": 2
+                  }
+                },
+                {
+                  "relation": "references",
+                  "reference": {
+                    "kind": "knowledge",
+                    "id": "8c652164-39db-4037-987a-bde33ab13754",
+                    "revision": 1
+                  }
+                },
+                {
+                  "relation": "references",
+                  "reference": {
+                    "kind": "knowledge",
+                    "id": "07aafae3-f7bf-4a44-8665-3de3f1940414",
+                    "revision": 1
+                  }
+                },
+                {
+                  "relation": "references",
+                  "reference": {
+                    "kind": "witness",
+                    "id": "6be96a0f-cf3b-4c35-9a94-f76c1f6abc42"
+                  }
+                }
+              ],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "No real service health observation exists in the controlled corpus; witness 6be96a0f-cf3b-4c35-9a94-f76c1f6abc42 states no current service observation is available and all retrieved record limitations state no real service health is established."
+                },
+                {
+                  "state": "absent",
+                  "reason": "No independent source confirming the runbook requirement exists: the sole supporting witness 6be96a0f-cf3b-4c35-9a94-f76c1f6abc42 is shared by both sides of the conflict (independenceGroupId null)."
+                },
+                {
+                  "state": "stale",
+                  "reason": "Dependent record 07aafae3-f7bf-4a44-8665-3de3f1940414 is derived from witness 28978e24-1e7f-4ea0-8aa1-69c342584a71 bound to revision 1 of eb315ef9-0986-408b-aaed-a7ce56b696fb (availability stale) while the current head is revision 2; no re-derivation from revision 2 exists."
+                }
+              ],
+              "limitations": [
+                "Witness 6be96a0f-cf3b-4c35-9a94-f76c1f6abc42 is cited by both conflicting records; its repeated citations are one source and cannot independently confirm either claim.",
+                "The declared conflict between eb315ef9-0986-408b-aaed-a7ce56b696fb revision 2 and 8c652164-39db-4037-987a-bde33ab13754 revision 1 remains unresolved; neither record is confirmed and this proposal does not adjudicate between them.",
+                "Synthetic research corpus; no real service health is established."
+              ],
+              "change": "add",
+              "owner": {
+                "kind": "company",
+                "companyId": "dd05f77a-29ea-4ac0-b80a-bf7949fbdf32"
+              }
+            }
+          ],
+          "selection": [
+            {
+              "childRunId": "336c1428-8f63-48b7-bcef-cdf441383926",
+              "resultRevision": 1,
+              "findingId": "current-record-supported-by-single-witness",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "ev-1"
+              ],
+              "reason": "Verbatim retention: assertion and basis copied unchanged; only id and sourceFindings differ."
+            },
+            {
+              "childRunId": "336c1428-8f63-48b7-bcef-cdf441383926",
+              "resultRevision": 1,
+              "findingId": "witness-content-and-corpus-limitation",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "ev-2"
+              ],
+              "reason": "Verbatim retention: assertion and basis copied unchanged; only id and sourceFindings differ."
+            },
+            {
+              "childRunId": "336c1428-8f63-48b7-bcef-cdf441383926",
+              "resultRevision": 1,
+              "findingId": "opposing-claim-unresolved",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "ev-3"
+              ],
+              "reason": "Verbatim retention: assertion and basis copied unchanged; only id and sourceFindings differ."
+            },
+            {
+              "childRunId": "336c1428-8f63-48b7-bcef-cdf441383926",
+              "resultRevision": 1,
+              "findingId": "dependent-record-stale-revision",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "ev-4"
+              ],
+              "reason": "Verbatim retention: assertion and basis copied unchanged; only id and sourceFindings differ."
+            },
+            {
+              "childRunId": "336c1428-8f63-48b7-bcef-cdf441383926",
+              "resultRevision": 1,
+              "findingId": "real-service-health-absent",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "ev-5"
+              ],
+              "reason": "Verbatim retention: assertion and basis copied unchanged; only id and sourceFindings differ."
+            },
+            {
+              "childRunId": "9ceff4e8-381c-45f0-b75c-7e54845ba58b",
+              "resultRevision": 1,
+              "findingId": "f1-unresolved-conflict",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "ct-1"
+              ],
+              "reason": "Verbatim retention: assertion and basis copied unchanged; only id and sourceFindings differ."
+            },
+            {
+              "childRunId": "9ceff4e8-381c-45f0-b75c-7e54845ba58b",
+              "resultRevision": 1,
+              "findingId": "f2-current-record-single-witness",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "ct-2"
+              ],
+              "reason": "Verbatim retention: assertion and basis copied unchanged; only id and sourceFindings differ."
+            },
+            {
+              "childRunId": "9ceff4e8-381c-45f0-b75c-7e54845ba58b",
+              "resultRevision": 1,
+              "findingId": "f3-opposing-claim-preserved",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "ct-3"
+              ],
+              "reason": "Verbatim retention: assertion and basis copied unchanged; only id and sourceFindings differ."
+            },
+            {
+              "childRunId": "9ceff4e8-381c-45f0-b75c-7e54845ba58b",
+              "resultRevision": 1,
+              "findingId": "f4-shared-source-dependence",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "ct-4"
+              ],
+              "reason": "Verbatim retention: assertion and basis copied unchanged; only id and sourceFindings differ."
+            },
+            {
+              "childRunId": "9ceff4e8-381c-45f0-b75c-7e54845ba58b",
+              "resultRevision": 1,
+              "findingId": "f5-stale-dependent-record",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "ct-5"
+              ],
+              "reason": "Verbatim retention: assertion and basis copied unchanged; only id and sourceFindings differ."
+            },
+            {
+              "childRunId": "9ceff4e8-381c-45f0-b75c-7e54845ba58b",
+              "resultRevision": 1,
+              "findingId": "f6-service-health-absent",
+              "disposition": "retained",
+              "outputFindingIds": [
+                "ct-6"
+              ],
+              "reason": "Verbatim retention: assertion and basis copied unchanged; only id and sourceFindings differ."
+            }
+          ]
+        }
+      },
+      {
+        "runId": "336c1428-8f63-48b7-bcef-cdf441383926",
+        "parentRunId": "d88b8d77-2085-4de7-81b0-84f0dbb8ed0f",
+        "depth": 1,
+        "kind": "agent",
+        "status": "Done",
+        "revision": 1,
+        "schemaSha256": "b9b4268990ecd525c2f8e490109a0b171f055499857c031a38f2c65794e04021",
+        "engineVersion": "3.12.0",
+        "collectedAt": "2026-11-09 08:57:12.295+00",
+        "sessionIds": [
+          "799c58a4-9207-48f9-85c5-ec99a579a0a3"
+        ],
+        "value": {
+          "schemaVersion": 1,
+          "findings": [
+            {
+              "id": "current-record-supported-by-single-witness",
+              "assertion": "Current record eb315ef9-0986-408b-aaed-a7ce56b696fb revision 2 ('Qualification runbook assertion', procedure, observed) asserts the current runbook requires an independent post-action health check and that process exit alone is insufficient; its sole supporting source is witness 6be96a0f-cf3b-4c35-9a94-f76c1f6abc42 (availability: available, selector submitted:text, captured 2026-11-09T08:51:44.919Z, sha256-bound source version inspected in its evidence view).",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "eb315ef9-0986-408b-aaed-a7ce56b696fb",
+                  "revision": 2
+                },
+                {
+                  "kind": "witness",
+                  "id": "6be96a0f-cf3b-4c35-9a94-f76c1f6abc42"
+                }
+              ],
+              "contradicting": [
+                {
+                  "kind": "knowledge",
+                  "id": "8c652164-39db-4037-987a-bde33ab13754",
+                  "revision": 1
+                }
+              ],
+              "missingEvidence": [],
+              "limitations": [
+                "The record's confirmation state is unconfirmed (decisionId, policyVersion, confirmer all null); retrieval and examination are not fact confirmation.",
+                "Witness 6be96a0f-cf3b-4c35-9a94-f76c1f6abc42 is the only supporting source and is also cited by the opposing record 8c652164-39db-4037-987a-bde33ab13754; repeated citations of it are ONE source, never independent confirmation.",
+                "Record freshness state and applicability are both unknown; capturedAt is not observation time (observedAt and sourceAt are null).",
+                "knowledge_search with query 'runbook health check restart' returned zero items while query 'runbook' returned all three records of this corpus; retrieval rank is not confirmation.",
+                "Two knowledge_conflicts calls failed transiently with 'CRASH: Database operation failed' and succeeded on retry; tool failures did not block examination."
+              ],
+              "openQuestions": [
+                "Should the runbook assertion in eb315ef9-0986-408b-aaed-a7ce56b696fb be confirmed, given its only supporting source is shared with the opposing record?"
+              ],
+              "sourceFindings": []
+            },
+            {
+              "id": "witness-content-and-corpus-limitation",
+              "assertion": "Witness 6be96a0f-cf3b-4c35-9a94-f76c1f6abc42 (sourceId 4090a4b0-2305-4da3-9219-a7ca910b19e7, selector submitted:text, availability available, capturedAt 2026-11-09T08:51:44.919Z) states in its excerpt that the current runbook requires a separate post-restart health check, that an older contradictory note claims a restart alone is sufficient, and that no current service observation is available.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "witness",
+                  "id": "6be96a0f-cf3b-4c35-9a94-f76c1f6abc42"
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "no witness, record, or observation in the corpus captures current real service health; the witness excerpt itself declares no current service observation is available"
+                }
+              ],
+              "limitations": [
+                "The witness is attributed to a single user attribution (user e5ca0c59-eb70-40e0-a33d-6c416226cd42) with no independenceGroupId, so it cannot corroborate itself across the records that cite it.",
+                "Capture time is not observation time: observedAt and sourceAt are null on the witness."
+              ],
+              "openQuestions": [
+                "Is a real post-action health check observation available outside this corpus to substantiate or refute the runbook assertion?"
+              ],
+              "sourceFindings": []
+            },
+            {
+              "id": "opposing-claim-unresolved",
+              "assertion": "Opposing record 8c652164-39db-4037-987a-bde33ab13754 revision 1 ('Opposing historical note') claims restart completion alone establishes health; this claim remains an unresolved, distinct opposing claim against current record eb315ef9-0986-408b-aaed-a7ce56b696fb revision 2 — each record's conflict view shows a declared_conflict edge to the other (edgeId 5ad1154f-ca21-4cce-8468-c371277d8cc0), and neither is confirmed.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "8c652164-39db-4037-987a-bde33ab13754",
+                  "revision": 1
+                }
+              ],
+              "contradicting": [
+                {
+                  "kind": "knowledge",
+                  "id": "eb315ef9-0986-408b-aaed-a7ce56b696fb",
+                  "revision": 2
+                }
+              ],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "no evidence in the corpus adjudicates between 'restart alone establishes health' and 'independent post-action health check required'; real service health is not observed anywhere in the corpus"
+                }
+              ],
+              "limitations": [
+                "The conflict was not and must not be resolved by score, revision recency, or silent overwrite; both claims stay distinct.",
+                "The opposing record lists witness 4c6846f1-0531-47ed-9e7c-5f781209b5a1 (selector record:eb315ef9-0986-408b-aaed-a7ce56b696fb:2) as contradicting evidence quoting the current record's assertion, and witness 6be96a0f-cf3b-4c35-9a94-f76c1f6abc42 as supporting — the same single witness shared with the current record.",
+                "The opposing record's freshness state and applicability are unknown and its confirmation state is unconfirmed."
+              ],
+              "openQuestions": [
+                "Which claim about post-action health checking is authoritative, and on what non-circular evidence?"
+              ],
+              "sourceFindings": []
+            },
+            {
+              "id": "dependent-record-stale-revision",
+              "assertion": "Dependent record 07aafae3-f7bf-4a44-8665-3de3f1940414 revision 1 ('Older interpretation', basis inferred) is STALE: it is derived from witness 28978e24-1e7f-4ea0-8aa1-69c342584a71 bound to sourceVersion '1' with selector record:eb315ef9-0986-408b-aaed-a7ce56b696fb:1 and availability stale, i.e. it refers to revision 1 of the current record, not the current head revision 2.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "07aafae3-f7bf-4a44-8665-3de3f1940414",
+                  "revision": 1
+                },
+                {
+                  "kind": "witness",
+                  "id": "28978e24-1e7f-4ea0-8aa1-69c342584a71"
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "stale",
+                  "reason": "the dependent record's derivation witness is bound to revision 1 of eb315ef9-0986-408b-aaed-a7ce56b696fb (availability stale), while the current head is revision 2; no refreshed derivation from revision 2 exists in the corpus"
+                }
+              ],
+              "limitations": [
+                "The dependent record's freshness state and applicability are unknown and its confirmation state is unconfirmed.",
+                "Its conflict state is none_known with no accessible conflicting records, so staleness does not create a second conflict edge."
+              ],
+              "openQuestions": [
+                "Should the dependent interpretation 07aafae3-f7bf-4a44-8665-3de3f1940414 be re-derived from revision 2 of the current record?"
+              ],
+              "sourceFindings": []
+            },
+            {
+              "id": "real-service-health-absent",
+              "assertion": "Current real service health is absent from the corpus: the witness excerpt explicitly states no current service observation is available, and every retrieved record (eb315ef9 rev 2, 8c652164 rev 1, 07aafae3 rev 1) carries the limitation 'Synthetic research corpus; no real service health is established.' No health status is asserted or fabricated here.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "witness",
+                  "id": "6be96a0f-cf3b-4c35-9a94-f76c1f6abc42"
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "eb315ef9-0986-408b-aaed-a7ce56b696fb",
+                  "revision": 2
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "8c652164-39db-4037-987a-bde33ab13754",
+                  "revision": 1
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "07aafae3-f7bf-4a44-8665-3de3f1940414",
+                  "revision": 1
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "no live or captured health check of any real service exists in the controlled corpus; the runbook record describes the required check but no record or witness records its execution or outcome"
+                }
+              ],
+              "limitations": [
+                "This finding describes the absence of evidence, not evidence of health or unhealthiness; the opposing claim and the current runbook claim both remain unconfirmed against reality.",
+                "The record limitations quoted come from the synthetic research corpus and were copied as returned."
+              ],
+              "openQuestions": [
+                "Can a real post-action health check observation be captured and witnessed to close the runbook assertion and the opposing historical note?"
+              ],
+              "sourceFindings": []
+            }
+          ],
+          "knowledgeProposals": [],
+          "selection": []
+        }
+      },
+      {
+        "runId": "9ceff4e8-381c-45f0-b75c-7e54845ba58b",
+        "parentRunId": "d88b8d77-2085-4de7-81b0-84f0dbb8ed0f",
+        "depth": 1,
+        "kind": "agent",
+        "status": "Done",
+        "revision": 1,
+        "schemaSha256": "b9b4268990ecd525c2f8e490109a0b171f055499857c031a38f2c65794e04021",
+        "engineVersion": "3.12.0",
+        "collectedAt": "2026-11-09 08:57:12.295+00",
+        "sessionIds": [
+          "b459b31e-7ac6-40db-b8a4-53b4269fc48a"
+        ],
+        "value": {
+          "schemaVersion": 1,
+          "findings": [
+            {
+              "id": "f1-unresolved-conflict",
+              "assertion": "An unresolved declared conflict exists between eb315ef9-0986-408b-aaed-a7ce56b696fb revision 2 (current runbook requires an independent post-action health check; process exit alone is insufficient) and 8c652164-39db-4037-987a-bde33ab13754 revision 1 (older note claims restart completion alone establishes health). Neither side is confirmed and no resolution exists in the corpus; both claims remain distinct and neither was chosen by score.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "eb315ef9-0986-408b-aaed-a7ce56b696fb",
+                  "revision": 2
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "8c652164-39db-4037-987a-bde33ab13754",
+                  "revision": 1
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "No authoritative resolution decision, confirmation, or tie-breaking evidence resolving which runbook rule is in force exists in the corpus; both records have confirmation.state unconfirmed."
+                }
+              ],
+              "limitations": [
+                "Both records carry conflict.state unresolved listing each other as the accessible opposing record.",
+                "knowledge_conflicts for 8c652164-39db-4037-987a-bde33ab13754 returned {code:\"CRASH\",message:\"Database operation failed\"} on first call; the retry succeeded and returned the declared_conflict edge, so the conflict view was eventually retrieved.",
+                "Synthetic research corpus; no real service health is established (stated limitation on both records)."
+              ],
+              "openQuestions": [
+                "Which health-check rule (independent post-action check vs restart-alone-sufficient) is currently authoritative, and who resolves the conflict?",
+                "Is 8c652164-39db-4037-987a-bde33ab13754 still applicable or should it be superseded/revoked?"
+              ],
+              "sourceFindings": []
+            },
+            {
+              "id": "f2-current-record-single-witness",
+              "assertion": "The current head record eb315ef9-0986-408b-aaed-a7ce56b696fb revision 2 is unconfirmed with freshness unknown, and its entire evidentiary support is the single witness 6be96a0f-cf3b-4c35-9a94-f76c1f6abc42 (selector submitted:text, availability available, capturedAt 2026-11-09T08:51:44.919Z).",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "eb315ef9-0986-408b-aaed-a7ce56b696fb",
+                  "revision": 2
+                },
+                {
+                  "kind": "witness",
+                  "id": "6be96a0f-cf3b-4c35-9a94-f76c1f6abc42"
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "No independent confirmation of the runbook requirement exists: confirmation.state is unconfirmed and there is no second, independence-distinct source for the current-record claim."
+                }
+              ],
+              "limitations": [
+                "Witness capturedAt 2026-11-09T08:51:44.919Z is a capture time, not an observation time (observedAt and sourceAt are null).",
+                "The witness excerpt itself states no current service observation is available."
+              ],
+              "openQuestions": [
+                "Can the runbook requirement be independently confirmed by a source distinct from witness 6be96a0f?"
+              ],
+              "sourceFindings": []
+            },
+            {
+              "id": "f3-opposing-claim-preserved",
+              "assertion": "The opposing claim of 8c652164-39db-4037-987a-bde33ab13754 revision 1 — that restart completion alone establishes health — is preserved as unresolved and uncontradicted by any confirmation; it remains unconfirmed with freshness unknown. Its recorded 'contradicts' witness 4c6846f1-0531-47ed-9e7c-5f781209b5a1 is bound (selector record:eb315ef9-0986-408b-aaed-a7ce56b696fb:2, sourceVersion 2) to a quotation of the current record's own text, so it points back at the rival claim rather than providing independent proof for either side.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "8c652164-39db-4037-987a-bde33ab13754",
+                  "revision": 1
+                },
+                {
+                  "kind": "witness",
+                  "id": "6be96a0f-cf3b-4c35-9a94-f76c1f6abc42"
+                }
+              ],
+              "contradicting": [
+                {
+                  "kind": "knowledge",
+                  "id": "eb315ef9-0986-408b-aaed-a7ce56b696fb",
+                  "revision": 2
+                },
+                {
+                  "kind": "witness",
+                  "id": "4c6846f1-0531-47ed-9e7c-5f781209b5a1"
+                }
+              ],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "No independent evidence (e.g., the original older note itself) verifying that restart-alone-sufficiency was ever an authoritative rule exists in the corpus; the only support is the shared witness 6be96a0f."
+                }
+              ],
+              "limitations": [
+                "Witness 4c6846f1-0531-47ed-9e7c-5f781209b5a1 excerpts the current record eb315ef9:2 text ('The current runbook requires an independent post-action health check; process exit alone is insufficient.'), making it a reference to the opposing claim, not independent support for restart-alone sufficiency.",
+                "Both records share the same attribution (user e5ca0c59-eb70-40e0-a33d-6c416226cd42) and witness independenceGroupId is null, so no independence between the two claims' authorship is established."
+              ],
+              "openQuestions": [
+                "Does the original older note underlying the restart-alone claim still exist and is it still applicable?"
+              ],
+              "sourceFindings": []
+            },
+            {
+              "id": "f4-shared-source-dependence",
+              "assertion": "Shared-source dependence: witness 6be96a0f-cf3b-4c35-9a94-f76c1f6abc42 is cited as 'supports' by BOTH sides of the conflict — eb315ef9-0986-408b-aaed-a7ce56b696fb revision 2 and 8c652164-39db-4037-987a-bde33ab13754 revision 1. Its repeated citations are ONE source and cannot serve as independent confirmation of either claim.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "witness",
+                  "id": "6be96a0f-cf3b-4c35-9a94-f76c1f6abc42"
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "eb315ef9-0986-408b-aaed-a7ce56b696fb",
+                  "revision": 2
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "8c652164-39db-4037-987a-bde33ab13754",
+                  "revision": 1
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "No independence-group assignment (witness independenceGroupId is null) or distinct-source evidence separating the two claims exists in the corpus."
+                }
+              ],
+              "limitations": [
+                "The witness excerpt narrates both the current runbook rule and the existence of the older contradictory note in a single submitted text, which structurally explains why both records cite it; it is a single submitted narrative, not two observations."
+              ],
+              "openQuestions": [
+                "Is there any source independent of the single submitted text that attests either the current runbook rule or the older note's claim?"
+              ],
+              "sourceFindings": []
+            },
+            {
+              "id": "f5-stale-dependent-record",
+              "assertion": "STALE: dependent record 07aafae3-f7bf-4a44-8665-3de3f1940414 revision 1 ('Older interpretation') is derived from witness 28978e24-1e7f-4ea0-8aa1-69c342584a71, which is bound to eb315ef9-0986-408b-aaed-a7ce56b696fb REVISION 1 (selector record:eb315ef9-0986-408b-aaed-a7ce56b696fb:1, sourceVersion 1, availability stale, sha256 edf16442e3c8ff37214c1f8c475126da431d85d27f6c665f1aacdf4e52f64295) — not the current head revision 2. The interpretation therefore reflects a superseded revision of the runbook assertion.",
+              "basis": "observed",
+              "supporting": [
+                {
+                  "kind": "knowledge",
+                  "id": "07aafae3-f7bf-4a44-8665-3de3f1940414",
+                  "revision": 1
+                },
+                {
+                  "kind": "witness",
+                  "id": "28978e24-1e7f-4ea0-8aa1-69c342584a71"
+                },
+                {
+                  "kind": "knowledge",
+                  "id": "eb315ef9-0986-408b-aaed-a7ce56b696fb",
+                  "revision": 2
+                }
+              ],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "stale",
+                  "reason": "The dependent record's derived_from witness points at superseded eb315ef9 revision 1; no re-derivation against current head revision 2 exists in the corpus."
+                }
+              ],
+              "limitations": [
+                "Witness 28978e24 availability is 'stale'.",
+                "Record 07aafae3 is unconfirmed with freshness unknown (freshness.state unknown, applicability unknown).",
+                "knowledge_evidence for 07aafae3-f7bf-4a44-8665-3de3f1940414 returned {code:\"CRASH\",message:\"Database operation failed\"} on first call; the retry succeeded, so its evidence view was eventually retrieved."
+              ],
+              "openQuestions": [
+                "Should 07aafae3-f7bf-4a44-8665-3de3f1940414 be re-derived from eb315ef9 revision 2, or withdrawn as an interpretation of a superseded revision?"
+              ],
+              "sourceFindings": []
+            },
+            {
+              "id": "f6-service-health-absent",
+              "assertion": "The current real service health is absent from the corpus. No record or witness contains a live service health observation; the witness excerpt explicitly states 'No current service observation is available' and every record's limitations state that no real service health is established. No health status is asserted here.",
+              "basis": "observed",
+              "supporting": [],
+              "contradicting": [],
+              "missingEvidence": [
+                {
+                  "state": "absent",
+                  "reason": "No post-restart/post-action health check result or live service observation exists in the controlled corpus; witness 6be96a0f-cf3b-4c35-9a94-f76c1f6abc42 excerpt states 'No current service observation is available' and all record limitations say no real service health is established."
+                }
+              ],
+              "limitations": [
+                "This run is read-only research; performing a real health check was out of scope and was not attempted.",
+                "Retrieval rank and acceptance of this work are not fact confirmation of any health state."
+              ],
+              "openQuestions": [
+                "What is the actual current health of the service, and is anyone authorized to run the post-action health check that the current runbook (eb315ef9 revision 2) requires?"
+              ],
+              "sourceFindings": []
+            }
+          ],
+          "knowledgeProposals": [],
+          "selection": []
+        }
+      }
+    ]
+  ],
+  "enforcementProofs": [
+    {
+      "runId": "d88b8d77-2085-4de7-81b0-84f0dbb8ed0f",
+      "profile": {
+        "tools": {
+          "allow": [
+            "Read",
+            "Grep",
+            "Glob",
+            "ToolSearch",
+            "mcp__maister__knowledge_search",
+            "mcp__maister__knowledge_get",
+            "mcp__maister__knowledge_evidence",
+            "mcp__maister__knowledge_conflicts",
+            "mcp__maister__knowledge_witness_get",
+            "mcp__maister__knowledge_propose",
+            "mcp__maister__knowledge_proposal_get",
+            "mcp__maister__run_delegate",
+            "mcp__maister__run_collect",
+            "mcp__maister__run_cancel"
+          ]
+        },
+        "enforcedClasses": [
+          "tools"
+        ]
+      }
+    },
+    {
+      "runId": "5e0aae59-e46d-4a0f-bdaa-6fa14223b626",
+      "profile": {
+        "tools": {
+          "allow": [
+            "Read",
+            "Grep",
+            "Glob",
+            "ToolSearch",
+            "mcp__maister__knowledge_search",
+            "mcp__maister__knowledge_get",
+            "mcp__maister__knowledge_evidence",
+            "mcp__maister__knowledge_conflicts",
+            "mcp__maister__knowledge_witness_get",
+            "mcp__maister__knowledge_propose",
+            "mcp__maister__knowledge_proposal_get",
+            "mcp__maister__run_delegate",
+            "mcp__maister__run_collect",
+            "mcp__maister__run_cancel"
+          ]
+        },
+        "enforcedClasses": [
+          "tools"
+        ]
+      }
+    }
+  ],
+  "dataClassification": "generated synthetic corpus in a fresh owned database and temporary repository; no existing Brain or private repository input",
+  "nativeProposalIds": [
+    "6f101fdd-8902-4794-97dd-e1225956e08d"
+  ],
+  "ledgerDiagnostics": [
+    {
+      "runId": "5e0aae59-e46d-4a0f-bdaa-6fa14223b626",
+      "parentRunId": null,
+      "status": "Failed",
+      "validity": null,
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "d88b8d77-2085-4de7-81b0-84f0dbb8ed0f",
+      "parentRunId": null,
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "336c1428-8f63-48b7-bcef-cdf441383926",
+      "parentRunId": "d88b8d77-2085-4de7-81b0-84f0dbb8ed0f",
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "9ceff4e8-381c-45f0-b75c-7e54845ba58b",
+      "parentRunId": "d88b8d77-2085-4de7-81b0-84f0dbb8ed0f",
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    }
+  ],
+  "executionDiagnostics": {
+    "schemaVersion": 1,
+    "classification": "owned_synthetic_qualification_only",
+    "capturedAt": "2026-11-09T09:05:50.521158+00:00",
+    "rowLimit": 100,
+    "treeDepthLimit": 3,
+    "failedOutputMaxBytes": 4096,
+    "totals": {
+      "attempts": 2,
+      "events": 1,
+      "commands": 29,
+      "tokens": 7,
+      "tokenAudit": 54
+    },
+    "attempts": [
+      {
+        "id": "43281fb5-73c5-4ea3-9048-94cbaf8e2611",
+        "runId": "d88b8d77-2085-4de7-81b0-84f0dbb8ed0f",
+        "nodeId": "research",
+        "nodeType": "orchestrator",
+        "attempt": 1,
+        "status": "Succeeded",
+        "startedAt": "2026-11-09T08:51:51.195004+00:00",
+        "endedAt": "2026-11-09T08:59:52.747+00:00",
+        "errorCode": null,
+        "exitCode": null,
+        "actionCompletion": {
+          "commandId": "0cfea12b-73a0-417d-9dfc-5b5eb27dfcc1",
+          "promptOrdinal": 1,
+          "ok": true,
+          "errorCode": null,
+          "exitCode": null,
+          "reason": null
+        },
+        "failedOutput": null
+      },
+      {
+        "id": "33f7dbd0-5c3a-4fe6-9e73-77e50f0efc75",
+        "runId": "5e0aae59-e46d-4a0f-bdaa-6fa14223b626",
+        "nodeId": "research",
+        "nodeType": "orchestrator",
+        "attempt": 1,
+        "status": "Failed",
+        "startedAt": "2026-11-09T09:00:00.262235+00:00",
+        "endedAt": "2026-11-09T09:05:48.879+00:00",
+        "errorCode": "EXECUTOR_UNAVAILABLE",
+        "exitCode": null,
+        "actionCompletion": {
+          "commandId": "99ee5de6-e26e-4c7a-b893-e02957a44190",
+          "promptOrdinal": 0,
+          "ok": true,
+          "errorCode": null,
+          "exitCode": null,
+          "reason": null
+        },
+        "failedOutput": {
+          "text": "used with UNAUTHENTICATED revoked; withheld content must not be paraphrased.\"},{\"state\":\"missing\",\"reason\":\"No direct-child findings were collected: both rah-research delegations and run_collect were refused with revoked, and no child run was ever created.\"}],\"limitations\":[\"Only the three initial record views were captured before revocation; all later corpus state is unverified.\"],\"openQuestions\":[\"Does the current grant permit knowledge_propose for owner company dd05f77a-29ea-4ac0-b80a-bf7949fbdf32 once re-issued?\"],\"sourceFindings\":[]}],\"knowledgeProposals\":[{\"title\":\"Runbook health-check conflict unresolved; dependent interpretation stale; real service health unestablished\",\"kind\":\"observation\",\"assertion\":\"Corpus state observed 2026-11-09 for owner company dd05f77a-29ea-4ac0-b80a-bf7949fbdf32: (1) current record eb315ef9-0986-408b-aaed-a7ce56b696fb revision 2 asserts that the current runbook requires an independent post-action health check and that process exit alone is insufficient; (2) opposing record 8c652164-39db-4037-987a-bde33ab13754 revision 1 asserts the older note that restart completion alone establishes health, and the conflict between the two records is explicitly unresolved in both records - both claims are kept distinct and neither is confirmed; (3) dependent record 07aafae3-f7bf-4a44-8665-3de3f1940414 revision 1 (basis inferred) derives from record:eb315ef9-0986-408b-aaed-a7ce56b696fb:1 via witness 28978e24-1e7f-4ea0-8aa1-69c342584a71 (availability stale) while the current head is revision 2, so the dependent record refers to an older revision and is stale where reported; (4) witness 6be96a0f-cf3b-4c35-9a94-f76c1f6abc42 is cited by both the current and the opposing record, so its repeated citations are one source and never independent confirmation; (5) current real service health is not established by this corpus. All three records are unconfirmed.\",\"basis\":\"observed\",\"evidence\":[{\"relation\":\"supports\",\"reference\":{\"kind\":\"knowledge\",\"id\":\"eb315ef9-0986-408b-aaed-a7ce56b696fb\",\"revision\":2}},{\"relation\":\"supports\",\"reference\":{\"kind\":\"knowledge\",\"id\":\"8c652164-39db-4037-987a-bde33ab13754\",\"revision\":1}},{\"relation\":\"supports\",\"reference\":{\"kind\":\"knowledge\",\"id\":\"07aafae3-f7bf-4a44-8665-3de3f1940414\",\"revision\":1}},{\"relation\":\"supports\",\"reference\":{\"kind\":\"witness\",\"id\":\"6be96a0f-cf3b-4c35-9a94-f76c1f6abc42\"}},{\"relation\":\"references\",\"reference\":{\"kind\":\"witness\",\"id\":\"4c6846f1-0531-47ed-9e7c-5f781209b5a1\"}},{\"relation\":\"references\",\"reference\":{\"kind\":\"witness\",\"id\":\"28978e24-1e7f-4ea0-8aa1-69c342584a71\"}}],\"missingEvidence\":[{\"state\":\"absent\",\"reason\":\"No live check of current real service health exists anywhere in the corpus; the records themselves state no real service health is established.\"},{\"state\":\"inaccessible\",\"reason\":\"knowledge_evidence, knowledge_conflicts and knowledge_witness_get detail views were refused with UNAUTHENTICATED revoked after initial retrieval; witness detail views could not be inspected.\"},{\"state\":\"missing\",\"reason\":\"Both mandated rah-research child delegations (operationKeys e2e-root-delegate-conflict-1, e2e-root-delegate-stale-1) and run_collect were refused with revoked; no child findings could be collected.\"},{\"state\":\"stale\",\"reason\":\"Dependent record 07aafae3-f7bf-4a44-8665-3de3f1940414 derives from eb315ef9 revision 1 while the current head is revision 2; current applicability is stale and unresolved.\"}],\"limitations\":[\"Synthetic research corpus; no real service health is established.\",\"Record views were captured in the initial retrieval window before the access grant was revoked; later re-reads were impossible.\",\"These are unconfirmed record contents, not established facts; acceptance and factual confirmation are separate actions.\",\"Submission through knowledge_propose was attempted once with stable idempotency key e2e-root-propose-5e0aae59-r1 and refused with UNAUTHENTICATED revoked; this content is returned here as a reviewable proposal only.\"],\"change\":\"add\",\"owner\":{\"kind\":\"company\",\"companyId\":\"dd05f77a-29ea-4ac0-b80a-bf7949fbdf32\"}}],\"selection\":[]}\n```",
+          "originalBytes": 13136,
+          "sanitizedBytes": 13136,
+          "capturedBytes": 4096,
+          "truncated": true,
+          "controlsRemoved": 0,
+          "redactions": 0,
+          "kinds": []
+        }
+      }
+    ],
+    "events": [
+      {
+        "id": "27",
+        "runId": "5e0aae59-e46d-4a0f-bdaa-6fa14223b626",
+        "kind": "run.failed",
+        "occurredAt": "2026-11-09T09:05:49.322+00:00",
+        "cause": {
+          "code": "EXECUTOR_UNAVAILABLE",
+          "source": "graph",
+          "reason": "session_delete_exit_unconfirmed"
+        }
+      }
+    ],
+    "commands": [
+      {
+        "id": "a28707be-fcc2-4859-a099-c015463d6851",
+        "runId": "5e0aae59-e46d-4a0f-bdaa-6fa14223b626",
+        "kind": "session.delete",
+        "state": "failed",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T09:05:48.733+00:00",
+        "updatedAt": "2026-11-09T09:05:48.84+00:00",
+        "acceptedAt": null,
+        "completedAt": "2026-11-09T09:05:48.84+00:00",
+        "completionAppliedAt": null,
+        "applicationNextRetryAt": null,
+        "code": "EXECUTOR_UNAVAILABLE",
+        "reason": "session_delete_exit_unconfirmed",
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "99ee5de6-e26e-4c7a-b893-e02957a44190",
+        "runId": "5e0aae59-e46d-4a0f-bdaa-6fa14223b626",
+        "kind": "session.prompt",
+        "state": "succeeded",
+        "transportState": "acknowledged",
+        "applicationState": "applied",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T09:00:02.037+00:00",
+        "updatedAt": "2026-11-09T09:05:48.399475+00:00",
+        "acceptedAt": "2026-11-09T09:00:02.055+00:00",
+        "completedAt": "2026-11-09T09:05:36.122+00:00",
+        "completionAppliedAt": "2026-11-09T09:05:48.399475+00:00",
+        "applicationNextRetryAt": null,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "a2ba09b7-9839-4e97-8e84-518207c6ed32",
+        "runId": "5e0aae59-e46d-4a0f-bdaa-6fa14223b626",
+        "kind": "session.create",
+        "state": "succeeded",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T09:00:01.317+00:00",
+        "updatedAt": "2026-11-09T09:00:02.007+00:00",
+        "acceptedAt": null,
+        "completedAt": "2026-11-09T09:00:02.007+00:00",
+        "completionAppliedAt": null,
+        "applicationNextRetryAt": null,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "7492b9f3-d557-4b49-ba03-cdeee729517d",
+        "runId": "5e0aae59-e46d-4a0f-bdaa-6fa14223b626",
+        "kind": "workspace.adopt",
+        "state": "succeeded",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T09:00:01.298+00:00",
+        "updatedAt": "2026-11-09T09:00:01.313+00:00",
+        "acceptedAt": null,
+        "completedAt": "2026-11-09T09:00:01.313+00:00",
+        "completionAppliedAt": null,
+        "applicationNextRetryAt": null,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "f8c6a77e-bd5e-478b-9c3c-26c4b47a02ab",
+        "runId": "5e0aae59-e46d-4a0f-bdaa-6fa14223b626",
+        "kind": "runtime_object.upload",
+        "state": "succeeded",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T09:00:01.248+00:00",
+        "updatedAt": "2026-11-09T09:00:01.289+00:00",
+        "acceptedAt": null,
+        "completedAt": "2026-11-09T09:00:01.289+00:00",
+        "completionAppliedAt": null,
+        "applicationNextRetryAt": null,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "536174e8-1215-478b-b6aa-e66056834d28",
+        "runId": "5e0aae59-e46d-4a0f-bdaa-6fa14223b626",
+        "kind": "runtime_object.upload",
+        "state": "succeeded",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T09:00:01.246+00:00",
+        "updatedAt": "2026-11-09T09:00:01.289+00:00",
+        "acceptedAt": null,
+        "completedAt": "2026-11-09T09:00:01.289+00:00",
+        "completionAppliedAt": null,
+        "applicationNextRetryAt": null,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "5f3e36ad-48a1-408a-b1d4-f673ba472a9c",
+        "runId": "5e0aae59-e46d-4a0f-bdaa-6fa14223b626",
+        "kind": "runtime_object.reserve",
+        "state": "succeeded",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T09:00:01.222+00:00",
+        "updatedAt": "2026-11-09T09:00:01.242+00:00",
+        "acceptedAt": null,
+        "completedAt": "2026-11-09T09:00:01.242+00:00",
+        "completionAppliedAt": null,
+        "applicationNextRetryAt": null,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "222814c8-68ab-459f-8231-64a3978b1b80",
+        "runId": "5e0aae59-e46d-4a0f-bdaa-6fa14223b626",
+        "kind": "runtime_object.reserve",
+        "state": "succeeded",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T09:00:01.221+00:00",
+        "updatedAt": "2026-11-09T09:00:01.243+00:00",
+        "acceptedAt": null,
+        "completedAt": "2026-11-09T09:00:01.243+00:00",
+        "completionAppliedAt": null,
+        "applicationNextRetryAt": null,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "2bd70733-d551-47e0-99ca-854083cf0c54",
+        "runId": "d88b8d77-2085-4de7-81b0-84f0dbb8ed0f",
+        "kind": "session.delete",
+        "state": "failed",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T08:59:52.568+00:00",
+        "updatedAt": "2026-11-09T08:59:52.598+00:00",
+        "acceptedAt": null,
+        "completedAt": "2026-11-09T08:59:52.598+00:00",
+        "completionAppliedAt": null,
+        "applicationNextRetryAt": null,
+        "code": "EXECUTOR_UNAVAILABLE",
+        "reason": "session_delete_exit_unconfirmed",
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "0cfea12b-73a0-417d-9dfc-5b5eb27dfcc1",
+        "runId": "d88b8d77-2085-4de7-81b0-84f0dbb8ed0f",
+        "kind": "session.prompt",
+        "state": "succeeded",
+        "transportState": "acknowledged",
+        "applicationState": "applied",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T08:57:05.269+00:00",
+        "updatedAt": "2026-11-09T08:59:52.551913+00:00",
+        "acceptedAt": "2026-11-09T08:57:05.287+00:00",
+        "completedAt": "2026-11-09T08:59:51.73+00:00",
+        "completionAppliedAt": "2026-11-09T08:59:52.551913+00:00",
+        "applicationNextRetryAt": null,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "e8c87354-a3a0-4f15-8388-d76cd23d073d",
+        "runId": "d88b8d77-2085-4de7-81b0-84f0dbb8ed0f",
+        "kind": "session.create",
+        "state": "succeeded",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T08:57:01.339+00:00",
+        "updatedAt": "2026-11-09T08:57:05.242+00:00",
+        "acceptedAt": null,
+        "completedAt": "2026-11-09T08:57:05.242+00:00",
+        "completionAppliedAt": null,
+        "applicationNextRetryAt": null,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "5418732b-5d95-4b87-a5a4-0d31ca774e69",
+        "runId": "d88b8d77-2085-4de7-81b0-84f0dbb8ed0f",
+        "kind": "runtime_object.upload",
+        "state": "succeeded",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T08:57:01.292+00:00",
+        "updatedAt": "2026-11-09T08:57:01.333+00:00",
+        "acceptedAt": null,
+        "completedAt": "2026-11-09T08:57:01.333+00:00",
+        "completionAppliedAt": null,
+        "applicationNextRetryAt": null,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "b16b49b3-f745-4343-bd80-188c04030bcf",
+        "runId": "d88b8d77-2085-4de7-81b0-84f0dbb8ed0f",
+        "kind": "runtime_object.upload",
+        "state": "succeeded",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T08:57:01.289+00:00",
+        "updatedAt": "2026-11-09T08:57:01.333+00:00",
+        "acceptedAt": null,
+        "completedAt": "2026-11-09T08:57:01.333+00:00",
+        "completionAppliedAt": null,
+        "applicationNextRetryAt": null,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "80515387-4869-4659-8087-5e4e80695de4",
+        "runId": "d88b8d77-2085-4de7-81b0-84f0dbb8ed0f",
+        "kind": "runtime_object.reserve",
+        "state": "succeeded",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T08:57:01.263+00:00",
+        "updatedAt": "2026-11-09T08:57:01.285+00:00",
+        "acceptedAt": null,
+        "completedAt": "2026-11-09T08:57:01.285+00:00",
+        "completionAppliedAt": null,
+        "applicationNextRetryAt": null,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "6953e820-fd5a-49d8-8d7f-324fd8d746dd",
+        "runId": "d88b8d77-2085-4de7-81b0-84f0dbb8ed0f",
+        "kind": "runtime_object.reserve",
+        "state": "succeeded",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T08:57:01.262+00:00",
+        "updatedAt": "2026-11-09T08:57:01.284+00:00",
+        "acceptedAt": null,
+        "completedAt": "2026-11-09T08:57:01.284+00:00",
+        "completionAppliedAt": null,
+        "applicationNextRetryAt": null,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "a0343b96-4a2f-4747-8d57-6ac6e218b885",
+        "runId": "d88b8d77-2085-4de7-81b0-84f0dbb8ed0f",
+        "kind": "session.delete",
+        "state": "failed",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T08:53:47.27+00:00",
+        "updatedAt": "2026-11-09T08:53:47.323+00:00",
+        "acceptedAt": null,
+        "completedAt": "2026-11-09T08:53:47.323+00:00",
+        "completionAppliedAt": null,
+        "applicationNextRetryAt": null,
+        "code": "EXECUTOR_UNAVAILABLE",
+        "reason": "session_delete_exit_unconfirmed",
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "7a0db90c-214a-432c-8c83-030021c91b5c",
+        "runId": "9ceff4e8-381c-45f0-b75c-7e54845ba58b",
+        "kind": "session.prompt",
+        "state": "succeeded",
+        "transportState": "acknowledged",
+        "applicationState": "applied",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T08:53:30.507+00:00",
+        "updatedAt": "2026-11-09T08:55:55.446404+00:00",
+        "acceptedAt": "2026-11-09T08:53:30.546+00:00",
+        "completedAt": "2026-11-09T08:55:54.862+00:00",
+        "completionAppliedAt": "2026-11-09T08:55:55.446404+00:00",
+        "applicationNextRetryAt": null,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "1b9e2c77-0909-4312-9e67-d9224bb57bc0",
+        "runId": "9ceff4e8-381c-45f0-b75c-7e54845ba58b",
+        "kind": "session.create",
+        "state": "succeeded",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T08:53:29.796+00:00",
+        "updatedAt": "2026-11-09T08:53:30.469+00:00",
+        "acceptedAt": null,
+        "completedAt": "2026-11-09T08:53:30.469+00:00",
+        "completionAppliedAt": null,
+        "applicationNextRetryAt": null,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "fdee1acc-999d-48a7-8dc2-bb15baa789b3",
+        "runId": "9ceff4e8-381c-45f0-b75c-7e54845ba58b",
+        "kind": "workspace.adopt",
+        "state": "succeeded",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T08:53:29.773+00:00",
+        "updatedAt": "2026-11-09T08:53:29.789+00:00",
+        "acceptedAt": null,
+        "completedAt": "2026-11-09T08:53:29.789+00:00",
+        "completionAppliedAt": null,
+        "applicationNextRetryAt": null,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "11085bcc-a90a-4f20-806b-089e8ddd9d84",
+        "runId": "336c1428-8f63-48b7-bcef-cdf441383926",
+        "kind": "session.prompt",
+        "state": "succeeded",
+        "transportState": "acknowledged",
+        "applicationState": "applied",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T08:53:25.08+00:00",
+        "updatedAt": "2026-11-09T08:57:00.15358+00:00",
+        "acceptedAt": "2026-11-09T08:53:25.112+00:00",
+        "completedAt": "2026-11-09T08:56:58.544+00:00",
+        "completionAppliedAt": "2026-11-09T08:57:00.15358+00:00",
+        "applicationNextRetryAt": null,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "fb52ce90-75ca-4374-aa50-6db635c5d591",
+        "runId": "336c1428-8f63-48b7-bcef-cdf441383926",
+        "kind": "session.create",
+        "state": "succeeded",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T08:53:24.377+00:00",
+        "updatedAt": "2026-11-09T08:53:25.052+00:00",
+        "acceptedAt": null,
+        "completedAt": "2026-11-09T08:53:25.052+00:00",
+        "completionAppliedAt": null,
+        "applicationNextRetryAt": null,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "b7dc772f-f29f-405d-b3a3-777c317b9a23",
+        "runId": "336c1428-8f63-48b7-bcef-cdf441383926",
+        "kind": "workspace.adopt",
+        "state": "succeeded",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T08:53:24.353+00:00",
+        "updatedAt": "2026-11-09T08:53:24.372+00:00",
+        "acceptedAt": null,
+        "completedAt": "2026-11-09T08:53:24.372+00:00",
+        "completionAppliedAt": null,
+        "applicationNextRetryAt": null,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "55d1fd0e-a2ce-4a28-8e91-7d8648d1a88a",
+        "runId": "d88b8d77-2085-4de7-81b0-84f0dbb8ed0f",
+        "kind": "session.prompt",
+        "state": "succeeded",
+        "transportState": "acknowledged",
+        "applicationState": "applied",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T08:51:53.441+00:00",
+        "updatedAt": "2026-11-09T08:53:47.250055+00:00",
+        "acceptedAt": "2026-11-09T08:51:53.472+00:00",
+        "completedAt": "2026-11-09T08:53:46.918+00:00",
+        "completionAppliedAt": "2026-11-09T08:53:47.250055+00:00",
+        "applicationNextRetryAt": null,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "a15f2aca-a656-475a-8497-4a0d51111f6b",
+        "runId": "d88b8d77-2085-4de7-81b0-84f0dbb8ed0f",
+        "kind": "session.create",
+        "state": "succeeded",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T08:51:52.297+00:00",
+        "updatedAt": "2026-11-09T08:51:53.418+00:00",
+        "acceptedAt": null,
+        "completedAt": "2026-11-09T08:51:53.418+00:00",
+        "completionAppliedAt": null,
+        "applicationNextRetryAt": null,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "234374f6-6ed2-471a-b484-796b68d758cd",
+        "runId": "d88b8d77-2085-4de7-81b0-84f0dbb8ed0f",
+        "kind": "workspace.adopt",
+        "state": "succeeded",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T08:51:52.278+00:00",
+        "updatedAt": "2026-11-09T08:51:52.292+00:00",
+        "acceptedAt": null,
+        "completedAt": "2026-11-09T08:51:52.292+00:00",
+        "completionAppliedAt": null,
+        "applicationNextRetryAt": null,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "acbee4a9-4ca7-4d62-acd8-91444037915f",
+        "runId": "d88b8d77-2085-4de7-81b0-84f0dbb8ed0f",
+        "kind": "runtime_object.upload",
+        "state": "succeeded",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T08:51:52.227+00:00",
+        "updatedAt": "2026-11-09T08:51:52.268+00:00",
+        "acceptedAt": null,
+        "completedAt": "2026-11-09T08:51:52.268+00:00",
+        "completionAppliedAt": null,
+        "applicationNextRetryAt": null,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "abbe5050-3859-4c4e-a9fa-842a06116662",
+        "runId": "d88b8d77-2085-4de7-81b0-84f0dbb8ed0f",
+        "kind": "runtime_object.upload",
+        "state": "succeeded",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T08:51:52.227+00:00",
+        "updatedAt": "2026-11-09T08:51:52.268+00:00",
+        "acceptedAt": null,
+        "completedAt": "2026-11-09T08:51:52.268+00:00",
+        "completionAppliedAt": null,
+        "applicationNextRetryAt": null,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "44c40c50-c388-4617-bae5-3089b2a7fbe1",
+        "runId": "d88b8d77-2085-4de7-81b0-84f0dbb8ed0f",
+        "kind": "runtime_object.reserve",
+        "state": "succeeded",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T08:51:52.198+00:00",
+        "updatedAt": "2026-11-09T08:51:52.223+00:00",
+        "acceptedAt": null,
+        "completedAt": "2026-11-09T08:51:52.223+00:00",
+        "completionAppliedAt": null,
+        "applicationNextRetryAt": null,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "11ca1244-5808-4638-8292-646af40d8fb7",
+        "runId": "d88b8d77-2085-4de7-81b0-84f0dbb8ed0f",
+        "kind": "runtime_object.reserve",
+        "state": "succeeded",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "createdAt": "2026-11-09T08:51:52.194+00:00",
+        "updatedAt": "2026-11-09T08:51:52.223+00:00",
+        "acceptedAt": null,
+        "completedAt": "2026-11-09T08:51:52.223+00:00",
+        "completionAppliedAt": null,
+        "applicationNextRetryAt": null,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      }
+    ],
+    "tokens": [
+      {
+        "tokenId": "3d9e17f7-2c2d-4a6e-9a8e-34153ac2a5a5",
+        "tokenKind": "project",
+        "originKind": "orchestrator_run",
+        "boundRunId": "5e0aae59-e46d-4a0f-bdaa-6fa14223b626",
+        "nodeAttemptId": "33f7dbd0-5c3a-4fe6-9e73-77e50f0efc75",
+        "issuedAt": "2026-11-09T09:01:09.364725+00:00",
+        "lastUsedAt": null,
+        "expiresAt": "2026-11-11T09:01:09.369+00:00",
+        "revokedAt": "2026-11-09T09:05:49.571729+00:00",
+        "revocationReason": "revoked"
+      },
+      {
+        "tokenId": "ff9456be-6723-4443-8e55-2330b28766d8",
+        "tokenKind": "project",
+        "originKind": "orchestrator_run",
+        "boundRunId": "5e0aae59-e46d-4a0f-bdaa-6fa14223b626",
+        "nodeAttemptId": "33f7dbd0-5c3a-4fe6-9e73-77e50f0efc75",
+        "issuedAt": "2026-11-09T09:00:01.136189+00:00",
+        "lastUsedAt": "2026-11-09T09:01:08.364+00:00",
+        "expiresAt": "2026-11-11T09:00:01.141+00:00",
+        "revokedAt": "2026-11-09T09:01:09.367+00:00",
+        "revocationReason": "revoked"
+      },
+      {
+        "tokenId": "f92175a1-1258-4942-a24a-55ef97d78477",
+        "tokenKind": "project",
+        "originKind": "orchestrator_run",
+        "boundRunId": "d88b8d77-2085-4de7-81b0-84f0dbb8ed0f",
+        "nodeAttemptId": "43281fb5-73c5-4ea3-9048-94cbaf8e2611",
+        "issuedAt": "2026-11-09T08:57:01.172884+00:00",
+        "lastUsedAt": "2026-11-09T08:58:31.656+00:00",
+        "expiresAt": "2026-11-11T08:57:01.177+00:00",
+        "revokedAt": "2026-11-09T08:59:52.712052+00:00",
+        "revocationReason": "revoked"
+      },
+      {
+        "tokenId": "2daa00bf-b958-44a2-b487-6aaaba4ed432",
+        "tokenKind": "agent",
+        "originKind": "agent_run",
+        "boundRunId": "9ceff4e8-381c-45f0-b75c-7e54845ba58b",
+        "nodeAttemptId": null,
+        "issuedAt": "2026-11-09T08:53:29.752466+00:00",
+        "lastUsedAt": "2026-11-09T08:54:40.819+00:00",
+        "expiresAt": "2026-11-11T08:53:29.753+00:00",
+        "revokedAt": "2026-11-09T08:55:55.439869+00:00",
+        "revocationReason": "revoked"
+      },
+      {
+        "tokenId": "44cb67e6-17c0-4707-8d74-36dc77b321f1",
+        "tokenKind": "agent",
+        "originKind": "agent_run",
+        "boundRunId": "336c1428-8f63-48b7-bcef-cdf441383926",
+        "nodeAttemptId": null,
+        "issuedAt": "2026-11-09T08:53:24.405015+00:00",
+        "lastUsedAt": null,
+        "expiresAt": "2026-11-11T08:53:24.406+00:00",
+        "revokedAt": "2026-11-09T08:57:00.146763+00:00",
+        "revocationReason": "revoked"
+      },
+      {
+        "tokenId": "4b3f8726-280d-4f04-97e7-122c8ab8894f",
+        "tokenKind": "agent",
+        "originKind": "agent_run",
+        "boundRunId": "336c1428-8f63-48b7-bcef-cdf441383926",
+        "nodeAttemptId": null,
+        "issuedAt": "2026-11-09T08:53:24.262751+00:00",
+        "lastUsedAt": "2026-11-09T08:55:32.878+00:00",
+        "expiresAt": "2026-11-11T08:53:24.263+00:00",
+        "revokedAt": "2026-11-09T08:57:00.14692+00:00",
+        "revocationReason": "revoked"
+      },
+      {
+        "tokenId": "aef2213e-018f-43ac-94eb-a1bf6f01245e",
+        "tokenKind": "project",
+        "originKind": "orchestrator_run",
+        "boundRunId": "d88b8d77-2085-4de7-81b0-84f0dbb8ed0f",
+        "nodeAttemptId": "43281fb5-73c5-4ea3-9048-94cbaf8e2611",
+        "issuedAt": "2026-11-09T08:51:52.070891+00:00",
+        "lastUsedAt": "2026-11-09T08:53:40.766+00:00",
+        "expiresAt": "2026-11-11T08:51:52.074+00:00",
+        "revokedAt": "2026-11-09T08:57:01.175+00:00",
+        "revocationReason": "revoked"
+      }
+    ],
+    "tokenAudit": [
+      {
+        "id": "07b1004d-3ebd-4a04-a486-6bf0a59aa02a",
+        "tokenId": "ff9456be-6723-4443-8e55-2330b28766d8",
+        "scopeUsed": "knowledge:propose",
+        "method": "POST",
+        "result": "error",
+        "statusCode": 401,
+        "createdAt": "2026-11-09T09:04:40.735531+00:00"
+      },
+      {
+        "id": "4bed918a-e63f-494e-94f5-cbea8596d43d",
+        "tokenId": "ff9456be-6723-4443-8e55-2330b28766d8",
+        "scopeUsed": "runs:collect",
+        "method": "POST",
+        "result": "error",
+        "statusCode": 401,
+        "createdAt": "2026-11-09T09:03:37.199429+00:00"
+      },
+      {
+        "id": "d703bd39-5a76-4f48-abf2-ece4909eafbb",
+        "tokenId": "ff9456be-6723-4443-8e55-2330b28766d8",
+        "scopeUsed": "runs:delegate",
+        "method": "POST",
+        "result": "error",
+        "statusCode": 401,
+        "createdAt": "2026-11-09T09:02:31.205725+00:00"
+      },
+      {
+        "id": "60810ce1-d2d5-438d-abf2-6c163ea7e5cf",
+        "tokenId": "ff9456be-6723-4443-8e55-2330b28766d8",
+        "scopeUsed": "runs:delegate",
+        "method": "POST",
+        "result": "error",
+        "statusCode": 401,
+        "createdAt": "2026-11-09T09:02:24.27298+00:00"
+      },
+      {
+        "id": "dfcd9478-8b3c-4e1b-9cec-d1c26208f15e",
+        "tokenId": "ff9456be-6723-4443-8e55-2330b28766d8",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "error",
+        "statusCode": 401,
+        "createdAt": "2026-11-09T09:01:45.538282+00:00"
+      },
+      {
+        "id": "5a8fc384-fa12-4784-ad5a-c71bde64db7c",
+        "tokenId": "ff9456be-6723-4443-8e55-2330b28766d8",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "error",
+        "statusCode": 401,
+        "createdAt": "2026-11-09T09:01:28.200455+00:00"
+      },
+      {
+        "id": "a1b56f60-a0ef-4821-89bc-7d73900e9a4f",
+        "tokenId": "ff9456be-6723-4443-8e55-2330b28766d8",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "error",
+        "statusCode": 401,
+        "createdAt": "2026-11-09T09:01:27.810159+00:00"
+      },
+      {
+        "id": "e0e09a58-bf86-48dc-8464-09fec877686c",
+        "tokenId": "ff9456be-6723-4443-8e55-2330b28766d8",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "error",
+        "statusCode": 401,
+        "createdAt": "2026-11-09T09:01:27.456468+00:00"
+      },
+      {
+        "id": "ed1145e6-53d8-40f8-a066-d213ee79cb68",
+        "tokenId": "ff9456be-6723-4443-8e55-2330b28766d8",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "error",
+        "statusCode": 401,
+        "createdAt": "2026-11-09T09:01:27.040326+00:00"
+      },
+      {
+        "id": "76cfd694-4f17-4705-a3ba-281d8b0c1721",
+        "tokenId": "ff9456be-6723-4443-8e55-2330b28766d8",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "error",
+        "statusCode": 401,
+        "createdAt": "2026-11-09T09:01:26.627099+00:00"
+      },
+      {
+        "id": "0a2ed0db-6a92-4f8f-bf9c-a35d104aa1a2",
+        "tokenId": "ff9456be-6723-4443-8e55-2330b28766d8",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "error",
+        "statusCode": 401,
+        "createdAt": "2026-11-09T09:01:26.342127+00:00"
+      },
+      {
+        "id": "82742c54-c703-49e0-a602-232d3b1a742e",
+        "tokenId": "ff9456be-6723-4443-8e55-2330b28766d8",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "error",
+        "statusCode": 401,
+        "createdAt": "2026-11-09T09:01:25.879408+00:00"
+      },
+      {
+        "id": "b97cea61-9c18-42be-9edc-752a6928df03",
+        "tokenId": "ff9456be-6723-4443-8e55-2330b28766d8",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "error",
+        "statusCode": 401,
+        "createdAt": "2026-11-09T09:01:25.472828+00:00"
+      },
+      {
+        "id": "cdf430a8-fc3d-408d-b3ea-c2b215f4a152",
+        "tokenId": "ff9456be-6723-4443-8e55-2330b28766d8",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "error",
+        "statusCode": 401,
+        "createdAt": "2026-11-09T09:01:25.101309+00:00"
+      },
+      {
+        "id": "3cf27036-c54e-4276-896d-628ff5a71f30",
+        "tokenId": "ff9456be-6723-4443-8e55-2330b28766d8",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "ok",
+        "statusCode": 200,
+        "createdAt": "2026-11-09T09:01:08.363087+00:00"
+      },
+      {
+        "id": "43174768-6459-4ba4-9b14-f236f641bfb2",
+        "tokenId": "ff9456be-6723-4443-8e55-2330b28766d8",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "ok",
+        "statusCode": 200,
+        "createdAt": "2026-11-09T09:01:04.764237+00:00"
+      },
+      {
+        "id": "1697c291-3017-45b2-8885-0e979aafa3b1",
+        "tokenId": "ff9456be-6723-4443-8e55-2330b28766d8",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "ok",
+        "statusCode": 200,
+        "createdAt": "2026-11-09T09:01:01.016922+00:00"
+      },
+      {
+        "id": "36d121dd-4466-4d91-82fc-a21962536163",
+        "tokenId": "f92175a1-1258-4942-a24a-55ef97d78477",
+        "scopeUsed": "knowledge:propose",
+        "method": "POST",
+        "result": "ok",
+        "statusCode": 201,
+        "createdAt": "2026-11-09T08:58:31.656072+00:00"
+      },
+      {
+        "id": "b4d248b8-f22a-4aa9-aeda-a64189059c79",
+        "tokenId": "f92175a1-1258-4942-a24a-55ef97d78477",
+        "scopeUsed": "knowledge:propose",
+        "method": "POST",
+        "result": "error",
+        "statusCode": 409,
+        "createdAt": "2026-11-09T08:58:03.860398+00:00"
+      },
+      {
+        "id": "4427c16e-2459-4942-a6af-366e531e8e70",
+        "tokenId": "f92175a1-1258-4942-a24a-55ef97d78477",
+        "scopeUsed": "runs:collect",
+        "method": "POST",
+        "result": "ok",
+        "statusCode": 200,
+        "createdAt": "2026-11-09T08:57:12.296976+00:00"
+      },
+      {
+        "id": "9c897f0f-c9c0-4952-b10d-446cf0d95170",
+        "tokenId": "4b3f8726-280d-4f04-97e7-122c8ab8894f",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "ok",
+        "statusCode": 200,
+        "createdAt": "2026-11-09T08:55:32.877875+00:00"
+      },
+      {
+        "id": "5f374504-b5ab-470e-8fb1-ffe2bf651be6",
+        "tokenId": "4b3f8726-280d-4f04-97e7-122c8ab8894f",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "ok",
+        "statusCode": 200,
+        "createdAt": "2026-11-09T08:55:04.457259+00:00"
+      },
+      {
+        "id": "b34c9e87-8175-464f-bb8a-356822c406c1",
+        "tokenId": "4b3f8726-280d-4f04-97e7-122c8ab8894f",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "ok",
+        "statusCode": 200,
+        "createdAt": "2026-11-09T08:54:53.618864+00:00"
+      },
+      {
+        "id": "47e98e29-43f2-48e4-9bc3-74072c73a4ec",
+        "tokenId": "4b3f8726-280d-4f04-97e7-122c8ab8894f",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "error",
+        "statusCode": 500,
+        "createdAt": "2026-11-09T08:54:52.144487+00:00"
+      },
+      {
+        "id": "b217d4ff-6b84-47d2-b110-0925a01762e9",
+        "tokenId": "2daa00bf-b958-44a2-b487-6aaaba4ed432",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "ok",
+        "statusCode": 200,
+        "createdAt": "2026-11-09T08:54:40.818508+00:00"
+      },
+      {
+        "id": "937ba544-f0c1-4a7a-ba34-17154234eb41",
+        "tokenId": "2daa00bf-b958-44a2-b487-6aaaba4ed432",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "ok",
+        "statusCode": 200,
+        "createdAt": "2026-11-09T08:54:27.183817+00:00"
+      },
+      {
+        "id": "4db015ae-82e6-4562-a449-2a93c07c4789",
+        "tokenId": "4b3f8726-280d-4f04-97e7-122c8ab8894f",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "ok",
+        "statusCode": 200,
+        "createdAt": "2026-11-09T08:54:23.346513+00:00"
+      },
+      {
+        "id": "c86fba9f-0b8f-4ef8-945c-bd6a118ed285",
+        "tokenId": "2daa00bf-b958-44a2-b487-6aaaba4ed432",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "ok",
+        "statusCode": 200,
+        "createdAt": "2026-11-09T08:54:23.326047+00:00"
+      },
+      {
+        "id": "9d20bb3a-1925-43b4-b4d4-b66fb8fcf807",
+        "tokenId": "2daa00bf-b958-44a2-b487-6aaaba4ed432",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "error",
+        "statusCode": 500,
+        "createdAt": "2026-11-09T08:54:19.469678+00:00"
+      },
+      {
+        "id": "baacb3a0-109c-427b-b9ed-241aea76352a",
+        "tokenId": "4b3f8726-280d-4f04-97e7-122c8ab8894f",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "ok",
+        "statusCode": 200,
+        "createdAt": "2026-11-09T08:54:15.321663+00:00"
+      },
+      {
+        "id": "2225ed65-0f1a-4bcf-a18e-e62ccb80f38a",
+        "tokenId": "4b3f8726-280d-4f04-97e7-122c8ab8894f",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "error",
+        "statusCode": 500,
+        "createdAt": "2026-11-09T08:54:13.198363+00:00"
+      },
+      {
+        "id": "6827a7aa-0021-47c8-a254-9f0000abfce2",
+        "tokenId": "4b3f8726-280d-4f04-97e7-122c8ab8894f",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "error",
+        "statusCode": 500,
+        "createdAt": "2026-11-09T08:54:12.250957+00:00"
+      },
+      {
+        "id": "95c53599-0ab1-4f8c-afdc-95d70362e8d0",
+        "tokenId": "4b3f8726-280d-4f04-97e7-122c8ab8894f",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "ok",
+        "statusCode": 200,
+        "createdAt": "2026-11-09T08:54:11.558496+00:00"
+      },
+      {
+        "id": "9e19d60d-3809-4551-ba47-72a94264624d",
+        "tokenId": "4b3f8726-280d-4f04-97e7-122c8ab8894f",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "ok",
+        "statusCode": 200,
+        "createdAt": "2026-11-09T08:54:07.835018+00:00"
+      },
+      {
+        "id": "45f7cd28-d185-484d-b5eb-38725161b4a1",
+        "tokenId": "2daa00bf-b958-44a2-b487-6aaaba4ed432",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "ok",
+        "statusCode": 200,
+        "createdAt": "2026-11-09T08:54:07.402799+00:00"
+      },
+      {
+        "id": "b65c9b4f-d187-4d4f-a00b-377c60a62306",
+        "tokenId": "2daa00bf-b958-44a2-b487-6aaaba4ed432",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "ok",
+        "statusCode": 200,
+        "createdAt": "2026-11-09T08:54:07.40268+00:00"
+      },
+      {
+        "id": "7e1e4a76-f7d5-42fc-a36f-0767ff96035e",
+        "tokenId": "2daa00bf-b958-44a2-b487-6aaaba4ed432",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "ok",
+        "statusCode": 200,
+        "createdAt": "2026-11-09T08:54:07.401383+00:00"
+      },
+      {
+        "id": "9a6677ba-5242-4840-9e57-95526091b470",
+        "tokenId": "2daa00bf-b958-44a2-b487-6aaaba4ed432",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "error",
+        "statusCode": 500,
+        "createdAt": "2026-11-09T08:54:07.247795+00:00"
+      },
+      {
+        "id": "e4720a23-1a82-46cb-ab61-3b5d5fd78c84",
+        "tokenId": "2daa00bf-b958-44a2-b487-6aaaba4ed432",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "error",
+        "statusCode": 500,
+        "createdAt": "2026-11-09T08:54:07.247504+00:00"
+      },
+      {
+        "id": "e38b4f7e-1db0-4ecb-932b-6a66d70599ab",
+        "tokenId": "2daa00bf-b958-44a2-b487-6aaaba4ed432",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "error",
+        "statusCode": 500,
+        "createdAt": "2026-11-09T08:54:05.996653+00:00"
+      },
+      {
+        "id": "49cd0238-804b-4e33-b30f-68853c618c34",
+        "tokenId": "2daa00bf-b958-44a2-b487-6aaaba4ed432",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "ok",
+        "statusCode": 200,
+        "createdAt": "2026-11-09T08:54:03.78915+00:00"
+      },
+      {
+        "id": "a5313f3b-9945-4189-a6f0-4f9ff9d8a034",
+        "tokenId": "4b3f8726-280d-4f04-97e7-122c8ab8894f",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "ok",
+        "statusCode": 200,
+        "createdAt": "2026-11-09T08:53:54.221624+00:00"
+      },
+      {
+        "id": "b042aa69-82c3-4b82-8354-07b0467fdde4",
+        "tokenId": "4b3f8726-280d-4f04-97e7-122c8ab8894f",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "ok",
+        "statusCode": 200,
+        "createdAt": "2026-11-09T08:53:54.054115+00:00"
+      },
+      {
+        "id": "7e3122cd-48ce-47be-960d-7a4f726e7a2f",
+        "tokenId": "2daa00bf-b958-44a2-b487-6aaaba4ed432",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "ok",
+        "statusCode": 200,
+        "createdAt": "2026-11-09T08:53:53.996694+00:00"
+      },
+      {
+        "id": "13a74d8f-008e-4302-8c40-f1d36b439296",
+        "tokenId": "2daa00bf-b958-44a2-b487-6aaaba4ed432",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "ok",
+        "statusCode": 200,
+        "createdAt": "2026-11-09T08:53:53.734985+00:00"
+      },
+      {
+        "id": "0467fed3-c42e-4131-a00d-f9f9696e6925",
+        "tokenId": "2daa00bf-b958-44a2-b487-6aaaba4ed432",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "ok",
+        "statusCode": 200,
+        "createdAt": "2026-11-09T08:53:53.414283+00:00"
+      },
+      {
+        "id": "587a8294-0070-4c09-aa73-74c723294f6d",
+        "tokenId": "4b3f8726-280d-4f04-97e7-122c8ab8894f",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "ok",
+        "statusCode": 200,
+        "createdAt": "2026-11-09T08:53:53.247024+00:00"
+      },
+      {
+        "id": "fd814d1b-4feb-409c-9461-6a3a23230835",
+        "tokenId": "4b3f8726-280d-4f04-97e7-122c8ab8894f",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "ok",
+        "statusCode": 200,
+        "createdAt": "2026-11-09T08:53:52.666392+00:00"
+      },
+      {
+        "id": "a80a04f2-375d-499a-9cff-313ef65eb754",
+        "tokenId": "2daa00bf-b958-44a2-b487-6aaaba4ed432",
+        "scopeUsed": "knowledge:read",
+        "method": "GET",
+        "result": "ok",
+        "statusCode": 200,
+        "createdAt": "2026-11-09T08:53:52.134677+00:00"
+      },
+      {
+        "id": "21124b02-7918-44c6-bd9d-0f5f61b621ea",
+        "tokenId": "aef2213e-018f-43ac-94eb-a1bf6f01245e",
+        "scopeUsed": "runs:collect",
+        "method": "POST",
+        "result": "ok",
+        "statusCode": 200,
+        "createdAt": "2026-11-09T08:53:40.766102+00:00"
+      },
+      {
+        "id": "96937f5b-deca-427c-b25e-71441fa0dfa0",
+        "tokenId": "aef2213e-018f-43ac-94eb-a1bf6f01245e",
+        "scopeUsed": "runs:delegate",
+        "method": "POST",
+        "result": "ok",
+        "statusCode": 202,
+        "createdAt": "2026-11-09T08:53:29.738908+00:00"
+      },
+      {
+        "id": "45d9936a-8c11-4915-808f-94c80972423a",
+        "tokenId": "aef2213e-018f-43ac-94eb-a1bf6f01245e",
+        "scopeUsed": "runs:delegate",
+        "method": "POST",
+        "result": "ok",
+        "statusCode": 202,
+        "createdAt": "2026-11-09T08:53:24.248586+00:00"
+      },
+      {
+        "id": "b82fd3f9-6d96-4572-bebc-04ba112fc236",
+        "tokenId": "aef2213e-018f-43ac-94eb-a1bf6f01245e",
+        "scopeUsed": "runs:delegate",
+        "method": "POST",
+        "result": "error",
+        "statusCode": 422,
+        "createdAt": "2026-11-09T08:53:11.68086+00:00"
+      },
+      {
+        "id": "e70db18c-0602-4472-aa87-06f3e92427bf",
+        "tokenId": "aef2213e-018f-43ac-94eb-a1bf6f01245e",
+        "scopeUsed": "runs:delegate",
+        "method": "POST",
+        "result": "error",
+        "statusCode": 422,
+        "createdAt": "2026-11-09T08:53:05.658982+00:00"
+      }
+    ]
+  }
+}
