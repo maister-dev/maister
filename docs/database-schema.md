@@ -4707,7 +4707,7 @@ only). No UPDATE/DELETE application paths; future pruning MUST honor
 
 Company ownership is an exclusive alternative to project ownership. Main
 `0246_company_hitl_wait_events` permits `run.needs_input` for an exact
-company operational Run with no task. The existing `0240` reference and
+company operational agent or exact v2 result-only Flow with no task. The `0240`/`0249` reference and
 immutable routing guards apply; the HITL row and wait fact commit together.
 Private local assistants retain their separate notification path.
 Main `0247_company_operational_attention` additionally permits the existing

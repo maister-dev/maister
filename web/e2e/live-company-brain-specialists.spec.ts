@@ -12,6 +12,7 @@ import { z } from "zod";
 
 import { singleValue, withE2EDb } from "./_seed/db";
 import { loadNativeCompanyBrainFixtures } from "./_seed/native-company-brain-fixtures";
+import { waitForTaskLaunchRun } from "./_seed/task-launch";
 
 import { resolveTestWorktreesRoot } from "@/test-support/worktree-test-root";
 import {
@@ -126,6 +127,37 @@ async function acceptProposal(
   );
 }
 
+async function launchResearchTask(
+  request: APIRequestContext,
+  origin: string,
+  selection: Readonly<{ taskId: string; flowId: string; runnerId: string }>,
+): Promise<{ runId: string }> {
+  const options = await readResponse(
+    await request.get("/api/task-launch-intents/options", {
+      params: selection,
+    }),
+    z.object({ taskRevision: z.number().int(), settingsToken: z.string() }),
+  );
+  const receipt = await readResponse(
+    await request.post("/api/task-launch-intents", {
+      headers: { Origin: origin, "Idempotency-Key": randomUUID() },
+      data: {
+        ...selection,
+        expectedTaskRevision: options.taskRevision,
+        expectedSettingsToken: options.settingsToken,
+        autoPromote: false,
+      },
+    }),
+    z.object({
+      schemaVersion: z.literal(1),
+      intentId: z.string().min(1),
+      taskId: z.literal(selection.taskId),
+    }),
+  );
+
+  return { runId: await waitForTaskLaunchRun(receipt) };
+}
+
 async function inspectTree(rootId: string): Promise<RunProof[]> {
   return withE2EDb(async (pool) => {
     const rows = await pool.query(
@@ -167,8 +199,12 @@ test("QL-CBX-03 the real pinned RAH package retrieves structured company knowled
   request,
   page,
   context,
+  baseURL,
 }, testInfo) => {
   test.setTimeout(3300000);
+  if (!baseURL) throw new Error("Live qualification requires a browser origin");
+  const origin = new URL(baseURL).origin;
+
   expect(requiredSetting("E2E_LIVE_SUPERVISOR")).toBe("1");
   const sourceUrl = requiredSetting("E2E_RAH_GIT_URL");
   const tag = requiredSetting("E2E_RAH_TAG");
@@ -567,17 +603,11 @@ test("QL-CBX-03 the real pinned RAH package retrieves structured company knowled
         }),
         z.object({ taskId: z.string() }),
       );
-      const launched = await readResponse(
-        await request.post("/api/runs", {
-          data: {
-            taskId: task.taskId,
-            flowId,
-            runnerId: runner.id,
-            autoPromote: false,
-          },
-        }),
-        z.object({ runId: z.string() }),
-      );
+      const launched = await launchResearchTask(request, origin, {
+        taskId: task.taskId,
+        flowId,
+        runnerId: runner.id,
+      });
 
       runIds.push(launched.runId);
       const enforcementQuery =
@@ -834,17 +864,11 @@ test("QL-CBX-03 the real pinned RAH package retrieves structured company knowled
       }),
       z.object({ taskId: z.string() }),
     );
-    const unavailableRun = await readResponse(
-      await request.post("/api/runs", {
-        data: {
-          taskId: unavailableTask.taskId,
-          flowId: "rah-control",
-          runnerId: runner.id,
-          autoPromote: false,
-        },
-      }),
-      z.object({ runId: z.string() }),
-    );
+    const unavailableRun = await launchResearchTask(request, origin, {
+      taskId: unavailableTask.taskId,
+      flowId: "rah-control",
+      runnerId: runner.id,
+    });
 
     runIds.push(unavailableRun.runId);
     await expect
