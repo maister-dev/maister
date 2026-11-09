@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "testedHead": "a365ede86810e00fd5314e386f90243e0b4deb2c",
+  "verdict": "failed_before_first_root_result",
+  "credentialReplay": "one original coordinator token remained current through reentry and both real child launches",
+  "renewalFailure": "typed ACP_PROTOCOL projection_transaction_deadline",
+  "terminalCause": "EXECUTOR_UNAVAILABLE session_delete_exit_unconfirmed while parking with both children running",
+  "lockObservation": "sanitized SQL shapes only; recursive knowledge policy query retained Run lock while other reads and ownership updates waited",
+  "cleanup": "wrapper reaped two owned child process leaks and stopped disposable database; retained as failure, not clean qualification",
+  "redactions": {
+    "providerSecrets": 0,
+    "managedCredentials": 0
+  },
+  "files": {
+    "live-session-retirement-failure.json": "bd6cebd85c38abccddfb6bb5fcfab8f8f5849b235ab834941a03b14dd1780454",
+    "live-session-retirement-failure.log.gz": "a24801e880b681e5c468ec993204e207133efed350d3116429834cd36ae38dd2",
+    "live-bounded-lock-observations.json": "dcdd6089af99135321b8cfd2b634a8e002ff257ff09fc301bc08b8456f60e646"
+  }
+}

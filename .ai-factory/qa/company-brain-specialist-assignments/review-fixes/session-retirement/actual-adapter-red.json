@@ -1,0 +1,48 @@
+{
+  "evidence": "/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/actual-retirement-evidence-hIxuI6",
+  "results": [
+    {
+      "source": "baseline",
+      "runId": "retirement-baseline-ef1f8731-deeb-45b3-a04f-73b9a1374293",
+      "invocationId": "dd0c0b1a-d416-4f87-b7a0-2127454ebc13",
+      "killGraceMs": 2000,
+      "createStatus": 201,
+      "promptStatus": 200,
+      "deleteStatus": 503,
+      "deleteElapsedMs": 21,
+      "reason": "session_delete_exit_unconfirmed",
+      "stage": "process_exit",
+      "leaderExited": true,
+      "terminalPublished": true,
+      "groupAtResponse": {
+        "state": "active",
+        "states": [
+          "S"
+        ]
+      },
+      "groupAfter250Ms": {
+        "state": "active",
+        "states": [
+          "S"
+        ]
+      },
+      "cleanupFailureCount": 1,
+      "remainingOwnedProcesses": 0
+    },
+    {
+      "source": "candidate",
+      "runId": "retirement-candidate-2a9e1398-885c-4eca-9db5-814e61570605",
+      "invocationId": "5f8d243d-317e-4d70-9753-f69ef70988c1",
+      "killGraceMs": 2000,
+      "createStatus": 201,
+      "promptStatus": 200,
+      "deleteStatus": 204,
+      "deleteElapsedMs": 626,
+      "probeError": {
+        "name": "TypeError"
+      },
+      "cleanupFailureCount": 0,
+      "remainingOwnedProcesses": 0
+    }
+  ]
+}

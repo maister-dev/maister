@@ -1,0 +1,415 @@
+[
+  {
+    "pid": 5662,
+    "state": "active",
+    "wait": null,
+    "blockers": [],
+    "xactStart": "2026-11-09T10:43:43.555Z",
+    "queryStart": "2026-11-09T10:43:43.634Z",
+    "queryShape": "WITH RECURSIVE knowledge_requested_revisions AS (SELECT e.record_id,e.revision FROM (SELECT e.id AS edge_id,e.claim_state AS classification,e.created_at, CASE WHEN e.from_ref->><literal>=$1 THEN e.to_ref->><literal> ELSE e.from_ref->><literal> END AS record_id, CASE WHEN e.from_ref->><literal>=$2 THEN e.to_revision ELSE e.from_revision END AS revis",
+    "firstSeen": "2026-11-09T10:43:43.767Z",
+    "lastSeen": "2026-11-09T10:43:47.036Z",
+    "samples": 14
+  },
+  {
+    "pid": 450,
+    "state": "active",
+    "wait": "transactionid",
+    "blockers": [
+      5662
+    ],
+    "xactStart": "2026-11-09T10:43:43.648Z",
+    "queryStart": "2026-11-09T10:43:43.650Z",
+    "queryShape": "select \"id\" from \"runs\" where \"runs\".\"id\" in ($1, $2) order by \"runs\".\"id\" asc for no key update",
+    "firstSeen": "2026-11-09T10:43:43.767Z",
+    "lastSeen": "2026-11-09T10:43:47.036Z",
+    "samples": 14
+  },
+  {
+    "pid": 6409,
+    "state": "active",
+    "wait": "tuple",
+    "blockers": [
+      450
+    ],
+    "xactStart": "2026-11-09T10:43:44.055Z",
+    "queryStart": "2026-11-09T10:43:44.056Z",
+    "queryShape": "SELECT id FROM runs WHERE id=$1 FOR NO KEY UPDATE",
+    "firstSeen": "2026-11-09T10:43:44.269Z",
+    "lastSeen": "2026-11-09T10:43:47.036Z",
+    "samples": 12
+  },
+  {
+    "pid": 5607,
+    "state": "active",
+    "wait": "tuple",
+    "blockers": [
+      450,
+      6409
+    ],
+    "xactStart": "2026-11-09T10:43:44.590Z",
+    "queryStart": "2026-11-09T10:43:44.591Z",
+    "queryShape": "SELECT id FROM runs WHERE id=$1 FOR NO KEY UPDATE",
+    "firstSeen": "2026-11-09T10:43:44.772Z",
+    "lastSeen": "2026-11-09T10:43:47.036Z",
+    "samples": 10
+  },
+  {
+    "pid": 1096,
+    "state": "active",
+    "wait": "transactionid",
+    "blockers": [
+      450
+    ],
+    "xactStart": "2026-11-09T10:43:46.701Z",
+    "queryStart": "2026-11-09T10:43:46.701Z",
+    "queryShape": "select \"id\", \"run_kind\", \"status\", \"execution_assignment_id\", \"flow_id\", \"flow_revision_id\" from \"runs\" where \"runs\".\"id\" = $1 for no key update",
+    "firstSeen": "2026-11-09T10:43:46.783Z",
+    "lastSeen": "2026-11-09T10:43:47.036Z",
+    "samples": 2
+  },
+  {
+    "pid": 6409,
+    "state": "active",
+    "wait": null,
+    "blockers": [],
+    "xactStart": "2026-11-09T10:43:55.796Z",
+    "queryStart": "2026-11-09T10:43:58.951Z",
+    "queryShape": "WITH RECURSIVE knowledge_requested_revisions AS (SELECT e.record_id,e.revision FROM (SELECT e.id AS edge_id,e.claim_state AS classification,e.created_at, CASE WHEN e.from_ref->><literal>=$1 THEN e.to_ref->><literal> ELSE e.from_ref->><literal> END AS record_id, CASE WHEN e.from_ref->><literal>=$2 THEN e.to_revision ELSE e.from_revision END AS revis",
+    "firstSeen": "2026-11-09T10:43:47.287Z",
+    "lastSeen": "2026-11-09T10:44:00.384Z",
+    "samples": 20
+  },
+  {
+    "pid": 450,
+    "state": "active",
+    "wait": "transactionid",
+    "blockers": [
+      5607
+    ],
+    "xactStart": "2026-11-09T10:43:47.094Z",
+    "queryStart": "2026-11-09T10:43:47.100Z",
+    "queryShape": "select \"id\" from \"runs\" where \"runs\".\"id\" in ($1, $2) order by \"runs\".\"id\" asc for no key update",
+    "firstSeen": "2026-11-09T10:43:47.287Z",
+    "lastSeen": "2026-11-09T10:43:54.838Z",
+    "samples": 31
+  },
+  {
+    "pid": 5607,
+    "state": "active",
+    "wait": "transactionid",
+    "blockers": [
+      6409
+    ],
+    "xactStart": "2026-11-09T10:43:44.590Z",
+    "queryStart": "2026-11-09T10:43:44.591Z",
+    "queryShape": "SELECT id FROM runs WHERE id=$1 FOR NO KEY UPDATE",
+    "firstSeen": "2026-11-09T10:43:47.287Z",
+    "lastSeen": "2026-11-09T10:43:50.558Z",
+    "samples": 14
+  },
+  {
+    "pid": 5311,
+    "state": "active",
+    "wait": "transactionid",
+    "blockers": [
+      450
+    ],
+    "xactStart": "2026-11-09T10:43:48.360Z",
+    "queryStart": "2026-11-09T10:43:48.361Z",
+    "queryShape": "select \"execution_assignment_id\" from \"runs\" where \"runs\".\"id\" = $1 limit $2 for update",
+    "firstSeen": "2026-11-09T10:43:48.545Z",
+    "lastSeen": "2026-11-09T10:43:53.326Z",
+    "samples": 20
+  },
+  {
+    "pid": 6409,
+    "state": "active",
+    "wait": "transactionid",
+    "blockers": [
+      5607
+    ],
+    "xactStart": "2026-11-09T10:43:50.625Z",
+    "queryStart": "2026-11-09T10:43:50.625Z",
+    "queryShape": "update \"project_tokens\" set \"last_used_at\" = $1 where \"project_tokens\".\"id\" = $2",
+    "firstSeen": "2026-11-09T10:43:50.809Z",
+    "lastSeen": "2026-11-09T10:43:54.838Z",
+    "samples": 17
+  },
+  {
+    "pid": 5607,
+    "state": "active",
+    "wait": null,
+    "blockers": [],
+    "xactStart": "2026-11-09T10:43:58.924Z",
+    "queryStart": "2026-11-09T10:43:58.987Z",
+    "queryShape": "WITH RECURSIVE knowledge_requested_revisions AS (SELECT e.record_id,e.revision FROM (SELECT e.id AS edge_id,e.claim_state AS classification,e.created_at, CASE WHEN e.from_ref->><literal>=$1 THEN e.to_ref->><literal> ELSE e.from_ref->><literal> END AS record_id, CASE WHEN e.from_ref->><literal>=$2 THEN e.to_revision ELSE e.from_revision END AS revis",
+    "firstSeen": "2026-11-09T10:43:50.809Z",
+    "lastSeen": "2026-11-09T10:44:00.384Z",
+    "samples": 36
+  },
+  {
+    "pid": 986,
+    "state": "active",
+    "wait": "ClientRead",
+    "blockers": [],
+    "xactStart": "2026-11-09T10:43:55.071Z",
+    "queryStart": "2026-11-09T10:43:55.088Z",
+    "queryShape": "select \"id\", \"run_id\", \"execution_assignment_id\", \"assignment_epoch\", \"execution_host_id\", \"event_stream_id\", \"host_sequence\", \"host_boot_id\", \"host_session_id\", \"envelope_version\", \"event_type\", \"payload_schema\", \"payload\", \"payload_sha256\", \"payload_bytes\", \"occurred_at\", \"ingest_disposition\", \"ingest_error\" from \"execution_events\" where (\"execut",
+    "firstSeen": "2026-11-09T10:43:55.091Z",
+    "lastSeen": "2026-11-09T10:43:55.091Z",
+    "samples": 1
+  },
+  {
+    "pid": 1096,
+    "state": "active",
+    "wait": "transactionid",
+    "blockers": [
+      986
+    ],
+    "xactStart": "2026-11-09T10:43:55.081Z",
+    "queryStart": "2026-11-09T10:43:55.082Z",
+    "queryShape": "select \"id\", \"run_kind\", \"status\", \"execution_assignment_id\", \"flow_id\", \"flow_revision_id\" from \"runs\" where \"runs\".\"id\" = $1 for no key update",
+    "firstSeen": "2026-11-09T10:43:55.091Z",
+    "lastSeen": "2026-11-09T10:43:55.091Z",
+    "samples": 1
+  },
+  {
+    "pid": 1096,
+    "state": "active",
+    "wait": "transactionid",
+    "blockers": [
+      5607
+    ],
+    "xactStart": "2026-11-09T10:43:55.236Z",
+    "queryStart": "2026-11-09T10:43:55.239Z",
+    "queryShape": "select \"id\" from \"runs\" where \"runs\".\"id\" in ($1, $2) order by \"runs\".\"id\" asc for no key update",
+    "firstSeen": "2026-11-09T10:43:55.343Z",
+    "lastSeen": "2026-11-09T10:43:58.872Z",
+    "samples": 15
+  },
+  {
+    "pid": 6760,
+    "state": "active",
+    "wait": "transactionid",
+    "blockers": [
+      1096
+    ],
+    "xactStart": "2026-11-09T10:43:55.192Z",
+    "queryStart": "2026-11-09T10:43:55.192Z",
+    "queryShape": "select \"project_id\", \"company_id\", \"agent_id\", \"run_kind\", \"status\" from \"runs\" where \"runs\".\"id\" = $1 for update",
+    "firstSeen": "2026-11-09T10:43:55.343Z",
+    "lastSeen": "2026-11-09T10:43:58.872Z",
+    "samples": 15
+  },
+  {
+    "pid": 6409,
+    "state": "active",
+    "wait": "tuple",
+    "blockers": [
+      1096
+    ],
+    "xactStart": "2026-11-09T10:43:55.796Z",
+    "queryStart": "2026-11-09T10:43:55.797Z",
+    "queryShape": "SELECT id FROM runs WHERE id=$1 FOR NO KEY UPDATE",
+    "firstSeen": "2026-11-09T10:43:55.847Z",
+    "lastSeen": "2026-11-09T10:43:58.872Z",
+    "samples": 13
+  },
+  {
+    "pid": 5662,
+    "state": "active",
+    "wait": "tuple",
+    "blockers": [
+      1096,
+      6409,
+      6446
+    ],
+    "xactStart": "2026-11-09T10:43:56.818Z",
+    "queryStart": "2026-11-09T10:43:56.820Z",
+    "queryShape": "SELECT id FROM runs WHERE id=$1 FOR NO KEY UPDATE",
+    "firstSeen": "2026-11-09T10:43:56.858Z",
+    "lastSeen": "2026-11-09T10:43:58.872Z",
+    "samples": 9
+  },
+  {
+    "pid": 6446,
+    "state": "active",
+    "wait": "tuple",
+    "blockers": [
+      1096,
+      6409
+    ],
+    "xactStart": "2026-11-09T10:43:56.735Z",
+    "queryStart": "2026-11-09T10:43:56.736Z",
+    "queryShape": "SELECT id FROM runs WHERE id=$1 FOR NO KEY UPDATE",
+    "firstSeen": "2026-11-09T10:43:56.858Z",
+    "lastSeen": "2026-11-09T10:43:58.872Z",
+    "samples": 9
+  },
+  {
+    "pid": 450,
+    "state": "active",
+    "wait": "tuple",
+    "blockers": [
+      6760
+    ],
+    "xactStart": "2026-11-09T10:43:57.096Z",
+    "queryStart": "2026-11-09T10:43:57.096Z",
+    "queryShape": "select \"id\", \"run_kind\", \"status\", \"execution_assignment_id\", \"flow_id\", \"flow_revision_id\" from \"runs\" where \"runs\".\"id\" = $1 for no key update",
+    "firstSeen": "2026-11-09T10:43:57.111Z",
+    "lastSeen": "2026-11-09T10:43:58.872Z",
+    "samples": 8
+  },
+  {
+    "pid": 6808,
+    "state": "active",
+    "wait": "tuple",
+    "blockers": [
+      1096,
+      6409,
+      6446,
+      5662
+    ],
+    "xactStart": "2026-11-09T10:43:57.291Z",
+    "queryStart": "2026-11-09T10:43:57.292Z",
+    "queryShape": "SELECT id FROM runs WHERE id=$1 FOR NO KEY UPDATE",
+    "firstSeen": "2026-11-09T10:43:57.362Z",
+    "lastSeen": "2026-11-09T10:43:58.872Z",
+    "samples": 7
+  },
+  {
+    "pid": 6826,
+    "state": "active",
+    "wait": "tuple",
+    "blockers": [
+      1096,
+      6409,
+      6446,
+      5662,
+      6808
+    ],
+    "xactStart": "2026-11-09T10:43:57.783Z",
+    "queryStart": "2026-11-09T10:43:57.784Z",
+    "queryShape": "SELECT id FROM runs WHERE id=$1 FOR NO KEY UPDATE",
+    "firstSeen": "2026-11-09T10:43:57.864Z",
+    "lastSeen": "2026-11-09T10:43:58.872Z",
+    "samples": 5
+  },
+  {
+    "pid": 5607,
+    "state": "idle in transaction",
+    "wait": "ClientRead",
+    "blockers": [],
+    "xactStart": "2026-11-09T10:43:55.226Z",
+    "queryStart": "2026-11-09T10:43:58.871Z",
+    "queryShape": "SELECT witness_snapshot-><literal> AS restrictions FROM brain_revision_evidence WHERE record_id=$1 AND revision=$2 LIMIT 65",
+    "firstSeen": "2026-11-09T10:43:58.872Z",
+    "lastSeen": "2026-11-09T10:43:58.872Z",
+    "samples": 1
+  },
+  {
+    "pid": 427,
+    "state": "active",
+    "wait": "tuple",
+    "blockers": [
+      6446,
+      5662,
+      6808,
+      6826
+    ],
+    "xactStart": "2026-11-09T10:43:58.893Z",
+    "queryStart": "2026-11-09T10:43:58.899Z",
+    "queryShape": "select \"id\" from \"runs\" where \"runs\".\"id\" in ($1, $2) order by \"runs\".\"id\" asc for no key update",
+    "firstSeen": "2026-11-09T10:43:59.122Z",
+    "lastSeen": "2026-11-09T10:44:00.384Z",
+    "samples": 6
+  },
+  {
+    "pid": 5662,
+    "state": "active",
+    "wait": "tuple",
+    "blockers": [
+      6446
+    ],
+    "xactStart": "2026-11-09T10:43:56.818Z",
+    "queryStart": "2026-11-09T10:43:56.820Z",
+    "queryShape": "SELECT id FROM runs WHERE id=$1 FOR NO KEY UPDATE",
+    "firstSeen": "2026-11-09T10:43:59.122Z",
+    "lastSeen": "2026-11-09T10:44:00.384Z",
+    "samples": 6
+  },
+  {
+    "pid": 6446,
+    "state": "active",
+    "wait": "transactionid",
+    "blockers": [
+      6409
+    ],
+    "xactStart": "2026-11-09T10:43:56.735Z",
+    "queryStart": "2026-11-09T10:43:56.736Z",
+    "queryShape": "SELECT id FROM runs WHERE id=$1 FOR NO KEY UPDATE",
+    "firstSeen": "2026-11-09T10:43:59.122Z",
+    "lastSeen": "2026-11-09T10:44:00.384Z",
+    "samples": 6
+  },
+  {
+    "pid": 6808,
+    "state": "active",
+    "wait": "tuple",
+    "blockers": [
+      6446,
+      5662
+    ],
+    "xactStart": "2026-11-09T10:43:57.291Z",
+    "queryStart": "2026-11-09T10:43:57.292Z",
+    "queryShape": "SELECT id FROM runs WHERE id=$1 FOR NO KEY UPDATE",
+    "firstSeen": "2026-11-09T10:43:59.122Z",
+    "lastSeen": "2026-11-09T10:44:00.384Z",
+    "samples": 6
+  },
+  {
+    "pid": 6826,
+    "state": "active",
+    "wait": "tuple",
+    "blockers": [
+      6446,
+      5662,
+      6808
+    ],
+    "xactStart": "2026-11-09T10:43:57.783Z",
+    "queryStart": "2026-11-09T10:43:57.784Z",
+    "queryShape": "SELECT id FROM runs WHERE id=$1 FOR NO KEY UPDATE",
+    "firstSeen": "2026-11-09T10:43:59.122Z",
+    "lastSeen": "2026-11-09T10:44:00.384Z",
+    "samples": 6
+  },
+  {
+    "pid": 6845,
+    "state": "active",
+    "wait": "transactionid",
+    "blockers": [
+      5607
+    ],
+    "xactStart": "2026-11-09T10:43:59.321Z",
+    "queryStart": "2026-11-09T10:43:59.322Z",
+    "queryShape": "SELECT id FROM runs WHERE id=$1 FOR NO KEY UPDATE",
+    "firstSeen": "2026-11-09T10:43:59.374Z",
+    "lastSeen": "2026-11-09T10:44:00.384Z",
+    "samples": 5
+  },
+  {
+    "pid": 6890,
+    "state": "active",
+    "wait": "tuple",
+    "blockers": [
+      6845
+    ],
+    "xactStart": "2026-11-09T10:43:59.834Z",
+    "queryStart": "2026-11-09T10:43:59.835Z",
+    "queryShape": "SELECT id FROM runs WHERE id=$1 FOR NO KEY UPDATE",
+    "firstSeen": "2026-11-09T10:43:59.879Z",
+    "lastSeen": "2026-11-09T10:44:00.384Z",
+    "samples": 3
+  }
+]

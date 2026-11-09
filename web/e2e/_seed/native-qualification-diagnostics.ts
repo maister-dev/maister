@@ -70,6 +70,7 @@ const commandSchema = z.object({
   applicationNextRetryAt: timestamp.nullable(),
   code: optionalText,
   reason: optionalText,
+  terminationStage: z.enum(["process_exit", "terminal_output"]).nullable(),
   applicationReason: optionalText,
   applicationCauseCode: optionalText,
   applicationCauseReason: optionalText,
@@ -345,6 +346,8 @@ export async function captureNativeQualificationDiagnostics(
         to_jsonb(c.completion_applied_at)#>>'{}' AS "completionAppliedAt",
         to_jsonb(c.application_next_retry_at)#>>'{}' AS "applicationNextRetryAt",
         c.last_error->>'code' AS code,coalesce(c.last_error->'details'->>'reason',c.last_error->>'reason') AS reason,
+        CASE WHEN c.kind='session.delete' AND c.last_error->'details'->>'stage' IN ('process_exit','terminal_output')
+          THEN c.last_error->'details'->>'stage' ELSE NULL END AS "terminationStage",
         c.application_error->>'reason' AS "applicationReason",c.application_error->>'causeCode' AS "applicationCauseCode",
         c.application_error->>'causeReason' AS "applicationCauseReason",c.application_error->>'phase' AS "applicationPhase",
         c.application_error->>'classification' AS "applicationClassification",count(*) OVER()::int AS total
