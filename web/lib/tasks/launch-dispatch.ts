@@ -27,6 +27,7 @@ import {
   lockTaskLaunchBoundRun,
 } from "./launch-locks";
 import { launchRefusal } from "./launch-resolution";
+import { isTaskLaunchContention } from "./launch-contention";
 
 import {
   launchAcceptedTaskAgentRun,
@@ -79,9 +80,9 @@ async function settlePreparationFailure(
       ? error.details.reason
       : "launch_preparation_failed";
   const busy =
+    isTaskLaunchContention(error) ||
     (isMaisterError(error) && error.code === "EXECUTOR_UNAVAILABLE") ||
     [
-      "operation_busy",
       "host_pressured",
       "network",
       "timeout",
@@ -303,6 +304,62 @@ async function startBoundTaskLaunch(db: Db, intentId: string): Promise<void> {
     });
 }
 
+/** A refused admission has no live preparation owner; preserve its identity for the next sweep. */
+export async function deferQueuedTaskLaunchIntent(
+  db: Db,
+  intentId: string,
+  error: unknown,
+): Promise<void> {
+  const [initial] = await db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.id, intentId));
+
+  if (!initial) throw error;
+  await db.transaction(async (tx) => {
+    await takeSchedulerLock(tx);
+    await lockTaskLaunchReservation(tx, initial.taskId);
+    const reason =
+      isMaisterError(error) && typeof error.details?.reason === "string"
+        ? error.details.reason
+        : "launch_dispatch_unavailable";
+    const [deferred] = await tx
+      .update(taskLaunchIntents)
+      .set({
+        state: "queued",
+        reason,
+        dueAt: sql`clock_timestamp()+interval '1 second'`,
+        leaseToken: null,
+        leaseExpiresAt: null,
+        stateVersion: initial.stateVersion + 1,
+        updatedAt: sql`clock_timestamp()`,
+      })
+      .where(
+        and(
+          eq(taskLaunchIntents.id, intentId),
+          eq(taskLaunchIntents.stateVersion, initial.stateVersion),
+          or(
+            eq(taskLaunchIntents.state, "queued"),
+            and(
+              eq(taskLaunchIntents.state, "preparing"),
+              isNull(taskLaunchIntents.runId),
+              isNull(taskLaunchIntents.originalRunId),
+              sql`${taskLaunchIntents.leaseExpiresAt}<=clock_timestamp()`,
+            ),
+          ),
+        ),
+      )
+      .returning();
+
+    if (!deferred) return;
+    await emitTaskLaunchChanged(tx, deferred, { type: "system", id: null });
+    log.warn(
+      { intentId, reason, attempts: deferred.attempts },
+      "[FIX:delegation-contention] accepted launch waits for its current execution writer",
+    );
+  });
+}
+
 /** Refused due work is held only when queued or its unbound preparation no longer has a valid owner. */
 export async function holdQueuedTaskLaunchIntent(
   db: Db,
@@ -387,7 +444,9 @@ export async function prepareTaskLaunchIntent(
     claim = await claimTaskLaunchIntent(db, intentId);
   } catch (error) {
     if (pgErrorOf(error)) throw error;
-    await holdQueuedTaskLaunchIntent(db, intentId, error);
+    if (isTaskLaunchContention(error))
+      await deferQueuedTaskLaunchIntent(db, intentId, error);
+    else await holdQueuedTaskLaunchIntent(db, intentId, error);
 
     return currentReceipt(db, intentId);
   }
@@ -505,10 +564,11 @@ export async function dispatchBoundTaskLaunchIntent(
     await startBoundTaskLaunch(db, intentId);
   } catch (error) {
     const yielded =
-      isMaisterError(error) &&
-      ["launch_worker_fenced", "run_state_changed", "operation_busy"].includes(
-        String(error.details?.reason),
-      );
+      isTaskLaunchContention(error) ||
+      (isMaisterError(error) &&
+        ["launch_worker_fenced", "run_state_changed"].includes(
+          String(error.details?.reason),
+        ));
 
     if (
       !yielded &&
@@ -516,10 +576,7 @@ export async function dispatchBoundTaskLaunchIntent(
     )
       await holdUndispatchedBoundRun(db, intentId, error);
     else {
-      if (
-        !yielded ||
-        (isMaisterError(error) && error.details?.reason === "operation_busy")
-      )
+      if (!yielded || isTaskLaunchContention(error))
         await deferBoundTaskLaunch(db, intentId, error);
       log.warn(
         {

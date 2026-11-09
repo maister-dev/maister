@@ -22,6 +22,7 @@ import pino from "pino";
 
 import { taskLaunchIntents } from "@/lib/db/schema";
 import { claimTaskLaunchIntent } from "@/lib/tasks/launch-dispatch-claim";
+import { isTaskLaunchContention } from "@/lib/tasks/launch-contention";
 import { prepareTaskLaunchFirstDispatch } from "@/lib/tasks/launch-first-dispatch";
 import { countTaskLaunchPreparationSlots } from "@/lib/tasks/launch-capacity";
 import { getDb } from "@/lib/db/client";
@@ -1143,10 +1144,12 @@ export async function promoteNextPending(
           if (claim) return { kind: "task_intent" as const, claim };
         } catch (error) {
           if (!isMaisterError(error)) throw error;
-          const { holdQueuedTaskLaunchIntent } =
+          const { holdQueuedTaskLaunchIntent, deferQueuedTaskLaunchIntent } =
             await import("@/lib/tasks/launch-dispatch");
 
-          await holdQueuedTaskLaunchIntent(tx, ref.intentId, error);
+          if (isTaskLaunchContention(error))
+            await deferQueuedTaskLaunchIntent(tx, ref.intentId, error);
+          else await holdQueuedTaskLaunchIntent(tx, ref.intentId, error);
         }
         continue;
       }

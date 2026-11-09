@@ -162,6 +162,7 @@ import {
   releaseTaskAgentCaptureAfterFailure,
 } from "@/lib/tasks/launch-agent-definition";
 import { commitTaskAgentLaunchFirstDispatch } from "@/lib/tasks/launch-first-dispatch";
+import { isTaskLaunchContention } from "@/lib/tasks/launch-contention";
 import {
   assertPreparedConsensusDraftAdmission,
   assertConsensusDraftAdmission,
@@ -3973,9 +3974,12 @@ export async function startAgentSession(
 
       return;
     }
-    if (isMaisterError(err) && err.details?.reason === "operation_busy") {
+    if (isTaskLaunchContention(err)) {
       log.info(
-        { runId, reason: "operation_busy" },
+        {
+          runId,
+          reason: err.details?.reason,
+        },
         "agent-preparation-deferred",
       );
 
@@ -4546,7 +4550,7 @@ async function driveAgentSession(
       (run.agentKind !== "operational" && !run.taskLaunchIntentId) ||
       isFencedError(error) ||
       isPreparationIdentityRefusal(error) ||
-      (isMaisterError(error) && error.details?.reason === "operation_busy")
+      isTaskLaunchContention(error)
     ) {
       await releaseAgentPreparationAfterFailure(preparation, error, {
         ...preparationContext,
@@ -5277,6 +5281,20 @@ async function driveAgentSession(
         : originalError;
 
       packageCapture.current = null;
+      if (isTaskLaunchContention(err)) {
+        await releaseAgentPreparationAfterFailure(preparation, err, {
+          ...preparationContext,
+          stage: operationalSpawnStage,
+        });
+        log.info(
+          {
+            runId,
+            reason: err.details?.reason,
+          },
+          "[FIX:delegation-contention] agent preparation yielded before model dispatch",
+        );
+        throw err;
+      }
       if (!isFencedError(err))
         await recordAgentPreparationFailure(preparation, err, {
           ...preparationContext,

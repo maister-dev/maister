@@ -254,6 +254,16 @@ Existing due/lease columns and `task_launch_intents_recovery_idx(state,due_at,id
 suffice; no migration or
 second queue is introduced.
 
+An exact `CONFLICT/delegation_execution_busy` is a transient execution-writer
+deferral, including scheduler/direct preparation claims, child binding and first
+dispatch. It retains the accepted intent, reserved Run and preparation identity,
+does not consume a failure attempt or request cleanup, and schedules the existing
+queued/bound path one second later. An agent that meets contention after
+materialization releases its physical preparation owner before yielding; the
+existing no-generation continuation worker resumes that same Running Run before
+any create/prompt command. Terminal ancestry and stale qualification remain
+permanent refusals. Current-authority checks run again on re-entry.
+
 A wake requests fair service of its pool through
 `promoteNextPending({db,pool})`; an intent ID in a notification is only a hint,
 never authority to select or claim that request. The shared scheduler retains
