@@ -1,15 +1,24 @@
 import { randomUUID } from "node:crypto";
 
 import { sql } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
 import { requireCompanyActionForUser } from "@/lib/authz";
 import { getKnowledgeRecord } from "@/lib/brain/knowledge-records";
-import { resolveKnowledgePrincipal } from "@/lib/brain/knowledge-access";
+import {
+  resolveKnowledgePrincipal,
+  resolveNativeTokenPrincipal,
+} from "@/lib/brain/knowledge-access";
 import { knowledgeReadPolicyCte } from "@/lib/brain/knowledge-query-policy";
 import { authorizeKnowledgeRecordRead } from "@/lib/brain/knowledge-restrictions";
 import { loadProjectBrainPanelData } from "@/lib/brain/ui-queries";
-import { issueOrchestratorRunToken } from "@/lib/agents/tokens";
+import {
+  issueOrchestratorRunToken,
+  revokeOrchestratorRunTokensForRun,
+} from "@/lib/agents/tokens";
+import { pgErrorOf } from "@/lib/db/pg-error";
+import { isMaisterError } from "@/lib/errors";
 import {
   lockKnowledgeReadConsumer,
   recordKnowledgeDisclosure,
@@ -832,3 +841,236 @@ it("IT-CBK-05 native reads keep oversized legacy assertions usable without inven
     details: { reason: "knowledge_reference_unavailable" },
   });
 });
+
+async function nativeDisclosureCredentialFixture() {
+  const project = await seedProjectRow(database.db);
+  const runId = await seedRun(database.db, {
+    projectId: project.id,
+    status: "Running",
+    runKind: "flow",
+  });
+
+  await database.pool.query(
+    "UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1",
+    [
+      runId,
+      JSON.stringify({
+        schemaVersion: 1,
+        state: "complete",
+        generation: 1,
+        restrictions: [],
+      }),
+    ],
+  );
+  const issued = await issueOrchestratorRunToken({
+    projectId: project.id,
+    runId,
+    db: database.db,
+  });
+
+  return { projectId: project.id, runId, tokenId: issued.tokenId };
+}
+
+it("IT-CBE-06 native disclosure and the actual token issuer serialize without a Run/token lock cycle", async () => {
+  const fixture = await nativeDisclosureCredentialFixture();
+  const tokenLocked = Promise.withResolvers<number>();
+  const releaseReader = Promise.withResolvers<void>();
+  const dialect = new PgDialect();
+  let intercepted = false;
+  const reader = database.db
+    .transaction(async (tx) => {
+      await tx.execute(sql`SET LOCAL statement_timeout='8s'`);
+      const consumer = await lockKnowledgeReadConsumer(
+        {
+          execute: async (query) => {
+            const result = await tx.execute(query);
+            const text = dialect.sqlToQuery(query).sql;
+
+            if (
+              !intercepted &&
+              /project_tokens/i.test(text) &&
+              /FOR SHARE/i.test(text)
+            ) {
+              intercepted = true;
+              const backend = await tx.execute(
+                sql`SELECT pg_backend_pid() AS pid`,
+              );
+
+              tokenLocked.resolve(Number(backend.rows[0]!.pid));
+              await releaseReader.promise;
+            }
+
+            return result;
+          },
+        },
+        { kind: "token", tokenId: fixture.tokenId },
+      );
+
+      await recordKnowledgeDisclosure(tx, consumer, [
+        { kind: "project", projectId: fixture.projectId },
+      ]);
+    })
+    .then(
+      () => ({ status: "fulfilled" as const }),
+      (error: unknown) => ({
+        status: "rejected" as const,
+        sqlState: pgErrorOf(error)?.code,
+      }),
+    );
+  const backendId = await tokenLocked.promise;
+  const issuer = issueOrchestratorRunToken({
+    projectId: fixture.projectId,
+    runId: fixture.runId,
+    db: database.db,
+  }).then(
+    () => ({ status: "fulfilled" as const }),
+    (error: unknown) => ({
+      status: "rejected" as const,
+      sqlState: pgErrorOf(error)?.code,
+    }),
+  );
+
+  try {
+    await expect
+      .poll(async () =>
+        Number(
+          (
+            await database.pool.query(
+              "SELECT count(*)::int AS count FROM pg_stat_activity WHERE $1::integer=ANY(pg_blocking_pids(pid))",
+              [backendId],
+            )
+          ).rows[0]!.count,
+        ),
+      )
+      .toBe(1);
+  } finally {
+    releaseReader.resolve();
+  }
+  expect(await Promise.all([reader, issuer])).toEqual([
+    { status: "fulfilled" },
+    { status: "fulfilled" },
+  ]);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT knowledge_access FROM runs WHERE id=$1",
+        [fixture.runId],
+      )
+    ).rows[0]!.knowledge_access,
+  ).toMatchObject({
+    generation: 2,
+    restrictions: [{ kind: "project", projectId: fixture.projectId }],
+  });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT revoked_at IS NOT NULL AS revoked FROM project_tokens WHERE id=$1",
+        [fixture.tokenId],
+      )
+    ).rows[0]!.revoked,
+  ).toBe(true);
+});
+
+it.each(["disclosure", "native_identity"] as const)(
+  "IT-CBE-06 current token revocation wins while %s waits for its Run and discloses no data",
+  async (mode) => {
+    const fixture = await nativeDisclosureCredentialFixture();
+    const runLocked = Promise.withResolvers<number>();
+    const revokeNow = Promise.withResolvers<void>();
+    const revoker = database.db
+      .transaction(async (tx) => {
+        await tx.execute(sql`SET LOCAL statement_timeout='8s'`);
+        await tx.execute(
+          sql`SELECT id FROM runs WHERE id=${fixture.runId} FOR UPDATE`,
+        );
+        runLocked.resolve(
+          Number(
+            (await tx.execute(sql`SELECT pg_backend_pid() AS pid`)).rows[0]!
+              .pid,
+          ),
+        );
+        await revokeNow.promise;
+        await revokeOrchestratorRunTokensForRun(fixture.runId, tx);
+      })
+      .then(
+        () => ({ status: "fulfilled" as const }),
+        (error: unknown) => ({
+          status: "rejected" as const,
+          sqlState: pgErrorOf(error)?.code,
+        }),
+      );
+    const backendId = await runLocked.promise;
+    const reader = database.db
+      .transaction(async (tx) => {
+        await tx.execute(sql`SET LOCAL statement_timeout='8s'`);
+        if (mode === "native_identity")
+          await resolveNativeTokenPrincipal(
+            tx,
+            fixture.tokenId,
+            "knowledge:read",
+          );
+        else {
+          const consumer = await lockKnowledgeReadConsumer(tx, {
+            kind: "token",
+            tokenId: fixture.tokenId,
+          });
+
+          await recordKnowledgeDisclosure(tx, consumer, [
+            { kind: "project", projectId: fixture.projectId },
+          ]);
+        }
+      })
+      .then(
+        () => ({ status: "fulfilled" as const }),
+        (error: unknown) => ({
+          status: "rejected" as const,
+          domainCode: isMaisterError(error) ? error.code : undefined,
+          sqlState: pgErrorOf(error)?.code,
+        }),
+      );
+
+    try {
+      await expect
+        .poll(async () =>
+          Number(
+            (
+              await database.pool.query(
+                "SELECT count(*)::int AS count FROM pg_stat_activity WHERE $1::integer=ANY(pg_blocking_pids(pid))",
+                [backendId],
+              )
+            ).rows[0]!.count,
+          ),
+        )
+        .toBe(1);
+    } finally {
+      revokeNow.resolve();
+    }
+    const [revocationOutcome, readOutcome] = await Promise.all([
+      revoker,
+      reader,
+    ]);
+
+    expect(revocationOutcome).toEqual({ status: "fulfilled" });
+    expect(readOutcome).toMatchObject({
+      status: "rejected",
+      domainCode: "UNAUTHORIZED",
+      sqlState: undefined,
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT knowledge_access FROM runs WHERE id=$1",
+          [fixture.runId],
+        )
+      ).rows[0]!.knowledge_access,
+    ).toMatchObject({ generation: 1, restrictions: [] });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT revoked_at IS NOT NULL AS revoked FROM project_tokens WHERE id=$1",
+          [fixture.tokenId],
+        )
+      ).rows[0]!.revoked,
+    ).toBe(true);
+  },
+);

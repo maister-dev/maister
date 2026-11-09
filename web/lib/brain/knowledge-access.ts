@@ -10,6 +10,7 @@ import type { SessionUser } from "@/lib/authz";
 import { sql } from "drizzle-orm";
 
 import { resolveKnowledgeRunIdentity } from "./knowledge-run-identity";
+import { lockCurrentNativeKnowledgeToken } from "./knowledge-token-lock";
 
 import { requireCompanyRunCredentialOwner } from "@/lib/agents/company-run-credential-owner";
 import { projectRolesForActions } from "@/lib/authz";
@@ -153,11 +154,7 @@ export async function resolveNativeTokenPrincipal(
   tokenId: string,
   action: CompanyAction,
 ): Promise<KnowledgePrincipalIdentity> {
-  const token = (
-    await tx.execute(
-      sql`SELECT id,name,token_kind,owner_user_id,project_id,company_id,company_run_id,agent_id,scopes,knowledge_node_attempt_id FROM project_tokens WHERE id=${tokenId} AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>now()) FOR SHARE`,
-    )
-  ).rows[0];
+  const token = await lockCurrentNativeKnowledgeToken(tx, tokenId);
 
   if (
     !token ||

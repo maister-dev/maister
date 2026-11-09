@@ -2,7 +2,7 @@
 
 ## Purpose
 
-**Implemented and locally qualified — ADR-202; CB0 release gates pass.** Structured storage, publication/confirmation policy, session/bearer APIs, built MCP tools, explicit company authority and EN/RU knowledge/review views are implemented and platform-qualified. Native launch capture inheritance and outward source-access guards are also platform-qualified. Actual local `rah/v1.0.4` at `a1ddf140369bbae7fe7efc9db88ff82b0a2289e6` passes real-loader/ACP depth-one and depth-two research, human write-back review without implicit confirmation, revoked-reference handling and localized evidence inspection. The production build and complete web integration regression pass on immutable CB0 source `6729ac891801fd33f66d5bdfefe024425e9953b4`; evidence is retained under `.ai-factory/qa/company-brain-specialist-assignments/T17/`. No remote publication or deployment is implied. Stand maintenance belongs to the separate CB1 gate. Structured company/project knowledge extends Project Brain. This domain owns record identity, publication and confirmation; [evidence](company-brain-evidence.md) owns source witnesses. Personal librarian and private agent memory are separate stores.
+**Implemented — ADR-202; historical CB0 qualification retained, current branch requalification pending.** Structured storage, publication/confirmation policy, session/bearer APIs, built MCP tools, explicit company authority and EN/RU knowledge/review views are implemented and platform-qualified. Native launch capture inheritance and outward source-access guards are also platform-qualified. The retained qualification on immutable CB0 source `6729ac891801fd33f66d5bdfefe024425e9953b4` shows actual local `rah/v1.0.4` at `a1ddf140369bbae7fe7efc9db88ff82b0a2289e6` passed real-loader/ACP depth-one and depth-two research, human write-back review without implicit confirmation, revoked-reference handling and localized evidence inspection. The same source passed the production build and complete web integration regression; evidence is retained under `.ai-factory/qa/company-brain-specialist-assignments/T17/`. No remote publication or deployment is implied. Stand maintenance belongs to the separate CB1 gate. Structured company/project knowledge extends Project Brain. This domain owns record identity, publication and confirmation; [evidence](company-brain-evidence.md) owns source witnesses. Personal librarian and private agent memory are separate stores.
 
 ## Domain entities
 
@@ -183,6 +183,12 @@ controls, confirmation revocation and current access revocation. Its fixture
 supervisor does not qualify installed agents, ACP cooperation or the stand pilot.
 
 ### Native write admission and transport refusals
+
+Execution-bound native reads and writes lock the consumer Run before locking
+its current credential, matching issuance and revocation. An unlocked credential
+lookup only locates that lock; binding, revocation and wall-clock expiry are
+revalidated under the token lock before current scope, role and source checks.
+Revocation during admission refuses disclosure without widening its capture.
 
 Native create/review/confirmation transactions take the consumer run lock first,
 then the installation-wide transaction advisory write lock before any record or

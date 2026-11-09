@@ -13,6 +13,7 @@ import pino from "pino";
 
 import { assertNativeWorkspaceMode } from "./knowledge-workspace-policy";
 import { knowledgeWriteLockSql } from "./knowledge-write-lock";
+import { lockCurrentNativeKnowledgeToken } from "./knowledge-token-lock";
 
 import {
   knowledgeAccessCaptureSchema,
@@ -77,17 +78,8 @@ export async function lockKnowledgeReadConsumer(
   if (principal.kind === "user") return null;
   if (principal.kind === "execution")
     return lockRunKnowledgeReadConsumer(tx, principal.runId);
-  const token = (
-    await tx.execute(
-      sql`SELECT name,token_kind FROM project_tokens WHERE id=${principal.tokenId} AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>now()) FOR SHARE`,
-    )
-  ).rows[0];
+  const token = await lockCurrentNativeKnowledgeToken(tx, principal.tokenId);
 
-  if (!token)
-    throw new MaisterError(
-      "UNAUTHORIZED",
-      "A current native knowledge token is required",
-    );
   if (token.token_kind === "user") return null;
   if (
     token.token_kind !== "agent" &&
