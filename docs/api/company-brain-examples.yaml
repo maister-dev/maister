@@ -323,6 +323,7 @@ cases:
       relation: supports
       unavailable:
         state: missing
+        reasonCode: record_evidence_missing
         reason: Retained proof is currently unavailable; no source metadata is reconstructed.
   - id: conflict-reference-retains-original-revision
     surfaces: [web, external]

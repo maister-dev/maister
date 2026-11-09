@@ -88,6 +88,7 @@ export async function getKnowledgeRecord(
           recordId: selector.recordId,
           revision: result.record.revision,
           evidenceCount: result.record.evidence.length,
+          diagnosticCodes: result.record.diagnostics,
         },
         "structured knowledge disclosed",
       );
@@ -158,22 +159,23 @@ export async function readKnowledgeRecord(
     revision,
     access,
   );
-  const limitations = boundedLimitations(row.limitations, proof.items);
-
-  if (row.source_restrictions === null && limitations.length < 32)
-    limitations.push(
-      "Historical source classification is unknown; retained ownership and current record policy still apply.",
-    );
+  const retained = retainedLimitations(row.limitations, row.provenance);
 
   if (typeof row.assertion !== "string")
     throw new MaisterError("CONFIG", "Retained assertion content is invalid");
   const assertion = truncateUtf16(row.assertion, 32000);
   const assertionTruncated = assertion.length !== row.assertion.length;
 
-  if (assertionTruncated && limitations.length < 32)
-    limitations.push(
-      "Legacy assertion exceeds the native display limit; the returned assertion is an explicit prefix of the retained original.",
-    );
+  const diagnostics: KnowledgeRecordDto["diagnostics"] = [
+    ...retained.diagnostics,
+    ...(row.source_restrictions === null
+      ? (["historical_source_classification_unknown"] as const)
+      : []),
+    ...(assertionTruncated ? (["assertion_truncated"] as const) : []),
+    ...(proof.items.some((entry) => "unavailable" in entry)
+      ? (["accepted_evidence_unavailable"] as const)
+      : []),
+  ];
 
   const fresh = row.freshness as KnowledgeRecordDto["freshness"];
   const parsed = knowledgeRecordSchema.safeParse({
@@ -197,7 +199,8 @@ export async function readKnowledgeRecord(
       sourceAt: knowledgeTimestamp(fresh.sourceAt),
       capturedAt: knowledgeTimestamp(fresh.capturedAt),
     },
-    limitations,
+    limitations: retained.limitations,
+    diagnostics,
     conflict: conflict.value,
     updatedAt: knowledgeTimestamp(row.updated_at),
   });
@@ -271,6 +274,7 @@ async function readRecordEvidence(
           relation: link.relation,
           unavailable: {
             state: "missing",
+            reasonCode: "record_evidence_missing",
             reason:
               "Retained evidence is unavailable; no source metadata has been reconstructed.",
           },
@@ -347,26 +351,38 @@ async function readRecordConfirmation(
   };
 }
 
-function boundedLimitations(
+function retainedLimitations(
   raw: unknown,
-  evidence: readonly KnowledgeRecordEvidence[],
-): string[] {
+  provenance: unknown,
+): Pick<KnowledgeRecordDto, "limitations" | "diagnostics"> {
   if (!Array.isArray(raw) || !raw.every((entry) => typeof entry === "string"))
     throw new MaisterError(
       "CONFIG",
       "Stored knowledge limitations are invalid",
     );
-  const limitations: string[] = [...raw];
-
   if (
-    evidence.some((entry) => "unavailable" in entry) &&
-    limitations.length < 32
+    provenance !== "submitted" &&
+    provenance !== "legacy_migration" &&
+    provenance !== "legacy_writer"
   )
-    limitations.push(
-      "Some accepted evidence is unavailable; current support is incomplete.",
-    );
+    throw new MaisterError("CONFIG", "Stored knowledge provenance is invalid");
+  const legacy =
+    provenance === "legacy_migration"
+      ? {
+          text: "Legacy metadata does not establish submitting identity, observation time or confirmation.",
+          code: "legacy_metadata_unknown" as const,
+        }
+      : provenance === "legacy_writer"
+        ? {
+            text: "Legacy writer metadata does not establish submitting identity, observation time or confirmation.",
+            code: "legacy_writer_metadata_unknown" as const,
+          }
+        : null;
 
-  return limitations;
+  return {
+    limitations: raw.filter((entry) => entry !== legacy?.text),
+    diagnostics: legacy && raw.includes(legacy.text) ? [legacy.code] : [],
+  };
 }
 
 async function readRecordConflict(

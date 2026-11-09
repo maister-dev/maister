@@ -123,12 +123,16 @@ export default async function KnowledgeRecordPage({
           <section className={knowledgePanelClass}>
             <h2 className="mb-3 font-semibold text-ink">{t("limitations")}</h2>
             {record.limitations.length === 0 &&
+            record.diagnostics.length === 0 &&
             record.missingEvidence.length === 0 ? (
               <p className="text-sm text-mute">{t("noLimitations")}</p>
             ) : (
               <ul className="list-inside list-disc space-y-2 text-sm text-mute">
                 {record.limitations.map((item, index) => (
                   <li key={`limitation:${index}`}>{item}</li>
+                ))}
+                {record.diagnostics.map((code) => (
+                  <li key={code}>{t(`diagnostic.${code}`)}</li>
                 ))}
                 {record.missingEvidence.map((item, index) => (
                   <li key={`missing:${index}`}>

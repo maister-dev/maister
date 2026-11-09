@@ -7038,7 +7038,18 @@
     "sourceSelector": "Source selector",
     "publicationRevisionUnknown": "The original publication revision is unknown; inspect the current record.",
     "errorBusy": "Another knowledge update is in progress. Inspect current state and retry the same request when it finishes.",
-    "errorSize": "Narrow the request, source text or evidence dependencies before trying again."
+    "errorSize": "Narrow the request, source text or evidence dependencies before trying again.",
+    "diagnostic": {
+      "legacy_metadata_unknown": "Legacy metadata does not establish submitting identity, observation time or confirmation.",
+      "legacy_writer_metadata_unknown": "Legacy writer metadata does not establish submitting identity, observation time or confirmation.",
+      "historical_source_classification_unknown": "Historical source classification is unknown; retained ownership and current record policy still apply.",
+      "assertion_truncated": "Legacy assertion exceeds the native display limit; the returned assertion is an explicit prefix of the retained original.",
+      "accepted_evidence_unavailable": "Some accepted evidence is unavailable; current support is incomplete."
+    },
+    "evidenceDiagnostic": {
+      "record_evidence_missing": "Retained evidence is unavailable; no source metadata has been reconstructed.",
+      "proposal_source_capture_missing": "The proposal's retained source capture is currently unavailable."
+    }
   },
   "findings": {
     "title": "Evidence-linked findings",

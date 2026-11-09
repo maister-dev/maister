@@ -113,7 +113,7 @@ The existing run inspector renders structured findings only for the frozen nativ
 
 `findings` provides EN/RU native evidence/history labels. `knowledge` provides EN/RU labels and mutation feedback; `nav.knowledge`,
 `brain.structuredKnowledge` and `settings.companyAccess*` provide entry points.
-Captured source bytes and submitted assertions retain their original language.
+System-generated legacy/source-availability warnings use localized diagnostic copy, separately from authored limitations. Corrections retain selected missing-evidence declarations without copying generated diagnostics into authored knowledge. Captured source bytes and submitted assertions retain their original language.
 Dates use the active locale and explicit UTC. Loading and error states reuse the
 shared route skeleton and error boundary.
 

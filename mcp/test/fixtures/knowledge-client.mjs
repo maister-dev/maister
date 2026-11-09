@@ -1,6 +1,8 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
+import nativeToolSchemas from "../../../runtime/knowledge-tool-input.schema.json" with { type: "json" };
+
 let input = "";
 
 for await (const chunk of process.stdin) input += chunk;
@@ -215,7 +217,9 @@ try {
   process.stdout.write(
     JSON.stringify({
       workflow,
-      tools: tools.filter((tool) => tool.name.startsWith("knowledge_")),
+      tools: tools.filter((tool) =>
+        Object.hasOwn(nativeToolSchemas, tool.name),
+      ),
       capture,
       record,
       search,

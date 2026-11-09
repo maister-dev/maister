@@ -13144,6 +13144,7 @@ components:
         - attribution
         - freshness
         - limitations
+        - diagnostics
         - conflict
         - updatedAt
       properties:
@@ -13322,6 +13323,13 @@ components:
             minLength: 1
             maxLength: 1000
           maxItems: 32
+        diagnostics:
+          type: array
+          description: Server-derived limitation codes, separate from authored limitations and localized by the receiving UI. Historical revision bytes are unchanged.
+          maxItems: 5
+          items:
+            type: string
+            enum: [legacy_metadata_unknown, legacy_writer_metadata_unknown, historical_source_classification_unknown, assertion_truncated, accepted_evidence_unavailable]
         conflict:
           type: object
           additionalProperties: false
@@ -18191,9 +18199,10 @@ components:
     CBUnavailableEvidence:
       type: object
       additionalProperties: false
-      required: [state, reason]
+      required: [state, reasonCode, reason]
       properties:
         state: {type: string, enum: [missing, inaccessible, unknown]}
+        reasonCode: {type: string, enum: [record_evidence_missing, proposal_source_capture_missing], description: Server-derived diagnostic identity for localized presentation; reason remains an inspectable diagnostic description.}
         reason: {type: string, minLength: 1, maxLength: 1000}
     CBKnowledgeConflictPage:
       type: object

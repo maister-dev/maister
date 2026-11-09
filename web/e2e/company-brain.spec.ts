@@ -1,15 +1,212 @@
+import type { Pool } from "pg";
+
 import { randomUUID } from "node:crypto";
 
-import { Pool } from "pg";
 import { z } from "zod";
 import { expect, test } from "@playwright/test";
 
 import { loadFixtures } from "./_seed/fixtures";
+import { createE2EDbPool } from "./_seed/db";
 
 import { resolvePostgresDbUrl } from "@/lib/db/postgres-url";
 import { contentDigest } from "@/lib/evaluations/digest";
 
 test.use({ actionTimeout: 10000 });
+
+async function enableKnowledgeProject(
+  pool: Pool,
+  slug: string,
+): Promise<string> {
+  const result = await pool.query(
+    "UPDATE projects SET brain_enabled=true WHERE slug=$1 RETURNING id",
+    [slug],
+  );
+
+  return z.object({ id: z.string() }).parse(result.rows[0]).id;
+}
+
+test("E2E-CBU-01 correction retains an explicit missing-evidence declaration and preserves authored diagnostic-like text", async ({
+  page,
+  context,
+}) => {
+  const { byKey } = loadFixtures();
+  const pool = createE2EDbPool(resolvePostgresDbUrl());
+  const assertion = `Unverified maintenance hypothesis ${randomUUID()}`;
+  const missing =
+    "An independent configured health observation is unavailable.";
+  const authored =
+    "Legacy writer metadata does not establish submitting identity, observation time or confirmation.";
+
+  try {
+    const projectId = await enableKnowledgeProject(
+      pool,
+      byKey.m11a.projectSlug,
+    );
+    const created = await page.request.post("/api/knowledge/proposals", {
+      data: {
+        idempotencyKey: randomUUID(),
+        content: {
+          change: "add",
+          owner: { kind: "project", projectId },
+          title: assertion,
+          kind: "assertion",
+          assertion,
+          basis: "inferred",
+          evidence: [],
+          missingEvidence: [{ state: "absent", reason: missing }],
+          limitations: [authored],
+        },
+      },
+    });
+
+    expect(created.status(), await created.text()).toBe(201);
+    const proposal = z.object({ id: z.string() }).parse(await created.json());
+    const accepted = await page.request.post(
+      `/api/knowledge/proposals/${proposal.id}/decision`,
+      {
+        data: {
+          expectedRevision: 1,
+          decision: "accept",
+          reason:
+            "Publish an explicitly unsupported hypothesis without confirming it.",
+          idempotencyKey: randomUUID(),
+        },
+      },
+    );
+
+    expect(accepted.status(), await accepted.text()).toBe(200);
+    const recordId = z
+      .object({ published_record_id: z.string() })
+      .parse(
+        (
+          await pool.query(
+            "SELECT published_record_id FROM brain_proposals WHERE id=$1",
+            [proposal.id],
+          )
+        ).rows[0],
+      ).published_record_id;
+
+    await page.goto(`/knowledge/${recordId}`);
+    await context.addCookies([
+      { name: "NEXT_LOCALE", value: "ru", url: new URL(page.url()).origin },
+    ]);
+    await page.reload();
+    await expect(
+      page.getByRole("main").getByText(authored, { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("link", { name: "Предложить исправление", exact: true })
+      .click();
+    await page
+      .getByLabel("Утверждение", { exact: true })
+      .fill(`${assertion}: corrected`);
+    const retained = page.getByRole("checkbox", { name: new RegExp(missing) });
+
+    await expect(retained).toBeChecked();
+    await retained.uncheck();
+    await page
+      .getByRole("button", { name: "Отправить предложение", exact: true })
+      .click();
+    await expect(page.getByRole("main").getByRole("alert")).toHaveText(
+      "Проверьте обязательные поля и ссылки на доказательства.",
+    );
+    await retained.check();
+    await page
+      .getByRole("button", { name: "Отправить предложение", exact: true })
+      .click();
+    await expect(page).toHaveURL(/\/knowledge\/proposals\/[^/]+$/);
+    const correctionId = page.url().split("/").at(-1)!;
+    const retainedDraft = z
+      .object({
+        draft: z.object({
+          missingEvidence: z.array(
+            z.object({ state: z.string(), reason: z.string() }),
+          ),
+          limitations: z.array(z.string()),
+        }),
+      })
+      .parse(
+        (
+          await pool.query("SELECT draft FROM brain_proposals WHERE id=$1", [
+            correctionId,
+          ])
+        ).rows[0],
+      ).draft;
+
+    expect(retainedDraft).toMatchObject({
+      missingEvidence: [{ state: "absent", reason: missing }],
+      limitations: [authored],
+    });
+  } finally {
+    await pool.end();
+  }
+});
+
+test("E2E-CBU-01 missing retained evidence and legacy metadata diagnostics use the active language", async ({
+  page,
+  context,
+}, testInfo) => {
+  const { byKey } = loadFixtures();
+  const pool = createE2EDbPool(resolvePostgresDbUrl());
+  const recordId = randomUUID();
+  const original = "Legacy retained maintenance observation";
+
+  try {
+    const projectId = await enableKnowledgeProject(
+      pool,
+      byKey.m11a.projectSlug,
+    );
+
+    await pool.query(
+      "INSERT INTO brain_items(id,project_id,kind,title,content,content_hash,confidence) VALUES($1,$2,'state_fact','Legacy diagnostic inspection',$3,$4,0.99)",
+      [recordId, projectId, original, randomUUID()],
+    );
+    await pool.query(
+      "INSERT INTO brain_revision_evidence(record_id,revision,witness_id,relation,witness_snapshot) VALUES($1,1,$2,'supports','{\"restrictions\":[]}'::jsonb)",
+      [recordId, randomUUID()],
+    );
+    await page.goto(`/knowledge/${recordId}`);
+    for (const [locale, messages] of [
+      [
+        "en",
+        [
+          "Legacy writer metadata does not establish submitting identity, observation time or confirmation.",
+          "Retained evidence is unavailable; no source metadata has been reconstructed.",
+          "Some accepted evidence is unavailable; current support is incomplete.",
+          "Historical source classification is unknown; retained ownership and current record policy still apply.",
+        ],
+      ],
+      [
+        "ru",
+        [
+          "Метаданные прежнего способа записи не устанавливают автора, время наблюдения или подтверждение.",
+          "Сохранённое доказательство недоступно; метаданные источника не восстанавливались.",
+          "Часть принятых доказательств недоступна; текущая доказательная база неполна.",
+          "Классификация прежних источников неизвестна; сохранённое владение и текущая политика записи продолжают действовать.",
+        ],
+      ],
+    ] as const) {
+      await context.addCookies([
+        { name: "NEXT_LOCALE", value: locale, url: new URL(page.url()).origin },
+      ]);
+      await page.reload();
+      const surface = page.getByRole("main");
+
+      for (const message of messages)
+        await expect(surface.getByText(message, { exact: true })).toBeVisible();
+      await expect(surface.getByText(original, { exact: true })).toBeVisible();
+    }
+    expect(await page.getByRole("main").innerText()).not.toContain(
+      "Retained evidence is unavailable;",
+    );
+    await page.screenshot({
+      path: testInfo.outputPath("knowledge-degraded-ru.png"),
+      fullPage: true,
+    });
+  } finally {
+    await pool.end();
+  }
+});
 
 test("E2E-CBU-01 original delegated input is inspectable in English and Russian and withheld when capture becomes unavailable", async ({
   page,
@@ -18,7 +215,7 @@ test("E2E-CBU-01 original delegated input is inspectable in English and Russian 
   test.setTimeout(120000);
   const { byKey } = loadFixtures();
   const runId = byKey.m11a.runId!;
-  const pool = new Pool({ connectionString: resolvePostgresDbUrl() });
+  const pool = createE2EDbPool(resolvePostgresDbUrl());
   const parentId = randomUUID();
   const row = z
     .object({
@@ -394,7 +591,7 @@ test("E2E-CBU-01 findings preserve exact evidence links and retained revisions i
   test.setTimeout(120000);
   const { byKey } = loadFixtures();
   const projectSlug = byKey.m11a.projectSlug;
-  const pool = new Pool({ connectionString: resolvePostgresDbUrl() });
+  const pool = createE2EDbPool(resolvePostgresDbUrl());
   const runId = randomUUID();
   const childRunId = randomUUID();
   const assertion = `Bounded health observation ${randomUUID()}`;

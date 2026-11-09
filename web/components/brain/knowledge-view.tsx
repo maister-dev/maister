@@ -172,7 +172,9 @@ export async function KnowledgeEvidence({
                   </Link>
                 </>
               ) : (
-                <p className="mt-1 text-mute">{entry.unavailable.reason}</p>
+                <p className="mt-1 text-mute">
+                  {t(`evidenceDiagnostic.${entry.unavailable.reasonCode}`)}
+                </p>
               )}
             </li>
           ))}

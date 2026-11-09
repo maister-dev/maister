@@ -794,9 +794,12 @@ it("IT-CBK-05 native reads keep oversized legacy assertions usable without inven
     },
   });
   expect(result.assertion).toBe("Ж".repeat(31999));
-  expect(result.limitations).toContain(
-    "Legacy assertion exceeds the native display limit; the returned assertion is an explicit prefix of the retained original.",
-  );
+  expect(result.limitations).toEqual([]);
+  expect(result.diagnostics).toEqual([
+    "legacy_writer_metadata_unknown",
+    "historical_source_classification_unknown",
+    "assertion_truncated",
+  ]);
   expect(
     (
       await database.pool.query("SELECT content FROM brain_items WHERE id=$1", [
@@ -804,6 +807,20 @@ it("IT-CBK-05 native reads keep oversized legacy assertions usable without inven
       ])
     ).rows,
   ).toEqual([{ content: original }]);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT limitations FROM brain_record_revisions WHERE record_id=$1 AND revision=1",
+        [recordId],
+      )
+    ).rows,
+  ).toEqual([
+    {
+      limitations: [
+        "Legacy writer metadata does not establish submitting identity, observation time or confirmation.",
+      ],
+    },
+  ]);
   await database.pool.query(
     "DELETE FROM project_members WHERE project_id=$1 AND user_id=$2",
     [project.id, userId],

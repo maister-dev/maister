@@ -114,8 +114,14 @@ export function KnowledgeProposalForm({
         });
       }
       const missing = String(form.get("missingReason") ?? "").trim();
+      const missingEvidence = [
+        ...(record?.missingEvidence.filter((_entry, index) =>
+          form.getAll("retainedMissing").includes(String(index)),
+        ) ?? []),
+        ...(missing ? [{ state: "absent" as const, reason: missing }] : []),
+      ];
 
-      if (evidence.length === 0 && missing === "")
+      if (evidence.length === 0 && missingEvidence.length === 0)
         throw new MaisterError(
           "CONFIG",
           "Describe the missing evidence explicitly",
@@ -127,12 +133,7 @@ export function KnowledgeProposalForm({
         assertion: String(form.get("assertion") ?? ""),
         basis: String(form.get("basis") ?? ""),
         evidence,
-        missingEvidence: [
-          ...(record?.missingEvidence.filter((_entry, index) =>
-            form.getAll("retainedMissing").includes(String(index)),
-          ) ?? []),
-          ...(missing ? [{ state: "absent" as const, reason: missing }] : []),
-        ],
+        missingEvidence,
         limitations: [
           ...(record?.limitations.filter((_entry, index) =>
             form.getAll("retainedLimitations").includes(String(index)),

@@ -1298,15 +1298,16 @@ it("IT-CBE-06 run-bound native reads bind current grants to the immutable role/p
       )
     ).rows[0].source_restrictions,
   ).toEqual(inherited.source_restrictions);
-  await database.pool.query(
-    "UPDATE project_tokens SET agent_id=$2 WHERE id=$1",
-    [token.tokenId, otherAgentId],
-  );
-  expect((await read()).status).toBe(403);
-  await database.pool.query(
-    "UPDATE project_tokens SET agent_id=$2 WHERE id=$1",
-    [token.tokenId, agentId],
-  );
+  await expect(
+    database.pool.query("UPDATE project_tokens SET agent_id=$2 WHERE id=$1", [
+      token.tokenId,
+      otherAgentId,
+    ]),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "project_tokens_run_origin_immutable",
+  });
+  expect((await read()).status).toBe(200);
   await database.pool.query(
     "UPDATE package_installs SET trust_status='untrusted' WHERE id=$1",
     [installationId],

@@ -65,6 +65,10 @@ const knowledgeEvidenceRelationSchema = z.enum([
 const unavailableEvidenceSchema = z
   .object({
     state: z.enum(["missing", "inaccessible", "unknown"]),
+    reasonCode: z.enum([
+      "record_evidence_missing",
+      "proposal_source_capture_missing",
+    ]),
     reason: postgresTextSchema.min(1).max(1000),
   })
   .strict();
@@ -127,6 +131,17 @@ export const knowledgeRecordSchema = z
     attribution: knowledgeActorSchema,
     freshness: knowledgeFreshnessSchema,
     limitations: z.array(postgresTextSchema.min(1).max(1000)).max(32),
+    diagnostics: z
+      .array(
+        z.enum([
+          "legacy_metadata_unknown",
+          "legacy_writer_metadata_unknown",
+          "historical_source_classification_unknown",
+          "assertion_truncated",
+          "accepted_evidence_unavailable",
+        ]),
+      )
+      .max(5),
     conflict: z
       .object({
         state: z.enum(["none_known", "unresolved", "resolved", "limited"]),

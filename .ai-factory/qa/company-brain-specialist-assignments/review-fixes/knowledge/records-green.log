@@ -1,0 +1,36 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/kaa/.codex/worktrees/2599/mAIster/web
+
+{"level":30,"time":1794209484206,"pid":24011,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-daemon-contact","outcome":"passed","durationMs":10,"serverVersion":"29.4.2","strategy":"ConfigurationStrategy","msg":"test container daemon contacted"}
+{"level":30,"time":1794209484206,"pid":24011,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"started","msg":"constructing test container runtime client"}
+{"level":30,"time":1794209484214,"pid":24011,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"passed","durationMs":8,"serverVersion":"29.4.2","msg":"test container runtime client ready"}
+{"level":30,"time":1794209484215,"pid":24011,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-create-start","preparationDurationMs":20,"storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"starting owned PostgreSQL container"}
+{"level":30,"time":1794209484935,"pid":24011,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-start","outcome":"passed","durationMs":719,"containerId":"d83081d268ddea0d257c75489ace5400be270051e35d2478cd00c12251a511f7","storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"started owned PostgreSQL container"}
+{"level":30,"time":1794209484949,"pid":24011,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"bare","phase":"ready","durationMs":754,"containerId":"d83081d268ddea0d257c75489ace5400be270051e35d2478cd00c12251a511f7","endpoint":"postgres://localhost:56385/company_records","msg":"started bare test database"}
+(node:24011) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+{"level":30,"time":1794209485387,"pid":24011,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/migrations","migrationsTable":"__drizzle_migrations","migrationCount":264,"querySubmissions":6,"durationMs":430,"msg":"applied test database migration lineage"}
+{"level":30,"time":1794209485430,"pid":24011,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/brain-migrations","migrationsTable":"__drizzle_brain_migrations","migrationCount":11,"querySubmissions":6,"durationMs":43,"msg":"applied test database migration lineage"}
+{"level":30,"time":1794209485430,"pid":24011,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"main+brain","phase":"migrate","endpoint":"postgres://localhost:56385/company_records","msg":"applied Brain test database migrations"}
+{"level":40,"time":1794209485467,"pid":24011,"hostname":"MacBook-Pro-2.local","name":"authz","userId":"reader","status":"disabled","msg":"denied: inactive account"}
+{"level":40,"time":1794209485467,"pid":24011,"hostname":"MacBook-Pro-2.local","name":"authz","userId":"reader","msg":"denied: password change required"}
+{"level":40,"time":1794209485468,"pid":24011,"hostname":"MacBook-Pro-2.local","name":"authz","userId":"missing-user","msg":"denied: missing user"}
+{"level":30,"time":1794209485599,"pid":24011,"hostname":"MacBook-Pro-2.local","name":"agent-tokens","runId":"2905cf89-84cc-4c23-a02a-9d45ec6d4b8a","tokenId":"ab00da0b-c065-44ed-a537-497bf5a49388","scopeCount":23,"msg":"ephemeral Flow node token issued"}
+{"level":30,"time":1794209485685,"pid":24011,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"company","ownerId":"0b1f4ce6-c88a-45b1-9958-44cd5328031a","sourceId":"bb0da3e2-3f7a-4067-842c-1162bf2a5aed","witnessId":"da573a18-9ab1-4eb2-a134-fa461a0b3ce0","bytes":21700,"duplicate":false,"msg":"source capture retained"}
+{"level":30,"time":1794209485701,"pid":24011,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"company","ownerId":"0b1f4ce6-c88a-45b1-9958-44cd5328031a","sourceId":"bb0da3e2-3f7a-4067-842c-1162bf2a5aed","witnessId":"da573a18-9ab1-4eb2-a134-fa461a0b3ce0","bytes":21700,"duplicate":true,"msg":"source capture retained"}
+{"level":30,"time":1794209485710,"pid":24011,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"project","ownerId":"d1781cbd-eac7-423e-ab95-e72e74446a3b","sourceId":"d2de9475-ef80-4ad0-86d0-af3ba076d375","witnessId":"e3780655-fa00-4408-b0c5-6a0e914a35c9","bytes":31,"duplicate":false,"msg":"source capture retained"}
+{"level":30,"time":1794209485974,"pid":24011,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"stop","durationMs":227,"containerId":"d83081d268ddea0d257c75489ace5400be270051e35d2478cd00c12251a511f7","endpoint":"postgres://localhost:56385/company_records","msg":"stopped test database"}
+
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+   Start at  10:31:23
+   Duration  2.37s (tests 77%, import 17%, transform 5%)

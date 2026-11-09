@@ -182,6 +182,7 @@ async function readProposal(
         relation: link.relation,
         unavailable: {
           state: "missing",
+          reasonCode: "proposal_source_capture_missing",
           reason:
             "The proposal's retained source capture is currently unavailable.",
         },
