@@ -15,6 +15,12 @@ import { assertProjectCoordinatorProvider } from "./project-flow-provider";
 import { submitProjectCommentAssignment } from "./project-comment-intake";
 import { submitProjectCronAssignment } from "./project-cron-intake";
 import { submitProjectEventAssignment } from "./project-event-intake";
+import {
+  advanceProjectRecoveryCursor,
+  PROJECT_RECOVERY_PAGE_SIZE,
+  projectRecoveryHeadBounds,
+  readProjectRecoveryCursor,
+} from "./project-recovery-cursor";
 
 import { agentTriggerAttempts } from "@/lib/db/schema";
 import { assertProjectAgentTriggerClaim } from "@/lib/agents/trigger-attempts";
@@ -122,9 +128,19 @@ function originalSourceAppointment(
 export async function recoverInterruptedProjectIntakes(
   db: Db,
 ): Promise<number> {
+  const cursor = await readProjectRecoveryCursor(
+    db,
+    "projectIntakeRecoveryCursor",
+  );
   const candidates = (
-    await db.execute(sql`
-    SELECT head.id,head.requester->>'id' AS user_id FROM specialist_assignments head
+    await db.execute<{
+      id: string;
+      user_id: string;
+      cursor_created_at: string;
+    }>(sql`
+    SELECT head.id,head.requester->>'id' AS user_id,
+      to_char(head.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_created_at
+    FROM specialist_assignments head
     JOIN specialist_input_revisions input ON input.assignment_id=head.id AND input.revision=head.input_revision
     WHERE head.project_id IS NOT NULL AND head.company_id IS NULL AND head.status='queued'
       AND input.standing_definition->'schemaVersion'='2'::jsonb AND head.requester->>'kind'='user'
@@ -135,7 +151,8 @@ export async function recoverInterruptedProjectIntakes(
       AND NOT EXISTS(SELECT 1 FROM task_launch_intents intent WHERE intent.task_id=head.project_task_id)
       AND (head.project_task_id IS NULL OR (head.origin->>'kind' IN ('task_comment','schedule','event')
         AND NOT EXISTS(SELECT 1 FROM agent_trigger_attempts invocation WHERE invocation.specialist_assignment->'assignment'->>'id'=head.id)))
-    ORDER BY head.updated_at,head.id LIMIT 100
+      AND ${projectRecoveryHeadBounds(cursor)}
+    ORDER BY head.created_at,head.id LIMIT ${PROJECT_RECOVERY_PAGE_SIZE}
   `)
   ).rows;
   let recovered = 0;
@@ -242,6 +259,15 @@ export async function recoverInterruptedProjectIntakes(
       );
     }
   }
+  const last = candidates.at(-1);
+
+  await advanceProjectRecoveryCursor(
+    db,
+    cursor,
+    candidates.length === PROJECT_RECOVERY_PAGE_SIZE && last
+      ? { id: last.id, createdAt: last.cursor_created_at }
+      : null,
+  );
 
   return recovered;
 }

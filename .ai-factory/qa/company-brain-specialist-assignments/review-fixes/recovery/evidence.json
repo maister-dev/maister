@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "finding": "F2_project_assignment_recovery_starvation",
+  "recordedAt": "2026-11-09T07:46:37.994319+00:00",
+  "baseHead": "4e13a41a8d911bcb54d63265b42a6cf97d7faf6b",
+  "red": [
+    {
+      "log": "starvation-red.log",
+      "oracle": "A second bounded pass must reach healthy assignment 101 after 100 current-authority refusals",
+      "observed": "0 recovered instead of 1"
+    },
+    {
+      "log": "cycle-arrival-red.log",
+      "oracle": "A request arriving after the cycle started must wait for the next frozen cycle",
+      "observed": "2 recovered instead of 1"
+    }
+  ],
+  "green": {
+    "log": "green-refactor.log",
+    "command": "pnpm exec vitest run --project integration lib/specialist-assignments/__tests__/project-source-recovery.integration.test.ts lib/scheduler/__tests__/jobs.integration.test.ts lib/scheduler/handlers/__tests__/auto-launch-triaged.integration.test.ts",
+    "files": 3,
+    "tests": 45,
+    "failed": 0
+  },
+  "checks": {
+    "lint": "pnpm exec eslint --fix [five owning files]; exit 0 with no warnings",
+    "typecheck": "pnpm exec tsc --noEmit; exit 0",
+    "diffCheck": "git --no-pager diff --check -- [five owning files]; exit 0"
+  },
+  "coverage": [
+    "both native recovery lanes beyond 100 revoked requests",
+    "new intake and qualified work arriving during frozen cycles",
+    "targeted wake independent of global cursor",
+    "frozen input digests and no Run allocation under capacity pressure",
+    "concurrent cursor CAS, rotation ABA, independent cursor/operator fields",
+    "malformed cursor fail-fast"
+  ],
+  "logNormalization": "Trailing line whitespace removed for repository formatting; original transcripts remain in /private/tmp."
+}

@@ -157,9 +157,10 @@ const DEFAULT_DOMAIN_EVENT_DISPATCH_CADENCE_SECONDS = 60;
 // cron rows and recovers stranded Pending agent runs each tick.
 const DEFAULT_AGENT_TICK_JOB_ID = "agent_tick.dispatcher";
 const DEFAULT_AGENT_TICK_CADENCE_SECONDS = 60;
+
 // ADR-112: the ONE seeded auto_launch_triaged tick — launches triaged + auto +
 // flow tasks whose relation blockers have cleared (budget 1, singleton).
-const DEFAULT_AUTO_LAUNCH_TRIAGED_JOB_ID = "auto_launch_triaged.default";
+export const DEFAULT_AUTO_LAUNCH_TRIAGED_JOB_ID = "auto_launch_triaged.default";
 const DEFAULT_AUTO_LAUNCH_TRIAGED_CADENCE_SECONDS = 60;
 
 // ADR-126: the ONE seeded auto_promote sweep (budget 1, singleton) — promotes
@@ -241,6 +242,24 @@ export function computeNextRunAt(input: ComputeNextRunAtInput): Date {
   return new Date(
     input.previousNextRunAt.getTime() + intervalsToAdvance * intervalMs,
   );
+}
+
+export async function ensureDefaultAutoLaunchTriagedJob(
+  input: EnsureDefaultSchedulerJobsInput = {},
+): Promise<void> {
+  const now = input.now ?? new Date();
+  const db = input.db ?? (getDb() as unknown as SchedulerDb);
+
+  await db.execute(sql`
+    INSERT INTO scheduler_jobs (
+      id, project_id, job_kind, target, cadence_interval_seconds,
+      next_run_at, max_failures, created_at, updated_at
+    ) VALUES (
+      ${DEFAULT_AUTO_LAUNCH_TRIAGED_JOB_ID}, NULL, 'auto_launch_triaged',
+      '{}'::jsonb, ${DEFAULT_AUTO_LAUNCH_TRIAGED_CADENCE_SECONDS},
+      ${now}, 3, ${now}, ${now}
+    ) ON CONFLICT (id) DO NOTHING
+  `);
 }
 
 export async function ensureDefaultSchedulerJobs(
@@ -379,31 +398,7 @@ export async function ensureDefaultSchedulerJobs(
     ON CONFLICT (id) DO NOTHING
   `);
 
-  await db.execute(sql`
-    INSERT INTO scheduler_jobs (
-      id,
-      project_id,
-      job_kind,
-      target,
-      cadence_interval_seconds,
-      next_run_at,
-      max_failures,
-      created_at,
-      updated_at
-    )
-    VALUES (
-      ${DEFAULT_AUTO_LAUNCH_TRIAGED_JOB_ID},
-      NULL,
-      'auto_launch_triaged',
-      '{}'::jsonb,
-      ${DEFAULT_AUTO_LAUNCH_TRIAGED_CADENCE_SECONDS},
-      ${now},
-      3,
-      ${now},
-      ${now}
-    )
-    ON CONFLICT (id) DO NOTHING
-  `);
+  await ensureDefaultAutoLaunchTriagedJob({ db, now });
 
   await db.execute(sql`
     INSERT INTO scheduler_jobs (

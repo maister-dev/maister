@@ -1016,8 +1016,16 @@ the source acknowledgement immutable.
 The existing `agent_triggers` consumer resumes matching work after
 `task.qualification_changed`. The existing automatic-launch job supplies bounded
 recovery of missed wakes and provider/authority restoration, using at most 100
-oldest queued project carriers with a current accepted ready assessment per pass and the existing admission locks and
-intent worker. No timer, scheduler, process or attempt ledger is added. Manual
+queued project carriers with a current accepted ready assessment per pass and the existing admission locks and
+intent worker. Global intake and qualified-resume scans have independent rotating
+`(created_at,id)` keysets in the existing automatic-launch job target. Each completed scan advances past every visited
+row, including current-authority/provider refusals; a completed tail wraps to the
+head. The cycle freezes its upper creation boundary so new arrivals cannot defer
+revisiting older restored work indefinitely. Unexpected decoder/storage failures
+retain the existing scheduler failure policy and do not publish scan progress. Exact timestamp text preserves PostgreSQL precision.
+Versioned compare-and-swap cursor writes preserve other lanes and reject stale
+scan progress. A targeted qualification wake neither reads nor changes a global
+cursor. No scheduler-row lock spans provider inspection or dispatch. No timer, scheduler, process or attempt ledger is added. Manual
 and webhook requests without source attempts resume from their original
 assignment/input/origin and current requester, never from an invented session.
 A non-ready, stale or revoked assessment keeps work queued. Current revocation,
@@ -1073,7 +1081,8 @@ match. A settled known outcome or previously used reservation remains immutable.
 This proves unused execution identity; it is not an external-operation retry.
 
 The existing automatic-launch job first recovers a bounded page of at most 100
-queued native coordinator intakes missing a carrier or source pointer. It reuses
+queued native coordinator intakes missing a carrier or source pointer, rotating
+past refused rows under its independent persisted cursor. It reuses
 `reserveProjectAssignmentTask`, the original source attempt and the actual
 comment/cron/event intake adapters. Original source identity comes from the real
 stored invocation joined to the immutable assignment origin, never from a model.

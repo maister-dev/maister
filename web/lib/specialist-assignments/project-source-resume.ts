@@ -10,6 +10,12 @@ import { getSpecialistAssignment, getSpecialistAssignmentInput } from "./store";
 import { projectSourceHandoffSchema } from "./project-source-types";
 import { loadProjectEventAppointment } from "./project-event-appointment";
 import { acceptProjectCoordinatorAssignmentLaunch } from "./project-flow-launch";
+import {
+  advanceProjectRecoveryCursor,
+  PROJECT_RECOVERY_PAGE_SIZE,
+  projectRecoveryHeadBounds,
+  readProjectRecoveryCursor,
+} from "./project-recovery-cursor";
 
 import { dispatchTaskLaunchIntent } from "@/lib/tasks/launch-dispatch";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -25,9 +31,18 @@ export async function resumeQualifiedProjectAssignments(
   projectId?: string,
   taskId?: string,
 ): Promise<number> {
+  const cursor =
+    projectId === undefined && taskId === undefined
+      ? await readProjectRecoveryCursor(db, "projectQualifiedResumeCursor")
+      : null;
   const candidates = (
-    await db.execute(sql`
-    SELECT head.id,head.requester->>'id' AS user_id
+    await db.execute<{
+      id: string;
+      user_id: string;
+      cursor_created_at: string;
+    }>(sql`
+    SELECT head.id,head.requester->>'id' AS user_id,
+      to_char(head.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_created_at
     FROM specialist_assignments head
     JOIN specialist_input_revisions input ON input.assignment_id=head.id AND input.revision=head.input_revision
     JOIN tasks carrier ON carrier.id=head.project_task_id AND carrier.project_id=head.project_id
@@ -41,7 +56,8 @@ export async function resumeQualifiedProjectAssignments(
       AND NOT EXISTS(SELECT 1 FROM task_launch_intents owned_intent WHERE owned_intent.task_id=head.project_task_id)
       ${projectId ? sql`AND head.project_id=${projectId}` : sql``}
       ${taskId ? sql`AND head.project_task_id=${taskId}` : sql``}
-    ORDER BY head.updated_at,head.id LIMIT 100
+      ${cursor ? sql`AND ${projectRecoveryHeadBounds(cursor)}` : sql``}
+    ORDER BY head.created_at,head.id LIMIT ${PROJECT_RECOVERY_PAGE_SIZE}
   `)
   ).rows;
   let accepted = 0;
@@ -183,6 +199,17 @@ export async function resumeQualifiedProjectAssignments(
         "retained project assignment awaits current admission or source authority",
       );
     }
+  }
+  if (cursor) {
+    const last = candidates.at(-1);
+
+    await advanceProjectRecoveryCursor(
+      db,
+      cursor,
+      candidates.length === PROJECT_RECOVERY_PAGE_SIZE && last
+        ? { id: last.id, createdAt: last.cursor_created_at }
+        : null,
+    );
   }
 
   return accepted;
