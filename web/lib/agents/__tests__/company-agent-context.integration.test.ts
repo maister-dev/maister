@@ -79,6 +79,7 @@ import { requestTaskRequalificationIfCurrent } from "@/lib/tasks/qualification-r
 import {
   getSpecialistAssignment,
   getSpecialistAssignmentInput,
+  getSpecialistAssignmentInputInTransaction,
 } from "@/lib/specialist-assignments/store";
 import {
   acknowledgeOperationalAttention,
@@ -222,6 +223,7 @@ import { enableRevision } from "@/lib/flows/lifecycle";
 import { startMainAndBrainPostgresTestDb } from "@/test-support/pg-container";
 import { seedProjectRow } from "@/test-support/execution-host-seed";
 import { git, initRepo } from "@/test-support/git-fixture";
+import { contentDigest } from "@/lib/evaluations/digest";
 
 const browserSession = vi.hoisted(() => ({ user: null as SessionUser | null }));
 let database: StartedPostgresTestDb;
@@ -634,6 +636,216 @@ afterAll(async () => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
   }
+});
+
+it("IT-CBC-01 fails closed on incomplete work witnesses and retains company source identity after catalog removal", async () => {
+  const db: Db = database.db;
+  const { hosts } = await fakeExecutionHosts(db);
+  const runnerId = randomUUID();
+  const host = await localHost({ db, transport: hosts.transport });
+  const before = (
+    await db.execute(sql`SELECT
+    (SELECT count(*) FROM specialist_assignments) AS assignments,
+    (SELECT count(*) FROM runs) AS runs,
+    (SELECT to_jsonb(settings) FROM platform_runtime_settings settings WHERE id='singleton') AS runtime
+  `)
+  ).rows;
+
+  const rollback = new Error(
+    "Restore the retained catalog fixture after checking deferred guards",
+  );
+
+  await expect(
+    db.transaction(async (tx) => {
+      await tx.insert(platformAcpRunners).values({
+        id: runnerId,
+        adapter: "claude",
+        capabilityAgent: "claude",
+        model: "work-source-fixture",
+        provider: { kind: "anthropic" },
+        readinessStatus: "Ready",
+      });
+      await tx
+        .insert(platformRuntimeSettings)
+        .values({ id: "singleton", defaultRunnerId: runnerId })
+        .onConflictDoUpdate({
+          target: platformRuntimeSettings.id,
+          set: { defaultRunnerId: runnerId },
+        });
+      const assignment = await createSpecialistAssignmentInTransaction(
+        tx,
+        userId,
+        assignmentInput,
+      );
+      const receipt = await reserveCompanyAgentRunInTransaction(
+        tx,
+        userId,
+        { ...request, assignmentId: assignment.id },
+        hosts,
+        host,
+      );
+      const input = await getSpecialistAssignmentInputInTransaction(
+        tx,
+        userId,
+        assignment.id,
+        1,
+      );
+
+      await tx.execute(
+        sql`UPDATE runs SET status='Running' WHERE id=${receipt.runId}`,
+      );
+      const [binding] = (
+        await tx.execute<{ snapshot_digest: string }>(sql`
+        SELECT snapshot_digest FROM company_specialist_binding_revisions
+        WHERE binding_id=${request.bindingId} AND revision=${request.bindingRevision}
+      `)
+      ).rows;
+      const target = {
+        kind: "company_agent",
+        companyId: request.companyId,
+        specialistBinding: {
+          id: request.bindingId,
+          revision: request.bindingRevision,
+          snapshotSha256: binding!.snapshot_digest,
+        },
+        role: {
+          agentId,
+          packageInstallId: assignmentInput.standingDefinition.packageInstallId,
+          packageRevision: assignmentInput.standingDefinition.packageRevision,
+          definitionSha256: assignmentInput.standingDefinition.definitionSha256,
+        },
+      };
+      const definition = {
+        schemaVersion: 1,
+        objectiveInput: assignmentInput.objectiveInput,
+        target,
+        context: {
+          revision: 0,
+          inputRevision: 1,
+          inputSha256: input.digest,
+          contentSha256: null,
+        },
+        parent: {
+          runId: receipt.runId,
+          nodeAttemptId: null,
+          rootRunId: receipt.runId,
+        },
+      };
+      const actor = {
+        kind: "agent",
+        id: agentId,
+        runId: receipt.runId,
+        attemptId: null,
+      };
+
+      expect(
+        (
+          await tx.execute(
+            sql`SELECT agent_id,source_agent_id,project_id FROM runs WHERE id=${receipt.runId}`,
+          )
+        ).rows,
+      ).toEqual([
+        { agent_id: agentId, source_agent_id: agentId, project_id: null },
+      ]);
+      // Exercise the actual ON DELETE SET NULL retention path, not a fabricated launch shape.
+      await tx.execute(sql`DELETE FROM agents WHERE id=${agentId}`);
+      expect(
+        (
+          await tx.execute(
+            sql`SELECT agent_id,source_agent_id FROM runs WHERE id=${receipt.runId}`,
+          )
+        ).rows,
+      ).toEqual([{ agent_id: null, source_agent_id: agentId }]);
+      const { companyId: _companyId, ...unscopedTarget } = target;
+      const cases = [
+        {
+          logicalWorkId: "forged-actor",
+          definition,
+          actor: { ...actor, id: "rah:unrelated-role" },
+          constraint: "specialist_work_source_binding",
+        },
+        {
+          logicalWorkId: "missing-context",
+          definition: { ...definition, context: { revision: 0 } },
+          actor,
+          constraint: "specialist_work_context_binding",
+        },
+        {
+          logicalWorkId: "missing-target-owner",
+          definition: { ...definition, target: unscopedTarget },
+          actor,
+          constraint: "specialist_work_target_binding",
+        },
+        {
+          logicalWorkId: "retained-source",
+          definition,
+          actor,
+          constraint: null,
+        },
+      ];
+      const unexpectedlyAccepted: string[] = [];
+
+      for (const candidate of cases) {
+        const workId = randomUUID();
+        const sourceKey = contentDigest({
+          assignmentId: assignment.id,
+          inputRevision: 1,
+          logicalWorkId: candidate.logicalWorkId,
+          workRevision: 1,
+        });
+        const requestSha256 = contentDigest(candidate.definition);
+        const authority = {
+          schemaVersion: 1,
+          actor: candidate.actor,
+          capturedAt: new Date().toISOString(),
+          executionPolicy: assignmentInput.executionPolicy,
+          witnesses: [],
+        };
+        const write = tx.transaction(async (nested) => {
+          await nested.execute(sql`SET CONSTRAINTS ALL DEFERRED`);
+          await nested.execute(sql`INSERT INTO specialist_work(id,work_revision,assignment_id,input_revision,input_sha256,logical_work_id,parent_run_id,definition,definition_sha256,actor,authority_snapshot,bounds,source_restrictions,request_sha256,source_key,reserved_run_id)
+            VALUES(${workId},1,${assignment.id},1,${input.digest},${candidate.logicalWorkId},${receipt.runId},${JSON.stringify(candidate.definition)}::jsonb,${contentDigest(candidate.definition)},${JSON.stringify(candidate.actor)}::jsonb,${JSON.stringify(authority)}::jsonb,
+              '{"schemaVersion":1,"maxDepth":2,"maxFanout":4,"maxActiveChildren":2,"maxChildRuns":8,"maxTokens":100000,"wallClockMinutes":30,"consecutiveFailures":3}'::jsonb,'[]'::jsonb,${requestSha256},${sourceKey},${randomUUID()})`);
+          await nested.execute(sql`INSERT INTO specialist_intake_receipts(source_kind,source_key,request_digest,assignment_id,input_revision,actor,disposition,work_id,work_revision)
+            VALUES('delegation',${sourceKey},${requestSha256},${assignment.id},1,${JSON.stringify(candidate.actor)}::jsonb,'delegated',${workId},1)`);
+          await nested.execute(sql`SET CONSTRAINTS ALL IMMEDIATE`);
+        });
+
+        if (candidate.constraint === null) {
+          await expect(write).resolves.toBeUndefined();
+        } else {
+          await write.then(
+            () => {
+              unexpectedlyAccepted.push(candidate.logicalWorkId);
+            },
+            (error: unknown) => {
+              expect(error, candidate.logicalWorkId).toMatchObject({
+                cause: { code: "23514", constraint: candidate.constraint },
+              });
+            },
+          );
+        }
+      }
+      expect(unexpectedlyAccepted).toEqual([]);
+      expect(
+        (
+          await tx.execute(
+            sql`SELECT logical_work_id,actor FROM specialist_work WHERE assignment_id=${assignment.id}`,
+          )
+        ).rows,
+      ).toEqual([{ logical_work_id: "retained-source", actor }]);
+      throw rollback;
+    }),
+  ).rejects.toBe(rollback);
+  expect(
+    (
+      await db.execute(sql`SELECT
+    (SELECT count(*) FROM specialist_assignments) AS assignments,
+    (SELECT count(*) FROM runs) AS runs,
+    (SELECT to_jsonb(settings) FROM platform_runtime_settings settings WHERE id='singleton') AS runtime
+  `)
+    ).rows,
+  ).toEqual(before);
 });
 
 it("CBS-02 preflights a real pinned company specialist and exact assignment input without a project or admission effects", async () => {

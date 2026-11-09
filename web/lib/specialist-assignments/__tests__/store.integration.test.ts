@@ -2885,9 +2885,10 @@ it("IT-CBX-01 logical-work upgrade preserves old intake and opaque child labels 
       )
     ).rows;
 
-    await legacy.db.transaction((tx) =>
-      applyMainMigration(tx, "0269_specialist_logical_work"),
-    );
+    await legacy.db.transaction(async (tx) => {
+      await applyMainMigration(tx, "0269_specialist_logical_work");
+      await applyMainMigration(tx, "0270_specialist_work_witness_guards");
+    });
     expect(
       (
         await legacy.pool.query(

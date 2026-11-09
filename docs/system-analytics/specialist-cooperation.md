@@ -159,7 +159,10 @@ alone grants no delegation capability. Main migration `0267` requires atomic wor
 and attributed intake retention, refuses bare acceptance/rework decisions, and
 binds any executed child to its exact role/Flow pin and native Run link. T28 will
 enable later request revisions and decisions through their actual receipt writer;
-the storage foundation refuses them until then.
+the storage foundation refuses them until then. Forward migration `0268` closes
+nullable source/context/target comparisons under the
+[persistence guard contract](../db/specialist-assignments-domain.md#backfill-guards-and-lifetime);
+retained company source identity survives catalog FK removal.
 
 ### Ownership, rework and acceptance
 

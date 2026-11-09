@@ -1863,6 +1863,13 @@
       "when": 1794606477972,
       "tag": "0269_specialist_logical_work",
       "breakpoints": true
+    },
+    {
+      "idx": 270,
+      "version": "7",
+      "when": 1794606477973,
+      "tag": "0270_specialist_work_witness_guards",
+      "breakpoints": true
     }
   ]
 }
