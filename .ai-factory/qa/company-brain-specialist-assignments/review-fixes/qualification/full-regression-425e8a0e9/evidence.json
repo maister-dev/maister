@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "testedHead": "425e8a0e9ca207feee6ed54169ba38b91b02634c",
+  "runtimeHead": "7605ebf5967ceb7d9834aa1f5f3a97993175570a",
+  "verdict": "failed",
+  "durationSeconds": 2062.14,
+  "files": {
+    "passed": 685,
+    "failed": 1,
+    "skipped": 2,
+    "total": 688
+  },
+  "tests": {
+    "passed": 6266,
+    "failed": 1,
+    "skipped": 2,
+    "total": 6269
+  },
+  "failure": {
+    "file": "web/lib/agents/__tests__/company-agent-context.integration.test.ts",
+    "test": "IT-CBS-04 admits company webhook deliveries through the actual authenticated entry point and retains one native effect across token rotation",
+    "stage": "finally supervisor.stop",
+    "error": "InvocationOwnershipError: refusing unverifiable fixture group 87082",
+    "unverifiedMember": {
+      "pid": 87207,
+      "ppid": 87082,
+      "pgid": 87082,
+      "uid": 501,
+      "owned": false,
+      "inspected": true,
+      "start": "1794227263:457425"
+    },
+    "historicalMemberExecutable": "not captured; controlled native-helper reproduction establishes the failure class without identifying this historical process",
+    "precedingEvidence": "Retained logs show both business Runs Done and final grant revocation/restoration. Last replay response was not retained; finally exception may mask an earlier assertion. Independent primary owning rerun establishes business behavior separately."
+  },
+  "productionBuild": {
+    "passed": true,
+    "buildId": "8N8Bxdcreoys_duwKWyV7",
+    "durationMs": 14600,
+    "revision": "425e8a0e9ca207feee6ed54169ba38b91b02634c"
+  },
+  "optionalSkipped": [
+    "MAISTER_EVENT_PLANE_LOAD",
+    "MAISTER_HOST_SPAN_LOAD"
+  ],
+  "cleanup": {
+    "invocationId": "ab9b6941-d115-49d5-b779-43e89fb64665",
+    "ownedLiveProcesses": 0,
+    "containers": 0,
+    "temporaryRoots": 0,
+    "errors": []
+  },
+  "retainedSha256": {
+    "cleanup.log.gz": "a65189c9e2ccc7b23b85e4b994d5a8adb27605562e011468415016037e6f1ddf",
+    "full.log.gz": "f8c7d6118177af952c7fdf1be721fe50b7e730bcc40da5124546def17c0c9d96"
+  }
+}

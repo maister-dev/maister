@@ -1291,6 +1291,166 @@ describe("S5.2 invocation process ownership", () => {
     }
   }, 45_000);
 
+  it.skipIf(process.platform !== "darwin")(
+    "O-signal: rereads a retiring native helper without signalling an unverified member",
+    async () => {
+      const directory = await mkdtemp(
+        path.join(tmpdir(), "s52-retiring-helper-"),
+      );
+      const invocation = await createInvocation(directory);
+      const fixture = `const {spawn}=require('node:child_process');
+const helper=spawn('/usr/sbin/sysctl',['-n','kern.bootsessionuuid'],{stdio:'ignore'});
+const exited=new Promise(resolve=>helper.once('exit',resolve));
+const ready=new Promise(resolve=>helper.once('spawn',()=>{helper.kill('SIGSTOP');process.stdout.write(JSON.stringify({helperPid:helper.pid})+'\\n');resolve()}));
+const retire=async()=>{await ready;if(helper.exitCode===null&&helper.signalCode===null)helper.kill('SIGCONT');await exited};
+process.on('message',async message=>{if(message?.kind!=='retire-helper')throw new Error('Unknown helper control');await retire();process.send({kind:'helper-retired'})});
+process.once('disconnect',async()=>{await retire();process.exit(97)});
+process.once('SIGTERM',async()=>{await retire();process.removeAllListeners('SIGTERM');process.kill(process.pid,'SIGTERM')});
+setInterval(()=>{},1000);`;
+      const leader = spawn(process.execPath, ["-e", fixture], {
+        env: { ...process.env, ...invocationEnvironment(invocation) },
+        detached: true,
+        stdio: ["ignore", "pipe", "pipe", "ipc"],
+      });
+      const exited = once(leader, "exit");
+      let reader: string | undefined;
+      let original: string | undefined;
+      let readerStored = false;
+      let controlFailure: unknown;
+
+      try {
+        const [ready] = await once(leader.stdout!, "data", {
+          signal: AbortSignal.timeout(5_000),
+        });
+        const { helperPid } = JSON.parse(String(ready)) as {
+          helperPid: number;
+        };
+        const identity = await processIdentity(invocation, leader.pid!);
+        const helper = await processIdentity(invocation, helperPid);
+
+        expect(identity).toMatchObject({ owned: true, inspected: true });
+        expect(helper).toMatchObject({
+          ppid: leader.pid,
+          pgid: leader.pid,
+          owned: false,
+          inspected: true,
+        });
+        const executable = path.join(directory, "helper-retirement-reader");
+
+        await execFileAsync(
+          "cc",
+          [
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-O2",
+            fileURLToPath(
+              new URL(
+                "../fixtures/process-helper-retirement.c",
+                import.meta.url,
+              ),
+            ),
+            "-o",
+            executable,
+          ],
+          { timeout: 10_000, maxBuffer: 16 * 1024 },
+        );
+        const name = (await readdir(invocation.directory)).find((entry) =>
+          /^process-environment-[a-f0-9]{16}$/u.test(entry),
+        );
+
+        if (!name) throw new Error("The invocation kernel reader is missing");
+        reader = path.join(invocation.directory, name);
+        original = `${reader}.original`;
+        await writeFile(
+          path.join(invocation.directory, "process-helper-release-owner"),
+          `${helper.pid} ${helper.ppid} ${helper.pgid} ${helper.uid} ${helper.started}`,
+          { flag: "wx", mode: 0o600 },
+        );
+        await rename(reader, original);
+        readerStored = true;
+        await copyFile(executable, reader);
+        // The first real snapshot contains the untagged native child; the
+        // scheduling control then lets that exact child finish before return.
+        await signalInvocationGroup(invocation, leader.pid!, "SIGTERM");
+        await exited;
+        await assertInvocationGroupEmpty(invocation, leader.pid!);
+        expect(leader.signalCode).toBe("SIGTERM");
+      } catch (error) {
+        controlFailure = error;
+        throw error;
+      } finally {
+        const failures: unknown[] = [];
+        const cleanup = [
+          async () => {
+            if (
+              leader.exitCode !== null ||
+              leader.signalCode !== null ||
+              !leader.connected
+            )
+              return;
+            const retired = once(leader, "message", {
+              signal: AbortSignal.timeout(5_000),
+            });
+
+            leader.send({ kind: "retire-helper" });
+            expect((await retired)[0]).toEqual({ kind: "helper-retired" });
+          },
+          async () => {
+            // The trusted parent owns the native child handle. Its TERM
+            // handler resumes and reaps the helper if the IPC proof fails.
+            if (leader.exitCode !== null || leader.signalCode !== null) return;
+            const retired = once(leader, "exit", {
+              signal: AbortSignal.timeout(5_000),
+            });
+
+            leader.kill("SIGTERM");
+            await retired;
+          },
+          async () => {
+            if (!reader || !original || !readerStored) return;
+            await rm(reader, { force: true });
+            await rename(original, reader);
+          },
+          async () =>
+            failures.push(
+              ...(await releaseInvocation(
+                invocation,
+                "retiring helper control",
+              )),
+            ),
+          async () => {
+            if (
+              !leader.pid ||
+              !(await processGroupRetired(invocation, leader.pid))
+            )
+              throw new Error(
+                "Retiring helper group is not quiescent; its evidence ledger is preserved",
+              );
+            if (controlFailure !== undefined || failures.length > 0) return;
+            await rm(directory, { recursive: true, force: true });
+          },
+        ];
+
+        for (const action of cleanup) {
+          try {
+            await action();
+          } catch (error) {
+            failures.push(error);
+          }
+        }
+        if (failures.length)
+          throw new AggregateError(
+            controlFailure === undefined
+              ? failures
+              : [controlFailure, ...failures],
+            "Retiring helper control cleanup failed",
+          );
+      }
+    },
+    30_000,
+  );
+
   it("O-identity: exact environment tags exclude argv decoys and sibling invocations, and PID reuse refuses ownership", async () => {
     const directory = await mkdtemp(
       path.join(tmpdir(), "s52-process-control-"),

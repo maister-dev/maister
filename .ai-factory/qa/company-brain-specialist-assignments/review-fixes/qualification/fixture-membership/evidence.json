@@ -1,0 +1,195 @@
+{
+  "baseline": "425e8a0e9ca207feee6ed54169ba38b91b02634c",
+  "candidateCheckout": "/private/tmp/maister-company-webhook-425e8a0e9",
+  "patch": "/private/tmp/maister-company-webhook-helper-candidate.patch",
+  "patchSha256": "f7869b4c48e4bfc2a9ee6f5bd60dd7cfcd40119c4efaa3f6a6af1087b046c775",
+  "files": [
+    {
+      "path": "web/test-support/process-invocation.ts",
+      "baselineSha256": "87ead70a1c808af822f4b3ad0500f6c524064192c13e6222cd9be267ed8fea77",
+      "candidateSha256": "6ea7f6dab5b31c9c7bfbf3de8266f597a1b5a89050f8b850013139c8e3276834"
+    },
+    {
+      "path": "web/test-support/__tests__/execution-ab-process-cleanup.integration.test.ts",
+      "baselineSha256": "ad729d077a3f07b1b7e96c89db973467f789b714f342398d6ed381b1d7d9d720",
+      "candidateSha256": "40f90c8626223a2705767640dc37e38abdda89ca8a4980f3d477ad74ce07d7a5"
+    },
+    {
+      "path": "web/test-support/fixtures/process-helper-retirement.c",
+      "baselineSha256": null,
+      "candidateSha256": "f0ffb82b18aa510d9119598922ed582e04757370e275d80c2475630c15597635"
+    }
+  ],
+  "primaryFailure": {
+    "log": "/private/tmp/cb-qualification-web-integration-425e8a0e9.log",
+    "stackLine": 97724,
+    "stage": "Final stack proves failure in finally supervisor.stop. Retained logs show both Runs Done and final read-grant revocation/restoration; they do not independently retain the last replay response body/status, and finally errors can mask an earlier body error.",
+    "cause": "Readable but untagged child observed in group87082; one-shot authority snapshot refused instead of rereading fresh membership after the child retires. Historical executable unknown.",
+    "exactRefusal": [
+      {
+        "event": "fixture-group-signal-refused",
+        "pgid": 87082,
+        "signal": "SIGTERM",
+        "memberCount": 2,
+        "unverifiedCount": 1
+      },
+      {
+        "event": "fixture-group-unverified-member",
+        "pid": 87207,
+        "ppid": 87082,
+        "pgid": 87082,
+        "uid": 501,
+        "started": "1794227263:457425",
+        "owned": false,
+        "inspected": true,
+        "zombie": false,
+        "signal": "SIGTERM"
+      }
+    ],
+    "unknown": "Actual executable/argv for historical child87207 was not retained; native sysctl relation remains source-supported explanation, not identified historical command",
+    "fullReceipt": "6266passed/1teardownfailed/2skipped;2062.14s",
+    "businessQualification": "Untouched isolated target1/1 and predecessor prefix4/4 passed; final candidate current prefix4/4 passed. Whole primary company49 qualification remains parent-owned."
+  },
+  "controlledNativeProbe": {
+    "receipt": "/private/tmp/maister-company-webhook-native-probe.json",
+    "outcome": "8/8 explicitly invocation-tagged stopped sysctl children observedownedfalse/inspectedtrue; ps protectiongaveinspectionerrors; allresumed/reaped;cleanup0"
+  },
+  "runtimeGuard": {
+    "maxSnapshots": 3,
+    "schedulingWindowMs": 100,
+    "pauseMs": 10,
+    "existingNativeTransportTimeoutMs": 10000,
+    "hardWallClockDeadline": false,
+    "positiveFence": "Same original positively tagged leader PID+UID+kernelstart on every fresh snapshot; existing strict currentallmembers guard before signal; no ancestry ownership",
+    "persistentUnknown": "Still refused after bound; no signal on unavailable reads, foreignpersistentmembers or changedleader"
+  },
+  "validation": {
+    "realRed": {
+      "log": "/private/tmp/maister-company-webhook-helper-red.log",
+      "failed": 1,
+      "durationSeconds": 1.97
+    },
+    "finalFocused": {
+      "log": "/private/tmp/maister-company-webhook-helper-green-reviewed.log",
+      "passed": 2,
+      "durationSeconds": 18.19
+    },
+    "setupFailureControl": {
+      "log": "/private/tmp/maister-company-webhook-helper-setup-failure.log",
+      "expectedFailure": "trusted-parent-cleanup-failure-control helper43894 leader43893",
+      "durationMs": 860,
+      "cleanup": "clean invocation sweep, original failure preserved; disposabletestcopyremoved"
+    },
+    "fullOwningBeforeFinalFixturePrecision": {
+      "log": "/private/tmp/maister-company-webhook-helper-full-cleanup.log",
+      "passed": 14,
+      "durationSeconds": 121.02,
+      "scope": "Shared signalguard final; later changesonly fixture cleanupcomposition and nativecontrol kernel-lifetime validation, covered finalfocused"
+    },
+    "webSupervisorSibling": {
+      "log": "/private/tmp/maister-company-webhook-helper-real-supervisor.log",
+      "passed": 3,
+      "durationSeconds": 6.48
+    },
+    "supervisorOwnershipSibling": {
+      "log": "/private/tmp/maister-company-webhook-helper-session-ownership.log",
+      "passed": 4,
+      "durationSeconds": 6.96
+    },
+    "releaseUnit": {
+      "log": "/private/tmp/maister-company-webhook-helper-unit.log",
+      "passed": 5
+    },
+    "untouchedWebhookTarget": {
+      "log": "/private/tmp/maister-company-webhook-baseline-target.log",
+      "passed": 1
+    },
+    "untouchedPrefix": {
+      "log": "/private/tmp/maister-company-webhook-baseline-prefix.log",
+      "passed": 4
+    },
+    "currentPrefix": {
+      "log": "/private/tmp/maister-company-webhook-current-prefix-green.log",
+      "passed": 4,
+      "durationSeconds": 22.85
+    },
+    "typecheck": {
+      "log": "/private/tmp/maister-company-webhook-helper-types-final-guard.log",
+      "exitCode": 0
+    },
+    "lintLog": "/private/tmp/maister-company-webhook-helper-lint-final.log",
+    "diffCheck": 0,
+    "lintExitCode": 0,
+    "finalPositiveAfterEvidenceGuard": {
+      "log": "/private/tmp/maister-company-webhook-helper-final-positive.log",
+      "passed": 1,
+      "durationSeconds": 3.3
+    },
+    "finalTwoAfterAllReviewFixes": {
+      "log": "/private/tmp/maister-company-webhook-helper-final-two.log",
+      "passed": 2,
+      "durationSeconds": 20.0,
+      "cleanup": "clean ownership sweeps; all jobs exited0"
+    }
+  },
+  "platform": "New C schedulingcontrol Darwin-only; JS guard applies Linux/macOS; existingcrossplatformforeign/inspectionnegativecontrols retained",
+  "audit": "knowledge_fix_audit final no actionable findings",
+  "isolation": "Own physical offlinefrozen node_modules; primary HEAD/source/deps/.next untouched; all package/childcommands pnpm_config_verify_deps_before_run=false",
+  "commitsCreated": false,
+  "jobsComplete": true,
+  "cleanup": "All scoped commands exited; nativeprobe cleanup0; native safety controls clean sweeps; sibling fixtures stopped; currentprefix owned DB stopped170ms. No broad primary cleanup.",
+  "cleanupEvidenceGuard": "Directory removal requires unfiltered positive processGroupRetired proof and no control/cleanup failure. Failure preserves ledger/evidence; original control and independent cleanup errors remain aggregated.",
+  "primaryRecheck": {
+    "nativeSafety": {
+      "passed": 4,
+      "filtered": 10,
+      "exitCode": 0,
+      "log": "primary-native-green.log.gz",
+      "durationSeconds": 47.4
+    },
+    "types": {
+      "exitCode": 0,
+      "log": "primary-types.log.gz"
+    },
+    "lint": {
+      "exitCode": 0,
+      "log": "primary-lint.log.gz"
+    },
+    "wholeCompany": {
+      "passed": 49,
+      "files": 1,
+      "exitCode": 0,
+      "durationSeconds": 338.47,
+      "log": "primary-company-green.log.gz"
+    }
+  },
+  "webUnit": {
+    "passed": 9312,
+    "files": 891,
+    "exitCode": 0,
+    "durationSeconds": 26.02,
+    "log": "../web-unit-final-fixtures.log.gz"
+  },
+  "retainedSha256": {
+    "maister-company-webhook-helper-final-positive.log.gz": "b244c890f5625222f0a2589e72de2b2c92b8852c95f0132b0ac3298dff9c83a7",
+    "maister-company-webhook-helper-final-two.log.gz": "acffb17b4a92df1ff2351b142e402ea64fa69ea3af4c2ab652cd094438259f78",
+    "maister-company-webhook-baseline-prefix.log.gz": "eec9d2efc997dde0475951aeae4f69ab013733a2e881fb532efa0fc4288589f6",
+    "maister-company-webhook-current-prefix-green.log.gz": "3474292cc6ba2e1fb2f42a6e500161e6f1b27044f286127bfe96ea3fd0ddc9a6",
+    "maister-company-webhook-helper-types-final-guard.log.gz": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237",
+    "maister-company-webhook-helper-real-supervisor.log.gz": "e9e8a839378c3d302859b564735afcff97d5b3c832c0e9ddf6972fa5c863d86f",
+    "maister-company-webhook-helper-session-ownership.log.gz": "8172608aa045abb4b879d3bb11425e27ef6969d95dcbb313638daa3b2de32ed8",
+    "maister-company-webhook-helper-types-reviewed.log.gz": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237",
+    "primary-native-green.log.gz": "3563c81ca648a83f30533549dd86edbfcd6ea67df4f232753f8d85cf3fd5c2d5",
+    "primary-lint.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "maister-company-webhook-helper-setup-failure.log.gz": "d2ebaa47a159239064e446cafaae6ca51d37bd7bd7ccec24072e3311fbb6595a",
+    "maister-company-webhook-helper-unit.log.gz": "268be4b74ef46dd558640b0442ee29bd4454088259ca977fafa9c0d816b9b90b",
+    "maister-company-webhook-helper-green-reviewed.log.gz": "16506172694d58537fd04d241eb6f1836ccb01d80a100e51bc09156669c289f1",
+    "maister-company-webhook-helper-full-cleanup.log.gz": "954664d2d38e0ca6508774587880f18dcb2d4b4751ea4a695342a047d03d311b",
+    "maister-company-webhook-helper-lint-final.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "native-probe.json": "d95d206c64332d2019878ddb0cb1331e265d3d041de44cd80519030a476d1eb6",
+    "maister-company-webhook-helper-red.log.gz": "c9d6393cb094709ff74ee121b778c93d8968082a0d6f7d35fa1fc6b06d0174e5",
+    "maister-company-webhook-baseline-target.log.gz": "2375657a7c443a9342ef47ea1e5b7504f7da6c4702bd9ee3054bd195bc3e3c09",
+    "primary-types.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "primary-company-green.log.gz": "01e2c3c3f20bd229b054ddf35d643ea82d5167b3951524ec6b0d0f89f9b5aee9"
+  }
+}
