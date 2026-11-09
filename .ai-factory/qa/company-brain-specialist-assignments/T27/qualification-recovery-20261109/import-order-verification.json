@@ -1,0 +1,15 @@
+{
+  "recordedAt": "2026-11-09T21:19:15.208613+00:00",
+  "baseline": "d4527306faec049c6887eee7ec01202bc99fc899",
+  "change": "Move the existing pure safe-error-cause import into its required relative import group; no executable statements, declarations or exported contracts change.",
+  "checks": {
+    "lint": "passed; zero warnings",
+    "supervisorTypes": "passed",
+    "diffCheck": "passed"
+  },
+  "source": {
+    "path": "supervisor/src/spawn.ts",
+    "sha256": "35672c21a32849c12605d40f000dcd3237de8481235887b338514432e00b61d0"
+  },
+  "fullRegression": "Pending on the next frozen commit; prior focused functional receipts retain their original source hashes."
+}

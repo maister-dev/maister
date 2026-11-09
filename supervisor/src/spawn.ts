@@ -11,6 +11,8 @@ import { createWriteStream, type WriteStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
+import { safeErrorCauseChain } from "../../runtime/safe-error-cause";
+
 import { prepareProducerFiles, type ProducerFiles } from "./producer-files";
 import { HostRuntimeEventError } from "./host-runtime-errors";
 import { producerPressure, type ProducerPauseBound } from "./producer-pressure";
@@ -38,7 +40,6 @@ import {
   startGatedSessionProcess,
 } from "./session-process-ownership";
 import { isSupervisorError } from "./types";
-import { safeErrorCauseChain } from "../../runtime/safe-error-cause";
 
 type RuntimeObjectEnvName =
   | "MAISTER_OUTPUT_FILE"
