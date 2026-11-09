@@ -162,13 +162,20 @@ sequenceDiagram
 
 ### Detach / upgrade / trust
 
-- **Detach**: refuse with `PRECONDITION` while any member revision is pinned
-  by a non-terminal run; otherwise one transaction removes the attachment,
-  member `flows` rows, ingested MCP/restriction records; member revisions stay
-  for in-flight runs and GC ([`reconciliation-gc.md`](reconciliation-gc.md)).
+- **Detach**: apply the attachment-pinning contract below under run row locks
+  in the deletion transaction; otherwise remove the attachment, member `flows`
+  rows and ingested MCP/restriction records. Clear only the mutable `runs.flow_id`
+  association and obsolete `tasks.flow_id` launch selection before deleting
+  member rows (`runs.flow_id` cascades and `tasks.flow_id` restricts); retain runs,
+  outcomes, immutable revision pins, dependent evidence and workspace/archive
+  references. Revision removal and GC still refuse every referenced revision
+  ([`reconciliation-gc.md`](reconciliation-gc.md)).
 - **Upgrade**: install the newer revision beside the old one, then one
   transaction flips the group pointers; in-flight runs keep their pinned
-  revisions. The same operation supports downgrade. Git pins change only through
+  revisions. Removed members clear only the mutable run-to-Flow association,
+  preserving historical runs and evidence exactly as detach does. Removing a
+  member used by an unfinished legacy run without an immutable revision refuses
+  with `historical_revision_missing`, since that run still needs its manifest. The same operation supports downgrade. Git pins change only through
   [reviewed persistence](project-config-persistence.md).
 - **Trust**: one operator decision per package revision, gated on the
   **global `admin` role** — the fan-out crosses every project attached to the
@@ -178,18 +185,61 @@ sequenceDiagram
   setup path runs per-member `setup.sh` (never at install — fetch and execute
   stay physically separate, ADR-021/ADR-042/ADR-069).
 
+### Attachment-pinning lifecycle
+
+`Pending`, `Running`, `NeedsInput`, `NeedsInputIdle`, `HumanWorking`,
+`WaitingOnChildren` and `Review` continue to protect their attachment.
+`Crashed` also protects it unless all these conditions hold:
+
+- The run has `ended_at` and an immutable `flow_revision_id`. Legacy crashes
+  without a revision still need their live Flow manifest and remain protected
+  (`historical_revision_missing`); archive metadata cannot substitute for it.
+- Every applicable workspace has both `archived_at` and `removed_at`.
+  `archived_at` alone is preservation-in-progress, not completed removal.
+- Preservation is recorded as `not_needed` for a clean tree, or both
+  `archived_branch` and `archived_commit` are retained.
+- No lifecycle operation is claiming or failed, and no live promotion owns
+  the workspace. An expired claim still needs reconciliation before detach.
+- No active execution assignment, unconfirmed session incarnation (including
+  `lost`), or open execution command exists. Checkpointed/exited/crashed/deleted
+  incarnations describe stopped processes; retained session handles are history.
+- Shared worktree users resolve their allocator's workspace even when they own
+  no workspace row. All shared siblings must be ended, terminal and quiescent;
+  all their workspace records must satisfy the same archive checks.
+
+`Failed`, `Abandoned` and `Done` remain nonblocking outcomes, while active
+execution evidence independently blocks detach for every status. Refusals expose
+run IDs, statuses and precise reason tokens in `details.blockers`, also logged
+at the package boundary; reconcile execution, complete archival or resolve
+recovery before retrying.
+
+Backward compatibility requires no outcome rewrite or revision unpinning.
+Existing archived rows without a preservation outcome qualify when both Git
+references and finalized removal are recorded. Incomplete legacy records remain
+protected and require lifecycle reconciliation; do not infer removal from an
+archive timestamp. No archive ref or snapshot is deleted by package mutation.
+
+Run locks serialize the decision with recovery and reattach's lifecycle claim.
+If recovery commits first, detach sees its new status/assignment; if detach
+commits first, removed workspaces still refuse direct recovery. Explicit reattach
+remains supported through retained branch/archive references, then recovery uses
+the retained immutable revision independently of current package enablement.
+Upgrade remains an allowed group-pointer change for in-flight runs; it does not
+remove their immutable runtime bundles. Revision retention guards remain stricter
+than attachment protection and include every historical run reference.
+
 ### Crash windows (attach path)
 
-| Window | Reachable state | Recovery |
-| --- | --- | --- |
-| Install done, attach tx not committed | Orphan package install | Harmless; reused on retry or swept by GC when unreferenced |
-| Attach tx committed, configuration not saved to Git | Runtime applied, export pending | Explicit preview and configuration commit; package mutation retry does not write YAML |
-| Trust tx committed, setup not yet run | Members trusted, `setup_status='pending'` | Existing launch precondition refuses until setup completes; setup retried via the trust/enable path |
+| Window                                              | Reachable state                           | Recovery                                                                                            |
+| --------------------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Install done, attach tx not committed               | Orphan package install                    | Harmless; reused on retry or swept by GC when unreferenced                                          |
+| Attach tx committed, configuration not saved to Git | Runtime applied, export pending           | Explicit preview and configuration commit; package mutation retry does not write YAML               |
+| Trust tx committed, setup not yet run               | Members trusted, `setup_status='pending'` | Existing launch precondition refuses until setup completes; setup retried via the trust/enable path |
 
 ## Expectations
 
 - Exactly one `package_installs` row per `(source_url, name,
-  resolved_revision)`; installed package revisions are immutable.
+resolved_revision)`; installed package revisions are immutable.
 - Attach group writes — member `flows` rows, `capability_imports`,
   MCP/restriction ingestion, `project_package_attachments`,
   `package_install_id` FK links — MUST commit in ONE transaction, on the UI
@@ -210,8 +260,8 @@ sequenceDiagram
 - Reviewed persistence exports pins without installing, trusting or ingesting
   packages. Local sources that cannot reproduce the attached revision refuse
   export explicitly while runtime attachments remain usable.
-- Detach MUST refuse with `MaisterError("PRECONDITION")` while any member
-  revision is pinned by a non-terminal run's `runs.flow_revision_id`.
+- Detach MUST apply the attachment-pinning contract below, including older
+  revisions still associated with the member Flow after an upgrade.
 - Upgrade flips group pointers only; in-flight runs keep their pinned
   revisions (ADR-021 pinning contract unchanged).
 - Per-source discovery failure MUST degrade to the cached `discovered`
@@ -297,6 +347,7 @@ The AIF release is `aif/v2.5.0` (`e25937f`) and the superpowers release is
 `superpowers/v1.2.0` (`0fecf20`). Each source declares engine 3.1.0 and its
 artifact contract; historic tags, installs, and SHA-pinned runs remain
 unchanged.
+
 ## Linked artifacts
 
 - Decision: [`../decisions.md` ADR-088](../decisions.md#adr-088-multi-flow-package-management)
@@ -318,4 +369,3 @@ unchanged.
 - AIF package content: the `maister-plugins` repo (`packages/aif`,
   release `aif/v2.5.0` at `e25937f`); consumption notes in
   [`../flow-aif-plugin.md`](../flow-aif-plugin.md).
-

@@ -34,13 +34,14 @@ describe("loadRun — per-session set (M42)", () => {
       pinned?: boolean;
       mutableManifest?: unknown;
       pinnedManifest?: unknown;
+      detached?: boolean;
     },
   ) {
     const run = {
       id: "run-1",
       taskId: "task-1",
       projectId: "project-1",
-      flowId: "flow-1",
+      flowId: opts?.detached ? null : "flow-1",
       flowRevisionId: opts?.pinned ? "revision-1" : null,
       flowRevision: opts?.pinned ? "rev-pinned" : "unknown",
       runnerSnapshot: snapshot("runner-default", "claude-opus-4-8"),
@@ -51,27 +52,30 @@ describe("loadRun — per-session set (M42)", () => {
     const byTable: Record<string, Record<string, unknown>[]> = {
       [getTableName(runsTable)]: [run],
       [getTableName(tasksTable)]: [{ id: "task-1" }],
-      [getTableName(flowsTable)]: [
-        {
-          id: "flow-1",
-          flowRefId: "bugfix",
-          manifest: opts?.mutableManifest ?? {
-            schemaVersion: 1,
-            name: "Bugfix",
-            nodes: [
-              {
-                id: "run",
-                type: "cli",
-                action: { command: "true" },
-                transitions: { success: "done" },
+      [getTableName(flowsTable)]: opts?.detached
+        ? []
+        : [
+            {
+              id: "flow-1",
+              flowRefId: "bugfix",
+              manifest: opts?.mutableManifest ?? {
+                schemaVersion: 1,
+                name: "Bugfix",
+                nodes: [
+                  {
+                    id: "run",
+                    type: "cli",
+                    action: { command: "true" },
+                    transitions: { success: "done" },
+                  },
+                ],
               },
-            ],
-          },
-        },
-      ],
+            },
+          ],
       [getTableName(flowRevisionsTable)]: [
         {
           id: "revision-1",
+          flowRefId: "bugfix",
           manifest: opts?.pinnedManifest ?? {
             schemaVersion: 1,
             name: "Pinned",
@@ -165,6 +169,26 @@ describe("loadRun — per-session set (M42)", () => {
       "run-1",
     );
 
+    expect(loaded.manifest.nodes.map((node) => node.id)).toEqual(["pinned"]);
+    expect(loaded.flowInstallPath).toBe("/cache/pinned");
+    expect(loaded.execTrust).toBe("trusted");
+  });
+
+  it("loads a detached run from its retained revision after workspace reattachment", async () => {
+    const loaded = await loadRun(
+      fakeDb(
+        [
+          {
+            sessionName: "default",
+            runnerSnapshot: snapshot("runner-default", "claude-opus-4-8"),
+          },
+        ],
+        { pinned: true, detached: true },
+      ) as never,
+      "run-1",
+    );
+
+    expect(loaded.flow).toBeNull();
     expect(loaded.manifest.nodes.map((node) => node.id)).toEqual(["pinned"]);
     expect(loaded.flowInstallPath).toBe("/cache/pinned");
     expect(loaded.execTrust).toBe("trusted");

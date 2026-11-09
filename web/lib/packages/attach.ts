@@ -8,7 +8,7 @@ import os from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { splitFrontmatter } from "@/lib/flows/artifact-frontmatter";
@@ -34,6 +34,7 @@ import { resolvePackageSource } from "@/lib/packages/install";
 import { redactUrl } from "@/lib/repo-source";
 import { assertAttachedQualificationAgentsPolicy } from "@/lib/agents/qualification-policy";
 import { readPackageAgentSources } from "@/lib/agents/package-contract";
+import { lockPackageRunBlockers } from "@/lib/packages/run-pins";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (see flows.ts).
 const {
@@ -44,25 +45,13 @@ const {
   capabilityImports,
   capabilityRecords,
   runs,
+  tasks,
 } = schemaModule as unknown as Record<string, any>;
 
 const log = pino({
   name: "package-attach",
   level: process.env.LOG_LEVEL ?? "info",
 });
-
-// Allow-list of run statuses that pin a revision against detach (never a
-// deny-list of terminals — a future status must be rejected by default).
-const ACTIVE_RUN_STATUSES = [
-  "Pending",
-  "Running",
-  "NeedsInput",
-  "NeedsInputIdle",
-  "HumanWorking",
-  "WaitingOnChildren",
-  "Review",
-  "Crashed",
-] as const;
 
 // `manifest` jsonb on package_installs: the parsed spec + the content
 // inventory (spec stays strict-schema-parseable on its own).
@@ -968,7 +957,71 @@ async function loadAttachment(
   return att ?? null;
 }
 
-// Detach: refused while any member revision is pinned by an active run; one
+// FIXME(any): the same dual Drizzle peer-dependency seam as attachPackage.
+async function lockAttachment(
+  tx: any,
+  attachmentId: string,
+  installId: string,
+): Promise<void> {
+  const [current] = await tx
+    .select({ packageInstallId: projectPackageAttachments.packageInstallId })
+    .from(projectPackageAttachments)
+    .where(eq(projectPackageAttachments.id, attachmentId))
+    .for("update");
+
+  if (!current || current.packageInstallId !== installId)
+    throw new MaisterError(
+      "CONFLICT",
+      "package attachment changed; reload before retrying",
+      {
+        details: { reason: "package_attachment_changed", attachmentId },
+      },
+    );
+}
+
+// FIXME(any): the same dual Drizzle peer-dependency seam as attachPackage.
+async function deleteMemberEnablements(
+  tx: any,
+  flowIds: string[],
+): Promise<void> {
+  if (flowIds.length === 0) return;
+  const legacyRuns: { id: string }[] = await tx
+    .select({ id: runs.id })
+    .from(runs)
+    .where(
+      and(
+        inArray(runs.flowId, flowIds),
+        isNull(runs.flowRevisionId),
+        notInArray(runs.status, ["Done", "Failed", "Abandoned"]),
+      ),
+    )
+    .for("update");
+
+  if (legacyRuns.length > 0)
+    throw new MaisterError(
+      "PRECONDITION",
+      `legacy run(s) ${legacyRuns.map(({ id }) => id).join(", ")} still require the member Flow manifest; finish or abandon them before removing enablement`,
+      {
+        details: {
+          reason: "historical_revision_missing",
+          runIds: legacyRuns.map(({ id }) => id),
+        },
+      },
+    );
+  // runs.flow_id cascades; tasks.flow_id restricts. These are mutable launch
+  // associations, distinct from the retained immutable run revision and evidence.
+  await tx
+    .update(runs)
+    .set({ flowId: null })
+    .where(inArray(runs.flowId, flowIds));
+  await tx
+    .update(tasks)
+    .set({ flowId: null })
+    .where(inArray(tasks.flowId, flowIds));
+  await tx.delete(flows).where(inArray(flows.id, flowIds));
+}
+
+// Detach: refused while a member still needs its attachment; one
 // transaction removes the attachment + member rows + ingested records.
 // Member flow_revisions stay (in-flight runs + GC own them).
 export async function detachPackage(opts: {
@@ -987,40 +1040,44 @@ export async function detachPackage(opts: {
     .from(packageInstalls)
     .where(eq(packageInstalls.id, att.packageInstallId));
 
-  const memberFlows = await db
-    .select({ id: flows.id, enabledRevisionId: flows.enabledRevisionId })
-    .from(flows)
-    .where(
-      and(
-        eq(flows.projectId, opts.projectId),
-        eq(flows.packageInstallId, att.packageInstallId),
-      ),
-    );
-  const revisionIds = memberFlows
-    .map((f: any) => f.enabledRevisionId)
-    .filter((id: unknown): id is string => typeof id === "string");
-
-  if (revisionIds.length > 0) {
-    const active = await db
-      .select({ id: runs.id })
-      .from(runs)
+  await db.transaction(async (tx: any) => {
+    await lockAttachment(tx, att.id, att.packageInstallId);
+    const memberFlows = await tx
+      .select({ id: flows.id, enabledRevisionId: flows.enabledRevisionId })
+      .from(flows)
       .where(
         and(
-          eq(runs.projectId, opts.projectId),
-          inArray(runs.flowRevisionId, revisionIds),
-          inArray(runs.status, [...ACTIVE_RUN_STATUSES]),
+          eq(flows.projectId, opts.projectId),
+          eq(flows.packageInstallId, att.packageInstallId),
         ),
-      );
+      )
+      .for("update");
+    const flowIds: string[] = memberFlows.map(
+      (flow: { id: string }) => flow.id,
+    );
+    const revisionIds: string[] = memberFlows
+      .map(
+        (flow: { enabledRevisionId: string | null }) => flow.enabledRevisionId,
+      )
+      .filter((id: string | null): id is string => id !== null);
+    const blockers = await lockPackageRunBlockers(
+      tx,
+      opts.projectId,
+      flowIds,
+      revisionIds,
+    );
 
-    if (active.length > 0) {
+    if (blockers.length > 0) {
+      log.warn(
+        { projectId: opts.projectId, attachmentId: att.id, blockers },
+        "[FIX:package-run-pins] package detach blocked",
+      );
       throw new MaisterError(
         "PRECONDITION",
-        `package "${att.packageName}" has ${active.length} active run(s) pinned to member revisions; finish or abandon them first`,
+        `package "${att.packageName}" is pinned by ${blockers.map((blocker) => `${blocker.runId} (${blocker.status}: ${blocker.reasons.join(", ")})`).join("; ")}; stop live execution, finish archival or resolve recovery before detaching`,
+        { details: { reason: "package_run_pinned", blockers } },
       );
     }
-  }
-
-  await db.transaction(async (tx: any) => {
     if (install) await deleteIngestionRecords(tx, opts.projectId, install);
     await tx
       .delete(capabilityImports)
@@ -1030,14 +1087,7 @@ export async function detachPackage(opts: {
           eq(capabilityImports.packageInstallId, att.packageInstallId),
         ),
       );
-    await tx
-      .delete(flows)
-      .where(
-        and(
-          eq(flows.projectId, opts.projectId),
-          eq(flows.packageInstallId, att.packageInstallId),
-        ),
-      );
+    await deleteMemberEnablements(tx, flowIds);
     await tx
       .delete(projectPackageAttachments)
       .where(eq(projectPackageAttachments.id, att.id));
@@ -1115,6 +1165,7 @@ export async function upgradeAttachment(opts: {
     );
 
   await db.transaction(async (tx: any) => {
+    await lockAttachment(tx, att.id, att.packageInstallId);
     await assertAttachedQualificationAgentsPolicy(
       tx,
       opts.projectId,
@@ -1143,16 +1194,23 @@ export async function upgradeAttachment(opts: {
     });
     const flowRowIds = memberFlows.map((m) => m.flowRowId);
 
-    // Flows the new manifest no longer ships lose their enablement rows.
-    await tx
-      .delete(flows)
+    // Removed members lose enablement, never their pinned run history.
+    const removedFlows = await tx
+      .select({ id: flows.id })
+      .from(flows)
       .where(
         and(
           eq(flows.projectId, opts.projectId),
           eq(flows.packageInstallId, att.packageInstallId),
           flowRowIds.length > 0 ? notInArray(flows.id, flowRowIds) : undefined,
         ),
-      );
+      )
+      .for("update");
+    const removedFlowIds: string[] = removedFlows.map(
+      (flow: { id: string }) => flow.id,
+    );
+
+    await deleteMemberEnablements(tx, removedFlowIds);
 
     await tx
       .update(projectPackageAttachments)
