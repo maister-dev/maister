@@ -13,6 +13,10 @@ import { z } from "zod";
 import { singleValue, withE2EDb } from "./_seed/db";
 import { loadNativeCompanyBrainFixtures } from "./_seed/native-company-brain-fixtures";
 import { waitForTaskLaunchRun } from "./_seed/task-launch";
+import {
+  captureNativeQualificationDiagnostics,
+  qualificationSecretValues,
+} from "./_seed/native-qualification-diagnostics";
 
 import { resolveTestWorktreesRoot } from "@/test-support/worktree-test-root";
 import {
@@ -961,6 +965,20 @@ test("QL-CBX-03 the real pinned RAH package retrieves structured company knowled
 
       return result.rows;
     });
+    const executionDiagnostics = await withE2EDb((pool) =>
+      captureNativeQualificationDiagnostics(pool, runIds, {
+        projectId: project.projectId,
+        repoPath: project.repoPath,
+        hostPaths: [
+          process.cwd(),
+          resolveTestWorktreesRoot("e2e-live", process.env),
+          ...(process.env.MAISTER_RUNTIME_ROOT
+            ? [process.env.MAISTER_RUNTIME_ROOT]
+            : []),
+        ],
+        secretValues: qualificationSecretValues(process.env),
+      }),
+    );
 
     const evidencePath = testInfo.outputPath(
       "native-package-qualification.json",
@@ -983,6 +1001,7 @@ test("QL-CBX-03 the real pinned RAH package retrieves structured company knowled
             "generated synthetic corpus in a fresh owned database and temporary repository; no existing Brain or private repository input",
           nativeProposalIds: [...nativeProposalIds],
           ledgerDiagnostics,
+          executionDiagnostics,
         },
         null,
         2,
