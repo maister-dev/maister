@@ -1221,6 +1221,15 @@ with immutable run/assignment/epoch/session identity, registered process group,
 OS boot identity and PID namespace,
 phase (`registered`, `unproven`, `released`) and registration/retirement times.
 The host records a gated process group before permitting adapter execution.
+After native exit and output drain, heartbeat releases that exact recorded
+command/session/assignment owner when its captured OS boot and PID namespace
+still match and the kernel positively reports whole-group absence (`ESRCH`).
+This observation precedes terminal publication and sends no process signal.
+Live descendants or unavailable observations retain the obligation for existing
+scoped recovery. Historical unknown owners are not backfilled as retired.
+Gate-start failures log the original bounded error identities and codes with
+server-recorded command/session IDs. Raw error messages, paths, arguments,
+environment and stderr stay excluded; the existing HTTP refusal remains intact.
 Recovery observes that group without treating its numeric ID as authority to
 signal another process. An active group or unavailable observation keeps the
 original create unresolved; confirmed group retirement within the recorded PID

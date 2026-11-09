@@ -5168,12 +5168,14 @@ async function driveAgentSession(
 
       // ADR-166: the create is handle-form — the workspace (and its context
       // mounts, snapshotted on the run above) is adopted by the bound client.
+      operationalSpawnStage = "execution_binding";
       const execution = await bindAgentExecution(hosts, runId, assignmentId);
 
       // S2.12: a resume that reaches here resolved NO turn above, so its
       // generation is named by the placement its claim minted. A turn resolved
       // earlier keeps its identity — minting a second one here would strand the
       // original queued and consume another pool slot.
+      operationalSpawnStage = "turn_admission";
       if (!agentTurn) {
         const ownedVariant =
           overridePrompt === undefined && !run.acpSessionId
@@ -5220,6 +5222,7 @@ async function driveAgentSession(
       }
 
       return await withoutGitOwnership(async () => {
+        operationalSpawnStage = "dispatch_admission";
         if (run.taskAdmissionSnapshot?.version === 3)
           await assertTaskAdmissionForDispatch(_db, runId);
         const createPayload = {
@@ -5254,6 +5257,9 @@ async function driveAgentSession(
             "auto_approve",
           ...(run.acpSessionId ? { resumeSessionId: run.acpSessionId } : {}),
         };
+
+        operationalSpawnStage = "session_create";
+
         const session = await execution.client.createOwnedSession(
           {
             variant: "agent",
@@ -5263,6 +5269,7 @@ async function driveAgentSession(
           async () => createPayload,
         );
 
+        operationalSpawnStage = "prompt_dispatch";
         await dispatchStoredAgentTurn(
           _db,
           execution,

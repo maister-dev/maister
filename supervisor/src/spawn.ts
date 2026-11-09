@@ -38,6 +38,7 @@ import {
   startGatedSessionProcess,
 } from "./session-process-ownership";
 import { isSupervisorError } from "./types";
+import { safeErrorCauseChain } from "../../runtime/safe-error-cause";
 
 type RuntimeObjectEnvName =
   | "MAISTER_OUTPUT_FILE"
@@ -393,7 +394,13 @@ export async function spawnSession(
       opts.registry.register(record, child, emitter, {
         runtimeEventPublisher: opts.runtimeEventPublisher,
       });
-      attachHeartbeat({ sessionId, child, registry: opts.registry, logger });
+      attachHeartbeat({
+        sessionId,
+        child,
+        registry: opts.registry,
+        logger,
+        hostState: opts.hostState,
+      });
     }
 
     try {
@@ -507,6 +514,16 @@ export async function spawnSession(
           environment: childEnv,
         });
       } catch (cause) {
+        logger.error(
+          {
+            runId: record.runId,
+            sessionId,
+            commandId: record.createdByCommandId,
+            stage: "gate_start",
+            causeChain: safeErrorCauseChain(cause),
+          },
+          "session-bootstrap-gate-failed",
+        );
         const entry = opts.registry.get(sessionId);
 
         opts.registry.markIntentionalShutdown(sessionId, "intentional");

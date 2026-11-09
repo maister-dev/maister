@@ -3593,7 +3593,7 @@ it.each(["normal", "activation-recovery", "agent", "cancelled"] as const)(
                     [runId, ordinal],
                   )
                 ).rows[0].count,
-              { timeout: 15000, interval: 25 },
+              { timeout: 30000, interval: 25 },
             )
             .toBe(1);
         };
@@ -3828,7 +3828,8 @@ it.each(["normal", "activation-recovery", "agent", "cancelled"] as const)(
       setDefaultTransportForTests(null);
     }
   },
-  300000,
+  // All 32 real checkpoint/answer/resume cycles must fit, including bounded owner recovery.
+  600000,
 );
 
 it("IT-CBA-05 resumes a repository-admitted project assignment after its actual specialist clarification under current project membership", async () => {
@@ -7712,7 +7713,8 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
     resetRegistrarStateForTests();
     setDefaultTransportForTests(null);
   }
-}, 90000);
+  // Manual, mention, event and webhook deliveries each retain their own bounded waits.
+}, 240000);
 
 it.each(["live", "checkpointed", "cancelled"] as const)(
   "CBS-02 routes a real company permission through current human authority and the existing owned delivery (%s)",

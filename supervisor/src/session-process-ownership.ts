@@ -1,13 +1,16 @@
 import type { ChildProcess } from "node:child_process";
 import type { HostState, SessionProcessObligation } from "./host-state";
-import type { SessionRegistry } from "./registry";
+import type { RegistryEntry, SessionRegistry } from "./registry";
 import type { SessionRecord } from "./types";
 
 import { fileURLToPath } from "node:url";
 
 import { z } from "zod";
 
-import { inspectProcessGroup } from "../../runtime/process-group";
+import {
+  inspectProcessGroup,
+  processGroupAbsent,
+} from "../../runtime/process-group";
 
 import { waitForChildExit } from "./execution-fence";
 import {
@@ -232,6 +235,40 @@ function processOwnershipRefusal(
       },
     },
   );
+}
+
+/** Natural exit releases only the exact recorded owner after positive whole-group absence. */
+export function retireExitedSessionProcess(
+  state: HostState,
+  entry: RegistryEntry,
+): boolean {
+  const { child, record } = entry;
+  const context = readHostProcessContext();
+  const obligation = state
+    .sessionProcessesForRun(record.runId)
+    .find((candidate) => candidate.commandId === record.createdByCommandId);
+
+  if (
+    !obligation ||
+    obligation.phase !== "registered" ||
+    (child.exitCode === null && child.signalCode === null) ||
+    !record.processGroup ||
+    child.pid !== record.processGroup ||
+    obligation.hostSessionId !== record.sessionId ||
+    obligation.assignmentId !== record.assignmentId ||
+    obligation.epoch !== record.assignmentEpoch ||
+    obligation.processGroup !== record.processGroup ||
+    obligation.osBootIdentity !== context.osBootIdentity ||
+    obligation.pidNamespace !== context.pidNamespace ||
+    record.processContext?.osBootIdentity !== context.osBootIdentity ||
+    record.processContext?.pidNamespace !== context.pidNamespace ||
+    processGroupAbsent(record.processGroup) !== true
+  )
+    return false;
+
+  state.releaseSessionProcess(obligation.commandId, new Date().toISOString());
+
+  return true;
 }
 
 /** Live registry owners remain inspectable; missing owners require positive group or OS-boot retirement. */

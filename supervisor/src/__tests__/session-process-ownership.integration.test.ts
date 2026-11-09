@@ -8,8 +8,10 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Writable } from "node:stream";
 
 import { afterEach, expect, it, vi } from "vitest";
+import pino from "pino";
 
 import * as sessionOwnership from "../session-process-ownership";
 import * as processGroups from "../../../runtime/process-group";
@@ -28,6 +30,7 @@ import {
 
 import {
   bootHost,
+  completePrompt,
   createEnvelope,
   createSession,
   envelope,
@@ -128,6 +131,104 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   if (failures.length)
     throw new AggregateError(failures, "Owned session fixture teardown failed");
+});
+
+it("retains safe gate failure identity while withholding private error messages and confirming child termination", async () => {
+  const output: string[] = [];
+  const logger = pino(
+    { level: "debug" },
+    new Writable({
+      write(chunk, _encoding, callback) {
+        output.push(String(chunk));
+        callback();
+      },
+    }),
+  );
+  const owner = await ownedHost({ logger });
+  const marker = "private-gate-credential-must-not-leak";
+  const failure = Object.assign(new Error(marker), {
+    code: "ERR_SQLITE_ERROR",
+  });
+
+  vi.spyOn(
+    owner.host.hostState,
+    "registerSessionProcess",
+  ).mockImplementationOnce(() => {
+    throw failure;
+  });
+  const response = await postJson(
+    `${owner.host.url}/sessions`,
+    await createEnvelope(owner.host, { runId: "gate-failure-identity" }),
+  );
+
+  expect(response.status).toBe(500);
+  expect(response.body).toMatchObject({
+    code: "SPAWN",
+    details: { sessionCreateQuiescence: { version: 1, process: "terminated" } },
+  });
+  const rows = output
+    .join("")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const diagnostic = rows.find(
+    (row) => row.msg === "session-bootstrap-gate-failed",
+  );
+
+  expect(diagnostic).toMatchObject({
+    runId: "gate-failure-identity",
+    stage: "gate_start",
+    commandId: expect.any(String),
+    sessionId: expect.any(String),
+    causeChain: [{ name: "Error", code: "ERR_SQLITE_ERROR" }],
+  });
+  expect(JSON.stringify({ rows, body: response.body })).not.toContain(marker);
+  expect(
+    owner.host.hostState.sessionProcessesForRun("gate-failure-identity"),
+  ).toEqual([]);
+});
+
+it("retires durable process ownership after a naturally completed group is absent without a DELETE command", async () => {
+  const owner = await ownedHost({ fixtureArgs: ["--lines", "0"] });
+  const runId = "naturally-retired-session";
+  const create = await createEnvelope(
+    owner.host,
+    { runId },
+    {
+      reapOnEndTurn: true,
+    },
+  );
+  const created = await postJson(`${owner.host.url}/sessions`, create);
+
+  expect(created.status).toBe(201);
+  const sessionId = String(created.body.sessionId);
+  const entry = owner.host.registry.get(sessionId)!;
+  const gate = await recordOwnedProcess(owner, entry.record.pid);
+
+  await recordOwnedProcess(owner, entry.record.adapterPid!);
+  expect(owner.host.hostState.sessionProcessesForRun(runId)).toMatchObject([
+    { commandId: create.command.id, phase: "registered" },
+  ]);
+  const result = await completePrompt(
+    owner.host,
+    sessionId,
+    envelope("session.prompt", fenceFor(owner.host, runId), {
+      stepId: "agent",
+      prompt: "Complete this finite operation",
+    }),
+  );
+
+  expect(result.status).toBe(200);
+  expect(await waitForChildExit(entry, 2_000)).toBe(true);
+  await assertInvocationGroupEmpty(owner.invocation, gate.identity.pgid);
+  expect(owner.host.hostState.sessionProcessesForRun(runId)).toMatchObject([
+    {
+      commandId: create.command.id,
+      processGroup: gate.identity.pgid,
+      phase: "released",
+      retiredAt: expect.any(String),
+    },
+  ]);
 });
 
 it("keeps an inherited descendant in physical ownership after its adapter exits and refuses scoped inventory until that descendant retires", async () => {

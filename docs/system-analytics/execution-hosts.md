@@ -67,7 +67,9 @@ manager-side [execution event plane](execution-event-plane.md),
   `host_identity`, `run_fences`, `workspaces`, `command_receipts`, durable
   runtime-event streams/outbox, the private runtime-object registry and
   `session_process_obligations` (schema `user_version` 16 with guarded in-place
-  upgrades). The web tier never reads it.
+  upgrades). Exact native-exit retirement and retained uncertain ownership
+  follow the [supervisor ownership contract](../supervisor.md#execution-host-state-store).
+  The web tier never reads it.
 - **Execution assignment** — one row in `execution_assignments` per
   `(run, epoch)`: `state ∈ {active, superseded, released}`,
   `placement_reason` (ten tokens), the optional `execution_workspace_id` +
