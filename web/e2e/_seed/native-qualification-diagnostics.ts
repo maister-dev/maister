@@ -11,6 +11,7 @@ import {
   terminalCauseReason,
 } from "@/lib/domain-events/taxonomy";
 import { isMaisterErrorCode } from "@/lib/errors-core";
+import { isTokenScope, type TokenScope } from "@/types/token-scopes";
 
 const OUTPUT_BYTES = 4096;
 const ROW_LIMIT = 100;
@@ -21,6 +22,7 @@ const tree = `WITH RECURSIVE tree AS (
 ), owned_runs AS (SELECT DISTINCT id FROM tree)`;
 const optionalText = z.string().nullable();
 const optionalInteger = z.number().int().nullable();
+const timestamp = z.string().datetime({ offset: true });
 const actionSchema = z.object({
   commandId: optionalText,
   promptOrdinal: optionalInteger,
@@ -36,6 +38,8 @@ const attemptSchema = z.object({
   nodeType: z.string(),
   attempt: z.number().int(),
   status: z.string(),
+  startedAt: timestamp,
+  endedAt: timestamp.nullable(),
   errorCode: optionalText,
   exitCode: optionalInteger,
   actionCompletion: actionSchema.nullable(),
@@ -46,6 +50,7 @@ const eventSchema = z.object({
   id: z.string(),
   runId: z.string(),
   kind: z.string(),
+  occurredAt: timestamp,
   cause: z.unknown(),
   total: z.number().int(),
 });
@@ -57,6 +62,12 @@ const commandSchema = z.object({
   transportState: z.string(),
   applicationState: z.string(),
   applicationAttempts: z.number().int(),
+  createdAt: timestamp,
+  updatedAt: timestamp,
+  acceptedAt: timestamp.nullable(),
+  completedAt: timestamp.nullable(),
+  completionAppliedAt: timestamp.nullable(),
+  applicationNextRetryAt: timestamp.nullable(),
   code: optionalText,
   reason: optionalText,
   applicationReason: optionalText,
@@ -64,6 +75,29 @@ const commandSchema = z.object({
   applicationCauseReason: optionalText,
   applicationPhase: optionalText,
   applicationClassification: optionalText,
+  total: z.number().int(),
+});
+const tokenSchema = z.object({
+  tokenId: z.string(),
+  tokenKind: z.enum(["project", "user", "agent", "librarian"]),
+  originKind: z.enum(["orchestrator_run", "agent_run"]).nullable(),
+  boundRunId: z.string(),
+  nodeAttemptId: optionalText,
+  issuedAt: timestamp,
+  lastUsedAt: timestamp.nullable(),
+  expiresAt: timestamp.nullable(),
+  revokedAt: timestamp.nullable(),
+  revocationReason: z.enum(["rotation", "revoked"]).nullable(),
+  total: z.number().int(),
+});
+const tokenAuditSchema = z.object({
+  id: z.string(),
+  tokenId: z.string(),
+  scopeUsed: z.string(),
+  method: z.enum(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]),
+  result: z.enum(["ok", "error"]),
+  statusCode: z.number().int().min(100).max(599),
+  createdAt: timestamp,
   total: z.number().int(),
 });
 
@@ -87,10 +121,17 @@ type SanitizedOutput = Readonly<{
 export type NativeQualificationDiagnostics = Readonly<{
   schemaVersion: 1;
   classification: "owned_synthetic_qualification_only";
+  capturedAt: string;
   rowLimit: number;
   treeDepthLimit: number;
   failedOutputMaxBytes: number;
-  totals: Readonly<{ attempts: number; events: number; commands: number }>;
+  totals: Readonly<{
+    attempts: number;
+    events: number;
+    commands: number;
+    tokens: number;
+    tokenAudit: number;
+  }>;
   attempts: readonly (Omit<
     z.infer<typeof attemptSchema>,
     "failedOutput" | "total"
@@ -101,6 +142,13 @@ export type NativeQualificationDiagnostics = Readonly<{
     cause: TerminalCause | null;
   })[];
   commands: readonly Omit<z.infer<typeof commandSchema>, "total">[];
+  tokens: readonly Omit<z.infer<typeof tokenSchema>, "total">[];
+  tokenAudit: readonly (Omit<
+    z.infer<typeof tokenAuditSchema>,
+    "scopeUsed" | "total"
+  > & {
+    scopeUsed: TokenScope | null;
+  })[];
 }>;
 
 function maskLiteralSecrets(
@@ -221,14 +269,19 @@ export async function captureNativeQualificationDiagnostics(
   const client = await pool.connect();
 
   try {
-    await client.query("BEGIN READ ONLY");
+    await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
     await client.query("SET LOCAL statement_timeout='5s'");
+    await client.query("SET LOCAL TIME ZONE 'UTC'");
     const identity = z
-      .object({ database: z.string(), repoPath: z.string() })
+      .object({
+        database: z.string(),
+        repoPath: z.string(),
+        capturedAt: timestamp,
+      })
       .parse(
         (
           await client.query(
-            'SELECT current_database() AS database,repo_path AS "repoPath" FROM projects WHERE id=$1',
+            `SELECT current_database() AS database,repo_path AS "repoPath",to_jsonb(clock_timestamp())#>>'{}' AS "capturedAt" FROM projects WHERE id=$1`,
             [scope.projectId],
           )
         ).rows[0],
@@ -254,6 +307,7 @@ export async function captureNativeQualificationDiagnostics(
         await client.query(
           `${tree}
       SELECT n.id,n.run_id AS "runId",n.node_id AS "nodeId",n.node_type AS "nodeType",n.attempt,n.status,
+        to_jsonb(n.started_at)#>>'{}' AS "startedAt",to_jsonb(n.ended_at)#>>'{}' AS "endedAt",
         n.error_code AS "errorCode",n.exit_code AS "exitCode",
         CASE WHEN n.action_completion IS NULL THEN NULL ELSE jsonb_build_object(
           'commandId',n.action_completion->'commandId','promptOrdinal',n.action_completion->'promptOrdinal',
@@ -271,7 +325,8 @@ export async function captureNativeQualificationDiagnostics(
       (
         await client.query(
           `${tree}
-      SELECT e.id::text,e.run_id AS "runId",e.kind,e.payload->'cause' AS cause,count(*) OVER()::int AS total
+      SELECT e.id::text,e.run_id AS "runId",e.kind,to_jsonb(e.occurred_at)#>>'{}' AS "occurredAt",
+        e.payload->'cause' AS cause,count(*) OVER()::int AS total
       FROM domain_events e JOIN owned_runs t ON t.id=e.run_id
       WHERE e.kind IN ('run.failed','run.crashed','run.abandoned','run.needs_input')
       ORDER BY e.occurred_at DESC,e.id DESC LIMIT ${ROW_LIMIT}`,
@@ -285,6 +340,10 @@ export async function captureNativeQualificationDiagnostics(
           `${tree}
       SELECT c.id,c.run_id AS "runId",c.kind,c.state,c.transport_state AS "transportState",
         c.application_state AS "applicationState",c.application_attempts AS "applicationAttempts",
+        to_jsonb(c.created_at)#>>'{}' AS "createdAt",to_jsonb(c.updated_at)#>>'{}' AS "updatedAt",
+        to_jsonb(c.accepted_at)#>>'{}' AS "acceptedAt",to_jsonb(c.completed_at)#>>'{}' AS "completedAt",
+        to_jsonb(c.completion_applied_at)#>>'{}' AS "completionAppliedAt",
+        to_jsonb(c.application_next_retry_at)#>>'{}' AS "applicationNextRetryAt",
         c.last_error->>'code' AS code,coalesce(c.last_error->'details'->>'reason',c.last_error->>'reason') AS reason,
         c.application_error->>'reason' AS "applicationReason",c.application_error->>'causeCode' AS "applicationCauseCode",
         c.application_error->>'causeReason' AS "applicationCauseReason",c.application_error->>'phase' AS "applicationPhase",
@@ -295,12 +354,41 @@ export async function captureNativeQualificationDiagnostics(
         )
       ).rows,
     );
+    const tokens = z.array(tokenSchema).parse(
+      (
+        await client.query(
+          `${tree}
+      SELECT p.id AS "tokenId",p.token_kind AS "tokenKind",p.origin_kind AS "originKind",
+        p.bound_run_id AS "boundRunId",p.knowledge_node_attempt_id AS "nodeAttemptId",
+        to_jsonb(p.created_at)#>>'{}' AS "issuedAt",to_jsonb(p.last_used_at)#>>'{}' AS "lastUsedAt",
+        to_jsonb(p.expires_at)#>>'{}' AS "expiresAt",to_jsonb(p.revoked_at)#>>'{}' AS "revokedAt",
+        p.revocation_reason AS "revocationReason",count(*) OVER()::int AS total
+      FROM project_tokens p JOIN owned_runs t ON t.id=p.bound_run_id WHERE p.project_id=$2
+      ORDER BY p.created_at DESC,p.id DESC LIMIT ${ROW_LIMIT}`,
+          params,
+        )
+      ).rows,
+    );
+    const tokenAudit = z.array(tokenAuditSchema).parse(
+      (
+        await client.query(
+          `${tree}
+      SELECT a.id,a.token_id AS "tokenId",a.scope_used AS "scopeUsed",a.method,a.result,
+        a.status_code AS "statusCode",to_jsonb(a.created_at)#>>'{}' AS "createdAt",count(*) OVER()::int AS total
+      FROM token_audit_log a JOIN project_tokens p ON p.id=a.token_id
+        JOIN owned_runs t ON t.id=p.bound_run_id WHERE p.project_id=$2
+      ORDER BY a.created_at DESC,a.id DESC LIMIT ${ROW_LIMIT}`,
+          params,
+        )
+      ).rows,
+    );
 
     await client.query("COMMIT");
 
     return {
       schemaVersion: 1,
       classification: "owned_synthetic_qualification_only",
+      capturedAt: identity.capturedAt,
       rowLimit: ROW_LIMIT,
       treeDepthLimit: 3,
       failedOutputMaxBytes: OUTPUT_BYTES,
@@ -308,6 +396,8 @@ export async function captureNativeQualificationDiagnostics(
         attempts: attempts[0]?.total ?? 0,
         events: events[0]?.total ?? 0,
         commands: commands[0]?.total ?? 0,
+        tokens: tokens[0]?.total ?? 0,
+        tokenAudit: tokenAudit[0]?.total ?? 0,
       },
       attempts: await Promise.all(
         attempts.map(async ({ failedOutput, total: _total, ...attempt }) => ({
@@ -361,6 +451,11 @@ export async function captureNativeQualificationDiagnostics(
           command.applicationClassification,
           scope.secretValues,
         ),
+      })),
+      tokens: tokens.map(({ total: _total, ...token }) => token),
+      tokenAudit: tokenAudit.map(({ total: _total, ...audit }) => ({
+        ...audit,
+        scopeUsed: isTokenScope(audit.scopeUsed) ? audit.scopeUsed : null,
       })),
     };
   } catch (error) {
