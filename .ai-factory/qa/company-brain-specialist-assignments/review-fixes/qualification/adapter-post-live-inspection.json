@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "observedAt": "2026-11-09T13:19:45.147739+00:00",
+  "scope": "post-run installed dependency inspection; not a contemporaneous live binary fingerprint",
+  "liveRawAdapterVersion": null,
+  "liveRawAdapterPath": "/Users/kaa/.codex/worktrees/2599/mAIster/supervisor/node_modules/.bin/claude-agent-acp",
+  "installedPackage": {
+    "name": "@agentclientprotocol/claude-agent-acp",
+    "version": "0.95.0",
+    "manifest": "/Users/kaa/.codex/worktrees/2599/mAIster/node_modules/.pnpm/@agentclientprotocol+claude-agent-acp@0.95.0_@anthropic-ai+sdk@1.3.0_zod@4.6.7__@modelc_f288ee759dee483b17a7ca2b5e7630c3/node_modules/@agentclientprotocol/claude-agent-acp/package.json",
+    "manifestSha256": "ce544454dca99a620aef760b83f42ac832f53c5135da8c7573c61789c5b1c8c8",
+    "entryPoint": "/Users/kaa/.codex/worktrees/2599/mAIster/node_modules/.pnpm/@agentclientprotocol+claude-agent-acp@0.95.0_@anthropic-ai+sdk@1.3.0_zod@4.6.7__@modelc_f288ee759dee483b17a7ca2b5e7630c3/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
+    "entryPointSha256": "dac87af861bedf6ee1444e99832274d6f517f5e83006f3905094cfc4479b3b00",
+    "shimSha256": "79b427e66f802f52950eddcaf01e53afa3fab4d7e4de9921c132b4bbdd4906a9"
+  },
+  "frozenLockfileSha256": "93cf58e44b3dad95fafc983dabf86b108cb79d6b979d1bd63242090036822f0d",
+  "limitation": "Primary dependencies were restored from the same frozen offline lock after live qualification. No exact contemporaneous binary version/hash was captured by the live receipt; its version remains null.",
+  "relativeTo": "Inspection after the7605 installed-package live run and dependency restore, before final8f regression; not a contemporaneous live binary hash."
+}

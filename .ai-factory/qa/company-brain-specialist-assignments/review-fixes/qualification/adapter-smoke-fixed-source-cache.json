@@ -1,0 +1,20 @@
+{
+  "version": 2,
+  "adapters": {
+    "claude": {
+      "status": "ok",
+      "checkedAt": "2026-11-09T10:39:44.671Z",
+      "protocolVersion": 1,
+      "steering": {
+        "supported": true,
+        "checkedAt": "2026-11-09T10:39:44.671Z"
+      },
+      "capabilityEnforcement": {
+        "status": "ok",
+        "probeVersion": 2,
+        "checkedAt": "2026-11-09T10:39:44.671Z",
+        "protocolVersion": 1
+      }
+    }
+  }
+}

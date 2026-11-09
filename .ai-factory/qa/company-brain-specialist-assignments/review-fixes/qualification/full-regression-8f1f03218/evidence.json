@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "testedHead": "8f1f0321810f5c9967354177864a8b9fc4c3e263",
+  "verdict": "passed",
+  "processExitCode": 0,
+  "jsonReporterSuccess": true,
+  "unhandledErrors": 0,
+  "durationSeconds": 2065.72,
+  "files": {
+    "passed": 687,
+    "failed": 0,
+    "skipped": 2,
+    "total": 689
+  },
+  "tests": {
+    "passed": 6271,
+    "failed": 0,
+    "skipped": 2,
+    "total": 6273
+  },
+  "optionalSkipped": [
+    {
+      "file": "lib/execution-host/__tests__/event-plane-load.integration.test.ts",
+      "enable": "MAISTER_EVENT_PLANE_LOAD=1"
+    },
+    {
+      "file": "lib/execution-host/__tests__/host-span-load.integration.test.ts",
+      "enable": "MAISTER_HOST_SPAN_LOAD=1"
+    }
+  ],
+  "productionBuild": {
+    "passed": true,
+    "buildId": "ZXYWRhahDywRNtqR4QUID",
+    "durationMs": 12942,
+    "revision": "8f1f0321810f5c9967354177864a8b9fc4c3e263"
+  },
+  "cleanup": {
+    "invocationId": "5e60b311-1f52-4204-8d0d-41874a1c9801",
+    "ownedLiveProcesses": 0,
+    "containers": 0,
+    "temporaryRoots": 0,
+    "errors": []
+  },
+  "jsonReporterSemantics": "Nested suite counts differ from file counts; skipped file JSON status is passed. Final file/test counts were cross-checked against assertion statuses, human summary and outer process exit.",
+  "retainedSha256": {
+    "cleanup.log.gz": "87915981560f2d1beb4a7a7ef154b6c404b13477f51affacaeaadb8af7bceba0",
+    "full.log.gz": "243b52c60213c48a37501a6b7b6911a7a11fb8269b3f3d75fb5895ec351c880d",
+    "results.json.gz": "ab2fc3107521033eb88f03d06bb8299529c9649b6dd85195576bfd255691e8fd"
+  }
+}
