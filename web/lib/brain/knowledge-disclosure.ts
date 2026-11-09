@@ -75,6 +75,13 @@ export async function lockKnowledgeReadConsumer(
   tx: KnowledgeTransaction,
   principal: KnowledgePrincipal,
 ): Promise<KnowledgeReadConsumer> {
+  // Fresh/small policy tables can overestimate recursive work and spend seconds
+  // compiling authorization branches while holding the consumer Run lock.
+  await tx.execute(sql`SET LOCAL jit=off`);
+  log.debug(
+    { principalKind: principal.kind, queryExecutionPolicy: "interpreted" },
+    "FIX native knowledge admission avoids policy JIT compilation",
+  );
   if (principal.kind === "user") return null;
   if (principal.kind === "execution")
     return lockRunKnowledgeReadConsumer(tx, principal.runId);
