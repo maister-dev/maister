@@ -55,6 +55,7 @@ import { serverTaskLaunchRequest } from "@/lib/tasks/launch-intent";
 import { agentWorkdirPath } from "@/lib/agents/workspace-paths";
 import { assertTaskLaunchUserAuthority } from "@/lib/tasks/launch-authority";
 import { cancelInteractiveTaskLaunch } from "@/lib/tasks/launch-cancel";
+import { ingestRuntimeEvent } from "@/lib/execution-host/events/ingest";
 
 const missingAgentAsset = vi.hoisted(() => ({
   source: "",
@@ -207,7 +208,7 @@ beforeAll(async () => {
   );
 }, 180_000);
 
-afterEach(async () => {
+async function settleLaunchFixture(): Promise<void> {
   const undispatched = await database.db
     .select({
       id: taskLaunchIntents.id,
@@ -234,16 +235,34 @@ afterEach(async () => {
       { expectedStateVersion: intent.stateVersion },
       randomUUID(),
     );
-});
+  await fake?.waitForCanonicalEvents();
+}
+
+afterEach(settleLaunchFixture);
 
 afterAll(async () => {
+  const drainOutcomes = await Promise.allSettled([
+    fake?.waitForCanonicalEvents(),
+  ]);
+
   if (previousRuntimeRoot === undefined)
     delete process.env.MAISTER_RUNTIME_ROOT;
   else process.env.MAISTER_RUNTIME_ROOT = previousRuntimeRoot;
   if (previousRoot === undefined) delete process.env.MAISTER_WORKTREES_ROOT;
   else process.env.MAISTER_WORKTREES_ROOT = previousRoot;
-  await database?.stop();
-  if (root) await rm(root, { recursive: true, force: true });
+  const stopOutcomes = await Promise.allSettled([database?.stop()]);
+  const rootOutcomes = await Promise.allSettled([
+    root ? rm(root, { recursive: true, force: true }) : undefined,
+  ]);
+  const failures = new Set<unknown>(
+    [...drainOutcomes, ...stopOutcomes, ...rootOutcomes].flatMap((outcome) =>
+      outcome.status === "rejected" ? [outcome.reason] : [],
+    ),
+  );
+
+  if (failures.size === 1) throw [...failures][0];
+  if (failures.size > 1)
+    throw new AggregateError(failures, "Launch fixture teardown failed");
 });
 
 it.each(["none", "repo_read", "worktree"] as const)(
@@ -324,6 +343,128 @@ it.each(["none", "repo_read", "worktree"] as const)(
     expect(run.operationalIntegrityBaseline?.generation).toBeGreaterThan(0);
   },
 );
+
+it("drains an ingested terminal projection before releasing the launch fixture", async () => {
+  await fake.waitForCanonicalEvents();
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const drainEntered = Promise.withResolvers<void>();
+  const deliver = fake.deliverCanonical.bind(fake);
+  const drain = fake.waitForCanonicalEvents.bind(fake);
+  const host = await database.pool.query<{ id: string }>(
+    "SELECT id FROM execution_hosts WHERE host_key=$1",
+    [fake.identity.hostKey],
+  );
+  let terminalSequence: string | undefined;
+  let projected = false;
+  let settled = false;
+  let settling: Promise<void> | undefined;
+  let launching: Promise<void> | undefined;
+  const failures = new Set<unknown>();
+  const deliverySpy = vi
+    .spyOn(fake, "deliverCanonical")
+    .mockImplementation(async (envelope, ingest) => {
+      if (
+        envelope.eventType === "session.command" &&
+        envelope.payload.phase === "completed" &&
+        terminalSequence === undefined
+      ) {
+        // Ingest is durable and directly bindable before the same event is projected.
+        await ingestRuntimeEvent({
+          db: database.db,
+          executionHostId: host.rows[0]!.id,
+          envelope,
+        });
+        terminalSequence = (
+          await database.pool.query<{ sequence: string }>(
+            "SELECT run_sequence::text AS sequence FROM execution_events WHERE id=$1",
+            [envelope.eventId],
+          )
+        ).rows[0]!.sequence;
+        entered.resolve();
+        await release.promise;
+        await deliver(envelope, ingest);
+        projected = true;
+
+        return;
+      }
+      await deliver(envelope, ingest);
+    });
+  const drainSpy = vi
+    .spyOn(fake, "waitForCanonicalEvents")
+    .mockImplementation(async () => {
+      drainEntered.resolve();
+      await drain();
+    });
+
+  try {
+    const receipt = await acceptInteractiveTaskLaunch(
+      database.db,
+      await interactiveTaskLaunchPrincipal(),
+      await request("none"),
+      randomUUID(),
+    );
+    const bound = await prepareTaskLaunchIntent(database.db, receipt.intentId);
+    const { tryStartRun } = await import("@/lib/scheduler");
+    const { startAgentSession } = await import("@/lib/agents/launch");
+
+    expect((await tryStartRun(bound.runId!, { db: database.db })).started).toBe(
+      true,
+    );
+    launching = startAgentSession(bound.runId!, { db: database.db });
+    const launchOutcome = Promise.allSettled([launching]);
+
+    await Promise.race([
+      entered.promise,
+      launchOutcome.then(([outcome]) => {
+        if (outcome?.status === "rejected") throw outcome.reason;
+
+        return entered.promise;
+      }),
+    ]);
+    expect(projected).toBe(false);
+    settling = settleLaunchFixture().then(() => {
+      settled = true;
+    });
+    await Promise.race([settling, drainEntered.promise]);
+    expect(settled).toBe(false);
+    expect(projected).toBe(false);
+    release.resolve();
+    await settling;
+    await launching;
+    expect(projected).toBe(true);
+    expect(
+      (
+        await database.pool.query<{ count: number }>(
+          "SELECT count(*)::int AS count FROM execution_event_consumers WHERE run_id=$1 AND consumer_name IN ('canonical-prompt-command-v1','canonical-session-lifecycle-v1') AND last_run_sequence >= $2::bigint",
+          [bound.runId, terminalSequence],
+        )
+      ).rows[0]!.count,
+    ).toBe(2);
+  } catch (error) {
+    failures.add(error);
+  } finally {
+    release.resolve();
+    const workOutcomes = await Promise.allSettled([
+      settling,
+      launching,
+      Promise.resolve().then(drain),
+    ]);
+    const restoreOutcomes = await Promise.allSettled([
+      Promise.resolve().then(() => deliverySpy.mockRestore()),
+      Promise.resolve().then(() => drainSpy.mockRestore()),
+    ]);
+
+    for (const outcome of [...workOutcomes, ...restoreOutcomes])
+      if (outcome.status === "rejected") failures.add(outcome.reason);
+  }
+  if (failures.size === 1) throw [...failures][0];
+  if (failures.size > 1)
+    throw new AggregateError(
+      failures,
+      "Launch fixture projection cleanup failed",
+    );
+});
 
 it("retains a real pre-model filesystem probe failure and creates no session", async () => {
   const body = await request("none");

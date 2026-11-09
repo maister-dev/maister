@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "baseHead": "bbe923cb20187cbc74012ec88fa9c0d8f17d23a5",
+  "file": "web/lib/tasks/__tests__/launch-agent-admission.integration.test.ts",
+  "patchSha256": "760bf134c0359120995366da549645217910730046f0f21e92b1e538589de933",
+  "appliedSourceSha256": "4d5faf24f6661cec36a4541247ce157a1d79e4e4675d5a323d3c8e434cdf294b",
+  "productionAndSharedFakeChanged": false,
+  "cause": "Suite ended PostgreSQL while a detached fake terminal delivery was ingested but not finished canonical projection. Existing fake.waitForCanonicalEvents was omitted from teardown.",
+  "provenance": "The missing-drain source mechanism exists on master; no separate runtime baseline failure on master is claimed.",
+  "red": {
+    "log": "red.log.gz",
+    "failed": 1,
+    "filtered": 40,
+    "durationSeconds": 3.56,
+    "oracle": "Owning fixture cleanup must not finish while a real durably ingested terminal event remains held before projection",
+    "observed": "Cleanup settled true while expected false; all work was released and drained afterward"
+  },
+  "green": {
+    "log": "audit-final.log.gz",
+    "passed": 41,
+    "files": 1,
+    "durationSeconds": 29.77,
+    "processExitCode": 0,
+    "unhandledErrors": 0
+  },
+  "siblingCheckBeforeFinalTestCleanupPrecision": {
+    "log": "owning-siblings-green.log.gz",
+    "passed": 67,
+    "files": 3,
+    "durationSeconds": 45.01,
+    "processExitCode": 0
+  },
+  "checks": {
+    "types": 0,
+    "lint": 0,
+    "diffCheck": 0
+  },
+  "audit": "No remaining actionable findings; immediate launch ownership, independent work/spy settlement, drain and cleanup errors preserved.",
+  "developmentFailures": {
+    "barrier-setup-failure.log.gz": "Initial barrier setup timeout, not the functional RED; launch ownership corrected.",
+    "types.log.gz": "Isolated missing mcp dependency subtree, not product type failure; physical frozen subtree restored before final green."
+  },
+  "primaryRecheck": {
+    "passed": 67,
+    "files": 3,
+    "processExitCode": 0,
+    "durationSeconds": 47.63,
+    "unhandledErrors": 0,
+    "types": 0,
+    "lint": 0,
+    "log": "primary-green.log.gz"
+  },
+  "retainedSha256": {
+    "barrier-setup-failure.log.gz": "675988a2b0db2a48e2f052bd534e5424cdfbc088c96b6dfd4624b737f0a4eda4",
+    "primary-green.log.gz": "9b8729f71ce55c08a32782f83fd74be3f83446ab150ec467fbc6726042e22dec",
+    "ownership-final.log.gz": "3da0d7b11720f23e4ae6261a129307b3b1a24e03405fde9878d1292c6dfcf78b",
+    "types-audit-final.log.gz": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237",
+    "green.log.gz": "432af320f6511a097dd952e3002bad4c73d1d1dfffa5f0fa98b9edac8decfb2f",
+    "owning-siblings-green.log.gz": "a50cfcc12f76bd2358bebc6ef58965ed6ad0bcd8f069902d99dc8344bca83af7",
+    "eslint-audit-final.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "primary-lint.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "types.log.gz": "33ef2d579e5b99b6f8229d98d1d9bc2627c521041a637479e5bcea7ffb96bca0",
+    "audit-final.log.gz": "d888465c91aab60730949a1b04ee71ef222a6712b2e9fd072a795d439e805759",
+    "primary-types.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "red.log.gz": "5346dbe9359ecd74260804812c1e1f9736d2e40114906aa137cfc45062330f15"
+  }
+}
