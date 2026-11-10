@@ -57,7 +57,7 @@ sequenceDiagram
 
 ### Bounds and identity
 
-Logical delegation identity is `(assignmentId,inputRevision,workId,workRevision)`; canonical request digest includes target specialist/Flow binding, objective, refs, constraints, required result and effective bounds. Exact replay returns the same child; changed payload under the key returns 409. Existing `run_delegate` and plan admission must share this guarded seam. Children are direct children of their current coordinator; merely sharing assignment ownership never permits collecting a foreign branch/grandchild.
+Logical delegation identity is `(assignmentId,inputRevision,logicalWorkId,workRevision)`; `logicalWorkId` is the caller's bounded assignment-scoped key, while the server-generated work subject `id` is returned by the first receipt. The canonical request digest includes target specialist/Flow binding, objective, refs, constraints, required result and effective bounds. Exact replay returns the same child; changed payload under the key returns 409. Existing `run_delegate` and plan admission must share this guarded seam. Children are direct children of their current coordinator; merely sharing assignment ownership never permits collecting a foreign branch/grandchild.
 
 Delegation advisory locks use tree-root-then-parent order at the shared helper,
 including explicit pre-admission locks used by task/plan paths. The root case
