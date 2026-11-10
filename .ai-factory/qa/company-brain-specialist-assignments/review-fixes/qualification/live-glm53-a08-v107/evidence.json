@@ -1,0 +1,170 @@
+{
+  "schemaVersion": 1,
+  "status": "failed_model_output_transport",
+  "sourceHead": "a08ef0d08ae009676c203a39a7d5e9d1ba59a9d0",
+  "package": {
+    "tag": "rah/v1.0.7",
+    "commit": "2f1474bc295ec9522a83fc7e80719be14a42f626",
+    "loaderUrl": "https://cb-native-qualification.invalid/maister-plugins",
+    "localMirror": "/Users/kaa/Work/dev/github/maister-plugins"
+  },
+  "runner": {
+    "id": "cb-live-claude",
+    "adapter": "claude",
+    "model": "glm-5.3",
+    "permissionPolicy": "default"
+  },
+  "adapter": {
+    "manifestVersion": "0.95.0",
+    "binaryPath": "/private/tmp/maister-cb-live-b081-approved/node_modules/.pnpm/@agentclientprotocol+claude-agent-acp@0.95.0_@anthropic-ai+sdk@1.3.0_zod@4.6.7__@modelc_f288ee759dee483b17a7ca2b5e7630c3/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
+    "binarySha256": "dac87af861bedf6ee1444e99832274d6f517f5e83006f3905094cfc4479b3b00",
+    "adapterReportedVersion": "observed separately by runtime diagnostics"
+  },
+  "adapterReportedVersion": null,
+  "adapterBinaryUnchanged": true,
+  "startedAt": "2026-11-10T10:43:44.435Z",
+  "finishedAt": "2026-11-10T11:06:01.588Z",
+  "exitCode": 1,
+  "invocationId": "1f2e276c-cb71-421b-ad0e-371219aabee4",
+  "playwrightStats": {
+    "startTime": "2026-11-10T10:43:51.378Z",
+    "duration": 1329745.579,
+    "expected": 1,
+    "skipped": 0,
+    "unexpected": 1,
+    "flaky": 0
+  },
+  "qualifiedTrees": 1,
+  "qualifiedTreeSizes": [
+    3
+  ],
+  "runStates": [
+    {
+      "runId": "853c5ac6-1c9c-458d-af57-046ba20b4812",
+      "parentRunId": null,
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "eb1d2712-1d0e-4b60-a73d-c7d4388dbefa",
+      "parentRunId": null,
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "44d779d0-0290-4018-90ba-6e7602f298e2",
+      "parentRunId": "eb1d2712-1d0e-4b60-a73d-c7d4388dbefa",
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "4967e858-82f8-4a29-bd33-aee5ef7a8f32",
+      "parentRunId": "853c5ac6-1c9c-458d-af57-046ba20b4812",
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "820b58de-45c7-4d66-bcd7-96a2dd8005e4",
+      "parentRunId": "853c5ac6-1c9c-458d-af57-046ba20b4812",
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "9677b03f-818a-4791-8c4b-b50905488058",
+      "parentRunId": "eb1d2712-1d0e-4b60-a73d-c7d4388dbefa",
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "1c25be7e-4d94-4414-bd13-23b4d6db9c61",
+      "parentRunId": "4967e858-82f8-4a29-bd33-aee5ef7a8f32",
+      "status": "Failed",
+      "validity": "invalid",
+      "invalidReason": "result_missing",
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "4c8d846b-f027-46ea-83e2-d1d860198a0f",
+      "parentRunId": "820b58de-45c7-4d66-bcd7-96a2dd8005e4",
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "88a1bbf6-c0e7-4388-aec0-0d7ccc648582",
+      "parentRunId": "820b58de-45c7-4d66-bcd7-96a2dd8005e4",
+      "status": "Failed",
+      "validity": "invalid",
+      "invalidReason": "result_missing",
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "e4241706-d5bb-4ae2-9396-00cd4b90de5a",
+      "parentRunId": "4967e858-82f8-4a29-bd33-aee5ef7a8f32",
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    }
+  ],
+  "observations": [
+    "Depth-one passes complete semantic/evidence/result/write-back checks before depth-two launch.",
+    "Depth-two root and both intermediate coordinators complete, but two required leaves fail CONFIG/result_missing; no control tree or final bilingual UI acceptance is reached.",
+    "The two successful SDK end_turn outputs contain schema-valid native findings with opposing evidence, but use an ordinary JSON fence or place maister:output on the body next line.",
+    "Canonical extraction correctly refuses both; no permissive extraction, fabricated evidence, test assertion or package change is introduced."
+  ],
+  "repairReceipt": "../native-output-fence-20261110/evidence.json",
+  "cleanup": {
+    "wrapperLeaks": 0,
+    "independentOwnedProcesses": 0,
+    "containers": 0,
+    "roots": 0,
+    "errors": []
+  },
+  "artifacts": [
+    {
+      "path": "cb-live-a08-v107-glm53-qualified.log.gz",
+      "sha256": "e01af8f3645932d9075a2f9735145d5ed8f3a1cce2226bb8d236c953c2126d50",
+      "rawSha256": "dfb0a410bb84d6f7825797f9cb3001b2daf28577ea3a65c5c5454258526d0a49"
+    },
+    {
+      "path": "cb-live-a08-v107-glm53-qualified-launch-metadata.json.gz",
+      "sha256": "b603e3d08d32f183e82fbe7f1d075f4937fca337ae69a72edfbe518917e6d55c",
+      "rawSha256": "189abafb7fe93e12b39a0b72cc46406a97c4f5d8449865cd7353d47577e3fdb7"
+    },
+    {
+      "path": "cb-live-a08-v107-glm53-qualified-report.json.gz",
+      "sha256": "efd300e6ba964b21e827b9bc7654600072e3ca40d40856dfe5cf9f00a16a1e47",
+      "rawSha256": "d2aacf6962d70c818a2cb7d4852689f204e33f39306f9ce1a8b94ba83f87a017"
+    },
+    {
+      "path": "native-package-qualification.json.gz",
+      "sha256": "30267b62e91a8ea00d579b3bcb9b47543b01c00413895ed01f1df3c3bc8095f5",
+      "rawSha256": "ca72246a770efcc0f913b27b28964f614a684fa854a0353f8183e0428bf2deb5"
+    },
+    {
+      "path": "cb-glm53-v107-native-leaf-diagnosis.json.gz",
+      "sha256": "56ad10073119df68dfd29da9d473f1774c9d228c6e69882a6d38c83f242f116e",
+      "rawSha256": "430bc1287b71fed98dd7f47d14be567b38406b8fe60c5e94c570d4a388262c07"
+    },
+    {
+      "path": "cb-glm53-v107-live-cleanup.log.gz",
+      "sha256": "f7ee06ad15e1d3157f8119ac34c4920c37fe57f87efcdb5bfb0d2079ccc24756",
+      "rawSha256": "f93a1f7a23b69333b5a51b1c9b8de6f1146fed9c8f1cf91df283f977c80232e0"
+    }
+  ],
+  "readiness": "Failed qualification; the completed root and parsed diagnostic JSON do not qualify required child execution or CB0/CB1 readiness."
+}

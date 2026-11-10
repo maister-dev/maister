@@ -8,6 +8,7 @@ import {
   publicAgentLaunchMessage,
 } from "@/lib/agents/launch";
 import { evidenceFindingsV1Schema } from "@/lib/run-results/findings-types";
+import { extractSentinelBlock } from "@/lib/flows/graph/node-output";
 
 type PromptTaskRow = {
   number: number;
@@ -181,13 +182,20 @@ describe("buildAgentPrompt", () => {
     const exampleMarker = "Native leaf result example (shape only):\n";
 
     expect(prompt).toContain(exampleMarker);
-    const example: unknown = JSON.parse(
+    const example = extractSentinelBlock(
       prompt.slice(
         prompt.indexOf(exampleMarker) + exampleMarker.length,
         prompt.indexOf(marker),
       ),
+      1024 * 1024,
     );
-    const leaf = evidenceFindingsV1Schema.parse(example);
+
+    expect(example.kind).toBe("value");
+    if (example.kind !== "value")
+      throw new Error(
+        "The delivered native example must use the actual output transport",
+      );
+    const leaf = evidenceFindingsV1Schema.parse(example.value);
 
     expect(leaf.findings.length).toBeGreaterThan(0);
     expect(leaf.selection).toEqual([]);

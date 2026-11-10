@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "status": "focused_fix_qualified_actual_model_requalification_pending",
+  "gitHeadAtReceipt": "cf10f6931020c7ae3ee22b1138e4fe7fba60bc89",
+  "sourceState": "Two source files dirty and frozen during verification; receipt is not a full integration or paid-provider pass.",
+  "sourceSha256": {
+    "web/lib/run-results/findings-prompt.ts": "cc0a1df8aedc087429eeb9bfb7047acffb2e21eaa2ba047519e31d39930807fd",
+    "web/lib/agents/__tests__/launch.test.ts": "0eab6ab82b7ee25cebeeac07f86f18ba0f326422534a16fe2095e00d2a2f6b8f"
+  },
+  "red": {
+    "failed": 1,
+    "passed": 9,
+    "reason": "Delivered example produces absent through the actual canonical sentinel extractor."
+  },
+  "green": {
+    "focusedTests": 10,
+    "focusedFiles": 1,
+    "fullWebUnitTests": 9312,
+    "fullWebUnitFiles": 891,
+    "fullWebUnitSeconds": 27.48,
+    "typescriptExit": 0,
+    "eslintExit": 0,
+    "diffCheckExit": 0
+  },
+  "review": "Independent read-only reviewer found no actionable issue in the exact two-file diff and verified all native standalone/company/Flow consumers; prompt bytes never enter assistant-output extraction.",
+  "scope": "Literal correctly fenced example and same-line opening instructions in the existing shared prompt; no schema/extractor/authority/budget/acceptance changes. Existing test strengthened without adding another case.",
+  "actualRedReceipt": "../live-glm53-a08-v107/evidence.json",
+  "actualGreenRequired": true,
+  "artifacts": [
+    {
+      "path": "cb-native-fence-example-red.log.gz",
+      "sha256": "3c45badd18193b0c60e833a1e9bb7d7e6976b6b80d92c3e82639ede7a06343fb",
+      "rawSha256": "40a09f009ea45bb302aa25e89b8362e68f9cdeda987d669d01555d9e2b021274"
+    },
+    {
+      "path": "cb-native-fence-example-green.log.gz",
+      "sha256": "7489cf0c8dee5a58648bb51b6c8d3e83743c66c2c5f4bb9600824438480689b3",
+      "rawSha256": "fb7c3c8ccae3c07f4eca0756b895da8aaae36d61ef38eae1efae7e29fcced974"
+    },
+    {
+      "path": "cb-native-fence-example-full-unit.log.gz",
+      "sha256": "ea8948ea8180d6c2888438f7deedf4dbe3e252f5712e5569e06ab2d1d1da9b6f",
+      "rawSha256": "675aa8a79feb7c0962b93fa5f93ef0eeb1471e93896ef532ff4d61b8f0a3fb55"
+    },
+    {
+      "path": "cb-native-fence-example-types.log.gz",
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cb-native-fence-example-lint.log.gz",
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cb-native-fence-example.patch.gz",
+      "sha256": "3571f9d7927c10b2ecae0e931190bf43c0ca711a7b2a525824fe8d55eb5877c7",
+      "rawSha256": "1bcc4aad689b3525f77f2e90b1c9ee5ba4aac3c4f317bd9d566230ce1c3af40f"
+    }
+  ]
+}
