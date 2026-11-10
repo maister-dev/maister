@@ -275,6 +275,7 @@ describe("runReviewHuman stamps review_tip_sha (ADR-082)", () => {
             leftJoin: () => thenable,
             orderBy: () => thenable,
             limit: () => thenable,
+            for: () => thenable,
           };
 
           return thenable;
