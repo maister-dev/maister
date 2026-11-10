@@ -1,0 +1,99 @@
+{
+  "schemaVersion": 1,
+  "sourceHead": "a73b1ff89a8f67b637e7b0af7530226f65be58f2",
+  "productionBuildId": "kVCXGsR4JxgAscVtZFgos",
+  "invocationId": "92d2a5a1-42bd-4f84-a5ed-652f3110a73b",
+  "status": "failed",
+  "exitCode": 1,
+  "files": {
+    "passed": 685,
+    "failed": 2,
+    "skipped": 2,
+    "total": 689
+  },
+  "tests": {
+    "passed": 6268,
+    "failed": 6,
+    "skipped": 2,
+    "total": 6276
+  },
+  "unhandledErrors": 0,
+  "seconds": 1555.27,
+  "causes": [
+    "Confirmed EEXIST: fault-injection test publishes in the shared real build-lock namespace.",
+    "Comment qualification fixture assumes one dispatch consumed its exact event despite transaction-horizon filtering.",
+    "Four subsequent company permission/capacity assertions cascade from two unretired promoted executions after the first fixture failure."
+  ],
+  "artifacts": [
+    {
+      "path": "vitest.json.gz",
+      "sha256": "039ae01e95ae1e1e5304cb83238bd22816b441a5844ead37ca9808fcc0bc3505",
+      "rawSha256": "718f2702781e0c9091888fa9b10eebf746cb0f7c452d1735c7801c992c7d368d"
+    },
+    {
+      "path": "web-integration.log.gz.part-01",
+      "sha256": "501af6bccf28f4f69476eb622e9e2ff0d6c5422a46699d9f714e4215d848d1db"
+    },
+    {
+      "path": "web-integration.log.gz.part-02",
+      "sha256": "a4559cf174b19580bc79c37b8477fadd6524f6a9a20de9e20ee1c27961b80d57"
+    },
+    {
+      "path": "web-integration.log.gz.part-03",
+      "sha256": "2b82bc5474739a0668973cf8afb7bbde8739dab726b41d9985be60be567b0615"
+    },
+    {
+      "path": "web-integration.log.gz.part-04",
+      "sha256": "c7d3d0e88755c0266e63748fed00758eb171bda6d6dd066fbebe56fdd4c0cece"
+    },
+    {
+      "path": "web-integration.log.gz.part-05",
+      "sha256": "448586ef5f8e74ca9fdb5da1dec6f6b9bd4ebb21371ba89f65e9f71ce29d3a7e"
+    },
+    {
+      "path": "web-integration.log.gz.part-06",
+      "sha256": "aa922c5db3ef5ade5b298b00a1af6db95d1d4d61d9ada7e351af885cd37c75fd"
+    },
+    {
+      "path": "web-integration.log.gz.part-07",
+      "sha256": "fd83bd8496514e1b8b739d43ca3795a9288b6afe7a06029498452b4ab3ad8bf7"
+    },
+    {
+      "path": "web-integration.log.gz.part-08",
+      "sha256": "402073abb75cee4fc91b5562dc37f16e053affe3e58d2d1902d33c9539214e6f"
+    },
+    {
+      "path": "web-integration.log.gz.part-09",
+      "sha256": "f32bc83b0237792cfd8a470e8964b848284afd993b96b6621194c7728f760777"
+    },
+    {
+      "path": "cleanup.log.gz",
+      "sha256": "b046912117c3b0d6283c84f79520a7f23ef2e1b2e948e2f6af8325ba2e5d36b3",
+      "sourceSha256": "fb1c2fd98d4c60370187806008b250e8810da32068e83f9aa1da8152104793a1"
+    }
+  ],
+  "integrationLogBundle": {
+    "encoding": "Concatenate parts in order and gzip decompress.",
+    "rawSha256": "d9834a7dcff60c633e179b6f7879ced4171a1b2e52d781d0467d813bc468baf4",
+    "compressedSha256": "cb1f6f9b0268a5f0d2f0bded19f309efc5febd9b88f288a7d1c4f897ea350f9f",
+    "parts": [
+      "web-integration.log.gz.part-01",
+      "web-integration.log.gz.part-02",
+      "web-integration.log.gz.part-03",
+      "web-integration.log.gz.part-04",
+      "web-integration.log.gz.part-05",
+      "web-integration.log.gz.part-06",
+      "web-integration.log.gz.part-07",
+      "web-integration.log.gz.part-08",
+      "web-integration.log.gz.part-09"
+    ]
+  },
+  "cleanup": {
+    "independentlyQuiescent": true,
+    "ownedLivePids": [],
+    "containers": [],
+    "survivingRoots": [],
+    "cleanupErrors": [],
+    "wrapperLeakReapedCount": 0
+  }
+}

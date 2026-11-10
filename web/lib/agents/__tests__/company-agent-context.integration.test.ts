@@ -69,9 +69,12 @@ import {
   reserveCompanyAgentRunInTransaction,
 } from "../company-agent-launch";
 import { startAgentSession } from "../launch";
+import * as agentLaunch from "../launch";
 import { startAgentContinuationWorker } from "../continuation-worker";
 import { getCompanyAgentRunHistory } from "../activity-queries";
 
+import * as flowRunner from "@/lib/flows/runner";
+import { poll } from "@/test-support/durable-workers-ledger";
 import { answerAssignmentQuestion } from "@/lib/services/assignment-question-response";
 import { assignmentQuestionReceiptSchema } from "@/lib/specialist-assignments/question-types";
 import { getSpecialistAssignmentAdmission } from "@/lib/specialist-assignments/admission-read";
@@ -4207,19 +4210,23 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
       )
     ).rows[0].id;
 
-    for (let batch = 0; batch < 20; batch++) {
-      expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
-      const cursor = (
-        await database.pool.query<{ complete: boolean }>(
-          "SELECT cursor_event_id >= $1::bigint AS complete FROM domain_event_consumers WHERE consumer_id='agent_triggers'",
-          [watermark],
-        )
-      ).rows[0];
+    await poll(
+      async () => {
+        expect(await dispatchDomainEvents({ db })).toMatchObject({
+          failures: 0,
+        });
+        const cursor = (
+          await database.pool.query<{ complete: boolean }>(
+            "SELECT cursor_event_id >= $1::bigint AS complete FROM domain_event_consumers WHERE consumer_id='agent_triggers'",
+            [watermark],
+          )
+        ).rows[0];
 
-      if (cursor?.complete) return;
-    }
-    throw new Error(
-      "Registered trigger consumer did not drain its bounded qualification fixture batch",
+        return cursor?.complete ? true : null;
+      },
+      30000,
+      `agent_triggers cursor through event ${watermark}`,
+      25,
     );
   };
   const qualifyQueuedCoordinators = async (): Promise<void> => {
@@ -4300,11 +4307,81 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
   });
   const restoreUrl = useRealSupervisorUrl(supervisor.url);
   const worker = startProjectionWorker({ db, projectors: canonicalProjectors });
+  let initialRunIds: readonly string[] | undefined;
+  let restoreAgentDispatch: (() => void) | undefined;
+  let restoreFlowDispatch: (() => void) | undefined;
+  const dispatchedRunIds = new Set<string>();
+  const activeDispatches = new Set<
+    Promise<Readonly<{ ok: true } | { ok: false; error: unknown }>>
+  >();
+  const dispatchAbort = new AbortController();
+  const cleanupFailures: unknown[] = [];
+  let closing = false;
+  let bodyFailure: Readonly<{ error: unknown }> | undefined;
+  let ownedCancellation: Readonly<{ id: string; revision: number }> | undefined;
+  const observeDispatch = (
+    runId: string,
+    pending: Promise<void>,
+  ): Promise<void> => {
+    dispatchedRunIds.add(runId);
+    const settled = pending.then(
+      (): Readonly<{ ok: true }> => ({ ok: true }),
+      (error: unknown): Readonly<{ ok: false; error: unknown }> => ({
+        ok: false,
+        error,
+      }),
+    );
+
+    activeDispatches.add(settled);
+    void settled.then((outcome) => {
+      activeDispatches.delete(settled);
+      if (closing && !outcome.ok) cleanupFailures.push(outcome.error);
+    });
+
+    return pending;
+  };
+  const originalAgentDispatch = agentLaunch.startAgentSession;
+  const originalFlowDispatch = flowRunner.runFlow;
 
   setDefaultTransportForTests(null);
   resetResolverForTests();
   resetRegistrarStateForTests();
   try {
+    initialRunIds = (
+      await database.pool.query<{ id: string }>("SELECT id FROM runs")
+    ).rows.map((row) => row.id);
+    const agentDispatch = vi.spyOn(agentLaunch, "startAgentSession");
+
+    restoreAgentDispatch = () => {
+      agentDispatch.mockRestore();
+    };
+    agentDispatch.mockImplementation((runId, options = {}) =>
+      observeDispatch(
+        runId,
+        originalAgentDispatch(runId, {
+          ...options,
+          signal: options.signal
+            ? AbortSignal.any([options.signal, dispatchAbort.signal])
+            : dispatchAbort.signal,
+        }),
+      ),
+    );
+    const flowDispatch = vi.spyOn(flowRunner, "runFlow");
+
+    restoreFlowDispatch = () => {
+      flowDispatch.mockRestore();
+    };
+    flowDispatch.mockImplementation((runId, options = {}) =>
+      observeDispatch(
+        runId,
+        originalFlowDispatch(runId, {
+          ...options,
+          signal: options.signal
+            ? AbortSignal.any([options.signal, dispatchAbort.signal])
+            : dispatchAbort.signal,
+        }),
+      ),
+    );
     browserSession.user = await requireActiveUserById(userId);
     const { expectedResult: _expectedResult, ...objective } =
       assignmentInput.objectiveInput;
@@ -4826,7 +4903,7 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
       const body: { comment: { id: string } } = await response.json();
 
       commentIds.push(body.comment.id);
-      expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+      await drainProjectTriggerEvents();
     }
     const commentWork = (
       await database.pool.query<{
@@ -5377,7 +5454,7 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
       adopted: 0,
       unknown: 0,
     });
-    expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+    await drainProjectTriggerEvents();
     const waitingComment = (
       await database.pool.query<{
         task_id: string;
@@ -5571,22 +5648,58 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
         ],
       );
     }
-    await qualifyCoordinatorTask(waitingComment[0].task_id, userId);
-    expect(
-      await getSpecialistAssignmentAdmission(
-        db,
-        userId,
-        waitingComment[0].assignment_id,
-      ),
-    ).toMatchObject({
-      carrier: {
-        input: { revision: 1 },
-        qualification: { freshness: "current", decision: "ready" },
-      },
-      limitations: ["repository_evidence_not_checked"],
-    });
+    const qualificationHorizon = await database.pool.connect();
 
-    expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+    try {
+      await qualificationHorizon.query("BEGIN");
+      await qualificationHorizon.query("SELECT pg_current_xact_id()");
+      await qualifyCoordinatorTask(waitingComment[0].task_id, userId);
+      expect(
+        await getSpecialistAssignmentAdmission(
+          db,
+          userId,
+          waitingComment[0].assignment_id,
+        ),
+      ).toMatchObject({
+        carrier: {
+          input: { revision: 1 },
+          qualification: { freshness: "current", decision: "ready" },
+        },
+        limitations: ["repository_evidence_not_checked"],
+      });
+
+      expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+      const heldQualificationEvent = (
+        await database.pool.query<{ id: string }>(
+          "SELECT id::text AS id FROM domain_events WHERE kind='task.qualification_changed' AND task_id=$1 ORDER BY id DESC LIMIT 1",
+          [waitingComment[0].task_id],
+        )
+      ).rows[0]!;
+
+      expect(
+        (
+          await database.pool.query(
+            "SELECT cursor_event_id < $1::bigint AS behind FROM domain_event_consumers WHERE consumer_id='agent_triggers'",
+            [heldQualificationEvent.id],
+          )
+        ).rows,
+      ).toEqual([{ behind: true }]);
+      expect(
+        (
+          await database.pool.query(
+            "SELECT run_id FROM specialist_run_links WHERE assignment_id=$1",
+            [waitingComment[0].assignment_id],
+          )
+        ).rows,
+      ).toEqual([]);
+    } finally {
+      try {
+        await qualificationHorizon.query("ROLLBACK");
+      } finally {
+        qualificationHorizon.release();
+      }
+    }
+    await drainProjectTriggerEvents();
     const coordinatorCommentWork = (
       await database.pool.query<{
         id: string;
@@ -5644,7 +5757,7 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
       "UPDATE domain_event_consumers SET cursor_event_id=$1::bigint-1 WHERE consumer_id='agent_triggers'",
       [firstCommentEvent.id],
     );
-    expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+    await drainProjectTriggerEvents();
     expect(
       (
         await database.pool.query(
@@ -5695,7 +5808,7 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
       [project.id, userId],
     );
     try {
-      expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+      await drainProjectTriggerEvents();
       expect(
         (
           await database.pool.query(
@@ -5742,7 +5855,7 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
     const oversizedComment: { comment: { id: string } } =
       await oversizedCommentResponse.json();
 
-    expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+    await drainProjectTriggerEvents();
     expect(
       (
         await database.pool.query(
@@ -6792,7 +6905,7 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
       "INSERT INTO execution_host_pressure(execution_host_id,pressured_since) SELECT id,now() FROM execution_hosts WHERE kind='local_direct' AND retired_at IS NULL ON CONFLICT DO NOTHING",
     );
     try {
-      expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+      await drainProjectTriggerEvents();
       expect(
         (
           await database.pool.query(
@@ -6825,7 +6938,7 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
     let eventRunId: string;
 
     try {
-      expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+      await drainProjectTriggerEvents();
       const eventWork = (
         await database.pool.query<{
           run_id: string;
@@ -6895,7 +7008,7 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
         "UPDATE domain_event_consumers SET cursor_event_id=(SELECT trigger_event_id-1 FROM runs WHERE id=$1) WHERE consumer_id='agent_triggers'",
         [eventRunId],
       );
-      expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+      await drainProjectTriggerEvents();
       expect(
         (
           await database.pool.query(
@@ -7034,7 +7147,7 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
       },
       { timeout: 30000, interval: 25 },
     );
-    expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+    await drainProjectTriggerEvents();
     await qualifyQueuedCoordinators();
     const receiverWork = (
       await database.pool.query<{
@@ -7185,7 +7298,7 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
       },
       { timeout: 30000, interval: 25 },
     );
-    expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+    await drainProjectTriggerEvents();
     expect(
       (
         await database.pool.query(
@@ -7235,7 +7348,7 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
     const userComment: { comment: { id: string } } =
       await userFactResponse.json();
 
-    expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+    await drainProjectTriggerEvents();
     const rootWork = (
       await database.pool.query<{
         id: string;
@@ -7699,19 +7812,175 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
       { kind: "session.create", count: 1 },
       { kind: "session.prompt", count: 1 },
     ]);
+  } catch (error) {
+    bodyFailure = { error };
+    throw error;
   } finally {
-    await database.pool.query(
-      "UPDATE agent_schedules SET enabled=false WHERE project_id=$1",
-      [project.id],
-    );
-    browserSession.user = null;
-    await worker.stop();
-    await stopRuntimeEventConsumers();
-    await supervisor.stop();
-    restoreUrl();
-    resetResolverForTests();
-    resetRegistrarStateForTests();
-    setDefaultTransportForTests(null);
+    closing = true;
+    const cleanup: readonly (() => void | Promise<void>)[] = [
+      async () => {
+        await database.pool.query(
+          "UPDATE agent_schedules SET enabled=false WHERE project_id=$1",
+          [project.id],
+        );
+      },
+      async () => {
+        if (initialRunIds === undefined) return;
+        const existing = await database.pool.query(
+          "SELECT id FROM company_grants WHERE principal_type='user' AND principal_id=$1 AND action='assignments:cancel' AND revoked_at IS NULL",
+          [userId],
+        );
+
+        if (existing.rows.length === 0) {
+          const granted = await createCompanyGrants(db, administratorId, {
+            principalKind: "user",
+            principalId: userId,
+            actions: ["assignments:cancel"],
+            idempotencyKey: randomUUID(),
+          });
+
+          ownedCancellation = granted.page.items.find(
+            (grant) => grant.action === "assignments:cancel",
+          );
+          expect(ownedCancellation).toBeDefined();
+        }
+        const failedStops = new Set<string>();
+
+        await poll(
+          async () => {
+            const owned = (
+              await database.pool.query<{
+                id: string;
+                company_id: string | null;
+              }>(
+                "SELECT id,company_id FROM runs WHERE (id<>ALL($1::text[]) OR id=ANY($2::text[])) AND status NOT IN ('Done','Failed','Crashed','Abandoned')",
+                [initialRunIds, [...dispatchedRunIds]],
+              )
+            ).rows;
+
+            for (const run of owned) {
+              if (failedStops.has(run.id)) continue;
+              try {
+                browserSession.user = await requireActiveUserById(
+                  run.company_id === null ? administratorId : userId,
+                );
+                const response = await stopRunPost(
+                  new Request(`http://localhost/api/runs/${run.id}/stop`, {
+                    method: "POST",
+                  }),
+                  { params: Promise.resolve({ runId: run.id }) },
+                );
+                const result: unknown = await response.json();
+
+                if (response.status === 503) {
+                  expect(result).toMatchObject({
+                    code: "EXECUTOR_UNAVAILABLE",
+                  });
+                  continue;
+                }
+                const retained = (
+                  await database.pool.query<{ terminal: boolean }>(
+                    "SELECT status IN ('Done','Failed','Crashed','Abandoned') AS terminal FROM runs WHERE id=$1",
+                    [run.id],
+                  )
+                ).rows[0];
+
+                expect(
+                  retained?.terminal,
+                  JSON.stringify({
+                    runId: run.id,
+                    status: response.status,
+                    result,
+                  }),
+                ).toBe(true);
+              } catch (error) {
+                failedStops.add(run.id);
+                cleanupFailures.push(error);
+              }
+            }
+
+            return owned.every((run) => failedStops.has(run.id)) ? true : null;
+          },
+          30000,
+          "owned native Run settlement",
+          25,
+        );
+      },
+      () => {
+        dispatchAbort.abort();
+      },
+      async () => {
+        await poll(
+          async () => (activeDispatches.size === 0 ? true : null),
+          10000,
+          "owned dispatch settlement before host teardown",
+          25,
+        );
+      },
+      () => supervisor.stop(),
+      async () => {
+        await poll(
+          async () => (activeDispatches.size === 0 ? true : null),
+          30000,
+          "owned dispatch settlement after host teardown",
+          25,
+        );
+      },
+      async () => {
+        if (initialRunIds === undefined) return;
+        const remaining = await database.pool.query(
+          "SELECT assignment.run_id FROM execution_assignments assignment WHERE assignment.state='active' AND (assignment.run_id<>ALL($1::text[]) OR assignment.run_id=ANY($2::text[]))",
+          [initialRunIds, [...dispatchedRunIds]],
+        );
+
+        expect(remaining.rows).toEqual([]);
+      },
+      async () => {
+        if (ownedCancellation)
+          await revokeCompanyGrant(db, administratorId, ownedCancellation.id, {
+            expectedRevision: ownedCancellation.revision,
+            reason:
+              "Release this project fixture's exact temporary cancellation authority",
+            idempotencyKey: randomUUID(),
+          });
+      },
+      () => worker.stop(),
+      () => stopRuntimeEventConsumers(),
+      () => {
+        restoreAgentDispatch?.();
+      },
+      () => {
+        restoreFlowDispatch?.();
+      },
+      () => {
+        restoreUrl();
+      },
+      () => {
+        browserSession.user = null;
+      },
+      () => {
+        resetResolverForTests();
+      },
+      () => {
+        resetRegistrarStateForTests();
+      },
+      () => {
+        setDefaultTransportForTests(null);
+      },
+    ];
+
+    for (const release of cleanup) {
+      try {
+        await release();
+      } catch (error) {
+        cleanupFailures.push(error);
+      }
+    }
+    if (cleanupFailures.length)
+      throw new AggregateError(
+        [...(bodyFailure ? [bodyFailure.error] : []), ...cleanupFailures],
+        "Project assignment fixture could not release all owned executions",
+      );
   }
   // Manual, mention, event and webhook deliveries each retain their own bounded waits.
 }, 240000);
