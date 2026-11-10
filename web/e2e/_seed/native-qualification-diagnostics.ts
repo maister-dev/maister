@@ -70,6 +70,7 @@ const commandSchema = z.object({
   applicationNextRetryAt: timestamp.nullable(),
   code: optionalText,
   reason: optionalText,
+  errorMessage: optionalText,
   terminationStage: z.enum(["process_exit", "terminal_output"]).nullable(),
   applicationReason: optionalText,
   applicationCauseCode: optionalText,
@@ -142,7 +143,10 @@ export type NativeQualificationDiagnostics = Readonly<{
   events: readonly (Omit<z.infer<typeof eventSchema>, "cause" | "total"> & {
     cause: TerminalCause | null;
   })[];
-  commands: readonly Omit<z.infer<typeof commandSchema>, "total">[];
+  commands: readonly (Omit<
+    z.infer<typeof commandSchema>,
+    "total" | "errorMessage"
+  > & { errorMessage: SanitizedOutput | null })[];
   tokens: readonly Omit<z.infer<typeof tokenSchema>, "total">[];
   tokenAudit: readonly (Omit<
     z.infer<typeof tokenAuditSchema>,
@@ -346,6 +350,7 @@ export async function captureNativeQualificationDiagnostics(
         to_jsonb(c.completion_applied_at)#>>'{}' AS "completionAppliedAt",
         to_jsonb(c.application_next_retry_at)#>>'{}' AS "applicationNextRetryAt",
         c.last_error->>'code' AS code,coalesce(c.last_error->'details'->>'reason',c.last_error->>'reason') AS reason,
+        c.last_error->>'message' AS "errorMessage",
         CASE WHEN c.kind='session.delete' AND c.last_error->'details'->>'stage' IN ('process_exit','terminal_output')
           THEN c.last_error->'details'->>'stage' ELSE NULL END AS "terminationStage",
         c.application_error->>'reason' AS "applicationReason",c.application_error->>'causeCode' AS "applicationCauseCode",
@@ -430,31 +435,37 @@ export async function captureNativeQualificationDiagnostics(
         ...event,
         cause: normalizedCause(event.cause, scope.secretValues),
       })),
-      commands: commands.map(({ total: _total, ...command }) => ({
-        ...command,
-        code: safeCode(command.code, scope.secretValues),
-        reason: safeReason(command.reason, scope.secretValues),
-        applicationReason: safeReason(
-          command.applicationReason,
-          scope.secretValues,
-        ),
-        applicationCauseCode: safeCode(
-          command.applicationCauseCode,
-          scope.secretValues,
-        ),
-        applicationCauseReason: safeReason(
-          command.applicationCauseReason,
-          scope.secretValues,
-        ),
-        applicationPhase: safeReason(
-          command.applicationPhase,
-          scope.secretValues,
-        ),
-        applicationClassification: safeReason(
-          command.applicationClassification,
-          scope.secretValues,
-        ),
-      })),
+      commands: await Promise.all(
+        commands.map(async ({ total: _total, errorMessage, ...command }) => ({
+          ...command,
+          errorMessage:
+            errorMessage === null
+              ? null
+              : await sanitizedOutput(errorMessage, scope),
+          code: safeCode(command.code, scope.secretValues),
+          reason: safeReason(command.reason, scope.secretValues),
+          applicationReason: safeReason(
+            command.applicationReason,
+            scope.secretValues,
+          ),
+          applicationCauseCode: safeCode(
+            command.applicationCauseCode,
+            scope.secretValues,
+          ),
+          applicationCauseReason: safeReason(
+            command.applicationCauseReason,
+            scope.secretValues,
+          ),
+          applicationPhase: safeReason(
+            command.applicationPhase,
+            scope.secretValues,
+          ),
+          applicationClassification: safeReason(
+            command.applicationClassification,
+            scope.secretValues,
+          ),
+        })),
+      ),
       tokens: tokens.map(({ total: _total, ...token }) => token),
       tokenAudit: tokenAudit.map(({ total: _total, ...audit }) => ({
         ...audit,

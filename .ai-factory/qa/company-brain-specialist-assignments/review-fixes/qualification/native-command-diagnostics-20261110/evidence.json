@@ -1,0 +1,128 @@
+{
+  "schemaVersion": 1,
+  "scope": "Synthetic qualification diagnostics only; no runtime outcome, authorization or public API change.",
+  "sourceFiles": [
+    {
+      "path": "web/e2e/_seed/native-qualification-diagnostics.ts",
+      "sha256": "83386ffbcf73a171e2d6a3b97dcc11d2175ebe4be1a054fd823df27e2bf69493"
+    },
+    {
+      "path": "web/e2e/__tests__/native-qualification-diagnostics.integration.test.ts",
+      "sha256": "27fb897e01157809158f9c58e740d1e2d9397df42f8b6b8f161fb7e2a413460e"
+    }
+  ],
+  "red": {
+    "log": "cb-native-error-diagnostics-red3.log.gz",
+    "exitCode": 1,
+    "reason": "Actual retained execution command message absent from diagnostics.",
+    "seconds": 2.51
+  },
+  "fixtureSetupFailures": [
+    {
+      "log": "cb-native-error-diagnostics-red.log.gz",
+      "reason": "Fixture omitted required max_attempts; not functional RED."
+    },
+    {
+      "log": "cb-native-error-diagnostics-red2.log.gz",
+      "reason": "Fixture omitted terminal completed_at witness; not functional RED."
+    }
+  ],
+  "green": {
+    "log": "cb-native-error-diagnostics-green-final.log.gz",
+    "exitCode": 0,
+    "tests": 1,
+    "files": 1,
+    "seconds": 4.09,
+    "checks": [
+      "Original useful error suffix survives.",
+      "Known secret, host path and ANSI controls removed before 4096-byte UTF8-safe tail clipping.",
+      "Foreign root and wrong repository are refused."
+    ]
+  },
+  "checks": {
+    "lintExit": 0,
+    "typesExit": 0,
+    "independentReview": "No findings; knowledge_fix_audit read-only."
+  },
+  "existingCheckpointGates": {
+    "sourceHead": "3242043831f1f134241eb0bec9fd3c533e12f6f2",
+    "webUnit": {
+      "passed": 9312,
+      "files": 891,
+      "seconds": 43.52,
+      "exitCode": 0,
+      "initialSandboxAttempt": "Failed19cases and1unhandled due local listen EPERM; unchanged suite rerun with local sockets allowed passes."
+    },
+    "contracts": "84requirements/45tasks, generated schemas and106surface examples pass.",
+    "docs": "177-table ERD and canonical indexes pass."
+  },
+  "companion": {
+    "tag": "rah/v1.0.6",
+    "commit": "2e513d737502f23332de98d4b79a979cfe8f5b87",
+    "change": "Token ceilings now account for cached context: depth1/intermediate2million, depth2sixmillion. Other governance limits unchanged.",
+    "candidateRealLoader": {
+      "exitCode": 0,
+      "tests": 1,
+      "seconds": 3.27
+    },
+    "liveReady": false
+  },
+  "readiness": "New actual installed-package qualification required; budget ownership fix and full regression remain separate gates. CB1 remains unqualified.",
+  "artifacts": [
+    {
+      "path": "cb-native-error-diagnostics-red.log.gz",
+      "sha256": "5ba0c867eb200e71f8bb00329c442b1e4920c837fe7cbb476b85dd0bb942858a",
+      "rawSha256": "8cf725f4c4053c1f459796b727cd9776d5351f07ba913aed28e2ef0275ab6ac6"
+    },
+    {
+      "path": "cb-native-error-diagnostics-red2.log.gz",
+      "sha256": "4bbe9fc56b37e98b4cb9f09c7b19df68b5504c225bac1b55d51daef72b569a78",
+      "rawSha256": "8445a1db5b7337fad67e056ef2d30867398d6978520a9ac3ee99b30a9d6288de"
+    },
+    {
+      "path": "cb-native-error-diagnostics-red3.log.gz",
+      "sha256": "85eacda2b13f9902efcf7edf721b9678ba8788f8161f95292795d39d9cca4ca6",
+      "rawSha256": "4576fd0b52da3abc0f9f83b1fa9c8aaa1de85458854a170160fa19bc6b29f155"
+    },
+    {
+      "path": "cb-native-error-diagnostics-green-final.log.gz",
+      "sha256": "8ae8a397bedeacbd1cf820468719b7de217e1c0ab79c0c9cc233e4f86d010a4b",
+      "rawSha256": "9dd1a7fc34187343ed1f6eb27e818af6748517058e38f201bfc9b77023922fb2"
+    },
+    {
+      "path": "cb-native-error-diagnostics-lint.log.gz",
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cb-native-error-diagnostics-types-final.log.gz",
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cb-native-cache-budget-package.log.gz",
+      "sha256": "f6d720071b25ea709f4f9fabdc0e3d3c640b0380d6d93fdfc12679f0de9a2467",
+      "rawSha256": "6b92ffec3a750af1270d3f834650ee6d215991028d745f574ff994920a474fd3"
+    },
+    {
+      "path": "cb-324204383-web-unit.log.gz",
+      "sha256": "650769b25010dd4a46ff6bf0189c5fe1a8ef30d450b78ec80a2d2eddb427c276",
+      "rawSha256": "8a750aca1e7f0e46452691836b840dffde643a09f50798c0f304b87c81d2cf6d"
+    },
+    {
+      "path": "cb-324204383-web-unit-unrestricted.log.gz",
+      "sha256": "dd43a28a00d03a2cda49b11c0e8a8ea55677189969e445739ba5824375eb257f",
+      "rawSha256": "a1bc938baa4cb261b33a831c0fbd83ae960ca156bbb9c6ab2551de8f39ea326e"
+    },
+    {
+      "path": "cb-324204383-contracts.log.gz",
+      "sha256": "d2d07cd8a47d6f2321fd988f0546c5e78597a2b1e0b261dc502d3972cea0f83d",
+      "rawSha256": "64904566e67eddd7773de71eb7008fae6024e6a681cb67c6c6ffca2c929bc531"
+    },
+    {
+      "path": "cb-324204383-docs.log.gz",
+      "sha256": "77adf5feab85261389e29bc9dde374545a26af1f019383853eac2d131e00c8b5",
+      "rawSha256": "e7ff777a555fa45c3df7b047ad9261171c5c6469a7d9c2148e0c1f03c099c739"
+    }
+  ]
+}
