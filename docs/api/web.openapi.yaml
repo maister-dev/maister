@@ -14812,13 +14812,32 @@ paths:
       tags: [flow-packages, projects]
       summary: (ADR-088 — Implemented) Detach a package from a project
       description: |
-        (ADR-088 — Implemented.) Admin-only (`managePackages`). Refused with 409
-        (`PRECONDITION`) while any member revision is pinned by a non-terminal
-        run. One transaction removes the attachment, member `flows` rows, and
-        the ingested MCP/restriction records this install owns
+        (ADR-088 — Implemented.) Admin-only (`managePackages`). Attachment
+        protection is checked under run row locks in the deletion transaction,
+        including older revisions still associated with a member Flow.
+        Pending, Running, NeedsInput, NeedsInputIdle, HumanWorking,
+        WaitingOnChildren and Review runs remain protected. A Crashed run
+        releases its attachment pin only when ended and revision-pinned, with
+        every applicable workspace archived and removed, preservation recorded
+        as not_needed or backed by both archive branch and commit, and no
+        incomplete lifecycle operation or live promotion claim. Shared worktree
+        users also require ended, terminal, quiescent siblings and a fully
+        archived allocator workspace. An archive timestamp alone is insufficient.
+        Active assignments, unconfirmed session incarnations or open execution
+        commands block detach for every status; otherwise Failed, Abandoned and
+        Done remain nonblocking. A refusal returns 409 PRECONDITION with
+        details.reason `package_run_pinned` and details.blockers[] containing
+        runId, status and reasons[].
+        One transaction removes the attachment, member `flows` rows, and the
+        ingested MCP/restriction records this install owns
         (`material.packageInstallId` — a same-id record from another attached
-        package survives); member revisions stay for in-flight
-        runs and GC. Write-back removes the `packages[]` pin after commit.
+        package survives). Only mutable task/run Flow associations are cleared;
+        historical outcomes, revision pins, execution evidence and workspace
+        archive references remain. Explicit reattach and immutable-revision
+        recovery remain supported; revision removal and GC still protect every
+        historical run reference. Existing archives without preservation_outcome
+        qualify with complete archive references and finalized removal;
+        incomplete archives and unpinned legacy crashes remain protected.
       operationId: detachProjectPackage
       parameters:
         - {
@@ -14856,8 +14875,15 @@ paths:
         (ADR-088 — Implemented.) Admin-only (`managePackages`). The target
         `packageInstallId` MUST be an installed revision of the SAME package
         name (mismatch → 409 `PRECONDITION`). One transaction flips the group
-        pointers; in-flight runs keep their pinned revisions. Write-back
-        rewrites the `packages[]` version pin after commit.
+        pointers; in-flight runs keep their immutable pinned revisions. Removed
+        members lose only mutable task/run Flow associations: historical runs,
+        outcomes, execution evidence and workspace archive references survive,
+        and pinned recovery does not require the removed Flow enablement.
+        Removing a member still needed by an unfinished legacy run without an
+        immutable revision returns 409 PRECONDITION with details.reason
+        `historical_revision_missing` and details.runIds[]. This operation also supports
+        downgrade; package mutations do not write configuration files. Git pins
+        change through reviewed configuration persistence.
       operationId: upgradeProjectPackage
       parameters:
         - {

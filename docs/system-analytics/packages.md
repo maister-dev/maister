@@ -230,11 +230,11 @@ than attachment protection and include every historical run reference.
 
 ### Crash windows (attach path)
 
-| Window                                              | Reachable state                           | Recovery                                                                                            |
-| --------------------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Install done, attach tx not committed               | Orphan package install                    | Harmless; reused on retry or swept by GC when unreferenced                                          |
-| Attach tx committed, configuration not saved to Git | Runtime applied, export pending           | Explicit preview and configuration commit; package mutation retry does not write YAML               |
-| Trust tx committed, setup not yet run               | Members trusted, `setup_status='pending'` | Existing launch precondition refuses until setup completes; setup retried via the trust/enable path |
+| Window | Reachable state | Recovery |
+| --- | --- | --- |
+| Install done, attach tx not committed | Orphan package install | Harmless; reused on retry or swept by GC when unreferenced |
+| Attach tx committed, configuration not saved to Git | Runtime applied, export pending | Explicit preview and configuration commit; package mutation retry does not write YAML |
+| Trust tx committed, setup not yet run | Members trusted, `setup_status='pending'` | Existing launch precondition refuses until setup completes; setup retried via the trust/enable path |
 
 ## Expectations
 
@@ -260,8 +260,8 @@ resolved_revision)`; installed package revisions are immutable.
 - Reviewed persistence exports pins without installing, trusting or ingesting
   packages. Local sources that cannot reproduce the attached revision refuse
   export explicitly while runtime attachments remain usable.
-- Detach MUST apply the attachment-pinning contract below, including older
-  revisions still associated with the member Flow after an upgrade.
+- Detach MUST apply the [attachment-pinning contract](#attachment-pinning-lifecycle),
+  including older revisions still associated with the member Flow after an upgrade.
 - Upgrade flips group pointers only; in-flight runs keep their pinned
   revisions (ADR-021 pinning contract unchanged).
 - Per-source discovery failure MUST degrade to the cached `discovered`
