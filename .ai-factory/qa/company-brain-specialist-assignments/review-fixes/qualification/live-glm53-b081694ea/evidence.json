@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "status": "failed",
+  "sourceHead": "b081694eafab72ddfd3cce8bfd2fc02462a65511",
+  "package": {
+    "tag": "rah/v1.0.4",
+    "commit": "a1ddf140369bbae7fe7efc9db88ff82b0a2289e6",
+    "loaderUrl": "https://cb-native-qualification.invalid/maister-plugins",
+    "localMirror": "/Users/kaa/Work/dev/github/maister-plugins"
+  },
+  "runner": {
+    "id": "cb-live-claude",
+    "adapter": "claude",
+    "model": "glm-5.3",
+    "permissionPolicy": "default"
+  },
+  "adapterBeforeExecution": {
+    "manifestVersion": "0.95.0",
+    "binaryPath": "/private/tmp/maister-cb-live-b081-approved/node_modules/.pnpm/@agentclientprotocol+claude-agent-acp@0.95.0_@anthropic-ai+sdk@1.3.0_zod@4.6.7__@modelc_f288ee759dee483b17a7ca2b5e7630c3/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
+    "binarySha256": "dac87af861bedf6ee1444e99832274d6f517f5e83006f3905094cfc4479b3b00",
+    "adapterReportedVersion": "observed separately by runtime diagnostics"
+  },
+  "adapterReportedVersion": null,
+  "adapterBinaryUnchanged": true,
+  "exitCode": 1,
+  "completedTrees": 1,
+  "depthTwoQualified": false,
+  "validResults": 5,
+  "invalidResults": 2,
+  "failure": "Depth-two root remained WaitingOnChildren at the 20-minute predicate deadline. Two native leaf payloads had forbidden findings[].selection; another intermediate legitimately exhausted max_duration without a final result.",
+  "cleanup": {
+    "independentlyQuiescent": true,
+    "ownedLivePids": [],
+    "containers": [],
+    "survivingRoots": [],
+    "cleanupErrors": [],
+    "wrapperLeakReapedCount": 2
+  },
+  "artifacts": [
+    {
+      "path": "native-package-qualification.json.gz",
+      "sha256": "89ecea146559e70cd50723197c9c737551ee373a840642e6d656c0369bd79a22",
+      "sourceSha256": "93633a45bd5d6eda668f57a67a0e9563739f64298510110cf2852d6831802eaa"
+    },
+    {
+      "path": "cb-live-b081-glm53-qualified.log.gz",
+      "sha256": "f0536404f290e322c79ca1471d327c10e26bc35ad7fccebbc18811a6738936c6",
+      "sourceSha256": "c1acda91382529560e2da559c9db02af76d3981fd679046a8761bb0e7ce5cf13"
+    },
+    {
+      "path": "cb-live-b081-glm53-qualified-report.json.gz",
+      "sha256": "27d6ca371b04c5bde3105d12697faf0b039e882219326f8e7f5a51515fe61fe1",
+      "sourceSha256": "0f108df86bc446d698575a83befdf6463ec43c6af984f88c304674a23dfc142a"
+    },
+    {
+      "path": "cb-live-b081-glm53-qualified-launch-metadata.json.gz",
+      "sha256": "ed795c8d8258d50f2ab832a6697bbbdac7b39c4311078da8532a6aa114f1b379",
+      "sourceSha256": "b989b365f49841c0afb19c346fc9873c434a0c2046b55b8bbca7edb862725a32"
+    },
+    {
+      "path": "cb-live-b081-glm53-smoke-validated.log.gz",
+      "sha256": "e5e650368d13827a93904664cd054d55b31ebf9bafc9168c5da6ab775684af70",
+      "sourceSha256": "091868e05523a96c14049f6c44df4aa8476d5acf8c0ef32914e6b135165f8370"
+    },
+    {
+      "path": "cb-glm53-native-violations.json.gz",
+      "sha256": "a306efcaa3b196d3392eb3bcb66745d3d9b3239fbb2573fffc571681d6ed823d",
+      "sourceSha256": "f1f19e964a9becbe5d37ae61d85088d1c4deb55437b86c009ac582c94fe5f1c0"
+    },
+    {
+      "path": "cleanup.log.gz",
+      "sha256": "2e1ad58016b16a7a8f21f4d8d60a2cfbafe6aac7447daa4d76b50a8aa470c11c",
+      "sourceSha256": "4b8017fe9c2a2896d4d5336005a90b9b6b13c902414580c3a49cc3e33efde0b7"
+    }
+  ],
+  "limits": [
+    "The first complete three-Run tree does not qualify the incomplete depth-two tree or the control/write-back/UI scenarios after it.",
+    "Per-session model snapshots were inspected read-only during execution; all ten observed snapshots selected glm-5.3.",
+    "Strict native validation remains authoritative; malformed results were not repaired or accepted.",
+    "The independently discovered root node-only budget activation defect is not attributed as this attempt cause."
+  ]
+}

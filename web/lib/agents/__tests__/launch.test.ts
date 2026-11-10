@@ -7,6 +7,7 @@ import {
   hidesAgentExistenceForLaunch,
   publicAgentLaunchMessage,
 } from "@/lib/agents/launch";
+import { evidenceFindingsV1Schema } from "@/lib/run-results/findings-types";
 
 type PromptTaskRow = {
   number: number;
@@ -164,7 +165,7 @@ describe("buildAgentPrompt", () => {
     });
   }
 
-  it("supplies the closed native finding grammar instead of only opaque JSON arrays", async () => {
+  it("supplies closed native grammar and an executable leaf example with result-level selection", async () => {
     const prompt = await buildAgentPrompt(emptyPromptDb(), parsed, {
       id: "native-prompt",
       projectId: null,
@@ -177,7 +178,26 @@ describe("buildAgentPrompt", () => {
       },
     });
     const marker = "Native result JSON Schema:\n";
+    const exampleMarker = "Native leaf result example (shape only):\n";
 
+    expect(prompt).toContain(exampleMarker);
+    const example: unknown = JSON.parse(
+      prompt.slice(
+        prompt.indexOf(exampleMarker) + exampleMarker.length,
+        prompt.indexOf(marker),
+      ),
+    );
+    const leaf = evidenceFindingsV1Schema.parse(example);
+
+    expect(leaf.findings.length).toBeGreaterThan(0);
+    expect(leaf.selection).toEqual([]);
+    expect(leaf.knowledgeProposals).toEqual([]);
+    for (const finding of leaf.findings) {
+      expect(finding.sourceFindings).toEqual([]);
+      expect(finding.supporting).toEqual([]);
+      expect(finding.contradicting).toEqual([]);
+      expect(finding.missingEvidence).not.toHaveLength(0);
+    }
     expect(prompt).toContain(marker);
     const grammar = JSON.parse(
       prompt.slice(prompt.indexOf(marker) + marker.length),
