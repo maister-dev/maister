@@ -58,6 +58,8 @@ import {
   productionWebBuild,
 } from "@/test-support/real-web";
 
+import { acquireProductionBuildLock } from "@/test-support/production-build-lock";
+
 type StackReady = {
   workerPid: number;
   supervisorPid: number;
@@ -794,7 +796,7 @@ try {
 
 async function assertMissingBuildLockIdentity(
   invocation: Invocation,
-  directory: string,
+  lockPath: string,
 ): Promise<void> {
   const child = spawn(
     process.execPath,
@@ -806,7 +808,7 @@ async function assertMissingBuildLockIdentity(
       fileURLToPath(
         new URL("../fixtures/build-lock-refusal.mjs", import.meta.url),
       ),
-      path.join(directory, "missing-owner-build.log"),
+      lockPath,
     ],
     {
       cwd: process.cwd(),
@@ -886,30 +888,51 @@ describe("S5.2 invocation process ownership", () => {
       ...process.env,
       ...invocationEnvironment(invocation),
     });
-    const lock = path.join(process.cwd(), ".next.build-lock");
+    const productionLock = path.join(process.cwd(), ".next.build-lock");
+    const lock = path.join(directory, ".next.build-lock");
     const ownerFile = path.join(invocation.directory, "dead-build-owner.json");
+    let releaseProductionLock: (() => Promise<void>) | undefined;
 
     try {
+      releaseProductionLock = await acquireProductionBuildLock(productionLock);
+      const productionOwner = await readlink(productionLock);
       const owner = await processIdentity(invocation, child.pid!);
 
       await writeFile(ownerFile, JSON.stringify(owner));
       await symlink(ownerFile, lock);
       await stopIdleChild(child);
       await unlink(ownerFile);
-      await assertMissingBuildLockIdentity(invocation, directory);
+      await assertMissingBuildLockIdentity(invocation, lock);
       expect(await readlink(lock)).toBe(ownerFile);
       await unlink(lock);
+      await writeFile(ownerFile, JSON.stringify(owner));
+      await symlink(ownerFile, lock);
+      const releaseReclaimedLock = await acquireProductionBuildLock(lock);
+
+      try {
+        expect(await readlink(lock)).not.toBe(ownerFile);
+        expect(JSON.parse(await readFile(lock, "utf8"))).toMatchObject({
+          pid: process.pid,
+          owned: true,
+          zombie: false,
+        });
+      } finally {
+        await releaseReclaimedLock();
+      }
+      await expect(access(lock)).rejects.toMatchObject({ code: "ENOENT" });
+      // Fault injection must not replace or remove a real builder's lock.
+      expect(await readlink(productionLock)).toBe(productionOwner);
+      await releaseProductionLock();
+      releaseProductionLock = undefined;
       const buildId = await buildProductionWeb(
         path.join(directory, "next-build.log"),
       );
 
-      await writeFile(ownerFile, JSON.stringify(owner));
-      await symlink(ownerFile, lock);
       expect(
         await buildProductionWeb(path.join(directory, "next-build.log")),
       ).toBe(buildId);
-      await expect(access(lock)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
+      await releaseProductionLock?.();
       await stopIdleChild(child);
       const target = await readlink(lock).catch(
         (error: NodeJS.ErrnoException) => {

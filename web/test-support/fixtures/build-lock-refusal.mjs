@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
 
-import { buildProductionWeb } from "../real-web.ts";
+import { acquireProductionBuildLock } from "../production-build-lock.ts";
 
-const logFile = process.argv[2];
+const lockPath = process.argv[2];
 
-assert(logFile, "build-lock refusal control requires an owned log path");
+assert(lockPath, "build-lock refusal control requires an owned lock path");
 /** @type {unknown} */
 let failure;
 
 try {
-  await buildProductionWeb(logFile);
+  const release = await acquireProductionBuildLock(lockPath);
+
+  await release();
 } catch (error) {
   failure = error;
 }
