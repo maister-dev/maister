@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { ExecutionHostTransport } from "./execution-host/contracts";
+import type { Db as ExecutionDb } from "./execution-host/db";
 import type {
   PromptEvidenceClass,
   PromptReceiptProbe,
@@ -247,6 +248,132 @@ export const NO_PROMPT_EVIDENCE: ResolvedPromptEvidence = {
   commandId: null,
   nodeAttemptId: null,
 };
+
+/** Standalone completion belongs to the exact current agent owner, not a lost-session timer. */
+export async function resolveAgentPromptEvidence(
+  db: ExecutionDb,
+  input: Readonly<{ runId: string }>,
+): Promise<ResolvedPromptEvidence> {
+  const command = schemaModule.executionCommands;
+  const run = schemaModule.runs;
+  const assignment = schemaModule.executionAssignments;
+  const session = schemaModule.runSessions;
+  const incarnation = schemaModule.runSessionIncarnations;
+  const turn = schemaModule.agentTurns;
+  const dispatchedTurn = and(
+    eq(turn.commandId, command.id),
+    eq(turn.state, "dispatched"),
+    eq(turn.executionAssignmentId, assignment.id),
+    eq(turn.assignmentEpoch, assignment.epoch),
+    eq(turn.runSessionId, session.id),
+    eq(turn.incarnationId, incarnation.id),
+    sql`${turn.variant} = ${command.ownerRef}->>'variant'`,
+    sql`${turn.ordinal}::text = ${command.ownerRef}->>'promptOrdinal'`,
+  );
+  const [row] = await db
+    .select({
+      id: command.id,
+      state: command.state,
+      applicationState: command.applicationState,
+      applicationError: command.applicationError,
+      lastError: command.lastError,
+      terminalEventId: command.terminalEventId,
+      terminalEvidenceSha256: command.terminalEvidenceSha256,
+      incarnationState: incarnation.state,
+    })
+    .from(command)
+    .innerJoin(run, and(eq(run.id, command.runId), eq(run.runKind, "agent")))
+    .innerJoin(
+      assignment,
+      and(
+        eq(assignment.id, run.executionAssignmentId),
+        eq(command.executionAssignmentId, assignment.id),
+        eq(command.assignmentEpoch, assignment.epoch),
+        eq(command.executionHostId, assignment.executionHostId),
+        eq(assignment.state, "active"),
+      ),
+    )
+    .innerJoin(
+      session,
+      and(
+        eq(session.runId, run.id),
+        eq(session.executionAssignmentId, assignment.id),
+        eq(session.hostSessionId, command.targetSessionId),
+        sql`${session.id} = ${command.ownerRef}->>'runSessionId'`,
+      ),
+    )
+    .innerJoin(
+      incarnation,
+      and(
+        eq(incarnation.runSessionId, session.id),
+        eq(incarnation.executionAssignmentId, assignment.id),
+        eq(incarnation.assignmentEpoch, assignment.epoch),
+        eq(incarnation.executionHostId, assignment.executionHostId),
+        eq(incarnation.hostSessionId, command.targetSessionId),
+        sql`${incarnation.id} = ${command.ownerRef}->>'incarnationId'`,
+      ),
+    )
+    .leftJoin(
+      turn,
+      and(
+        eq(turn.runId, run.id),
+        sql`${turn.id} = ${command.ownerRef}->>'turnId'`,
+      ),
+    )
+    .where(
+      and(
+        eq(command.runId, input.runId),
+        eq(command.kind, "session.prompt"),
+        eq(command.ownerKind, "agent_turn"),
+        sql`${command.ownerRef}->'version' = '1'::jsonb`,
+        sql`${command.ownerRef}->>'runId' = ${run.id}`,
+        sql`${command.ownerRef}->>'assignmentId' = ${assignment.id}`,
+        sql`${command.ownerRef}->>'assignmentEpoch' = ${assignment.epoch}::text`,
+        or(
+          and(
+            sql`${command.ownerRef}->>'variant' = 'initial'`,
+            sql`${command.ownerRef}->>'turnId' = ${assignment.id}`,
+            sql`${command.ownerRef}->'promptOrdinal' = '0'::jsonb`,
+            or(isNull(turn.id), dispatchedTurn),
+          ),
+          and(
+            inArray(sql`${command.ownerRef}->>'variant'`, [
+              "resume",
+              "rework",
+              "live_message",
+              "persistent_message",
+            ]),
+            dispatchedTurn,
+          ),
+        ),
+      ),
+    )
+    .orderBy(desc(command.createdAt), desc(command.id))
+    .limit(1);
+
+  if (!row) return NO_PROMPT_EVIDENCE;
+  let evidence = classifyPromptEvidence(row);
+
+  if (evidence !== "poisoned" && evidence !== "quarantined") {
+    if (isTurnLostError(row.lastError)) evidence = "turn_lost";
+    else if (
+      !["succeeded", "failed"].includes(row.state) ||
+      row.terminalEvidenceSha256 === null ||
+      !["created", "active", "exited", "crashed"].includes(
+        row.incarnationState,
+      ) ||
+      !["pending_application", "applying"].includes(evidence)
+    )
+      return { ...NO_PROMPT_EVIDENCE, commandId: row.id };
+  }
+
+  return {
+    evidence,
+    streamLost: false,
+    commandId: row.id,
+    nodeAttemptId: null,
+  };
+}
 
 /** A poisoned or quarantined consensus generation is a terminal owner refusal
  * even if its supervisor session remains live. It belongs to the current open

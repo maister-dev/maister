@@ -46,6 +46,7 @@ import { resolveCurrentNodeContext } from "@/lib/flows/graph/current-node-kind";
 import {
   NO_PROMPT_EVIDENCE,
   resolveConsensusPoisonEvidence,
+  resolveAgentPromptEvidence,
   resolvePoisonedPromptEvidence,
   resolvePromptEvidence,
 } from "@/lib/reconcile-evidence-db";
@@ -632,11 +633,20 @@ const EVIDENCE_DECISIONS = {
 } as const satisfies Record<PromptEvidenceClass, ReconcileDecision | null>;
 
 function evidenceClassification(
-  input: ReconcileInput,
+  input: Pick<
+    ReconcileInput,
+    "runKind" | "promptEvidence" | "promptEvidenceStreamLost"
+  >,
 ): ReconcileDecision | null {
-  // Scope guard: the flow agent-node arm only. `agent` and `scratch` runs reach
-  // this branch through their own kind mapping and keep their own owners.
-  if (input.runKind !== "flow") return null;
+  if (input.runKind !== "flow" && input.runKind !== "agent") return null;
+  // A finished old agent turn cannot hold a current Run merely by existing.
+  if (
+    input.runKind === "agent" &&
+    ["none", "applied", "pending_ingest", "inflight"].includes(
+      input.promptEvidence ?? "none",
+    )
+  )
+    return null;
   const decision = EVIDENCE_DECISIONS[input.promptEvidence ?? "none"];
 
   if (!decision) return null;
@@ -821,6 +831,7 @@ type CandidateRow = {
   runId: string;
   runKind: RunKind;
   status: string;
+  assignmentId: string | null;
   acpSessionId: string | null;
   currentStepId: string | null;
   resumeStartedAt: Date | null;
@@ -1284,6 +1295,7 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
       runId: string;
       runKind: RunKind;
       status: string;
+      assignmentId: string | null;
       acpSessionId: string | null;
       currentStepId: string | null;
       resumeStartedAt: Date | null;
@@ -1298,6 +1310,7 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
         runId: runs.id,
         runKind: runs.runKind,
         status: runs.status,
+        assignmentId: runs.executionAssignmentId,
         currentStepId: runs.currentStepId,
         resumeStartedAt: runs.resumeStartedAt,
         runStartedAt: runs.startedAt,
@@ -1334,6 +1347,7 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
         runId: runs.id,
         runKind: runs.runKind,
         status: runs.status,
+        assignmentId: runs.executionAssignmentId,
         currentStepId: runs.currentStepId,
         resumeStartedAt: runs.resumeStartedAt,
         runStartedAt: runs.startedAt,
@@ -1404,6 +1418,7 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
     runId: string;
     runKind: RunKind;
     status: string;
+    assignmentId: string | null;
     acpSessionId: string | null;
     currentStepId: string | null;
     resumeStartedAt: Date | null;
@@ -1418,6 +1433,7 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
       runId: runs.id,
       runKind: runs.runKind,
       status: runs.status,
+      assignmentId: runs.executionAssignmentId,
       currentStepId: runs.currentStepId,
       resumeStartedAt: runs.resumeStartedAt,
       runStartedAt: runs.startedAt,
@@ -1998,28 +2014,30 @@ export async function runReconcileSweep(
     const wantsDbPoisonCheck =
       cand.runKind === "flow" && currentNodeKind !== null && !wantsEvidence;
     const promptEvidence =
-      cand.runKind === "flow" &&
-      currentNodeKind === "consensus" &&
-      cand.currentStepId
-        ? await resolveConsensusPoisonEvidence(db, {
-            runId: cand.runId,
-            nodeId: cand.currentStepId,
-          })
-        : wantsDbPoisonCheck && cand.currentStepId
-          ? await resolvePoisonedPromptEvidence(db, {
+      cand.runKind === "agent" && !live && !liveRunStep
+        ? await resolveAgentPromptEvidence(db, { runId: cand.runId })
+        : cand.runKind === "flow" &&
+            currentNodeKind === "consensus" &&
+            cand.currentStepId
+          ? await resolveConsensusPoisonEvidence(db, {
               runId: cand.runId,
               nodeId: cand.currentStepId,
             })
-          : wantsEvidence && cand.currentStepId
-            ? await resolvePromptEvidence(db, hosts.transport, {
+          : wantsDbPoisonCheck && cand.currentStepId
+            ? await resolvePoisonedPromptEvidence(db, {
                 runId: cand.runId,
-                // The CURRENT NODE's open attempt, which is what the boundary will
-                // act on. Deliberately not `latestAttempt` (the run-scoped grace
-                // anchor): classifying from one attempt and writing to another is
-                // how a run ends up crashed for evidence that was never its own.
                 nodeId: cand.currentStepId,
               })
-            : NO_PROMPT_EVIDENCE;
+            : wantsEvidence && cand.currentStepId
+              ? await resolvePromptEvidence(db, hosts.transport, {
+                  runId: cand.runId,
+                  // The CURRENT NODE's open attempt, which is what the boundary will
+                  // act on. Deliberately not `latestAttempt` (the run-scoped grace
+                  // anchor): classifying from one attempt and writing to another is
+                  // how a run ends up crashed for evidence that was never its own.
+                  nodeId: cand.currentStepId,
+                })
+              : NO_PROMPT_EVIDENCE;
 
     // M36 (ADR-095) T7.1: orphan detection needs the parent's status; the
     // parked-orchestrator pass needs to know if any child is still pending.
@@ -2228,14 +2246,83 @@ export async function runReconcileSweep(
           // transition won the CAS, or the finalize is deferred to a pending
           // human-ask activation): nothing was crashed, so nothing downstream
           // may pretend it was.
-          const result = await finalizeAgentRun(cand.runId, "Crashed", {
+          const crashOptions = {
             db,
             causeReason: causeReason(reason),
             reason: observerFailure
               ? `reconcile: ${reason} (observer gave up after ${observerFailure.attempts} attempts: ${observerFailure.code} ${observerFailure.message})`
               : `reconcile: ${reason}`,
             closeOpenHitl: true,
-          });
+          };
+          let result: { finalized: boolean };
+
+          if (reason === "agent-session-gone") {
+            const { prepareAgentRunFinalization } =
+              await import("@/lib/agents/finalization");
+            const prepared = await prepareAgentRunFinalization(
+              cand.runId,
+              "Crashed",
+              crashOptions,
+            );
+            const application = await db.transaction(
+              async (tx: ExecutionDb) => {
+                // Canonical settlement also locks the Run before its command.
+                const [locked] = await tx
+                  .select({
+                    id: schemaModule.runs.id,
+                    status: schemaModule.runs.status,
+                    assignmentId: schemaModule.runs.executionAssignmentId,
+                    resumeStartedAt: schemaModule.runs.resumeStartedAt,
+                  })
+                  .from(schemaModule.runs)
+                  .where(eq(schemaModule.runs.id, cand.runId))
+                  .for("update");
+
+                if (
+                  !locked ||
+                  locked.status !== cand.status ||
+                  locked.assignmentId !== cand.assignmentId ||
+                  locked.resumeStartedAt?.getTime() !==
+                    cand.resumeStartedAt?.getTime()
+                )
+                  return { finalized: false };
+                const current = await resolveAgentPromptEvidence(tx, {
+                  runId: cand.runId,
+                });
+
+                if (current.commandId !== promptEvidence.commandId)
+                  return { finalized: false };
+                const disposition = evidenceClassification({
+                  runKind: "agent",
+                  promptEvidence: current.evidence,
+                });
+
+                if (disposition !== null) {
+                  log.info(
+                    {
+                      runId: cand.runId,
+                      commandId: current.commandId,
+                      evidence: current.evidence,
+                      disposition: disposition.action,
+                    },
+                    "reconcile: current prompt evidence superseded the generic missing-session diagnosis",
+                  );
+
+                  return { finalized: false };
+                }
+
+                return prepared.apply(tx);
+              },
+            );
+
+            await prepared.afterCommit(application);
+            result = application;
+          } else
+            result = await finalizeAgentRun(
+              cand.runId,
+              "Crashed",
+              crashOptions,
+            );
 
           if (!result.finalized) {
             // Nothing was crashed, so the evidence this arm consumed was not
@@ -2246,7 +2333,7 @@ export async function runReconcileSweep(
             skipped += 1;
             log.warn(
               { runId: cand.runId, reason },
-              "reconcile: agent crash not finalized — a concurrent transition or a pending human-ask activation owns the run; left alone",
+              "reconcile: agent crash not finalized — current ownership, prompt application or a concurrent transition retained the Run",
             );
 
             return;

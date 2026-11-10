@@ -1,0 +1,32 @@
+Source: /private/tmp/cb-agent-pending-completion-rework-RED.log
+SHA256: 6e45fdeb00fd29543f03fc0e1a80ed1f8c7af79b35c631ff602549f6685a9ef8
+Original lines: 53-80
+
+     × owner-agent-reconcile preserves witnessed rework completion while pending until its real owner publishes 5801ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |integration| lib/agents/__tests__/prompt-owners.integration.test.ts > Agent owned prompts through the production launcher > owner-agent-reconcile preserves witnessed rework completion while pending until its real owner publishes
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ lib/agents/__tests__/prompt-owners.integration.test.ts:661:29
+    659|       });
+    660|
+    661|       expect(sweep.crashed).toBe(0);
+       |                             ^
+    662|       expect(
+    663|         await db
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 64 skipped (65)
+   Start at  12:44:18
+   Duration  11.15s (tests 89%, import 7%, transform 3%)

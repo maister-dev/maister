@@ -1,0 +1,23 @@
+Source: /private/tmp/cb-agent-pending-completion-RED.log
+SHA256: 0c67d028015b6273f5e422b10aa1ce3961d809d16d48547289882d7e6048132e
+Original lines: 78-96
+
+ FAIL  |integration| lib/agents/__tests__/prompt-owners.integration.test.ts > Agent owned prompts through the production launcher > owner-agent-reconcile preserves witnessed initial completion while applying until its real owner publishes
+ FAIL  |integration| lib/agents/__tests__/prompt-owners.integration.test.ts > Agent owned prompts through the production launcher > owner-agent-reconcile preserves witnessed initial completion while deferred until its real owner publishes
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ lib/agents/__tests__/prompt-owners.integration.test.ts:644:29
+    642|       });
+    643|
+    644|       expect(sweep.crashed).toBe(0);
+       |                             ^
+    645|       expect(
+    646|         await db
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯

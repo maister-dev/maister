@@ -260,7 +260,9 @@ flowchart TD
     Tick([interval tick]) --> Candidates[load Running candidates per project]
     Candidates --> Grace{agent node,<br/>no live session?}
     Grace -- within grace --> SkipG[SKIP<br/>resume_started_at OR the per-kind<br/>anchor < grace]
-    Grace -- past grace --> CrashG[CRASH agent-session-gone]
+    Grace -- past grace --> Completion{Standalone agent with current<br/>witnessed completion pending?}
+    Completion -- yes --> Owner[SKIP: existing prompt owner<br/>applies retained outcome]
+    Completion -- no --> CrashG[CRASH agent-session-gone]
     Candidates --> Worktree{worktree present?}
     Worktree -- no --> CrashW[CRASH worktree-gone]
     Candidates --> Node{current node kind?}
@@ -644,7 +646,12 @@ the worktree GC collects (`WORKTREE_TTL_RUN_STATUSES`). See
   latest `node_attempts.started_at`; agent: `runs.started_at`; scratch: the
   newest user `run_messages.created_at`) is within
   `MAISTER_RECONCILE_GRACE_SECONDS` (default 90); only past grace MUST it be
-  crashed (reason `agent-session-gone`). A `Running` run with no live session
+  crashed (reason `agent-session-gone`) unless its exact current standalone
+  agent command has witnessed terminal evidence still pending application.
+  That completion remains owned by the existing agent prompt-owner worker,
+  which must apply the retained outcome and finalize the Run. Missing, stale, applied
+  or superseded commands do not create a healthy indefinite hold. A `Running`
+  run with no live session
   whose current node is a read-only gate eval (`check`/`judge`) MUST be
   re-dispatched; a `cli` node MUST be SKIPPED while its current assignment's
   driver lease is live or its attempt/resume anchor is within grace. Past both,
@@ -779,14 +786,18 @@ For each run at reconcile time, gather: `run.status`, `run.runKind`,
 **node type of `currentStepId`** (from the run's pinned graph
 `flow_revisions.manifest`), `worktreeExists` (path ∈ `listWorktrees`),
 `liveSession` (`acpSessionId` ∈ live `listSessions` map), and — for a
-`run_kind='flow'` candidate with no live session on an agent node — the
-**prompt evidence** of the current attempt's newest owned `session.prompt`
-command (ADR-177, see [Evidence classes](#evidence-classes-adr-177-implemented)).
+`run_kind='flow'` candidate with no live session on an agent node, or a
+standalone agent with no live session — the **prompt evidence** of its current
+owned `session.prompt` command (ADR-177, see
+[Evidence classes](#evidence-classes-adr-177-implemented)). Standalone evidence
+requires the active assignment/epoch, canonical session/incarnation and exact
+server-owned turn. No historical command can authorize a replacement owner.
 Then:
 
-The `Evidence` column is the ADR-177 discriminant. It is resolved for the flow
-agent-node arm only; every other row reads `—` and is classified exactly as it
-was before ADR-177.
+The `Evidence` column is the ADR-177 discriminant. Flow agent nodes retain their
+existing evidence rules. Standalone agents use only the currently bound
+terminal application or explicit lost/poisoned owner; scratch behavior remains
+separate.
 
 | Run state | Condition | Evidence | Action | Reason |
 |-----------|-----------|----------|--------|--------|
@@ -795,6 +806,8 @@ was before ADR-177.
 | `Running`, `runKind='flow'` | current node **`consensus`**, live session or not, and a `consensus_verifier` / `consensus_synthesis` command of the current open attempt is poisoned or quarantined | `quarantined` ∨ `poisoned` (`resolveConsensusPoisonEvidence`) | **CRASH** (evidence boundary, reason `owner-poisoned`) | P0-5 v2: a poisoned or quarantined consensus generation is a terminal owner refusal even while its supervisor session lives, so this arm precedes the live-session arms (after the sync arm). The row is classified by `classifyPromptEvidence`, so a conflict found AFTER application (`application_state='applied'` with `application_error.reason='prompt_terminal_conflict'`) counts. Only the current open attempt's commands are read; an older or closed attempt's generation cannot crash a new attempt. Recover then follows the consensus table in [`runs.md`](runs.md) |
 | `Running`, `runKind='flow'` | worktree present, `liveSession` present | — | **RE-ATTACH** (`scheduleResumedSessionDrive`) or re-dispatch `runFlow` | live agent session with no attached runner (post web restart) — not crashed |
 | `Running`, `runKind='agent'` | worktree present, `liveSession` present, an in-process observer holds the host session | — | **SKIP** (reason `agent-observer-live`) | the run's single reader of its canonical stream is alive here — healthy |
+| `Running`, `runKind='agent'` | no live session; exact current command has witnessed terminal completion awaiting its existing owner | `pending_application` ∨ `applying` | **SKIP** | Owner recovery applies the retained outcome; grace expiry cannot discard completed work. Before a generic missing-session crash commits, a Run-lock recheck compares status, assignment, resume anchor and command. A newly completed or specifically failed owner wins over the old observation. |
+| `Running`, `runKind='agent'` | no live session; exact current command has lost, poisoned or quarantined ownership | `turn_lost` ∨ `poisoned` ∨ `quarantined` | **CRASH** with its specific diagnosis | No healthy completion hold is granted; a newly specific disposition discovered during finalization is deferred to the next sweep so its cause is preserved. |
 | `Running`, `runKind='scratch'` | worktree present, `liveSession` present | — | **SKIP** (reason `live-scratch-session`) | a scratch dialog between turns is healthy; its continuation owner is the next user message (or, for a `queued` row, the agent continuation worker's scratch arm), and a continuation prompt it cannot satisfy would be crashed by the watchdog |
 | `Running`, `runKind='agent'` | worktree present, `liveSession` present, NO in-process observer | — | **RE-OBSERVE** (`reobserveAgentSession`, counted as `reobserved`) | an agent run has no continuation driver — its live path is ONE in-process observer (`consumeAgentSession`). A web restart, or an observer whose supervisor exhausted its retries, leaves a live session nobody reads; this arm used to classify RE-ATTACH and was then refused ("refusing reattach for non-flow run"), so the run held an unread session until it died and the sweep crashed it as `agent-session-gone`. The re-observe binds the run's ACTIVE assignment, writes NO run state, and yields on a fenced assignment |
 | `Running` | worktree present, no `acpSessionId` match but a LIVE session exists for this `(runId, currentStepId)` | — | **SKIP** (reason `live-session-by-step`) | an agent node's prompt is in-flight — `acp_session_id` persists only AFTER it returns, so the active `run_sessions` row's is still null; the node is genuinely running and must NOT be crashed (the bug this guards) or re-attached (double-drive) |
