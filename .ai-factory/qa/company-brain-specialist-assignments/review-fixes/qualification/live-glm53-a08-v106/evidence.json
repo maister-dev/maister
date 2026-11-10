@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 1,
+  "status": "failed_semantic_acceptance_after_completed_execution",
+  "exitCode": 1,
+  "sourceHead": "a08ef0d08ae009676c203a39a7d5e9d1ba59a9d0",
+  "package": {
+    "tag": "rah/v1.0.6",
+    "commit": "2e513d737502f23332de98d4b79a979cfe8f5b87",
+    "loaderUrl": "https://cb-native-qualification.invalid/maister-plugins",
+    "localMirror": "/Users/kaa/Work/dev/github/maister-plugins"
+  },
+  "runner": {
+    "id": "cb-live-claude",
+    "adapter": "claude",
+    "model": "glm-5.3",
+    "permissionPolicy": "default"
+  },
+  "adapter": {
+    "manifestVersion": "0.95.0",
+    "binaryPath": "/private/tmp/maister-cb-live-b081-approved/node_modules/.pnpm/@agentclientprotocol+claude-agent-acp@0.95.0_@anthropic-ai+sdk@1.3.0_zod@4.6.7__@modelc_f288ee759dee483b17a7ca2b5e7630c3/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
+    "binarySha256": "dac87af861bedf6ee1444e99832274d6f517f5e83006f3905094cfc4479b3b00",
+    "adapterReportedVersion": "observed separately by runtime diagnostics"
+  },
+  "adapterReportedVersion": null,
+  "adapterBinaryUnchanged": true,
+  "startedAt": "2026-11-10T10:30:05.515Z",
+  "finishedAt": "2026-11-10T10:37:26.472Z",
+  "invocationId": "541a1198-cbe3-4934-9ed3-32b1d10bb34d",
+  "playwrightStats": {
+    "startTime": "2026-11-10T10:30:13.644Z",
+    "duration": 432431.108,
+    "expected": 1,
+    "skipped": 0,
+    "unexpected": 1,
+    "flaky": 0
+  },
+  "completedExecutionTrees": 1,
+  "qualifiedAcceptanceTrees": 0,
+  "runStates": [
+    {
+      "runId": "e70e5642-1023-435c-9b62-ff1a0a759dff",
+      "parentRunId": null,
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "1d585389-301c-441a-9196-26fbf64d4301",
+      "parentRunId": "e70e5642-1023-435c-9b62-ff1a0a759dff",
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "91dc9252-615c-4710-b991-f4db5d8dcd7e",
+      "parentRunId": "e70e5642-1023-435c-9b62-ff1a0a759dff",
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    }
+  ],
+  "observations": [
+    "Depth-one root and both child Runs finish Done with valid published native results; the prior agent-session-gone completion failure did not recur.",
+    "Qualification fails at the unchanged root contradicting-reference assertion (line697). Depth-two, control, write-back review and EN/RU final qualification were not reached.",
+    "Both leaves emit zero contradicting references across eight findings despite retrieving genuine accessible conflict and a contradicting evidence witness.",
+    "The coordinator preserves all eight child assertions and evidence arrays exactly; the missing claim-level evidence polarity originates at the leaves.",
+    "A meta-finding that conflict exists can correctly cite both records as support; it does not replace substantive compared claims with inspected opposing evidence."
+  ],
+  "repair": {
+    "companionTag": "rah/v1.0.7",
+    "companionCommit": "2f1474bc295ec9522a83fc7e80719be14a42f626",
+    "scope": "Both leaf definitions and EN/RU README clarify claim-relative polarity; no schema, permission, budget, coordinator or acceptance change.",
+    "candidateActualLoader": {
+      "exitCode": 0,
+      "tests": 1,
+      "seconds": 3.08
+    },
+    "independentReview": "No concrete issues; actual diagnosis author reviewed semantic and confirmation boundaries.",
+    "actualRequalificationRequired": true
+  },
+  "cleanup": {
+    "wrapperLeaks": 0,
+    "independentOwnedProcesses": 0,
+    "containers": 0,
+    "roots": 0,
+    "errors": []
+  },
+  "artifacts": [
+    {
+      "path": "cb-live-a08ef0d08-glm53-qualified.log.gz",
+      "sha256": "e43b88c7c5bd3a03d777c5bf13b8f21641790fffdfa58a963e5d541e2049ea3b",
+      "rawSha256": "9a3d1774473228ef7d09175309f35f0a4c1e386ae2aad08f15039d51ec788148"
+    },
+    {
+      "path": "cb-live-a08ef0d08-glm53-qualified-launch-metadata.json.gz",
+      "sha256": "255a36b0daafb7d7e8acc56f2157fa84ccb4ca48394fbf4115de80de40b8a24a",
+      "rawSha256": "683925938ab42f205d0e1f7f1c4675d61bea1d7815e666fd953ab35367823ee8"
+    },
+    {
+      "path": "cb-live-a08ef0d08-glm53-qualified-report.json.gz",
+      "sha256": "0985f4e2c96fb8b10716c0058b022c8e326dde2060b4b7f9a09b587babff5d54",
+      "rawSha256": "938a84183b11082577dca1281d32762e9f975bd93d45dad50b3449ad70e04c93"
+    },
+    {
+      "path": "native-package-qualification.json.gz",
+      "sha256": "d8d6221d2e030ca8b3c7821125fb87cc8ced54b0ba7f705f28c981894ec53fb0",
+      "rawSha256": "0d116848252e963173d43538aab174d4eb57a6cff7e13ea2a043a2f9421455dd"
+    },
+    {
+      "path": "cb-glm53-a08-contradiction-diagnosis.json.gz",
+      "sha256": "e7a38fc22bb3bb8bf1cdd876872cbc17f384d1bc29a281d694fa37dcd0665c0d",
+      "rawSha256": "9a63da740113984089f1657d22417f9f8311153e73f8e56774291e25dff24b74"
+    },
+    {
+      "path": "cb-glm53-a08-live-cleanup.log.gz",
+      "sha256": "5438ffd31f99580f35fd178a6c622feb503f79d36c4c198ac80227cada6fee77",
+      "rawSha256": "0e94909d30b1c19087abd9276cec283ff256bf9e790ec874bfec0888c4e2fb47"
+    },
+    {
+      "path": "cb-native-claim-polarity-package.log.gz",
+      "sha256": "5768015ae754323ee166831e717d749f94b4fcf0ab7ddd59d0f96eba430a7145",
+      "rawSha256": "9ebbbcdd2f29df4a8d6ce191fb034d31b998d906e27df102fe0dc52befb5e591"
+    }
+  ],
+  "readiness": "The failed run proves completed depth-one transport/typed result publication at this source, not full package/CB0/CB1 acceptance."
+}
