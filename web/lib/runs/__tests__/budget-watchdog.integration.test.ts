@@ -1234,6 +1234,8 @@ describe("budget watchdog — TREE scope (E6)", () => {
   async function seedTreeRoot(args: {
     treeMaxTokens?: number;
     nodeBudget?: Record<string, number> | null;
+    executionPolicy?: ExecutionPolicy;
+    startedAt?: Date;
   }): Promise<string> {
     const rootId = randomUUID();
 
@@ -1241,13 +1243,15 @@ describe("budget watchdog — TREE scope (E6)", () => {
       id: rootId,
       runKind: "flow",
       projectId,
-      rootRunId: rootId,
+      rootRunId: null,
       status: "WaitingOnChildren",
       currentStepId: null,
       flowVersion: "v1.0.0",
-      executionPolicy: policyWithBudget({
-        tree: { maxTokens: args.treeMaxTokens ?? 1000 },
-      }),
+      executionPolicy:
+        args.executionPolicy ??
+        policyWithBudget({
+          tree: { maxTokens: args.treeMaxTokens ?? 1000 },
+        }),
       delegationBounds: args.nodeBudget
         ? {
             nodeId: "orchestrate",
@@ -1267,7 +1271,7 @@ describe("budget watchdog — TREE scope (E6)", () => {
             },
           }
         : null,
-      startedAt: new Date(Date.now() - 60_000),
+      startedAt: args.startedAt ?? new Date(Date.now() - 60_000),
     });
     await db.insert(schema.runSessions).values({
       id: randomUUID(),
@@ -1280,6 +1284,66 @@ describe("budget watchdog — TREE scope (E6)", () => {
 
     return rootId;
   }
+
+  it("(ADR-165) a root node-only token budget reconciles canonical descendant usage with empty policy and override meters", async () => {
+    const rootId = await seedTreeRoot({
+      executionPolicy: policyWithBudget({}),
+      nodeBudget: {
+        maxTokens: 500,
+        wallClockMinutes: 10_000,
+        maxChildRuns: 50,
+        consecutiveFailures: 50,
+      },
+    });
+
+    await db
+      .update(schema.runs)
+      .set({ budgetState: { ceilingOverride: {} } })
+      .where(eq(schema.runs.id, rootId));
+    const childId = await seedRun({
+      rootRunId: rootId,
+      parentRunId: rootId,
+      status: "Running",
+    });
+
+    await seedRollup(rootId, null, 100);
+    await seedRollup(childId, null, 500);
+    await runSweepTick({ db, executionHosts: hosts });
+
+    expect(reconcileRollupsSpy).toHaveBeenCalledWith(rootId);
+    expect(reconcileRollupsSpy).toHaveBeenCalledWith(childId);
+    expect((await getRun(rootId)).status).toBe("Failed");
+    expect((await getRun(childId)).status).toBe("Abandoned");
+    expect(await assignmentStates(rootId)).toMatchObject([
+      { state: "released", releasedReason: "failed" },
+    ]);
+    expect(await getHitl(rootId)).toHaveLength(0);
+  }, 60_000);
+
+  it("(ADR-165) a parked root node-only wall-clock budget terminates without policy or override meters", async () => {
+    const rootId = await seedTreeRoot({
+      executionPolicy: { preset: "supervised" },
+      startedAt: new Date(Date.now() - 2 * 60_000),
+      nodeBudget: {
+        maxTokens: 100_000,
+        wallClockMinutes: 1,
+        maxChildRuns: 50,
+        consecutiveFailures: 50,
+      },
+    });
+
+    await runSweepTick({ db, executionHosts: hosts });
+
+    expect(await getRun(rootId)).toMatchObject({
+      status: "Failed",
+      endedAt: expect.any(Date),
+      budgetState: { notified: { tree: "terminate" } },
+    });
+    expect(await assignmentStates(rootId)).toMatchObject([
+      { state: "released", releasedReason: "failed" },
+    ]);
+    expect(await getHitl(rootId)).toHaveLength(0);
+  }, 60_000);
 
   it("(ADR-165) a node max_tokens BELOW the policy limit becomes the effective ceiling", async () => {
     // Policy tree limit 1000; the node declares 500. Spend of 600 is under the

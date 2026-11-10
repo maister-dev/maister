@@ -1024,21 +1024,36 @@ async function fetchBudgetCandidates(db: Db): Promise<BudgetCandidate[]> {
   return rows;
 }
 
+/** Spend, failure and elapsed-time declarations bind only at the actual tree root. */
+function rootDelegationBudget(
+  candidate: BudgetCandidate,
+): DelegationBounds["budget"] {
+  return candidate.parentRunId === null
+    ? (candidate.delegationBounds?.budget ?? null)
+    : null;
+}
+
 function hasConfiguredBudgetMeter(candidate: BudgetCandidate): boolean {
   const snapshotBudget = budgetFromSnapshot(candidate.executionPolicy);
   const override = candidate.budgetState?.ceilingOverride;
+  const nodeBudget = rootDelegationBudget(candidate);
 
-  return (["run", "task", "tree"] as const).some((scope) =>
-    (
-      [
-        "maxTokens",
-        "hardMaxTokens",
-        "consecutiveFailures",
-        "wallClockMinutes",
-      ] as const
-    ).some((meter) =>
-      isSetLimit(effectiveLimit(snapshotBudget, override, scope, meter)),
-    ),
+  return (
+    (["run", "task", "tree"] as const).some((scope) =>
+      (
+        [
+          "maxTokens",
+          "hardMaxTokens",
+          "consecutiveFailures",
+          "wallClockMinutes",
+        ] as const
+      ).some((meter) =>
+        isSetLimit(effectiveLimit(snapshotBudget, override, scope, meter)),
+      ),
+    ) ||
+    (["maxTokens", "consecutiveFailures", "wallClockMinutes"] as const).some(
+      (meter) => isSetLimit(nodeBudget?.[meter] ?? null),
+    )
   );
 }
 
@@ -1383,7 +1398,7 @@ async function evaluateBudgetForCandidate(
     // lower an instance policy, never raise it. Spend / time / failure budgets
     // bind at the ROOT ONLY; a nested orchestrator's budget is recorded on its
     // own run row and never metered (residual R-nested).
-    const nodeBudget = candidate.delegationBounds?.budget ?? null;
+    const nodeBudget = rootDelegationBudget(candidate);
     const mergeTree = (
       policyLimit: number | null,
       nodeLimit: number | undefined,

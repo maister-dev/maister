@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "finding": "root_node_only_budget_activation",
+  "scope": "Source-proved independent existing defect; not attributed to the failed GLM qualification.",
+  "headAtReceipt": "ec360f6aa45ec87606cbe4dbfa4cf153d5b72cae",
+  "ownedFiles": [
+    "web/lib/runs/keepalive-sweeper.ts",
+    "web/lib/runs/__tests__/budget-watchdog.integration.test.ts"
+  ],
+  "testedSourceSha256": {
+    "web/lib/runs/keepalive-sweeper.ts": "8ecbe11c1eca74e2230a9f3015d8f47ade5147241ab90f2fa1f33d58688e7165",
+    "web/lib/runs/__tests__/budget-watchdog.integration.test.ts": "eab66075db62f31f7a21bb8308809f4888c4d9f55c415d4bd634d9461858e624"
+  },
+  "red": {
+    "command": "Node24PATH pnpm_config_verify_deps_before_run=false CI=true pnpm exec vitest run --project integration lib/runs/__tests__/budget-watchdog.integration.test.ts -t \"root node-only\" --maxWorkers=1 --reporter=verbose --reporter=json",
+    "exitCode": 1,
+    "executed": 2,
+    "failed": 2,
+    "observed": [
+      "Root node-only token ceiling never schedules canonical root or descendant reconciliation.",
+      "Parked root past its declared wall-clock ceiling remains nonterminal."
+    ],
+    "report": "cb-node-only-budget-red.json",
+    "log": "cb-node-only-budget-red.log"
+  },
+  "green": {
+    "command": "Node24PATH pnpm_config_verify_deps_before_run=false CI=true pnpm exec vitest run --project integration lib/runs/__tests__/budget-watchdog.integration.test.ts lib/runs/__tests__/budget-aggregation.integration.test.ts lib/runs/__tests__/time-limit-watchdog.integration.test.ts --maxWorkers=2 --reporter=verbose --reporter=json",
+    "exitCode": 0,
+    "files": 3,
+    "passed": 87,
+    "failed": 0,
+    "skipped": 0,
+    "success": true,
+    "runtimeErrorSuites": null,
+    "durationSeconds": 5.83,
+    "report": "cb-node-only-budget-green.json",
+    "log": "cb-node-only-budget-green.log"
+  },
+  "checks": {
+    "webTypecheck": "exit0",
+    "scopedESLint": "exit0",
+    "diffCheck": "passed"
+  },
+  "implementation": "Reuse one rootDelegationBudget selector in admission to budget reconciliation/evaluation and existing tree min-merge; recognize positive token/failure/wall declarations even when policy and override meters are empty. Exclude nested declarations and admission-only child-count limits.",
+  "compatibility": [
+    "Existing actual-parentage root identity is preserved; shared root fixture now uses production rootRunId=null.",
+    "No policy defaults, override resolution, min-merge, bounds values, permissions, timeout or teardown behavior changes.",
+    "Existing nested-node budget exclusion and policy/min-merge/host-refusal/termination tests pass."
+  ],
+  "refactor": "Minimum shared pure root selector avoids separate root-declaration logic in activation and evaluation; no further refactor justified.",
+  "filesSha256": {
+    "cb-node-only-budget.patch": "1cef3b8decbc357d010b311fdfa3203ccedd2ba0a6ed31c271473b4d863ed9c2",
+    "cb-node-only-budget-red.log": "52c3af44aeb4dec26f77cd70ad2d81a84ed8cc24bc6622acde30a1f5b3f251c3",
+    "cb-node-only-budget-red.json": "d3ab9262ac8d68c4638c1c8188977a020f7b63e4a9c79c622b6142900fcc9a6d",
+    "cb-node-only-budget-green.log": "c84d32c7627ca92be9f7298b1d6e87c00e5703d39af48a2414a61c2fd3d1b6f1",
+    "cb-node-only-budget-green.json": "72833414cc97047c046ef0269c5a02237dec7a91c9a4088fabd3ee25a94d7d11",
+    "cb-node-only-budget-types.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "cb-node-only-budget-lint.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "cleanup": {
+    "redDatabaseContainersStarted": 1,
+    "redDatabaseContainersStopped": 1,
+    "greenDatabaseContainersStarted": 3,
+    "greenDatabaseContainersStopped": 3,
+    "proof": "Every test-database container-start containerId has a matching stop event in the retained RED/GREEN logs."
+  },
+  "artifacts": [
+    {
+      "path": "cb-node-only-budget.patch.gz",
+      "sha256": "1581b88c42223021e16d9dd833b07de80927229c420e7c03b17cc6d4a616a935",
+      "sourceSha256": "1cef3b8decbc357d010b311fdfa3203ccedd2ba0a6ed31c271473b4d863ed9c2"
+    },
+    {
+      "path": "cb-node-only-budget-red.log.gz",
+      "sha256": "c3e77a024792bd3a50dfc61b7051916747760c0afc7a42195a62731d049c04aa",
+      "sourceSha256": "52c3af44aeb4dec26f77cd70ad2d81a84ed8cc24bc6622acde30a1f5b3f251c3"
+    },
+    {
+      "path": "cb-node-only-budget-red.json.gz",
+      "sha256": "cfe9dcf2e273791fa81fbf06d39c2c7df0c57dafc2d4db72af7cbb4413aa91db",
+      "sourceSha256": "d3ab9262ac8d68c4638c1c8188977a020f7b63e4a9c79c622b6142900fcc9a6d"
+    },
+    {
+      "path": "cb-node-only-budget-green.log.gz",
+      "sha256": "1e08932f0a60fa1436cead4c4596e9c76dfc6cc84205c0e6920497950d0e097f",
+      "sourceSha256": "c84d32c7627ca92be9f7298b1d6e87c00e5703d39af48a2414a61c2fd3d1b6f1"
+    },
+    {
+      "path": "cb-node-only-budget-green.json.gz",
+      "sha256": "863a321a746b67efbda2fa5a30743516597e5acbc3cff184efc65e2c2cf4128c",
+      "sourceSha256": "72833414cc97047c046ef0269c5a02237dec7a91c9a4088fabd3ee25a94d7d11"
+    },
+    {
+      "path": "cb-node-only-budget-types.log.gz",
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+      "sourceSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cb-node-only-budget-lint.log.gz",
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+      "sourceSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "independentReview": "No actionable findings; root-only activation agrees with evaluation, nested declarations remain inert, child-count admission is excluded and policy/override minimums are unchanged."
+}
