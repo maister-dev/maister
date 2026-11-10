@@ -64,7 +64,7 @@ type TrackedTestPool = Pool & {
   readonly [CONNECTIONS_CLOSED]: () => Promise<void>;
 };
 
-function createTestPool(options: PoolConfig): TrackedTestPool {
+export function createTestPool(options: PoolConfig): TrackedTestPool {
   const pool = new Pool(options);
   const connections = new Set<Promise<void>>();
 
@@ -88,7 +88,7 @@ function isTrackedTestPool(pool: Pool): pool is TrackedTestPool {
   return CONNECTIONS_CLOSED in pool;
 }
 
-async function closeTestPool(pool: Pool): Promise<void> {
+export async function closeTestPool(pool: Pool): Promise<void> {
   if (!isTrackedTestPool(pool))
     throw new Error("Test database pool has no connection-retirement owner");
   try {

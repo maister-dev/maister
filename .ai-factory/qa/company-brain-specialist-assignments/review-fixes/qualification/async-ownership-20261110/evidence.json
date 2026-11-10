@@ -1,0 +1,326 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-10T08:00:01.479760+00:00",
+  "baseline": "b081694eafab72ddfd3cce8bfd2fc02462a65511",
+  "status": "focused fixes verified; new committed-source full regression pending",
+  "failedBaseline": "../full-regression-b081694ea/evidence.json",
+  "productionChange": "Payload-null Scratch create handoff transitions only Starting; delayed replay preserves later dialog and unknown-delivery evidence.",
+  "migrationsChanged": false,
+  "gates": {
+    "primaryFocused": {
+      "passed": 47,
+      "files": 4,
+      "seconds": 55.11
+    },
+    "primaryRetention": {
+      "passed": 10,
+      "files": 1,
+      "seconds": 7.46
+    },
+    "primaryCompanyAndReplayPools": {
+      "passed": 62,
+      "files": 3,
+      "seconds": 54.71
+    },
+    "primaryFaultPartitions": {
+      "passed": 6,
+      "files": 1,
+      "seconds": 256.61
+    },
+    "primaryWebUnit": {
+      "passed": 9312,
+      "files": 891,
+      "seconds": 43.13
+    },
+    "isolatedRealProductionHTTP": {
+      "passed": 10,
+      "files": 1,
+      "buildId": "Sdk2WwV0JhvKpK62Pb33B"
+    },
+    "isolatedIntegrityAndQuiescence": {
+      "passed": 6,
+      "selected": true
+    },
+    "isolatedPoolHarness": {
+      "passed": 26,
+      "files": 3
+    },
+    "isolatedPoolSiblings": {
+      "passed": 10,
+      "newTests": 0
+    },
+    "types": "passed",
+    "lint": "passed; final erased type-import grouping adjusted without executable changes",
+    "contracts": "passed;84 requirements/45 tasks",
+    "docs": "passed;177 tables",
+    "format": "passed after formatting the existing legacy Phase union; no executable behavior changed"
+  },
+  "limitations": [
+    "The original company cleanup blocker identity was not captured; a real policy-correct queued checkpoint reproduces its legitimate failure class and qualifies existing recovery.",
+    "The unmodified isolated P2 probe passed; its original full-run delivering-versus-queued stack is the RED witness.",
+    "The actual GLM-5.3 RAH run uses separate clean b081 source and is still running; no current live or CB1 stand readiness is claimed.",
+    "Earlier sandbox-only unit and CLI validation attempts failed native process/listener/tsx IPC permissions; retained private logs are distinct from authorized native GREEN receipts.",
+    "Import grouping changed only erased type imports after the focused migration tests; committed-source full regression remains required.",
+    "The initial formatting receipt is failed; the separate final format receipt passes after the existing legacy type alias was formatted."
+  ],
+  "sources": [
+    {
+      "path": "web/lib/scratch-runs/create-continuation.ts",
+      "sha256": "2df2540c1a6e5d1f92f686a439b4d9f78032068ccf4def26f3aa6bd25cae3648"
+    },
+    {
+      "path": "web/lib/scratch-runs/__tests__/prompt-owners.integration.test.ts",
+      "sha256": "9ff50d9a3dd17e2c1074e1d645579026a38198271a5ff0f93283c88b5719a9a1"
+    },
+    {
+      "path": "web/lib/librarian/__tests__/turn.integration.test.ts",
+      "sha256": "d57ae3af240d612506307135d604ec0a906d48ae9bfabac3d5c5fef51964a4bf"
+    },
+    {
+      "path": "web/lib/agents/__tests__/application-quiescence.integration.test.ts",
+      "sha256": "11989b27eaf3f6a8545ccf73d9e97456ef0540a1e0e3c51c1b315e00f8a7d33b"
+    },
+    {
+      "path": "web/lib/agents/__tests__/prompt-owners.integration.test.ts",
+      "sha256": "0baeb007703461d3e585a74dc691ce123a350c3980dc0b53aebc93d295332999"
+    },
+    {
+      "path": "web/lib/agents/__tests__/company-flow-context.integration.test.ts",
+      "sha256": "cd2d44c6ec9f9df7c398a8cb59e2beab525ceb9e128d34a460e244c4fc4b52dc"
+    },
+    {
+      "path": "web/lib/db/__tests__/social-board-migration.integration.test.ts",
+      "sha256": "6eec8dfb54ae611ee1c79fe58ccd9d959f8d00e6e64198e257cac286bcd5f314"
+    },
+    {
+      "path": "web/lib/db/__tests__/migration-0094.integration.test.ts",
+      "sha256": "f3d33b5857121733255ed4d39e174c5a79ce46ca8fefa159326b889ad937860c"
+    },
+    {
+      "path": "web/test-support/pg-container.ts",
+      "sha256": "dd70aa43e4713858c768f6dd3dc70fc064ebb1f840a4cb22772db2beda9318f3"
+    },
+    {
+      "path": "web/test-support/__tests__/execution-ab-partitions.integration.test.ts",
+      "sha256": "3d8dae274db5e21daf1e9f742020c5bd2e5e1173cd560a81f4bb67ed22bc08f8"
+    },
+    {
+      "path": "web/test-support/__tests__/pg-template.integration.test.ts",
+      "sha256": "b1413585f2b0495d610dea0b222f997b4656fe4fea70b351861172afde2ade7b"
+    },
+    {
+      "path": "web/lib/tasks/__tests__/qualification-admission.integration.test.ts",
+      "sha256": "2d9ecd9e53d78b3511a405059e6efca219e4f7fb538b7cfc84ad2d4fc17f4108"
+    },
+    {
+      "path": "web/lib/execution-host/__tests__/bounded-output.integration.test.ts",
+      "sha256": "34f961339d984fb36bef0f0aaee0f6d81e940ec6e1ad48eb06bb1698593ded09"
+    },
+    {
+      "path": "web/scripts/__tests__/legacy-import-cutover.integration.test.ts",
+      "sha256": "749150667c91ff6b9cc4e446e025a3e82424db9e42fab4aed2909fc65e336d37"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "cb-scratch-empty-create-red.log.gz",
+      "sourceSha256": "a7c4ac224665f521ad2f3cb1ba947ee669401514ddf48dfeb898abd3d5553972",
+      "sha256": "4157bf8ec8e692d4eef18603171003e41ffe103f907024125c62a19ec0ba60d1"
+    },
+    {
+      "path": "cb-scratch-empty-create-green.log.gz",
+      "sourceSha256": "c6dd2139d38338da510de6363b804fc52727a42267a00ab835c19df9bb0f2267",
+      "sha256": "8a4118ff33c4d26b74e1cf7b542433f39a7446c82dfe5db2e3f338ad1985fbc2"
+    },
+    {
+      "path": "cb-scratch-empty-create-http-green.log.gz",
+      "sourceSha256": "5fa71ee3e54a15e72886bbc3f1d8b9dd7a75c4ecdafa74a13b9af0bb099477b6",
+      "sha256": "7267e96409e512151c4fda55cdc05b9de9a8506e55b2ba1342ab3c57ac225f3a"
+    },
+    {
+      "path": "cb-scratch-empty-create-http-vitest.json.gz",
+      "sourceSha256": "e7e322577026545938cd62228e5d1420876be592e4ffa6b965f85353692502d4",
+      "sha256": "4d156f7e156cb07d247f1d7e36a31e400866c64b3b039b8115bd95a36089f36d"
+    },
+    {
+      "path": "cb-scratch-http-build-witness.json.gz",
+      "sourceSha256": "a8dd133f252b30664acc31bdbb0b3d5c4941bde54cb8694a93bbae1658c602bf",
+      "sha256": "fef49bc8cecf808f037c342a8e61d5d03d024ba773ccd650cb3d1c35747fdb3a"
+    },
+    {
+      "path": "cb-scratch-empty-create-old-cleanup.log.gz",
+      "sourceSha256": "b473cf862c014f2d4a298c6392be6042d97c4cdc2e6aa4c155802523924888f7",
+      "sha256": "c9b3dc522a54c252e9b97c7667613397f6420a27b9edbeea80b740a3e64e2b12"
+    },
+    {
+      "path": "cb-librarian-successor-b081-evidence.json.gz",
+      "sourceSha256": "55318debed4e9b250344a199ad552e28aa36d4e5ab29f718008582ddb9799949",
+      "sha256": "df9a60f723215a52455a14c1f8fbfe5b3e11f706d0e3707a15d8d0d4b17ad880"
+    },
+    {
+      "path": "cb-agent-quiescence-b081-evidence.json.gz",
+      "sourceSha256": "78730259f801f56594fdf62d7879aac692d282a901766f6f9f0c52c93c6a64ac",
+      "sha256": "6ea463057bf695e0e8db3b6a200cbce5e6f11633bcff21d8a812fb1f43d4ed54"
+    },
+    {
+      "path": "cb-company-checkpoint-b081-disposition-native-evidence.json.gz",
+      "sourceSha256": "92222d955107a01e68cca8234c9993847d955ecbd92727e39525861c92d2c442",
+      "sha256": "7ab68b61108b1453db32a1f10ebdd589247b9ddf65c222bb415e0a44def0420e"
+    },
+    {
+      "path": "cb-company-checkpoint-b081-disposition-native-RED.log.gz",
+      "sourceSha256": "e6790e65df8c89f3fc30f82e8d31e3ee6812f062bc24248f9477b5979d6e3d9f",
+      "sha256": "d4da3bd67db101a65d3cf04a204b56bbad648b5a09fb99d6ac61d19fcb9b1023"
+    },
+    {
+      "path": "cb-company-checkpoint-b081-disposition-native-owning.log.gz",
+      "sourceSha256": "a70250d0b4355778495d99090bc8238c9174dd5d3488490e013e035f8d954c8b",
+      "sha256": "1b2622108421b0fe570c99391b42165a587b5d0cd2d59b6ec47bbac997adc556"
+    },
+    {
+      "path": "cb-company-checkpoint-b081-cleanup.log.gz",
+      "sourceSha256": "f93d16bb844f501759587ecdc1bbed4f7961da2b9d4bcfef5e7e2fc7caf490e6",
+      "sha256": "40a23db6d3788017407bb65c924a04cc9e6832c505dd63b4c89843ce72fd94f4"
+    },
+    {
+      "path": "cb-social-pool-retirement-red.log.gz",
+      "sourceSha256": "bc7c1775d3462c7cd7d06e9043aea771469d237909ce79aa031dfb7cb6d5b4b1",
+      "sha256": "da902753d9b7c6b840f4426583b24bc44318e78fc0a39602e422d9817aa80209"
+    },
+    {
+      "path": "cb-social-pool-retirement-final-green.log.gz",
+      "sourceSha256": "f26f85525f721eacd2b24f1d6f0801cc87082432d430810053dc926a7c0f6682",
+      "sha256": "d4ddaf0e8a8ae66f34de16ceab579d1ed1a7ad2a313acf7fda3064d2cc652c78"
+    },
+    {
+      "path": "cb-social-pool-retirement-green.log.gz",
+      "sourceSha256": "7f08d3cc8b18313b317323072da55b3557e6865bd54d82576db560899624c060",
+      "sha256": "644f13d80cf3311de1dc61421eecb942a2ff8b27ddcde9df6ad96ed0331cb6b3"
+    },
+    {
+      "path": "cb-social-pool-retirement-cleanup.log.gz",
+      "sourceSha256": "cb8fc6b9ab17a30890010029f8719b2ae63d0e2052e22863c2822e8f71528f43",
+      "sha256": "1ca05837b9e716ad9dbc473539c10212667f3500e0b93879c16e175479d95552"
+    },
+    {
+      "path": "cb-pool-sibling-short-green.log.gz",
+      "sourceSha256": "82296b70ca74392d005418f3995433a3da73d04f38612a2f43ce40e3a32b6e5f",
+      "sha256": "579ed2f505616c1bab21387202a4fa5bc185ef1ac5b632f030cd9fcb29f67f25"
+    },
+    {
+      "path": "cb-pool-sibling-output-green.log.gz",
+      "sourceSha256": "62a76b5fd96a0ec985bd12b17b77d21c1f9dcaccee0688f4910d1ed24fcf945a",
+      "sha256": "32463b7b172aebdba4b9cf5e753e31ddd220e860ac954ade22162bf93e42d7e7"
+    },
+    {
+      "path": "cb-pool-sibling-import-green.log.gz",
+      "sourceSha256": "35d59feef0771b30f5c61165d3823aafbfa387e45d89f1ca926122654e0902ca",
+      "sha256": "12056d1431b95a9ffaff48f5e6d8566963b125c613b181c67fd51166e7e7a929"
+    },
+    {
+      "path": "cb-pool-sibling-cleanup.log.gz",
+      "sourceSha256": "4c62ba617affdcdab230f426ea0d896b57a1d3625db66619109a9f184404bb7e",
+      "sha256": "ee6c74574d05f86f767706f637856872fb70bfa894df4f61af0b432ef3ffefd9"
+    },
+    {
+      "path": "cb-b081-integrated-focused.log.gz",
+      "sourceSha256": "c8c8545b6ed544d5e9f10bce81dc99562702d0daeb5418cce231a413423f7fd9",
+      "sha256": "a7b7c3d09c41b6168ea65c47bef04faeeea58184e76a9cc46b154354dbfb0fa0"
+    },
+    {
+      "path": "cb-b081-retention-integrated.log.gz",
+      "sourceSha256": "95cb738f6ff2b47cf83d75accee92c86fceff0a40d5b0b0994f031080e7fbcc9",
+      "sha256": "6c7da494ef6e4ea8bcb382da83dddc8f2e9b43d3d30cd48974cb6bfc09bc1031"
+    },
+    {
+      "path": "cb-b081-company-pools-integrated.log.gz",
+      "sourceSha256": "3757ff67db4d621ff5d2f5b10966b1a3727646aa9e3aa3ef6844e4e0550e7b34",
+      "sha256": "9c1c0377daed2e7e7ab2bd954de16083589a731991f42355f23ab8b522ba344c"
+    },
+    {
+      "path": "cb-b081-p2-integrated-green.json.gz",
+      "sourceSha256": "aecae878d5de4c265f399b326f9d93663b3af74c6f8606c46c8532ea336415ce",
+      "sha256": "6f2cfe5e9804eae924cd8b938451b1a5fd78b478902f52bc439ed522e194a795"
+    },
+    {
+      "path": "cb-b081-p2-integrated-green.log.gz",
+      "sourceSha256": "c12f611f835c725c343e58294c54fd7820ad804af301ef1af2b9e01d84afac79",
+      "sha256": "0b9b3c954788dcbcb54f2a2357bf51bb3df817ba7fff9a3486d20dbaa386edb0"
+    },
+    {
+      "path": "cb-b081-integrated-web-unit-native.log.gz",
+      "sourceSha256": "c3a4ba0ba0557355512d43286d9bb28b41c674678b6c533227eae4675907a326",
+      "sha256": "67123739764a3b717dcba3b081a0d675d61fb1141c771cf5c16488f53caa2c53"
+    },
+    {
+      "path": "cb-b081-integrated-types.log.gz",
+      "sourceSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+    },
+    {
+      "path": "cb-b081-integrated-lint.log.gz",
+      "sourceSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+    },
+    {
+      "path": "cb-b081-checkpoint-final-types.log.gz",
+      "sourceSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+    },
+    {
+      "path": "cb-b081-checkpoint-final-lint.log.gz",
+      "sourceSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+    },
+    {
+      "path": "cb-b081-integrated-contracts-native.log.gz",
+      "sourceSha256": "9cb7bee79bbe837c19c3f5b4bc5e1988b26ea45776b955e6e1059a952c0d9bea",
+      "sha256": "7f56ae2b170a64b903a245bc39098992f79a9561959ae08f33305eb1c6485ed5"
+    },
+    {
+      "path": "cb-b081-integrated-docs-native.log.gz",
+      "sourceSha256": "e7ff777a555fa45c3df7b047ad9261171c5c6469a7d9c2148e0c1f03c099c739",
+      "sha256": "77adf5feab85261389e29bc9dde374545a26af1f019383853eac2d131e00c8b5"
+    },
+    {
+      "path": "cb-b081-focused-integrated-cleanup.log.gz",
+      "sourceSha256": "812305bd08167471de944f2866bfd588c12c88bd2c88a9133ca6e463b944c035",
+      "sha256": "9135e1ac69ffb5860a61298f2cbd610d498054a0cbebeb0275cfc973dd1c3591"
+    },
+    {
+      "path": "cb-b081-p2-integrated-cleanup.log.gz",
+      "sourceSha256": "535972cff18a8abe8327fe1b016eb29221d66aeb9e43c76b859075166d5103a8",
+      "sha256": "e445f8c77e48371711a5c552c297137eaa0a487d3e7dc4798bb216aa4fb1d8c9"
+    },
+    {
+      "path": "cb-b081-company-pools-integrated-cleanup.log.gz",
+      "sourceSha256": "b66c16e0c44ea7e6d2ddd31a6690657a19cd91591587feee9625f9ad51f0779a",
+      "sha256": "2cff86f0335d54a05c39bcb86cae30a857134b45131c729610051b1bb26bee5d"
+    },
+    {
+      "path": "cb-b081-legacy-format.log.gz",
+      "sourceSha256": "0aac9342097901f114508a581e2da0911e226c704e61fbcd38720ff7d69bbb57",
+      "sha256": "21ef5e60b98c3d82c355bb2753e81872434689edd420ad0d6d9b3d9d291f4aa3"
+    },
+    {
+      "path": "cb-b081-legacy-lint.log.gz",
+      "sourceSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+    },
+    {
+      "path": "cb-b081-checkpoint-format.log.gz",
+      "sourceSha256": "0e2bbff271471bd4038105ad94640024dad63b8baaab6dfc6f84a80913b3ee97",
+      "sha256": "464576d4995672df6f0d2baced5c6c0f234bb2bfac36275201bc5c56883bd7e5"
+    },
+    {
+      "path": "cb-b081-checkpoint-format-final.log.gz",
+      "sourceSha256": "17aa973d3f004560237d9a95171210b0671deff23d61628eecf7322ff5938f20",
+      "sha256": "6cd316ae8e81df0ff79776205007450fac3d62e1ba8e884e169e326d7955ebe5"
+    },
+    {
+      "path": "cb-b081-checkpoint-all-final-types.log.gz",
+      "sourceSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+    }
+  ]
+}

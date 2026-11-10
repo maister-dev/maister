@@ -1,3 +1,5 @@
+import type { Pool, PoolClient } from "pg";
+
 import { randomUUID } from "node:crypto";
 import {
   mkdir,
@@ -12,11 +14,12 @@ import { join, resolve } from "node:path";
 
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool, type PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { getGraphOnlyCutoverFailure } from "@/lib/queries/run-cutover";
 import {
+  closeTestPool,
+  createTestPool,
   startBarePostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
@@ -38,6 +41,7 @@ let migrationRoot: string;
 let migration0094: string;
 let migration0095: string;
 let migration0096: string;
+const replayPools = new Set<Pool>();
 
 beforeAll(async () => {
   testDatabase = await startBarePostgresTestDb({
@@ -60,11 +64,29 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  if (migrationRoot) {
-    await rm(migrationRoot, { recursive: true, force: true });
-  }
-  await testDatabase?.stop();
+  const results = await Promise.allSettled([
+    ...[...replayPools].map(retirePreparedDatabase),
+    ...(migrationRoot
+      ? [rm(migrationRoot, { recursive: true, force: true })]
+      : []),
+  ]);
+  const stopped = await Promise.allSettled([testDatabase?.stop()]);
+  const failures: unknown[] = [...results, ...stopped].flatMap((result) =>
+    result.status === "rejected" ? [result.reason] : [],
+  );
+
+  if (failures.length === 1) throw failures[0];
+  if (failures.length)
+    throw new AggregateError(failures, "Migration replay teardown failed");
 });
+
+async function retirePreparedDatabase(pool: Pool): Promise<void> {
+  try {
+    await closeTestPool(pool);
+  } finally {
+    replayPools.delete(pool);
+  }
+}
 
 async function buildPreCutoverMigrationRoot(): Promise<string> {
   const source = resolve(__dirname, "../migrations");
@@ -115,7 +137,9 @@ async function preparedDatabase(label: string): Promise<Pool> {
 
   url.pathname = `/${database}`;
 
-  const pool = new Pool({ connectionString: url.toString() });
+  const pool = createTestPool({ connectionString: url.toString() });
+
+  replayPools.add(pool);
 
   await migrate(drizzle(pool), { migrationsFolder: migrationRoot });
 
@@ -662,7 +686,7 @@ describe("migrations 0094/0095/0096 — D2 before irreversible D1", () => {
       ]),
     );
 
-    await pool.end();
+    await retirePreparedDatabase(pool);
   }, 180_000);
 
   it("clears only C2 claims that predate the D2 transition", async () => {
@@ -775,7 +799,7 @@ describe("migrations 0094/0095/0096 — D2 before irreversible D1", () => {
       ).rows[0]?.queue_claimed_at,
     ).toEqual(new Date(laterClaimAt));
 
-    await pool.end();
+    await retirePreparedDatabase(pool);
   }, 180_000);
 
   it("moves a settled D2-affected multi-variant experiment to comparable", async () => {
@@ -857,7 +881,7 @@ describe("migrations 0094/0095/0096 — D2 before irreversible D1", () => {
       ).rows[0],
     ).toMatchObject({ status: "comparable", comparable_at: expect.any(Date) });
 
-    await pool.end();
+    await retirePreparedDatabase(pool);
   }, 180_000);
 
   it("aborts atomically when an actionable Flow manifest identity is unresolved", async () => {
@@ -890,6 +914,6 @@ describe("migrations 0094/0095/0096 — D2 before irreversible D1", () => {
         .rows[0]?.table_name,
     ).toBe("step_runs");
 
-    await pool.end();
+    await retirePreparedDatabase(pool);
   }, 180_000);
 });

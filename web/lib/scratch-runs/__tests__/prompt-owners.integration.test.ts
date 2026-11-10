@@ -30,6 +30,8 @@ import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recove
 import { scratchPromptOwners } from "@/lib/scratch-runs/prompt-owner";
 import { isYieldedScratchTurn } from "@/lib/scratch-runs/prompt-owner";
 import { createExecutionHosts } from "@/lib/execution-host/client";
+import { readCreateIntent } from "@/lib/execution-host/create-intent";
+import { completeOwnedScratchCreate } from "@/lib/scratch-runs/create-continuation";
 import {
   freezeScratchPromptIntent,
   admitFrozenScratchPrompt,

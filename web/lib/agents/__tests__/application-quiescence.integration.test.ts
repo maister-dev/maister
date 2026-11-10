@@ -492,20 +492,22 @@ describe("agent application quiescence", () => {
         details: { reason: "agent_execution_quiescence_unproven" },
       });
       await expectSlotRetained(command, occupied);
-      const missedWake = waitForAgentCancellationExecutionQuiescent(
-        db,
-        owner,
-        performance.now() + 80,
-      );
       const silenceLocalWake = vi
         .spyOn(runEventWakeBus, "wake")
         .mockImplementation(() => undefined);
 
       try {
         await fake.releaseIngest();
+        await fake.waitForCanonicalEvents();
         // Simulate a commit in another process: no local EventEmitter wake.
-        // The final strict deadline read must find the actual durable exit.
-        await expect(missedWake).resolves.toBeUndefined();
+        // Even an expired wait must read the committed exit before refusing it.
+        await expect(
+          waitForAgentCancellationExecutionQuiescent(
+            db,
+            owner,
+            performance.now() - 1,
+          ),
+        ).resolves.toBeUndefined();
       } finally {
         silenceLocalWake.mockRestore();
       }

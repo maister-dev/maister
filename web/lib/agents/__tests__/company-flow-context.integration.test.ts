@@ -132,8 +132,17 @@ import { loadNativeInputForUser } from "@/lib/orchestrator/native-input-read";
 import { NativeInputInspectionPanel } from "@/components/runs/native-input-inspection";
 import enMessages from "@/messages/en.json";
 import ruMessages from "@/messages/ru.json";
-import { promoteNextPending, tryStartRun } from "@/lib/scheduler";
-import { disposeOperationalRun } from "@/lib/gc/operational-disposition";
+import {
+  countLiveRuns,
+  promoteNextPending,
+  tryStartRun,
+} from "@/lib/scheduler";
+import {
+  disposeOperationalRun,
+  sweepOperationalDispositions,
+} from "@/lib/gc/operational-disposition";
+import { recoverExecutionCommands } from "@/lib/execution-host/recovery";
+import { COMMAND_POLICY } from "@/lib/execution-host/deliverer";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { resumeRun } from "@/lib/runs/resume";
 import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-worker";
@@ -5365,6 +5374,11 @@ it("CBS-03 retains native permission consent, refuses revoked replay and deliver
 it("CBS-03 resumes a checkpointed native permission after retained-host restart without losing input, consent or capacity fences", async () => {
   const db: Db = database.db;
   const hostRoot = join(root, "reservation-host");
+  const previousSettings = (await db.select().from(platformRuntimeSettings))[0];
+  const runnerId = randomUUID();
+  let blockerRunId: string | undefined;
+  let ownedCancellation: Readonly<{ id: string; revision: number }> | undefined;
+  let bodyFailure: Readonly<{ error: unknown }> | undefined;
 
   await writeCompanyCapabilityCache(hostRoot);
   let supervisor = await startRealSupervisor({
@@ -5397,6 +5411,21 @@ it("CBS-03 resumes a checkpointed native permission after retained-host restart 
   resetResolverForTests();
   resetRegistrarStateForTests();
   try {
+    await db.insert(platformAcpRunners).values({
+      id: runnerId,
+      adapter: "claude",
+      capabilityAgent: "claude",
+      model: "company-checkpoint-fixture",
+      provider: { kind: "anthropic" },
+      readinessStatus: "Ready",
+    });
+    await db
+      .insert(platformRuntimeSettings)
+      .values({ id: "singleton", defaultRunnerId: runnerId })
+      .onConflictDoUpdate({
+        target: platformRuntimeSettings.id,
+        set: { defaultRunnerId: runnerId },
+      });
     const output = {
       schemaVersion: 1,
       findings: [],
@@ -5482,6 +5511,31 @@ it("CBS-03 resumes a checkpointed native permission after retained-host restart 
       .where(eq(runs.id, receipt.runId));
 
     expect(frozen[0]?.acp).toEqual(expect.any(String));
+    const checkpointOwner = (
+      await database.pool.query<{
+        assignment_id: string;
+        host_id: string;
+        epoch: number;
+        session_id: string;
+      }>(
+        "SELECT assignment.id AS assignment_id,assignment.execution_host_id AS host_id,assignment.epoch,session.host_session_id AS session_id FROM execution_assignments assignment JOIN run_sessions session ON session.execution_assignment_id=assignment.id WHERE assignment.run_id=$1 AND assignment.state='active'",
+        [receipt.runId],
+      )
+    ).rows[0]!;
+    // A persisted checkpoint intent may outlive the driver that would send it.
+    const pendingCheckpoint = await insertCommand(db, {
+      runId: receipt.runId,
+      assignmentId: checkpointOwner.assignment_id,
+      hostId: checkpointOwner.host_id,
+      assignmentEpoch: checkpointOwner.epoch,
+      kind: "session.checkpoint",
+      targetSessionId: checkpointOwner.session_id,
+      payload: {},
+      maxAttempts: COMMAND_POLICY["session.checkpoint"].maxAttempts,
+      driverless: COMMAND_POLICY["session.checkpoint"].driverless,
+    });
+
+    expect(pendingCheckpoint.state).toBe("queued");
     await database.pool.query(
       "UPDATE runs SET keepalive_until=now()-interval '1 second' WHERE id=$1",
       [receipt.runId],
@@ -5516,6 +5570,37 @@ it("CBS-03 resumes a checkpointed native permission after retained-host restart 
         .innerJoin(runSessions, eq(runSessions.runId, runs.id))
         .where(eq(runs.id, receipt.runId)),
     ).toEqual(frozen);
+    const blockedCap = (await countLiveRuns(db)) + 1;
+
+    vi.stubEnv("MAISTER_MAX_CONCURRENT_RUNS", String(blockedCap));
+    const blocker = await reserveCompanyFlowRun(
+      db,
+      requesterId,
+      await createFreshCompanyFlowRequest(),
+      hosts,
+    );
+
+    blockerRunId = blocker.runId;
+    expect(await tryStartRun(blocker.runId, { db })).toMatchObject({
+      started: true,
+    });
+    const existingCancellation = await database.pool.query<{ id: string }>(
+      "SELECT id FROM company_grants WHERE principal_type='user' AND principal_id=$1 AND action='assignments:cancel' AND revoked_at IS NULL",
+      [requesterId],
+    );
+
+    if (existingCancellation.rows.length === 0) {
+      const cancellation = await createCompanyGrants(db, administratorId, {
+        principalKind: "user",
+        principalId: requesterId,
+        actions: ["assignments:cancel"],
+        idempotencyKey: randomUUID(),
+      });
+
+      ownedCancellation = cancellation.page.items.find(
+        (grant) => grant.action === "assignments:cancel",
+      );
+    }
     const responderId = randomUUID();
 
     await database.pool.query(
@@ -5574,7 +5659,7 @@ it("CBS-03 resumes a checkpointed native permission after retained-host restart 
       reason: "Withdraw authority while native resume waits for capacity",
       idempotencyKey: randomUUID(),
     });
-    vi.stubEnv("MAISTER_MAX_CONCURRENT_RUNS", "2");
+    vi.stubEnv("MAISTER_MAX_CONCURRENT_RUNS", String(blockedCap + 1));
     await expect(
       resumeRun(receipt.runId, { db, executionHosts: hosts }),
     ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
@@ -5603,16 +5688,81 @@ it("CBS-03 resumes a checkpointed native permission after retained-host restart 
           (
             await database.pool.query<{
               status: string;
-              cleanup: string | null;
               driver: string | null;
             }>(
-              "SELECT status,operational_cleanup->>'state' AS cleanup,flow_driver_token AS driver FROM runs WHERE id=$1",
+              "SELECT status,flow_driver_token AS driver FROM runs WHERE id=$1",
               [receipt.runId],
             )
           ).rows[0],
         { timeout: 20000, interval: 50 },
       )
-      .toEqual({ status: "Done", cleanup: "released", driver: null });
+      .toEqual({ status: "Done", driver: null });
+    const deferred = (
+      await database.pool.query<{
+        state: string;
+        reason: string;
+        due_at: string;
+        armed_at: string;
+        attempts: number;
+        revision: number;
+      }>(
+        "SELECT operational_cleanup->>'state' AS state,operational_cleanup->>'errorCode' AS reason,operational_cleanup->>'dueAt' AS due_at,operational_cleanup->>'armedAt' AS armed_at,(operational_cleanup->>'attempts')::int AS attempts,(operational_cleanup->>'revision')::int AS revision FROM runs WHERE id=$1",
+        [receipt.runId],
+      )
+    ).rows[0]!;
+
+    expect(deferred).toMatchObject({
+      state: "retry",
+      reason: "operational_execution_not_quiescent",
+      attempts: 1,
+    });
+    expect(
+      Date.parse(deferred.due_at) - Date.parse(deferred.armed_at),
+    ).toBeGreaterThanOrEqual(60_000);
+    await sweepOperationalDispositions({
+      db,
+      hosts,
+      now: new Date(Date.parse(deferred.due_at) - 1),
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT operational_cleanup->>'state' AS state,(operational_cleanup->>'revision')::int AS revision FROM runs WHERE id=$1",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toEqual([{ state: "retry", revision: deferred.revision }]);
+    const recovery = await recoverExecutionCommands({
+      db,
+      transport: createLocalDirectTransport(),
+      now: () => new Date(deferred.due_at),
+      graceMs: 0,
+    });
+
+    expect(recovery.errors).toEqual([]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT state,attempts,last_error->>'reason' AS reason FROM execution_commands WHERE id=$1",
+          [pendingCheckpoint.id],
+        )
+      ).rows,
+    ).toEqual([{ state: "failed", attempts: 0, reason: "ORPHANED" }]);
+    // The existing sweep may first wrap its durable keyset cursor.
+    for (let pass = 0; pass < 2; pass += 1)
+      await sweepOperationalDispositions({
+        db,
+        hosts,
+        now: new Date(deferred.due_at),
+      });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status,operational_cleanup->>'state' AS cleanup,flow_driver_token AS driver FROM runs WHERE id=$1",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toEqual([{ status: "Done", cleanup: "released", driver: null }]);
     expect(
       await db
         .select({
@@ -5652,24 +5802,92 @@ it("CBS-03 resumes a checkpointed native permission after retained-host restart 
         )
       ).rows,
     ).toEqual([{ status: "completed", user_id: responderId }]);
+  } catch (error) {
+    bodyFailure = { error };
+    throw error;
   } finally {
-    browserUserId = requesterId;
-    abort.abort();
-    await driver;
-    await continuation?.stop();
-    await worker.stop();
-    await stopRuntimeEventConsumers();
-    await supervisor.stop();
-    restoreUrl();
-    compatibility.mockRestore();
-    resetResolverForTests();
-    resetRegistrarStateForTests();
-    setDefaultTransportForTests(null);
-    if (previousCap === undefined)
-      delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
-    else process.env.MAISTER_MAX_CONCURRENT_RUNS = previousCap;
-    if (previousRuntime === undefined) delete process.env.MAISTER_RUNTIME_ROOT;
-    else process.env.MAISTER_RUNTIME_ROOT = previousRuntime;
+    const failures: unknown[] = [];
+    const cleanup: readonly (() => void | Promise<void>)[] = [
+      () => {
+        browserUserId = requesterId;
+        abort.abort();
+      },
+      async () => {
+        if (!blockerRunId) return;
+        const stopped = await stopRunPost(
+          new Request(`http://localhost/api/runs/${blockerRunId}/stop`, {
+            method: "POST",
+          }),
+          { params: Promise.resolve({ runId: blockerRunId }) },
+        );
+
+        expect(stopped.status).toBe(200);
+      },
+      async () => {
+        if (ownedCancellation)
+          await revokeCompanyGrant(db, administratorId, ownedCancellation.id, {
+            expectedRevision: ownedCancellation.revision,
+            reason: "Release the checkpoint fixture's owned cancellation grant",
+            idempotencyKey: randomUUID(),
+          });
+      },
+      async () => {
+        await driver;
+      },
+      async () => {
+        await continuation?.stop();
+      },
+      () => worker.stop(),
+      () => stopRuntimeEventConsumers(),
+      () => supervisor.stop(),
+      () => {
+        restoreUrl();
+      },
+      () => {
+        compatibility.mockRestore();
+      },
+      () => {
+        resetResolverForTests();
+      },
+      () => {
+        resetRegistrarStateForTests();
+      },
+      () => {
+        setDefaultTransportForTests(null);
+      },
+      async () => {
+        if (previousSettings)
+          await db
+            .update(platformRuntimeSettings)
+            .set({ defaultRunnerId: previousSettings.defaultRunnerId })
+            .where(eq(platformRuntimeSettings.id, "singleton"));
+        else
+          await db
+            .delete(platformRuntimeSettings)
+            .where(eq(platformRuntimeSettings.id, "singleton"));
+      },
+      () => {
+        if (previousCap === undefined)
+          delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
+        else process.env.MAISTER_MAX_CONCURRENT_RUNS = previousCap;
+        if (previousRuntime === undefined)
+          delete process.env.MAISTER_RUNTIME_ROOT;
+        else process.env.MAISTER_RUNTIME_ROOT = previousRuntime;
+      },
+    ];
+
+    for (const release of cleanup) {
+      try {
+        await release();
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length)
+      throw new AggregateError(
+        [...(bodyFailure ? [bodyFailure.error] : []), ...failures],
+        "The company checkpoint fixture could not release all owned resources",
+      );
   }
 }, 90000);
 

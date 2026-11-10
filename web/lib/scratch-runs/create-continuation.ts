@@ -207,6 +207,21 @@ async function completeScratchCreateHandoff(
       !["Starting", "Running"].includes(scratch.dialogStatus)
     )
       return null;
+    // An empty create owns only its Starting-to-WaitingForUser transition.
+    // A delayed replay must retain a later turn and its unknown-delivery evidence.
+    if (!continuation.payload && scratch.dialogStatus !== "Starting") {
+      log.debug(
+        {
+          runId: run.id,
+          assignmentId: execution.client.assignment.id,
+          dialogStatus: scratch.dialogStatus,
+          kind: continuation.kind,
+        },
+        "[FIX:scratch-create-replay] empty create handoff already advanced",
+      );
+
+      return null;
+    }
     await assertCurrentSessionBinding(tx, {
       runId: run.id,
       sessionName: "default",

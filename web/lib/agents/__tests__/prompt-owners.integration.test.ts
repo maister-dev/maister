@@ -3627,16 +3627,19 @@ describe("Agent owned prompts through the production launcher", () => {
       applicationState: "applied",
       applicationAttempts: 0,
     });
-    // Terminal evidence may arrive after the first preparation. A recovered
-    // deferral is retained by the application contract, never a poisoned retry.
+    // Teardown or canonical exit projection may defer the first preparation.
+    // Both retain recovery history without consuming a failure attempt.
     if (applied.applicationError !== null) {
       expect(applied.applicationError).toMatchObject({
         reason: "prompt_owner_recovered",
         classification: "deferred",
         phase: "prepare",
         causeReason: "prompt_owner_deferred",
-        causeDetails: { causeCode: "terminal_event_unconfirmed" },
       });
+      expect([
+        "terminal_event_unconfirmed",
+        "agent_session_teardown_pending",
+      ]).toContain(applied.applicationError.causeDetails?.causeCode);
       expect(applied.applicationError.deferredSince).toEqual(
         expect.any(String),
       );

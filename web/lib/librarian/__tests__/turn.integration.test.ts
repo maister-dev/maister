@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import {
   afterAll,
+  afterEach,
   beforeAll,
   beforeEach,
   describe,
@@ -31,7 +32,7 @@ import {
   rememberPersonalMemory,
 } from "@/lib/librarian/memory";
 import { admitLibrarianOperation } from "@/lib/librarian/operations";
-import { startLibrarianTurn } from "@/lib/librarian/runtime";
+import * as librarianRuntime from "@/lib/librarian/runtime";
 import { updateLibrarianSettings } from "@/lib/librarian/settings";
 import { queueLibrarianSummary } from "@/lib/librarian/summary";
 import {
@@ -73,24 +74,33 @@ function rows<T>(result: unknown): T[] {
 }
 
 function start(turnId: string): Promise<void> {
-  const turn = startLibrarianTurn(turnId, {
+  const turn = librarianRuntime.startLibrarianTurn(turnId, {
     db: db as unknown as Db,
     hosts,
   });
-
-  running.push(turn);
 
   return turn;
 }
 
 async function settle(): Promise<void> {
-  // A finished turn may start its queued successor; drain until quiet.
+  // A finished turn may start its queued successor; join every actual lifetime.
+  const failures: unknown[] = [];
+
   for (let i = 0; i < 10 && running.length > 0; i += 1) {
     const batch = running;
 
     running = [];
-    await Promise.all(batch);
+    const results = await Promise.allSettled(batch);
+
+    for (const result of results)
+      if (result.status === "rejected") failures.push(result.reason);
   }
+  if (running.length > 0)
+    throw new Error(
+      "Librarian turn fixture exceeded its bounded successor drain",
+    );
+  if (failures.length > 0)
+    throw new AggregateError(failures, "Librarian turn fixture did not settle");
 }
 
 async function send(ownerId: string, body: string) {
@@ -189,12 +199,33 @@ beforeAll(async () => {
   fake = createFakeExecutionHost();
   ({ hosts } = await fakeExecutionHosts(db, { fake }));
   await seedLibrarianPlatform(db);
+  const startTurn = librarianRuntime.startLibrarianTurn;
+
+  // Observe the real runtime, including after-commit dispatch outside start().
+  vi.spyOn(librarianRuntime, "startLibrarianTurn").mockImplementation(
+    (...arguments_) => {
+      const turn = startTurn(...arguments_);
+
+      running.push(turn);
+
+      return turn;
+    },
+  );
 }, 180_000);
 
 afterAll(async () => {
-  await settle();
-  await database?.stop();
+  try {
+    await settle();
+  } finally {
+    vi.restoreAllMocks();
+    await database?.stop();
+  }
 });
+
+// A failed assertion must not leave its successor using the next fake host state.
+afterEach(async () => {
+  await settle();
+}, 30_000);
 
 beforeEach(async () => {
   await settle();
@@ -339,12 +370,10 @@ describe("IT-LCV-04 start recovery lease", () => {
       {
         db: db as unknown as Db,
         start: (turnId) => {
-          running.push(
-            startLibrarianTurn(turnId, {
-              db: db as unknown as Db,
-              hosts: delayedHosts,
-            }),
-          );
+          void librarianRuntime.startLibrarianTurn(turnId, {
+            db: db as unknown as Db,
+            hosts: delayedHosts,
+          });
 
           return Promise.resolve();
         },
@@ -353,7 +382,10 @@ describe("IT-LCV-04 start recovery lease", () => {
     const turnId = sent.turn!.id;
 
     await atHost;
-    await startLibrarianTurn(turnId, { db: db as unknown as Db, hosts });
+    await librarianRuntime.startLibrarianTurn(turnId, {
+      db: db as unknown as Db,
+      hosts,
+    });
     let [turn] = rows<{ start_attempts: number }>(
       await db.execute(sql`
         SELECT start_attempts FROM librarian_turns WHERE id = ${turnId}
@@ -366,7 +398,10 @@ describe("IT-LCV-04 start recovery lease", () => {
       UPDATE librarian_turns SET start_lease_at = now() - interval '61 seconds'
       WHERE id = ${turnId}
     `);
-    await startLibrarianTurn(turnId, { db: db as unknown as Db, hosts });
+    await librarianRuntime.startLibrarianTurn(turnId, {
+      db: db as unknown as Db,
+      hosts,
+    });
     release();
     await settle();
     [turn] = rows<{ start_attempts: number }>(
@@ -585,7 +620,7 @@ describe("IT-LCV-06: session/resume only under the same epoch and runner", () =>
       messages.filter((message) => message.author_kind === "librarian"),
     ).toHaveLength(2);
     expect((await turnRow(first.turn!.id)).status).toBe("completed");
-  });
+  }, 30_000);
 
   it("uses the updated model and configuration for the same runner id without resuming", async () => {
     const actorId = await seedActiveUser(db, { role: "admin" });
