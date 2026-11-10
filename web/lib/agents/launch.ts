@@ -268,6 +268,7 @@ import {
   materializeOperationalAdapterCapabilityHome,
 } from "@/lib/capabilities/adapter-home";
 import { getDb } from "@/lib/db/client";
+import { currentBudgetTermination } from "@/lib/runs/budget-termination";
 import * as schemaModule from "@/lib/db/schema";
 import {
   type AgentExecutionPolicyRecommendation,
@@ -3703,6 +3704,20 @@ async function recordAgentPermissionRequest(args: {
   event: Extract<SupervisorEvent, { type: "session.permission_request" }>;
 }): Promise<void> {
   await args.db.transaction(async (tx: Db) => {
+    const [current] = await tx
+      .select()
+      .from(runs)
+      .where(eq(runs.id, args.runId))
+      .for("no key update");
+
+    if (current && (await currentBudgetTermination(tx, current))) {
+      log.info(
+        { runId: args.runId, requestId: args.event.requestId },
+        "[FIX] legacy permission retained as evidence during budget stop",
+      );
+
+      return;
+    }
     const [existing] = await tx
       .select({ id: hitlRequests.id })
       .from(hitlRequests)

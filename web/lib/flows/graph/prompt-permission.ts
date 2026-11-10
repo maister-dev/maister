@@ -25,6 +25,7 @@ import { gatePromptOperationKey } from "./prompt-owner";
 import { lockFlowPromptOwner } from "./prompt-owner-authority";
 import { pendingNodePermissionResumeExists } from "./permission-resume";
 
+import { currentBudgetTermination } from "@/lib/runs/budget-termination";
 import {
   deliveryIntentSchema,
   withdrawRefusedPermissionDelivery,
@@ -686,7 +687,9 @@ export async function handleFlowPermission(input: {
           }),
     };
 
-    await lockPermissionSource(tx, source, hostSessionId);
+    const currentRun = await lockPermissionSource(tx, source, hostSessionId);
+
+    if (await currentBudgetTermination(tx, currentRun)) return null;
     if (
       ref.variant === "permission_resume" ||
       ((ref.variant === "gate_ai" || ref.variant === "gate_skill") &&

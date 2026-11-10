@@ -35,6 +35,7 @@ import { PromptOwnerSchema } from "./prompt-owner-contract";
 import { readPromptRequest, storePromptRequest } from "./command-request";
 import { redactPayload } from "./redact";
 
+import { currentBudgetTermination } from "@/lib/runs/budget-termination";
 import {
   coordinatorChildLaunchContextSchema,
   childLaunchPromptContext,
@@ -401,6 +402,11 @@ export async function issueOwnedPrompt(
       .select({
         incarnationId: runSessionIncarnations.id,
         companyCancellationIntent: runs.companyCancellationIntent,
+        id: runs.id,
+        budgetState: runs.budgetState,
+        executionAssignmentId: runs.executionAssignmentId,
+        currentStepId: runs.currentStepId,
+        flowDriverToken: runs.flowDriverToken,
       })
       .from(runs)
       .innerJoin(
@@ -441,6 +447,8 @@ export async function issueOwnedPrompt(
     if (binding?.companyCancellationIntent)
       throw ownedPromptConflict("company_cancellation_pending");
     if (!binding) throw ownedPromptConflict("inactive_incarnation");
+    if (await currentBudgetTermination(tx, binding))
+      throw ownedPromptConflict("budget_termination_pending");
     const [existing] = await tx
       .select()
       .from(executionCommands)

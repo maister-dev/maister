@@ -7,6 +7,7 @@ import pino from "pino";
 
 import { agentTurns, runs } from "@/lib/db/schema";
 import { releaseAssignmentForRun } from "@/lib/execution-host/assignments";
+import { currentBudgetTermination } from "@/lib/runs/budget-termination";
 import { releaseSlotOnIdle } from "@/lib/scheduler";
 
 const log = pino({
@@ -39,6 +40,20 @@ export async function applyAgentPark(
   runId: string,
   opts: { cause?: "host_pressure" } = {},
 ): Promise<AgentParkApplication> {
+  const [current] = await tx
+    .select()
+    .from(runs)
+    .where(eq(runs.id, runId))
+    .for("no key update");
+
+  if (current && (await currentBudgetTermination(tx, current))) {
+    log.info(
+      { runId, cause: opts.cause ?? "persistent" },
+      "[FIX] agent park retained for budget stop owner",
+    );
+
+    return { parked: false };
+  }
   const queuedSince = sql`(SELECT min(${agentTurns.createdAt}) FROM ${agentTurns}
         WHERE ${agentTurns.runId} = ${runId} AND ${agentTurns.state} = 'queued')`;
   const hostPark = opts.cause === "host_pressure";

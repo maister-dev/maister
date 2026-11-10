@@ -227,6 +227,8 @@ import { startMainAndBrainPostgresTestDb } from "@/test-support/pg-container";
 import { seedProjectRow } from "@/test-support/execution-host-seed";
 import { git, initRepo } from "@/test-support/git-fixture";
 import { contentDigest } from "@/lib/evaluations/digest";
+import { claimBudgetTermination } from "@/lib/runs/budget-termination";
+import { claimCompanyStop } from "@/lib/runs/stop";
 
 const browserSession = vi.hoisted(() => ({ user: null as SessionUser | null }));
 let database: StartedPostgresTestDb;
@@ -8746,6 +8748,106 @@ it("CBS-02 atomically reserves one company execution with frozen session and pla
     resetResolverForTests();
     setDefaultTransportForTests(null);
   }
+});
+
+it("CBS-02 serializes company cancellation and budget termination by their first retained owner", async () => {
+  const db: Db = database.db;
+  const { hosts } = await fakeExecutionHosts(db);
+  const host = await localHost({ db, transport: hosts.transport });
+  const runnerId = randomUUID();
+  const rollback = new Error("Roll back the company stop ordering fixtures");
+
+  await expect(
+    db.transaction(async (tx) => {
+      await tx.insert(platformAcpRunners).values({
+        id: runnerId,
+        adapter: "claude",
+        capabilityAgent: "claude",
+        model: "company-stop-ordering-fixture",
+        provider: { kind: "anthropic" },
+        readinessStatus: "Ready",
+      });
+      await tx
+        .insert(platformRuntimeSettings)
+        .values({ id: "singleton", defaultRunnerId: runnerId })
+        .onConflictDoUpdate({
+          target: platformRuntimeSettings.id,
+          set: { defaultRunnerId: runnerId },
+        });
+      for (const first of ["budget", "operator"] as const) {
+        const assignment = await createSpecialistAssignmentInTransaction(
+          tx,
+          userId,
+          assignmentInput,
+        );
+        const receipt = await reserveCompanyAgentRunInTransaction(
+          tx,
+          userId,
+          { ...request, assignmentId: assignment.id },
+          hosts,
+          host,
+        );
+        const [run] = await tx
+          .update(runs)
+          .set({ status: "Running" })
+          .where(eq(runs.id, receipt.runId))
+          .returning();
+        const claimBudget = () =>
+          claimBudgetTermination(tx, {
+            runId: run.id,
+            nodeId: run.currentStepId,
+            scope: "run",
+            meter: "tokens",
+            current: 2,
+            limit: 1,
+            assignmentId: run.executionAssignmentId,
+            sessionId: null,
+          });
+
+        if (first === "budget") {
+          const termination = await claimBudget();
+
+          expect(termination).not.toBeNull();
+          await expect(
+            claimCompanyStop(tx, userId, run.id),
+          ).rejects.toMatchObject({
+            code: "CONFLICT",
+            details: { reason: "budget_termination_pending" },
+          });
+          const [retained] = await tx
+            .select()
+            .from(runs)
+            .where(eq(runs.id, run.id));
+
+          expect(retained.companyCancellationIntent).toBeNull();
+          expect(retained.budgetState?.termination?.id).toBe(termination!.id);
+        } else {
+          const stopped = await claimCompanyStop(tx, userId, run.id);
+
+          expect(stopped.companyCancellationIntent?.userId).toBe(userId);
+          expect(await claimBudget()).toBeNull();
+          const [retained] = await tx
+            .select()
+            .from(runs)
+            .where(eq(runs.id, run.id));
+
+          expect(retained.companyCancellationIntent).toEqual(
+            stopped.companyCancellationIntent,
+          );
+          expect(retained.budgetState?.termination).toBeUndefined();
+        }
+        expect(
+          (
+            await tx
+              .select()
+              .from(executionCommands)
+              .where(eq(executionCommands.runId, run.id))
+          ).length,
+        ).toBe(0);
+      }
+      throw rollback;
+    }),
+  ).rejects.toBe(rollback);
 });
 
 it("CBS-02 cancels a native Pending company Run only under current cancellation authority and retains one terminal outcome", async () => {

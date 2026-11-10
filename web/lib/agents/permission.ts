@@ -13,6 +13,7 @@ import pino from "pino";
 
 import { canonicalCommandJson } from "../../../runtime/command-json";
 
+import { currentBudgetTermination } from "@/lib/runs/budget-termination";
 import { createHitlRequest } from "@/lib/runs/hitl-create";
 import {
   agentTurns,
@@ -303,6 +304,19 @@ export async function recordOwnedAgentPermissionInTransaction(
   });
 
   if (!assignment) return true;
+  const [current] = await tx
+    .select()
+    .from(runs)
+    .where(eq(runs.id, assignment.runId));
+
+  if (current && (await currentBudgetTermination(tx, current))) {
+    log.info(
+      { runId: current.id, requestId: event.requestId },
+      "[FIX] agent permission retained as evidence during budget stop",
+    );
+
+    return true;
+  }
   const [turn] = await tx
     .select()
     .from(agentTurns)

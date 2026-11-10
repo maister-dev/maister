@@ -8,6 +8,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as schema from "@/lib/db/schema";
+import { claimBudgetTermination } from "@/lib/runs/budget-termination";
 import { applyScratchSessionTerminal } from "@/lib/scratch-runs/events";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import { startMainPostgresTestDb } from "@/test-support/pg-container";
@@ -165,6 +166,48 @@ async function apply(
 }
 
 describe("S3 already-read terminal consumer incarnation ownership", () => {
+  it.each(["session.exited", "session.crashed"] as const)(
+    "preserves a current budget stop when native %s arrives before teardown acknowledgement",
+    async (type) => {
+      const turn = await seedTurn();
+      const [run] = await db
+        .select()
+        .from(schema.runs)
+        .where(eq(schema.runs.id, turn.runId));
+      const before = await state(turn.runId);
+      const intent = await claimBudgetTermination(db as Db, {
+        runId: turn.runId,
+        nodeId: run.currentStepId,
+        scope: "run",
+        meter: "tokens",
+        current: 200,
+        limit: 100,
+        assignmentId: run.executionAssignmentId!,
+        sessionId: turn.currentHostSessionId,
+      });
+
+      expect(intent).not.toBeNull();
+      const event: TerminalInput =
+        type === "session.exited"
+          ? { type, monotonicId: 12, exitCode: 0, reason: "intentional" }
+          : { type, monotonicId: 12, exitCode: null, signal: "SIGKILL" };
+
+      await apply(turn, turn.currentHostSessionId, event);
+
+      expect(await state(turn.runId)).toEqual(before);
+      // The same native event remains effective after explicit stop ownership ends.
+      await db
+        .update(schema.runs)
+        .set({ budgetState: null })
+        .where(eq(schema.runs.id, turn.runId));
+      await apply(turn, turn.currentHostSessionId, event);
+
+      expect((await state(turn.runId)).run).toBe(
+        type === "session.exited" ? "Review" : "Crashed",
+      );
+    },
+  );
+
   it.each(["session.exited", "session.crashed"] as const)(
     "ignores stale %s with the same ACP handle and assignment as the Running successor",
     async (type) => {

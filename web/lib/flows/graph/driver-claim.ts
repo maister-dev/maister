@@ -20,6 +20,7 @@ import { MaisterError } from "@/lib/errors";
 import { projectionTransaction } from "@/lib/execution-host/events/projection-transaction";
 import { parseExecutableStoredFlowManifest } from "@/lib/flows/manifest-parser";
 import { manifestDigest } from "@/lib/flows/digest";
+import { currentBudgetTermination } from "@/lib/runs/budget-termination";
 
 type PlacedFlowDriverScope = Readonly<{
   scope: "assignment";
@@ -61,10 +62,15 @@ async function lockFlowDriverRun(
       executionAssignmentId: runs.executionAssignmentId,
       flowId: runs.flowId,
       flowRevisionId: runs.flowRevisionId,
+      budgetState: runs.budgetState,
+      currentStepId: runs.currentStepId,
+      flowDriverToken: runs.flowDriverToken,
     })
     .from(runs)
     .where(eq(runs.id, runId))
     .for("no key update");
+
+  if (run && (await currentBudgetTermination(tx, run))) return null;
 
   return run?.runKind === "flow" &&
     ["Running", "NeedsInput"].includes(run.status)

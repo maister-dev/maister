@@ -20,6 +20,7 @@ import { getDb } from "@/lib/db/client";
 import { runs } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { createExecutionHosts } from "@/lib/execution-host";
+import { currentBudgetTermination } from "@/lib/runs/budget-termination";
 import { stopWorkbenchRun } from "@/lib/workbench-lifecycle/service";
 
 const log = pino({ name: "run-stop", level: process.env.LOG_LEVEL ?? "info" });
@@ -70,7 +71,8 @@ async function authorizeCompanyStop(
   }
 }
 
-async function claimCompanyStop(
+/** Retain current authorized cancellation before any host effects. */
+export async function claimCompanyStop(
   db: Db,
   userId: string,
   runId: string,
@@ -79,6 +81,12 @@ async function claimCompanyStop(
     const run = await authorizeCompanyStop(tx, userId, runId);
 
     if (run.status === "Abandoned") return run;
+    if (await currentBudgetTermination(tx, run))
+      throw new MaisterError(
+        "CONFLICT",
+        "A budget termination already owns this company Run; reconcile its retained stop before requesting another cancellation",
+        { details: { reason: "budget_termination_pending" } },
+      );
     if (run.companyCancellationIntent) {
       if (run.companyCancellationIntent.userId !== userId)
         throw new MaisterError(

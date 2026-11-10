@@ -49,6 +49,11 @@ function mockDb(returningRows: Array<{ id: string }>): {
   const captured: Captured = { setArg: null, whereArg: undefined };
 
   const db: Record<string, unknown> = {
+    select() {
+      return {
+        from: () => ({ where: () => ({ for: async () => returningRows }) }),
+      };
+    },
     update() {
       // Capture the FIRST update only — the run's terminal write, which is what
       // these tests assert. `crashRunningRun` also releases any stranded

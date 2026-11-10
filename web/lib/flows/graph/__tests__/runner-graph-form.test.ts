@@ -1,9 +1,11 @@
+import type { Run } from "@/lib/db/schema";
 import type { CompiledNode } from "@/lib/flows/graph/compile";
 
 import { readFile } from "node:fs/promises";
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
+import { runs } from "@/lib/db/schema";
 import { createHitlAssignmentForRun } from "@/lib/assignments/service";
 import { atomicWriteJson } from "@/lib/atomic";
 
@@ -18,9 +20,37 @@ import { atomicWriteJson } from "@/lib/atomic";
 // Capture INSERT values for assertion.
 const capturedInserts: Array<Record<string, unknown>> = [];
 
+const fixtureRun = {
+  id: "run-1",
+  projectId: "proj-1",
+  companyId: null,
+  taskId: null,
+  status: "Running",
+  currentStepId: "intake",
+  flowVersion: "v1.0.0",
+  budgetState: null,
+  executionAssignmentId: null,
+  flowDriverToken: null,
+} satisfies Pick<
+  Run,
+  | "id"
+  | "projectId"
+  | "companyId"
+  | "taskId"
+  | "status"
+  | "currentStepId"
+  | "flowVersion"
+  | "budgetState"
+  | "executionAssignmentId"
+  | "flowDriverToken"
+>;
+
+type MockRun = typeof fixtureRun;
+type MockSelection = Promise<MockRun[]> & { for: () => Promise<MockRun[]> };
+
 type MockDb = {
   insert: () => { values: (row: Record<string, unknown>) => Promise<void> };
-  select: () => { from: () => { where: () => Promise<[]> } };
+  select: () => { from: (table: unknown) => { where: () => MockSelection } };
   update: () => { set: () => { where: () => Promise<[]> } };
   transaction: <T>(fn: (tx: MockDb) => Promise<T>) => Promise<T>;
 };
@@ -34,8 +64,12 @@ const mockDb: MockDb = {
     },
   }),
   select: () => ({
-    from: () => ({
-      where: async () => [] as [],
+    from: (table) => ({
+      where: () => {
+        const rows = table === runs ? [fixtureRun] : [];
+
+        return Object.assign(Promise.resolve(rows), { for: async () => rows });
+      },
     }),
   }),
   update: () => ({
@@ -117,13 +151,7 @@ const { runFormCollect } = await import("@/lib/flows/graph/runner-graph");
 /** Minimal LoadedRun stub for runFormCollect. */
 
 const makeLoaded = (runId = "run-1"): any => ({
-  run: {
-    id: runId,
-    projectId: "proj-1",
-    status: "Running",
-    currentStepId: "intake",
-    flowVersion: "v1.0.0",
-  },
+  run: { ...fixtureRun, id: runId },
   projectSlug: "test-project",
   flowInstallPath: "/tmp/flow",
 });

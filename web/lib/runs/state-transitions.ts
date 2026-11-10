@@ -25,6 +25,7 @@ import {
   authorizeGatePermissionContinuation,
 } from "@/lib/flows/graph/gate-permission-resume";
 import { RELEASED_LIFECYCLE_CLAIM } from "@/lib/runs/lifecycle-claim";
+import { currentBudgetTermination } from "@/lib/runs/budget-termination";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { closedAnswerResponse } from "@/lib/hitl-closed-answer";
@@ -1375,6 +1376,13 @@ export async function crashResumedRun(
   const db = opts.db ?? getDb();
 
   const crashed: boolean = await db.transaction(async (tx: Db) => {
+    const [current] = await tx
+      .select()
+      .from(runs)
+      .where(eq(runs.id, runId))
+      .for("no key update");
+
+    if (current && (await currentBudgetTermination(tx, current))) return false;
     const rows = await tx
       .update(runs)
       .set({ status: "Crashed", endedAt: new Date() })
@@ -1496,6 +1504,13 @@ export async function crashRunningRun(
   );
 
   const crashed: boolean = await db.transaction(async (tx: Db) => {
+    const [current] = await tx
+      .select()
+      .from(runs)
+      .where(eq(runs.id, runId))
+      .for("no key update");
+
+    if (current && (await currentBudgetTermination(tx, current))) return false;
     // M19 crash-recover (ADR-034): retain the crashed node id in
     // resume_target_step_id BEFORE nulling current_step_id, so Recover can resolve
     // the node kind (agent → --resume; session-less + retry_safe → re-dispatch).
@@ -1609,6 +1624,13 @@ export async function crashWaitingOnChildren(
   const db = opts.db ?? getDb();
 
   const crashed: boolean = await db.transaction(async (tx: Db) => {
+    const [current] = await tx
+      .select()
+      .from(runs)
+      .where(eq(runs.id, runId))
+      .for("no key update");
+
+    if (current && (await currentBudgetTermination(tx, current))) return false;
     const rows = await tx
       .update(runs)
       .set({

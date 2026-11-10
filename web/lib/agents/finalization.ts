@@ -104,6 +104,7 @@ import {
   preparationFenced,
 } from "@/lib/agents/preparation-ownership";
 import { prepareQualificationPublication } from "@/lib/tasks/qualification";
+import { currentBudgetTermination } from "@/lib/runs/budget-termination";
 
 const log = pino({
   name: "agent-finalization",
@@ -142,6 +143,8 @@ type AgentAssignmentClose =
 
 export type AgentFinalizeOptions = {
   db?: Db;
+  /** Exact server-owned budget stop; ordinary prompt completion cannot settle it. */
+  budgetTerminationId?: string;
   infrastructureFailure?: OperationalFailureDiagnostic;
   /** A dispatch driver's diagnosis cannot settle another assignment generation. */
   expectedAssignmentId?: string | null;
@@ -747,11 +750,26 @@ async function prepareAgentFinalization(
         status: runs.status,
         assignmentId: runs.executionAssignmentId,
         companyCancellationIntent: runs.companyCancellationIntent,
+        budgetState: runs.budgetState,
+        executionAssignmentId: runs.executionAssignmentId,
+        currentStepId: runs.currentStepId,
+        flowDriverToken: runs.flowDriverToken,
       })
       .from(runs)
       .where(eq(runs.id, runId))
       .for("update");
 
+    const budgetTermination = locked
+      ? await currentBudgetTermination(tx, locked)
+      : null;
+
+    if (budgetTermination && budgetTermination.id !== opts.budgetTerminationId)
+      return { finalized: false };
+    if (
+      opts.budgetTerminationId &&
+      budgetTermination?.id !== opts.budgetTerminationId
+    )
+      return { finalized: false };
     if (
       locked?.companyCancellationIntent &&
       (outcome !== "Abandoned" || opts.closeAssignments?.kind !== "user")

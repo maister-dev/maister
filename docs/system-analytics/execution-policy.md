@@ -294,14 +294,27 @@ E1–E12 invariants.)
   transaction.
 - TERMINATE at `hardMaxTokens` (= `maxTokens × MAISTER_BUDGET_HARD_MULTIPLIER`,
   default 1.25, when unset) MUST call `deleteSession`, then mark the run terminal
-  `Failed` with `MaisterError("BUDGET_EXCEEDED")`; it NEVER marks `Failed` until
-  the session is confirmed stopped/absent.
+  `Failed`. Flow and scratch terminal events use `BUDGET_EXCEEDED`; the agent
+  finalizer retains its existing `budget_breach` reason. No kind marks `Failed`
+  until the session is confirmed stopped/absent.
+- Before teardown, the manager retains a server-owned pending termination in
+  the existing `runs.budget_state`. It identifies the observed scope, meter,
+  value and ceiling, and applicable current execution assignment, driver, node
+  attempt and canonical session incarnation. Absent identities remain null.
+  Claim and traversal commits share the Run
+  lock. The witness does not mark `notified`, release ownership or grant
+  authority. Ordinary prompt completion, crash reconciliation and lower budget
+  rungs cannot overwrite its current owner; new prompts are refused. A failed
+  or uncertain teardown remains retryable with the original verdict. Settlement
+  rechecks the exact owner after I/O and waits for confirmed quiescence. A newer
+  assignment, driver, attempt or session cannot inherit the old stop, and a
+  terminal failure recorded before the claim keeps its original cause.
 - A `tree`-scope breach MUST cascade-terminate the whole run-tree
   (`cascadeAbandonRunTree`, one transaction) then flip the root; tree scope has
-  NO escalate rung. The cascade commits before the root CAS, and nothing
-  serializes against the graph runner advancing that root, so the flip can be
-  lost after the descendants are already `Abandoned`. On that path the tree
-  action MUST NOT be recorded on `budget_state.notified.tree`: `alreadyActioned`
+  NO escalate rung. The pending stop fences graph traversal before teardown.
+  A legitimately replaced owner or attempt refuses stale settlement. If the
+  final root CAS is lost, the action MUST NOT be recorded on
+  `budget_state.notified.tree`: `alreadyActioned`
   compares rungs with `>=` and nothing outranks `terminate`, so stamping a flip
   that never landed permanently disables tree enforcement for a root that can
   still resume. A re-entry re-running the idempotent cascade is the lesser

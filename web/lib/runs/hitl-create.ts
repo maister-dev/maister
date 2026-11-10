@@ -15,8 +15,9 @@ import "server-only";
  * because `hitl_requests` carries four shape CHECK constraints that differ per
  * `kind` (agent-question supersession, activation state, retrigger mode,
  * decision-request shape) — redesigning the call sites' value objects would put
- * every one of those at risk for no benefit. The only thing this adds is the
- * event.
+ * every one of those at risk for no benefit. Admission also serializes with
+ * a current budget stop; the caller transaction retains that Run lock through
+ * its pause or question writes.
  *
  * The event is emitted in the SAME transaction as the insert (ADR-086): a
  * decision that exists without its event would be one nobody is told about, and
@@ -30,6 +31,8 @@ import {
   runDomainEventScope,
 } from "@/lib/domain-events/outbox";
 import { hitlRequests, runs } from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
+import { currentBudgetTermination } from "@/lib/runs/budget-termination";
 
 // FIXME(any): dual drizzle-orm peer-dep variants, as elsewhere in lib/runs.
 type Db = any;
@@ -50,6 +53,7 @@ export async function createHitlRequest(
   values: HitlInsertValues,
   options: CreateHitlRequestOptions = {},
 ): Promise<void> {
+  await assertHitlBudgetAdmission(tx, values.runId);
   await tx.insert(hitlRequests).values(values);
   await emitNeedsInput(tx, values, options);
 }
@@ -68,6 +72,7 @@ export async function createHitlRequestIfAbsent<
   returning: T,
   options: CreateHitlRequestOptions = {},
 ): Promise<Record<string, unknown> | undefined> {
+  await assertHitlBudgetAdmission(tx, values.runId);
   const [inserted] = (await tx
     .insert(hitlRequests)
     .values(values)
@@ -77,6 +82,30 @@ export async function createHitlRequestIfAbsent<
   if (inserted) await emitNeedsInput(tx, values, options);
 
   return inserted;
+}
+
+/** Caller transactions retain this Run lock through their pause/question writes. */
+async function assertHitlBudgetAdmission(tx: Db, runId: string): Promise<void> {
+  const [run] = await tx
+    .select({
+      id: runs.id,
+      budgetState: runs.budgetState,
+      executionAssignmentId: runs.executionAssignmentId,
+      currentStepId: runs.currentStepId,
+      flowDriverToken: runs.flowDriverToken,
+    })
+    .from(runs)
+    .where(eq(runs.id, runId))
+    .for("no key update");
+
+  if (run && (await currentBudgetTermination(tx, run)))
+    throw new MaisterError(
+      "CONFLICT",
+      "The current budget stop refuses a new human decision",
+      {
+        details: { reason: "budget_termination_pending", runId },
+      },
+    );
 }
 
 async function emitNeedsInput(

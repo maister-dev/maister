@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "status": "interrupted_failed_incomplete",
+  "outerExitCode": 1,
+  "vitestExitCode": 130,
+  "sourceHead": "1b91e392028fbc8240543cd3408bc74ff3ae7b97",
+  "sourceFrozenAndClean": true,
+  "invocation": {
+    "id": "8e8e1ea8-722e-4ca1-84c9-e838a8716797",
+    "directory": "/private/tmp/cb-1b91e3920-full-ledger"
+  },
+  "startedAt": "2026-11-10T09:03:40.417Z",
+  "finishedAt": "2026-11-10T09:37:36.531Z",
+  "maxWorkers": 6,
+  "productionBuild": {
+    "revision": "1b91e392028fbc8240543cd3408bc74ff3ae7b97",
+    "buildId": "bNtmwS-1u5UwQCatian7v",
+    "artifactPath": "/private/tmp/maister-cb1-work-intake-1640/web/.next",
+    "invocationId": "8e8e1ea8-722e-4ca1-84c9-e838a8716797"
+  },
+  "preexistingFailuresObserved": [
+    "launch-run-result-contract: two assertions failed under test timeout; exact final stacks unavailable.",
+    "host-pressure-park and triager-wire: beforeAll exceeded180seconds.",
+    "staged-migrate-cli: Docker probe timed out."
+  ],
+  "interruption": "Requested exact owned Vitest group SIGINT after service-startup failures and rising concurrent service latency. Full coverage was not completed; no final JSON report was emitted. Complete rerun with lower concurrency is required.",
+  "testTotals": null,
+  "resourceAssessment": "Concurrent fixture work and service-startup latency observed. No general host resource exhaustion or single causal infrastructure defect is claimed.",
+  "cleanup": {
+    "wrapperReportedLeakedContainersRemoved": 13,
+    "wrapperCleanupErrors": [
+      {
+        "name": "Error",
+        "message": "frozen full integration completion leaked 13 container(s); terminal cleanup removed them (ledger /private/tmp/cb-1b91e3920-full-ledger)"
+      }
+    ],
+    "independentOwnedProcesses": 0,
+    "containers": 0,
+    "roots": 0,
+    "errors": []
+  },
+  "logBundle": {
+    "encoding": "Concatenate parts in order then gzip decompress.",
+    "parts": [
+      "web-integration.log.gz.part-01",
+      "web-integration.log.gz.part-02",
+      "web-integration.log.gz.part-03",
+      "web-integration.log.gz.part-04",
+      "web-integration.log.gz.part-05",
+      "web-integration.log.gz.part-06",
+      "web-integration.log.gz.part-07"
+    ],
+    "rawSha256": "b85c26323f0754281b80cb6a3e10c982a2959b147ebe324c66038bc15855c011",
+    "compressedSha256": "f8bddb1fefe31bcad95a4f779e6413e8631e9638b121f78b4e33394734ebc95c"
+  },
+  "artifacts": [
+    {
+      "path": "web-integration.log.gz.part-01",
+      "sha256": "ed11f4b92a18d1df3ca566b403431e478bbef40f241183e85c14c62760732fe2"
+    },
+    {
+      "path": "web-integration.log.gz.part-02",
+      "sha256": "bb47a58ac2e976fcc676a834e538d7e3d455fffed7b41668541a49799ac81baa"
+    },
+    {
+      "path": "web-integration.log.gz.part-03",
+      "sha256": "c8681297dcfc57bcb45c52793bceeaeefc2ac1a943b424cd1fc87b54c1a6f88c"
+    },
+    {
+      "path": "web-integration.log.gz.part-04",
+      "sha256": "13369ad9d83c55cc33196726ecb4685c6b2ca0164aabef7d072839d8f5747b71"
+    },
+    {
+      "path": "web-integration.log.gz.part-05",
+      "sha256": "1cb6256459e75397a5bc2f6bfb36279e04ca19de379728cb1eb9e0eb292646c2"
+    },
+    {
+      "path": "web-integration.log.gz.part-06",
+      "sha256": "0712964421f1961b7e462a65a37e087cd452f1cdd6a19c191d4ced55cd1af2b4"
+    },
+    {
+      "path": "web-integration.log.gz.part-07",
+      "sha256": "1df7566dc75ff6874fd038a83c387c45adeb45aabb16bce84d07e8eb868d982a"
+    },
+    {
+      "path": "cb-1b91e3920-frozen-full-web-integration-metadata.json.gz",
+      "sha256": "0093296bf53476dcc39d9c2a59a20886cf0f1b9fc1780846d8809d55c799b34c",
+      "rawSha256": "0a0d1addbcdfe352283d582c1aaf108fcb24d7b4788fa4a8d938a59e953c9566"
+    },
+    {
+      "path": "cb-1b91-full-cleanup.log.gz",
+      "sha256": "fc48e54c7f767662223e7e1971f1054b28bde8914e31e6d0dc467b5af9aa42c0",
+      "rawSha256": "68b0dc3680321a36226d25c763b646c2b002cfeeb64fe119b061ec5c3c9a5e72"
+    },
+    {
+      "path": "cb-1b91e3920-production-build.log.gz",
+      "sha256": "3a1e4950d80d331d9c929ac46c2986432522183441aebeaa703a595e2d77a842",
+      "rawSha256": "4b4ae89c4d155105be2cc9154f1c9442df634ae42b7052e4c315aee12747ea63"
+    },
+    {
+      "path": "cb-1b91e3920-full-launch.mjs.gz",
+      "sha256": "a95071b7b0776721d0587d3754e3c2d44dd83caf313df50ea7b78f77a4654892",
+      "rawSha256": "02f62df4fcc175ad22fca880ae3095686096b2cdf256987c40f8a2fa4bcb2340"
+    }
+  ]
+}
