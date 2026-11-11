@@ -95,6 +95,24 @@ test("M27 flow editor: canvas add-node saves + persists; invalid edit refused", 
 
   expect(afterReopen).toContain("cli_1");
 
+  await page.getByTestId("flow-tab-graph").click();
+  const graph = page.getByTestId("flow-graph-editor");
+  const viewport = graph.locator(".react-flow__viewport");
+  const initialCamera = await viewport.getAttribute("style");
+
+  await graph.getByRole("button", { name: "Zoom in" }).click();
+  await expect(viewport).not.toHaveAttribute("style", initialCamera!);
+  const manualCamera = await viewport.getAttribute("style");
+
+  await page.getByTestId("flow-tab-yaml").click();
+  await replaceYamlEditor(page, afterReopen.replaceAll("cli_1", "cli_camera"));
+  await page.getByTestId("flow-tab-graph").click();
+  await expect(
+    graph.locator('.react-flow__node[data-id="cli_camera"]'),
+  ).toBeAttached();
+  await expect(viewport).toHaveAttribute("style", manualCamera!);
+  await page.getByTestId("flow-tab-yaml").click();
+
   // Invalid edit: a PARSEABLE manifest that fails the save-time graph hard-gate
   // (a graph flow must declare compat.engine_min) → CONFIG, never persisted.
   // (An unparseable manifest is a different path — stored raw — so we use a

@@ -83,10 +83,30 @@ test("UX-02A/B New task traps focus and retains the draft after failure", async 
   const submit = dialog.getByRole("button", { name: "Create task" });
 
   await expect(titleInput).toBeFocused();
+  await expect(dialog).toHaveAttribute("aria-modal", "true");
+  await expect
+    .poll(() =>
+      page
+        .getByRole("button", {
+          name: "New task",
+          exact: true,
+          includeHidden: true,
+        })
+        .evaluate((element) =>
+          Boolean(element.closest('[inert], [aria-hidden="true"]')),
+        ),
+    )
+    .toBe(true);
+  await expect(page.locator("html")).toHaveCSS("overflow", "hidden");
   await expect(submit).toBeDisabled();
   await titleInput.fill(title);
   await prompt.fill("Describe the requested change.");
   await expect(submit).toBeInViewport();
+  await expect(
+    dialog
+      .locator('[data-slot="modal-footer"]')
+      .getByRole("button", { name: "Cancel" }),
+  ).toBeInViewport();
   for (const key of ["Shift+Tab", "Shift+Tab", "Tab", "Tab", "Tab", "Tab"]) {
     await page.keyboard.press(key);
     await expect(dialog.locator(":focus")).toHaveCount(1);

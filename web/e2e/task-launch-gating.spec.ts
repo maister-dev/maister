@@ -270,10 +270,14 @@ test.describe("Manual task admission through the real browser and controlled pro
       readFakeGhState().prs.filter((pr) => pr.repoPath === fixture.repo),
     ).toEqual([]);
     await page.goto(`/runs/${runId}?wb=review&scope=review`);
-    await expect(page.getByTestId("review-workspace")).toBeVisible();
-    await expect(
-      page.getByTestId("review-workspace").getByTestId("run-diff"),
-    ).toContainText("manual-launch-proof.md");
+    const reviewWorkspace = page
+      .getByTestId("review-workspace")
+      .filter({ visible: true });
+
+    await expect(reviewWorkspace).toBeVisible();
+    await expect(reviewWorkspace.getByTestId("run-diff")).toContainText(
+      "manual-launch-proof.md",
+    );
     const approval = page.waitForResponse(
       (response) =>
         response.url().includes(`/api/runs/${runId}/hitl/`) &&

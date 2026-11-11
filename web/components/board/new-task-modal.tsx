@@ -126,7 +126,12 @@ export function NewTaskModal({
         isKeyboardDismissDisabled={busy}
       >
         <Modal.Container placement="center" scroll="inside">
-          <Modal.Dialog className="max-h-[calc(100dvh-2rem)] w-full max-w-[480px] overflow-hidden rounded-[14px] border border-line bg-paper">
+          <Modal.Dialog
+            className="max-h-[calc(100dvh-2rem)] w-full max-w-[480px] overflow-hidden rounded-[14px] border border-line bg-paper"
+            render={(props) => (
+              <section {...props} aria-modal="true" role="dialog" />
+            )}
+          >
             <Modal.Header className="shrink-0 border-b border-line py-4 pl-5 pr-12">
               <Modal.Heading className="m-0 font-sans text-base font-bold text-ink">
                 {labels.title}
