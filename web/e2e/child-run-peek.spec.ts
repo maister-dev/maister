@@ -1652,8 +1652,9 @@ test("E2E-PKN-04 E2E-PKN-10: a tall inspector cannot clamp the parent scroll whe
   const list = shell.getByTestId("run-inspector-child-runs");
 
   // Wait for the initial transcript to finish positioning before scrolling.
-  await expect(transcript).toBeVisible();
-  await expect(transcript.getByText(/loading history/i)).toHaveCount(0);
+  await expect(
+    transcript.getByText("No conversation has been recorded.", { exact: true }),
+  ).toBeVisible();
   await page.addStyleTag({
     content: '[data-testid="run-inspector-child-runs"] { margin-top: 3500px; }',
   });

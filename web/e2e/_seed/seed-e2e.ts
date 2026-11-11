@@ -4304,7 +4304,7 @@ async function seedM15Fixture(
 }
 
 type M16FixtureRecord = ProjectFixture & {
-  launchTaskId: string;
+  launchFlowId: string;
   runId: string;
   hitlRequestId: string;
   gateId: string;
@@ -4426,7 +4426,7 @@ async function seedM16Fixture(
 
   return {
     ...base,
-    launchTaskId: base.taskId as string,
+    launchFlowId: base.flowId,
     flowId: ids.flow,
     runId: ids.run,
     hitlRequestId: ids.hitl,

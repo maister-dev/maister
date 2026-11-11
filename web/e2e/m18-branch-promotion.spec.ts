@@ -195,8 +195,11 @@ test("pr scenario — pull_request promotion mode renders the pre-seeded PR link
 
   // The PR-mode run carries a pre-seeded pr_url/pr_number; the panel renders the
   // PR link / `PR #N`. No promote exec is performed in CI.
-  await expect(
-    page.getByText(`#${fx.prNumber}`, { exact: false }).first(),
-  ).toBeVisible();
-  await expect(page.locator(`a[href="${fx.prUrl}"]`)).toBeVisible();
+  const review = page.getByTestId("review-panel").filter({ visible: true });
+  const link = review.getByRole("link", {
+    name: `Pull request #${fx.prNumber}`,
+  });
+
+  await expect(link).toBeVisible();
+  await expect(link).toHaveAttribute("href", fx.prUrl);
 });
