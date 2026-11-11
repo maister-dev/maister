@@ -116,7 +116,7 @@ mAIster/
 │   ├── package.json            # Dependencies, scripts (dev/build/start/lint)
 │   ├── tsconfig.json           # strict, @/* path alias
 │   ├── next.config.mjs
-│   ├── eslint.config.mjs       # ESLint 9 flat config
+│   ├── eslint.config.mjs       # ESLint 10 flat config
 │   └── postcss.config.mjs      # @tailwindcss/postcss
 ├── CLAUDE.md                   # Root project instructions for AI agents
 ├── AGENTS.md                   # This file

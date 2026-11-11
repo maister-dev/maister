@@ -755,8 +755,8 @@ export default function FlowGraphEditor({
             colorMode={resolvedTheme}
             edges={edges}
             minZoom={GRAPH_MIN_ZOOM}
-            nodeTypes={nodeTypes}
             nodes={renderedNodes}
+            nodeTypes={nodeTypes}
             onConnect={handleConnect}
             onEdgesChange={onEdgesChange}
             onMoveEnd={(event, next) => {

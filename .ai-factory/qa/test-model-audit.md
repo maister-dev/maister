@@ -144,9 +144,11 @@ remain separate release owners; local passes do not replace their evidence.
 - Pre-commit currently runs whole-package lint/typecheck/format commands.
   File-scoped formatting/linting is another possible reduction, but hook
   behavior and unrelated working-tree rewrites are outside this test cleanup.
-- The current production build reports 33 broad/dynamic filesystem-tracing
-  warnings. Trace narrowing is another build-cost target, but requires checking
-  runtime assets rather than hiding warnings or excluding runtime paths blindly.
+- The rebased production build has zero filesystem-tracing warnings after
+  runtime file access moved to validated absolute file URLs and development
+  facade discovery was removed from production. No trace exclusions or warning
+  filters were added. Other statically inferred directory assets remain in NFT
+  manifests; this is not a standalone deployment-size qualification.
 - The Docker image still copies the monorepo and development dependencies.
   Production dependency pruning is a separate packaging change requiring image
   smoke qualification; test cleanup does not claim to reduce image size.

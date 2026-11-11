@@ -485,8 +485,8 @@ test("package source → discovery → install → attach → detach round-trip"
     await page.goto(`${memberPath}?install=${localInstall.id}`);
     // Next can stream the app shell before the member lookup returns not-found.
     await expect(
-      page.locator('meta[name="robots"][content="noindex"]'),
-    ).toHaveCount(1);
+      page.getByRole("heading", { name: "404", exact: true }),
+    ).toBeVisible();
     await expect(page.getByTestId("flow-yaml-toggle")).toHaveCount(0);
     expect(
       (

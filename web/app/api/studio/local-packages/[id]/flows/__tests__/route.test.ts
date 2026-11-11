@@ -1,6 +1,8 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { POST } from "../route";
+
 import { MaisterError } from "@/lib/errors-core";
 
 const mocks = vi.hoisted(() => ({
@@ -14,8 +16,6 @@ vi.mock("@/lib/local-packages/service", () => ({
   getLocalPackage: mocks.getLocalPackage,
   addFlowToLocalPackage: mocks.addFlowToLocalPackage,
 }));
-
-import { POST } from "../route";
 
 const FLOW = {
   id: "second",

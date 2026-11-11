@@ -1,6 +1,8 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { POST } from "../route";
+
 import { MaisterError } from "@/lib/errors";
 
 const mocks = vi.hoisted(() => ({
@@ -16,8 +18,6 @@ vi.mock("@/lib/local-packages/service", () => ({
 vi.mock("@/lib/local-packages/lock", () => ({
   releaseLock: mocks.releaseLock,
 }));
-
-import { POST } from "../route";
 
 function req(body: unknown): NextRequest {
   return new NextRequest(

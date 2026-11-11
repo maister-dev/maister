@@ -80,7 +80,7 @@ function loadM16Fixture(): M16Fixture {
   return all.byKey.m16;
 }
 
-test("external-operations API: token → task → unqualified launch refusal → readiness gate report → re-stale", async ({
+test("external-operations API: token → task → qualified launch receipt → readiness gate report → re-stale", async ({
   page,
   request,
 }) => {

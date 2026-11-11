@@ -3,11 +3,22 @@ name: CI
 on:
   push:
     branches:
-      - "**"
+      - master
   pull_request:
     branches:
       - master
     types: [opened, synchronize, reopened, labeled]
+
+# PR commits run once; master pushes qualify the integrated tree.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# Opt-in shared-host profile; developer defaults remain unchanged.
+env:
+  MAISTER_TEST_MAX_WORKERS: "1"
+  MAISTER_BUILD_MAX_WORKERS: "1"
+  NODE_OPTIONS: --max-old-space-size=4096
 
 jobs:
   lint-typecheck-unit:
@@ -226,7 +237,7 @@ jobs:
       matrix:
         part: [1, 2, 3]
     env:
-      NODE_OPTIONS: --dns-result-order=ipv4first
+      NODE_OPTIONS: --max-old-space-size=4096 --dns-result-order=ipv4first
       MAISTER_TEST_DOCKER_PROBE_TIMEOUT_MS: "30000"
     steps:
       - name: Record runner and evidence location

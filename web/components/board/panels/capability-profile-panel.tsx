@@ -165,20 +165,20 @@ export function CapabilityProfilePanel({
               ) : null}
 
               <ClassChips
-                classLabel={labels.classLabel}
                 classes={node.enforcedClasses}
+                classLabel={labels.classLabel}
                 groupLabel={labels.enforcedLabel}
                 tone="enforced"
               />
               <ClassChips
-                classLabel={labels.classLabel}
                 classes={node.instructedClasses}
+                classLabel={labels.classLabel}
                 groupLabel={labels.instructedLabel}
                 tone="instructed"
               />
               <ClassChips
-                classLabel={labels.classLabel}
                 classes={node.refusedClasses}
+                classLabel={labels.classLabel}
                 groupLabel={labels.refusedLabel}
                 tone="refused"
               />

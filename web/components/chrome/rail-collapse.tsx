@@ -126,9 +126,9 @@ export function RailCollapse({
   return (
     <RailCollapseView
       ariaLabel={ariaLabel}
-      collapseLabel={collapseLabel}
       collapsed={collapsed}
       collapsedChildren={collapsedChildren}
+      collapseLabel={collapseLabel}
       expandLabel={expandLabel}
       onToggle={toggle}
     >

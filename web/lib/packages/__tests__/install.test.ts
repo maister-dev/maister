@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { isMaisterError } from "@/lib/errors";
+import { installPackage } from "@/lib/packages/install";
 
 const installFlowPluginMock = vi.fn();
 const gitCloneMock = vi.fn();
@@ -37,8 +38,6 @@ vi.mock("@/lib/flows/trust", () => ({
       ? "trusted_by_policy"
       : "untrusted",
 }));
-
-import { installPackage } from "@/lib/packages/install";
 
 const GIT_SHA = "1234567890abcdef1234567890abcdef12345678";
 const DIGEST64 = "d".repeat(64);

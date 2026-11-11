@@ -24,13 +24,6 @@ import {
   it,
   vi,
 } from "vitest";
-
-const runtimeRootMock = vi.hoisted(() => ({ value: "/tmp/unset" }));
-
-vi.mock("@/lib/runtime-root", () => ({
-  runtimeRoot: () => runtimeRootMock.value,
-}));
-
 import { eq } from "drizzle-orm";
 
 import {
@@ -49,6 +42,12 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+
+const runtimeRootMock = vi.hoisted(() => ({ value: "/tmp/unset" }));
+
+vi.mock("@/lib/runtime-root", () => ({
+  runtimeRoot: () => runtimeRootMock.value,
+}));
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const schema = schemaModule as unknown as Record<string, any>;

@@ -247,11 +247,11 @@ function render(
   locale = "en-US",
 ): string {
   return renderToStaticMarkup(
-    // eslint-disable-next-line react/no-children-prop
     createElement(NextIntlClientProvider, {
       locale: "en",
       messages,
       timeZone: "UTC",
+      // eslint-disable-next-line react-jsx/no-children-prop -- Provider props require children in the non-JSX renderer.
       children: createElement(FlowRunCenter, {
         result: buildFlowRunResultDto(input(over)),
         labels: LABELS,

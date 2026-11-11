@@ -81,7 +81,9 @@ for (const denied of ["inactive", "password-reset"] as const) {
             : route.continue(),
       );
       await page.goto("/studio/packages");
-      const packageLink = page.locator(`a[href^="${packagePath}?install="]`);
+      const packageLink = page
+        .getByRole("main")
+        .getByRole("link", { name: "aif-flow-viewer v0.0.1" });
 
       await expect(packageLink).toBeVisible();
       await withE2EDb((pool) =>
@@ -106,8 +108,8 @@ for (const denied of ["inactive", "password-reset"] as const) {
         await expect(page).toHaveURL(/\/change-password$/);
       } else {
         await expect(
-          page.locator('meta[name="robots"][content="noindex"]'),
-        ).toHaveCount(1);
+          page.getByRole("heading", { name: "404", exact: true }),
+        ).toBeVisible();
       }
       await expect(page.getByTestId("package-bom")).toHaveCount(0);
     } finally {

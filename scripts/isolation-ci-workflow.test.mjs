@@ -38,6 +38,10 @@ test("isolation CI uses three independent serial VM parts and a failure-closed c
   const job = workflow.jobs["execution-isolation"];
   const gate = workflow.jobs["execution-isolation-complete"];
 
+  assert.deepEqual(workflow.on.push.branches, ["master"]);
+  assert.deepEqual(workflow.on.pull_request.branches, ["master"]);
+  assert.equal(workflow.concurrency["cancel-in-progress"], true);
+  assert.match(workflow.concurrency.group, /github.event.pull_request.number/u);
   assert.equal(job["runs-on"], "macos-15-intel");
   assert.equal(job["timeout-minutes"], 60);
   assert.deepEqual(job.strategy, { "fail-fast": false, matrix: { part: [1, 2, 3] } });

@@ -92,10 +92,10 @@ export function RunShell({
         keyRef={keyRef}
         labels={labels}
         prHasConflicts={prHasConflicts}
-        prState={prState}
         projectHref={projectHref}
         projectLabel={projectLabel}
         promotionOperation={promotionOperation}
+        prState={prState}
         reviewHref={reviewHref}
         runId={runId}
         status={status}

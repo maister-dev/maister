@@ -32,6 +32,8 @@ export function resolveFacadeLaunch(): {
     return { command: process.execPath, args: [distEntry, "--stdio"] };
   }
 
+  if (process.env.NODE_ENV === "production") return null;
+
   const srcEntry = path.join(mcpDir, "src", "main.ts");
 
   for (const tsxBin of [

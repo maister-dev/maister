@@ -73,6 +73,7 @@ import {
 } from "@/lib/diff/prepare";
 import { diffWorkingTree } from "@/lib/worktree";
 import { isUniqueViolation } from "@/lib/db/pg-error";
+import { runtimePathUrl } from "@/lib/runtime-file-url";
 
 const log = pino({
   name: "local-packages/service",
@@ -207,7 +208,7 @@ async function scaffoldWorkingDir(
   title: string,
 ): Promise<void> {
   for (const d of KIND_DIRS) {
-    await mkdir(path.join(workingDir, d), { recursive: true });
+    await mkdir(runtimePathUrl(workingDir, d), { recursive: true });
   }
   await atomicWriteText(
     path.join(workingDir, "maister-package.yaml"),

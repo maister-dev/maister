@@ -43,7 +43,7 @@ what stops this matrix decaying into the historical aliases the Stage B matrix b
 | ATN-02 | inbox_items source_ref activityId join | T4.2 | IT-ATN-02 | Implemented |
 | ATN-03 | bounded 24h fallback window | T4.2, T5.1 | IT-ATN-03 | Implemented |
 | ATN-04 | blocking-relation exclusion | T4.1 | IT-ATN-04 | Implemented |
-| ATN-05 | layout-level counter fan-out | T4.3, T4.4, T5.7 | IT-ATN-05 plus UT-ATN-05 | Implemented |
+| ATN-05 | layout-level counter fan-out | T4.3, T4.4, T5.7 | IT-ATN-05 | Implemented |
 | ATN-06 | ext pulse telemetry shape | T4.3, T4.5 | CT-ATN-06 | Implemented |
 | ATN-07 | decision-queue comparator | T4.1 | UT-ATN-07 | Implemented |
 | ATN-08 | ext decisions OpenAPI, ADR-137 omission | T4.5 | IT-ATN-08 | Implemented |
@@ -63,7 +63,7 @@ what stops this matrix decaying into the historical aliases the Stage B matrix b
 | NAV-02 | ADR-172 D5 landing clause | T6.6 | E2E-NAV-02 | Implemented |
 | NAV-03 | ADR-172 D2 relocation | T6.1 | E2E-NAV-03 | Implemented |
 | NAV-04 | railSectionForPathname totality | T3.3, T6.5 | UT-NAV-04 | Implemented |
-| NAV-05 | ADR-172 D3 inbound-link table | T6.2 | UT-NAV-05 | Implemented |
+| NAV-05 | Home and portfolio navigation destinations | T6.2 | E2E-NAV-01 plus E2E-NAV-02 plus E2E-NAV-03 | Implemented |
 | NAV-06 | server-side route authorization | T6.6 | IT-NAV-06 | Implemented |
 | NAV-07 | header fits 390px, keeps names and toggle | T8.9 | E2E-NAV-07 | Implemented |
 | NAV-08 | ADR-174 one object per work item | T6.3 | E2E-NAV-08 | Implemented |
@@ -100,9 +100,7 @@ not.
 | STG-09 | `IT-STG-09` in the read model | `E2E-STG-09` through `/work` — the wiring |
 | ATN-10 | `IT-ATN-10` cursor monotonicity | `E2E-ATN-10` the unread divider — the wiring |
 | NTF-08 | `IT-NTF-14` the sweep backstop emits a delta with no domain event at all | `IT-NTF-15` the two decision-OPENING events, plus `UT-NTF-13` that `createHitlRequest` is the only writer of `hitl_requests`. The backstop proves completeness, the events prove latency; neither test can see the other's property |
-| NAV-01 | `E2E-NAV-01` the Desk renders | `UT-NAV-01` it COMPOSES — every region goes through the owning surface's component, and the narrow stacking order is fixed in the source. Invisible to a browser assertion |
 | NAV-02 | `E2E-NAV-02` two sign-ins land apart | `UT-NAV-02` the fork is `role !== "admin"`, so a **viewer** is covered by the same branch as a member |
-| NAV-03 | `E2E-NAV-03` the seeded portfolio at `/projects` | `UT-NAV-03` the empty-state and onboarding branches moved too — unreachable in a browser, because the shared e2e database always has projects |
 
 ## Linked artifacts
 

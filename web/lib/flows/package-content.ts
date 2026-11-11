@@ -12,6 +12,7 @@ import {
   isLocalPackageInternalEntryName,
   isLocalPackageInternalPath,
 } from "@/lib/local-packages/paths";
+import { runtimeFileUrl } from "@/lib/runtime-file-url";
 
 const log = pino({
   name: "package-content",
@@ -296,7 +297,7 @@ export async function readInstalledPackageFile(
 
   if (!confined.ok) return { state: confined.state };
 
-  const bytes = await readFile(confined.real);
+  const bytes = await readFile(runtimeFileUrl(confined.real));
 
   if (bytes.includes(0)) return { state: "binary" };
 
@@ -321,7 +322,7 @@ export async function readInstalledPackageImage(
 
   if (!confined.ok) return { state: confined.state };
 
-  const bytes = await readFile(confined.real);
+  const bytes = await readFile(runtimeFileUrl(confined.real));
 
   return {
     state: "image",

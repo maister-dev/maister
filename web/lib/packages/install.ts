@@ -4,6 +4,7 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path, { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import pino from "pino";
 
@@ -28,6 +29,7 @@ import {
 } from "@/lib/flows";
 import { resolveTrust } from "@/lib/flows/trust";
 import { loadMaisterPackageManifest } from "@/lib/packages/manifest";
+import { runtimeFileUrl, runtimePathUrl } from "@/lib/runtime-file-url";
 
 const log = pino({
   name: "package-install",
@@ -76,10 +78,12 @@ export async function resolvePackageSource(opts: {
   const localRoot = isLocalPackageSource(opts.source);
 
   if (localRoot !== null) {
-    const pkgRoot = opts.path ? join(localRoot, opts.path) : localRoot;
+    const pkgRoot = opts.path
+      ? fileURLToPath(runtimePathUrl(localRoot, opts.path))
+      : localRoot;
 
     try {
-      const st = await stat(pkgRoot);
+      const st = await stat(runtimeFileUrl(pkgRoot));
 
       if (!st.isDirectory()) throw new Error("not a directory");
     } catch (err) {

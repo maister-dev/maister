@@ -1,10 +1,10 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-
-vi.mock("node:fs", () => ({ existsSync: vi.fn(() => false) }));
-
 import { existsSync } from "node:fs";
 
+import { afterEach, describe, expect, it, vi } from "vitest";
+
 import { resolveFacadeLaunch } from "@/lib/agents/facade-launch";
+
+vi.mock("node:fs", () => ({ existsSync: vi.fn(() => false) }));
 
 const existsMock = vi.mocked(existsSync);
 

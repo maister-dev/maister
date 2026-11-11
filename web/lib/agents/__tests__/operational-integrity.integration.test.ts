@@ -16,6 +16,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -57,7 +58,10 @@ vi.mock("node:fs/promises", async (original) => {
       const handle = await actual.open(...args);
       const fault = probeFault.current;
 
-      if (!fault || args[0] !== fault.file) return handle;
+      const openedPath =
+        args[0] instanceof URL ? fileURLToPath(args[0]) : args[0].toString();
+
+      if (!fault || openedPath !== fault.file) return handle;
 
       return new Proxy(handle, {
         get(target, property): unknown {

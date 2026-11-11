@@ -69,11 +69,11 @@ it.each([
     const render = (outcome: OperationalOutcome): string =>
       renderToStaticMarkup(
         // The provider's props require children in this non-JSX renderer.
-        // eslint-disable-next-line react/no-children-prop
         createElement(NextIntlClientProvider, {
           locale,
           messages,
           timeZone: "UTC",
+          // eslint-disable-next-line react-jsx/no-children-prop -- Provider props require children in the non-JSX renderer.
           children: createElement(OperationalRunResult, {
             runId: "run",
             outcome,
@@ -120,11 +120,11 @@ it.each([
       messages.operationalAgents.invalidResult,
     );
     const provenTaskFailure = renderToStaticMarkup(
-      // eslint-disable-next-line react/no-children-prop
       createElement(NextIntlClientProvider, {
         locale,
         messages,
         timeZone: "UTC",
+        // eslint-disable-next-line react-jsx/no-children-prop -- Provider props require children in the non-JSX renderer.
         children: createElement(TaskQualificationSourceFailureNotice, {
           failure: {
             runId: "run",

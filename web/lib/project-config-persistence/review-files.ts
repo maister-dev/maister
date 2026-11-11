@@ -2,6 +2,7 @@ import "server-only";
 
 import { chmod, lstat, mkdir, open, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { z } from "zod";
 
@@ -11,6 +12,7 @@ import { MANIFEST_MAX_BYTES } from "./manifest";
 import { atomicWriteJson, atomicWriteText } from "@/lib/atomic";
 import { MaisterError } from "@/lib/errors";
 import { worktreesRoot } from "@/lib/instance-config";
+import { runtimeFileUrl, runtimePathUrl } from "@/lib/runtime-file-url";
 
 export const CONFIG_PERSISTENCE_DIRECTORY = ".config-persistence";
 export const CONFIG_DIFF_MAX_BYTES = 2 * 1024 * 1024;
@@ -45,7 +47,9 @@ async function canonicalCandidate(path: string): Promise<string> {
 
     if (parent === path) throw error;
 
-    return join(await canonicalCandidate(parent), relative(parent, path));
+    return fileURLToPath(
+      runtimePathUrl(await canonicalCandidate(parent), relative(parent, path)),
+    );
   }
 }
 
@@ -114,9 +118,11 @@ export async function writeConfigReviewFiles(
   )
     throw unsupportedStorage();
   const root = await configReviewRoot(input.repoPath);
-  const contentDirectory = join(root, input.operationId);
+  const contentDirectory = fileURLToPath(
+    runtimePathUrl(root, input.operationId),
+  );
 
-  await mkdir(contentDirectory, { mode: 0o700 });
+  await mkdir(runtimeFileUrl(contentDirectory), { mode: 0o700 });
   await atomicWriteJson(join(contentDirectory, "operation.json"), {
     version: 1,
     operationId: input.operationId,
@@ -131,7 +137,7 @@ export async function writeConfigReviewFiles(
   }
   await atomicWriteText(join(contentDirectory, "after"), input.proposed);
   await syncPrivateFile(join(contentDirectory, "after"), mode);
-  const directoryHandle = await open(contentDirectory, "r");
+  const directoryHandle = await open(runtimeFileUrl(contentDirectory), "r");
 
   try {
     await directoryHandle.sync();

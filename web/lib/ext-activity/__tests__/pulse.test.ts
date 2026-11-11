@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { encodeToolPayload } from "@/lib/run-transcript/transcript";
+import {
+  getActivityPulse,
+  getRunActivityResponse,
+} from "@/lib/ext-activity/service";
 
 const needsYouMocks = vi.hoisted(() => ({
   listProjectNeedsYou: vi.fn(),
@@ -42,11 +46,6 @@ vi.mock("@/lib/runs/run-transcript-projector", () => ({
   projectRunTranscript: transcriptMocks.projectRunTranscript,
   getWholeRunTranscriptMessages: transcriptMocks.getWholeRunTranscriptMessages,
 }));
-
-import {
-  getActivityPulse,
-  getRunActivityResponse,
-} from "@/lib/ext-activity/service";
 
 type QueryRows = Record<string, unknown>[];
 
@@ -440,7 +439,7 @@ describe("assistant activity pulse service", () => {
     });
   });
 
-  it("REQ-A4 AC1/AC2 — a promotable run appears in neither now.runs nor needsYou.items", async () => {
+  it("CT-ATN-06 REQ-A4 AC1/AC2 — a promotable run appears in neither now.runs nor needsYou.items", async () => {
     const client = makeClient([
       [{ id: 3 }],
       [

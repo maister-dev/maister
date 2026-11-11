@@ -77,6 +77,7 @@ import { atomicWriteJson } from "@/lib/atomic";
 import { runtimeRoot } from "@/lib/runtime-root";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
 import { MaisterError } from "@/lib/errors";
+import { runtimeFileUrl } from "@/lib/runtime-file-url";
 
 const executionAuthority = Symbol("accepted task launch execution");
 
@@ -361,7 +362,7 @@ export async function assertTaskLaunchMaterializationReceipt(
     throw launchRefusal("launch_input_snapshot_incomplete", "PRECONDITION");
   const { receiptPath } = await taskLaunchPreparationReceiptPath(db, intent);
   const receipt = materializationReceiptSchema.parse(
-    JSON.parse(await readFile(receiptPath, "utf8")) as unknown,
+    JSON.parse(await readFile(runtimeFileUrl(receiptPath), "utf8")) as unknown,
   );
 
   if (

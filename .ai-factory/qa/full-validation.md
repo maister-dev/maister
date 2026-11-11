@@ -1,11 +1,50 @@
 # Regression validation
 
-Status: local integration, browser and final static/build validation complete.
-All failures in the initial broad runs have corrected complete-owner reruns.
-Checkout: `f38053b3192a24738c8b0920852cfd229c56721f` plus this working tree.
+This report separates the original full-suite checkpoint from the current
+rebased checks. The historical broad runs below use
+`f38053b3192a24738c8b0920852cfd229c56721f` plus the cleanup changes; their failures
+have corrected complete-owner reruns. The branch is now rebased onto master
+`9b5fb6c3d5c6401220fd5c9662fdaf71aeac300e`, retaining its session-retirement fixes,
+qualified external-token launch, human Librarian launch, and three-part isolation
+matrix.
 Local macOS ARM64; this does not qualify hosted CI or the Linux VPS.
 Evidence directory: the local `MAISTER_TEST_EVIDENCE_DIR` used for this run.
 Raw failed and successful invocations remain separate outside the repository.
+
+## Rebased checks
+
+The Node 24.22.3 one-worker profile passes 8,981 unit/component tests in 872
+files, all 41 runtime/CI contracts, all four package lint configurations with
+zero warnings, and the full web typecheck. A clean normal Next 16.4.6 production
+build passes in 38.225 s with TypeScript enabled and no Turbopack warnings.
+Real filesystem/private-publication/evidence checks initially passed 97/99;
+two failure-injection cases compared strings against Node file URLs. After
+normalizing Node's PathLike argument, the complete 23-case operational-integrity
+owner passes. The remaining 76 cases passed in the original invocation.
+
+ESLint 10.14 uses maintained React/DOM/JSX, accessibility, import and stylistic
+plugins instead of legacy compatibility wrappers. Active hook, accessibility,
+unused-import and import-boundary rules remain enabled. JSX ordering uses
+Perfectionist because the Stylistic equivalent is deprecated. The public-site
+tab handler is attached to focusable tabs.
+
+Mintlify's old common/Sucrase/glob/inflight chain is absent. Drizzle Kit's unused
+esbuild-kit loader declaration is removed with a version-scoped dependency
+removal; its real TypeScript config/schema export passes through tsx. The final
+audit has zero advisories and the peer graph has no compatibility issues.
+There are 1,413 lockfile resolutions versus 1,894 before cleanup. The remaining
+upstream deprecation is Mintlify's optional keytar/prebuild-install credential
+storage dependency; no incompatible API alias or log filtering is used.
+
+CI runs PR updates and master pushes once, cancelling superseded work. The
+expensive A/B web inventory runs on 24.22.3; runtime/supervisor and compatibility
+checks cover 26.13.1. Current browser and hosted results are recorded after the
+runs complete; earlier counts below are not attributed to the rebased source.
+
+Evidence: `production-build.log`, `web-unit.log`, `web-lint-zero.log`,
+`root-contracts-final.log`, `integration-paths.log`,
+`operational-integrity-fixed.log`, `drizzle-export-configured.log`,
+`audit-final.log`, `peers-final.log` in the rebased evidence directory.
 
 ## Resource profile
 
@@ -95,7 +134,7 @@ with local-socket access passes all 41 checks.
 - **Failure traces:** dedicated Playwright configs retain first-failure traces;
   `on-first-retry` collected nothing with retries disabled.
 
-## Node and dependencies
+## Original checkpoint: Node and dependencies
 
 CI uses Node 24.22.3 for the expensive two-shard A/B inventory, removing two
 redundant Node 24 minor-version jobs. Runtime/supervisor checks cover 24.22.3
@@ -126,7 +165,7 @@ Evidence: `dependency-audit-fixed.json`, `dependency-frozen-install.log`,
 `dependency-api-smoke.log`, `drizzle-schema-export.sql`,
 `mintlify-patched-validate.log`, and `final-esbuild-kit-api.log`.
 
-## Boundaries
+## Original checkpoint boundaries
 
 The final normal production build passes with type checking enabled and one
 page-data/prerender worker (38.273 s, including 17.0 s TypeScript). Full web,

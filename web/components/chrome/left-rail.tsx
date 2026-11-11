@@ -458,8 +458,8 @@ export async function LeftRail({
   return (
     <RailCollapse
       ariaLabel={tNav("railLabel")}
-      collapseLabel={tNav("collapseRail")}
       collapsedChildren={collapsedContent}
+      collapseLabel={tNav("collapseRail")}
       expandLabel={tNav("expandRail")}
     >
       <LeftRailNav

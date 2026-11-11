@@ -26,7 +26,9 @@ test("admin registers a local project and duplicate registration conflicts", asy
   // and the click below waited out the whole budget. This test registers an
   // EXISTING local repo, so select that source first.
   await page.getByRole("radio", { name: "Existing local repo" }).click();
-  await page.locator('input[name="target"]').fill(fx.repoPath);
+  await page
+    .getByRole("textbox", { name: "Local path or clone folder" })
+    .fill(fx.repoPath);
 
   const registerResponse = page.waitForResponse(
     (response) =>
@@ -51,7 +53,9 @@ test("admin registers a local project and duplicate registration conflicts", asy
   // default "Clone from URL" — so the mode has to be chosen again here.
   await page.getByRole("button", { name: "Register another" }).click();
   await page.getByRole("radio", { name: "Existing local repo" }).click();
-  await page.locator('input[name="target"]').fill(fx.repoPath);
+  await page
+    .getByRole("textbox", { name: "Local path or clone folder" })
+    .fill(fx.repoPath);
 
   const duplicateResponse = page.waitForResponse(
     (response) =>

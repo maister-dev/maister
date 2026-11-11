@@ -11,9 +11,13 @@ dangerouslyAllowAllBuilds: true
 overrides:
   '@mintlify/cli>sharp': 0.35.5
   '@mintlify/package-builder>js-yaml': 4.3.2
-  '@esbuild-kit/core-utils>esbuild': 0.25.12
+  # Drizzle Kit 0.31.11 embeds tsx and never imports this obsolete loader.
+  'drizzle-kit@0.31.11>@esbuild-kit/esm-loader': '-'
   'archiver-utils>glob': 14.0.4
   '@typescript-eslint/typescript-estree>minimatch': 11.0.8
+  'eslint>minimatch': 11.0.8
+  '@eslint/config-array>minimatch': 11.0.8
+  'eslint-plugin-jsx-a11y-x>minimatch': 11.0.8
 
 minimumReleaseAgeExclude:
   - icu-minify@4.13.0
@@ -26,3 +30,12 @@ minimumReleaseAgeExclude:
   - '@mintlify/package-builder@0.0.147'
   - mint@4.3.17
   - minimatch@11.0.8
+  - '@eslint-react/ast@5.30.2'
+  - '@eslint-react/core@5.30.2'
+  - '@eslint-react/eslint@5.30.2'
+  - '@eslint-react/jsx@5.30.2'
+  - '@eslint-react/shared@5.30.2'
+  - '@eslint-react/var@5.30.2'
+  - eslint-plugin-react-x@5.30.2
+  - eslint-plugin-react-dom@5.30.2
+  - eslint-plugin-react-jsx@5.30.2

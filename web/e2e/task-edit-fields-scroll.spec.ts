@@ -90,6 +90,7 @@ test("UX-02A/B New task traps focus and retains the draft after failure", async 
         .getByRole("button", {
           name: "New task",
           exact: true,
+          expanded: true,
           includeHidden: true,
         })
         .evaluate((element) =>

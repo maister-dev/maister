@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import { packageFilesEditorLabels } from "@/lib/flows/editor/editor-labels";
+import { SkillScreen } from "@/components/studio/skill-screen";
 
 // The navigator needs the app-router context; stub it to echo the props the
 // SkillScreen feeds it (scoped-relative paths + the subtree prefix).
@@ -17,8 +18,6 @@ vi.mock("@/components/studio/package-file-navigator", () => ({
       props.draftFiles.map((f) => f.path).join("|"),
     ),
 }));
-
-import { SkillScreen } from "@/components/studio/skill-screen";
 
 const stubT = Object.assign((key: string) => key, {
   raw: (key: string) => key,
