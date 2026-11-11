@@ -1,0 +1,112 @@
+{
+  "schemaVersion": 1,
+  "status": "interrupted_after_disposable_postgres_capacity_failure",
+  "sourceHead": "ef98fba38e2d3079b78e6eb9503e305a5c391cad",
+  "package": "rah/v1.0.7",
+  "packageCommit": "2f1474bc295ec9522a83fc7e80719be14a42f626",
+  "sdkSessionsReportingGlm53": 10,
+  "reason": "The 512 MiB test PostgreSQL tmpfs was 100% full while recording the last depth-two child, with PostgreSQL write errors. The first tree passed and the second did not settle.",
+  "remediation": "The same E2E entry point now selects a disposable disk-backed Docker volume. Actual PostgreSQL regression reproduces the tmpfs override, then verifies the real volume and its removal.",
+  "independentCleanup": {
+    "id": "e6edf57a-4917-48c1-83aa-b552ceecfc58",
+    "errors": [],
+    "containers": []
+  },
+  "providerSecretValueScan": {
+    "artifactsScanned": 7,
+    "matches": 0
+  },
+  "artifacts": [
+    {
+      "sourceName": "launch-metadata.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "0fcc1fbfda29ac940d7705f173dfd4e6e23da755a189424d59c77b380e3ab7ce",
+      "rawBytes": 544,
+      "compressedSha256": "15c64ac5f3a068f76bd0bf3f2a37a15018b48fa0b23e6db41d23dfb815fd9371",
+      "parts": [
+        {
+          "path": "launch-metadata.json.gz",
+          "sha256": "15c64ac5f3a068f76bd0bf3f2a37a15018b48fa0b23e6db41d23dfb815fd9371"
+        }
+      ]
+    },
+    {
+      "sourceName": "database-capacity.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "05f350781e6600b3220e75ed22d99d281cffdb9ff888a0c55775194823eae928",
+      "rawBytes": 869,
+      "compressedSha256": "b0d39a0ab6ed545ccbe76cb5b48a14273d066abdd603b4a27901b329e14eb877",
+      "parts": [
+        {
+          "path": "database-capacity.json.gz",
+          "sha256": "b0d39a0ab6ed545ccbe76cb5b48a14273d066abdd603b4a27901b329e14eb877"
+        }
+      ]
+    },
+    {
+      "sourceName": "model-identifiers.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "617a6f05e7fe72cd21bca199475bc23298d966e2a8bfbd6b8c759f4ad98837d9",
+      "rawBytes": 1043,
+      "compressedSha256": "7dd8db9c5e7c0c661b78d041efc365ffc96082daac7142da7f39a0465ba11b8e",
+      "parts": [
+        {
+          "path": "model-identifiers.json.gz",
+          "sha256": "7dd8db9c5e7c0c661b78d041efc365ffc96082daac7142da7f39a0465ba11b8e"
+        }
+      ]
+    },
+    {
+      "sourceName": "independent-cleanup.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "404636c3aecc69886d4c900d5895577f9814f66279046623c58164e57c510367",
+      "rawBytes": 393,
+      "compressedSha256": "b21e14b8fab2bfc06b8938646a0ad6e864f67624a5e10cf6dc3dd40085a7b609",
+      "parts": [
+        {
+          "path": "independent-cleanup.log.gz",
+          "sha256": "b21e14b8fab2bfc06b8938646a0ad6e864f67624a5e10cf6dc3dd40085a7b609"
+        }
+      ]
+    },
+    {
+      "sourceName": "disk-volume-red.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "950ad99e405641221167bce29c481471f96029904503e2102038249a0513d1c9",
+      "rawBytes": 4626,
+      "compressedSha256": "bd714d8836fe4ef10f86643a4abc78fc01c99c97bf83d3a5216f3acdf0da85c0",
+      "parts": [
+        {
+          "path": "disk-volume-red.log.gz",
+          "sha256": "bd714d8836fe4ef10f86643a4abc78fc01c99c97bf83d3a5216f3acdf0da85c0"
+        }
+      ]
+    },
+    {
+      "sourceName": "disk-volume-green.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "4101e76d618392d690132e8210390d4a1ba14d4af74a1a46cf5d9fbc895dddaa",
+      "rawBytes": 3463,
+      "compressedSha256": "9b7d9c24dc1765d40c83f5d94f1265fc8b23c07a31e9ebf6110db486a37661b7",
+      "parts": [
+        {
+          "path": "disk-volume-green.log.gz",
+          "sha256": "9b7d9c24dc1765d40c83f5d94f1265fc8b23c07a31e9ebf6110db486a37661b7"
+        }
+      ]
+    },
+    {
+      "sourceName": "e2e-wrapper-unit.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "3f18e5faf5aa39636375d555e18c5c5ed92b37799a0cac4a3f2bd9a0d294a3e7",
+      "rawBytes": 5795,
+      "compressedSha256": "14e16541fbc3b839c05015288b5da580b47360347ee663e058999adda68ffe33",
+      "parts": [
+        {
+          "path": "e2e-wrapper-unit.log.gz",
+          "sha256": "14e16541fbc3b839c05015288b5da580b47360347ee663e058999adda68ffe33"
+        }
+      ]
+    }
+  ]
+}

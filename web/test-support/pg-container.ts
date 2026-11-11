@@ -105,6 +105,7 @@ export type TestDatabaseOptions = {
   databaseName: string;
   lane?: TestDatabaseLane;
   poolMax?: number;
+  storage?: "volume";
 };
 
 type TestDatabaseClient = NodePgDatabase<Record<string, never>> &
@@ -290,6 +291,10 @@ async function allocatePostgresContainer(
 ): Promise<StartedPostgreSqlContainer> {
   const invocation = invocationFromEnvironment();
   const allocationId = randomUUID();
+  const storage =
+    options.storage === "volume"
+      ? { ...postgresStorage, storageKind: "volume", storageLimitBytes: null }
+      : postgresStorage;
 
   if (invocation) await registerContainerAllocation(invocation);
   logger.info(
@@ -297,14 +302,19 @@ async function allocatePostgresContainer(
       lane,
       phase: "container-create-start",
       preparationDurationMs: Date.now() - startedAt,
-      ...postgresStorage,
+      ...storage,
     },
     "starting owned PostgreSQL container",
   );
   const containerStartedAt = Date.now();
 
   try {
-    const container = await new PostgreSqlContainer(PGVECTOR_IMAGE)
+    const postgres = new PostgreSqlContainer(PGVECTOR_IMAGE);
+    const storageConfigured =
+      storage.storageKind === "tmpfs"
+        ? postgres.withTmpFs({ [postgresStorage.storagePath]: "rw,size=512m" })
+        : postgres;
+    const container = await storageConfigured
       .withDatabase(options.databaseName)
       .withUsername("test")
       .withPassword("test")
@@ -325,7 +335,6 @@ async function allocatePostgresContainer(
         timeout: 1_000,
         retries: 250,
       })
-      .withTmpFs({ [postgresStorage.storagePath]: "rw,size=512m" })
       .withCommand([
         "postgres",
         "-c",
@@ -354,7 +363,7 @@ async function allocatePostgresContainer(
         outcome: "passed",
         durationMs: containerStartDurationMs,
         containerId: container.getId(),
-        ...postgresStorage,
+        ...storage,
       },
       "started owned PostgreSQL container",
     );

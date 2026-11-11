@@ -27,23 +27,28 @@ is recorded; the existing denied-root and durable-worker core is Implemented.
 - **Barrier** — reached evidence plus explicit release or owned-process death.
 - **Build handle** — verified immutable production build reused by nested controls.
 
-Disposable PostgreSQL containers use a 512 MiB `tmpfs` for their data directory.
-Each container still starts a fresh real PostgreSQL 16/pgvector server, keeps its
-own invocation label and reaper lifetime, and retains `fsync`,
+Disposable PostgreSQL containers default to a 512 MiB `tmpfs` for their data
+directory. The installed Company Brain package qualification selects an
+anonymous Docker data volume for its real recursive session transcripts and
+execution events. Container teardown removes that volume.
+Each container starts a fresh PostgreSQL 16/pgvector server, uses the existing
+allocation ownership and reaper lifecycle, and retains `fsync`,
 `full_page_writes` and `synchronous_commit` enabled. The helper promises data
 persistence for the live container's lifetime; stopping the disposable container
 ends that lifetime. Web/supervisor restarts use the same live database. No test
 container data is a production durability or host-reboot acceptance witness.
 WAL recycling uses a 64 MiB `max_wal_size` checkpoint target and 32 MiB
-`min_wal_size`, rather than PostgreSQL's default target larger than this filesystem.
-These are soft recycling targets; the 512 MiB filesystem remains the hard cap.
+`min_wal_size`. PostgreSQL's default checkpoint target exceeds the tmpfs capacity.
+These are soft recycling targets. The 512 MiB filesystem is the hard cap for
+the default test database.
 Autovacuum checks each database every second so obsolete TOAST versions from
 streamed transcript updates can be reused within this small filesystem. Its
 worker count, cost limits and all durability settings retain their defaults.
 The real bare-lineage owner verifies the filesystem, capacity and server settings,
 and the full scheduler admission owner retains its two 24,000-row controls and
-updates of accumulated history to qualify actual capacity. Container startup or
-capacity errors remain explicit, with no disk-backed fallback.
+updates of accumulated history to qualify actual capacity. The volume-backed
+owner checks the actual mount and verifies its removal. Container startup and
+capacity errors remain explicit.
 
 ## State machine
 

@@ -412,7 +412,7 @@ describe("E2E wrapper environment", () => {
     expect(mocks.createTestWorktreesRoot).toHaveBeenCalledWith("e2e-live");
   });
 
-  it("seeds only the native corpus before starting native live qualification", async () => {
+  it("seeds the native corpus on disk for live qualification", async () => {
     configureTestDatabase();
     const child = createChildProcess();
 
@@ -426,6 +426,11 @@ describe("E2E wrapper environment", () => {
     await vi.waitFor(() => expect(mocks.spawn).toHaveBeenCalledOnce());
     emitChildExit(child, 0, null);
     await expect(invocation).resolves.toBe(0);
+    expect(mocks.startBarePostgresTestDb).toHaveBeenCalledWith({
+      databaseName: "maister_e2e",
+      lane: "e2e",
+      storage: "volume",
+    });
     expect(mocks.prepareNativeCompanyBrainDatabase).toHaveBeenCalledWith(
       "postgres://test",
       expect.objectContaining({

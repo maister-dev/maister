@@ -326,6 +326,10 @@ export async function runE2eInvocation(
 ): Promise<number> {
   const lane = worktreeLaneForE2eArguments(arguments_);
   const worktreesRoot = createTestWorktreesRoot(lane);
+  const nativeCompanyBrain = arguments_.some(
+    (argument) =>
+      path.basename(argument) === "live-company-brain-specialists.spec.ts",
+  );
   let invocationError: unknown;
   let e2eInvocation: E2eInvocation | undefined;
   let testDatabase: StartedPostgresTestDb | undefined;
@@ -335,13 +339,12 @@ export async function runE2eInvocation(
     testDatabase = await startBarePostgresTestDb({
       databaseName: "maister_e2e",
       lane: "e2e",
+      // Real recursive sessions can retain more output than the normal tmpfs.
+      ...(nativeCompanyBrain ? { storage: "volume" } : {}),
     });
     throwIfE2eInvocationInterrupted(signal);
 
-    const prepareDatabase = arguments_.some(
-      (argument) =>
-        path.basename(argument) === "live-company-brain-specialists.spec.ts",
-    )
+    const prepareDatabase = nativeCompanyBrain
       ? prepareNativeCompanyBrainDatabase
       : prepareE2eDatabase;
 

@@ -387,6 +387,38 @@ describe("shared Testcontainers Postgres helper", () => {
     ]);
   });
 
+  it("retires the disk volume used by a long-lived test database", async () => {
+    const docker = (await getContainerRuntimeClient()).container.dockerode;
+    const database = await startBarePostgresTestDb({
+      databaseName: "test_support_disk",
+      lane: "e2e",
+      storage: "volume",
+    });
+    let volumeName: string;
+
+    try {
+      const container = await docker
+        .getContainer(database.container.getId())
+        .inspect();
+      const dataPath = "/var/lib/postgresql/data";
+      const mount = container.Mounts.find(
+        (entry) => entry.Destination === dataPath,
+      );
+
+      expect(container.HostConfig.Tmpfs ?? {}).not.toHaveProperty(dataPath);
+      expect(mount?.Type).toBe("volume");
+      if (!mount?.Name)
+        throw new Error("The PostgreSQL data volume has no identity");
+      volumeName = mount.Name;
+    } finally {
+      await database.stop();
+    }
+
+    await expect(docker.getVolume(volumeName).inspect()).rejects.toMatchObject({
+      statusCode: 404,
+    });
+  });
+
   it("migrates the main lineage and preserves the requested pool limit", async () => {
     const database = await startMainPostgresTestDb({
       databaseName: "test_support_main",
