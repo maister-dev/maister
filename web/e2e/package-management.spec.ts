@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -51,6 +51,8 @@ function buildPackageRepo(): string {
 }
 
 test("package source → discovery → install → attach → detach round-trip", async ({
+  browser,
+  baseURL,
   page,
 }) => {
   test.setTimeout(180_000);
@@ -99,8 +101,15 @@ test("package source → discovery → install → attach → detach round-trip"
   // UX-01A/B: a local install can export the upstream package's name.
   const localRepo = buildPackageRepo();
   const localPackage = join(localRepo, "packages", RUN_TAG);
+  const localManifest = join(localPackage, "flows/e2e-flow/flow.yaml");
 
-  writeFileSync(join(localPackage, "README.md"), "local revision\n");
+  writeFileSync(
+    localManifest,
+    readFileSync(localManifest, "utf8").replace(
+      "echo hi",
+      "echo local-revision",
+    ),
+  );
   const local = await page.request.post("/api/admin/package-installs", {
     data: { localPath: localPackage },
   });
@@ -122,14 +131,105 @@ test("package source → discovery → install → attach → detach round-trip"
   await expect(localChoice).toBeVisible();
   await page.goForward();
   await expect(page).toHaveURL(new RegExp(`install=${localInstall.id}`));
+  const memberPath = `/studio/packages/${RUN_TAG}/flows/${RUN_TAG}-flow`;
+
+  await page.goto(memberPath);
+  const choices = page.getByTestId("studio-package-chooser").getByRole("link");
+  const upstream = choices.and(
+    page.locator(`a[href^="${memberPath}?"]:not([href*="${localInstall.id}"])`),
+  );
+  const upstreamHref = await upstream.getAttribute("href");
+
+  expect(upstreamHref).toMatch(/\?install=/);
+  const upstreamId = new URL(upstreamHref!, page.url()).searchParams.get(
+    "install",
+  );
+
+  await page.goto("/studio/packages");
+  for (const id of [localInstall.id, upstreamId]) {
+    const packageHref = `/studio/packages/${RUN_TAG}?install=${id}`;
+
+    await page.locator(`a[href="${packageHref}"]`).click();
+    await expect(page).toHaveURL(new RegExp(`install=${id}`));
+    await page.goBack();
+  }
+  for (const [href, command] of [
+    [`${memberPath}?install=${localInstall.id}`, "echo local-revision"],
+    [upstreamHref!, "echo hi"],
+  ]) {
+    await page.goto(href);
+    await page.getByTestId("flow-yaml-toggle").click();
+    await expect(page.getByTestId("flow-yaml-panel")).toContainText(command);
+  }
 
   // UX-01C: whole-fork resolution uses the selected install and retains dedup.
   const forkPath = `/api/studio/packages/${RUN_TAG}/fork`;
-  const refusal = await page.request.post(
-    `${forkPath}?install=${localInstall.id}&install=${localInstall.id}`,
+  const elementPath = `${forkPath}-element`;
+  const element = {
+    elementName: "Local member",
+    elementPath: "flows/e2e-flow",
+  };
+  const viewerContext = await browser.newContext({
+    baseURL,
+    storageState: { cookies: [], origins: [] },
+  });
+
+  try {
+    const viewer = await viewerContext.newPage();
+
+    await viewer.goto("/login");
+    await viewer.locator('input[name="email"]').fill(fixtures.m22.viewerEmail);
+    await viewer
+      .locator('input[name="password"]')
+      .fill(fixtures.m22.viewerPassword);
+    await viewer.locator('form button[type="submit"]').click();
+    await viewer.waitForURL((url) => !url.pathname.startsWith("/login"));
+    expect(
+      (
+        await viewer.request.post(`${forkPath}?install=${localInstall.id}`)
+      ).status(),
+    ).toBe(403);
+    expect(
+      (
+        await viewer.request.post(`${elementPath}?install=${localInstall.id}`, {
+          data: element,
+        })
+      ).status(),
+    ).toBe(403);
+  } finally {
+    await viewerContext.close();
+  }
+
+  for (const query of [
+    "",
+    "?install=",
+    "?install=unknown",
+    `?install=${localInstall.id}&install=${localInstall.id}`,
+  ]) {
+    expect((await page.request.post(`${forkPath}${query}`)).status()).toBe(404);
+    expect(
+      (
+        await page.request.post(`${elementPath}${query}`, { data: element })
+      ).status(),
+    ).toBe(404);
+  }
+  const forkElement = await page.request.post(
+    `${elementPath}?install=${localInstall.id}`,
+    { data: element },
   );
 
-  expect(refusal.status()).toBe(404);
+  expect(forkElement.status(), await forkElement.text()).toBe(201);
+  const { localPackageId: elementForkId } = (await forkElement.json()) as {
+    localPackageId: string;
+  };
+  const forkedFile = await page.request.get(
+    `/api/studio/local-packages/${elementForkId}/files/flows/e2e-flow/flow.yaml`,
+  );
+
+  expect(forkedFile.ok(), await forkedFile.text()).toBe(true);
+  expect(await forkedFile.json()).toMatchObject({
+    content: expect.stringContaining("echo local-revision"),
+  });
   const fork = await page.request.post(
     `${forkPath}?install=${localInstall.id}`,
   );
@@ -162,6 +262,36 @@ test("package source → discovery → install → attach → detach round-trip"
   expect(attachmentHref).toMatch(/\?install=/);
   expect(attachmentHref).not.toContain(localInstall.id);
   await expect(page.getByText(`${RUN_TAG}-flow`).first()).toBeVisible();
+  await page
+    .getByTestId("flow-preview-card")
+    .getByRole("link", { name: `${RUN_TAG}-flow` })
+    .click();
+  await expect(page.getByTestId("open-flow-in-studio")).toHaveAttribute(
+    "href",
+    upstreamHref!,
+  );
+  await page.goBack();
+
+  const localProject = fixtures.m22.projectSlug;
+  const localAttachment = await page.request.post(
+    `/api/projects/${localProject}/packages`,
+    {
+      data: { packageInstallId: localInstall.id },
+    },
+  );
+
+  expect(localAttachment.status(), await localAttachment.text()).toBe(201);
+  const { attachmentId: localAttachmentId } =
+    (await localAttachment.json()) as { attachmentId: string };
+  await page.goto(`/projects/${localProject}?tab=packages`);
+  await page.getByRole("link", { name: RUN_TAG, exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`install=${localInstall.id}`));
+  const detached = await page.request.delete(
+    `/api/projects/${localProject}/packages/${localAttachmentId}`,
+  );
+
+  expect(detached.ok(), await detached.text()).toBe(true);
+  await page.goto(`/projects/${projectSlug}?tab=packages`);
 
   // 5. Detach → attachment gone (empty state or no link).
   // Scoped to THIS package's row. The bare `getByRole("button", …)` assumed

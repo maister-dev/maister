@@ -417,22 +417,36 @@ export async function getAvailablePackageInstalls(): Promise<
 }
 
 export async function getStudioInstallForFlowRevision(
+  projectId: string,
   flowId: string,
-  revision: { resolvedRevision: string; source?: string },
+  revision: { resolvedRevision: string; versionLabel: string; source?: string },
 ): Promise<{ id: string; name: string } | null> {
   if (!revision.source) return null;
 
   const source = revision.source.replace(/^file:\/\//, "");
+  const installs = schemaModule.packageInstalls;
+  const attachments = schemaModule.projectPackageAttachments;
   const rows = await getDb()
-    .select()
-    .from(schemaModule.packageInstalls)
+    .select({
+      id: installs.id,
+      name: installs.name,
+      manifest: installs.manifest,
+      installedPath: installs.installedPath,
+      versionLabel: installs.versionLabel,
+      attachmentId: attachments.id,
+    })
+    .from(installs)
+    .leftJoin(
+      attachments,
+      and(
+        eq(attachments.projectId, projectId),
+        eq(attachments.packageInstallId, installs.id),
+      ),
+    )
     .where(
       and(
-        eq(schemaModule.packageInstalls.packageStatus, "Installed"),
-        eq(
-          schemaModule.packageInstalls.resolvedRevision,
-          revision.resolvedRevision,
-        ),
+        eq(installs.packageStatus, "Installed"),
+        eq(installs.resolvedRevision, revision.resolvedRevision),
       ),
     );
   const matches = rows.filter((row) => {
@@ -442,9 +456,17 @@ export async function getStudioInstallForFlowRevision(
     return member && join(row.installedPath, member.path) === source;
   });
 
-  return matches.length === 1
-    ? { id: matches[0].id, name: matches[0].name }
-    : null;
+  const attached = matches.filter(
+    (row) => row.attachmentId && row.versionLabel === revision.versionLabel,
+  );
+  const match =
+    attached.length === 1
+      ? attached[0]
+      : matches.length === 1
+        ? matches[0]
+        : null;
+
+  return match && { id: match.id, name: match.name };
 }
 
 export async function getNamedPackageAttachmentIds(

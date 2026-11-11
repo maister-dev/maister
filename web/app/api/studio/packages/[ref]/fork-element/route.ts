@@ -26,7 +26,7 @@ const bodySchema = z
   })
   .strict();
 
-// (M39 A3) `ref` (url-param) resolves server-side to its newest install.
+// An exact install selector disambiguates the package name in `ref`.
 // `elementPath`/`elementName` are body-controlled: `elementPath` is confined
 // inside the source bundle by the service before any fs copy; `elementName` is a
 // display name only. Forks EXACTLY ONE element into a NEW centralized local
@@ -79,6 +79,7 @@ export async function POST(
     log.info(
       {
         ref,
+        installId: resolution.installId,
         elementPath: parsed.data.elementPath,
         localPackageId: result.localPackageId,
       },

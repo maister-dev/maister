@@ -557,7 +557,7 @@ test("upstream re-tag → install & sync with conflict → resolve → publish b
 
   await page.goto(`/studio/edit/${fork1Id}`);
   await lockReacquired;
-  await page.getByTestId("local-editor-sync").click();
+  await page.getByTestId("local-editor-sync").filter({ visible: true }).click();
   await page
     .getByTestId("sync-target-select")
     .selectOption({ label: `Install & sync — ${RUN_TAG}/v2.0.0` });
@@ -576,10 +576,12 @@ test("upstream re-tag → install & sync with conflict → resolve → publish b
 
   // The pending banner lists the conflicted file.
   await page.reload();
-  await expect(page.getByTestId("sync-banner")).toBeVisible({
+  const syncBanner = page.getByTestId("sync-banner").filter({ visible: true });
+
+  await expect(syncBanner).toBeVisible({
     timeout: 30_000,
   });
-  await expect(page.getByTestId("sync-conflicted-file")).toContainText(
+  await expect(syncBanner.getByTestId("sync-conflicted-file")).toContainText(
     "docs/README.md",
   );
 
@@ -596,11 +598,11 @@ test("upstream re-tag → install & sync with conflict → resolve → publish b
     );
   });
   await page.goto(`/studio/edit/${fork1Id}`);
-  await expect(page.getByTestId("sync-banner")).toBeVisible({
+  await expect(syncBanner).toBeVisible({
     timeout: 30_000,
   });
-  await page.getByTestId("sync-resolve").click();
-  await expect(page.getByTestId("sync-banner")).toHaveCount(0, {
+  await syncBanner.getByTestId("sync-resolve").click();
+  await expect(syncBanner).toHaveCount(0, {
     timeout: 30_000,
   });
 
@@ -620,13 +622,47 @@ test("upstream re-tag → install & sync with conflict → resolve → publish b
   await addGitSource(page, barePath, "develop");
 
   await page.goto(`/studio/edit/${fork1Id}`);
-  await page.getByTestId("local-editor-publish").click();
-  await page.getByTestId("publish-source").selectOption({ label: bareUrl });
+  const publish = page
+    .getByTestId("local-editor-publish")
+    .filter({ visible: true });
+  const publishEndpoint = `/api/studio/local-packages/${fork1Id}/publish`;
+  const publishOptions = await page.request.get(publishEndpoint);
+  const { sources } = (await publishOptions.json()) as {
+    sources: { id: string; url: string }[];
+  };
+  const localTarget = sources.find((source) => source.url === bareUrl);
+
+  expect(localTarget).toBeDefined();
+  await page.route(`**${publishEndpoint}`, async (route) => {
+    const request = route.request();
+
+    if (
+      request.method() === "POST" &&
+      request.postDataJSON().targetSourceId !== localTarget!.id
+    ) {
+      await route.fulfill({
+        status: 422,
+        json: {
+          code: "CONFIG",
+          message: "Expected the local Git publication target.",
+        },
+      });
+
+      return;
+    }
+    await route.continue();
+  });
+  const sourcePicker = page.getByTestId("publish-source");
+
+  await publish.click();
+  await sourcePicker.selectOption(localTarget!.id);
+  await expect(sourcePicker).toHaveValue(localTarget!.id);
   await page.getByTestId("publish-submit").click();
   await expect(page.getByTestId("publish-result")).toBeVisible({
     timeout: 60_000,
   });
   await page.getByTestId("publish-cancel").click();
+  await expect(sourcePicker).toHaveCount(0);
 
   // Move the remote maister/<slug> branch independently → the next publish
   // refuses with "upstream moved — sync first" and the sync CTA (canSync).
@@ -649,9 +685,20 @@ test("upstream re-tag → install & sync with conflict → resolve → publish b
 
   git(barePath, "update-ref", `refs/heads/${branch}`, moved);
 
-  await page.getByTestId("local-editor-publish").click();
-  await page.getByTestId("publish-source").selectOption({ label: bareUrl });
+  await publish.click();
+  await sourcePicker.selectOption(localTarget!.id);
+  await expect(sourcePicker).toHaveValue(localTarget!.id);
+  await expect(page.getByTestId("publish-branch")).toHaveValue(branch);
+  const refusedPush = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === publishEndpoint &&
+      response.request().method() === "POST",
+  );
+
   await page.getByTestId("publish-submit").click();
+  const refusal = await refusedPush;
+
+  expect(refusal.status(), await refusal.text()).toBe(409);
   await expect(page.getByTestId("publish-upstream-moved")).toBeVisible({
     timeout: 60_000,
   });

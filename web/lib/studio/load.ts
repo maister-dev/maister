@@ -65,10 +65,8 @@ export type StudioPackageResolution =
   | { status: "ambiguous"; matches: PackageGroup[] }
   | { status: "ok"; group: PackageGroup; installId: string };
 
-// Resolves a Studio package detail `ref` (the package name, Phase A) to its
-// newest install. Two sources can expose the same name → `ambiguous` (the caller
-// surfaces the collision rather than silently picking one). Shared by the package
-// detail page and its flow/skill/agent sub-pages (M36).
+// An explicit install must belong to the named group. A legacy name resolves
+// to the first version only when the name has a single source.
 export async function resolveStudioPackageByRef(
   userId: string,
   userRole: GlobalRole,
@@ -99,11 +97,11 @@ export async function resolveStudioPackageByRef(
 
   const group = matches[0];
 
-  return {
-    status: "ok",
-    group,
-    installId: group.versions[0]?.installId ?? "",
-  };
+  const installId = group.versions[0]?.installId;
+
+  return installId
+    ? { status: "ok", group, installId }
+    : { status: "not-found" };
 }
 
 // Instance-wide Studio package view: every installed package grouped by

@@ -72,6 +72,7 @@ async function createIndexerRepo(): Promise<string> {
       (_, index) => `## Heading ${index}\nBody`,
     ).join("\n\n"),
   );
+  await writeFile(join(repo, "limits/binary.md"), Buffer.from([0, 255, 0]));
   await git(repo, ["add", "."]);
   await git(repo, ["commit", "-m", "seed"]);
 
@@ -473,6 +474,37 @@ describe("Project Brain source indexer (ADR-127)", () => {
     expect(summary.jobsCompleted).toBe(1);
     expect(await chunkCount(ctx, source.id)).toBe(0);
     expect(row.rows[0]?.last_error).toMatchObject({ code: "PRECONDITION" });
+  });
+
+  it("reports a binary Git match as a source failure", async () => {
+    const source = await createBrainSource(ctx.db, {
+      projectId,
+      repoPath,
+      mainBranch: "main",
+      input: { path: "limits/*.md", kind: "markdown" },
+    });
+
+    await enqueueBrainSourceReindex(ctx.db, {
+      projectId,
+      sourceId: source.id,
+      reason: "manual",
+    });
+    await runBrainReindexSweep({
+      db: ctx.db as any,
+      client: fakeEmbeddingClient(),
+      maxItemsPerJob: 10,
+    });
+    const row = await ctx.db.execute(sql`
+      SELECT last_error FROM brain_sources WHERE id = ${source.id}
+    `);
+
+    expect(row.rows[0]?.last_error).toMatchObject({
+      code: "PRECONDITION",
+      message: expect.stringContaining(
+        'Brain source "limits/binary.md" is binary',
+      ),
+    });
+    expect(await chunkCount(ctx, source.id)).toBe(0);
   });
 
   it("records parser errors per source and continues other source jobs", async () => {

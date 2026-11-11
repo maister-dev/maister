@@ -20,6 +20,7 @@ vi.mock("@/lib/db/client", () => ({
 }));
 
 let getFlowPackageDetail: typeof import("@/lib/queries/flow-packages").getFlowPackageDetail;
+let getStudioInstallForFlowRevision: typeof import("@/lib/queries/packages").getStudioInstallForFlowRevision;
 
 const PROJECT_ID = randomUUID();
 const REVISION_ID = randomUUID();
@@ -44,6 +45,8 @@ beforeAll(async () => {
   db = testDatabase.db;
 
   ({ getFlowPackageDetail } = await import("@/lib/queries/flow-packages"));
+  ({ getStudioInstallForFlowRevision } =
+    await import("@/lib/queries/packages"));
 
   await db.insert(schema.projects).values({
     id: PROJECT_ID,
@@ -129,5 +132,45 @@ describe("getFlowPackageDetail (integration)", () => {
     });
     expect(legacy).not.toHaveProperty("manifest");
     expect(legacy).not.toHaveProperty("installedPath");
+  });
+
+  it("requires a proven Studio install when identical Git revisions are available from two sources", async () => {
+    const detail = await getFlowPackageDetail("flow-link-fix", "aif-dev");
+    const revision = detail?.revisions.find(
+      (candidate) => candidate.id === REVISION_ID,
+    );
+
+    expect(revision).toBeDefined();
+    const attached = randomUUID();
+    const competing = randomUUID();
+    await db.insert(schema.packageInstalls).values(
+      [attached, competing].map((id) => ({
+        id,
+        name: "aif",
+        sourceUrl: `file:///tmp/${id}`,
+        installedPath: "/tmp/pkg",
+        versionLabel: revision!.versionLabel,
+        resolvedRevision: revision!.resolvedRevision,
+        manifestDigest: "test-digest",
+        manifest: { spec: { flows: [{ id: "aif-dev", path: "flows/dev" }] } },
+        packageStatus: "Installed",
+      })),
+    );
+    expect(
+      await getStudioInstallForFlowRevision(PROJECT_ID, "aif-dev", revision!),
+    ).toBeNull();
+
+    await db.insert(schema.projectPackageAttachments).values({
+      id: randomUUID(),
+      projectId: PROJECT_ID,
+      packageInstallId: attached,
+      packageName: "aif",
+    });
+    expect(
+      await getStudioInstallForFlowRevision(PROJECT_ID, "aif-dev", revision!),
+    ).toEqual({
+      id: attached,
+      name: "aif",
+    });
   });
 });

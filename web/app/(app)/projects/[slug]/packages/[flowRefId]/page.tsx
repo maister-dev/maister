@@ -277,6 +277,7 @@ export default async function FlowPackageViewerPage({
       : null;
 
   const studioInstall = await getStudioInstallForFlowRevision(
+    detail.project.id,
     flowRefId,
     revision,
   );

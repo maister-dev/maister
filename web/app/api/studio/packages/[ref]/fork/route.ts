@@ -31,8 +31,8 @@ const bodySchema = z
   })
   .strict();
 
-// `ref` is the package name (url-param). It is resolved server-side to its
-// newest install (resolveStudioPackageByRef); the body carries only the
+// `ref` is the package name. An exact install selector disambiguates it;
+// the body carries only the
 // non-authority `forceNew` flag. Fork CREATES a local package (writes a working
 // dir) → gated `requireGlobalRole("member")`, matching every other studio
 // authoring mutation (create/commit/import/cut-version) — `requireSession`
@@ -78,6 +78,7 @@ export async function POST(
     log.info(
       {
         ref,
+        installId: resolution.installId,
         localPackageId: result.localPackageId,
         alreadyExists: result.alreadyExists === true,
         forceNew,

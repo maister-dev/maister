@@ -13,10 +13,13 @@
 //       flow.yaml visible, and clicking a file in the list shows its content.
 //   → CLICK Fork → assert navigation to /flows/{projectSlug}/{capId} (editor)
 //   → in the editor, Save the draft → assert it persists across a reload.
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { test, expect, type Page } from "@playwright/test";
+
+import { withE2EDb } from "./_seed/db";
 
 type FlowViewerFixture = {
   projectSlug: string;
@@ -34,6 +37,74 @@ function loadFixture(): FlowViewerFixture {
 
   return all.byKey.flowViewer;
 }
+
+test("UX-01D Run and explicit viewer links retain the old Flow revision after enablement moves", async ({
+  page,
+}) => {
+  const fx = loadFixture();
+  const newRevision = randomUUID();
+  const run = randomUUID();
+  const manifest = {
+    schemaVersion: 1,
+    name: "Newly enabled manifest",
+    nodes: [
+      {
+        id: "replacement",
+        type: "cli",
+        action: { command: "true" },
+        transitions: { success: "done" },
+      },
+    ],
+  };
+  const path = `/projects/${fx.projectSlug}/packages/${fx.flowRefId}`;
+
+  await withE2EDb(async (pool) => {
+    await pool.query(
+      "INSERT INTO flow_revisions(id,flow_ref_id,source,version_label,resolved_revision,manifest_digest,manifest,schema_version,installed_path,setup_status,package_status) SELECT $1,flow_ref_id,source,'v2-fixture',$2,$2,$3,1,installed_path,setup_status,'Installed' FROM flow_revisions WHERE id=$4",
+      [newRevision, newRevision.replaceAll("-", ""), manifest, fx.revisionId],
+    );
+    await pool.query(
+      "INSERT INTO runs(id,project_id,flow_id,run_kind,status,flow_version,flow_revision_id) SELECT $1,project_id,id,'flow','Done',version,enabled_revision_id FROM flows WHERE enabled_revision_id=$2",
+      [run, fx.revisionId],
+    );
+    await pool.query(
+      "UPDATE flows SET enabled_revision_id=$1, manifest=$2 WHERE enabled_revision_id=$3",
+      [newRevision, manifest, fx.revisionId],
+    );
+  });
+  try {
+    await page.goto(path);
+    await expect(
+      page.locator('.react-flow__node[data-id="replacement"]'),
+    ).toBeVisible();
+    await page.goto(`${path}?rev=${fx.revisionId}`);
+    await expect(
+      page.locator(`.react-flow__node[data-id="${fx.implementNode}"]`),
+    ).toBeVisible();
+    const graph = await page.request.get(`/api/runs/${run}/graph`);
+
+    expect(graph.ok(), await graph.text()).toBe(true);
+    const result = (await graph.json()) as {
+      topology: { nodes: { id: string }[] };
+    };
+
+    expect(result.topology.nodes.map((node) => node.id)).toContain(
+      fx.implementNode,
+    );
+    expect(result.topology.nodes.map((node) => node.id)).not.toContain(
+      "replacement",
+    );
+  } finally {
+    await withE2EDb(async (pool) => {
+      await pool.query("DELETE FROM runs WHERE id=$1", [run]);
+      await pool.query(
+        "UPDATE flows SET enabled_revision_id=$1, manifest=(SELECT manifest FROM flow_revisions WHERE id=$1) WHERE enabled_revision_id=$2",
+        [fx.revisionId, newRevision],
+      );
+      await pool.query("DELETE FROM flow_revisions WHERE id=$1", [newRevision]);
+    });
+  }
+});
 
 // Replace the whole CodeMirror buffer with `text` (the editor owns the DOM, so
 // drive the real contenteditable).
