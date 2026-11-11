@@ -704,15 +704,21 @@ not `session.crashed`, even on non-zero exit codes. **(Implemented —
 ADR-166)** Takes a `session.delete` envelope; issued `driverless` so web
 startup recovery may re-deliver it. After `SIGKILL`, the handler waits for a
 second kill-grace window for observed child exit and durable terminal output.
+Within each window, the remaining grace also covers retirement of the owned
+process group: the leader may exit before its descendants. Group observations
+are retried only within that deadline; a departed leader never authorizes
+signalling its old group ID.
 An unconfirmed barrier returns `EXECUTOR_UNAVAILABLE`, reason
-`session_delete_exit_unconfirmed`, with stage `process_exit` or
-`terminal_output`. The manager still requires canonical incarnation terminal
+`session_delete_exit_unconfirmed`, with stage `process_exit`,
+`terminal_output`, `process_group_active` or `process_group_unavailable`.
+Unconfirmed group retirement logs the last OS observation and process states.
+The manager still requires canonical incarnation terminal
 evidence before releasing an agent scheduler slot; a missing session or a
 historical successful DELETE does not establish quiescence.
 
 | Status | Body                                                       | When                                                                  |
 | ------ | ---------------------------------------------------------- | --------------------------------------------------------------------- |
-| `204`  | empty                                                      | Observed process exit and terminal-output persistence confirmed. |
+| `204`  | empty                                                      | Process group retirement and terminal-output persistence confirmed. |
 | `404`  | `{ "code": "PRECONDITION", "message": "unknown session" }` | No such session in the registry.                                      |
 | `409`  | `{ "code": "PRECONDITION" \| "FENCED", "details": {…} }`   | Missing envelope, fence refusal, or stale epoch (ADR-166).            |
 | `503`  | `{ "code": "EXECUTOR_UNAVAILABLE", "details": {…} }` | Process exit or terminal-output persistence was not confirmed. |

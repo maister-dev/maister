@@ -466,17 +466,49 @@ test("E2E-L-03: create only, launch, and triage-only remain distinct", async ({
 
     return Object.fromEntries(rows.rows.map((row) => [row.title, row.id]));
   });
+  const launchOptions = await page.request.get(
+    `/api/runs/launch-options?taskId=${taskIds[titles[1]]}`,
+  );
+
+  expect(launchOptions.ok(), await launchOptions.text()).toBe(true);
+  const preview = (await launchOptions.json()) as {
+    task: { revision: number };
+    settingsToken: string;
+  };
+  const launchRequest = {
+    taskId: taskIds[titles[1]],
+    expectedTaskRevision: preview.task.revision,
+    expectedSettingsToken: preview.settingsToken,
+  };
+  const refused = await sendScript(
+    page,
+    [
+      {
+        tool: "task_launch",
+        args: { ...launchRequest, operationKey: `l03-auto-${marker}` },
+      },
+    ],
+    "Automatic launch needs qualification",
+    { expectToolErrors: true },
+  );
+
+  expect(refused).toContain('"isError":true');
+  expect(refused).toContain("qualification_required");
+  // Librarian is an automatic caller; only the authenticated human request
+  // supplies manual authority for an unqualified task.
+  const launched = await page.request.post("/api/task-launch-intents", {
+    headers: {
+      Origin: new URL(page.url()).origin,
+      "Idempotency-Key": `l03-launch-${marker}`,
+    },
+    data: launchRequest,
+  });
+
+  expect(launched.status(), await launched.text()).toBe(202);
 
   await sendScript(
     page,
     [
-      {
-        tool: "run_launch",
-        args: {
-          taskId: taskIds[titles[1]],
-          operationKey: `l03-launch-${marker}`,
-        },
-      },
       {
         tool: "task_send_to_triage",
         args: {
@@ -489,34 +521,36 @@ test("E2E-L-03: create only, launch, and triage-only remain distinct", async ({
     ],
     "Routed independently",
   );
-  await withE2EDb(async (pool) => {
-    const rows = await pool.query<{
-      title: string;
-      launch_intent: string;
-      run_count: number;
-    }>(
-      `
+  await expect(async () =>
+    withE2EDb(async (pool) => {
+      const rows = await pool.query<{
+        title: string;
+        launch_intent: string;
+        run_count: number;
+      }>(
+        `
       SELECT t.title, t.launch_intent, count(r.id)::int AS run_count
       FROM tasks t LEFT JOIN runs r ON r.task_id = t.id
       WHERE t.title = ANY($1::text[])
       GROUP BY t.id
     `,
-      [titles],
-    );
-    const byTitle = Object.fromEntries(
-      rows.rows.map((row) => [row.title, row]),
-    );
+        [titles],
+      );
+      const byTitle = Object.fromEntries(
+        rows.rows.map((row) => [row.title, row]),
+      );
 
-    expect(byTitle[titles[0]]).toMatchObject({
-      launch_intent: "none",
-      run_count: 0,
-    });
-    expect(byTitle[titles[1]].run_count).toBe(1);
-    expect(byTitle[titles[2]]).toMatchObject({
-      launch_intent: "triage_only",
-      run_count: 0,
-    });
-  });
+      expect(byTitle[titles[0]]).toMatchObject({
+        launch_intent: "none",
+        run_count: 0,
+      });
+      expect(byTitle[titles[1]].run_count).toBe(1);
+      expect(byTitle[titles[2]]).toMatchObject({
+        launch_intent: "triage_only",
+        run_count: 0,
+      });
+    }),
+  ).toPass();
 });
 
 test("E2E-L-07: a second tab safely replays a lost task-create receipt", async ({

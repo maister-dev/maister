@@ -90,9 +90,12 @@ export function webShardFiles(files, shardIndex, shardCount) {
 }
 
 export function isolationPartFiles(part) {
-  assert(part === 1 || part === 2, "usage: isolation --part 1/2|2/2");
+  assert(part === 1 || part === 2 || part === 3, "usage: isolation --part 1/3|2/3|3/3");
 
-  return part === 1 ? laneSuites.isolation.slice(0, 2) : laneSuites.isolation.slice(2);
+  // Keep scratch restart scenarios on their own VM; the previous five-suite
+  // second part exceeded its 39-minute budget on hosted Intel runners.
+  return part === 1 ? laneSuites.isolation.slice(0, 2) :
+    part === 2 ? laneSuites.isolation.slice(2, 6) : laneSuites.isolation.slice(6);
 }
 
 export function isolationFiles(platform = process.platform) {
@@ -113,7 +116,7 @@ export function parseLaneInvocation(args, platform = process.platform) {
   if (flag === "--part") {
     assert.equal(slice, "isolation", "only isolation accepts --part");
     assert.equal(platform, "darwin", "only Darwin isolation accepts --part");
-    assert(/^[12]\/2$/u.test(shard ?? ""), "usage: isolation --part 1/2|2/2");
+    assert(/^[123]\/3$/u.test(shard ?? ""), "usage: isolation --part 1/3|2/3|3/3");
 
     return { slice, files: isolationPartFiles(Number(shard[0])) };
   }

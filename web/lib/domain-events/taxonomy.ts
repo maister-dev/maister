@@ -201,6 +201,7 @@ export const TERMINAL_CAUSE_REASONS = [
   "orchestrator_stuck",
   "turn_lost",
   "session_crashed",
+  "session_delete_exit_unconfirmed",
   "stream_lost",
   "owner_poisoned",
   // agent finalization

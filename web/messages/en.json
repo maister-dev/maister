@@ -3064,6 +3064,7 @@
         "agent_turn_lost": "The execution host restarted and lost the agent's turn.",
         "turn_lost": "The execution host restarted and lost the agent's turn.",
         "session_crashed": "The agent process crashed.",
+        "session_delete_exit_unconfirmed": "The run stopped while closing the agent session. The execution host could not confirm that all session processes had exited and the final output was saved. Check the supervisor's session cleanup diagnostics before retrying; the agent's response may already be available in its activity history.",
         "agent_session_gone": "The agent session was gone and did not come back.",
         "agent_prompt_failed": "The agent's turn failed.",
         "stream_lost": "The execution host's event stream was lost, so the turn's result can never arrive.",

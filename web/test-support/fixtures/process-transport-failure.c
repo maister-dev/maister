@@ -16,7 +16,7 @@ int main(int argc, char **argv) {
   if (!control) return 70;
   int mode, failures, calls;
   if (fscanf(control, "%d %d %d", &mode, &failures, &calls) != 3 ||
-      mode < 1 || mode > 4 || failures < -1 || failures > 1 || calls < 0) {
+      mode < 1 || mode > 5 || failures < -1 || failures > 1 || calls < 0) {
     fclose(control);
     return 64;
   }
@@ -38,6 +38,7 @@ int main(int argc, char **argv) {
       if (signal(SIGTERM, SIG_DFL) == SIG_ERR || raise(SIGTERM) != 0) return 70;
       return 70;
     }
+    if (mode == 5) return 0;
   }
   return native_reader_main(argc, argv);
 }

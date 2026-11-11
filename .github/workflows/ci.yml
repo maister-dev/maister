@@ -186,13 +186,13 @@ jobs:
           if-no-files-found: error
 
   execution-isolation:
-    name: A/B isolation (macOS Intel, Node 24.19.0, part ${{ matrix.part }}/2)
+    name: A/B isolation (macOS Intel, Node 24.19.0, part ${{ matrix.part }}/3)
     runs-on: macos-15-intel
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        part: [1, 2]
+        part: [1, 2, 3]
     env:
       NODE_OPTIONS: --dns-result-order=ipv4first
       MAISTER_TEST_DOCKER_PROBE_TIMEOUT_MS: "30000"
@@ -257,14 +257,14 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: execution-isolation-part-${{ matrix.part }}-of-2-reports
+          name: execution-isolation-part-${{ matrix.part }}-of-3-reports
           path: ${{ runner.temp }}/maister-isolation-evidence/ci-reports/
           if-no-files-found: error
       - name: Preserve failed outer reports before runtime cleanup
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: execution-isolation-part-${{ matrix.part }}-of-2-raw-reports
+          name: execution-isolation-part-${{ matrix.part }}-of-3-raw-reports
           path: ${{ runner.temp }}/maister-isolation-evidence/maister-ab-isolation-*/vitest.json
           if-no-files-found: error
       - name: Stop the job-owned container runtime
@@ -293,7 +293,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: execution-isolation-part-${{ matrix.part }}-of-2-diagnostics
+          name: execution-isolation-part-${{ matrix.part }}-of-3-diagnostics
           path: ${{ runner.temp }}/maister-isolation-evidence/
           if-no-files-found: error
 
@@ -318,13 +318,17 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - uses: actions/download-artifact@v4
         with:
-          name: execution-isolation-part-1-of-2-reports
+          name: execution-isolation-part-1-of-3-reports
           path: ${{ runner.temp }}/maister-isolation-combined/part-1
       - uses: actions/download-artifact@v4
         with:
-          name: execution-isolation-part-2-of-2-reports
+          name: execution-isolation-part-2-of-3-reports
           path: ${{ runner.temp }}/maister-isolation-combined/part-2
-      - name: Validate both preflights and the complete original isolation inventory
+      - uses: actions/download-artifact@v4
+        with:
+          name: execution-isolation-part-3-of-3-reports
+          path: ${{ runner.temp }}/maister-isolation-combined/part-3
+      - name: Validate all preflights and the complete original isolation inventory
         if: always()
         run: node scripts/isolation-ci-evidence.mjs "$RUNNER_TEMP/maister-isolation-combined"
       - uses: actions/upload-artifact@v4

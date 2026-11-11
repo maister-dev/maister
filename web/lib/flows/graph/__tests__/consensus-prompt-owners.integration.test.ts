@@ -25,6 +25,7 @@ import {
   hitlRequests,
   nodeAttempts,
   runs,
+  runSessionIncarnations,
   tasks,
   workspaces,
   platformAcpRunners,
@@ -87,6 +88,7 @@ import { qualificationFixture } from "@/test-support/task-qualification";
 import { seedTaskAgentFlowFacadeFixture } from "@/test-support/task-agent-flow-facade";
 import {
   holdChildProjection,
+  holdProjection,
   suppressIncarnations,
 } from "@/test-support/projection-hold";
 import {
@@ -788,6 +790,57 @@ async function childRuns(parentRunId: string) {
     .where(eq(runs.parentRunId, parentRunId));
 }
 
+/** Reproduce a late create event after the paid turn has already applied. */
+async function activateAppliedConsensusSession(
+  runId: string,
+  variant: "consensus_verifier" | "consensus_synthesis",
+  releaseLifecycle: () => Promise<void>,
+): Promise<void> {
+  // Let owner application overtake session.created deterministically. The
+  // late event must activate the acknowledged session so cleanup owns it.
+  let appliedSessionId: string | null = null;
+
+  await expect
+    .poll(
+      async () => {
+        const commands = await database.db
+          .select()
+          .from(executionCommands)
+          .where(eq(executionCommands.runId, runId));
+        const applied = commands.find(
+          (command) =>
+            command.ownerRef?.variant === variant &&
+            command.applicationState === "applied",
+        );
+
+        appliedSessionId = applied?.targetSessionId ?? null;
+
+        return appliedSessionId;
+      },
+      { timeout: 30_000, interval: 100 },
+    )
+    .not.toBeNull();
+  await releaseLifecycle();
+  await expect
+    .poll(
+      async () => {
+        const [incarnation] = await database.db
+          .select({ state: runSessionIncarnations.state })
+          .from(runSessionIncarnations)
+          .where(
+            and(
+              eq(runSessionIncarnations.runId, runId),
+              eq(runSessionIncarnations.hostSessionId, appliedSessionId!),
+            ),
+          );
+
+        return incarnation?.state;
+      },
+      { timeout: 10_000, interval: 100 },
+    )
+    .toBe("active");
+}
+
 describe("Consensus prompt owners through the production graph driver", () => {
   it("owner-consensus-draft: the draft artifact comes from the durable command output", async () => {
     const seeded = await seedConsensusFlow(
@@ -1366,6 +1419,10 @@ describe("Consensus prompt owners through the production graph driver", () => {
       "RAISE EXCEPTION 'held consensus verifier application';",
     );
 
+    const releaseLifecycle = await holdProjection(database.pool, {
+      consumerName: CANONICAL_PROJECTION_CONSUMERS.lifecycle,
+      runId: seeded.runId,
+    });
     const resuming = settleDraftsAndResume(seeded.runId);
     let resumeOutcome: "pending" | "fulfilled" | "rejected" = "pending";
 
@@ -1419,6 +1476,9 @@ describe("Consensus prompt owners through the production graph driver", () => {
 
       expect(run.status).toBe("Running");
       expect(attempt.status).toBe("Running");
+    } catch (error) {
+      await releaseLifecycle();
+      throw error;
     } finally {
       await dropTrigger();
     }
@@ -1427,16 +1487,23 @@ describe("Consensus prompt owners through the production graph driver", () => {
       db: database.db as unknown as Db,
       owners: flowPromptOwners,
     });
-    const continuation = startFlowContinuationWorker({
-      db: database.db as unknown as Db,
-      runtimeRoot: supervisor.runtimeRoot,
-      executionHosts: createExecutionHosts({
-        db: database.db as unknown as Db,
-      }),
-    });
+    let continuation:
+      ReturnType<typeof startFlowContinuationWorker> | undefined;
 
     try {
       await resuming;
+      await activateAppliedConsensusSession(
+        seeded.runId,
+        "consensus_verifier",
+        releaseLifecycle,
+      );
+      continuation = startFlowContinuationWorker({
+        db: database.db as unknown as Db,
+        runtimeRoot: supervisor.runtimeRoot,
+        executionHosts: createExecutionHosts({
+          db: database.db as unknown as Db,
+        }),
+      });
       await expect
         .poll(
           async () => {
@@ -1462,22 +1529,24 @@ describe("Consensus prompt owners through the production graph driver", () => {
             "consensus_verifier",
         ),
       ).toHaveLength(2);
-      const liveSessions = await createExecutionHosts({
-        db: database.db as unknown as Db,
-      })
-        .local()
-        .listSessions();
-
-      expect(
-        liveSessions.filter(
-          (session) =>
-            session.runId === seeded.runId && session.status === "live",
-        ),
-      ).toHaveLength(0);
     } finally {
-      await continuation.stop();
+      await releaseLifecycle();
+      await continuation?.stop();
       await owners.stop();
     }
+    // The driver must retire every session, including the delayed incarnation.
+    const liveSessions = await createExecutionHosts({
+      db: database.db as unknown as Db,
+    })
+      .local()
+      .listSessions();
+
+    expect(
+      liveSessions.filter(
+        (session) =>
+          session.runId === seeded.runId && session.status === "live",
+      ),
+    ).toHaveLength(0);
   }, 180_000);
   it("P0-5: delayed synthesis application yields and resumes through the owner workers", async () => {
     const seeded = await seedConsensusFlow(consensusPrompt("agree"));
@@ -1488,6 +1557,10 @@ describe("Consensus prompt owners through the production graph driver", () => {
       "artifact_instances",
       "IF NEW.id LIKE '%:consensus-synthesis:%' AND NEW.id NOT LIKE '%:input' THEN RAISE EXCEPTION 'held consensus synthesis application'; END IF; RETURN NEW;",
     );
+    const releaseLifecycle = await holdProjection(database.pool, {
+      consumerName: CANONICAL_PROJECTION_CONSUMERS.lifecycle,
+      runId: seeded.runId,
+    });
     const resuming = settleDraftsAndResume(seeded.runId);
     let resumeOutcome: "pending" | "fulfilled" | "rejected" = "pending";
 
@@ -1536,6 +1609,9 @@ describe("Consensus prompt owners through the production graph driver", () => {
 
       expect(run.status).toBe("Running");
       expect(attempt.status).toBe("Running");
+    } catch (error) {
+      await releaseLifecycle();
+      throw error;
     } finally {
       await dropTrigger();
     }
@@ -1544,16 +1620,23 @@ describe("Consensus prompt owners through the production graph driver", () => {
       db: database.db as unknown as Db,
       owners: flowPromptOwners,
     });
-    const continuation = startFlowContinuationWorker({
-      db: database.db as unknown as Db,
-      runtimeRoot: supervisor.runtimeRoot,
-      executionHosts: createExecutionHosts({
-        db: database.db as unknown as Db,
-      }),
-    });
+    let continuation:
+      ReturnType<typeof startFlowContinuationWorker> | undefined;
 
     try {
       await resuming;
+      await activateAppliedConsensusSession(
+        seeded.runId,
+        "consensus_synthesis",
+        releaseLifecycle,
+      );
+      continuation = startFlowContinuationWorker({
+        db: database.db as unknown as Db,
+        runtimeRoot: supervisor.runtimeRoot,
+        executionHosts: createExecutionHosts({
+          db: database.db as unknown as Db,
+        }),
+      });
       await expect
         .poll(
           async () => {
@@ -1579,22 +1662,24 @@ describe("Consensus prompt owners through the production graph driver", () => {
             "consensus_synthesis",
         ),
       ).toHaveLength(1);
-      const liveSessions = await createExecutionHosts({
-        db: database.db as unknown as Db,
-      })
-        .local()
-        .listSessions();
-
-      expect(
-        liveSessions.filter(
-          (session) =>
-            session.runId === seeded.runId && session.status === "live",
-        ),
-      ).toHaveLength(0);
     } finally {
-      await continuation.stop();
+      await releaseLifecycle();
+      await continuation?.stop();
       await owners.stop();
     }
+    // The driver must retire every session, including the delayed incarnation.
+    const liveSessions = await createExecutionHosts({
+      db: database.db as unknown as Db,
+    })
+      .local()
+      .listSessions();
+
+    expect(
+      liveSessions.filter(
+        (session) =>
+          session.runId === seeded.runId && session.status === "live",
+      ),
+    ).toHaveLength(0);
   }, 180_000);
   it("P0-5: poisoned verifier application ends in owner-poisoned crash", async () => {
     const seeded = await seedConsensusFlow(consensusPrompt("agree"));

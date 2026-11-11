@@ -21,6 +21,7 @@ function groupAbsent(group: number): boolean | null {
 /** Recorded groups are observation scopes, never authority to signal an unknown process. */
 export async function inspectProcessGroup(
   group: number,
+  timeoutMs = 5_000,
 ): Promise<ProcessGroupObservation> {
   if (!Number.isSafeInteger(group) || group <= 0)
     return { state: "unavailable" };
@@ -28,6 +29,9 @@ export async function inspectProcessGroup(
 
   if (absent === true) return { state: "retired" };
   if (absent === null) return { state: "unavailable" };
+  // A spent budget permits the signal-0 proof above, never an unbounded ps
+  // subprocess (Node interprets timeout: 0 as no timeout).
+  if (timeoutMs <= 0) return { state: "unavailable" };
   let stdout: string;
 
   try {
@@ -35,7 +39,7 @@ export async function inspectProcessGroup(
       "ps",
       ["-g", String(group), "-o", "pgid=,stat="],
       {
-        timeout: 5_000,
+        timeout: timeoutMs,
         maxBuffer: 1024 * 1024,
       },
     ));

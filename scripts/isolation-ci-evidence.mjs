@@ -63,7 +63,7 @@ export function validateIsolationReceipt(receipt, reportBytes, { identity, stage
   assert.deepEqual(receipt.identity, identity, "isolation SHA/repository/run identity differs");
   assert.equal(receipt.stage, stage, "wrong isolation stage");
   assert.equal(receipt.part, part, "wrong or duplicated isolation part");
-  assert.equal(receipt.parts, 2, "wrong isolation part count");
+  assert.equal(receipt.parts, 3, "wrong isolation part count");
   assert.equal(receipt.platform, "darwin", "isolation receipt is not macOS");
   assert.equal(receipt.arch, "x64", "isolation receipt is not Intel");
   assert.equal(receipt.node, "24.19.0", "wrong hosted isolation Node");
@@ -89,10 +89,10 @@ export function validateIsolationReceipt(receipt, reportBytes, { identity, stage
 
 /** Only fixed outer-stage paths are accepted; nested failure-control reports are never discovered. */
 export async function aggregateIsolationEvidence(directory, identity, jobResult) {
-  assert.equal(jobResult, "success", "both isolation jobs, uploads and runtime cleanups must succeed");
+  assert.equal(jobResult, "success", "all isolation jobs, uploads and runtime cleanups must succeed");
   const stages = [];
 
-  for (const part of [1, 2]) {
+  for (const part of [1, 2, 3]) {
     for (const stage of ["preflight", "part"]) {
       const root = join(directory, `part-${part}`, stage);
       const receiptBytes = await readFile(join(root, "receipt.json"));
@@ -102,7 +102,7 @@ export async function aggregateIsolationEvidence(directory, identity, jobResult)
       stages.push({ ...checked, receiptSha256: evidenceSha256(receiptBytes) });
     }
   }
-  assert.equal(new Set(stages.map(({ receipt }) => receipt.invocationId)).size, 4, "outer isolation invocations must be distinct");
+  assert.equal(new Set(stages.map(({ receipt }) => receipt.invocationId)).size, 6, "outer isolation invocations must be distinct");
   const parts = stages.filter(({ receipt }) => receipt.stage === "part");
   const files = parts.flatMap((row) => row.files);
   const cases = laneSuites.isolation.reduce((total, file) => total + requiredIsolationCases[file].length, 0);
@@ -112,7 +112,7 @@ export async function aggregateIsolationEvidence(directory, identity, jobResult)
 
   return {
     schema: "maister.isolation-ci-combined.v1", identity, outcome: "passed", platform: "darwin/x64", node: "24.19.0",
-    files, cases, preflights: 2, jobResult,
+    files, cases, preflights: 3, jobResult,
     stages: stages.map(({ receipt, receiptSha256 }) => ({ ...receipt, receiptSha256 })),
   };
 }

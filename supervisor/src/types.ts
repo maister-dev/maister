@@ -809,7 +809,11 @@ export type SupervisorErrorDetails = {
   mount?: string;
   runId?: string;
   sessionId?: string;
-  stage?: "process_exit" | "terminal_output";
+  stage?:
+    | "process_exit"
+    | "terminal_output"
+    | "process_group_active"
+    | "process_group_unavailable";
   killGraceMs?: number;
   sessionCreateQuiescence?: SessionCreateQuiescence;
   sessionCreateFailure?: SessionCreateFailure;

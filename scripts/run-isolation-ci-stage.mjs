@@ -35,7 +35,7 @@ export async function runIsolationCiStage(stage, part) {
   assert.equal(execFileSync("git", ["rev-parse", "HEAD"], { cwd: repository, encoding: "utf8" }).trim(), identity.sourceSha, "isolation checkout changed during execution");
   await writeFile(join(stageDirectory, "vitest.json"), reportBytes, { flag: "wx", mode: 0o600 });
   const receipt = {
-    schema: isolationReceiptSchema, identity, stage, part, parts: 2,
+    schema: isolationReceiptSchema, identity, stage, part, parts: 3,
     platform: process.platform, arch: process.arch, node: process.versions.node, concurrency: 1,
     runnerImage: { os: process.env.ImageOS ?? null, version: process.env.ImageVersion ?? null },
     invocationId: completed.invocation.id, originalReportPath: completed.reportPath,
@@ -49,6 +49,6 @@ export async function runIsolationCiStage(stage, part) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  assert.equal(process.argv.length, 4, "usage: run-isolation-ci-stage.mjs preflight|part 1|2");
+  assert.equal(process.argv.length, 4, "usage: run-isolation-ci-stage.mjs preflight|part 1|2|3");
   await runIsolationCiStage(process.argv[2], Number(process.argv[3]));
 }

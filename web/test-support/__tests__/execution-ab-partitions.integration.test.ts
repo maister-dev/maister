@@ -618,7 +618,8 @@ describe("S5.2 production-boot fault partitions", () => {
         expect(row.state).not.toBe("failed");
         expect(row.completion_applied_at).toBeNull();
 
-        return row.transport_state === "reconciliation_required" &&
+        return row.state === "queued" &&
+          row.transport_state === "reconciliation_required" &&
           row.attempts >= 3
           ? row
           : null;
@@ -901,10 +902,12 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
     expect(originalAttempts.rows).toHaveLength(1);
     const originalAttemptId = originalAttempts.rows[0]!.id;
 
+    // Preparation may continue concurrently; these three write-once payloads
+    // are not owner transitions and are verified at the publication barrier.
     await stack.database.pool
       .query(`CREATE TABLE s52_stale_writes(table_name text);
       CREATE FUNCTION s52_audit_stale() RETURNS trigger LANGUAGE plpgsql AS $audit$
-      BEGIN IF to_jsonb(NEW) - ARRAY['updated_at','flow_driver_lease_expires_at'] IS DISTINCT FROM to_jsonb(OLD) - ARRAY['updated_at','flow_driver_lease_expires_at'] THEN
+      BEGIN IF to_jsonb(NEW) - ARRAY['updated_at','flow_driver_lease_expires_at','enforcement_snapshot','materialization_plan','resolved_prompt'] IS DISTINCT FROM to_jsonb(OLD) - ARRAY['updated_at','flow_driver_lease_expires_at','enforcement_snapshot','materialization_plan','resolved_prompt'] THEN
         INSERT INTO s52_stale_writes VALUES(TG_TABLE_NAME); END IF; RETURN NEW; END $audit$;
       CREATE TRIGGER s52_audit_stale AFTER UPDATE ON runs FOR EACH ROW WHEN (NEW.id = '${runId}') EXECUTE FUNCTION s52_audit_stale();
       CREATE TRIGGER s52_audit_stale AFTER UPDATE ON execution_assignments FOR EACH ROW WHEN (NEW.run_id = '${runId}' AND NEW.epoch = 2) EXECUTE FUNCTION s52_audit_stale();
@@ -998,12 +1001,9 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
     expect(restart.status, await restart.clone().text()).toBe(202);
     events.release();
     receipt.release();
-    const publishing = await successorPublication.awaitReached();
-
-    expect(publishing.assignmentEpoch).toBe(2);
-    // Publication waits outside a database transaction after successor metadata
-    // commits. Keep session creation behind it while the original handler rejects
-    // its stale ACK, independently of capability transfer latency.
+    // The successor epoch is the stale-ACK boundary. Its preparation can take
+    // longer than the held checkpoint's wire deadline on a loaded host; audit
+    // ownership now, and verify preparation at the publication barrier later.
     expect(
       oldResponseSettled,
       "successor assignment commits before old handler settles",
@@ -1042,30 +1042,26 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
           [runId],
         )
       ).rows[0].state;
-    const currentAttempts = await stack.database.pool.query<{
-      id: string;
-      enforcement_recorded: boolean;
-      materialization_recorded: boolean;
-      prompt_recorded: boolean;
-    }>(
-      `SELECT n.id, n.enforcement_snapshot IS NOT NULL AS enforcement_recorded,
-         n.materialization_plan IS NOT NULL AS materialization_recorded,
-         n.resolved_prompt IS NOT NULL AS prompt_recorded
-       FROM node_attempts n
-       JOIN runs r ON r.id=n.run_id
-       JOIN execution_assignments a ON a.id=r.execution_assignment_id
-       WHERE n.run_id=$1 AND n.status='Running'
-         AND n.execution_assignment_id=a.id AND a.epoch=2`,
-      [runId],
+    const successorAttemptId = await poll(
+      async () => {
+        const attempts = await stack.database.pool.query<{ id: string }>(
+          `SELECT n.id FROM node_attempts n
+           JOIN runs r ON r.id=n.run_id
+           JOIN execution_assignments a ON a.id=r.execution_assignment_id
+           WHERE n.run_id=$1 AND n.status='Running'
+             AND n.execution_assignment_id=a.id AND a.epoch=2`,
+          [runId],
+        );
+
+        expect(attempts.rows.length).toBeLessThanOrEqual(1);
+
+        return attempts.rows[0]?.id ?? null;
+      },
+      10_000,
+      "successor attempt owns the cursor before stale ACK audit",
     );
 
-    expect(currentAttempts.rows).toHaveLength(1);
-    expect(currentAttempts.rows[0]!).toMatchObject({
-      enforcement_recorded: true,
-      materialization_recorded: true,
-      prompt_recorded: true,
-    });
-    expect(currentAttempts.rows[0]!.id).not.toBe(originalAttemptId);
+    expect(successorAttemptId).not.toBe(originalAttemptId);
     await stack.database.pool.query("TRUNCATE s52_stale_writes");
     const before = await snapshot();
 
@@ -1088,6 +1084,28 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
     ).toEqual([]);
     expect(stale.status).toBe(409);
     expect(await stale.json()).toMatchObject({ code: "CONFLICT" });
+    const publishing = await successorPublication.awaitReached();
+
+    expect(publishing.assignmentEpoch).toBe(2);
+    const prepared = await stack.database.pool.query<{
+      enforcement_recorded: boolean;
+      materialization_recorded: boolean;
+      prompt_recorded: boolean;
+    }>(
+      `SELECT enforcement_snapshot IS NOT NULL AS enforcement_recorded,
+         materialization_plan IS NOT NULL AS materialization_recorded,
+         resolved_prompt IS NOT NULL AS prompt_recorded
+       FROM node_attempts WHERE id=$1`,
+      [successorAttemptId],
+    );
+
+    expect(prepared.rows).toEqual([
+      {
+        enforcement_recorded: true,
+        materialization_recorded: true,
+        prompt_recorded: true,
+      },
+    ]);
     successorPublication.release();
     const creating = await successorCreate.awaitReached();
 

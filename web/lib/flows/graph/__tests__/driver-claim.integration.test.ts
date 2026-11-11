@@ -6,7 +6,18 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { executionAssignments, runs, tasks } from "@/lib/db/schema";
+import {
+  artifactInstances,
+  executionAssignments,
+  nodeAttempts,
+  runs,
+  tasks,
+} from "@/lib/db/schema";
+import { prepareConsensusInputEvidence } from "@/lib/flows/graph/consensus/input-evidence";
+import {
+  boundConsensusText,
+  CONSENSUS_PROMPT_TEXT_CAP_BYTES,
+} from "@/lib/flows/graph/consensus/text";
 import {
   claimFlowDriver,
   FlowDriverClaimLost,
@@ -15,6 +26,7 @@ import {
   renewFlowDriverClaim,
 } from "@/lib/flows/graph/driver-claim";
 import { flowDriverDatabase } from "@/lib/flows/graph/driver-db";
+import { lockCurrentSessionAssignment } from "@/lib/execution-host/session-binding";
 import { releaseAssignmentForRun } from "@/lib/execution-host/assignments";
 import { boundedPostgresTransaction } from "@/lib/execution-host/events/projection-transaction";
 import { seedGraphRun } from "@/test-support/graph-run-seed";
@@ -59,6 +71,65 @@ async function seedClaim() {
 }
 
 describe("Flow traversal database fences", () => {
+  it("preserves non-key run locks during evidence preparation and session binding against an event FK reader", async () => {
+    const seeded = await seedClaim();
+    const attemptId = randomUUID();
+
+    await db
+      .update(runs)
+      .set({ currentStepId: "work" })
+      .where(eq(runs.id, seeded.runId));
+    await db.insert(nodeAttempts).values({
+      id: attemptId,
+      runId: seeded.runId,
+      nodeId: "work",
+      nodeType: "consensus",
+      status: "Running",
+    });
+    const claim = await claimFlowDriver(db, seeded);
+
+    if (!claim) throw new Error("Expected traversal claim");
+    const reader = await database.pool.connect();
+    const generationId = `run:${attemptId}:consensus-synthesis:r1:consensus`;
+    const bounded = boundConsensusText("plan", CONSENSUS_PROMPT_TEXT_CAP_BYTES);
+
+    try {
+      await reader.query("BEGIN");
+      // Event insertion retains this FK lock until its run-frontier update.
+      await reader.query("SELECT id FROM runs WHERE id=$1 FOR KEY SHARE", [
+        seeded.runId,
+      ]);
+      await prepareConsensusInputEvidence(flowDriverDatabase(db, claim), {
+        runId: seeded.runId,
+        nodeId: "work",
+        nodeAttemptId: attemptId,
+        attempt: 1,
+        round: 1,
+        generationId,
+        role: "synthesis",
+        sourceId: "selected",
+        value: bounded.text,
+        renderPrompt: (slot) => `Synthesize ${slot}`,
+        textBounds: bounded.bounds,
+      });
+      expect(
+        await flowDriverDatabase(db, claim).transaction((tx) =>
+          lockCurrentSessionAssignment(tx, seeded),
+        ),
+      ).toMatchObject({ id: seeded.assignmentId });
+      expect(
+        await db
+          .select()
+          .from(artifactInstances)
+          .where(eq(artifactInstances.id, `${generationId}:input`)),
+      ).toHaveLength(1);
+    } finally {
+      await reader.query("ROLLBACK");
+      reader.release();
+      await releaseFlowDriverClaim(db, claim);
+    }
+  });
+
   it("preserves a revoked driver's typed fence through the prompt privacy boundary", async () => {
     const request = "private-revoked-driver-request-sentinel";
     const seeded = await seedGraphRun(

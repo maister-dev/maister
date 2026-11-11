@@ -414,6 +414,8 @@ export function sameProcess(
   );
 }
 
+class IncompleteProcessSnapshotError extends InvocationOwnershipError {}
+
 function identityFromRead(
   pid: number,
   snapshot: readonly ProcessIdentity[],
@@ -428,7 +430,7 @@ function identityFromRead(
     if ((error as NodeJS.ErrnoException).code === "ESRCH") return null;
     throw error;
   }
-  throw new InvocationOwnershipError(
+  throw new IncompleteProcessSnapshotError(
     `live process ${pid} could not be inspected`,
     {
       cause: new Error(
@@ -451,42 +453,52 @@ export async function findProcessIdentities(
       "process identity lookup requires a nonempty list of positive PIDs",
     );
   const selected = [...new Set(pids)];
-  let snapshot: ProcessIdentity[];
-  let diagnostics = "";
 
-  if (process.platform === "darwin") {
-    const native = await readDarwinProcesses(invocation, selected);
+  for (let attempt = 1; ; attempt++) {
+    let snapshot: ProcessIdentity[];
+    let diagnostics = "";
 
-    snapshot = native.identities;
-    diagnostics = native.diagnostics;
-  } else if (process.platform === "linux") {
-    snapshot = [];
-    for (const pid of selected)
-      snapshot.push(...(await readLinuxProcesses(invocation, pid)));
-  } else {
-    throw new InvocationOwnershipError(
-      `no process environment reader for ${process.platform}`,
-    );
+    if (process.platform === "darwin") {
+      const native = await readDarwinProcesses(invocation, selected);
+
+      snapshot = native.identities;
+      diagnostics = native.diagnostics;
+    } else if (process.platform === "linux") {
+      snapshot = [];
+      for (const pid of selected)
+        snapshot.push(...(await readLinuxProcesses(invocation, pid)));
+    } else {
+      throw new InvocationOwnershipError(
+        `no process environment reader for ${process.platform}`,
+      );
+    }
+
+    try {
+      return pids.map((pid) => identityFromRead(pid, snapshot, diagnostics));
+    } catch (error) {
+      if (!(error instanceof IncompleteProcessSnapshotError)) throw error;
+      logInvocation(invocation, "process-inspection-incomplete", {
+        level: "warn",
+        selectedPids: selected,
+        attempt,
+        attempts: 2,
+        retrying: attempt === 1,
+        nativeDiagnostics: diagnostics,
+      });
+      // A missing live PID grants no authority. Retry a fresh complete read;
+      // persistent failure remains fatal, including in the fixture watchdog.
+      if (attempt >= 2) throw error;
+    }
   }
-
-  return pids.map((pid) => identityFromRead(pid, snapshot, diagnostics));
 }
 
 export async function findProcessIdentity(
   invocation: Invocation,
   pid: number,
 ): Promise<ProcessIdentity | null> {
-  const native =
-    process.platform === "darwin"
-      ? await readDarwinProcesses(invocation, [pid])
-      : undefined;
-  const snapshot =
-    native?.identities ??
-    (process.platform === "linux"
-      ? await readLinuxProcesses(invocation, pid)
-      : await readProcessSnapshot(invocation));
+  const [identity] = await findProcessIdentities(invocation, [pid]);
 
-  return identityFromRead(pid, snapshot, native?.diagnostics ?? "");
+  return identity;
 }
 
 export async function processIdentity(

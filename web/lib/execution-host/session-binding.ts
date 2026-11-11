@@ -35,7 +35,9 @@ export async function lockCurrentSessionAssignment(
     .select({ assignmentId: runs.executionAssignmentId })
     .from(runs)
     .where(eq(runs.id, input.runId))
-    .for("update")
+    // Binding changes never alter the run key. Keep FK event writers compatible
+    // with the run lock already held by the driver or scratch transaction.
+    .for("no key update")
     .limit(1);
 
   if (!run || run.assignmentId !== input.assignmentId) return null;

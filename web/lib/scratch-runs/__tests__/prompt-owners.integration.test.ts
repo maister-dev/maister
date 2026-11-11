@@ -33,9 +33,15 @@ import { createExecutionHosts } from "@/lib/execution-host/client";
 import {
   freezeScratchPromptIntent,
   admitFrozenScratchPrompt,
+  readScratchPromptIntent,
+  scratchOwnerFromIntent,
 } from "@/lib/scratch-runs/prompt-intent";
 import { appendScratchMessage } from "@/lib/scratch-runs/messages";
 import { redriveRunningScratchPrompt } from "@/lib/scratch-runs/dispatch-recovery";
+import { sendScratchPromptAndProjectEvents } from "@/lib/scratch-runs/events";
+import { failScratchMessageTurn } from "@/lib/scratch-runs/service";
+import { completeOwnedScratchCreate } from "@/lib/scratch-runs/create-continuation";
+import { readCreateIntent } from "@/lib/execution-host/create-intent";
 import { retireEligibleCommands } from "@/lib/execution-host/retirement";
 import {
   startMainPostgresTestDb,
@@ -291,6 +297,133 @@ async function killAtDialogTransition(
 }
 
 describe("Scratch prompt owners through the production service", () => {
+  it("a delayed empty create handoff preserves a legacy Running turn and its unknown-delivery notice", async () => {
+    const runId = await launch("");
+    const hosts = createExecutionHosts({ db: db as unknown as Db });
+    const execution = await hosts.executionFor(runId);
+    const [command] = await db
+      .select()
+      .from(schema.executionCommands)
+      .where(
+        and(
+          eq(schema.executionCommands.runId, runId),
+          eq(schema.executionCommands.kind, "session.create"),
+        ),
+      );
+    const { intent } = readCreateIntent(command, execution.client.host.hostKey);
+    const [session] = await db
+      .select()
+      .from(schema.runSessions)
+      .where(eq(schema.runSessions.runId, runId));
+
+    if (
+      intent.owner.variant !== "scratch" ||
+      !session.hostSessionId ||
+      !session.acpSessionId
+    )
+      throw new Error("Expected an owned scratch session");
+    const legacy = {
+      dialogStatus: "Running" as const,
+      activePromptIntent: null,
+      errorMetadata: { reason: "scratch_dispatch_unknown" },
+    };
+
+    await db
+      .update(schema.scratchRuns)
+      .set(legacy)
+      .where(eq(schema.scratchRuns.runId, runId));
+    expect(
+      await completeOwnedScratchCreate(
+        db as unknown as Db,
+        execution,
+        intent.owner,
+        {
+          sessionId: session.hostSessionId,
+          acpSessionId: session.acpSessionId,
+        },
+      ),
+    ).toBeNull();
+    const [after] = await db
+      .select()
+      .from(schema.scratchRuns)
+      .where(eq(schema.scratchRuns.runId, runId));
+
+    expect(after).toMatchObject(legacy);
+    expect(await promptCommands(runId)).toHaveLength(0);
+  }, 120_000);
+
+  it("replays the same prompt after its permission request without admitting another turn", async () => {
+    const runId = await launch("");
+    const hosts = createExecutionHosts({ db: db as unknown as Db });
+    const sending = sendScratchUserMessage({
+      runId,
+      body: {
+        content:
+          'fixture-output:{"bytes":0,"text":"permission replay","permission":true}',
+        attachments: [],
+      },
+    }).catch((error: unknown) => error);
+
+    try {
+      await expect
+        .poll(
+          async () => {
+            const [run] = await db
+              .select()
+              .from(schema.runs)
+              .where(eq(schema.runs.id, runId));
+
+            return run.status;
+          },
+          { timeout: 30_000, interval: 25 },
+        )
+        .toBe("NeedsInput");
+      const [scratch] = await db
+        .select()
+        .from(schema.scratchRuns)
+        .where(eq(schema.scratchRuns.runId, runId));
+      const intent = readScratchPromptIntent(scratch.activePromptIntent);
+      const execution = await hosts.executionFor(runId);
+      const before = await promptCommands(runId);
+      const replay = (payload: SendPromptInput) =>
+        execution.client.prompt(intent.hostSessionId, payload, {
+          admitOwner: (tx) =>
+            admitFrozenScratchPrompt(
+              tx,
+              execution.client,
+              intent.hostSessionId,
+              scratchOwnerFromIntent(intent),
+              payload,
+            ),
+        });
+      const handle = await replay(intent.payload);
+
+      expect(handle.commandId).toBe(before[0].id);
+      expect(await promptCommands(runId)).toHaveLength(1);
+      await expect(
+        replay({ ...intent.payload, prompt: "changed" }),
+      ).rejects.toMatchObject({
+        details: { causeCode: "scratch_intent_changed" },
+      });
+      const open = await db
+        .select()
+        .from(schema.hitlRequests)
+        .where(eq(schema.hitlRequests.runId, runId));
+
+      expect(open).toHaveLength(1);
+      expect(open[0].respondedAt).toBeNull();
+    } finally {
+      const { stopScratchWorkbench } =
+        await import("@/lib/scratch-runs/service");
+
+      await stopScratchWorkbench(runId, {
+        db: db as unknown as Db,
+        executionHosts: hosts,
+      });
+      await sending;
+    }
+  }, 120_000);
+
   it("S1 retired command: a tombstone blocks an old frozen turn without another host prompt", async () => {
     const runId = await launch('fixture-output:{"bytes":0,"text":"retained"}');
     const hosts = createExecutionHosts({ db: db as unknown as Db });
@@ -478,6 +611,38 @@ describe("Scratch prompt owners through the production service", () => {
     );
     expect(command?.applicationState).toBe("applied");
     expect(scratch.dialogStatus).toBe("WaitingForUser");
+
+    // A create recovery worker can finish its handoff while Running, then
+    // reach admission only after another sender applies and clears the turn.
+    const hosts = createExecutionHosts({ db: db as unknown as Db });
+    const execution = await hosts.executionFor(runId);
+    const delayed = await sendScratchPromptAndProjectEvents({
+      db: db as unknown as Db,
+      runId,
+      sessionId: command.targetSessionId!,
+      stepId: "scratch",
+      prompt: 'fixture-output:{"bytes":0,"text":"hello"}',
+      execution,
+      owner: { variant: "initial" },
+    }).catch((error: unknown) => error);
+
+    expect(isYieldedScratchTurn(delayed)).toBe(true);
+    await failScratchMessageTurn({
+      db: db as unknown as Db,
+      runId,
+      messageId: null,
+      hostSessionId: command.targetSessionId!,
+      isLocalPackageAssistant: false,
+      err: delayed,
+    });
+    expect(await promptCommands(runId)).toHaveLength(1);
+    const [after] = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, runId));
+
+    expect(after.status).toBe("Running");
+    expect(after.executionAssignmentId).toBe(assignment.id);
   }, 240_000);
 
   it("owner-scratch-message: the accepted transcript row owns its own turn", async () => {

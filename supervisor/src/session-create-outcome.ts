@@ -2,6 +2,7 @@ import type { Logger } from "pino";
 import type { CommandReceiptRow, HostState } from "./host-state";
 import type { RegistryEntry } from "./registry";
 import type { SessionCreateFailure } from "../../runtime/session-create-failure";
+import type { SupervisorErrorDetails } from "./types";
 
 import { safeErrorCauseChain } from "../../runtime/safe-error-cause";
 
@@ -16,7 +17,7 @@ export class UnsettledSessionCreateError extends SupervisorError {
     input: Readonly<{
       runId: string;
       sessionId: string;
-      stage: "process_exit" | "terminal_output";
+      stage: NonNullable<SupervisorErrorDetails["stage"]>;
       killGraceMs: number;
       cause: unknown;
       retainedSession: RegistryEntry | null;

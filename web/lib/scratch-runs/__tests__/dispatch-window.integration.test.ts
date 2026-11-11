@@ -47,7 +47,12 @@ afterEach(async (context) => {
   try {
     if (context.task.result?.state === "fail") {
       // eslint-disable-next-line no-console
-      console.error(JSON.stringify(await fixture?.tails()));
+      console.error(
+        JSON.stringify({
+          errors: context.task.result.errors,
+          ...(await fixture?.tails()),
+        }),
+      );
     }
   } finally {
     await fixture?.close();
@@ -831,6 +836,19 @@ it("S3 transport: a held parked exit is fenced before the canonical scratch cons
   try {
     const initial = await initialPrompt.awaitReached(60_000);
 
+    // Install the terminal barrier before the host starts its permission
+    // deadline. Persistence of the request can lag that deadline on CI.
+    oldTerminal = fixture.proxy.arm(
+      {
+        caseId: "s3-parked-prompt-terminal",
+        method: "GET",
+        path: /^\/runtime-events$/,
+        eventType: "session.command",
+        commandPhases: ["completed", "rejected"],
+        commandId: initial.commandId!,
+      },
+      "hold-events",
+    );
     initialPrompt.release();
     initialReleased = true;
     const request = await poll(
@@ -847,23 +865,6 @@ it("S3 transport: a held parked exit is fenced before the canonical scratch cons
       },
       10_000,
       "parked permission before its held exit",
-    );
-    const initialCommand = await fixture.database.pool.query<{ id: string }>(
-      "SELECT id FROM execution_commands WHERE run_id=$1 AND kind='session.prompt'",
-      [request.run_id],
-    );
-
-    // The accepted frame precedes the persisted permission. Hold only the
-    // upcoming terminal of this known command so its observer stays alive.
-    oldTerminal = fixture.proxy.arm(
-      {
-        caseId: "s3-parked-prompt-terminal",
-        method: "GET",
-        path: /^\/runtime-events$/,
-        eventType: "session.command",
-        commandId: initialCommand.rows[0]!.id,
-      },
-      "hold-events",
     );
     const [exitWitness] = await Promise.all([
       oldExit.awaitReached(60_000),
