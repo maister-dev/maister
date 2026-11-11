@@ -2,9 +2,12 @@ import type { Logger } from "pino";
 import type { HostState } from "./host-state";
 import type { PendingPermissionRegistry } from "./pending-permissions";
 import type { RegistryEntry, SessionRegistry } from "./registry";
-import type { CommandFence } from "./types";
+import type { CommandFence, SupervisorErrorDetails } from "./types";
 import type { SessionRecord } from "./types";
 import type { ChildProcess } from "node:child_process";
+import type { ProcessGroupObservation } from "../../runtime/process-group";
+
+import { setTimeout as delay } from "node:timers/promises";
 
 import { inspectProcessGroup } from "../../runtime/process-group";
 import { safeErrorCauseChain } from "../../runtime/safe-error-cause";
@@ -261,25 +264,26 @@ export async function terminateSessionProcess(
   entry: RegistryEntry,
   killGraceMs: number,
   logger: Logger,
-): Promise<"confirmed" | "process_exit" | "terminal_output"> {
+): Promise<"confirmed" | NonNullable<SupervisorErrorDetails["stage"]>> {
+  const termDeadline = performance.now() + killGraceMs;
+
   if (entry.child.exitCode === null && entry.child.signalCode === null)
     entry.record.stopOutputForTeardown?.();
   else entry.record.drainSessionOutput?.();
   requestOwnedSessionTermination(entry, "SIGTERM", logger);
-  if (await waitForChildExit(entry, killGraceMs)) {
-    return (await ownedSessionProcessGroupRetired(entry))
-      ? "confirmed"
-      : "process_exit";
-  }
+  if (
+    await waitForChildExit(entry, Math.max(0, termDeadline - performance.now()))
+  )
+    return waitForOwnedSessionProcessGroup(entry, termDeadline, logger);
   logger.warn(
     { sessionId: entry.record.sessionId, killGraceMs },
     "sigterm-grace-expired-sigkill",
   );
   requestOwnedSessionTermination(entry, "SIGKILL", logger);
+  const killDeadline = performance.now() + killGraceMs;
+
   if (await waitForChildExit(entry, killGraceMs)) {
-    return (await ownedSessionProcessGroupRetired(entry))
-      ? "confirmed"
-      : "process_exit";
+    return waitForOwnedSessionProcessGroup(entry, killDeadline, logger);
   }
 
   return entry.child.exitCode !== null || entry.child.signalCode !== null
@@ -293,7 +297,17 @@ export async function ownedSessionProcessGroupRetired(
 ): Promise<boolean> {
   if (owner.child.exitCode === null && owner.child.signalCode === null)
     return false;
-  if (!owner.record.processGroup) return true;
+
+  return (
+    (await observeOwnedSessionProcessGroup(owner, 5_000)).state === "retired"
+  );
+}
+
+async function observeOwnedSessionProcessGroup(
+  owner: Readonly<{ record: SessionRecord }>,
+  timeoutMs: number,
+): Promise<ProcessGroupObservation> {
+  if (!owner.record.processGroup) return { state: "retired" };
   const context = readHostProcessContext();
 
   if (
@@ -301,11 +315,54 @@ export async function ownedSessionProcessGroupRetired(
     owner.record.processContext.osBootIdentity !== context.osBootIdentity ||
     owner.record.processContext.pidNamespace !== context.pidNamespace
   )
-    return false;
+    return { state: "unavailable" };
 
-  return (
-    (await inspectProcessGroup(owner.record.processGroup)).state === "retired"
+  return inspectProcessGroup(owner.record.processGroup, timeoutMs);
+}
+
+/** The leader's exit is only the start of descendant retirement. Retry the
+ * OS proof within the remaining grace, without signalling a now-unowned PGID. */
+async function waitForOwnedSessionProcessGroup(
+  entry: RegistryEntry,
+  deadline: number,
+  logger: Logger,
+): Promise<"confirmed" | "process_group_active" | "process_group_unavailable"> {
+  let observation: ProcessGroupObservation = { state: "unavailable" };
+
+  while (performance.now() < deadline) {
+    observation = await observeOwnedSessionProcessGroup(
+      entry,
+      Math.max(1, Math.ceil(deadline - performance.now())),
+    );
+
+    if (observation.state === "retired") return "confirmed";
+    const remainingMs = deadline - performance.now();
+
+    if (remainingMs <= 25) {
+      if (remainingMs > 0) await delay(Math.ceil(remainingMs));
+      break;
+    }
+    await delay(25);
+  }
+  // The group can disappear during the final delay or while a probe uses
+  // the remaining budget. Recheck absence without launching another process.
+  if ((await observeOwnedSessionProcessGroup(entry, 0)).state === "retired")
+    return "confirmed";
+  logger.warn(
+    {
+      runId: entry.record.runId,
+      sessionId: entry.record.sessionId,
+      processGroup: entry.record.processGroup,
+      observation,
+      exitCode: entry.child.exitCode,
+      signalCode: entry.child.signalCode,
+    },
+    "session-process-group-retirement-unconfirmed",
   );
+
+  return observation.state === "active"
+    ? "process_group_active"
+    : "process_group_unavailable";
 }
 
 /** Darwin may refuse signals to an already-exiting owned group; only the subsequent positive lifetime proof can settle it. */

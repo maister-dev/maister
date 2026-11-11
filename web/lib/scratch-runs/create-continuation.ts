@@ -220,6 +220,9 @@ async function completeScratchCreateHandoff(
       if (current.owner.ref.assignmentId === execution.client.assignment.id)
         return continuation;
     }
+    // Only Starting owns the initial handoff. A Running row without an intent
+    // can be a legacy turn; an old create must not reset it or erase diagnostics.
+    if (scratch.dialogStatus !== "Starting") return null;
     await tx
       .update(scratchRuns)
       .set({

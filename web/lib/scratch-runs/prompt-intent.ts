@@ -11,13 +11,18 @@ import { z } from "zod";
 
 import { canonicalCommandJson } from "../../../runtime/command-json";
 
-import { admitScratchPrompt } from "./prompt-owner";
+import { admitScratchPrompt, scratchPromptOperationKey } from "./prompt-owner";
+import { lockScratchRunRows } from "./turn-completion";
 
 import { executionCommands, runMessages, scratchRuns } from "@/lib/db/schema";
 import { PromptPayloadSchema } from "@/lib/execution-host/command-request";
 import { ScratchPromptOwnerSchema } from "@/lib/execution-host/prompt-owner-contract";
 import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owner-errors";
 import { MaisterError } from "@/lib/errors";
+import {
+  lockCurrentSessionAssignment,
+  staleSessionBinding,
+} from "@/lib/execution-host/session-binding";
 
 const PromptIntentSchema = z
   .object({
@@ -140,14 +145,43 @@ export async function admitFrozenScratchPrompt(
   owner: ScratchPromptOwner,
   payload: SendPromptInput,
 ): Promise<PromptOwnerAdmission> {
-  const admission = await admitScratchPrompt(tx, client, hostSessionId, owner);
+  const assignment = await lockCurrentSessionAssignment(tx, {
+    runId: client.assignment.runId,
+    assignmentId: client.assignment.id,
+  });
+
+  if (!assignment)
+    throw staleSessionBinding(client.assignment.runId, client.assignment.id);
+  await lockScratchRunRows(tx, client.assignment.runId);
   const [scratch] = await tx
     .select({ intent: scratchRuns.activePromptIntent })
     .from(scratchRuns)
     .where(eq(scratchRuns.runId, client.assignment.runId));
+  const operationKey = scratchPromptOperationKey(owner, assignment.id);
+  const [existing] = await tx
+    .select({
+      id: executionCommands.id,
+      applicationState: executionCommands.applicationState,
+    })
+    .from(executionCommands)
+    .where(
+      and(
+        eq(executionCommands.runId, client.assignment.runId),
+        eq(executionCommands.kind, "session.prompt"),
+        eq(executionCommands.logicalOperationKey, operationKey),
+      ),
+    )
+    .limit(1);
+
+  // A delayed create continuation can reach admission after the owner has
+  // applied the turn and cleared its intent. It has no new work to admit.
+  if (existing?.applicationState === "applied")
+    throw new MaisterError("CONFLICT", "scratch turn is already applied", {
+      details: { reason: "prompt_owner_superseded" },
+    });
   const intent = readScratchPromptIntent(scratch?.intent);
 
-  if (intent.logicalOperationKey !== admission.logicalOperationKey)
+  if (intent.logicalOperationKey !== operationKey)
     throw new MaisterError(
       "CONFLICT",
       "scratch turn belongs to a newer frozen intent",
@@ -159,11 +193,24 @@ export async function admitFrozenScratchPrompt(
 
   if (
     intent.hostSessionId !== hostSessionId ||
-    intent.logicalOperationKey !== admission.logicalOperationKey ||
-    canonicalCommandJson(intent.owner) !==
-      canonicalCommandJson(admission.owner) ||
+    canonicalCommandJson(scratchOwnerFromIntent(intent)) !==
+      canonicalCommandJson(owner) ||
     canonicalCommandJson(intent.payload) !==
       canonicalCommandJson(JSON.parse(JSON.stringify(payload)))
+  )
+    throw new PromptOwnerInvariantError("scratch_intent_changed");
+  // A concurrent sender may already have reached NeedsInput. Replaying its
+  // immutable command is not admission of a new turn; the ledger checks the
+  // current binding and full request hash before returning the existing row.
+  if (existing)
+    return {
+      owner: intent.owner,
+      logicalOperationKey: intent.logicalOperationKey,
+    };
+  const admission = await admitScratchPrompt(tx, client, hostSessionId, owner);
+
+  if (
+    canonicalCommandJson(intent.owner) !== canonicalCommandJson(admission.owner)
   )
     throw new PromptOwnerInvariantError("scratch_intent_changed");
   const blocker = await findScratchPromptObligation(tx, intent);

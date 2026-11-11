@@ -4204,12 +4204,12 @@ components:
         sessionId: { type: string }
         stage:
           type: string
-          enum: [process_exit, terminal_output]
+          enum: [process_exit, terminal_output, process_group_active, process_group_unavailable]
           description: (`session_delete_exit_unconfirmed` / `session_create_exit_unconfirmed`) The unconfirmed quiescence barrier.
         killGraceMs:
           type: integer
           minimum: 0
-          description: (`session_delete_exit_unconfirmed` / `session_create_exit_unconfirmed`) The timeout used for each termination barrier.
+          description: (`session_delete_exit_unconfirmed` / `session_create_exit_unconfirmed`) The grace budget per signal, shared by process exit, terminal output and process group retirement.
         sessionCreateQuiescence:
           type: object
           additionalProperties: false

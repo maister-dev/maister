@@ -42,6 +42,9 @@ export async function startReadyRealFixtureStack(): Promise<{
     supervisorUrl: supervisor.url,
     runtimeRoot: webRoot,
     worktreesRoot,
+    // Cleanup controls own their processes and data; external catalogue clones
+    // must not race shutdown or turn a GitHub outage into a fixture leak.
+    env: { MAISTER_DEFAULT_PACKAGE_SOURCES: "" },
   });
   const socket = connect(
     Number(process.env.MAISTER_TEST_CLEANUP_CONTROL_PORT),

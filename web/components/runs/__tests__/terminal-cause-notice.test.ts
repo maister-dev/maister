@@ -46,6 +46,27 @@ function render(
 }
 
 describe("TerminalCauseNotice", () => {
+  it.each([en, ru])(
+    "explains session cleanup failure without claiming the runner is unavailable",
+    (messages) => {
+      const labels = labelsOf(messages);
+      const html = renderToStaticMarkup(
+        createElement(TerminalCauseNotice, {
+          status: "Failed",
+          cause: {
+            code: "EXECUTOR_UNAVAILABLE",
+            reason: "session_delete_exit_unconfirmed",
+            source: "graph",
+          },
+          labels,
+        }),
+      ).replaceAll("&#x27;", "'");
+
+      expect(html).toContain(labels.reasons.session_delete_exit_unconfirmed);
+      expect(html).not.toContain(labels.codes.EXECUTOR_UNAVAILABLE);
+    },
+  );
+
   it("a budget-failed run renders the title and the reason's copy, which leads over the code's", () => {
     const html = render("Failed", {
       code: "BUDGET_EXCEEDED",

@@ -306,6 +306,8 @@ async function assertDarwinInspectorTransportRetries(
       { mode: 2, failures: -1, calls: 1, signal: null, code: 70 },
       { mode: 3, failures: -1, calls: 1, signal: null, code: null },
       { mode: 4, failures: -1, calls: 1, signal: "SIGTERM", code: null },
+      { mode: 5, failures: 1, calls: 2, signal: null, code: null },
+      { mode: 5, failures: -1, calls: 2, signal: null, code: null },
     ] as const;
     const moduleUrl = new URL("../process-invocation.ts", import.meta.url).href;
     const source = `const reader = await import(${JSON.stringify(moduleUrl)}); try { const identities = await reader.findProcessIdentities(${JSON.stringify(invocation)}, ${JSON.stringify([foreign.pid, owned.pid, owned.pid])}); process.stdout.write(JSON.stringify({ identities })); } catch (error) { const cause = error.cause; process.stdout.write(JSON.stringify({ error: { name: error.name, message: error.message, cause: cause ? { code: cause.code ?? null, signal: cause.signal ?? null, killed: cause.killed ?? null, stderr: cause.stderr ?? null } : null } })); }`;
@@ -339,7 +341,8 @@ async function assertDarwinInspectorTransportRetries(
       const calls = Number(
         (await readFile(controlFile, "utf8")).trim().split(/\s+/u)[2],
       );
-      const recovered = control.mode === 1 && control.failures === 1;
+      const recovered =
+        (control.mode === 1 || control.mode === 5) && control.failures === 1;
 
       expect
         .soft(calls, `native transport mode ${control.mode}`)
@@ -352,6 +355,11 @@ async function assertDarwinInspectorTransportRetries(
           name: "InvocationOwnershipError",
           message: "malformed native process identity",
           cause: null,
+        });
+      } else if (control.mode === 5) {
+        expect.soft(result.error).toMatchObject({
+          name: "InvocationOwnershipError",
+          message: `live process ${foreign.pid} could not be inspected`,
         });
       } else {
         expect.soft(result.error).toMatchObject({
@@ -383,12 +391,28 @@ async function assertDarwinInspectorTransportRetries(
               retrying?: boolean;
             }>,
         )
-        .filter((event) => event.event === "process-inspection-command-failed");
+        .filter(
+          (event) =>
+            event.event ===
+            (control.mode === 5
+              ? "process-inspection-incomplete"
+              : "process-inspection-command-failed"),
+        );
 
       expect
         .soft(diagnostics)
         .toHaveLength(control.mode === 3 ? 0 : recovered ? 1 : control.calls);
       for (const [index, diagnostic] of diagnostics.entries()) {
+        if (control.mode === 5) {
+          expect.soft(diagnostic).toMatchObject({
+            level: "warn",
+            attempt: index + 1,
+            attempts: 2,
+            selectedPids: [foreign.pid, owned.pid],
+            retrying: index === 0,
+          });
+          continue;
+        }
         expect.soft(diagnostic).toMatchObject({
           level: "warn",
           attempt: index + 1,

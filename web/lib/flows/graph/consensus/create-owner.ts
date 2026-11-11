@@ -61,6 +61,9 @@ export async function lockConsensusCreateOwner(
       })
     )
       return false;
+    // A completed cell prevents another create, but its existing session still
+    // belongs to this visit until cleanup. Projection may lag prompt application.
+    if (check === "ack") return true;
     const [verdict] = await tx
       .select({ id: consensusRoundVerdicts.id })
       .from(consensusRoundVerdicts)
@@ -74,6 +77,7 @@ export async function lockConsensusCreateOwner(
     )
   )
     return false;
+  if (check === "ack") return true;
   const [synthesis] = await tx
     .select({ id: artifactInstances.id })
     .from(artifactInstances)

@@ -147,7 +147,9 @@ export async function prepareConsensusInputEvidence(
       .select({ currentStepId: runs.currentStepId, status: runs.status })
       .from(runs)
       .where(eq(runs.id, input.runId))
-      .for("update");
+      // The driver already holds NO KEY UPDATE. Upgrading it would deadlock
+      // with an event ingester holding an FK KEY SHARE and awaiting this run.
+      .for("no key update");
     const [attempt] = await tx
       .select({ status: nodeAttempts.status, runId: nodeAttempts.runId })
       .from(nodeAttempts)

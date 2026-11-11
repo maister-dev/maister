@@ -3075,6 +3075,17 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         );
 
         if (termination !== "confirmed") {
+          logger.error(
+            {
+              reason: "session_delete_exit_unconfirmed",
+              stage: termination,
+              sessionId: req.params.id,
+              runId: entry.record.runId,
+              processGroup: entry.record.processGroup,
+              killGraceMs,
+            },
+            "session-delete-exit-unconfirmed",
+          );
           throw new SupervisorError(
             "EXECUTOR_UNAVAILABLE",
             "session deletion could not confirm process exit and durable terminal output",

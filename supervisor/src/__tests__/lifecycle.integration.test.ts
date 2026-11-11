@@ -560,7 +560,7 @@ describe("supervisor lifecycle integration", () => {
       "DELETE",
     );
 
-    expect(response.status).toBe(204);
+    expect(response.status, JSON.stringify(response.body)).toBe(204);
     expect(entry.child.signalCode).toBe("SIGKILL");
     expect(() => process.kill(entry.record.pid, 0)).toThrow();
     expect(entry.record.terminalPublished).toBe(true);
@@ -867,12 +867,13 @@ describe("supervisor lifecycle integration", () => {
           register(...args);
           const entry = host.registry.get(args[0].sessionId)!;
           const kill = process.kill.bind(process);
-          // The process is real. Withhold only delivery of the final signal to
-          // deterministically expose the host's unconfirmed-exit boundary.
+          // Withhold termination of this real group until recovery. The
+          // handshake can time out before the adapter installs its TERM handler.
           const intercepted = vi
             .spyOn(process, "kill")
             .mockImplementation((pid, signal) =>
-              pid === -entry.record.processGroup! && signal === "SIGKILL"
+              pid === -entry.record.processGroup! &&
+              (signal === "SIGTERM" || signal === "SIGKILL")
                 ? true
                 : kill(pid, signal),
             );
@@ -989,7 +990,7 @@ describe("supervisor lifecycle integration", () => {
       const body = res.body as { code: string; message: string };
 
       expect(body.code).toBe("EXECUTOR_UNAVAILABLE");
-      expect(body.message).toContain("newSession");
+      expect(body.message, JSON.stringify(res.body)).toContain("newSession");
       expect(body.message).toContain("timed out");
       expect(res.body).toMatchObject({
         details: {

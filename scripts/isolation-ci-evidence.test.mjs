@@ -18,7 +18,7 @@ function stageEvidence(stage, part) {
   };
   const bytes = Buffer.from(JSON.stringify(report));
   const receipt = {
-    schema: isolationReceiptSchema, identity, stage, part, parts: 2,
+    schema: isolationReceiptSchema, identity, stage, part, parts: 3,
     platform: "darwin", arch: "x64", node: "24.19.0", concurrency: 1,
     runnerImage: { os: "macos15", version: "20261019.14" },
     invocationId: `00000000-0000-4000-8000-00000000000${part * 2 + (stage === "part" ? 1 : 0)}`,
@@ -33,7 +33,7 @@ async function completeEvidence(context) {
   const directory = await mkdtemp(join(tmpdir(), "maister-isolation-receipts-"));
 
   context.after(() => rm(directory, { recursive: true, force: true }));
-  for (const part of [1, 2]) {
+  for (const part of [1, 2, 3]) {
     for (const stage of ["preflight", "part"]) {
       const root = join(directory, `part-${part}`, stage);
       const { receipt, bytes } = stageEvidence(stage, part);
@@ -47,7 +47,7 @@ async function completeEvidence(context) {
   return directory;
 }
 
-test("combined isolation validates two independent preflights and exactly all 51 required cases", async (context) => {
+test("combined isolation validates three independent preflights and exactly all 51 required cases", async (context) => {
   const directory = await completeEvidence(context);
   const nested = join(directory, "part-1", "maister-ab-isolation-negative");
 
@@ -58,9 +58,9 @@ test("combined isolation validates two independent preflights and exactly all 51
   assert.equal(combined.outcome, "passed");
   assert.equal(combined.files.length, 7);
   assert.equal(combined.cases, 51);
-  assert.equal(combined.preflights, 2);
-  assert.equal(combined.stages.length, 4);
-  assert.deepEqual(combined.stages.filter((row) => row.stage === "part").map((row) => row.cases), [19, 32]);
+  assert.equal(combined.preflights, 3);
+  assert.equal(combined.stages.length, 6);
+  assert.deepEqual(combined.stages.filter((row) => row.stage === "part").map((row) => row.cases), [19, 22, 10]);
   assert.deepEqual(JSON.parse(await readFile(join(directory, "combined.json"), "utf8")), combined);
 });
 
@@ -80,7 +80,7 @@ test("combined isolation rejects a duplicated part receipt", async (context) => 
   await assert.rejects(aggregateIsolationEvidence(directory, identity, "success"), /duplicated isolation part/u);
 });
 
-test("combined isolation records failure when either independent preflight is missing", async (context) => {
+test("combined isolation records failure when any independent preflight is missing", async (context) => {
   const directory = await completeEvidence(context);
 
   await rm(join(directory, "part-2", "preflight", "receipt.json"));

@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 
 import * as sessionOwnership from "../session-process-ownership";
+import * as processGroups from "../../../runtime/process-group";
 import { terminateSessionProcess, waitForChildExit } from "../execution-fence";
 import { inspectProcessGroup } from "../../../runtime/process-group";
 import {
@@ -28,6 +29,9 @@ import {
 import {
   bootHost,
   createEnvelope,
+  createSession,
+  envelope,
+  fenceFor,
   postJson,
   silentLogger,
 } from "./_fixtures/boot-host";
@@ -128,11 +132,15 @@ afterEach(async () => {
 
 it("keeps an inherited descendant in physical ownership after its adapter exits and refuses scoped inventory until that descendant retires", async () => {
   vi.stubEnv("MAISTER_ACP_HANDSHAKE_TIMEOUT_MS", "5000");
+  const logRoot = await mkdtemp(join(tmpdir(), "session-ownership-handshake-"));
+  const invocationLog = join(logRoot, "invocations.jsonl");
   const owner = await ownedHost({
     fixture: "inherited-descendant-acp.mjs",
-    fixtureArgs: ["--hang-new-session"],
+    fixtureArgs: ["--hang-new-session", "--invocation-log", invocationLog],
     killGraceMs: 25,
   });
+
+  await registerRoot(owner.invocation, logRoot, "session-handshake-log");
   const pidFile = join(owner.host.runtimeRoot, "descendant.pid");
   const create = await createEnvelope(
     owner.host,
@@ -152,9 +160,13 @@ it("keeps an inherited descendant in physical ownership after its adapter exits 
 
   try {
     await vi.waitFor(
-      () => {
+      async () => {
         expect(owner.host.registry.list()[0]?.adapterPid).toBeGreaterThan(0);
         expect(existsSync(pidFile)).toBe(true);
+        expect(existsSync(invocationLog)).toBe(true);
+        expect(await readFile(invocationLog, "utf8")).toContain(
+          '"method":"session/new"',
+        );
       },
       { timeout: 4000, interval: 25 },
     );
@@ -180,7 +192,7 @@ it("keeps an inherited descendant in physical ownership after its adapter exits 
     if ("error" in outcome) throw outcome.error;
     const response = outcome.value;
 
-    expect(response.status).toBe(503);
+    expect(response.status, JSON.stringify(response.body)).toBe(503);
     expect(response.body).toMatchObject({
       details: { reason: "session_create_exit_unconfirmed" },
     });
@@ -192,7 +204,7 @@ it("keeps an inherited descendant in physical ownership after its adapter exits 
       state: "active",
     });
     expect(await terminateSessionProcess(entry, 25, silentLogger)).toBe(
-      "process_exit",
+      "process_group_active",
     );
     const refused = await fetch(
       `${owner.host.url}/sessions?runId=owned-descendant`,
@@ -242,6 +254,181 @@ it("keeps an inherited descendant in physical ownership after its adapter exits 
   } finally {
     await pending;
   }
+});
+
+it.each(["within grace", "at deadline"] as const)(
+  "DELETE waits for an inherited descendant after the leader exits, then durably replays success (%s)",
+  async (retirement) => {
+    const owner = await ownedHost({
+      fixture: "retiring-descendant-acp.mjs",
+      killGraceMs: 2_000,
+    });
+    const runId = "retiring-descendant";
+    const pidFile = join(owner.host.runtimeRoot, "descendant.pid");
+    const { sessionId } = await createSession(
+      owner.host,
+      { runId },
+      {
+        executor: {
+          agent: "claude",
+          model: "fixture",
+          env: { MAISTER_DESCENDANT_PID_FILE: pidFile },
+        },
+      },
+    );
+    const entry = owner.host.registry.get(sessionId)!;
+    const leader = await recordOwnedProcess(owner, entry.record.pid);
+    const descendant = await recordOwnedProcess(
+      owner,
+      Number(await readFile(pidFile, "utf8")),
+    );
+    const inspect = processGroups.inspectProcessGroup;
+    let observedLiveDescendant = false;
+    let deadlineReached = false;
+    const now = performance.now.bind(performance);
+
+    vi.spyOn(performance, "now").mockImplementation(
+      () => now() + (deadlineReached ? 2_000 : 0),
+    );
+
+    expect(descendant.identity.pgid).toBe(leader.identity.pgid);
+    vi.spyOn(processGroups, "inspectProcessGroup").mockImplementation(
+      async (...args) => {
+        const observation = await inspect(...args);
+
+        if (
+          !observedLiveDescendant &&
+          args[0] === leader.identity.pgid &&
+          observation.state === "active"
+        ) {
+          expect(
+            entry.child.exitCode !== null || entry.child.signalCode !== null,
+          ).toBe(true);
+          expect(entry.record.terminalPublished).toBe(true);
+          observedLiveDescendant = true;
+          // Release only after the real OS proof observes the leader/descendant
+          // lifetime gap. The former single-probe implementation fails here.
+          await signalInvocationProcess(
+            owner.invocation,
+            descendant.identity,
+            "SIGUSR2",
+          );
+          if (retirement === "at deadline") {
+            await assertInvocationGroupEmpty(
+              owner.invocation,
+              leader.identity.pgid,
+            );
+            await expect
+              .poll(
+                () => {
+                  try {
+                    process.kill(-leader.identity.pgid, 0);
+
+                    return false;
+                  } catch (error) {
+                    if ((error as NodeJS.ErrnoException).code !== "ESRCH")
+                      throw error;
+
+                    return true;
+                  }
+                },
+                { timeout: 2_000, interval: 10 },
+              )
+              .toBe(true);
+            // Exhaust the grace after a real active observation and real exit,
+            // reproducing retirement during the final observation/delay window.
+            deadlineReached = true;
+          }
+        }
+
+        return observation;
+      },
+    );
+    const command = envelope("session.delete", fenceFor(owner.host, runId));
+    const response = await postJson(
+      `${owner.host.url}/sessions/${sessionId}`,
+      command,
+      "DELETE",
+    );
+
+    expect(observedLiveDescendant).toBe(true);
+    expect(response.status, JSON.stringify(response.body)).toBe(204);
+    expect(await inspect(leader.identity.pgid)).toEqual({ state: "retired" });
+    expect(owner.host.hostState.getReceipt(command.command.id)).toMatchObject({
+      phase: "completed",
+      httpStatus: 204,
+    });
+    expect(owner.host.hostState.sessionProcessesForRun(runId)[0]).toMatchObject(
+      {
+        phase: "released",
+      },
+    );
+    const replay = await postJson(
+      `${owner.host.url}/sessions/${sessionId}`,
+      command,
+      "DELETE",
+    );
+
+    expect(replay.status).toBe(204);
+    expect(replay.headers.get("x-maister-command-replayed")).toBe("true");
+  },
+);
+
+it("DELETE retains ownership and records the group stage when a descendant outlives the grace", async () => {
+  const owner = await ownedHost({
+    fixture: "retiring-descendant-acp.mjs",
+    killGraceMs: 250,
+  });
+  const runId = "stuck-descendant";
+  const pidFile = join(owner.host.runtimeRoot, "descendant.pid");
+  const { sessionId } = await createSession(
+    owner.host,
+    { runId },
+    {
+      executor: {
+        agent: "claude",
+        model: "fixture",
+        env: { MAISTER_DESCENDANT_PID_FILE: pidFile },
+      },
+    },
+  );
+  const entry = owner.host.registry.get(sessionId)!;
+  const leader = await recordOwnedProcess(owner, entry.record.pid);
+
+  await recordOwnedProcess(owner, Number(await readFile(pidFile, "utf8")));
+  const command = envelope("session.delete", fenceFor(owner.host, runId));
+  const started = performance.now();
+  const response = await postJson(
+    `${owner.host.url}/sessions/${sessionId}`,
+    command,
+    "DELETE",
+  );
+
+  expect(performance.now() - started).toBeGreaterThanOrEqual(250);
+  expect(response.status).toBe(503);
+  expect(response.body).toMatchObject({
+    code: "EXECUTOR_UNAVAILABLE",
+    details: {
+      reason: "session_delete_exit_unconfirmed",
+      stage: "process_group_active",
+      sessionId,
+      runId,
+      killGraceMs: 250,
+    },
+  });
+  expect(entry.child.exitCode !== null || entry.child.signalCode !== null).toBe(
+    true,
+  );
+  expect(entry.record.terminalPublished).toBe(true);
+  expect(await inspectProcessGroup(leader.identity.pgid)).toMatchObject({
+    state: "active",
+  });
+  expect(owner.host.hostState.sessionProcessesForRun(runId)[0].phase).toBe(
+    "registered",
+  );
+  expect(owner.host.hostState.getReceipt(command.command.id)?.httpStatus).toBe(
+    503,
+  );
 });
 
 it.each(["protected", "guard-disabled"] as const)(

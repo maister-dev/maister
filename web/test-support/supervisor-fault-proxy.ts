@@ -55,6 +55,7 @@ export type FaultSelector = {
   path: RegExp;
   commandId?: string;
   eventType?: string;
+  commandPhases?: readonly string[];
   objectId?: string;
   sequence?: string;
   assignmentEpoch?: number;
@@ -82,6 +83,7 @@ export type FaultWitness = {
   status: number | null;
   sequence: string | null;
   eventType: string | null;
+  commandPhase?: string;
   lastEventId: string | null;
   streamId: string | null;
   runId?: string;
@@ -357,6 +359,9 @@ export async function startSupervisorFaultProxy(
           rule.selector.commandId === witness.commandId) &&
         (!rule.selector.eventType ||
           rule.selector.eventType === witness.eventType) &&
+        (!rule.selector.commandPhases ||
+          (witness.commandPhase !== undefined &&
+            rule.selector.commandPhases.includes(witness.commandPhase))) &&
         (!rule.selector.sequence ||
           rule.selector.sequence === witness.sequence) &&
         (!rule.selector.objectId || rule.selector.objectId === objectId) &&
@@ -508,6 +513,8 @@ export async function startSupervisorFaultProxy(
                   typeof event.streamId === "string" ? event.streamId : null,
                 eventType:
                   typeof event.eventType === "string" ? event.eventType : null,
+                commandPhase:
+                  typeof payload.phase === "string" ? payload.phase : undefined,
                 commandId:
                   typeof payload.commandId === "string"
                     ? payload.commandId

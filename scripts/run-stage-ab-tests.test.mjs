@@ -26,17 +26,15 @@ test("CLI accepts only valid web shards and preserves unsharded slices", () => {
   }
 });
 
-test("isolation CI parts retain the complete disjoint 19/32 whole-suite inventory", () => {
-  const first = parseLaneInvocation(["isolation", "--part", "1/2"], "darwin");
-  const second = parseLaneInvocation(["isolation", "--part", "2/2"], "darwin");
+test("isolation CI parts retain the complete disjoint 19/22/10 whole-suite inventory", () => {
+  const parts = [1, 2, 3].map((part) => parseLaneInvocation(["isolation", "--part", `${part}/3`], "darwin"));
 
-  assert.deepEqual(first, { slice: "isolation", files: laneSuites.isolation.slice(0, 2) });
-  assert.deepEqual(second, { slice: "isolation", files: laneSuites.isolation.slice(2) });
-  assert.deepEqual([...first.files, ...second.files], laneSuites.isolation);
-  assert.deepEqual([first, second].map(({ files }) => files.reduce((total, file) => total + requiredIsolationCases[file].length, 0)), [19, 32]);
+  assert.deepEqual(parts.map(({ files }) => files), [laneSuites.isolation.slice(0, 2), laneSuites.isolation.slice(2, 6), laneSuites.isolation.slice(6)]);
+  assert.deepEqual(parts.flatMap(({ files }) => files), laneSuites.isolation);
+  assert.deepEqual(parts.map(({ files }) => files.reduce((total, file) => total + requiredIsolationCases[file].length, 0)), [19, 22, 10]);
   assert.deepEqual(parseLaneInvocation(["isolation"], "darwin"), { slice: "isolation", files: laneSuites.isolation });
-  for (const args of [["isolation", "--part", "0/2"], ["isolation", "--part", "3/2"],
-    ["isolation", "--part", "1/3"], ["web", "--part", "1/2"], ["supervisor", "--part", "1/2"]])
+  for (const args of [["isolation", "--part", "0/3"], ["isolation", "--part", "4/3"],
+    ["isolation", "--part", "1/2"], ["web", "--part", "1/3"], ["supervisor", "--part", "1/3"]])
     assert.throws(() => parseLaneInvocation(args), /part|usage/u);
 });
 
@@ -199,7 +197,7 @@ test("platform selection requires Linux56 and preserves Darwin51", () => {
 });
 
 test("Linux isolation refuses parts and unknown platforms refuse selection", () => {
-  for (const part of ["1/2", "2/2"])
+  for (const part of ["1/3", "2/3", "3/3"])
     assert.throws(() => parseLaneInvocation(["isolation", "--part", part], "linux"), /part/u);
   for (const platform of ["freebsd", "win32", "unknown"])
     assert.throws(() => parseLaneInvocation(["isolation"], platform), /platform/u);
