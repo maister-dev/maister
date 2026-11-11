@@ -59,6 +59,13 @@ combined isolation gate only for cancelled runs; failed parts still reach its
 failure-closed report check. Docker builds receive the worker limit through an
 explicit build argument.
 
+GitHub Actions use checkout 7.0.1, setup-node 7.1.0, pnpm/action-setup 6.1.1,
+upload-artifact 7.0.2 and download-artifact 8.0.2, replacing the Node 20 action
+runtime and its deprecated toolkit dependencies. Node is installed before pnpm
+for the Intel macOS pnpm 11 boundary; pnpm owns the lockfile-keyed store cache.
+All 41 runtime/CI contracts pass after the action migration. The public Next
+site also builds without warnings in 4.242 s.
+
 Evidence: `production-build.log`, `web-unit.log`, `web-lint-zero.log`,
 `root-contracts-final.log`, `integration-paths.log`,
 `operational-integrity-fixed.log`, `drizzle-export-configured.log`,
