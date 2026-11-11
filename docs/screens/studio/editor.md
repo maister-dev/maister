@@ -416,4 +416,4 @@ parity required.
 - Area: [`README.md`](README.md).
 - Source: see the Header.
 
-Fit View, overview resize and keyboard node location follow the [Flow editor viewport contract](../../system-analytics/flow-studio.md#flow-editor-viewport-designed) (Designed).
+Fit View, overview resize and keyboard node location follow the [Flow editor viewport contract](../../system-analytics/flow-studio.md#flow-editor-viewport-implemented).

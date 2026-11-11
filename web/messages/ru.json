@@ -1,4 +1,10 @@
 {
+  "graphViewport": {
+    "locate": "Найти узел",
+    "fit": "Уместить граф",
+    "zoomIn": "Увеличить",
+    "zoomOut": "Уменьшить"
+  },
   "common": {
     "appName": "MAIster",
     "signIn": "Войти",

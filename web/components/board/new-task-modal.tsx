@@ -3,6 +3,7 @@
 import type { ProjectFlow } from "@/lib/queries/project";
 import type { ReactElement } from "react";
 
+import { Button, Input, Modal } from "@heroui/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
@@ -95,11 +96,15 @@ export function NewTaskModal({
     busy || pending || title.trim() === "" || prompt.trim() === "";
 
   return (
-    <>
-      <button
+    <Modal
+      isOpen={open}
+      onOpenChange={(next) => {
+        if (!busy) setOpen(next);
+      }}
+    >
+      <Button
         className="inline-flex items-center gap-1.5 rounded-lg border border-amber bg-amber px-3 py-[7px] font-mono text-[11px] font-semibold tracking-[0.02em] text-white shadow-[0_6px_18px_-8px_var(--amber)] hover:bg-amber-2"
         type="button"
-        onClick={() => setOpen(true)}
       >
         <svg
           aria-hidden="true"
@@ -113,41 +118,32 @@ export function NewTaskModal({
           <path d="M8 3v10M3 8h10" />
         </svg>
         {labels.trigger}
-      </button>
+      </Button>
 
-      {open ? (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
-          <button
-            aria-label={labels.cancel}
-            className="absolute inset-0 cursor-default bg-[rgba(22,20,15,0.45)] backdrop-blur-sm"
-            type="button"
-            onClick={() => setOpen(false)}
-          />
-          <div
-            aria-modal="true"
-            className="relative w-full max-w-[480px] overflow-hidden rounded-[14px] border border-line bg-paper shadow-[var(--shadow-lg)]"
-            role="dialog"
-          >
-            <div className="flex items-center justify-between border-b border-line px-5 py-4">
-              <h2 className="m-0 font-sans text-base font-bold tracking-[-0.01em] text-ink">
+      <Modal.Backdrop
+        className="z-[200]"
+        isDismissable={!busy}
+        isKeyboardDismissDisabled={busy}
+      >
+        <Modal.Container placement="center" scroll="inside">
+          <Modal.Dialog className="max-h-[calc(100dvh-2rem)] w-full max-w-[480px] overflow-hidden rounded-[14px] border border-line bg-paper">
+            <Modal.Header className="shrink-0 border-b border-line py-4 pl-5 pr-12">
+              <Modal.Heading className="m-0 font-sans text-base font-bold text-ink">
                 {labels.title}
-              </h2>
-              <button
+              </Modal.Heading>
+              <Modal.CloseTrigger
                 aria-label={labels.cancel}
-                className="font-mono text-[14px] text-mute hover:text-ink"
-                type="button"
-                onClick={() => setOpen(false)}
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="flex flex-col gap-4 px-5 py-5">
+                isDisabled={busy}
+              />
+            </Modal.Header>
+            <Modal.Body className="flex min-h-0 flex-col gap-4 overflow-y-auto px-5 py-5">
               <label className="flex flex-col gap-1.5">
                 <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-mute">
                   {labels.titleLabel}
                 </span>
-                <input
+                <Input
+                  // eslint-disable-next-line jsx-a11y/no-autofocus -- Focus enters the opened modal at its first field.
+                  autoFocus
                   className="rounded-lg border border-line bg-paper px-3 py-2 text-[13px] text-ink outline-none focus:border-amber"
                   placeholder={labels.titlePlaceholder}
                   type="text"
@@ -200,15 +196,19 @@ export function NewTaskModal({
               </div>
 
               {error ? (
-                <div className="rounded-lg border border-amber-line bg-amber-soft px-3 py-2 font-mono text-[11px] font-semibold text-amber">
+                <div
+                  className="rounded-lg border border-amber-line bg-amber-soft px-3 py-2 font-mono text-[11px] font-semibold text-amber"
+                  role="alert"
+                >
                   {error}
                 </div>
               ) : null}
-            </div>
+            </Modal.Body>
 
-            <div className="flex items-center justify-end gap-2 border-t border-line px-5 py-4">
+            <Modal.Footer className="flex shrink-0 items-center justify-end gap-2 border-t border-line px-5 py-4">
               <button
                 className="rounded-lg border border-line bg-paper px-3.5 py-2 font-mono text-[11px] font-semibold tracking-[0.02em] text-mute hover:border-mute hover:text-ink-2"
+                disabled={busy}
                 type="button"
                 onClick={() => setOpen(false)}
               >
@@ -225,10 +225,10 @@ export function NewTaskModal({
               >
                 {labels.create}
               </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-    </>
+            </Modal.Footer>
+          </Modal.Dialog>
+        </Modal.Container>
+      </Modal.Backdrop>
+    </Modal>
   );
 }

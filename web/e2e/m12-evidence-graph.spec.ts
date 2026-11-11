@@ -80,7 +80,8 @@ test("evidence graph renders, artifact payload opens, and the board readiness ba
   // evidence container and finds it hidden, which is what this spec had been
   // failing on. Clicking the tab is what a reader does; this is the URL that
   // tab links to.
-  await page.goto(`/runs/${fx.runId}?wb=evidence`);
+  await page.goto(`/runs/${fx.runId}`);
+  await page.getByRole("tab", { name: "Evidence", exact: true }).click();
 
   await expect(page.locator('[data-testid="evidence-graph"]')).toBeVisible();
 
@@ -101,6 +102,37 @@ test("evidence graph renders, artifact payload opens, and the board readiness ba
     ).toBeVisible();
   }
 
+  await page
+    .getByRole("combobox")
+    .filter({ has: page.locator('option[value="artifact"]') })
+    .selectOption("artifact");
+  await expect(page).toHaveURL(/kind=artifact/);
+  await page
+    .getByRole("combobox")
+    .filter({ has: page.locator('option[value="current"]') })
+    .selectOption("current");
+  await expect(page).toHaveURL(/kind=artifact.*state=current/);
+  const canvas = page.getByTestId("evidence-graph").locator(".react-flow");
+
+  const fullyVisible = (): Promise<number> =>
+    canvas.evaluate((el) => {
+      const bounds = el.getBoundingClientRect();
+
+      return [...el.querySelectorAll(".react-flow__node")].filter((node) => {
+        const rect = node.getBoundingClientRect();
+
+        return (
+          rect.width > 0 &&
+          rect.left >= bounds.left &&
+          rect.right <= bounds.right &&
+          rect.top >= bounds.top &&
+          rect.bottom <= bounds.bottom
+        );
+      }).length;
+    });
+
+  await expect.poll(fullyVisible).toBe(7);
+
   // (2) Click the impl-diff artifact node → payload drawer opens → the REAL
   // payload API returns the inline diff text.
   await implDiff.click();
@@ -112,6 +144,24 @@ test("evidence graph renders, artifact payload opens, and the board readiness ba
 
   // Close the modal (Escape) before navigating on.
   await page.keyboard.press("Escape");
+  const viewport = canvas.locator(".react-flow__viewport");
+  const beforeZoom = await viewport.getAttribute("style");
+
+  await canvas.getByRole("button", { name: "Zoom in" }).click();
+  await expect(viewport).not.toHaveAttribute("style", beforeZoom!);
+  const manualCamera = await viewport.getAttribute("style");
+
+  await page.getByRole("button", { name: "Switch to dark mode" }).click();
+  await expect(canvas).toHaveClass(/dark/);
+  await expect(viewport).toHaveAttribute("style", manualCamera!);
+  const state = page.getByRole("combobox").filter({
+    has: page.locator('option[value="current"]'),
+  });
+
+  await state.selectOption("passed");
+  await expect(page.getByTestId("evidence-empty")).toBeVisible();
+  await page.goBack();
+  await expect.poll(fullyVisible).toBe(7);
 
   // (3a) Simulate rework → stale: impl-diff validity=stale + gate status=failed.
   await withDb(async (pool) => {
@@ -133,6 +183,11 @@ test("evidence graph renders, artifact payload opens, and the board readiness ba
         `[data-testid="evidence-node"][data-artifact-id="${fx.implDiffArtifactId}"]`,
       ),
     ).toHaveAttribute("data-state", "stale");
+    await page
+      .getByRole("combobox")
+      .filter({ has: page.locator('option[value="stale"]') })
+      .selectOption("stale");
+    await expect.poll(fullyVisible).toBe(1);
 
     // The board card now shows the unified readiness badge. T15: a failed
     // blocking gate dominates the rollup, so the badge reads "Failed".

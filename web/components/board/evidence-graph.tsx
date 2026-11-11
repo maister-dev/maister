@@ -6,18 +6,12 @@ import type {
 } from "@/lib/board/evidence-graph-layout";
 import type { EvidenceGraph as EvidenceGraphData } from "@/lib/queries/evidence-graph";
 import type { EvidenceNodeKind } from "@/lib/queries/evidence-graph";
-import type { Node, NodeProps, NodeTypes } from "@xyflow/react";
+import type { Edge, Node, NodeProps, NodeTypes, Viewport } from "@xyflow/react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactElement } from "react";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import {
-  Background,
-  Controls,
-  Handle,
-  Position,
-  ReactFlow,
-} from "@xyflow/react";
+import { Background, Handle, Position, ReactFlow } from "@xyflow/react";
 import { Chip } from "@heroui/react";
 
 import {
@@ -27,9 +21,15 @@ import {
   stateLabel,
   toFlowGraph,
 } from "@/lib/board/evidence-graph-layout";
+import {
+  GRAPH_MIN_ZOOM,
+  GraphViewportControls,
+  useGraphViewportLabels,
+} from "@/components/graphs/graph-viewport-controls";
+import { useTheme } from "@/lib/theme";
+import { useLatestRef } from "@/lib/use-latest-ref";
 
 import "@xyflow/react/dist/style.css";
-import { useLatestRef } from "@/lib/use-latest-ref";
 
 export interface EvidenceGraphLabels extends EvidenceTextLabels {
   title: string;
@@ -163,6 +163,7 @@ export default function EvidenceGraph({
   const nodeFilter = searchParams.get("node");
   const kindFilter = searchParams.get("kind");
   const stateFilter = searchParams.get("state");
+  const filterKey = JSON.stringify([nodeFilter, kindFilter, stateFilter]);
 
   const nodeOptions = useMemo(
     () => uniq(graph.nodes.map((n) => n.meta.nodeId as string | undefined)),
@@ -197,7 +198,7 @@ export default function EvidenceGraph({
 
   const { flowNodes, flowEdges } = useMemo(() => {
     const fg = toFlowGraph(filtered);
-    const laidOut = layoutGraph(fg.nodes, fg.edges).map((n) => ({
+    const laidOut: Node[] = layoutGraph(fg.nodes, fg.edges).map((n) => ({
       ...n,
       data: { ...n.data, onOpen: openArtifact },
     }));
@@ -309,19 +310,20 @@ export default function EvidenceGraph({
         className="h-[420px] w-full overflow-hidden rounded-[10px] border border-line bg-paper"
         data-testid="evidence-graph"
       >
-        <ReactFlow
-          fitView
-          edges={flowEdges}
-          elementsSelectable={true}
-          nodeTypes={nodeTypes}
-          nodes={flowNodes}
-          nodesConnectable={false}
-          nodesDraggable={false}
-          onNodeClick={onNodeClick}
-        >
-          <Background />
-          <Controls showInteractive={false} />
-        </ReactFlow>
+        {flowNodes.length === 0 ? (
+          <p className="p-6 text-center text-mute" data-testid="evidence-empty">
+            {labels.empty}
+          </p>
+        ) : (
+          <EvidenceCanvas
+            key={filterKey}
+            edges={flowEdges}
+            labels={labels}
+            nodeTypes={nodeTypes}
+            nodes={flowNodes}
+            onNodeClick={onNodeClick}
+          />
+        )}
       </div>
 
       {payloadArtifactId ? (
@@ -333,6 +335,78 @@ export default function EvidenceGraph({
         />
       ) : null}
     </div>
+  );
+}
+
+function EvidenceCanvas({
+  nodes,
+  edges,
+  labels,
+  nodeTypes,
+  onNodeClick,
+}: {
+  nodes: Node[];
+  edges: Edge[];
+  labels: EvidenceGraphLabels;
+  nodeTypes: NodeTypes;
+  onNodeClick: (event: unknown, node: Node) => void;
+}): ReactElement {
+  const viewportLabels = useGraphViewportLabels();
+  const { resolvedTheme } = useTheme();
+  const cameraRef = useRef<Viewport | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const displayedNodes = useMemo(
+    () => nodes.map((node) => ({ ...node, selected: node.id === selectedId })),
+    [nodes, selectedId],
+  );
+
+  function selectNode(event: unknown, node: Node): void {
+    setSelectedId(node.id);
+    onNodeClick(event, node);
+  }
+
+  return (
+    <ReactFlow
+      ariaLabelConfig={viewportLabels}
+      colorMode={resolvedTheme}
+      edges={edges}
+      minZoom={GRAPH_MIN_ZOOM}
+      nodeTypes={nodeTypes}
+      nodes={displayedNodes}
+      nodesConnectable={false}
+      nodesDraggable={false}
+      onMoveEnd={(event, next) => {
+        if (event || cameraRef.current) cameraRef.current = next;
+      }}
+      onNodeClick={selectNode}
+      onPaneClick={() => setSelectedId(null)}
+    >
+      <Background />
+      <GraphViewportControls
+        cameraRef={cameraRef}
+        nodes={nodes.map((node) => {
+          const data = node.data as unknown as EvidenceNodeData;
+          const label =
+            data.kind === "artifact"
+              ? artifactKindLabel(data.label, labels)
+              : data.label;
+          const definition = data.meta.defId;
+
+          return {
+            id: node.id,
+            label:
+              typeof definition === "string"
+                ? `${label} · ${definition}`
+                : label,
+          };
+        })}
+        onLocate={(id) => {
+          const node = nodes.find((candidate) => candidate.id === id);
+
+          if (node) selectNode(null, node);
+        }}
+      />
+    </ReactFlow>
   );
 }
 

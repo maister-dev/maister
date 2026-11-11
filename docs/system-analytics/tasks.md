@@ -395,7 +395,7 @@ flowchart TD
     Review --> Regate["getOpenRelationBlockers sees counterpart in InFlight, dependents re-gate as blocked"]
 ```
 
-### New task modal (Designed)
+### New task modal (Implemented)
 
 The board opens a named modal with initial Title focus, background isolation
 and contained Tab navigation. Idle dismissal restores the opener and keeps

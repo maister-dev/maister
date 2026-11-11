@@ -2508,6 +2508,17 @@ async function seedM12EvidenceFixture(
     ],
   ];
 
+  for (const ordinal of [1, 2, 3]) {
+    artifacts.push([
+      randomUUID(),
+      ids.checksAttempt,
+      "checks",
+      `viewport-note-${ordinal}`,
+      "human_note",
+      { kind: "inline", text: `Viewport note ${ordinal}` },
+    ]);
+  }
+
   for (const [
     id,
     nodeAttemptId,

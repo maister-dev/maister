@@ -1,5 +1,6 @@
 "use client";
 
+import type { Viewport } from "@xyflow/react";
 import type { FlowGraphEditorLabels } from "@/components/flows/flow-graph-editor";
 import type {
   EditorDrawerKind,
@@ -20,6 +21,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -191,6 +193,10 @@ export function FlowEditorTabs({
   // last-seeded state. The debounced reducer diffs the parsed yaml against this
   // to decide reseed-vs-noop. A canvas onChange updates it BEFORE setYaml so the
   // debounce that follows sees equality and does not bounce the canvas.
+  const cameraRef = useMemo(
+    () => ({ current: null as Viewport | null }),
+    [capId, projectSlug],
+  );
   const canvasManifestRef = useRef<FlowYamlV1 | null>(initialManifest);
 
   // Every reseed hands the canvas `seed.manifest`, so that is what it reflects.
@@ -367,6 +373,7 @@ export function FlowEditorTabs({
           {canvasReady && seed ? (
             <FlowGraphEditor
               key={seedKey}
+              cameraRef={cameraRef}
               draftVersion={draftVersion}
               initialManifest={seed.manifest}
               inspectorContainer={inspectorContainer}

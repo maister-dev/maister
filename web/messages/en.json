@@ -1,4 +1,10 @@
 {
+  "graphViewport": {
+    "locate": "Locate a node",
+    "fit": "Fit View",
+    "zoomIn": "Zoom in",
+    "zoomOut": "Zoom out"
+  },
   "common": {
     "appName": "MAIster",
     "signIn": "Sign in",

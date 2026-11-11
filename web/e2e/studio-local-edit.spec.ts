@@ -772,3 +772,78 @@ test("local editor structured controls: skills multiselect, /-autosuggest prompt
   ).toBeVisible();
   await expect(page.getByTestId("studio-ai-launch")).toBeVisible();
 });
+
+test("UX-03A/B Fit View and keyboard location keep eleven editor nodes reachable", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const repo = buildPackageRepo();
+  const packagePath = join(repo, "packages", RUN_TAG);
+  const nodes = Array.from(
+    { length: 11 },
+    (_, i) =>
+      `  - id: step-${i}\n    type: cli\n    action:\n      command: echo step\n    transitions:\n      success: ${i < 10 ? `step-${i + 1}` : "done"}`,
+  );
+
+  writeFileSync(
+    join(packagePath, "flows/e2e-flow/flow.yaml"),
+    `schemaVersion: 1\nname: ${RUN_TAG}-flow\ncompat:\n  engine_min: 1.1.0\nnodes:\n${nodes.join("\n")}\n`,
+  );
+  const install = await page.request.post("/api/admin/package-installs", {
+    data: { localPath: packagePath },
+  });
+
+  expect(install.status(), await install.text()).toBe(201);
+  const { id } = (await install.json()) as { id: string };
+  const fork = await page.request.post(
+    `/api/studio/packages/${RUN_TAG}/fork?install=${id}`,
+    { data: { forceNew: true } },
+  );
+
+  expect(fork.status(), await fork.text()).toBe(201);
+  const { localPackageId } = (await fork.json()) as { localPackageId: string };
+
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(`/studio/edit/${localPackageId}/flows/e2e-flow/flow.yaml`);
+  const canvas = page.getByTestId("flow-graph-editor").locator(".react-flow");
+  const controls = canvas.locator(".react-flow__controls-fitview");
+
+  await controls.click();
+  const fullyVisible = (): Promise<number> =>
+    canvas.evaluate((el) => {
+      const bounds = el.getBoundingClientRect();
+
+      return [...el.querySelectorAll(".react-flow__node")].filter((node) => {
+        const rect = node.getBoundingClientRect();
+
+        return (
+          rect.width > 0 &&
+          rect.left >= bounds.left + 4 &&
+          rect.right <= bounds.right - 4 &&
+          rect.top >= bounds.top + 4 &&
+          rect.bottom <= bounds.bottom - 4
+        );
+      }).length;
+    });
+
+  await expect.poll(fullyVisible).toBe(11);
+  for (const id of ["step-0", "step-10"]) {
+    await canvas.locator(`.react-flow__node[data-id="${id}"]`).click();
+    await expect(page.getByTestId("node-side-form")).toBeVisible();
+  }
+  await page.setViewportSize({ width: 1100, height: 760 });
+  await expect.poll(fullyVisible).toBe(11);
+  const locator = canvas.getByRole("combobox", { name: "Locate a node" });
+
+  await locator.focus();
+  await expect(locator).toBeFocused();
+  await locator.selectOption("step-10");
+  const transform = canvas.locator(".react-flow__viewport");
+
+  await expect(transform).toHaveAttribute("style", /scale\(0\.95\)/);
+  await expect(page.getByTestId("node-side-form")).toBeVisible();
+  await page.setViewportSize({ width: 1250, height: 850 });
+  await expect(transform).toHaveAttribute("style", /scale\(0\.95\)/);
+  await controls.click();
+  await expect.poll(fullyVisible).toBe(11);
+});

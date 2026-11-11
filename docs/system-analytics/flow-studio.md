@@ -713,7 +713,7 @@ list (`gate-form.tsx`).
 - Run/preview status keeps the existing `FlowGraphView` coloring; the static
   editor canvas has no status ring.
 
-### Flow editor viewport (Designed)
+### Flow editor viewport (Implemented)
 
 Fit waits for a visible measured canvas and measured nodes. Initial fit and
 explicit Fit use the same padding and scale limits. The overview refits on a
