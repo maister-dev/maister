@@ -859,13 +859,12 @@ async function seedRetainedStandalone(): Promise<void> {
       'operational','none','agent','manual','Pending',${JSON.stringify(result)}::jsonb,${requesterId},now(),now(),'launch',
       ${JSON.stringify(context.binding.snapshot.effectiveConfiguration)}::jsonb,${JSON.stringify(context.binding.snapshot.executionPolicy)}::jsonb,
       ${JSON.stringify(buildAgentActivitySnapshot(effective.parsed.id, effective))}::jsonb)`);
-    await linkSpecialistAssignmentRunInTransaction(tx, requesterId, work.id, {
-      runId,
-      inputRevision: work.inputRevision,
-      expectedRevision: work.revision,
-      role: "specialist",
-      work: null,
-    });
+    // This historical fixture runs before the native root admission migration.
+    await tx.execute(sql`INSERT INTO specialist_run_links(assignment_id,run_id,input_revision,role)
+      VALUES(${work.id},${runId},${work.inputRevision},'specialist')`);
+    await tx.execute(
+      sql`UPDATE specialist_assignments SET revision=revision+1,updated_at=clock_timestamp() WHERE id=${work.id}`,
+    );
 
     return runId;
   });

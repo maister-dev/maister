@@ -2065,6 +2065,7 @@ it("IT-CBA-03 retains cancellation and recovery facts and original input rather 
 it("IT-CBA-01 links existing same-owner runs exactly once, refuses project carriers for company work and never treats run success as assignment completion", async () => {
   const projectId = randomUUID();
   const runId = randomUUID();
+  const replacementRunId = randomUUID();
 
   await database.pool.query(
     "INSERT INTO projects(id,slug,name,repo_path,maister_yaml_path,task_key) VALUES($1,$1,'Assignment run owner',$2,$3,'CBA')",
@@ -2079,8 +2080,8 @@ it("IT-CBA-01 links existing same-owner runs exactly once, refuses project carri
     [randomUUID(), projectId, requesterId],
   );
   await database.pool.query(
-    "INSERT INTO runs(id,project_id,flow_version) VALUES($1,$2,'retained-existing-run')",
-    [runId, projectId],
+    "INSERT INTO runs(id,project_id,flow_version) VALUES($1,$3,'retained-existing-run'),($2,$3,'retained-replacement-run')",
+    [runId, replacementRunId, projectId],
   );
   const company = await createSpecialistAssignment(
     database.db,
@@ -2149,6 +2150,17 @@ it("IT-CBA-01 links existing same-owner runs exactly once, refuses project carri
       status,
     ]);
     await expect(
+      linkSpecialistAssignmentRun(database.db, requesterId, project.id, {
+        ...link,
+        expectedRevision: 2,
+        role: "continuation",
+        runId: replacementRunId,
+      }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "assignment_root_unsettled" },
+    });
+    await expect(
       cancelSpecialistAssignment(
         database.db,
         requesterId,
@@ -2161,6 +2173,14 @@ it("IT-CBA-01 links existing same-owner runs exactly once, refuses project carri
       details: { reason: "assignment_execution_unsettled" },
     });
   }
+  await expect(
+    database.pool.query(
+      "INSERT INTO specialist_run_links(assignment_id,run_id,input_revision,role) VALUES($1,$2,1,'continuation')",
+      [project.id, replacementRunId],
+    ),
+  ).rejects.toMatchObject({
+    constraint: "specialist_assignment_root_unsettled",
+  });
   await expect(
     appendSpecialistAssignmentInput(database.db, requesterId, project.id, {
       expectedRevision: 2,
@@ -2182,22 +2202,35 @@ it("IT-CBA-01 links existing same-owner runs exactly once, refuses project carri
       )
     ).rows,
   ).toEqual([{ assignment_id: project.id, input_revision: 1, run_id: runId }]);
+  await expect(
+    linkSpecialistAssignmentRun(database.db, requesterId, project.id, {
+      ...link,
+      expectedRevision: 2,
+      role: "continuation",
+      runId: replacementRunId,
+    }),
+  ).resolves.toMatchObject({
+    assignment: { revision: 3, runIds: [runId, replacementRunId] },
+  });
+  await database.pool.query("UPDATE runs SET status='Done' WHERE id=$1", [
+    replacementRunId,
+  ]);
   expect(
     await cancelSpecialistAssignment(
       database.db,
       requesterId,
       project.id,
-      2,
+      3,
       "Retain the completed work",
     ),
-  ).toMatchObject({ status: "cancelled", revision: 3 });
+  ).toMatchObject({ status: "cancelled", revision: 4 });
   expect(
-    await recoverSpecialistAssignment(database.db, requesterId, project.id, 3),
-  ).toMatchObject({ status: "queued", revision: 4 });
+    await recoverSpecialistAssignment(database.db, requesterId, project.id, 4),
+  ).toMatchObject({ status: "queued", revision: 5 });
   expect(
     (await getSpecialistAssignment(database.db, requesterId, project.id))
       .runIds,
-  ).toEqual([runId]);
+  ).toEqual([runId, replacementRunId]);
   await expect(
     database.pool.query("DELETE FROM specialist_run_links WHERE run_id=$1", [
       runId,
@@ -3074,6 +3107,7 @@ it("IT-CBX-01 logical-work upgrade preserves old intake and opaque child labels 
       await applyMainMigration(tx, "0278_specialist_work_rejection");
       await applyMainMigration(tx, "0279_operational_evidence_contract");
       await applyMainMigration(tx, "0280_specialist_context_owner_fence");
+      await applyMainMigration(tx, "0281_specialist_root_admission_fence");
     });
     expect(
       (

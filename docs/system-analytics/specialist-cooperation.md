@@ -265,6 +265,12 @@ host quiescence before their own terminal receipts commit. The watchdog retains
 the stop when teardown is unconfirmed, and retries preserve settled results and
 work decisions.
 
+New root Run links serialize on the assignment row. A current assignment
+revision cannot appoint a competing root while the predecessor is unsettled,
+including a parked Run or a crashed Run with an active placement. Existing
+links remain immutable; settled results stay inspectable after replacement.
+This is the admission gate in migration `0281_specialist_root_admission_fence`.
+
 Assignment executor lease is 120 seconds, renewed every 40 seconds by one fenced owner; each claim/renew/write checks current epoch, owner ID and fresh expiry in a transaction. A stable assignment-row CAS increments epoch when replacing an owner. Execution-host assignment epoch remains a separate lower boundary. Current permissions are checked in addition to both fences. A stale owner yields with a typed conflict; it cannot finalize another run's current work or classify itself as a new failure.
 
 Acceptance stores responsible server principal, exact input/work/result revision, original evidence refs, limitations and verification decision. Schema validity, child Done or process exit alone cannot accept work. Agent children use supported existing message/rework. Flow children do not gain an unsupported message mutation: work rework creates a linked governed continuation, preserving the previous result and effect receipts. Rework references the new expected input revision and consumes remaining assignment/ancestor budget. Completed external effects are adopted as evidence, not replayed.

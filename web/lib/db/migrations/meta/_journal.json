@@ -1940,6 +1940,13 @@
       "when": 1794606477983,
       "tag": "0280_specialist_context_owner_fence",
       "breakpoints": true
+    },
+    {
+      "idx": 281,
+      "version": "7",
+      "when": 1794606477984,
+      "tag": "0281_specialist_root_admission_fence",
+      "breakpoints": true
     }
   ]
 }

@@ -928,6 +928,20 @@ export async function linkSpecialistAssignmentRunInTransaction(
       "CONFLICT",
       "Terminal assignments cannot acquire new execution work",
     );
+  if (!request.data.work && request.data.role !== "child") {
+    const [ownership] = (
+      await tx.execute(sql`
+        SELECT specialist_root_link_conflicts(${assignmentId}, ${request.data.runId}) AS blocked
+      `)
+    ).rows;
+
+    if (ownership?.blocked === true)
+      throw new MaisterError(
+        "CONFLICT",
+        "Settle the current root execution before appointing a replacement",
+        { details: { reason: "assignment_root_unsettled" } },
+      );
+  }
   await tx.execute(
     sql`INSERT INTO specialist_run_links(assignment_id,run_id,input_revision,role,work_id,work_revision) VALUES(${assignmentId},${request.data.runId},${request.data.inputRevision},${request.data.role},${request.data.work?.id ?? null},${request.data.work?.revision ?? null})`,
   );
