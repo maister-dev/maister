@@ -10938,7 +10938,7 @@ export const specialistWorkDecisions = pgTable(
     authoritySnapshot: jsonb("authority_snapshot")
       .$type<AssignmentAuthoritySnapshot>()
       .notNull(),
-    decision: text("decision").$type<"rework">().notNull(),
+    decision: text("decision").$type<"rework" | "accept">().notNull(),
     resultId: text("result_id")
       .notNull()
       .references(() => runResults.id, { onDelete: "restrict" }),
@@ -10968,11 +10968,14 @@ export const specialistWorkDecisions = pgTable(
       "specialist_work_decisions_shape_check",
       sql`(
         ${t.workRevision}>0 AND ${t.expectedRevision}>0 AND ${t.inputRevision}>0
-        AND ${t.resultRevision}>0 AND ${t.decision}='rework'
+        AND ${t.resultRevision}>0 AND ${t.decision} IN ('rework','accept')
         AND ${t.requestKey} ~ '^[A-Za-z0-9._:-]{8,128}$'
         AND ${t.requestSha256} ~ '^[a-f0-9]{64}$'
         AND char_length(${t.reason}) BETWEEN 1 AND 8000
-        AND ${specialistActorShape(t.actor)} AND ${t.actor}->>'kind'='agent'
+        AND ${specialistActorShape(t.actor)}
+        AND ((${t.decision}='rework' AND ${t.actor}->>'kind'='agent')
+          OR (${t.decision}='accept' AND ${t.actor}->>'kind'='user'
+            AND ${t.actor}->'runId'='null'::jsonb AND ${t.actor}->'attemptId'='null'::jsonb))
         AND ${t.authoritySnapshot}->'schemaVersion'='1'::jsonb
         AND ${t.authoritySnapshot}->'actor'=${t.actor}
         AND pg_column_size(${t.authoritySnapshot})<=32768

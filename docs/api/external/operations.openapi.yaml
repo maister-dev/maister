@@ -15816,13 +15816,96 @@ components:
                 - decision
                 - work
                 - blocker
-                - accepted
           required:
             - id
             - text
             - state
             - references
             - kind
+          additionalProperties: false
+        - type: object
+          properties:
+            id:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+            text:
+              type: string
+              minLength: 1
+              maxLength: 8000
+              allOf:
+                - type: string
+                  pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                - type: string
+                  pattern: \S
+            state:
+              type: string
+              enum:
+                - accepted
+            references:
+              maxItems: 64
+              type: array
+              items:
+                type: object
+                properties:
+                  kind:
+                    type: string
+                    enum:
+                      - knowledge
+                      - witness
+                      - result
+                      - operation
+                      - verification
+                  id:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                  revision:
+                    type: integer
+                    minimum: 1
+                    maximum: 2147483647
+                  version:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                  sha256:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                required:
+                  - kind
+                  - id
+                additionalProperties: false
+            supersedesEntryId:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+            kind: { type: string, enum: [accepted] }
+            acceptedWork:
+              type: object
+              additionalProperties: false
+              required: [decisionId, workId, workRevision, childRunId, resultRevision, sourceFindings]
+              properties:
+                decisionId: { type: string, minLength: 1, maxLength: 128 }
+                workId: { type: string, minLength: 1, maxLength: 128 }
+                workRevision: { type: integer, minimum: 1, maximum: 2147483647 }
+                childRunId: { type: string, minLength: 1, maxLength: 128 }
+                resultRevision: { type: integer, minimum: 1, maximum: 2147483647 }
+                sourceFindings:
+                  type: array
+                  maxItems: 32
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [childRunId, resultRevision, findingId]
+                    properties:
+                      childRunId: { type: string, minLength: 1, maxLength: 128 }
+                      resultRevision: { type: integer, minimum: 1, maximum: 2147483647 }
+                      findingId: { type: string, minLength: 1, maxLength: 128 }
+          required: [id, text, state, references, kind, acceptedWork]
           additionalProperties: false
         - type: object
           properties:

@@ -88,6 +88,10 @@ a new Run under the same logical work, and you can still inspect the original
 result. Reuse the same request key and instructions to check an uncertain
 request.
 
+An authorized reviewer can accept a collected child result through the
+assignment API. The accepted working-context entry links to the original
+result and findings. The assignment stays open for its final decision.
+
 ## Related guides
 
 - [Human-in-the-loop requests](/guides/human-in-the-loop)

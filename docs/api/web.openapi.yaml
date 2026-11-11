@@ -21489,20 +21489,28 @@ paths:
   /api/specialist-assignments/{assignmentId}/work/{workId}/decisions:
     post:
       operationId: specialistWorkDecide
-      summary: Designed — Accept clarify reject or rework exact child result
-      description: Designed; no implementation is implied. Requires current assignments:accept. URL identifiers are
-        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
-        target endpoint and execution ownership are derived from authenticated context/server state. Writes
-        compare canonical payload digest and expected revision; exact replay returns the original currently
-        accessible receipt, changed payload conflicts.
-      x-implementation-status: Designed
+      summary: Accept an exact collected child result
+      description: |
+        A user with current assignments:accept can accept an exact valid,
+        collected result from the current work revision. The server retains
+        an immutable decision and a versioned accepted context entry linked
+        to the original result and finding identities. The assignment remains
+        active for overall acceptance. Work with unmet required verification
+        is refused. A repeat with the same key and content returns the same
+        decision under current authority.
+      x-implementation-status: Implemented
       x-required-scope: assignments:accept
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CBWorkDecision"
+              allOf:
+                - $ref: "#/components/schemas/CBWorkDecision"
+                - type: object
+                  required: [resultRevision]
+                  properties:
+                    decision: { type: string, enum: [accept] }
       responses:
         "200":
           description: Authorized explicit DTO or idempotent safe existing receipt.
@@ -38495,13 +38503,96 @@ components:
                 - decision
                 - work
                 - blocker
-                - accepted
           required:
             - id
             - text
             - state
             - references
             - kind
+          additionalProperties: false
+        - type: object
+          properties:
+            id:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+            text:
+              type: string
+              minLength: 1
+              maxLength: 8000
+              allOf:
+                - type: string
+                  pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                - type: string
+                  pattern: \S
+            state:
+              type: string
+              enum:
+                - accepted
+            references:
+              maxItems: 64
+              type: array
+              items:
+                type: object
+                properties:
+                  kind:
+                    type: string
+                    enum:
+                      - knowledge
+                      - witness
+                      - result
+                      - operation
+                      - verification
+                  id:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                  revision:
+                    type: integer
+                    minimum: 1
+                    maximum: 2147483647
+                  version:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                    pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+                  sha256:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                required:
+                  - kind
+                  - id
+                additionalProperties: false
+            supersedesEntryId:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: ^(?:[^\u0000\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$
+            kind: { type: string, enum: [accepted] }
+            acceptedWork:
+              type: object
+              additionalProperties: false
+              required: [decisionId, workId, workRevision, childRunId, resultRevision, sourceFindings]
+              properties:
+                decisionId: { type: string, minLength: 1, maxLength: 128 }
+                workId: { type: string, minLength: 1, maxLength: 128 }
+                workRevision: { type: integer, minimum: 1, maximum: 2147483647 }
+                childRunId: { type: string, minLength: 1, maxLength: 128 }
+                resultRevision: { type: integer, minimum: 1, maximum: 2147483647 }
+                sourceFindings:
+                  type: array
+                  maxItems: 32
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [childRunId, resultRevision, findingId]
+                    properties:
+                      childRunId: { type: string, minLength: 1, maxLength: 128 }
+                      resultRevision: { type: integer, minimum: 1, maximum: 2147483647 }
+                      findingId: { type: string, minLength: 1, maxLength: 128 }
+          required: [id, text, state, references, kind, acceptedWork]
           additionalProperties: false
         - type: object
           properties:

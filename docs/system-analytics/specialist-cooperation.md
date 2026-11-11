@@ -232,8 +232,12 @@ alone grants no delegation capability. Main migration `0267` requires atomic wor
 and attributed intake retention, refuses bare acceptance/rework decisions, and
 binds any executed child to its exact role/Flow pin and native Run link. Main
 `0272` records immutable result-only rework decisions and requires the
-exact next work revision in the same transaction. Acceptance and accepted
-context entries remain open. Forward migration `0268` closes
+exact next work revision in the same transaction. Main `0273` enables human
+acceptance of an exact collected result with a current acceptance grant.
+The same transaction records the work decision and a context revision with
+the child result and original finding identities. The assignment remains
+active. Coordinator acceptance, assignment completion and effect
+verification remain open. Forward migration `0268` closes
 nullable source/context/target comparisons under the
 [persistence guard contract](../db/specialist-assignments-domain.md#backfill-guards-and-lifetime);
 retained company source identity survives catalog FK removal.

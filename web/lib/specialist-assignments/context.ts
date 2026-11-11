@@ -10,6 +10,8 @@ import type { AssignmentInputRevision, SpecialistAssignment } from "./types";
 import type { AssignmentContextPrincipal } from "./context-access";
 import type { KnowledgePrincipal } from "@/lib/brain/knowledge-types";
 import type { KnowledgeAccessWalk } from "@/lib/brain/knowledge-restrictions";
+import type { KnowledgeAttribution } from "@/lib/brain/record-types";
+import type { KnowledgeAccessRestriction } from "@/lib/company/types";
 
 import { sql } from "drizzle-orm";
 import pino from "pino";
@@ -66,6 +68,50 @@ function contextConflict(message: string): MaisterError {
   return new MaisterError("CONFLICT", message, {
     details: { reason: "assignment_context_conflict" },
   });
+}
+
+/** Retain a bounded context revision under the caller's locked assignment head. */
+export async function retainAssignmentContextRevision(
+  tx: SqlTransaction,
+  input: Readonly<{
+    assignmentId: string;
+    baseRevision: number;
+    snapshot: AssignmentContextSnapshot;
+    actor: KnowledgeAttribution;
+    sourceRestrictions: readonly KnowledgeAccessRestriction[];
+    requestKey: string;
+    requestDigest: string;
+  }>,
+): Promise<void> {
+  const {
+    assignmentId,
+    baseRevision,
+    snapshot,
+    actor,
+    sourceRestrictions,
+    requestKey,
+    requestDigest,
+  } = input;
+  const bytes = (
+    await tx.execute(
+      sql`SELECT octet_length(${JSON.stringify(snapshot)}::jsonb::text) AS bytes`,
+    )
+  ).rows[0]?.bytes;
+
+  if (typeof bytes !== "number")
+    throw new MaisterError(
+      "CRASH",
+      "Context storage did not return its bounded serialized size",
+    );
+  if (bytes > MAX_CONTEXT_BYTES)
+    throw new MaisterError(
+      "CONFIG",
+      "Retained context exceeds 128 KiB; explicitly supersede entries before adding work",
+      { details: { reason: "assignment_context_too_large" } },
+    );
+
+  await tx.execute(sql`INSERT INTO specialist_context_revisions(assignment_id,revision,base_revision,input_revision,context,source_restrictions,actor,owner_epoch,principal_key,request_key,request_digest,content_digest)
+    VALUES(${assignmentId},${baseRevision + 1},${baseRevision},${snapshot.inputRevision},${JSON.stringify(snapshot)}::jsonb,${JSON.stringify(sourceRestrictions)}::jsonb,${JSON.stringify(actor)}::jsonb,NULL,${contentDigest(actor)},${requestKey},${requestDigest},${contentDigest(snapshot)})`);
 }
 
 /** Source policy includes current assignment authority and the exact execution appointment, without user impersonation. */
@@ -561,27 +607,17 @@ async function appendContext(
           "CONFIG",
           "Working context exceeds its versioned entry bounds",
         );
-      const bytes = (
-        await tx.execute(
-          sql`SELECT octet_length(${JSON.stringify(snapshot.data)}::jsonb::text) AS bytes`,
-        )
-      ).rows[0]?.bytes;
-
-      if (typeof bytes !== "number")
-        throw new MaisterError(
-          "CRASH",
-          "Context storage did not return its bounded serialized size",
-        );
-      if (bytes > MAX_CONTEXT_BYTES)
-        throw new MaisterError(
-          "CONFIG",
-          "Retained context exceeds 128 KiB; explicitly supersede entries before adding work",
-          { details: { reason: "assignment_context_too_large" } },
-        );
       const restrictions = restrictionsForKnowledgeAccess(access);
 
-      await tx.execute(sql`INSERT INTO specialist_context_revisions(assignment_id,revision,base_revision,input_revision,context,source_restrictions,actor,owner_epoch,principal_key,request_key,request_digest,content_digest)
-        VALUES(${assignmentId},${nextRevision},${assignment.contextRevision},${currentInput.revision},${JSON.stringify(snapshot.data)}::jsonb,${JSON.stringify(restrictions)}::jsonb,${JSON.stringify(actor)}::jsonb,NULL,${principalKey},${update.idempotencyKey},${requestDigest},${contentDigest(snapshot.data)})`);
+      await retainAssignmentContextRevision(tx, {
+        assignmentId,
+        baseRevision: assignment.contextRevision,
+        snapshot: snapshot.data,
+        actor,
+        sourceRestrictions: restrictions,
+        requestKey: update.idempotencyKey,
+        requestDigest,
+      });
       await tx.execute(
         sql`UPDATE specialist_assignments SET context_revision=${nextRevision},revision=revision+1,updated_at=clock_timestamp() WHERE id=${assignmentId}`,
       );

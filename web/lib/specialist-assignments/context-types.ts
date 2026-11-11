@@ -6,7 +6,10 @@ import {
   knowledgeReferenceSchema,
   knowledgeRevisionSchema,
 } from "@/lib/brain/knowledge-types";
-import { evidenceFindingsV1Schema } from "@/lib/run-results/findings-types";
+import {
+  evidenceFindingsV1Schema,
+  sourceFindingSchema,
+} from "@/lib/run-results/findings-types";
 import { postgresTextSchema } from "@/lib/text-schema";
 
 const identity = postgresTextSchema.min(1).max(128);
@@ -40,9 +43,21 @@ const editableContextEntrySchema = z.discriminatedUnion("kind", [
 ]);
 
 export const assignmentContextEntrySchema = z.discriminatedUnion("kind", [
+  baseEntrySchema.extend({ kind: z.enum(editableNoteKinds) }).strict(),
   baseEntrySchema
     .extend({
-      kind: z.enum([...editableNoteKinds, "accepted"]),
+      kind: z.literal("accepted"),
+      state: z.literal("accepted"),
+      acceptedWork: z
+        .object({
+          decisionId: identity,
+          workId: identity,
+          workRevision: knowledgeRevisionSchema,
+          childRunId: identity,
+          resultRevision: knowledgeRevisionSchema,
+          sourceFindings: z.array(sourceFindingSchema).max(32),
+        })
+        .strict(),
     })
     .strict(),
   baseEntrySchema

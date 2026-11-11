@@ -131,6 +131,7 @@ import { POST as delegateExternalRun } from "@/app/api/v1/ext/runs/delegate/rout
 import { POST as collectExternalRun } from "@/app/api/v1/ext/runs/collect/route";
 import { POST as messageExternalRun } from "@/app/api/v1/ext/runs/message/route";
 import { POST as reworkExternalRun } from "@/app/api/v1/ext/runs/rework/route";
+import { POST as decideSpecialistWork } from "@/app/api/specialist-assignments/[assignmentId]/work/[workId]/decisions/route";
 import { runFlow } from "@/lib/flows/runner";
 import { captureNativeChildInput } from "@/lib/orchestrator/native-child-input";
 import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
@@ -159,7 +160,10 @@ import { operationalSuccessFixture } from "@/test-support/operational-agent";
 import { getKnowledgeRecord } from "@/lib/brain/knowledge-records";
 import { resolveKnowledgePrincipal } from "@/lib/brain/knowledge-access";
 import { readPromptRequest } from "@/lib/execution-host/command-request";
-import { appendSpecialistAssignmentContext } from "@/lib/specialist-assignments/context";
+import {
+  appendSpecialistAssignmentContext,
+  getSpecialistAssignmentTokenContext,
+} from "@/lib/specialist-assignments/context";
 import {
   GET as externalContextGet,
   PATCH as externalContextPatch,
@@ -11553,7 +11557,31 @@ it("IT-CBC-01 requires current company delegation grants for a repository-free w
         });
         const continuationPrompt = scriptAgentTurn(fake, {
           ...scriptedTurn,
-          text: "```json maister:output\n" + JSON.stringify(findings) + "\n```",
+          text:
+            "```json maister:output\n" +
+            JSON.stringify({
+              ...findings,
+              findings: [
+                {
+                  id: "observation-gap",
+                  assertion:
+                    "The applicability of the original observation is unresolved.",
+                  basis: "unknown",
+                  supporting: [],
+                  contradicting: [],
+                  missingEvidence: [
+                    {
+                      state: "absent",
+                      reason: "No fresh observation was supplied.",
+                    },
+                  ],
+                  limitations: ["No stand was inspected."],
+                  openQuestions: ["Does the original observation still apply?"],
+                  sourceFindings: [],
+                },
+              ],
+            }) +
+            "\n```",
         });
 
         process.env.MAISTER_MAX_CONCURRENT_RUNS = "100";
@@ -11582,7 +11610,17 @@ it("IT-CBC-01 requires current company delegation grants for a repository-free w
         );
 
         expect(continuationResult.status).toBe(200);
-        expect(await continuationResult.json()).toMatchObject([
+        const completed: {
+          resultRevision: number;
+          assignmentWork: {
+            id: string;
+            revision: number;
+            workRevision: number;
+            inputRevision: number;
+          };
+        }[] = await continuationResult.json();
+
+        expect(completed).toMatchObject([
           {
             childRunId: continuation.childRunId,
             status: "Done",
@@ -11593,6 +11631,106 @@ it("IT-CBC-01 requires current company delegation grants for a repository-free w
             },
           },
         ]);
+        const [ready] = completed;
+        const acceptBody = {
+          decision: "accept",
+          expectedRevision: ready.assignmentWork.revision,
+          inputRevision: ready.assignmentWork.inputRevision,
+          workRevision: ready.assignmentWork.workRevision,
+          resultRevision: ready.resultRevision,
+          reason: "The continued result addresses the requested observation.",
+          idempotencyKey: "accept-continued-observation",
+        };
+        const decide = (body: typeof acceptBody) =>
+          decideSpecialistWork(
+            new NextRequest(
+              `http://localhost/api/specialist-assignments/${assignment.id}/work/${work.id}/decisions`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+              },
+            ),
+            {
+              params: Promise.resolve({
+                assignmentId: assignment.id,
+                workId: work.id,
+              }),
+            },
+          );
+
+        browserSession.user = await requireActiveUserById(userId);
+        try {
+          expect((await decide(acceptBody)).status).toBe(403);
+        } finally {
+          browserSession.user = null;
+        }
+        const grants = await createCompanyGrants(db, administratorId, {
+          principalKind: "user",
+          principalId: userId,
+          actions: ["assignments:accept"],
+          idempotencyKey: randomUUID(),
+        });
+        const acceptGrant = grants.page.items.find(
+          (entry) => entry.action === "assignments:accept",
+        )!;
+
+        browserSession.user = await requireActiveUserById(userId);
+        try {
+          const mismatched = await decide({
+            ...acceptBody,
+            resultRevision: acceptBody.resultRevision + 1,
+          });
+
+          expect(mismatched.status).toBe(409);
+          const accepted = await decide(acceptBody);
+
+          expect(accepted.status).toBe(200);
+          const receipt: { id: string } = await accepted.json();
+          const repeated = await decide(acceptBody);
+
+          expect(repeated.status).toBe(200);
+          expect(await repeated.json()).toMatchObject({
+            ...receipt,
+            status: "accepted",
+            duplicate: true,
+          });
+          await expect(
+            getSpecialistAssignment(db, userId, assignment.id),
+          ).resolves.toMatchObject({ status: "active" });
+          const acceptedContext = await getSpecialistAssignmentTokenContext(
+            db,
+            appointment.credential.tokenId,
+            assignment.id,
+          );
+
+          expect(acceptedContext.entries).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                actor: expect.objectContaining({ kind: "user", id: userId }),
+                entry: expect.objectContaining({
+                  kind: "accepted",
+                  state: "accepted",
+                  acceptedWork: expect.objectContaining({
+                    decisionId: receipt.id,
+                    childRunId: continuation.childRunId,
+                    resultRevision: ready.resultRevision,
+                    sourceFindings: [
+                      {
+                        childRunId: continuation.childRunId,
+                        resultRevision: ready.resultRevision,
+                        findingId: "observation-gap",
+                      },
+                    ],
+                  }),
+                }),
+              }),
+            ]),
+          );
+        } finally {
+          browserSession.user = null;
+          await revoke(acceptGrant);
+        }
       } finally {
         graphHost.mockRestore();
       }

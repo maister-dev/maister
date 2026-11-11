@@ -1898,6 +1898,13 @@
       "when": 1794606477977,
       "tag": "0274_specialist_work_rework",
       "breakpoints": true
+    },
+    {
+      "idx": 275,
+      "version": "7",
+      "when": 1794606477978,
+      "tag": "0275_specialist_work_acceptance",
+      "breakpoints": true
     }
   ]
 }
