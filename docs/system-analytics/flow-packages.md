@@ -407,9 +407,9 @@ flowchart LR
 
 An installed revision is addressed by exported package name and the existing
 `package_installs.id`. Every Studio package content page checks the active
-account before resolving the ID or reading content. Inactive accounts return
-to sign-in and password-reset-required accounts go to password change. The
-viewer resolves the ID against installed catalog entries with that name. The project Flow viewer
+account before resolving the ID or reading content. Inactive and
+password-reset-required accounts receive the existing protected-page refusal.
+The viewer resolves the ID against installed catalog entries with that name. The project Flow viewer
 also requires `readRepoFiles` for its project and scopes the revision to its
 existing source guard.
 
