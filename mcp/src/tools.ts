@@ -540,16 +540,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      anyOf: [
-        { required: ["operationKey"] },
-        {
-          properties: {
-            mode: { const: "run" },
-            target: { required: ["agentId"] },
-          },
-          required: ["mode", "target"],
-        },
-      ],
+      // Claude omits tools with a root union. Dispatch enforces the conditional key.
       properties: {
         operationKey: {
           type: "string",
@@ -1218,13 +1209,10 @@ export async function dispatchTool(opts: {
   }
 
   if (isDelegationAdmissionTool(name)) {
-    const schema = Object.fromEntries(
-      Object.entries(TOOL_SPECS[name].inputSchema).filter(
-        ([key]) => key !== "anyOf",
-      ),
-    );
     const parsed = z
-      .fromJSONSchema(schema as z.core.JSONSchema.JSONSchema)
+      .fromJSONSchema(
+        TOOL_SPECS[name].inputSchema as z.core.JSONSchema.JSONSchema,
+      )
       .safeParse(args);
     const taskBacked =
       name === "run_plan" ||
