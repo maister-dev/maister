@@ -38,6 +38,7 @@ import {
 import { resolveResultContractForDelegation } from "@/lib/run-results/resolve-profile";
 import { resolveActiveBoundRun } from "@/lib/runs/bound-run";
 import { addTaskRelation } from "@/lib/social/relations";
+import { dispatchProjectAssignmentChild } from "@/lib/specialist-assignments/project-child-dispatch";
 import { createDelegatedTaskLaunchSource } from "@/lib/orchestrator/delegated-launch-authority";
 import {
   delegationLaunchOperation,
@@ -137,6 +138,39 @@ async function compensateChildTask(args: {
   }
 }
 
+async function checkParentAfterLaunch(
+  db: Db,
+  projectId: string,
+  parent: { id: string; taskId: string | null },
+  childRunId: string,
+): Promise<NextResponse | null> {
+  const current = await resolveActiveBoundRun(db, parent.id, projectId);
+
+  if (current.ok) return null;
+
+  // The parent's stop may have completed before the new child was committed.
+  await cascadeAbandonRunTreeAndStopSessions(
+    parent.id,
+    parent.taskId,
+    "user_stopped",
+    { db, logLabel: "[delegation.compensate]" },
+  ).catch((error: unknown) =>
+    log.error(
+      {
+        parentRunId: parent.id,
+        childRunId,
+        err: error instanceof Error ? error.message : String(error),
+      },
+      "[delegation.compensate] cascade of an orphaned child failed",
+    ),
+  );
+
+  return NextResponse.json(
+    { code: current.code, message: current.message },
+    { status: httpStatusForExtCode(current.code) },
+  );
+}
+
 export async function POST(
   req: NextRequest,
   _routeCtx: object,
@@ -216,6 +250,38 @@ export async function POST(
         }
 
         const parent = boundRes.run;
+
+        if (body.assignmentWork) {
+          const child = await dispatchProjectAssignmentChild(db, {
+            body,
+            projectId: ctx.projectId,
+            parentRunId,
+            tokenId: ctx.actor.tokenId,
+          });
+          const parentRefusal = await checkParentAfterLaunch(
+            db,
+            ctx.projectId,
+            parent,
+            child.childRunId,
+          );
+
+          if (parentRefusal) return parentRefusal;
+
+          await recordRequiredTokenAudit(
+            {
+              ...tokenAuditIdentity(ctx.actor),
+              projectId: ctx.projectId,
+              scopeUsed: "runs:delegate",
+              endpoint: ENDPOINT,
+              method: "POST",
+              result: "ok",
+              statusCode: 202,
+            },
+            db,
+          );
+
+          return NextResponse.json(child, { status: 202 });
+        }
         const needsChildTask = targetKind === "flow" || body.mode === "task";
         const operation = needsChildTask
           ? delegationLaunchOperation(
@@ -714,48 +780,14 @@ export async function POST(
             throw launchErr;
           }
 
-          // W6: the orchestrator may have terminalized WHILE this child was
-          // launching — the pre-flight check cannot see that, and the parent's own
-          // cascade already ran before this child existed. Re-read the parent now
-          // that the child row is committed and, if the tree is terminal, run the
-          // SAME cascade a parent stop runs. Cascading from the PARENT (not the
-          // child) is deliberate: the cascade abandons a run's DESCENDANTS and
-          // leaves the root to its caller, and the just-born child is exactly one
-          // of the parent's descendants. The already-terminal parent is untouched.
-          const parentNow = await resolveActiveBoundRun(
+          const parentRefusal = await checkParentAfterLaunch(
             db,
-            parentRunId,
             ctx.projectId,
+            parent,
+            childRunId,
           );
 
-          if (!parentNow.ok) {
-            // The cascade flips rows only; the just-born child may already hold
-            // a live supervisor session that would otherwise keep spending
-            // under the terminal tree.
-            await cascadeAbandonRunTreeAndStopSessions(
-              parentRunId,
-              parent.taskId ?? null,
-              "user_stopped",
-              { db, logLabel: "[delegation.compensate]" },
-            ).catch((cascadeErr: unknown) =>
-              log.error(
-                {
-                  parentRunId,
-                  childRunId,
-                  err:
-                    cascadeErr instanceof Error
-                      ? cascadeErr.message
-                      : String(cascadeErr),
-                },
-                "[delegation.compensate] cascade of an orphaned child failed",
-              ),
-            );
-
-            return NextResponse.json(
-              { code: parentNow.code, message: parentNow.message },
-              { status: httpStatusForExtCode(parentNow.code) },
-            );
-          }
+          if (parentRefusal) return parentRefusal;
 
           const result = { runId: childRunId };
 

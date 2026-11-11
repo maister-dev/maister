@@ -599,6 +599,29 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
             "Stable key, unique within this orchestrator tree, used to address a persistent child via run_message. Required when persistent is true.",
         },
         runnerOverride: { type: "string", minLength: 1 },
+        assignmentWork: {
+          type: "object",
+          additionalProperties: false,
+          description: "Exact native project assignment work. Use a standalone workspace-none agent with a required result contract.",
+          required: ["selector", "expectedOutcome"],
+          properties: {
+            expectedOutcome: { type: "string", minLength: 1, maxLength: 4000 },
+            selector: {
+              type: "object",
+              additionalProperties: false,
+              required: ["schemaVersion", "assignmentId", "expectedRevision", "inputRevision", "contextRevision", "logicalWorkId", "workRevision"],
+              properties: {
+                schemaVersion: { type: "integer", const: 1 },
+                assignmentId: { type: "string", minLength: 1, maxLength: 128 },
+                expectedRevision: { type: "integer", minimum: 1, maximum: 2147483647 },
+                inputRevision: { type: "integer", minimum: 1, maximum: 2147483647 },
+                contextRevision: { type: "integer", minimum: 0, maximum: 2147483647 },
+                logicalWorkId: { type: "string", minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9._:-]+$" },
+                workRevision: { type: "integer", minimum: 1, maximum: 2147483647 },
+              },
+            },
+          },
+        },
         resultProfile: {
           type: "string",
           minLength: 1,
@@ -1841,6 +1864,7 @@ function resolveRouting(
         addressableKey,
         runnerOverride,
         resultProfile,
+        assignmentWork,
       } = args as {
         target: { agentId?: string; flowId?: string };
         mode: string;
@@ -1852,6 +1876,7 @@ function resolveRouting(
         addressableKey?: string;
         runnerOverride?: string;
         resultProfile?: string;
+        assignmentWork?: Record<string, unknown>;
       };
       const body: Record<string, unknown> = { target, mode, prompt };
 
@@ -1862,6 +1887,7 @@ function resolveRouting(
       if (addressableKey !== undefined) body.addressableKey = addressableKey;
       if (runnerOverride !== undefined) body.runnerOverride = runnerOverride;
       if (resultProfile !== undefined) body.resultProfile = resultProfile;
+      if (assignmentWork !== undefined) body.assignmentWork = assignmentWork;
 
       return { method: "POST", path: `/api/v1/ext/runs/delegate`, body };
     }

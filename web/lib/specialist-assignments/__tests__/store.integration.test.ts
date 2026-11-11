@@ -28,9 +28,14 @@ import {
 import { intakeSpecialistAssignmentInTransaction } from "../intake";
 import { assignmentContextSchema } from "../context-types";
 import { assignmentWorkDefinitionSchema } from "../work-types";
-import { retainDelegatedWorkInTransaction } from "../delegated-intake";
+import {
+  bindDelegatedWorkRunInTransaction,
+  retainDelegatedWorkInTransaction,
+} from "../delegated-intake";
 
 import { contentDigest } from "@/lib/evaluations/digest";
+import { authorizeSourceRestrictions } from "@/lib/brain/knowledge-restrictions";
+import { admitDelegatedChild } from "@/lib/orchestrator/admission";
 import {
   GET as contextGet,
   PATCH as contextPatch,
@@ -395,6 +400,18 @@ it("IT-CBC-01 retains and replays immutable work through the current executing p
   expect(first.work.actor).toEqual(actor);
   const { id: workId, reservedRunId, requestSha256 } = first.work;
 
+  await expect(
+    database.db.transaction(async (tx) => {
+      await tx.execute(
+        sql`UPDATE runs SET delegation_bounds='{"budget":{"maxChildRuns":1}}'::jsonb WHERE id=${parentRunId}`,
+      );
+      await admitDelegatedChild(tx, { parentRunId, assignmentBounds: bounds });
+    }),
+  ).rejects.toMatchObject({
+    code: "CONFIG",
+    message: expect.stringContaining("child-run budget exhausted"),
+  });
+
   await revokeAgentRunToken(firstToken.tokenId, database.db);
   const rotated = { ...request, tokenId: (await issue()).tokenId };
   const staleHeads = {
@@ -611,14 +628,43 @@ it("IT-CBC-01 retains and replays immutable work through the current executing p
       )
     ).rows,
   ).toEqual([{ appointed: false }]);
-
-  await database.db.transaction(async (tx) => {
-    await tx.execute(sql`INSERT INTO specialist_run_links(run_id,assignment_id,input_revision,role,work_id,work_revision,work_witness)
-      VALUES(${reservedRunId},${assignment.id},1,'child',${workId},1,${JSON.stringify(witness)}::jsonb)`);
-    await tx.execute(
-      sql`UPDATE specialist_work SET child_run_id=${reservedRunId},revision=revision+1 WHERE id=${workId}`,
+  const assertChildSources = () =>
+    database.db.transaction((tx) =>
+      authorizeSourceRestrictions(
+        tx,
+        { kind: "execution", runId: reservedRunId, nodeAttemptId: null },
+        first.work.sourceRestrictions,
+      ),
     );
+
+  await expect(assertChildSources()).rejects.toMatchObject({
+    details: { reason: "knowledge_reference_unavailable" },
   });
+
+  const bind = () =>
+    database.db.transaction(async (tx) => {
+      await tx.execute(
+        sql`SELECT id FROM specialist_assignments WHERE id=${assignment.id} FOR UPDATE`,
+      );
+      await bindDelegatedWorkRunInTransaction(tx, first.work);
+    });
+
+  await database.pool.query(
+    "UPDATE run_cost_rollups SET input_tokens=$2 WHERE run_id=$1",
+    [parentRunId, bounds.maxTokens - 20],
+  );
+  await expect(bind()).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "assignment_budget_exhausted", meter: "tokens" },
+  });
+  await expect(assertChildSources()).rejects.toMatchObject({
+    details: { reason: "knowledge_reference_unavailable" },
+  });
+  await database.pool.query(
+    "UPDATE run_cost_rollups SET input_tokens=30 WHERE run_id=$1",
+    [parentRunId],
+  );
+  await bind();
   expect(
     (
       await database.pool.query(
@@ -627,6 +673,9 @@ it("IT-CBC-01 retains and replays immutable work through the current executing p
       )
     ).rows,
   ).toEqual([{ appointed: true }]);
+  await expect(assertChildSources()).resolves.toMatchObject({
+    visited: expect.arrayContaining([expect.stringContaining(assignment.id)]),
+  });
   expect(
     (
       await database.pool.query(

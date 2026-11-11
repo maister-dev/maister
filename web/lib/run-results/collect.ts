@@ -11,7 +11,7 @@ import type {
   RunResultInvalidReason,
 } from "@/lib/run-results/types";
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -28,6 +28,7 @@ import {
   resolvePublicResult,
 } from "@/lib/run-results/ledger";
 import { deriveResultStatus } from "@/lib/run-results/status";
+import { authorizeNativeChildCollection } from "@/lib/specialist-assignments/child-authority";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches lib/services/tasks.ts).
 const { artifactInstances, runs } = schemaModule as unknown as Record<
@@ -162,6 +163,7 @@ export type CollectedChild = {
   result: CollectResult;
   servedResultId: string | null;
   knowledgeDisclosureRequired?: true;
+  nativeWorkParentId?: string;
 };
 
 export async function collectChild(
@@ -178,6 +180,9 @@ export async function collectChild(
       status: runs.status,
       resultContract: runs.resultContract,
       knowledgeAccess: runs.knowledgeAccess,
+      nativeWork: sql<boolean>`EXISTS (
+        SELECT 1 FROM specialist_work work WHERE work.reserved_run_id=runs.id
+      )`,
     })
     .from(runs)
     .where(
@@ -190,6 +195,7 @@ export async function collectChild(
     status: string;
     resultContract: RunResultContract | null;
     knowledgeAccess: KnowledgeAccessCapture | null;
+    nativeWork: boolean;
   }[];
   const run = runRows[0];
 
@@ -199,6 +205,8 @@ export async function collectChild(
       "run is not a child of the bound orchestrator run",
     );
   }
+  if (run.nativeWork)
+    await db.transaction((tx: Db) => authorizeNativeChildCollection(tx, args));
 
   const knowledgeDisclosureRequired = usesStructuredKnowledgeContext(run);
 
@@ -241,6 +249,7 @@ export async function collectChild(
 
   return {
     servedResultId: servedRow?.id ?? null,
+    ...(run.nativeWork ? { nativeWorkParentId: args.parentRunId } : {}),
     ...(knowledgeDisclosureRequired
       ? { knowledgeDisclosureRequired: true as const }
       : {}),
@@ -342,9 +351,21 @@ export async function markCollected(
 
   const governed = collected.filter((item) => item.knowledgeDisclosureRequired);
 
-  if (served.length === 0 && governed.length === 0) return;
+  const native = collected.filter(
+    (item): item is CollectedChild & { nativeWorkParentId: string } =>
+      item.nativeWorkParentId !== undefined,
+  );
+
+  if (served.length === 0 && governed.length === 0 && native.length === 0)
+    return;
 
   await db.transaction(async (tx: Db) => {
+    for (const item of native)
+      await authorizeNativeChildCollection(tx, {
+        parentRunId: item.nativeWorkParentId,
+        childRunId: item.result.childRunId,
+        recipient,
+      });
     for (const item of governed)
       await authorizeRunKnowledgeDisclosure(
         tx,

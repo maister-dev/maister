@@ -11519,6 +11519,7 @@ components:
         | `persistent` | yes | REFUSED — agent-target only |
         | `addressableKey` | yes | REFUSED — agent-target only |
         | `runnerOverride` | yes (agent runner chain) | yes (Flow executor-resolution chain) |
+        | `assignmentWork` | standalone project agent, `mode: run`, workspace none, required result | REFUSED for this dispatch arm |
 
         An authorized agent target whose effective definition names a Flow uses
         the Flow column above. Its `workspace`, `workspaceMode`, `persistent`,
@@ -11549,6 +11550,28 @@ components:
       properties:
         target:
           $ref: "#/components/schemas/ExtDelegationTarget"
+        assignmentWork:
+          type: object
+          additionalProperties: false
+          required: [selector, expectedOutcome]
+          description: |
+            The caller must hold the exact project assignment appointment. The
+            child uses the current installed binding and the required result
+            contract resolved by the server. Exact replay returns the same Run.
+          properties:
+            expectedOutcome: { type: string, minLength: 1, maxLength: 4000 }
+            selector:
+              type: object
+              additionalProperties: false
+              required: [schemaVersion, assignmentId, expectedRevision, inputRevision, contextRevision, logicalWorkId, workRevision]
+              properties:
+                schemaVersion: { type: integer, enum: [1] }
+                assignmentId: { type: string, minLength: 1, maxLength: 128 }
+                expectedRevision: { type: integer, minimum: 1, maximum: 2147483647 }
+                inputRevision: { type: integer, minimum: 1, maximum: 2147483647 }
+                contextRevision: { type: integer, minimum: 0, maximum: 2147483647 }
+                logicalWorkId: { type: string, minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9._:-]+$" }
+                workRevision: { type: integer, minimum: 1, maximum: 2147483647 }
         mode:
           type: string
           enum: [task, run]

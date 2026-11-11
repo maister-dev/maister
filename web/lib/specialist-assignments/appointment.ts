@@ -13,8 +13,19 @@ export async function assertAssignmentAppointment(
   assignmentId: string,
 ): Promise<void> {
   const links = await tx.execute(sql`
-    SELECT 1 FROM specialist_run_links WHERE run_id=${runId} AND assignment_id=${assignmentId}
-      AND role IN ('specialist','coordinator','continuation') AND work_id IS NULL
+    SELECT 1 FROM specialist_run_links link
+    WHERE link.run_id=${runId} AND link.assignment_id=${assignmentId} AND (
+      (link.role IN ('specialist','coordinator','continuation') AND link.work_id IS NULL)
+      OR (link.role IN ('child','continuation') AND EXISTS (
+        SELECT 1 FROM specialist_work work
+        JOIN specialist_assignments assignment ON assignment.id=work.assignment_id
+        WHERE work.id=link.work_id AND work.work_revision=link.work_revision
+          AND work.assignment_id=link.assignment_id AND work.child_run_id=link.run_id
+          AND work.decision_state='open'
+          AND specialist_run_has_input(link.run_id,work.assignment_id,work.input_revision,work.input_sha256)
+          AND specialist_work_target_exists(work.definition->'target',assignment.company_id,assignment.project_id)
+      ))
+    )
   `);
 
   if (links.rows.length !== 1) throw unavailableKnowledgeReference();

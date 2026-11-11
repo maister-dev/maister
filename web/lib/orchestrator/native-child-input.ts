@@ -11,6 +11,7 @@ import { unavailableKnowledgeReference } from "@/lib/brain/knowledge-restriction
 import { knowledgeAccessCaptureSchema } from "@/lib/company/types";
 import { MaisterError } from "@/lib/errors";
 import { FINDINGS_CONTRACT } from "@/lib/run-results/findings-contract";
+import { authorizeNativeChildInput } from "@/lib/specialist-assignments/child-authority";
 
 /** Admit source-bearing input to a direct professional child before private turn bytes exist. */
 export async function captureNativeChildInput(
@@ -19,6 +20,11 @@ export async function captureNativeChildInput(
   input: Readonly<{ sourceRunId: string; childRunId: string }>,
 ): Promise<void> {
   await db.transaction(async (tx) => {
+    await authorizeNativeChildInput(tx, {
+      parentRunId: input.sourceRunId,
+      childRunId: input.childRunId,
+      recipient: principal,
+    });
     const source = (
       await tx.execute(
         sql`SELECT project_id,knowledge_access,result_contract->>'nativeContract' AS native_contract FROM runs WHERE id=${input.sourceRunId} FOR NO KEY UPDATE`,

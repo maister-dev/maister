@@ -41,6 +41,7 @@ import {
 
 import { knowledgeOwner } from "@/lib/brain/knowledge-access";
 import { additionalKnowledgeRestrictions } from "@/lib/brain/knowledge-disclosure";
+import { recordNativeRunSourcesInTransaction } from "@/lib/brain/knowledge-execution-access";
 import { knowledgeActorSchema } from "@/lib/brain/knowledge-read-types";
 import { inspectKnowledgeEvidenceReference } from "@/lib/brain/knowledge-reference";
 import {
@@ -98,6 +99,12 @@ const retainedWorkSchema = z.object({
 export type DelegatedWorkReceipt = Readonly<{
   work: SpecialistWorkRecord;
   duplicate: boolean;
+}>;
+
+export type DelegatedWorkRequest = Readonly<{
+  tokenId: string;
+  selector: AssignmentWorkSelector;
+  prepared: PreparedAssignmentWork;
 }>;
 type DelegatedWorkOrigin = Readonly<{
   principal: ResolvedAssignmentContextPrincipal;
@@ -225,11 +232,7 @@ async function lockDelegatedWorkOrigin(
 /** Retain an authorized work definition and its canonical intake receipt under the existing tree fences. */
 export async function retainDelegatedWorkInTransaction(
   tx: SqlTransaction,
-  input: Readonly<{
-    tokenId: string;
-    selector: AssignmentWorkSelector;
-    prepared: PreparedAssignmentWork;
-  }>,
+  input: DelegatedWorkRequest,
 ): Promise<DelegatedWorkReceipt> {
   const selector = assignmentWorkSelectorSchema.parse(input.selector);
   const { assignmentId, logicalWorkId, workRevision, inputRevision } = selector;
@@ -451,4 +454,68 @@ export async function retainDelegatedWorkInTransaction(
   );
 
   return { work, duplicate: false };
+}
+
+/** Bind the exact reserved child and its source closure in the Run allocation transaction. */
+export async function bindDelegatedWorkRunInTransaction(
+  tx: SqlTransaction,
+  work: SpecialistWorkRecord,
+): Promise<void> {
+  const {
+    id,
+    assignmentId,
+    workRevision,
+    revision,
+    definitionSha256,
+    reservedRunId,
+  } = work;
+
+  await admitAssignmentWorkBudget(tx, {
+    assignmentId,
+    parentRunId: work.definition.parent.runId,
+    rootRunId: work.definition.parent.rootRunId,
+    requested: work.bounds,
+    reservedRunId,
+  });
+  const [bound] = (
+    await tx.execute(sql`
+      UPDATE specialist_work SET child_run_id=${reservedRunId}, revision=revision+1
+      WHERE id=${id} AND assignment_id=${assignmentId} AND work_revision=${workRevision}
+        AND revision=${revision} AND definition_sha256=${definitionSha256}
+        AND reserved_run_id=${reservedRunId} AND child_run_id IS NULL AND decision_state='open'
+        AND EXISTS (SELECT 1 FROM runs child WHERE child.id=${reservedRunId}
+          AND child.knowledge_access->>'state'='complete')
+      RETURNING input_revision
+    `)
+  ).rows;
+
+  if (!bound || bound.input_revision !== work.inputRevision)
+    throw new MaisterError(
+      "CONFLICT",
+      "Delegated work no longer owns the reserved Run",
+      {
+        details: { reason: "delegated_work_binding_changed" },
+      },
+    );
+  const witness = { schemaVersion: 1, id, workRevision, definitionSha256 };
+
+  await tx.execute(sql`
+    INSERT INTO specialist_run_links(run_id,assignment_id,input_revision,role,work_id,work_revision,work_witness)
+    VALUES(${reservedRunId},${assignmentId},${work.inputRevision},'child',${id},${workRevision},${JSON.stringify(witness)}::jsonb)
+  `);
+  await recordNativeRunSourcesInTransaction(
+    tx,
+    reservedRunId,
+    work.sourceRestrictions,
+  );
+  log.debug(
+    {
+      assignmentId,
+      parentRunId: work.definition.parent.runId,
+      workId: id,
+      workRevision,
+      childRunId: reservedRunId,
+    },
+    "delegated Run and authorized source closure bound",
+  );
 }

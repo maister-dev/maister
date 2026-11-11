@@ -21,6 +21,7 @@ import {
   resolveNativeTokenPrincipal,
 } from "@/lib/brain/knowledge-access";
 import { lockKnowledgeReadConsumer } from "@/lib/brain/knowledge-disclosure";
+import { assignmentInputReadPolicy } from "@/lib/brain/knowledge-assignment-policy";
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import { MaisterError } from "@/lib/errors";
 
@@ -212,16 +213,23 @@ async function authorizeAssignmentExecutionAction(
       WHERE execution.id=${identity.actor.runId} AND execution.project_id=${owner.projectId} AND execution.company_id IS NULL
         AND requested.project_id=execution.project_id AND requested.company_id IS NULL
         AND original.actor->>'kind'='user'
-        AND (${projectAssignmentInitiatorPolicy({
-          runId: sql`execution.id`,
-          createdByUserId: sql`execution.created_by_user_id`,
-          projectId: sql`execution.project_id`,
-          taskId: sql`execution.task_id`,
-          userId: sql`original.actor->>'id'`,
-          assignmentId: sql`original.assignment_id`,
-          inputRevision: sql`original.revision`,
-          inputSha256: sql`original.digest`,
-        })})
+        AND ((appointment.work_id IS NULL AND (${projectAssignmentInitiatorPolicy(
+          {
+            runId: sql`execution.id`,
+            createdByUserId: sql`execution.created_by_user_id`,
+            projectId: sql`execution.project_id`,
+            taskId: sql`execution.task_id`,
+            userId: sql`original.actor->>'id'`,
+            assignmentId: sql`original.assignment_id`,
+            inputRevision: sql`original.revision`,
+            inputSha256: sql`original.digest`,
+          },
+        )})) OR (appointment.work_id IS NOT NULL AND (${assignmentInputReadPolicy(
+          identity,
+          sql`original.assignment_id`,
+          sql`original.revision`,
+          sql`original.digest`,
+        )})))
       FOR SHARE OF execution,appointment,requested,original`,
     )
   ).rows[0];

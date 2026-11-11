@@ -5,6 +5,8 @@ import type { DelegationBounds } from "@/lib/run-results/types";
 import { and, eq, notInArray, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { MAX_DELEGATION_ANCESTORS } from "./delegation-spec";
+
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { pgErrorOf } from "@/lib/db/pg-error";
@@ -60,7 +62,6 @@ type AncestorLink = {
   bounds: DelegationBounds | null;
   status: string;
 };
-const MAX_DELEGATION_ANCESTORS = 64;
 
 function invalidDelegationLineage(
   parentRunId: string,
@@ -217,6 +218,7 @@ async function countRunSubtree(
   tx: Db,
   ancestorId: string,
   ownedTaskId: string | null,
+  reservedRunId: string | null,
 ): Promise<number> {
   const result: unknown = await tx.execute(sql`
     WITH RECURSIVE subtree AS (
@@ -230,6 +232,11 @@ async function countRunSubtree(
         AND child.qualification_child_proof->>'parentRunId' IN (SELECT id FROM subtree UNION SELECT ${ancestorId})
         AND child.id IS DISTINCT FROM ${ownedTaskId}
         AND NOT EXISTS(SELECT 1 FROM runs WHERE task_id=child.id)
+    ) + (
+      SELECT count(*) FROM specialist_work work
+      WHERE work.decision_state='open' AND work.child_run_id IS NULL
+        AND work.reserved_run_id IS DISTINCT FROM ${reservedRunId}
+        AND work.parent_run_id IN (SELECT id FROM subtree UNION SELECT ${ancestorId})
     ))::int AS n
   `);
   // node-postgres returns `{ rows }`; some drizzle drivers return the array
@@ -258,6 +265,7 @@ async function countLiveDelegatedChildren(
   tx: Db,
   parentRunId: string,
   launchIntentId: string | null,
+  reservedRunId: string | null,
 ): Promise<number> {
   const rows = (await tx
     .select({ n: sql<number>`count(*)::int` })
@@ -274,7 +282,15 @@ async function countLiveDelegatedChildren(
     WHERE state='preparing' AND run_id IS NULL AND id IS DISTINCT FROM ${launchIntentId}
       AND settings_snapshot->'serverExecution'->'execution'->>'parentRunId'=${parentRunId}`);
 
-  return (rows[0]?.n ?? 0) + Number(reservations.rows[0]?.n ?? 0);
+  const work = await tx.execute(sql`SELECT count(*)::int n FROM specialist_work
+    WHERE parent_run_id=${parentRunId} AND decision_state='open'
+      AND child_run_id IS NULL AND reserved_run_id IS DISTINCT FROM ${reservedRunId}`);
+
+  return (
+    (rows[0]?.n ?? 0) +
+    Number(reservations.rows[0]?.n ?? 0) +
+    Number(work.rows[0]?.n ?? 0)
+  );
 }
 
 /**
@@ -294,11 +310,32 @@ export async function admitDelegatedChild(
     incoming?: number;
     launchIntentId?: string;
     assignmentBounds?: { maxDepth: number; maxFanout: number };
+    reservedRunId?: string;
   },
 ): Promise<void> {
   const incoming = args.incoming ?? 1;
 
   const chain = await lockDelegationTree(tx, args.parentRunId);
+
+  if (!args.assignmentBounds) {
+    const [nativeAppointment] = (
+      await tx.execute(sql`
+        SELECT 1 FROM specialist_run_links
+        WHERE run_id=${args.parentRunId} AND (
+          work_witness IS NOT NULL OR (
+            work_id IS NULL AND role IN ('specialist','coordinator','continuation')
+          )
+        )
+      `)
+    ).rows;
+
+    if (nativeAppointment)
+      throw new MaisterError(
+        "PRECONDITION",
+        "An appointed specialist must delegate through exact assignment work",
+        { details: { reason: "assignment_work_required" } },
+      );
+  }
 
   // One current locked ancestry supplies all three bounds checks below.
   const [ownedIntent] = args.launchIntentId
@@ -314,6 +351,27 @@ export async function admitDelegatedChild(
       "Delegated launch does not own this parent reservation",
       { details: { reason: "delegation_intent_fenced" } },
     );
+  if (args.reservedRunId) {
+    const [ownedWork] = (
+      await tx.execute(sql`SELECT 1 FROM specialist_work
+        WHERE parent_run_id=${args.parentRunId} AND reserved_run_id=${args.reservedRunId}
+          AND child_run_id IS NULL AND decision_state='open' FOR SHARE`)
+    ).rows;
+
+    if (
+      !args.assignmentBounds ||
+      incoming !== 1 ||
+      args.launchIntentId ||
+      !ownedWork
+    )
+      throw new MaisterError(
+        "CONFLICT",
+        "Delegated launch does not own this work reservation",
+        {
+          details: { reason: "delegated_work_binding_changed" },
+        },
+      );
+  }
   const depth = chain.length - 1;
   const parentBounds = chain[0]?.bounds ?? null;
   const rootBounds = chain.at(-1)?.bounds ?? null;
@@ -354,6 +412,7 @@ export async function admitDelegatedChild(
     tx,
     args.parentRunId,
     args.launchIntentId ?? null,
+    args.reservedRunId ?? null,
   );
   const envFanout = orchestratorMaxFanout();
   const maxFanout = Math.min(
@@ -411,6 +470,7 @@ export async function admitDelegatedChild(
       tx,
       ancestor.id,
       ownedIntent?.task_id ?? null,
+      args.reservedRunId ?? null,
     );
 
     if (descendants + incoming > cap) {

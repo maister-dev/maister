@@ -5,6 +5,7 @@ import type { KnowledgePrincipalIdentity } from "./knowledge-access";
 
 import { sql } from "drizzle-orm";
 
+import { MAX_DELEGATION_ANCESTORS } from "@/lib/orchestrator/delegation-spec";
 import { projectAssignmentInitiatorPolicy } from "@/lib/specialist-assignments/project-initiator-policy";
 import { projectRolesForActions } from "@/lib/authz";
 
@@ -43,7 +44,7 @@ export function assignmentInputReadPolicy(
   digest: SQL,
 ): SQL {
   if (identity.kind === "agent")
-    return sql`((${projectAssignmentInputReadPolicy(identity, assignmentId, revision, digest)}) OR (${projectEventInputReadPolicy(identity, assignmentId, revision, digest)}))`;
+    return sql`((${projectAssignmentInputReadPolicy(identity, assignmentId, revision, digest)}) OR (${projectEventInputReadPolicy(identity, assignmentId, revision, digest)}) OR (${projectWorkInputReadPolicy(identity, assignmentId, revision, digest)}))`;
   // The server-resolved execution identity already locks this exact input and
   // its current appointment, provider, initiating account and assignment read grant.
   if (identity.kind === "company_agent")
@@ -102,15 +103,47 @@ function projectAssignmentInputReadPolicy(
   digest: SQL,
 ): SQL {
   if (identity.actor.runId === null) return sql`false`;
-  const appointmentKind =
-    identity.actor.attemptId === null
-      ? sql`execution.run_kind='agent' AND appointment.role='specialist' AND binding.id=${identity.bindingId} AND role.id=${identity.actor.id}`
-      : sql`execution.run_kind='flow' AND appointment.role='coordinator'
-          AND original.standing_definition->'schemaVersion'='2'::jsonb
-          AND original.standing_definition->'coordinatorFlow'->>'flowId'=execution.flow_id
-          AND original.standing_definition->'coordinatorFlow'->>'flowRevisionId'=execution.flow_revision_id
-          AND original.standing_definition->'coordinatorFlow'->>'resolvedRevision'=execution.flow_revision
-          AND requested.project_task_id=execution.task_id`;
+
+  return projectOriginAssignmentInputReadPolicy(
+    {
+      runId: sql`${identity.actor.runId}`,
+      nodeAttemptId: sql`${identity.actor.attemptId}`,
+      projectId: sql`${identity.projectId}`,
+      bindingId: sql`${identity.bindingId}`,
+      actorId: sql`${identity.actor.id}`,
+    },
+    assignmentId,
+    revision,
+    digest,
+  );
+}
+
+type ProjectAssignmentOrigin = Readonly<{
+  runId: SQL;
+  nodeAttemptId: SQL;
+  projectId: SQL;
+  bindingId: SQL;
+  actorId: SQL;
+}>;
+
+function projectOriginAssignmentInputReadPolicy(
+  origin: ProjectAssignmentOrigin,
+  assignmentId: SQL,
+  revision: SQL,
+  digest: SQL,
+): SQL {
+  const appointmentKind = sql`(
+    (${origin.nodeAttemptId}::text IS NULL
+      AND execution.run_kind='agent' AND appointment.role='specialist'
+      AND binding.id=${origin.bindingId} AND role.id=${origin.actorId})
+    OR (${origin.nodeAttemptId}::text IS NOT NULL
+      AND execution.run_kind='flow' AND appointment.role='coordinator'
+      AND original.standing_definition->'schemaVersion'='2'::jsonb
+      AND original.standing_definition->'coordinatorFlow'->>'flowId'=execution.flow_id
+      AND original.standing_definition->'coordinatorFlow'->>'flowRevisionId'=execution.flow_revision_id
+      AND original.standing_definition->'coordinatorFlow'->>'resolvedRevision'=execution.flow_revision
+      AND requested.project_task_id=execution.task_id)
+  )`;
 
   return sql`EXISTS (
       SELECT 1 FROM specialist_run_links appointment
@@ -122,9 +155,9 @@ function projectAssignmentInputReadPolicy(
       JOIN project_package_attachments attachment ON attachment.project_id=binding.project_id AND attachment.package_name=role.package_name
       JOIN package_installs pin ON pin.id=attachment.package_install_id
       JOIN users initiator ON initiator.id=original.actor->>'id'
-      WHERE appointment.run_id=${identity.actor.runId} AND (${appointmentKind})
+      WHERE appointment.run_id=${origin.runId} AND (${appointmentKind})
         AND appointment.assignment_id=${assignmentId} AND specialist_run_has_input(execution.id,appointment.assignment_id,(${revision})::integer,(${digest})::text)
-        AND requested.project_id=${identity.projectId} AND requested.company_id IS NULL
+        AND requested.project_id=${origin.projectId} AND requested.company_id IS NULL
         AND requested.status IN ('active','waiting_input','waiting_children','waiting_resource','reconciling','awaiting_acceptance')
         AND (requested.origin->>'kind'<>'event' OR EXISTS (
           SELECT 1 FROM agent_schedules live_source
@@ -176,6 +209,82 @@ function projectAssignmentInputReadPolicy(
         ))
       FOR SHARE OF appointment,requested,original,execution,binding,role,attachment,pin,initiator
     )`;
+}
+
+/** Native project children inherit only the exact input appointed to their current installed role. */
+function projectWorkInputReadPolicy(
+  identity: Extract<KnowledgePrincipalIdentity, { kind: "agent" }>,
+  assignmentId: SQL,
+  revision: SQL,
+  digest: SQL,
+): SQL {
+  if (identity.actor.runId === null || identity.actor.attemptId !== null)
+    return sql`false`;
+
+  const source = projectOriginAssignmentInputReadPolicy(
+    {
+      runId: sql`origin.parent_run_id`,
+      nodeAttemptId: sql`origin.actor->>'attemptId'`,
+      projectId: sql`child.project_id`,
+      bindingId: sql`root_role.id`,
+      actorId: sql`origin.actor->>'id'`,
+    },
+    assignmentId,
+    revision,
+    digest,
+  );
+
+  return sql`EXISTS (
+    SELECT 1
+    FROM specialist_run_links link
+    JOIN specialist_work work ON work.id=link.work_id AND work.work_revision=link.work_revision
+      AND work.assignment_id=link.assignment_id AND work.input_revision=link.input_revision
+      AND work.child_run_id=link.run_id AND work.reserved_run_id=link.run_id
+    JOIN runs child ON child.id=link.run_id AND child.parent_run_id=work.parent_run_id
+    JOIN agent_project_links receiving ON receiving.id=${identity.bindingId}
+      AND receiving.agent_id=child.source_agent_id AND receiving.project_id=child.project_id AND receiving.enabled
+    JOIN agents recipient_role ON recipient_role.id=receiving.agent_id AND recipient_role.enabled AND recipient_role.quarantined_at IS NULL
+    JOIN project_package_attachments attachment ON attachment.project_id=child.project_id AND attachment.package_name=recipient_role.package_name
+    JOIN package_installs pin ON pin.id=attachment.package_install_id
+    JOIN agent_project_links origin_role ON origin_role.project_id=child.project_id
+      AND origin_role.agent_id=work.actor->>'id' AND origin_role.enabled
+    JOIN agents origin_catalog ON origin_catalog.id=origin_role.agent_id AND origin_catalog.enabled AND origin_catalog.quarantined_at IS NULL
+    WHERE child.id=${identity.actor.runId} AND child.run_kind='agent' AND child.company_id IS NULL
+      AND child.project_id=${identity.projectId} AND child.source_agent_id=${identity.actor.id}
+      AND link.assignment_id=${assignmentId} AND link.input_revision::text=(${revision})::text
+      AND link.role IN ('child','continuation')
+      AND specialist_run_has_input(child.id,link.assignment_id,(${revision})::integer,(${digest})::text)
+      AND work.input_sha256=${digest} AND work.decision_state<>'cancelled'
+      AND work.definition->'target'->>'kind'='project_agent'
+      AND work.definition->'target'->>'attachmentId'=receiving.id
+      AND work.definition->'target'->'role'->>'agentId'=recipient_role.id
+      AND work.definition->'target'->'role'->>'packageInstallId'=pin.id
+      AND work.definition->'target'->'role'->>'packageRevision'=pin.resolved_revision
+      AND work.definition->'target'->'role'->>'definitionSha256'=child.agent_activity_snapshot->>'definitionSha256'
+      AND pin.package_status='Installed' AND pin.trust_status IN ('trusted','trusted_by_policy')
+      AND EXISTS (
+        WITH RECURSIVE origin(parent_run_id, actor, lineage) AS (
+          SELECT work.parent_run_id,work.actor,ARRAY[child.id,work.parent_run_id]
+          UNION ALL
+          SELECT previous.parent_run_id,previous.actor,origin.lineage||previous.parent_run_id
+          FROM origin
+          JOIN specialist_work previous ON previous.child_run_id=origin.parent_run_id
+            AND previous.assignment_id=work.assignment_id AND previous.decision_state<>'cancelled'
+          JOIN runs ancestor ON ancestor.id=previous.child_run_id AND ancestor.parent_run_id=previous.parent_run_id
+          WHERE cardinality(origin.lineage)<=${MAX_DELEGATION_ANCESTORS} AND previous.parent_run_id<>ALL(origin.lineage)
+            AND ancestor.project_id=child.project_id AND ancestor.source_agent_id=origin.actor->>'id'
+            AND specialist_run_has_input(ancestor.id,previous.assignment_id,previous.input_revision,previous.input_sha256)
+            AND specialist_work_target_exists(previous.definition->'target',NULL,child.project_id)
+        )
+        SELECT 1 FROM origin
+        JOIN agent_project_links root_role ON root_role.project_id=child.project_id
+          AND root_role.agent_id=origin.actor->>'id' AND root_role.enabled
+        JOIN agents root_catalog ON root_catalog.id=root_role.agent_id AND root_catalog.enabled AND root_catalog.quarantined_at IS NULL
+        WHERE ${source}
+        FOR SHARE OF root_role,root_catalog
+      )
+    FOR SHARE OF link,work,child,receiving,recipient_role,attachment,pin,origin_role,origin_catalog
+  )`;
 }
 
 /** Only the producing Run's exact classified inputs are shared with its appointed recipient. */

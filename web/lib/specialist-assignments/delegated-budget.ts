@@ -36,6 +36,7 @@ type BudgetInput = Readonly<{
   parentRunId: string;
   rootRunId: string;
   requested: AssignmentWorkBounds;
+  reservedRunId?: string;
 }>;
 
 /** Read existing assignment work and usage while the caller holds the assignment write fence. */
@@ -43,7 +44,8 @@ export async function admitAssignmentWorkBudget(
   tx: SqlTransaction,
   input: BudgetInput,
 ): Promise<AssignmentWorkBounds> {
-  const { assignmentId, parentRunId, rootRunId, requested } = input;
+  const { assignmentId, parentRunId, rootRunId, requested, reservedRunId } =
+    input;
   const [retained] = (
     await tx.execute(sql`
       SELECT
@@ -102,13 +104,13 @@ export async function admitAssignmentWorkBudget(
         WHERE child.status=ANY(${sql.param(TERMINAL_RUN_STATUSES)}::text[])
       )
       SELECT
-        (SELECT count(*) FROM children) AS child_runs,
+        (SELECT count(*) FROM children WHERE id IS DISTINCT FROM ${reservedRunId ?? null}) AS child_runs,
         (SELECT count(*) FROM children LEFT JOIN runs child ON child.id=children.id
-          WHERE child.status=ANY(${sql.param(holdingOrPending)}::text[])
+          WHERE children.id IS DISTINCT FROM ${reservedRunId ?? null} AND (child.status=ANY(${sql.param(holdingOrPending)}::text[])
             OR (child.id IS NULL AND EXISTS (
               SELECT 1 FROM specialist_work work
               WHERE work.reserved_run_id=children.id AND work.decision_state='open'
-            ))) AS active_children,
+            )))) AS active_children,
         (SELECT ${baseTokenSumExpr} FROM appointments JOIN run_cost_rollups ON run_cost_rollups.run_id=appointments.run_id) AS tokens,
         (SELECT coalesce(greatest(extract(epoch FROM (clock_timestamp()-min(linked_at)))/60, 0), 0) FROM appointments) AS elapsed_minutes,
         (SELECT count(*) FROM finished

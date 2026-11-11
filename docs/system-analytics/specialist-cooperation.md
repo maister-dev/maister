@@ -89,15 +89,29 @@ Designed default maxima are depth 2 (absolute from root), fanout 4, active child
 
 Usage projects from existing run/session/turn usage with stable identity, including all coordinator replacements/rework attempts. Cumulative updates charge only the monotonic delta once; replay cannot double-charge. Assignment budget projection is not a new attempt ledger. Existing global pool locks/counters gate new and resumed work, including company rows. Parent WaitingOnChildren/Review/NeedsInputIdle release capacity as existing run predicates specify; continuation reacquires capacity rather than directly writing Running.
 
-Canonical intake now checks assignment usage before it reserves new work. It
+Canonical intake checks assignment usage before it reserves new work. It
 uses the earliest Run appointment for elapsed time, counts each reserved or
 linked child identity once, and reads base token totals from existing Run
 rollups. Resume counters are subsets of those totals. Exact replay returns the
 existing reservation before charging any new work. Later reservations inherit
 the strictest retained bounds for the assignment. At exhaustion, intake
 returns `PRECONDITION/assignment_budget_exhausted` with the meter, observed
-value and limit. Runtime teardown and replacement admission remain separate
-from this intake check.
+value and limit. Binding a project child rechecks the current budget under the
+same assignment fence and credits the child’s existing reservation. A refusal
+rolls back Run creation and leaves the logical work receipt available for
+inspection. Scheduler promotion, runtime teardown and replacement admission
+remain open.
+Shared tree admission also counts open native reservations against the parent
+fanout and ancestor child-attempt ceilings. The binding transaction credits
+only its exact open reservation when it rechecks those ceilings.
+
+Project coordinators can use `run_delegate` with `assignmentWork` to appoint a
+workspace-none agent with a required pinned result contract. The server binds
+the Run, source closure and appointment together. The current originating role
+can collect its direct child. An exact nested appointment preserves the
+initiating user’s authority and attributes new work to the executing child
+through the retained source chain. Repository-free company agent and Flow child
+dispatch and positive native message/rework qualification remain open.
 
 ### Decisive execution fences (T27)
 

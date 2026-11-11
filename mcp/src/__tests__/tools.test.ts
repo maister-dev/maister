@@ -833,6 +833,42 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     });
   });
 
+  it("forwards exact native assignment work through run_delegate", async () => {
+    mockOnce({ childRunId: "child-1", status: "Pending" }, 202);
+    const assignmentWork = {
+      selector: {
+        schemaVersion: 1,
+        assignmentId: "assignment-1",
+        expectedRevision: 3,
+        inputRevision: 1,
+        contextRevision: 0,
+        logicalWorkId: "diagnose",
+        workRevision: 1,
+      },
+      expectedOutcome: "A typed health observation",
+    };
+
+    await dispatchTool({
+      name: "run_delegate",
+      args: {
+        operationKey: "delegate-assignment",
+        target: { agentId: "pkg:worker" },
+        mode: "run",
+        prompt: "Read the health witness",
+        assignmentWork,
+      },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    expect(parsedBody(lastRequest().init)).toEqual({
+      target: { agentId: "pkg:worker" },
+      mode: "run",
+      prompt: "Read the health witness",
+      assignmentWork,
+    });
+  });
+
   it("run_plan → POST /api/v1/ext/runs/plan forwarding the task DAG", async () => {
     mockOnce({ tasks: [{ key: "a", taskId: "t1", childRunId: "r1" }] }, 202);
 

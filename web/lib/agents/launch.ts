@@ -22,6 +22,7 @@ import type { TasklessAgentFlowCarrierAdmission } from "./carrier-launch-authori
 import type { TaskLaunchReceipt } from "@/lib/tasks/launch-types";
 import type { TaskLaunchAuditContext } from "@/lib/tasks/launch-intent";
 import type { ProjectAssignmentAdmission } from "@/lib/specialist-assignments/project-admission";
+import type { DelegatedWorkRequest } from "@/lib/specialist-assignments/delegated-intake";
 import type { NativeDelegationInput } from "@/lib/orchestrator/native-input-types";
 
 import { randomUUID } from "node:crypto";
@@ -92,6 +93,11 @@ import {
   taskLaunchClarificationsForRun,
 } from "@/lib/tasks/launch-execution-input";
 import { activateInitialSpecialistAssignmentRunInTransaction } from "@/lib/specialist-assignments/store";
+import {
+  bindDelegatedWorkRunInTransaction,
+  retainDelegatedWorkInTransaction,
+} from "@/lib/specialist-assignments/delegated-intake";
+import { contentDigest } from "@/lib/evaluations/digest";
 import { appendSpecialistAssignmentContextPrompt } from "@/lib/specialist-assignments/projection";
 import {
   prepareProjectAssignmentAdmission,
@@ -400,6 +406,7 @@ export type AgentTriggerSource =
 export type LaunchAgentRunInput = {
   agentId: string;
   nativeInput?: NativeDelegationInput;
+  delegatedWork?: DelegatedWorkRequest;
   specialistAssignment?: ProjectAssignmentAdmission;
   projectId: string;
   taskId?: string | null;
@@ -1456,6 +1463,29 @@ async function launchAgentRunWithAdmission(
     acceptedExecution?.runtime ?? (await loadAgentContext(_db, input));
   const nativeInput = await nativeAgentLaunchInput(_db, input);
 
+  if (
+    input.delegatedWork &&
+    (!input.runId ||
+      !input.parentRunId ||
+      !input.rootRunId ||
+      !nativeInput ||
+      input.workspace !== "none" ||
+      input.workspaceMode === "shared" ||
+      input.taskId ||
+      input.persistent ||
+      input.addressableKey ||
+      input.retryClaim ||
+      input.agentTriggerReservation ||
+      input.specialistAssignment ||
+      acceptedExecution ||
+      input.trigger.source !== "manual" ||
+      input.trigger.eventId != null)
+  )
+    throw new MaisterError(
+      "CONFIG",
+      "Project delegated work requires an exact repository-free child reservation",
+    );
+
   if (input.specialistAssignment && (input.parentRunId || nativeInput))
     throw new MaisterError(
       "CONFIG",
@@ -2193,6 +2223,44 @@ async function launchAgentRunWithAdmission(
     try {
       const inserted = await _db.transaction(async (tx: Db) => {
         if (acceptedExecution) await acceptedExecution.beginBinding(tx);
+        const work = input.delegatedWork
+          ? (await retainDelegatedWorkInTransaction(tx, input.delegatedWork))
+              .work
+          : null;
+
+        if (work) {
+          const target = work.definition.target;
+          const expected = work.definition.objectiveInput.expectedResult;
+          const contract = runRow.resultContract;
+          const pinned = runRow.agentActivitySnapshot;
+
+          if (
+            work.reservedRunId !== runId ||
+            work.definition.parent.runId !== input.parentRunId ||
+            work.definition.parent.rootRunId !== input.rootRunId ||
+            target.kind !== "project_agent" ||
+            target.projectId !== input.projectId ||
+            target.attachmentId !== ctx.link.id ||
+            target.role.agentId !== input.agentId ||
+            target.role.packageInstallId !== pinned.packageInstallId ||
+            target.role.packageRevision !== pinned.packageRevision ||
+            target.role.definitionSha256 !== pinned.definitionSha256 ||
+            target.configurationSha256 !== contentDigest(agentConfig) ||
+            nativeInput?.prompt !== work.definition.objectiveInput.input ||
+            contract?.schemaRef !== expected.schemaRef ||
+            contract?.schemaVersion !== expected.schemaVersion ||
+            contract?.sha256 !== expected.sha256 ||
+            contract?.required !== true
+          )
+            throw new MaisterError(
+              "CONFLICT",
+              "Child launch does not match the retained delegated work",
+              {
+                details: { reason: "delegated_work_binding_changed" },
+              },
+            );
+          if (work.childRunId !== null) return false;
+        }
         const assignmentCapture = input.specialistAssignment
           ? await prepareProjectAssignmentAdmission(
               tx,
@@ -2246,6 +2314,10 @@ async function launchAgentRunWithAdmission(
         if (input.parentRunId) {
           await admitDelegatedChild(tx, {
             parentRunId: input.parentRunId,
+            ...(work && {
+              assignmentBounds: work.bounds,
+              reservedRunId: work.reservedRunId,
+            }),
             ...(acceptedExecution
               ? { launchIntentId: acceptedExecution.intent.id }
               : {}),
@@ -2287,6 +2359,7 @@ async function launchAgentRunWithAdmission(
           .returning({ id: runs.id });
 
         if (rows.length === 0) return false;
+        if (work) await bindDelegatedWorkRunInTransaction(tx, work);
 
         // M42 (ADR-114): a standalone agent run is a single-`default`-session run.
         await tx.insert(runSessions).values({

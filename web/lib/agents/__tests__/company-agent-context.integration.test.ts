@@ -78,6 +78,9 @@ import { poll } from "@/test-support/durable-workers-ledger";
 import { answerAssignmentQuestion } from "@/lib/services/assignment-question-response";
 import { assignmentQuestionReceiptSchema } from "@/lib/specialist-assignments/question-types";
 import { retainDelegatedWorkInTransaction } from "@/lib/specialist-assignments/delegated-intake";
+import { dispatchProjectAssignmentChild } from "@/lib/specialist-assignments/project-child-dispatch";
+import { collectChild } from "@/lib/run-results/collect";
+import { admitDelegatedChild } from "@/lib/orchestrator/admission";
 import { getSpecialistAssignmentAdmission } from "@/lib/specialist-assignments/admission-read";
 import { requestTaskRequalificationIfCurrent } from "@/lib/tasks/qualification-requalification";
 import {
@@ -428,6 +431,10 @@ beforeAll(async () => {
   );
   await writeFile(
     join(source, "maister-agents/delegating-observer.md"),
+    primarySource,
+  );
+  await writeFile(
+    join(source, "maister-agents/project-dispatch-observer.md"),
     primarySource,
   );
   await writeFile(
@@ -12775,4 +12782,266 @@ it("requires current explicit company admission authority even for an administra
       prepareCompanyAgentContext(tx, userId, request),
     ),
   ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+});
+
+it("IT-CBC-01 dispatches one exact workspace-none project child and adopts it on a concurrent replay", async () => {
+  const db: Db = database.db;
+  const project = await seedProjectRow(database.db);
+  const roleId = "rah:project-dispatch-observer";
+  const runnerId = randomUUID();
+  const parentRunId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'owner')",
+    [randomUUID(), project.id, userId],
+  );
+  await attachPackage({
+    projectId: project.id,
+    projectSlug: project.slug,
+    packageInstallId: assignmentInput.standingDefinition.packageInstallId,
+    db,
+  });
+  await db.insert(platformAcpRunners).values({
+    id: runnerId,
+    adapter: "claude",
+    capabilityAgent: "claude",
+    model: "native-project-dispatch-fixture",
+    provider: { kind: "anthropic" },
+    readinessStatus: "Ready",
+  });
+  await db
+    .insert(platformRuntimeSettings)
+    .values({ id: "singleton", defaultRunnerId: runnerId })
+    .onConflictDoUpdate({
+      target: platformRuntimeSettings.id,
+      set: { defaultRunnerId: runnerId },
+    });
+  const binding = await attachAgent(
+    { projectId: project.id, agentId: roleId, runnerOverrideId: runnerId },
+    db,
+  );
+
+  await updateAgentLink(
+    {
+      projectId: project.id,
+      agentId: roleId,
+      patch: { canReadBrain: true },
+    },
+    db,
+  );
+  const effective = await resolveInstalledAgentDefinition(database.db, {
+    agentId: roleId,
+    packageInstallId: assignmentInput.standingDefinition.packageInstallId,
+  });
+  const assignment = await createSpecialistAssignment(database.db, userId, {
+    ...assignmentInput,
+    owner: { kind: "project", projectId: project.id },
+    specialistBindingId: binding.linkId,
+    responsibleAgentId: roleId,
+    standingDefinition: {
+      ...assignmentInput.standingDefinition,
+      agentId: roleId,
+      definition: effective.parsed,
+      definitionSha256: agentDefinitionSha256(effective.parsed),
+    },
+  });
+
+  await database.pool.query(
+    "INSERT INTO runs(id,project_id,run_kind,status,flow_version,flow_revision,agent_id,source_agent_id,created_by_user_id,agent_workspace,knowledge_access,agent_activity_snapshot,launched_at,activity_sort_at,activity_timestamp_provenance) VALUES($1,$2,'agent','Running','agent','manual',$3,$3,$4,'none',$5::jsonb,$6::jsonb,now(),now(),'launch')",
+    [
+      parentRunId,
+      project.id,
+      roleId,
+      userId,
+      JSON.stringify({
+        schemaVersion: 1,
+        state: "complete",
+        generation: 1,
+        restrictions: [],
+      }),
+      JSON.stringify(buildAgentActivitySnapshot(roleId, effective)),
+    ],
+  );
+  await database.db.transaction((tx) =>
+    activateInitialSpecialistAssignmentRunInTransaction(
+      tx,
+      userId,
+      assignment.id,
+      {
+        expectedRevision: 1,
+        inputRevision: 1,
+        runId: parentRunId,
+        role: "specialist",
+      },
+    ),
+  );
+  const head = await getSpecialistAssignment(
+    database.db,
+    userId,
+    assignment.id,
+  );
+  const credential = await issueAgentRunToken({
+    db,
+    projectId: project.id,
+    runId: parentRunId,
+    agentId: roleId,
+  });
+
+  await expect(
+    db.transaction((tx) => admitDelegatedChild(tx, { parentRunId })),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "assignment_work_required" },
+  });
+  await fakeExecutionHosts(db);
+  const savedAgentCap = process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+
+  process.env.MAISTER_MAX_CONCURRENT_AGENTS = "1";
+  try {
+    const request = {
+      projectId: project.id,
+      parentRunId,
+      tokenId: credential.tokenId,
+      body: {
+        target: { agentId: roleId },
+        mode: "run" as const,
+        prompt: "Inspect the recorded health observation",
+        assignmentWork: {
+          selector: {
+            schemaVersion: 1 as const,
+            assignmentId: assignment.id,
+            expectedRevision: head.revision,
+            inputRevision: head.inputRevision,
+            contextRevision: head.contextRevision,
+            logicalWorkId: "read-observation",
+            workRevision: 1,
+          },
+          expectedOutcome: "A typed health observation with its limitations",
+        },
+      },
+    };
+    const [first, replay] = await Promise.all([
+      dispatchProjectAssignmentChild(db, request),
+      dispatchProjectAssignmentChild(db, request),
+    ]);
+
+    expect(first).toEqual({ childRunId: replay.childRunId, status: "Pending" });
+    const rows = (
+      await database.pool.query(
+        `SELECT child.id, child.task_id, child.parent_run_id, work.child_run_id, link.role,
+              child.knowledge_access->'restrictions' AS restrictions
+       FROM runs child JOIN specialist_run_links link ON link.run_id=child.id
+       JOIN specialist_work work ON work.id=link.work_id AND work.work_revision=link.work_revision
+       WHERE child.parent_run_id=$1`,
+        [parentRunId],
+      )
+    ).rows;
+
+    expect(rows).toEqual([
+      {
+        id: first.childRunId,
+        task_id: null,
+        parent_run_id: parentRunId,
+        child_run_id: first.childRunId,
+        role: "child",
+        restrictions: expect.arrayContaining([
+          expect.objectContaining({
+            kind: "assignment_input",
+            assignmentId: assignment.id,
+            inputRevision: head.inputRevision,
+          }),
+        ]),
+      },
+    ]);
+    const collect = (tokenId: string) =>
+      collectChild(db, {
+        parentRunId,
+        projectId: project.id,
+        childRunId: first.childRunId,
+        recipient: { kind: "token", tokenId },
+      });
+
+    await expect(collect(credential.tokenId)).resolves.toMatchObject({
+      result: {
+        childRunId: first.childRunId,
+        status: "Pending",
+        resultStatus: "pending",
+      },
+    });
+    const personal = await issueUserAccessToken(
+      {
+        ownerUserId: userId,
+        name: "assignment-child-non-origin",
+        scopes: ["knowledge:read", "assignments:read"],
+      },
+      db,
+    );
+
+    await expect(collect(personal.tokenId)).rejects.toMatchObject({
+      details: { reason: "delegated_work_origin_required" },
+    });
+    await expect(
+      dispatchProjectAssignmentChild(db, {
+        ...request,
+        body: { ...request.body, prompt: "Different objective" },
+      }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "specialist_intake_payload_conflict" },
+    });
+
+    await database.pool.query("UPDATE runs SET status='Running' WHERE id=$1", [
+      first.childRunId,
+    ]);
+    const current = await getSpecialistAssignment(
+      database.db,
+      userId,
+      assignment.id,
+    );
+    const childCredential = await issueAgentRunToken({
+      db,
+      projectId: project.id,
+      runId: first.childRunId,
+      agentId: roleId,
+    });
+    const nested = await dispatchProjectAssignmentChild(db, {
+      ...request,
+      parentRunId: first.childRunId,
+      tokenId: childCredential.tokenId,
+      body: {
+        ...request.body,
+        assignmentWork: {
+          ...request.body.assignmentWork,
+          selector: {
+            ...request.body.assignmentWork.selector,
+            expectedRevision: current.revision,
+            logicalWorkId: "cross-check-observation",
+          },
+        },
+      },
+    });
+
+    await expect(
+      collectChild(db, {
+        parentRunId: first.childRunId,
+        projectId: project.id,
+        childRunId: nested.childRunId,
+        recipient: { kind: "token", tokenId: childCredential.tokenId },
+      }),
+    ).resolves.toMatchObject({
+      result: { status: "Pending", resultStatus: "pending" },
+    });
+    const { rows: lineage } = await database.pool.query(
+      "SELECT parent_run_id, root_run_id FROM runs WHERE id=$1",
+      [nested.childRunId],
+    );
+
+    expect(lineage).toEqual([
+      { parent_run_id: first.childRunId, root_run_id: parentRunId },
+    ]);
+  } finally {
+    if (savedAgentCap === undefined)
+      delete process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+    else process.env.MAISTER_MAX_CONCURRENT_AGENTS = savedAgentCap;
+  }
 });
