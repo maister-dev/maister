@@ -3,7 +3,10 @@ import "server-only";
 import type { z } from "zod";
 import type { SqlTransaction } from "@/lib/db/sql-types";
 import type { RunResultContract } from "@/lib/run-results/types";
-import type { CompanySpecialistContext } from "./company-agent-context";
+import type {
+  CompanySpecialistContext,
+  CompanySpecialistExecutionIdentityInput,
+} from "./company-agent-context";
 import type { CompanyFlowBindingRevision } from "./company-flow-binding-types";
 import type { CompanyFlowExecutionSnapshot } from "./company-execution-types";
 
@@ -76,6 +79,57 @@ export async function prepareCompanyFlowContext(
     parsed.data;
 
   await lockCompanyAssignmentForExecution(tx, userId, request);
+  const coordinator = await loadReviewedCompanyCoordinator(tx, parsed.data);
+  const context = await prepareCompanySpecialistContext(tx, userId, request);
+  const flow = await resolveReviewedCompanyFlowSource(tx, context, coordinator);
+  const { resultContract } = flow;
+
+  if (
+    contentDigest(context.input.snapshot.objectiveInput.expectedResult) !==
+    contentDigest({
+      schemaRef: resultContract.schemaRef,
+      schemaVersion: resultContract.schemaVersion,
+      sha256: resultContract.sha256,
+      required: true,
+    })
+  )
+    throw new MaisterError(
+      "CONFIG",
+      "Assignment requires a different result contract from this pinned coordinator Flow",
+      {
+        details: { reason: "company_assignment_result_mismatch" },
+      },
+    );
+  log.debug(
+    {
+      companyId: request.companyId,
+      assignmentId: request.assignmentId,
+      inputRevision: request.inputRevision,
+      bindingId: request.bindingId,
+      bindingRevision: request.bindingRevision,
+      coordinatorBindingId,
+      coordinatorBindingRevision,
+      flowRevisionId: coordinator.snapshot.flowRevisionId,
+    },
+    "company coordinator preflight passed",
+  );
+
+  return { ...context, ...flow };
+}
+
+/** Resolve current coordinator configuration under the caller's owner fence. */
+export async function loadReviewedCompanyCoordinator(
+  tx: SqlTransaction,
+  request: Pick<
+    CompanyFlowContextInput,
+    | "companyId"
+    | "bindingId"
+    | "bindingRevision"
+    | "coordinatorBindingId"
+    | "coordinatorBindingRevision"
+  >,
+): Promise<CompanyFlowBindingRevision> {
+  const { coordinatorBindingId, coordinatorBindingRevision } = request;
   const head = decodeCompanyFlowBindingHead(
     (
       await tx.execute(sql`
@@ -119,7 +173,26 @@ export async function prepareCompanyFlowContext(
         details: { reason: "company_flow_specialist_mismatch" },
       },
     );
-  const context = await prepareCompanySpecialistContext(tx, userId, request);
+
+  return coordinator;
+}
+
+export type ReviewedCompanyFlowSource = Pick<
+  CompanyFlowAdmissionContext,
+  | "coordinator"
+  | "resultContract"
+  | "flowInstallPath"
+  | "flowVersion"
+  | "flowDefaultRunnerId"
+>;
+
+/** Resolve the installed manifest, routing and required export of the exact reviewed Flow. */
+export async function resolveReviewedCompanyFlowSource(
+  tx: SqlTransaction,
+  context: Pick<CompanySpecialistContext, "owner" | "binding" | "effective">,
+  coordinator: CompanyFlowBindingRevision,
+): Promise<ReviewedCompanyFlowSource> {
+  const reviewed = coordinator.snapshot;
 
   assertCompanySessionDefinition(context.effective.parsed);
   if (
@@ -182,40 +255,13 @@ export async function prepareCompanyFlowContext(
     },
   });
 
-  if (
-    resultContract?.kind !== "flow_export" ||
-    resultContract.required !== true ||
-    contentDigest(context.input.snapshot.objectiveInput.expectedResult) !==
-      contentDigest({
-        schemaRef: resultContract.schemaRef,
-        schemaVersion: resultContract.schemaVersion,
-        sha256: resultContract.sha256,
-        required: true,
-      })
-  )
+  if (resultContract?.kind !== "flow_export" || !resultContract.required)
     throw new MaisterError(
       "CONFIG",
-      "Assignment requires a different result contract from this pinned coordinator Flow",
-      {
-        details: { reason: "company_assignment_result_mismatch" },
-      },
+      "The reviewed company Flow requires a pinned required export",
     );
-  log.debug(
-    {
-      companyId: request.companyId,
-      assignmentId: request.assignmentId,
-      inputRevision: request.inputRevision,
-      bindingId: request.bindingId,
-      bindingRevision: request.bindingRevision,
-      coordinatorBindingId,
-      coordinatorBindingRevision,
-      flowRevisionId: reviewed.flowRevisionId,
-    },
-    "company coordinator preflight passed",
-  );
 
   return {
-    ...context,
     coordinator,
     resultContract,
     flowInstallPath: revision.installed_path,
@@ -226,7 +272,7 @@ export async function prepareCompanyFlowContext(
 
 /** The server preserves exact reviewed witnesses; accepting this capture grants no future authority. */
 export function captureCompanyFlowExecution(
-  context: CompanyFlowAdmissionContext,
+  context: CompanySpecialistExecutionIdentityInput & ReviewedCompanyFlowSource,
 ): CompanyFlowExecutionSnapshot {
   return companyFlowExecutionSnapshotSchema.parse({
     ...captureCompanySpecialistExecutionIdentity(context),

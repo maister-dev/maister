@@ -201,7 +201,8 @@ async function loadRetainedCompanyGraphInput(
       "The exact retained company graph input is unavailable",
     );
   const input = decodeAssignmentInput(inputRow);
-  const standing = input.snapshot.standingDefinition;
+  const standing =
+    owner.delegated?.binding ?? input.snapshot.standingDefinition;
   const effective = await resolveInstalledAgentDefinition(tx, {
     agentId: standing.agentId,
     packageInstallId: standing.packageInstallId,
@@ -243,7 +244,7 @@ async function loadRetainedCompanyGraphInput(
       contentDigest(
         expandExecutionPolicy(input.snapshot.authoritySnapshot.executionPolicy),
       ) ||
-    contentDigest(input.snapshot.scheduledRequest) !==
+    contentDigest(owner.delegated ? null : input.snapshot.scheduledRequest) !==
       contentDigest(run.scheduledRequestSnapshot)
   )
     throw new MaisterError(
@@ -331,7 +332,12 @@ async function loadPinnedCompanyGraphContract(
     resultContract?.kind !== "flow_export" ||
     !resultContract.required ||
     contentDigest(resultContract) !== contentDigest(run.resultContract) ||
-    contentDigest(input.snapshot.objectiveInput.expectedResult) !==
+    contentDigest(
+      (
+        owner.delegated?.definition.objectiveInput ??
+        input.snapshot.objectiveInput
+      ).expectedResult,
+    ) !==
       contentDigest({
         schemaRef: resultContract.schemaRef,
         schemaVersion: resultContract.schemaVersion,

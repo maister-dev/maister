@@ -5,7 +5,14 @@ import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionHost } from "@/lib/db/schema";
 import type { CompanyRunReservation } from "./company-execution-types";
 import type { ExecutionHosts } from "@/lib/execution-host";
-import type { CompanyFlowContextInput } from "./company-flow-context";
+import type { CompanySpecialistExecutionIdentityInput } from "./company-agent-context";
+import type { AssignmentInputRevision } from "@/lib/specialist-assignments/types";
+import type { DelegatedWorkRequest } from "@/lib/specialist-assignments/delegated-intake";
+import type { KnowledgeAccessRestriction } from "@/lib/company/types";
+import type {
+  CompanyFlowContextInput,
+  ReviewedCompanyFlowSource,
+} from "./company-flow-context";
 import type { RunSessionResolution } from "@/lib/acp-runners/resolve";
 
 import { randomUUID } from "node:crypto";
@@ -21,7 +28,10 @@ import {
   captureCompanyFlowExecution,
   companyFlowContextInputSchema,
   prepareCompanyFlowContext,
+  loadReviewedCompanyCoordinator,
+  resolveReviewedCompanyFlowSource,
 } from "./company-flow-context";
+import { prepareCompanyDelegatedReservation } from "./company-delegated-reservation";
 import {
   buildAgentActivitySnapshot,
   withAgentComparisonScopes,
@@ -32,6 +42,7 @@ import { assertReadOnlySessionEvidence } from "./runner-readonly-evidence";
 import { inspectFlowRunners } from "@/lib/acp-runners/flow-preflight";
 import { resolveCompanyAgentRunner } from "@/lib/acp-runners/resolve";
 import { capabilityAgentSchema } from "@/lib/config.schema";
+import { canonicalKnowledgeRestrictions } from "@/lib/brain/knowledge-disclosure";
 import {
   platformAcpRunners,
   platformRuntimeSettings,
@@ -45,6 +56,7 @@ import { localHost } from "@/lib/execution-host/resolver";
 import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
 import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence";
 import { activateInitialSpecialistAssignmentRunInTransaction } from "@/lib/specialist-assignments/store";
+import { bindDelegatedWorkRunInTransaction } from "@/lib/specialist-assignments/delegated-intake";
 
 const log = pino({
   name: "agents:company-flow-launch",
@@ -116,9 +128,143 @@ export async function reserveCompanyFlowRunInTransaction(
 ): Promise<CompanyRunReservation> {
   assertCompanyTriggerAppointment(input.triggerSource, invocation);
   assertUpgradeMaintenanceAllows("run_admission");
-  const executionDataPlaneMode = executionDataPlaneModeForHost(host);
   const request = input;
   const context = await prepareCompanyFlowContext(tx, userId, request);
+  const triggerReservation = invocation
+    ? await assertCompanyTriggerReservation(
+        tx,
+        userId,
+        context,
+        invocation,
+        context.coordinator,
+        request.triggerSource,
+      )
+    : null;
+  const runId = triggerReservation?.runId ?? randomUUID();
+
+  await insertCompanyFlowRun(tx, context, hosts, host, {
+    runId,
+    triggerSource: request.triggerSource,
+    triggerReservation,
+    scheduledRequest: context.input.snapshot.scheduledRequest,
+  });
+  const assignmentRevision =
+    await activateInitialSpecialistAssignmentRunInTransaction(
+      tx,
+      userId,
+      context.assignment.id,
+      {
+        runId,
+        inputRevision: context.input.revision,
+        expectedRevision: context.assignment.revision,
+        role: "coordinator",
+      },
+    );
+
+  return {
+    runId,
+    assignmentId: context.assignment.id,
+    assignmentRevision,
+    status: "Pending" as const,
+  };
+}
+
+/** Reserve a child graph through the same session and placement writer as a company coordinator. */
+export async function reserveCompanyDelegatedFlowRun(
+  db: Db,
+  request: DelegatedWorkRequest,
+  hosts: ExecutionHosts = createExecutionHosts({ db }),
+): Promise<{ childRunId: string; status: string }> {
+  assertUpgradeMaintenanceAllows("run_admission");
+  const host = await localHost({ db, transport: hosts.transport });
+
+  return db
+    .transaction(async (tx) => {
+      const prepared = await prepareCompanyDelegatedReservation(tx, request);
+
+      if (prepared.target.kind !== "company_flow")
+        throw new MaisterError("CONFIG", "Select a reviewed company Flow");
+      if (prepared.kind === "bound") return prepared.receipt;
+      const { context, target, work } = prepared;
+      const coordinator = await loadReviewedCompanyCoordinator(tx, {
+        companyId: target.companyId,
+        bindingId: target.specialistBinding.id,
+        bindingRevision: target.specialistBinding.revision,
+        coordinatorBindingId: target.coordinatorBinding.id,
+        coordinatorBindingRevision: target.coordinatorBinding.revision,
+      });
+      const flow = await resolveReviewedCompanyFlowSource(
+        tx,
+        context,
+        coordinator,
+      );
+      const { resultContract } = flow;
+      const expected = work.definition.objectiveInput.expectedResult;
+
+      if (
+        coordinator.snapshotDigest !==
+          target.coordinatorBinding.snapshotSha256 ||
+        coordinator.snapshot.flowRevisionId !== target.flow.flowRevisionId ||
+        coordinator.snapshot.flowRefId !== target.flow.flowRefId ||
+        coordinator.snapshot.packageRevision !== target.flow.resolvedRevision ||
+        coordinator.snapshot.manifestSha256 !== target.flow.manifestSha256 ||
+        resultContract.schemaRef !== expected.schemaRef ||
+        resultContract.schemaVersion !== expected.schemaVersion ||
+        resultContract.sha256 !== expected.sha256 ||
+        !expected.required
+      )
+        throw new MaisterError(
+          "CONFLICT",
+          "The company Flow differs from the retained required export",
+          {
+            details: { reason: "delegated_work_binding_changed" },
+          },
+        );
+      const runId = work.reservedRunId;
+
+      await insertCompanyFlowRun(tx, { ...context, ...flow }, hosts, host, {
+        runId,
+        triggerSource: "manual",
+        scheduledRequest: null,
+        parentRunId: work.definition.parent.runId,
+        rootRunId: work.definition.parent.rootRunId,
+        inheritedSources: work.sourceRestrictions,
+      });
+      await bindDelegatedWorkRunInTransaction(tx, work);
+
+      return { childRunId: runId, status: "Pending" };
+    })
+    .catch((error: unknown) => {
+      log.warn(
+        {
+          assignmentId: request.selector.assignmentId,
+          ...queryErrorDiagnostics(error),
+        },
+        "delegated company Flow reservation refused",
+      );
+      throw redactQueryError(error);
+    });
+}
+
+async function insertCompanyFlowRun(
+  tx: Db,
+  context: CompanySpecialistExecutionIdentityInput & ReviewedCompanyFlowSource,
+  hosts: ExecutionHosts,
+  host: ExecutionHost,
+  execution: Readonly<{
+    runId: string;
+    triggerSource: CompanyFlowContextInput["triggerSource"];
+    triggerReservation?: Awaited<
+      ReturnType<typeof assertCompanyTriggerReservation>
+    > | null;
+    scheduledRequest: AssignmentInputRevision["snapshot"]["scheduledRequest"];
+    parentRunId?: string;
+    rootRunId?: string;
+    inheritedSources?: readonly KnowledgeAccessRestriction[];
+  }>,
+): Promise<void> {
+  const { runId } = execution;
+  const executionDataPlaneMode = executionDataPlaneModeForHost(host);
   const [runtime] = await tx
     .select()
     .from(platformRuntimeSettings)
@@ -180,24 +326,13 @@ export async function reserveCompanyFlowRunInTransaction(
       workspace: "none",
     });
   }
-  const triggerReservation = invocation
-    ? await assertCompanyTriggerReservation(
-        tx,
-        userId,
-        context,
-        invocation,
-        context.coordinator,
-        request.triggerSource,
-      )
-    : null;
-  const runId = triggerReservation?.runId ?? randomUUID();
   const definition = context.effective.parsed;
 
   await tx.insert(runs).values({
     id: runId,
-    agentScheduleId: triggerReservation?.scheduleId ?? null,
-    triggerEventId: triggerReservation?.triggerEventId ?? null,
-    agentChainDepth: triggerReservation?.agentChainDepth ?? 0,
+    agentScheduleId: execution.triggerReservation?.scheduleId ?? null,
+    triggerEventId: execution.triggerReservation?.triggerEventId ?? null,
+    agentChainDepth: execution.triggerReservation?.agentChainDepth ?? 0,
     runKind: "flow",
     companyId: context.owner.companyId,
     companyExecutionSnapshot: captureCompanyFlowExecution(context),
@@ -208,11 +343,13 @@ export async function reserveCompanyFlowRunInTransaction(
     flowVersion: context.flowVersion,
     flowRevision: context.coordinator.snapshot.packageRevision,
     status: "Pending",
-    createdByUserId: userId,
-    triggerSource: request.triggerSource,
+    createdByUserId: context.authority.actor.id,
+    parentRunId: execution.parentRunId,
+    rootRunId: execution.rootRunId,
+    triggerSource: execution.triggerSource,
     agentConfig: context.binding.snapshot.effectiveConfiguration,
     executionPolicy: context.binding.snapshot.executionPolicy,
-    scheduledRequestSnapshot: context.input.snapshot.scheduledRequest,
+    scheduledRequestSnapshot: execution.scheduledRequest,
     resultContract: context.resultContract,
     launchedAt: sql`CURRENT_TIMESTAMP`,
     activitySortAt: sql`CURRENT_TIMESTAMP`,
@@ -221,7 +358,7 @@ export async function reserveCompanyFlowRunInTransaction(
       buildAgentActivitySnapshot(definition.id, context.effective),
       {
         configuration: context.binding.snapshot.effectiveConfiguration,
-        trigger: { source: request.triggerSource },
+        trigger: { source: execution.triggerSource },
         taskId: null,
         runner: primary.runnerSnapshot,
         workspace: "none",
@@ -233,14 +370,15 @@ export async function reserveCompanyFlowRunInTransaction(
       schemaVersion: 1,
       state: "complete",
       generation: 1,
-      restrictions: [
+      restrictions: canonicalKnowledgeRestrictions([
         {
           kind: "assignment_input",
           assignmentId: context.assignment.id,
           inputRevision: context.input.revision,
           inputSha256: context.input.digest,
         },
-      ],
+        ...(execution.inheritedSources ?? []),
+      ]),
     },
   });
   await tx.insert(runSessions).values(
@@ -262,19 +400,6 @@ export async function reserveCompanyFlowRunInTransaction(
     reason: "launch",
     host,
   });
-  const assignmentRevision =
-    await activateInitialSpecialistAssignmentRunInTransaction(
-      tx,
-      userId,
-      context.assignment.id,
-      {
-        runId,
-        inputRevision: context.input.revision,
-        expectedRevision: context.assignment.revision,
-        role: "coordinator",
-      },
-    );
-
   log.debug(
     {
       runId,
@@ -285,11 +410,4 @@ export async function reserveCompanyFlowRunInTransaction(
     },
     "company Flow session snapshots reserved",
   );
-
-  return {
-    runId,
-    assignmentId: context.assignment.id,
-    assignmentRevision,
-    status: "Pending" as const,
-  };
 }

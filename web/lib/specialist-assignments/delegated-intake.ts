@@ -484,7 +484,8 @@ export async function bindDelegatedWorkRunInTransaction(
         AND revision=${revision} AND definition_sha256=${definitionSha256}
         AND reserved_run_id=${reservedRunId} AND child_run_id IS NULL AND decision_state='open'
         AND EXISTS (SELECT 1 FROM runs child WHERE child.id=${reservedRunId}
-          AND child.knowledge_access->>'state'='complete')
+          AND child.knowledge_access->>'state'='complete'
+          AND (child.run_kind<>'flow' OR child.knowledge_access->'restrictions' @> ${JSON.stringify(work.sourceRestrictions)}::jsonb))
       RETURNING input_revision
     `)
   ).rows;
@@ -503,11 +504,12 @@ export async function bindDelegatedWorkRunInTransaction(
     INSERT INTO specialist_run_links(run_id,assignment_id,input_revision,role,work_id,work_revision,work_witness)
     VALUES(${reservedRunId},${assignmentId},${work.inputRevision},'child',${id},${workRevision},${JSON.stringify(witness)}::jsonb)
   `);
-  await recordNativeRunSourcesInTransaction(
-    tx,
-    reservedRunId,
-    work.sourceRestrictions,
-  );
+  if (work.definition.target.kind !== "company_flow")
+    await recordNativeRunSourcesInTransaction(
+      tx,
+      reservedRunId,
+      work.sourceRestrictions,
+    );
   log.debug(
     {
       assignmentId,

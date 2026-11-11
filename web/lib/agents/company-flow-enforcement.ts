@@ -15,6 +15,8 @@ import {
   requireCompanyFlowNodeKnowledgeOwner,
 } from "./company-run-credential-owner";
 
+import { assertNativeRunKnowledgeInputsInTransaction } from "@/lib/brain/knowledge-execution-access";
+
 const log = pino({
   name: "agents:company-flow-enforcement",
   level: process.env.LOG_LEVEL ?? "info",
@@ -32,6 +34,9 @@ export async function resolveCompanyFlowNodeEnforcement(
     root,
     nodeAttemptId,
   );
+
+  if (owner.delegated)
+    await assertNativeRunKnowledgeInputsInTransaction(tx, runId);
   const scopes = COMPANY_FLOW_TOKEN_SCOPES.filter(
     (action) => owner.platformMcp && owner.actionLimits.includes(action),
   );

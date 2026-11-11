@@ -603,7 +603,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
           type: "object",
           additionalProperties: false,
           description:
-            "Exact native assignment work. Use a standalone workspace-none agent with a required result contract. Company credentials use an explicitly reviewed company binding and cannot select a project.",
+            "Exact native assignment work. Use a workspace-none agent with a required result contract or a reviewed company result-only Flow. The server resolves ownership and installed bindings.",
           required: ["selector", "expectedOutcome"],
           properties: {
             expectedOutcome: { type: "string", minLength: 1, maxLength: 4000 },

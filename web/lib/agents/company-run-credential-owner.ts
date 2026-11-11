@@ -60,21 +60,9 @@ function companyRunOwnerQuery(runId: string): SQL {
     JOIN users principal ON principal.id=execution.company_execution_snapshot->'authority'->'actor'->>'id' AND principal.account_status='active' AND NOT principal.must_change_password
     JOIN company_grants read_grant ON read_grant.company_id=execution.company_id AND read_grant.principal_type='user' AND read_grant.principal_id=principal.id AND read_grant.action='assignments:read' AND read_grant.revoked_at IS NULL
     WHERE execution.id=${runId} AND execution.company_id IS NOT NULL AND execution.project_id IS NULL AND (
-        (execution.run_kind='agent' AND execution.company_execution_snapshot->>'schemaVersion'='1' AND (
-          link.work_id IS NULL OR (link.role='child' AND work.decision_state='open'
-            AND work.definition->'target'->>'kind'='company_agent'
-            AND specialist_run_has_input(execution.id,assignment.id,input.revision,input.digest)
-            AND specialist_work_target_exists(work.definition->'target',execution.company_id,NULL)
-            AND configuration.snapshot->'grantActions' ? 'assignments:read'
-            AND EXISTS (
-              SELECT 1 FROM company_grants receiving_grant
-              WHERE receiving_grant.company_id=execution.company_id AND receiving_grant.principal_type='agent'
-                AND receiving_grant.principal_id=binding.agent_id AND receiving_grant.action='assignments:read'
-                AND receiving_grant.revoked_at IS NULL FOR SHARE
-            )
-          )
-        ))
-        OR (execution.run_kind='flow' AND execution.company_execution_snapshot->>'schemaVersion'='2' AND link.role='coordinator'
+        (execution.run_kind='agent' AND execution.company_execution_snapshot->>'schemaVersion'='1')
+        OR (execution.run_kind='flow' AND execution.company_execution_snapshot->>'schemaVersion'='2'
+          AND (link.role='coordinator' OR link.work_id IS NOT NULL)
           AND EXISTS (
             SELECT 1 FROM company_flow_bindings coordinator
             JOIN company_flow_binding_revisions reviewed ON reviewed.binding_id=coordinator.id AND reviewed.revision=coordinator.revision
@@ -88,6 +76,20 @@ function companyRunOwnerQuery(runId: string): SQL {
               AND flow.manifest_digest=reviewed.snapshot->>'manifestSha256'
             FOR SHARE OF coordinator,reviewed,flow
           ))
+      )
+      AND (
+          link.work_id IS NULL OR (link.role='child' AND work.decision_state='open'
+            AND work.definition->'target'->>'kind'=CASE execution.run_kind WHEN 'agent' THEN 'company_agent' WHEN 'flow' THEN 'company_flow' END
+            AND specialist_run_has_input(execution.id,assignment.id,input.revision,input.digest)
+            AND specialist_work_target_exists(work.definition->'target',execution.company_id,NULL)
+            AND configuration.snapshot->'grantActions' ? 'assignments:read'
+            AND EXISTS (
+              SELECT 1 FROM company_grants receiving_grant
+              WHERE receiving_grant.company_id=execution.company_id AND receiving_grant.principal_type='agent'
+                AND receiving_grant.principal_id=binding.agent_id AND receiving_grant.action='assignments:read'
+                AND receiving_grant.revoked_at IS NULL FOR SHARE
+            )
+          )
       )
       AND assignment.status NOT IN ('completed','failed','cancelled')
       AND assignment.id=execution.company_execution_snapshot->'assignment'->>'id'

@@ -120,13 +120,18 @@ parent’s standing request. The existing HTTP and MCP delegate and collect tool
 support this company scope through an active execution credential. Collection
 applies the same exact originating-role and source checks as project collection.
 The shared input admission service can capture source-bearing input for the
-exact same-company child when both roles still have current authority. Company
-Flow children and delivery of native messages and rework remain open.
+exact same-company child when both roles still have current authority.
 The existing scheduler and owned agent driver execute a standalone company
 child in its own company directory. Child credentials bind the receiving role
 and become unusable when its grant is revoked. A valid typed child result is
 collectable while the assignment remains active for a separate acceptance
 decision.
+
+`run_delegate` also accepts a reviewed company result-only Flow. The existing
+graph driver restores the delegated objective and frozen runner sessions. It
+checks inherited source restrictions against the current node before prompt
+delivery, and `run_collect` serves the valid pinned export. Native message and
+rework delivery and scheduler-level assignment budget enforcement remain open.
 
 ### Decisive execution fences (T27)
 

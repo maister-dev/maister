@@ -38,6 +38,8 @@ import {
   captureCompanyAgentExecution,
 } from "../company-agent-context";
 import { detachCompanySpecialistBinding } from "../company-binding-mutations";
+import { createCompanyFlowBinding } from "../company-flow-bindings";
+import { loadCompanyFlowSessionContext } from "../company-flow-session-context";
 import {
   createCompanySpecialistBinding,
   getCompanySpecialistBindingRevision,
@@ -127,6 +129,7 @@ import { createExecutionHosts, localHost } from "@/lib/execution-host";
 import * as executionHostServices from "@/lib/execution-host";
 import { POST as delegateExternalRun } from "@/app/api/v1/ext/runs/delegate/route";
 import { POST as collectExternalRun } from "@/app/api/v1/ext/runs/collect/route";
+import { runFlow } from "@/lib/flows/runner";
 import { captureNativeChildInput } from "@/lib/orchestrator/native-child-input";
 import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
 import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
@@ -453,6 +456,15 @@ beforeAll(async () => {
     primarySource,
   );
   await writeFile(
+    join(source, "maister-agents/company-child-coordinator.md"),
+    primarySource
+      .replace(
+        "kind: operational\ncompletion: {contract: operational_v1}\n",
+        "",
+      )
+      .replace("workspace: none", "flow: rah-company-child\nworkspace: none"),
+  );
+  await writeFile(
     join(source, "maister-agents/memory-observer.md"),
     primarySource.replace(
       "workspace: none",
@@ -565,6 +577,37 @@ beforeAll(async () => {
           },
           transitions: { success: "done" },
         },
+      ],
+    }),
+  );
+  const childFlowPath = join(source, "flows/rah-company-child");
+  const controlFlow = parse(
+    (
+      await readFile(join(source, "flows/rah-control/flow.yaml"), "utf8")
+    ).replace("{{ task.prompt }}", "{{ assignment.input }}"),
+  ) as Record<string, unknown>;
+
+  await mkdir(childFlowPath, { recursive: true });
+  await writeFile(
+    join(childFlowPath, "flow.yaml"),
+    stringify({
+      ...controlFlow,
+      name: "rah-company-child",
+      execution: { workspace: "none", completion: "result" },
+    }),
+  );
+  const manifestPath = join(source, "maister-package.yaml");
+  const manifest = parse(await readFile(manifestPath, "utf8")) as {
+    flows: { id: string; path: string }[];
+  };
+
+  await writeFile(
+    manifestPath,
+    stringify({
+      ...manifest,
+      flows: [
+        ...manifest.flows,
+        { id: "rah-company-child", path: "flows/rah-company-child" },
       ],
     }),
   );
@@ -10780,12 +10823,12 @@ it("IT-CBC-01 requires current company delegation grants for a repository-free w
       const { reserveCompanyDelegatedAgentRun } =
         await import("../company-agent-launch");
       const fake = createFakeExecutionHost();
-      const { prompts } = scriptAgentTurn(fake, {
+      const scriptedTurn = {
         text:
           "```json maister:output\n" +
           JSON.stringify(operationalSuccessFixture()) +
           "\n```",
-        onPrompt: ({ sessionId }) => {
+        onPrompt: ({ sessionId }: { sessionId: string }) => {
           const session = fake.sessions.get(sessionId);
 
           if (!session)
@@ -10797,9 +10840,10 @@ it("IT-CBC-01 requires current company delegation grants for a repository-free w
             exitedAt: new Date().toISOString(),
           });
 
-          return { stopReason: "end_turn", meta: null };
+          return { stopReason: "end_turn" as const, meta: null };
         },
-      });
+      };
+      const { prompts } = scriptAgentTurn(fake, scriptedTurn);
       const { hosts } = await fakeExecutionHosts(db, { fake });
       const dispatch = () =>
         reserveCompanyDelegatedAgentRun(database.db, workRequest, hosts);
@@ -10987,6 +11031,277 @@ it("IT-CBC-01 requires current company delegation grants for a repository-free w
       await expect(
         getSpecialistAssignment(db, userId, assignment.id),
       ).resolves.toMatchObject({ status: "active" });
+
+      const flowRoleId = "rah:company-child-coordinator";
+      const flowRole = await resolveInstalledAgentDefinition(db, {
+        agentId: flowRoleId,
+        packageInstallId: effective.packageInstallId,
+      });
+      const flowPin = (
+        await database.pool.query<{ id: string; manifest_digest: string }>(
+          "SELECT id,manifest_digest FROM flow_revisions WHERE flow_ref_id='rah-company-child' AND resolved_revision=$1",
+          [flowRole.resolvedRevision],
+        )
+      ).rows[0]!;
+      const graphRole = await createCompanySpecialistBinding(
+        db,
+        userId,
+        flowRoleId,
+        {
+          owner: { kind: "company", companyId: request.companyId },
+          packageInstallId: flowRole.packageInstallId,
+          packageRevision: flowRole.resolvedRevision!,
+          definitionSha256: agentDefinitionSha256(flowRole.parsed),
+          coordinatorFlowRevisionId: flowPin.id,
+          configuration: {},
+          runnerId,
+          enabled: true,
+          grantActions: [
+            "knowledge:read",
+            "assignments:read",
+            "assignments:update",
+            "assignments:delegate",
+          ],
+          idempotencyKey: randomUUID(),
+        },
+      );
+
+      await createCompanyFlowBinding(db, userId, {
+        owner: { kind: "company", companyId: request.companyId },
+        specialistBindingId: graphRole.specialist.bindingId,
+        specialistRevision: graphRole.specialist.configRevision,
+        flowRevisionId: flowPin.id,
+        manifestSha256: flowPin.manifest_digest,
+        execution: { workspace: "none", completion: "result" },
+        enabled: true,
+        roleMappings: {},
+        idempotencyKey: randomUUID(),
+      });
+      await createCompanyGrants(db, administratorId, {
+        principalKind: "agent",
+        principalId: flowRoleId,
+        actions: ["assignments:read", "assignments:delegate"],
+        idempotencyKey: randomUUID(),
+      });
+      const head = await getSpecialistAssignment(db, userId, assignment.id);
+      const graphObjective =
+        "Review the child result against the retained observation";
+      const graphHost = vi
+        .spyOn(executionHostServices, "createExecutionHosts")
+        .mockReturnValue(hosts);
+
+      try {
+        const response = await delegateExternalRun(
+          new NextRequest("http://localhost/api/v1/ext/runs/delegate", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              target: { flowId: "rah-company-child" },
+              mode: "run",
+              prompt: graphObjective,
+              assignmentWork: {
+                selector: {
+                  ...workRequest.selector,
+                  expectedRevision: head.revision,
+                  logicalWorkId: "review-child",
+                },
+                expectedOutcome: "A pinned structured review",
+              },
+            }),
+          }),
+          {},
+        );
+
+        expect(response.status).toBe(202);
+        const graph = (await response.json()) as {
+          childRunId: string;
+          status: string;
+        };
+        const context = await db.transaction((tx) =>
+          loadCompanyFlowSessionContext(tx, graph.childRunId),
+        );
+
+        expect(context.run).toMatchObject({
+          runKind: "flow",
+          projectId: null,
+          taskId: null,
+          parentRunId: appointment.runId,
+        });
+        expect(
+          context.owner.delegated?.definition.objectiveInput.objective,
+        ).toBe(graphObjective);
+        const findings = {
+          schemaVersion: 1,
+          findings: [],
+          knowledgeProposals: [],
+          selection: [],
+        };
+        let nestedChildRunId: string | undefined;
+        const { prompts: graphPrompts } = scriptAgentTurn(fake, {
+          ...scriptedTurn,
+          text: "```json maister:output\n" + JSON.stringify(findings) + "\n```",
+          onPrompt: async (prompt) => {
+            const create = fake.callsOf("createSession").at(-1)?.envelope
+              ?.payload as
+              | {
+                  mcpServers?: { name: string; env?: Record<string, string> }[];
+                }
+              | undefined;
+            const bearer = create?.mcpServers?.find(
+              (server) => server.name === "maister",
+            )?.env?.MAISTER_PROJECT_TOKEN;
+
+            if (!bearer)
+              throw new Error(
+                "The company graph node has no facade credential",
+              );
+            const current = await getSpecialistAssignment(
+              db,
+              userId,
+              assignment.id,
+            );
+            const requestBody = {
+              target: { agentId: receivingRoleId },
+              mode: "run",
+              prompt: "Cross-check the bounded graph observation",
+              assignmentWork: {
+                selector: {
+                  ...workRequest.selector,
+                  expectedRevision: current.revision,
+                  logicalWorkId: "cross-check",
+                },
+                expectedOutcome: "Independent observation",
+              },
+            };
+            const delegate = () =>
+              delegateExternalRun(
+                new NextRequest("http://localhost/api/v1/ext/runs/delegate", {
+                  method: "POST",
+                  headers: { ...headers, Authorization: `Bearer ${bearer}` },
+                  body: JSON.stringify(requestBody),
+                }),
+                {},
+              );
+            const firstNested = await delegate();
+
+            expect(firstNested.status).toBe(202);
+            const receipt = (await firstNested.json()) as {
+              childRunId: string;
+              status: string;
+            };
+            const replayNested = await delegate();
+
+            expect(replayNested.status).toBe(202);
+            expect(await replayNested.json()).toEqual(receipt);
+            const collected = await collectExternalRun(
+              new NextRequest("http://localhost/api/v1/ext/runs/collect", {
+                method: "POST",
+                headers: { ...headers, Authorization: `Bearer ${bearer}` },
+                body: JSON.stringify({ childRunId: receipt.childRunId }),
+              }),
+              {},
+            );
+
+            expect(collected.status).toBe(200);
+            expect(await collected.json()).toMatchObject([
+              { childRunId: receipt.childRunId, status: "Pending" },
+            ]);
+            nestedChildRunId = receipt.childRunId;
+
+            return scriptedTurn.onPrompt(prompt);
+          },
+        });
+        const smoke = {
+          status: "ok" as const,
+          reason: null,
+          checkedAt: new Date().toISOString(),
+          protocolVersion: 1,
+        };
+
+        fake.setDiagnostics({
+          kind: "ready",
+          diagnostics: {
+            status: "ready",
+            version: "test",
+            checkedAt: smoke.checkedAt,
+            envRefs: [],
+            adapters: [
+              {
+                id: "claude",
+                binary: "test-claude",
+                source: "path",
+                path: null,
+                available: true,
+                version: null,
+                error: null,
+                smoke: {
+                  ...smoke,
+                  capabilityEnforcement: smoke,
+                  readOnlySession: {
+                    ...smoke,
+                    probeVersion: 2,
+                    staleReason: null,
+                  },
+                },
+              },
+            ],
+          },
+        });
+        const savedFlowCap = process.env.MAISTER_MAX_CONCURRENT_RUNS;
+
+        process.env.MAISTER_MAX_CONCURRENT_RUNS = "100";
+        try {
+          await expect(tryStartRun(graph.childRunId, { db })).resolves.toEqual({
+            started: true,
+          });
+          await runFlow(graph.childRunId, { db, executionHosts: hosts });
+          await fake.waitForCanonicalEvents();
+        } finally {
+          if (savedFlowCap === undefined)
+            delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
+          else process.env.MAISTER_MAX_CONCURRENT_RUNS = savedFlowCap;
+        }
+
+        expect(graphPrompts).toHaveLength(1);
+        expect(graphPrompts[0]).toContain(graphObjective);
+        expect(graphPrompts[0]).not.toContain(
+          assignmentInput.objectiveInput.input,
+        );
+        expect(nestedChildRunId).toBeDefined();
+        const nested = await database.pool.query(
+          "SELECT parent_run_id,root_run_id,project_id,task_id FROM runs WHERE id=$1",
+          [nestedChildRunId],
+        );
+
+        expect(nested.rows).toEqual([
+          {
+            parent_run_id: graph.childRunId,
+            root_run_id: appointment.runId,
+            project_id: null,
+            task_id: null,
+          },
+        ]);
+        const collectedGraph = await collectExternalRun(
+          new NextRequest("http://localhost/api/v1/ext/runs/collect", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ childRunId: graph.childRunId }),
+          }),
+          {},
+        );
+
+        expect(collectedGraph.status).toBe(200);
+        expect(await collectedGraph.json()).toMatchObject([
+          {
+            childRunId: graph.childRunId,
+            status: "Done",
+            resultStatus: "valid",
+            result: { value: findings },
+          },
+        ]);
+      } finally {
+        graphHost.mockRestore();
+      }
     } finally {
       await revoke(professional);
     }
@@ -10995,7 +11310,7 @@ it("IT-CBC-01 requires current company delegation grants for a repository-free w
     expect(
       (
         await database.pool.query(
-          "SELECT id FROM specialist_work WHERE assignment_id=$1",
+          "SELECT id FROM specialist_work WHERE assignment_id=$1 AND logical_work_id='inspect'",
           [assignment.id],
         )
       ).rows,

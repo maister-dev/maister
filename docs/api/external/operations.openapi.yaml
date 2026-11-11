@@ -1771,7 +1771,7 @@ paths:
         snapshots the resolved effective definition + runner onto the child run
         row.
 
-        **Flow targets (Implemented — ADR-163).** `target.flowId` launches the child
+        **Project Flow targets (Implemented — ADR-163).** `target.flowId` launches the child
         through the CANONICAL Flow Run pipeline (`launchRunStaged`) — the same
         workspace, graph state, session set, capability materialization, and
         executor resolution a board Launch gets — never through the agent
@@ -1812,7 +1812,9 @@ paths:
 
         An active company execution credential with `assignments:update` may
         submit `assignmentWork` for a reviewed workspace-none standalone
-        company agent using `mode: run`. The server derives the company and
+        company agent or result-only company Flow using `mode: run`.
+        Company Flow children use the installed export and have no carrier task.
+        The server derives the company and
         parent from the credential. The initiating user and actual origin role
         need current `assignments:delegate`, and the receiving binding and role
         need current assignment-read authority. A successful response contains
@@ -1860,9 +1862,8 @@ paths:
         "202":
           description: |
             Child request accepted. Canonical task-backed launches can remain queued
-            without a Run; accepted/intentId distinguish this from a bound Run receipt. `childTaskId` is present for an AGENT
-            target only with `mode = "task"`, and **(Implemented — ADR-163)** ALWAYS
-            for a FLOW target (a flow child always has a carrier task).
+            without a Run; accepted/intentId distinguish this from a bound Run receipt.
+            `childTaskId` is present for project agent tasks and project Flow targets.
           content:
             application/json:
               schema:
@@ -1891,8 +1892,7 @@ paths:
                     type: string
                     format: uuid
                     description: |
-                      Agent target: present only for `mode == "task"`. Flow
-                      target **(Implemented — ADR-163)**: always present.
+                      Present for project agent tasks and project Flow targets.
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
@@ -11534,7 +11534,7 @@ components:
         | `persistent` | yes | REFUSED — agent-target only |
         | `addressableKey` | yes | REFUSED — agent-target only |
         | `runnerOverride` | yes (agent runner chain) | yes (Flow executor-resolution chain) |
-        | `assignmentWork` | standalone project agent, `mode: run`, workspace none, required result | REFUSED for this dispatch arm |
+        | `assignmentWork` | standalone project or company agent, `mode: run`, workspace none, required result | reviewed company result-only Flow, `mode: run` |
 
         An authorized agent target whose effective definition names a Flow uses
         the Flow column above. Its `workspace`, `workspaceMode`, `persistent`,
@@ -11544,12 +11544,12 @@ components:
         Ordinary facade launches preserve
         the package pin, agent activity, branch base, and execution policy.
 
-        **Flow-target semantics (Implemented — ADR-163).** A flow child ALWAYS gets
+        **Project Flow-target semantics (Implemented — ADR-163).** A project Flow child gets
         a server-minted carrier task, ALWAYS linked `parent_of` under the
         orchestrator's task, in BOTH modes — a flow run cannot exist without a
         task, and the board renders a `parent_of` child as its own card anyway,
         so omitting the link would produce the same card with no provenance. The
-        response therefore ALWAYS carries `childTaskId` for a flow target. The
+        response therefore carries `childTaskId` for a project Flow target. The
         carrier task's flow is the SELECTED flow, never inherited from the
         orchestrator's task. Its `baseBranch`/`targetBranch` both resolve to the
         project's main branch; the body accepts no branch field.
@@ -11570,7 +11570,7 @@ components:
           additionalProperties: false
           required: [selector, expectedOutcome]
           description: |
-            The caller must hold the exact project assignment appointment. The
+            The caller must hold the exact company or project assignment appointment. The
             child uses the current installed binding and the required result
             contract resolved by the server. Exact replay returns the same Run.
           properties:

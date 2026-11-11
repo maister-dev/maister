@@ -3451,6 +3451,8 @@ export async function runGraph(
               inputRevision: loaded.companyContext.input.revision,
               inputSha256: loaded.companyContext.input.digest,
               objectiveInput:
+                loaded.companyContext.owner.delegated?.definition
+                  .objectiveInput ??
                 loaded.companyContext.input.snapshot.objectiveInput,
             },
             executor: nodeExecutor,
