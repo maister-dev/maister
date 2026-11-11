@@ -90,7 +90,7 @@ Use existing analytics sections. For each changed process, record inputs and aut
 - T6 RED: the Run displayed an unqualified readiness card. The matrix now has owning database coverage for all rollup statuses, a pinned empty definition, excluded checks, missing pins, and unevaluated declared and generated evidence. The browser checks independent Running and verification states, Scratch, operational work, and a historical executor failure. The M18 real Git review fixture checks that code-delivery agent promotion still consumes the existing rollup.
 - T7 RED: the agent Run body exposed a bare History link. The named header link now restores the exact paged history context on Back in both languages. Main and child history tests cover anchor retention, later and live announcements, docked Librarian containment, pagination, oversized records, and delayed responses. A failing child test exposed an attempt change between the latest and anchored reads. The read path now confirms a different attempt before retiring the old window.
 
-### Package gate results
+### Initial package gate results
 
 | Gate | Result |
 | --- | --- |
@@ -103,6 +103,35 @@ The gates used local disposable Git, Postgres and supervisor fixtures. Browser
 coverage includes EN/RU history, a short mobile dialog, light/dark Evidence,
 the 1440×1000 editor, and the existing Review and manual admission controls.
 Deployment revision parity was outside the local qualification.
+
+### Review remediation evidence
+
+| Acceptance | RED and GREEN evidence |
+| --- | --- |
+| UX-01A–D | The review regressions exposed stale sessions reaching Studio, 500 responses for invalid element JSON, and an old Run revision missing after a real attachment upgrade. The affected browser journeys and the four PostgreSQL source-scope cases passed. They check the exact old and new member content, foreign pin refusal, and current-source authoring behavior. |
+| UX-02A–B, UX-03A–D | The Evidence refresh case reproduced lost filters and camera state when the last match disappeared. It passed with the same filter and camera after the match returned. The combined browser run also exercised the named New task dialog, failed submission recovery, keyboard node location, editor geometry and Evidence filtering. |
+| UX-04A–C | The branch regression covers real Git selection and indexing for escaped literal and matched bracket paths. The database cases retain source/ref limits, exact-peer exclusion, and explicit errors. |
+| UX-07A–C, UX-09A–C | RED exposed generic gate reasons, two matches for a supposedly exact gate link, and a Jump control outside the exposed transcript bounds. GREEN exercised distinct reasons, one persisted gate with a same-state decoy, the clear-filter path, and the short viewport with Librarian open. Readiness parity passed 33 database cases. The combined browser gate exercised main and child transcript navigation and list return in both languages. |
+| Execution and migration controls | P2 now observes all transport budgets together with the queued reconciliation state. P1's proxy holds every selected receipt probe across Web process death. The migration history fixture starts without dispatch authority. These changes retain the original execution and migration assertions. |
+
+The final Playwright discovery found 96 tests in 21 files, including auth
+setup. The combined local run passed 95 with one existing Evidence skip and
+zero retries. The Web unit gate passed 9,248 tests across 888 files. Web,
+Supervisor and MCP type checks, scoped ESLint, documentation, ERD and contract
+gates passed. The compatibility browser test obtains an accepted qualification,
+reads versioned launch options and recovers the same intent using its
+authenticated Location. Its gate report still targets an independent seeded Run.
+
+| Final integration gate | Result |
+| --- | --- |
+| Combined run before test control corrections | Exposed P1's second receipt probe, delayed consensus cleanup, launch timing witnesses, unordered session-delete rows, and a publication-lock timeout. The corrected controls passed five focused cases. The publication-lock case passed separately on master and in the final full run. |
+| Full Web integration, standalone at `27e2ab3e2` | **Gate failed.** 5,895 passed, two existing skips, two failures across 656 files. All repaired partition, migration, launch, consensus and prompt-owner cases passed. |
+| Brain source-disable failure | Git reported `unable to create temporary file` while committing the fixture removal, before `updateBrainSource` ran. A fresh owning run passed 86 tests across 10 files, including source disable, bracket indexing, readiness parity, Evidence and migration controls. |
+| Scratch Q7 timeout | The case timed out after releasing the assignment for the old prompt. The complete scratch placement suite passed 19 cases on this branch and 19 on unchanged master in isolation. The cause of the combined-run timeout remains undetermined. |
+
+The re-review found no remaining in-scope correctness issue in the branch
+diff. The full integration exit leaves local qualification open despite the
+focused passes. Both cases remain enabled.
 
 ## Tasks
 
@@ -162,7 +191,7 @@ Deployment revision parity was outside the local qualification.
 | Acceptance ID → task | Primary owner | Observable assertion and fixture |
 | --- | --- | --- |
 | UX-01A, UX-01B → T1 | E2E `package-management.spec.ts` | Isolated temporary upstream Git repo and local cut with the **same exported name** and distinguishable members/content. Verify both catalog cards and both authorized project contexts open their own content, including an older attachment after a newer version is installed. Click version, member and return links and verify exact identity across reload and Back/Forward. Exercise legacy root and nested chooser without a silent winner and a unique legacy redirect. |
-| UX-01C → T1 | E2E `package-management.spec.ts` | Use the same collision fixture as UX-01A/B. Verify exact whole-fork persisted origin/dedup and exact element content. Parameterize malformed, repeated, mismatched, unknown/removed and ambiguous legacy action selections across the two operations. Assert 404 and no fork. A viewer gets 403 and an authorized member succeeds. Run `forked-package-loop.spec.ts` as the existing rename/adoption workflow control. |
+| UX-01C → T1 | E2E `package-management.spec.ts` | Use the same collision fixture as UX-01A/B. Verify exact whole-fork persisted origin/dedup and exact element content. A malformed, repeated, mismatched, unknown or removed `install`, or an ambiguous legacy action selection, returns 404 before a fork. Malformed element JSON returns 422. A viewer gets 403 and an authorized member succeeds. Run `forked-package-loop.spec.ts` as the existing rename/adoption workflow control. |
 | UX-01D → T1 | E2E `flow-package-viewer.spec.ts` | Seed a Flow Run pinned to the old revision. Change the enabled revision and check the existing Run graph resource and the explicit historical viewer URL. Assert the old topology is retained in both. Exercise exact project Flow-to-Studio provenance for a selected historical revision and unavailable when it cannot be uniquely proven. Keep the authorization assertion in `web/lib/queries/__tests__/flow-package-detail.integration.test.ts` as the existing source-scope control. |
 | UX-02A, UX-02B → T3 | E2E `task-edit-fields-scroll.spec.ts` | One new scenario on the real seeded board at a short/narrow viewport. Use the named modal and Title focus, Tab/Shift+Tab wrap, background lock, Escape/opener restoration, draft on reopen and reachability of both footer actions. Assert empty required input blocks submission. Inject one deterministic request failure at the boundary, verify entered fields and announced retry guidance, then allow the actual local flowless POST to return 201 and show the new board row. Keep selected-Flow POST smoke in `task-launch-gating.spec.ts`. |
 | UX-03A, UX-03B → T4 | E2E `studio-local-edit.spec.ts`, `flow-editor.spec.ts`, `m27-flow-editor.spec.ts` | Representative 11-node valid local package and explicit 1440×1000 viewport. Assert every rectangle fits the padded canvas after Fit and click the first and last nodes through the UI. Resize in overview and manual modes. Focus the native node selector, locate a distant node and verify its readable zoom and inspector. Verify manual camera retention through a same-Flow YAML reseed, and retain the rail and properties controls. |
@@ -219,7 +248,7 @@ git --no-pager diff --check
 
 - Authenticated deployment re-verification and deployed revision parity require an existing signed-in browser session and deployment revision evidence. Neither blocks local fixture work.
 - The pinned editor geometry and exact zoom floor are a T0 measurement. Do not tune against the stale dependency install.
-- Historical project viewer source scoping can make older revisions unavailable after a source switch. Same-name sources can also share byte-identical cache paths. Keep explicit refusal or unavailable behavior for unprovable provenance. Track broader historical viewer reachability and same-project fork co-attachment separately.
+- After an attachment source switch, an explicit old project-viewer revision needs a retained Run that pins the same project, Flow row and revision. Same-name sources can also share byte-identical cache paths. If that leaves several plausible Studio installs, the pinned revision remains readable and the Studio target is unavailable. Broader historical viewer reachability and same-project fork co-attachment remain separate.
 - No new product decision is required for these six fixes. Revisit a frozen decision only when a failing test or owning source demonstrates a gap.
 - The existing Studio publication dialog reset its selected source during browser qualification. The fork-loop control now pins the local Git source at the publication API boundary and checks the real sync-first refusal and remote ref. The dialog's source selection is a separate issue.
 
