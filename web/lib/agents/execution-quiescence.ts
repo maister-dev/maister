@@ -6,6 +6,7 @@ import type {
   ExecutionAssignment,
   ExecutionCommand,
 } from "@/lib/db/schema";
+import type { ExecutionHosts } from "@/lib/execution-host";
 
 import { and, eq, inArray, isNotNull, or } from "drizzle-orm";
 import pino from "pino";
@@ -333,11 +334,12 @@ export async function assertAgentExecutionQuiescent(
   db: Db,
   run: AgentExecutionIdentity,
   applicationCommandId?: string,
+  hosts?: ExecutionHosts,
 ): Promise<void> {
   if (!run.executionAssignmentId) return;
   await projectCanonicalSessionLifecycle({ db, runId: run.id });
   await assertAgentSessionBindingsQuiescent(db, run, applicationCommandId);
-  await assertNoLiveAgentSessions(db, run);
+  await assertNoLiveAgentSessions(db, run, hosts);
 }
 
 /** Await durable exit projection after teardown without repeating a command or weakening terminal evidence. */
@@ -345,6 +347,7 @@ export async function waitForAgentExecutionQuiescence(
   db: Db,
   run: AgentExecutionIdentity,
   signal?: AbortSignal,
+  hosts?: ExecutionHosts,
 ): Promise<void> {
   const deadline =
     performance.now() +
@@ -354,7 +357,7 @@ export async function waitForAgentExecutionQuiescence(
   for (;;) {
     signal?.throwIfAborted();
     try {
-      await assertAgentExecutionQuiescent(db, run);
+      await assertAgentExecutionQuiescent(db, run, undefined, hosts);
 
       return;
     } catch (error) {
@@ -396,11 +399,12 @@ export async function waitForAgentExecutionQuiescence(
 export async function assertAgentCancellationExecutionQuiescent(
   db: Db,
   run: AgentExecutionIdentity,
+  hosts?: ExecutionHosts,
 ): Promise<void> {
   if (!run.executionAssignmentId) return;
   await projectCanonicalSessionLifecycle({ db, runId: run.id });
   await assertAgentCancellationBindingsQuiescent(db, run);
-  await assertNoLiveAgentSessions(db, run);
+  await assertNoLiveAgentSessions(db, run, hosts);
 }
 
 /** Await canonical teardown outside a transaction. Wakes are process-local,
@@ -495,9 +499,10 @@ export async function assertTerminalAgentCleanupExecutionQuiescent(
 async function assertNoLiveAgentSessions(
   db: Db,
   run: AgentExecutionIdentity,
+  hosts?: ExecutionHosts,
 ): Promise<void> {
   if (!run.executionAssignmentId) return;
-  const client = await createExecutionHosts({ db }).forAssignment({
+  const client = await (hosts ?? createExecutionHosts({ db })).forAssignment({
     id: run.executionAssignmentId,
   });
   const live = (await client.sessionsForRun()).filter(

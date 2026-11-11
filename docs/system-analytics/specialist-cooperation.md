@@ -257,6 +257,14 @@ same transaction. Context revisions record the originating Run's
 Historical revisions without a placement witness stay readable. The separate
 business-owner claim and replacement recovery remain open.
 
+The budget watchdog reconciles usage across the assignment's retained Runs.
+At the token, elapsed-time, or consecutive-failure ceiling it rechecks the
+meter while claiming the existing tree stop and records the business
+assignment ID on that intent. Operational children and company Flows confirm
+host quiescence before their own terminal receipts commit. The watchdog retains
+the stop when teardown is unconfirmed, and retries preserve settled results and
+work decisions.
+
 Assignment executor lease is 120 seconds, renewed every 40 seconds by one fenced owner; each claim/renew/write checks current epoch, owner ID and fresh expiry in a transaction. A stable assignment-row CAS increments epoch when replacing an owner. Execution-host assignment epoch remains a separate lower boundary. Current permissions are checked in addition to both fences. A stale owner yields with a typed conflict; it cannot finalize another run's current work or classify itself as a new failure.
 
 Acceptance stores responsible server principal, exact input/work/result revision, original evidence refs, limitations and verification decision. Schema validity, child Done or process exit alone cannot accept work. Agent children use supported existing message/rework. Flow children do not gain an unsupported message mutation: work rework creates a linked governed continuation, preserving the previous result and effect receipts. Rework references the new expected input revision and consumes remaining assignment/ancestor budget. Completed external effects are adopted as evidence, not replayed.

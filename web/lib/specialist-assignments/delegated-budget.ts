@@ -210,3 +210,61 @@ export function assignmentBudgetAllowsDispatchSql(runId: SQL): SQL<boolean> {
     )
   )`;
 }
+
+/** Running-work enforcement uses the same retained limits and meters as admission. */
+export function assignmentRuntimeBudgetSourceSql(
+  runId: SQL,
+): SQL<string | null> {
+  return sql<string | null>`(
+    SELECT appointment.assignment_id FROM specialist_run_links appointment
+    JOIN runs root ON root.id=appointment.run_id AND root.parent_run_id IS NULL
+    WHERE appointment.run_id=${runId} AND appointment.work_id IS NULL
+      AND appointment.role IN ('specialist','coordinator','continuation')
+      AND EXISTS (SELECT 1 FROM specialist_work work WHERE work.assignment_id=appointment.assignment_id)
+  )`;
+}
+
+type AssignmentRuntimeBudget = Readonly<{
+  specialistAssignmentId: string;
+  meter: "tokens" | "wallclock" | "failures";
+  current: number;
+  limit: number;
+}>;
+
+export async function readAssignmentRuntimeBudget(
+  tx: SqlTransaction,
+  runId: string,
+): Promise<AssignmentRuntimeBudget | null> {
+  const [row] = (
+    await tx.execute(sql`
+      SELECT subject.id AS assignment_id,limits.*,usage.*
+      FROM specialist_assignments subject
+      CROSS JOIN LATERAL (${retainedBoundsSql(sql`subject.id`)}) limits
+      CROSS JOIN LATERAL (${assignmentMetersSql(sql`subject.id`, sql`NULL`)}) usage
+      WHERE subject.id=${assignmentRuntimeBudgetSourceSql(sql`${runId}`)}
+    `)
+  ).rows;
+
+  if (typeof row?.assignment_id !== "string") return null;
+  const usage = counts.parse(row);
+  const budget = [
+    { meter: "tokens", current: usage.tokens, limit: Number(row.maxTokens) },
+    {
+      meter: "wallclock",
+      current: usage.elapsed_minutes,
+      limit: Number(row.wallClockMinutes),
+    },
+    {
+      meter: "failures",
+      current: usage.consecutive_failures,
+      limit: Number(row.consecutiveFailures),
+    },
+  ] as const;
+  const breached = budget.find(
+    ({ current, limit }) => limit > 0 && current >= limit,
+  );
+
+  return breached
+    ? { specialistAssignmentId: row.assignment_id, ...breached }
+    : null;
+}

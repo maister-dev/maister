@@ -4,8 +4,10 @@ import type {
   ExecutionHosts,
   SupervisorSessionRecord,
 } from "@/lib/execution-host";
+import type { Db as ExecutionDb } from "@/lib/execution-host/db";
+import type { Run } from "@/lib/db/schema";
 
-import { and, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { abandonUnlaunchedTasks } from "@/lib/services/tasks";
@@ -16,7 +18,12 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { causeReason } from "@/lib/domain-events/taxonomy";
-import { releaseAssignmentForRun } from "@/lib/execution-host";
+import {
+  createExecutionHosts,
+  releaseAssignmentForRun,
+} from "@/lib/execution-host";
+import { runs as executionRuns } from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
 import {
   CASCADE_NON_TERMINAL_RUN_STATUSES,
   getRunSubtreeIds,
@@ -41,6 +48,56 @@ export type CascadeReason =
 
 export interface CascadeAbandonOptions {
   db?: Db;
+  executionHosts?: ExecutionHosts;
+}
+
+async function abandonReceiptBackedChild(
+  db: ExecutionDb,
+  hosts: ExecutionHosts,
+  child: Run,
+  reason: CascadeReason,
+): Promise<boolean> {
+  if (child.executionAssignmentId !== null) {
+    const client = await hosts.forAssignment({
+      id: child.executionAssignmentId,
+    });
+
+    for (const session of await client.sessionsForRun())
+      if (session.status === "live")
+        await client.deleteSession(session.sessionId);
+  }
+
+  if (child.runKind === "flow" && child.parentRunId !== null) {
+    const { finalizeCompanyFlowRun } =
+      await import("@/lib/run-results/company-flow-terminal");
+
+    return finalizeCompanyFlowRun({
+      db,
+      rootDb: db,
+      hosts,
+      runId: child.id,
+      requested: "Abandoned",
+      cascadeParentRunId: child.parentRunId,
+      driverToken: child.flowDriverToken ?? undefined,
+      errorCode: null,
+      reason: `cascade/${reason}`,
+    });
+  }
+
+  const { prepareAgentRunFinalization } =
+    await import("@/lib/agents/finalization");
+  const prepared = await prepareAgentRunFinalization(child.id, "Abandoned", {
+    db,
+    executionHosts: hosts,
+    reason: `cascade/${reason}`,
+    closeOpenHitl: true,
+    closeAssignments: { kind: "system", reason: `cascade/${reason}` },
+  });
+  const settled = await db.transaction((tx) => prepared.apply(tx));
+
+  await prepared.afterCommit(settled);
+
+  return settled.finalized;
 }
 
 export interface CascadeAbandonResult {
@@ -70,23 +127,20 @@ type CascadedRunRow = {
   parentRunId: string | null;
 };
 
-// M37 Phase 7 (T7.4, ADR-098): abandon the orchestrator's whole run sub-tree in
-// ONE transaction. The status-filtered bulk UPDATE both cancels in-flight
-// children AND releases WaitingOnChildren descendants without per-kind dispatch;
-// an un-launched as-plan child task is also marked Abandoned so the auto-launcher
-// never fires it into a cancelled tree. Idempotent: a re-run finds every
-// descendant already terminal → the filtered UPDATE matches nothing → no events.
+// Receipt-backed descendants confirm quiescence and settle through their
+// finalizers. The remaining descendants and unlaunched tasks keep their atomic
+// bulk transition. Retries skip descendants already settled.
 //
 // The orchestrator run ITSELF is NOT touched here — the caller flips it terminal
 // (children-first ordering) right after. `promoteNextPending` runs AFTER the tx,
 // once per pool that actually had a cascaded terminal, so freed flow/agent slots
 // are reclaimed.
-export async function cascadeAbandonRunTree(
+async function abandonRunSubtree(
   orchestratorRunId: string,
   orchestratorTaskId: string | null,
   reason: CascadeReason,
   opts: CascadeAbandonOptions = {},
-): Promise<CascadeAbandonResult> {
+): Promise<CascadeAbandonResult & { pendingTeardownIds: string[] }> {
   const database = opts.db ?? getDb();
 
   // Finding 1 (Codex adversarial review): revoke the orchestrator's run-bound
@@ -112,7 +166,59 @@ export async function cascadeAbandonRunTree(
       "cascadeAbandonRunTree: nothing to cascade",
     );
 
-    return { cascadedRunCount: 0, abandonedTaskCount: 0, cascadedRunIds: [] };
+    return {
+      cascadedRunCount: 0,
+      abandonedTaskCount: 0,
+      cascadedRunIds: [],
+      pendingTeardownIds: [],
+    };
+  }
+
+  const children = subtreeIds.length
+    ? await (database as ExecutionDb)
+        .select()
+        .from(executionRuns)
+        .where(
+          and(
+            inArray(executionRuns.id, subtreeIds),
+            inArray(executionRuns.status, [
+              ...CASCADE_NON_TERMINAL_RUN_STATUSES,
+            ]),
+            sql`(${executionRuns.agentKind}='operational' OR (${executionRuns.companyId} IS NOT NULL AND ${executionRuns.runKind}='flow'))`,
+          ),
+        )
+    : [];
+  const receiptBackedIds: string[] = [];
+
+  if (children.length) {
+    const hosts = opts.executionHosts ?? createExecutionHosts({ db: database });
+    const byId = new Map(children.map((child) => [child.id, child]));
+
+    for (const id of [...subtreeIds].reverse()) {
+      const child = byId.get(id);
+
+      if (!child) continue;
+      if (await abandonReceiptBackedChild(database, hosts, child, reason)) {
+        receiptBackedIds.push(id);
+        continue;
+      }
+      const [current] = await (database as ExecutionDb)
+        .select({ status: executionRuns.status })
+        .from(executionRuns)
+        .where(eq(executionRuns.id, id));
+
+      const unsettled: readonly Run["status"][] =
+        CASCADE_NON_TERMINAL_RUN_STATUSES;
+
+      if (current && unsettled.includes(current.status))
+        throw new MaisterError(
+          "CONFLICT",
+          "Child teardown still has an active owner",
+          {
+            details: { reason: "cascade_child_unsettled", runId: id },
+          },
+        );
+    }
   }
 
   const cascaded: CascadedRunRow[] = await database.transaction(
@@ -128,6 +234,7 @@ export async function cascadeAbandonRunTree(
                 and(
                   inArray(runs.id, subtreeIds),
                   inArray(runs.status, [...CASCADE_NON_TERMINAL_RUN_STATUSES]),
+                  sql`${runs.agentKind} IS DISTINCT FROM 'operational' AND (${runs.companyId} IS NULL OR ${runs.runKind}<>'flow')`,
                 ),
               )
               .returning({
@@ -215,7 +322,7 @@ export async function cascadeAbandonRunTree(
     {
       orchestratorRunId,
       reason,
-      cascadedRunCount: cascaded.length,
+      cascadedRunCount: cascaded.length + receiptBackedIds.length,
       abandonedTaskCount: unlaunchedTaskIds.length,
       pools: [...pools],
     },
@@ -223,10 +330,27 @@ export async function cascadeAbandonRunTree(
   );
 
   return {
-    cascadedRunCount: cascaded.length,
+    cascadedRunCount: cascaded.length + receiptBackedIds.length,
     abandonedTaskCount: unlaunchedTaskIds.length,
-    cascadedRunIds: cascaded.map((row) => row.id),
+    cascadedRunIds: [...receiptBackedIds, ...cascaded.map((row) => row.id)],
+    pendingTeardownIds: cascaded.map((row) => row.id),
   };
+}
+
+export async function cascadeAbandonRunTree(
+  orchestratorRunId: string,
+  orchestratorTaskId: string | null,
+  reason: CascadeReason,
+  opts: CascadeAbandonOptions = {},
+): Promise<CascadeAbandonResult> {
+  const { pendingTeardownIds: _pending, ...result } = await abandonRunSubtree(
+    orchestratorRunId,
+    orchestratorTaskId,
+    reason,
+    opts,
+  );
+
+  return result;
 }
 
 // Codex review F2 (ADR-163): the cascade flips rows; the graph runner never
@@ -244,14 +368,14 @@ export async function cascadeAbandonRunTreeAndStopSessions(
   reason: CascadeReason,
   opts: CascadeAndStopOptions,
 ): Promise<CascadeAbandonResult> {
-  const result = await cascadeAbandonRunTree(
+  const { pendingTeardownIds, ...result } = await abandonRunSubtree(
     orchestratorRunId,
     orchestratorTaskId,
     reason,
-    { db: opts.db },
+    { db: opts.db, executionHosts: opts.executionHosts },
   );
 
-  await teardownLiveSessionsForRuns(result.cascadedRunIds, {
+  await teardownLiveSessionsForRuns(pendingTeardownIds, {
     records: opts.records,
     logLabel: opts.logLabel,
     executionHosts: opts.executionHosts,

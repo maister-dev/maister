@@ -314,6 +314,8 @@ export type BudgetTermination = Readonly<{
   meter: "tokens" | "failures" | "wallclock";
   /** Absent on historical and run/task/tree budget stops. */
   trigger?: "node_duration";
+  /** Business assignment whose retained meter owns a tree teardown. */
+  specialistAssignmentId?: string;
   current: number;
   limit: number;
   requestedAt: string;

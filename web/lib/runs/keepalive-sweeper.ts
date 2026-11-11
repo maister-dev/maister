@@ -35,6 +35,7 @@ import { getDb } from "@/lib/db/client";
 import { loadActiveRunSessionsByRunId } from "@/lib/runs/active-run-session";
 import * as schemaModule from "@/lib/db/schema";
 import { RUN_SYNC_TERMINAL_PHASES, agentTurns } from "@/lib/db/schema";
+import { specialistRunLinks } from "@/lib/db/schema";
 import { closedAnswerResponse } from "@/lib/hitl-closed-answer";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -78,6 +79,10 @@ import {
   claimBudgetTermination,
   currentBudgetTermination,
 } from "@/lib/runs/budget-termination";
+import {
+  assignmentRuntimeBudgetSourceSql,
+  readAssignmentRuntimeBudget,
+} from "@/lib/specialist-assignments/delegated-budget";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
 import { promoteNextPending, releaseSlotOnIdle } from "@/lib/scheduler";
@@ -1008,6 +1013,8 @@ type BudgetCandidate = {
   executionAssignmentId: string | null;
   flowDriverToken: string | null;
   projectId: string | null;
+  specialistAssignmentId: string | null;
+  companyId: string | null;
 };
 
 async function fetchBudgetCandidates(db: Db): Promise<BudgetCandidate[]> {
@@ -1031,6 +1038,8 @@ async function fetchBudgetCandidates(db: Db): Promise<BudgetCandidate[]> {
       executionAssignmentId: runs.executionAssignmentId,
       flowDriverToken: runs.flowDriverToken,
       projectId: runs.projectId,
+      specialistAssignmentId: assignmentRuntimeBudgetSourceSql(sql`${runs.id}`),
+      companyId: runs.companyId,
     })
     .from(runs)
     .where(
@@ -1063,6 +1072,7 @@ function hasConfiguredBudgetMeter(candidate: BudgetCandidate): boolean {
   const nodeBudget = rootDelegationBudget(candidate);
 
   return (
+    candidate.specialistAssignmentId != null ||
     (["run", "task", "tree"] as const).some((scope) =>
       (
         [
@@ -1097,6 +1107,15 @@ async function budgetReconciliationRunIds(
   const rootRunIds = budgeted
     .filter((candidate) => candidate.parentRunId === null)
     .map((candidate) => candidate.id);
+  const specialistAssignmentIds = [
+    ...new Set(
+      budgeted.flatMap((candidate) =>
+        candidate.specialistAssignmentId
+          ? [candidate.specialistAssignmentId]
+          : [],
+      ),
+    ),
+  ];
 
   if (taskIds.length > 0) {
     const taskRuns = await db
@@ -1116,6 +1135,14 @@ async function budgetReconciliationRunIds(
       );
 
     for (const run of treeRuns) runIds.add(run.id);
+  }
+  if (specialistAssignmentIds.length) {
+    const appointments = await db
+      .select({ runId: specialistRunLinks.runId })
+      .from(specialistRunLinks)
+      .where(inArray(specialistRunLinks.assignmentId, specialistAssignmentIds));
+
+    for (const appointment of appointments) runIds.add(appointment.runId);
   }
 
   return [...runIds];
@@ -1210,6 +1237,7 @@ type BudgetVerdict = {
   meter: BudgetMeter;
   current: number;
   limit: number;
+  specialistAssignmentId?: string;
 };
 
 const RUNG_ORDER: Record<BudgetRung, number> = {
@@ -2302,6 +2330,24 @@ async function actBudgetTerminateRun(
 // sessions, so the root session + each child session are killed here and the
 // root row is flipped here (Failed for flow/agent; the scratch finalizer is
 // never a tree root).
+function deferOwnedTreeStop(
+  error: unknown,
+  runId: string,
+  stopId: string,
+): false {
+  if (
+    !isMaisterError(error) ||
+    (error.code !== "EXECUTOR_UNAVAILABLE" && error.code !== "CONFLICT")
+  )
+    throw error;
+  log.warn(
+    { runId, stopId, code: error.code, reason: error.details?.reason },
+    "budget tree teardown deferred under its retained stop",
+  );
+
+  return false;
+}
+
 async function actBudgetTerminateTree(
   db: Db,
   hosts: ExecutionHosts,
@@ -2328,13 +2374,22 @@ async function actBudgetTerminateTree(
     limit: verdict.limit,
     assignmentId: client.assignment.id,
     sessionId: rootLive?.sessionId ?? null,
+    specialistAssignmentId: verdict.specialistAssignmentId,
   });
 
   if (!termination) return false;
 
-  if (rootLive) {
+  if (rootLive || candidate.companyId) {
     try {
-      await client.deleteSession(rootLive.sessionId);
+      const sessions = candidate.companyId
+        ? await client.sessionsForRun()
+        : rootLive
+          ? [rootLive]
+          : [];
+
+      for (const session of sessions)
+        if (session.status === "live")
+          await client.deleteSession(session.sessionId);
     } catch (err) {
       log.warn(
         {
@@ -2352,12 +2407,16 @@ async function actBudgetTerminateTree(
 
   // Rows AND sessions: without the teardown the child agents keep running to
   // completion and the tree token cap stays soft.
-  await cascadeAbandonRunTreeAndStopSessions(
-    candidate.id,
-    candidate.taskId,
-    "budget_exceeded",
-    { db, executionHosts: hosts, logLabel: "[budget] tree-terminate" },
-  );
+  try {
+    await cascadeAbandonRunTreeAndStopSessions(
+      candidate.id,
+      candidate.taskId,
+      "budget_exceeded",
+      { db, executionHosts: hosts, logLabel: "[budget] tree-terminate" },
+    );
+  } catch (error) {
+    return deferOwnedTreeStop(error, candidate.id, termination.id);
+  }
 
   // The ROOT's own terminal flip is run-kind dispatched, exactly like the
   // run-scope arm. A tree root is any candidate with `root_run_id IS NULL` and
@@ -2368,17 +2427,27 @@ async function actBudgetTerminateTree(
   // token revocation, HITL close, materialization restore, context-mount release
   // or AGENT-pool promotion.
   if (candidate.runKind === "agent") {
-    const { finalizeAgentRun } = await import("@/lib/agents/launch");
-    const result = await finalizeAgentRun(candidate.id, "Failed", {
+    const { prepareAgentRunFinalization } =
+      await import("@/lib/agents/finalization");
+    const prepared = await prepareAgentRunFinalization(candidate.id, "Failed", {
       db,
+      executionHosts: hosts,
       reason: "budget_breach",
       budgetTerminationId: termination.id,
       closeOpenHitl: true,
       closeAssignments: { kind: "system", reason: "budget_breach" },
-    });
+    }).catch((error: unknown) =>
+      deferOwnedTreeStop(error, candidate.id, termination.id),
+    );
+
+    if (prepared === false) return false;
+    const result = await db.transaction((tx: Db) => prepared.apply(tx));
+
+    await prepared.afterCommit(result);
 
     if (!result.finalized) {
-      await releaseBudgetTermination(db, candidate.id, termination);
+      if (!termination.specialistAssignmentId)
+        await releaseBudgetTermination(db, candidate.id, termination);
       log.debug(
         { runId: candidate.id },
         "[budget] tree-terminate agent finalize mismatch — concurrent transition won",
@@ -2411,6 +2480,29 @@ async function actBudgetTerminateTree(
       return false;
     }
     await promoteAfterTimeoutKill(db);
+    logBudgetTerminated(candidate, verdict);
+
+    return true;
+  }
+
+  if (candidate.runKind === "flow" && candidate.companyId) {
+    const { finalizeCompanyFlowRun } =
+      await import("@/lib/run-results/company-flow-terminal");
+    const finalized = await finalizeCompanyFlowRun({
+      db,
+      rootDb: db,
+      hosts,
+      runId: candidate.id,
+      requested: "Failed",
+      errorCode: "BUDGET_EXCEEDED",
+      reason: "budget_breach",
+      driverToken: termination.driverToken ?? undefined,
+      budgetTerminationId: termination.id,
+    }).catch((error: unknown) =>
+      deferOwnedTreeStop(error, candidate.id, termination.id),
+    );
+
+    if (!finalized) return false;
     logBudgetTerminated(candidate, verdict);
 
     return true;
@@ -2617,6 +2709,7 @@ async function runBudgetPass(db: Db, hosts: ExecutionHosts): Promise<number> {
           meter: pending.meter,
           current: pending.current,
           limit: pending.limit,
+          specialistAssignmentId: pending.specialistAssignmentId,
         };
         const didAct =
           pending.scope === "tree"
@@ -2634,12 +2727,17 @@ async function runBudgetPass(db: Db, hosts: ExecutionHosts): Promise<number> {
       // neither contributes to the reconciliation set nor receives an action.
       if (!hasConfiguredBudgetMeter(candidate)) return;
 
-      const verdict = await evaluateBudgetForCandidate(
-        db,
-        candidate,
-        snapshotBudget,
-        override,
-      );
+      const assignmentBudget = candidate.specialistAssignmentId
+        ? await readAssignmentRuntimeBudget(db, candidate.id)
+        : null;
+      const verdict: BudgetVerdict | null = assignmentBudget
+        ? { ...assignmentBudget, scope: "tree", rung: "terminate" }
+        : await evaluateBudgetForCandidate(
+            db,
+            candidate,
+            snapshotBudget,
+            override,
+          );
 
       if (!verdict) return;
       if (alreadyActioned(candidate.budgetState, verdict.scope, verdict.rung)) {

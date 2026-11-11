@@ -1,5 +1,5 @@
 import "server-only";
-
+import type { ExecutionHosts } from "@/lib/execution-host";
 import type { AgentPreparationOwner } from "@/lib/agents/preparation-workspace";
 import type { RawNodeOutputPayload } from "@/lib/flows/graph/node-output";
 import type { OperationalFailureDiagnostic } from "@/lib/agents/operational-diagnostics";
@@ -144,6 +144,7 @@ type AgentAssignmentClose =
 
 export type AgentFinalizeOptions = {
   db?: Db;
+  executionHosts?: ExecutionHosts;
   /** Exact server-owned budget stop; ordinary prompt completion cannot settle it. */
   budgetTerminationId?: string;
   infrastructureFailure?: OperationalFailureDiagnostic;
@@ -586,13 +587,18 @@ async function prepareAgentFinalization(
     !failureEvidence
   ) {
     try {
-      if (outcome === "Abandoned")
-        await assertAgentCancellationExecutionQuiescent(_db, preparedRun);
+      if (outcome === "Abandoned" || opts.budgetTerminationId)
+        await assertAgentCancellationExecutionQuiescent(
+          _db,
+          preparedRun,
+          opts.executionHosts,
+        );
       else
         await assertAgentExecutionQuiescent(
           _db,
           preparedRun,
           opts.applicationCommandId,
+          opts.executionHosts,
         );
     } catch (error) {
       if (
@@ -839,7 +845,7 @@ async function prepareAgentFinalization(
         { details: { reason: "agent_terminal_status_inconsistent", runId } },
       );
     if (preparedRun.agentKind === "operational" && !failureEvidence) {
-      if (outcome === "Abandoned")
+      if (outcome === "Abandoned" || opts.budgetTerminationId)
         await assertAgentCancellationBindingsQuiescent(tx, preparedRun);
       else
         await assertAgentSessionBindingsQuiescent(
@@ -1344,7 +1350,10 @@ async function prepareAgentFinalization(
       const { disposeOperationalRun } =
         await import("@/lib/gc/operational-disposition");
 
-      await disposeOperationalRun(runId, { db: _db }).catch((error: unknown) =>
+      await disposeOperationalRun(runId, {
+        db: _db,
+        hosts: opts.executionHosts,
+      }).catch((error: unknown) =>
         log.error(
           { runId, errorType: error instanceof Error ? error.name : "unknown" },
           "operational-cleanup-dispatch-deferred",
@@ -1519,7 +1528,9 @@ export async function finalizeAgentRun(
     try {
       const { createExecutionHosts } =
         await import("@/lib/execution-host/client");
-      const client = await createExecutionHosts({ db }).forAssignment({
+      const client = await (
+        opts.executionHosts ?? createExecutionHosts({ db })
+      ).forAssignment({
         id: run.executionAssignmentId,
       });
 

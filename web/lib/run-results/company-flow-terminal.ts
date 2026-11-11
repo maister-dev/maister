@@ -44,6 +44,7 @@ import { closedAnswerResponse } from "@/lib/hitl-closed-answer";
 import { gcAgeDays } from "@/lib/instance-config";
 import { disposeOperationalRun } from "@/lib/gc/operational-disposition";
 import { MaisterError } from "@/lib/errors";
+import { currentBudgetTermination } from "@/lib/runs/budget-termination";
 
 const log = pino({
   name: "company-flow-terminal",
@@ -72,10 +73,12 @@ export async function finalizeCompanyFlowRun(
     reason?: string;
     hosts?: ExecutionHosts;
     driverToken?: string;
+    budgetTerminationId?: string;
     signal?: AbortSignal;
   } & (
     | { requested: "Done" | "Failed" | "Crashed" }
-    | { requested: "Abandoned"; userId: string }
+    | { requested: "Abandoned"; userId: string; cascadeParentRunId?: never }
+    | { requested: "Abandoned"; userId?: never; cascadeParentRunId: string }
   ),
 ): Promise<boolean> {
   const [run] = await args.db
@@ -91,10 +94,12 @@ export async function finalizeCompanyFlowRun(
   const sourceStatuses = TERMINAL_CAS_SOURCE[args.requested];
 
   if (!sourceStatuses.includes(run.status)) return false;
-  if (args.requested === "Abandoned")
+  const operatorId = args.requested === "Abandoned" ? args.userId : undefined;
+
+  if (operatorId !== undefined)
     await authorizeCompanyRunUserAction(
       args.db,
-      args.userId,
+      operatorId,
       run.id,
       "assignments:cancel",
     );
@@ -122,9 +127,25 @@ export async function finalizeCompanyFlowRun(
   const dispatched = dispatch.hasOwnedCommand || dispatch.hasBoundSession;
 
   if (dispatched && args.requested !== "Abandoned")
-    await waitForAgentExecutionQuiescence(args.rootDb, run, args.signal);
-  else if (dispatched) await assertAgentExecutionQuiescent(args.rootDb, run);
-  else await assertAgentCancellationExecutionQuiescent(args.rootDb, run);
+    await waitForAgentExecutionQuiescence(
+      args.rootDb,
+      run,
+      args.signal,
+      args.hosts,
+    );
+  else if (dispatched)
+    await assertAgentExecutionQuiescent(
+      args.rootDb,
+      run,
+      undefined,
+      args.hosts,
+    );
+  else
+    await assertAgentCancellationExecutionQuiescent(
+      args.rootDb,
+      run,
+      args.hosts,
+    );
   const publicResult = await resolvePublicResult(args.db, run.id);
   const resultStatus = deriveResultStatus({
     runStatus: "Review",
@@ -183,24 +204,33 @@ export async function finalizeCompanyFlowRun(
       .for("update");
 
     if (!current || !sourceStatuses.includes(current.status)) return false;
-    if (current.companyCancellationIntent && args.requested !== "Abandoned")
+    const budgetStop = await currentBudgetTermination(tx, current);
+
+    if (budgetStop?.id !== args.budgetTerminationId) return false;
+    if (current.companyCancellationIntent && operatorId === undefined)
       return false;
     if (
-      args.requested === "Abandoned" &&
-      current.companyCancellationIntent?.userId !== args.userId
+      operatorId !== undefined &&
+      current.companyCancellationIntent?.userId !== operatorId
     )
       throw new MaisterError(
         "CONFLICT",
         "Company Flow cancellation requires its retained operator intent",
         { details: { reason: "company_stop_owned" } },
       );
-    if (args.requested === "Abandoned")
+    if (operatorId !== undefined)
       await authorizeCompanyRunUserAction(
         tx,
-        args.userId,
+        operatorId,
         run.id,
         "assignments:cancel",
       );
+    if (
+      args.requested === "Abandoned" &&
+      args.cascadeParentRunId !== undefined &&
+      current.parentRunId !== args.cascadeParentRunId
+    )
+      return false;
     if (terminalWitness(current) !== terminalWitness(run))
       throw new MaisterError(
         "CONFLICT",
@@ -248,11 +278,11 @@ export async function finalizeCompanyFlowRun(
       );
     let actor: DomainEventActor = { type: "system", id: null };
 
-    if (args.requested === "Abandoned") {
+    if (operatorId !== undefined) {
       const human = await ensureCompanyUserActor({
         db: tx,
         companyId,
-        userId: args.userId,
+        userId: operatorId,
       });
 
       await cancelActiveAssignmentsForRun({
@@ -262,7 +292,7 @@ export async function finalizeCompanyFlowRun(
         eventKind: "cancelled",
         reason: "Company Flow Run stopped by operator",
       });
-      actor = { type: "user", id: args.userId };
+      actor = { type: "user", id: operatorId };
     } else {
       await systemCloseActiveAssignmentsForRun({
         db: tx,
@@ -296,7 +326,12 @@ export async function finalizeCompanyFlowRun(
       const cause: TerminalCause = {
         code: status === "Abandoned" ? null : (args.errorCode ?? "CONFIG"),
         reason,
-        source: status === "Abandoned" ? "operator" : "graph",
+        source:
+          operatorId !== undefined
+            ? "operator"
+            : status === "Abandoned"
+              ? "orchestrator"
+              : "graph",
       };
 
       await emitDomainEvent({

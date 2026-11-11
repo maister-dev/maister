@@ -15,6 +15,7 @@ import pino from "pino";
 import { FLOW_NODE_ATTEMPT_VARIANTS } from "@/lib/execution-host/prompt-owner-contract";
 import { classifyPromptEvidence } from "@/lib/reconcile-evidence";
 import { loadPromptEvidence } from "@/lib/reconcile-evidence-db";
+import { readAssignmentRuntimeBudget } from "@/lib/specialist-assignments/delegated-budget";
 import {
   executionCommands,
   nodeAttempts,
@@ -108,6 +109,7 @@ export async function claimBudgetTermination(
     assignmentId: string | null;
     sessionId: string | null;
     nodeDurationAttemptId?: string;
+    specialistAssignmentId?: string;
   }>,
 ): Promise<BudgetTermination | null> {
   return db.transaction(async (tx) => {
@@ -131,10 +133,23 @@ export async function claimBudgetTermination(
       return (input.nodeDurationAttemptId
         ? current.trigger === "node_duration" &&
           current.nodeAttemptId === input.nodeDurationAttemptId
-        : current.trigger !== "node_duration") &&
+        : current.trigger !== "node_duration" &&
+          current.specialistAssignmentId === input.specialistAssignmentId) &&
         (input.sessionId === null || input.sessionId === current.sessionId)
         ? current
         : null;
+    const assignmentBudget = input.specialistAssignmentId
+      ? await readAssignmentRuntimeBudget(tx, run.id)
+      : null;
+
+    if (
+      input.specialistAssignmentId &&
+      (assignmentBudget?.specialistAssignmentId !==
+        input.specialistAssignmentId ||
+        assignmentBudget.meter !== input.meter ||
+        input.scope !== "tree")
+    )
+      return null;
     const [attempt] = input.nodeId
       ? await tx
           .select()
@@ -225,8 +240,11 @@ export async function claimBudgetTermination(
       scope: input.scope,
       meter: input.meter,
       ...(input.nodeDurationAttemptId ? { trigger: "node_duration" } : {}),
-      current: input.current,
-      limit: input.limit,
+      ...(assignmentBudget
+        ? { specialistAssignmentId: assignmentBudget.specialistAssignmentId }
+        : {}),
+      current: assignmentBudget?.current ?? input.current,
+      limit: assignmentBudget?.limit ?? input.limit,
       requestedAt: new Date().toISOString(),
       assignmentId: run.executionAssignmentId,
       driverToken: run.flowDriverToken,

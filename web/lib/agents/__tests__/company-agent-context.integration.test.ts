@@ -127,6 +127,7 @@ import {
   runs,
   runSessions,
   executionCommands,
+  executionEvents,
   executionHosts,
   platformAcpRunners,
   platformRuntimeSettings,
@@ -11008,6 +11009,8 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
       (entry) => entry.action === "assignments:delegate",
     )!;
     let receipt: Awaited<ReturnType<typeof retain>>;
+    const fake = createFakeExecutionHost();
+    const { hosts, hostId } = await fakeExecutionHosts(db, { fake });
 
     try {
       await database.db.transaction(async (tx) => {
@@ -11045,7 +11048,6 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
       ]);
       const { reserveCompanyDelegatedAgentRun } =
         await import("../company-agent-launch");
-      const fake = createFakeExecutionHost();
       const promptEntered = Promise.withResolvers<void>();
       const releasePrompt = Promise.withResolvers<void>();
 
@@ -11073,7 +11075,6 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
         },
       };
       const { prompts } = scriptAgentTurn(fake, scriptedTurn);
-      const { hosts } = await fakeExecutionHosts(db, { fake });
       const dispatch = () =>
         reserveCompanyDelegatedAgentRun(database.db, workRequest, hosts);
 
@@ -12059,6 +12060,63 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
         )
       ).rows,
     ).toEqual([{ id: receipt.work.id }]);
+    await db.transaction((tx) =>
+      mintAssignment(tx, {
+        runId: appointment.runId,
+        hostId,
+        reason: "launch",
+      }),
+    );
+    await db.insert(executionEvents).values({
+      id: randomUUID(),
+      source: "manager",
+      sourceKey: `assignment-budget:${appointment.runId}`,
+      runId: appointment.runId,
+      eventType: "usage.recorded",
+      payloadSchema: "maister.usage.recorded.v1",
+      payload: {
+        sessionName: "default",
+        model: "budget-fixture",
+        inputTokens: prepared.bounds.maxTokens,
+        outputTokens: 0,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0,
+        resumed: false,
+      },
+      occurredAt: new Date(),
+      receivedAt: new Date(),
+      runSequence: 0n,
+      ingestDisposition: "accepted",
+    });
+    await runSweepTick({ db, executionHosts: hosts });
+    const [budgetRoot] = await db
+      .select({ status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, appointment.runId));
+
+    expect(budgetRoot).toEqual({ status: "Failed" });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status,operational_terminal->>'status' AS terminal FROM runs WHERE root_run_id=$1 AND agent_kind='operational' ORDER BY status",
+          [appointment.runId],
+        )
+      ).rows,
+    ).toEqual([
+      { status: "Abandoned", terminal: "Abandoned" },
+      { status: "Done", terminal: "Done" },
+    ]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT decision,count(*)::int AS count FROM specialist_work_decisions decision JOIN specialist_work work ON work.id=decision.work_id AND work.work_revision=decision.work_revision WHERE work.assignment_id=$1 GROUP BY decision ORDER BY decision",
+          [assignment.id],
+        )
+      ).rows,
+    ).toEqual([
+      { decision: "accept", count: 2 },
+      { decision: "rework", count: 1 },
+    ]);
   } finally {
     await revoke(initiating);
   }
