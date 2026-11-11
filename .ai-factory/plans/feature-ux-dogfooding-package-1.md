@@ -62,7 +62,7 @@ Use existing analytics sections. For each changed process, record inputs and aut
 | --- | --- |
 | UX-01A–D | Install v1 and v2 on distinct bundle paths. Upgrade the actual project attachment and verify an explicit v1 selection and its Studio link through a retained v1 Run. A revision pinned only by another project cannot authorize the view. Reject inactive and password-reset-required sessions before Studio content lookup. Assert malformed element JSON and extra properties return 422 and valid-body invalid selectors return 404; whole-fork optional defaults and exact dedup retain 200/201. |
 | UX-02A–B, UX-03A–D | Drive the native locator with keyboard input and keep the representative geometry assertions. Refresh Evidence without reloading the page as the last matching node disappears and returns. Check the selected filter, Clear filters, and the same-tuple camera. Keep the short modal scenario with the shared buttons. |
-| UX-07A–C, UX-09A–C | Show distinct explanations and next actions for skipped, pending, running, stale, failed, and overridden gates. Check all four Jump control bounds, including a transcript entering the viewport and child scroll ownership. Keep the current retention and live-follow assertions. |
+| UX-07A–C, UX-09A–C | Show distinct explanations and next actions for skipped, pending, running, stale, failed, and overridden gates. Links must select the exact gate row through the Evidence-only `evidenceItem` query, with a second same-status gate proving identity. Check all four Jump control bounds, including a transcript entering the viewport and child scroll ownership. Keep the current retention and live-follow assertions. |
 
 ### Persistence and migration decision
 

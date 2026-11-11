@@ -206,6 +206,11 @@ visible and clearable if its last option disappears. Empty results retain filter
 controls. A singleton is fitted with a zoom cap
 (UX-03C–D).
 
+`evidenceItem` selects one Evidence graph row in the current Run. Verification
+links use its stable gate row ID. The selected item appears with the other
+filters, and Clear filters removes it. Flow inspector selection keeps using
+`node` independently of this exact Evidence target.
+
 ### Transcript viewport (Implemented)
 
 Main and child transcripts keep their scroll owners. Earlier history loading,

@@ -248,8 +248,8 @@ The Flow Run page presents recorded blocking gates and required evidence in a
 compact indicator. The keyboard-operable disclosure names the gate or evidence,
 explains its recorded state, and gives a relevant next step. Skipped explains
 why the gate blocks, pending and running have distinct explanations, and an
-override explains that it supplied the decision. Evidence links are offered
-when they can locate the affected gate or evidence. Failed, stale, blocked,
+override explains that it supplied the decision. Evidence links open the exact
+gate row, even when other gates have the same status. Failed, stale, blocked,
 waiting and overridden contributions keep their existing precedence. Show
 recorded clear results separately from the lifecycle state. A known compatible
 pin and applicable requirements distinguish no checks, policy exclusion and
