@@ -125,13 +125,14 @@ authenticated Location. Its gate report still targets an independent seeded Run.
 | Final integration gate | Result |
 | --- | --- |
 | Combined run before test control corrections | Exposed P1's second receipt probe, delayed consensus cleanup, launch timing witnesses, unordered session-delete rows, and a publication-lock timeout. The corrected controls passed five focused cases. The publication-lock case passed separately on master and in the final full run. |
-| Full Web integration, standalone at `27e2ab3e2` | **Gate failed.** 5,895 passed, two existing skips, two failures across 656 files. All repaired partition, migration, launch, consensus and prompt-owner cases passed. |
+| Earlier full Web integration at `27e2ab3e2` | 5,895 passed, two existing skips, two failures across 656 files. All repaired partition, migration, launch, consensus and prompt-owner cases passed. |
 | Brain source-disable failure | Git reported `unable to create temporary file` while committing the fixture removal, before `updateBrainSource` ran. A fresh owning run passed 86 tests across 10 files, including source disable, bracket indexing, readiness parity, Evidence and migration controls. |
 | Scratch Q7 timeout | The case timed out after releasing the assignment for the old prompt. The complete scratch placement suite passed 19 cases on this branch and 19 on unchanged master in isolation. The cause of the combined-run timeout remains undetermined. |
+| Full Web integration at `7109ab903` for PR readiness | `pnpm --dir web test:integration --maxWorkers=6` passed with 5,897 tests and two existing skips across 656 files. Both previously failing cases passed in the complete run. |
 
 The re-review found no remaining in-scope correctness issue in the branch
-diff. The full integration exit leaves local qualification open despite the
-focused passes. Both cases remain enabled.
+diff. The six-worker rerun closed the local integration gate with both cases
+enabled.
 
 ## Tasks
 
