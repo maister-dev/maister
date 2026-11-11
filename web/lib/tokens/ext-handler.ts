@@ -49,10 +49,11 @@ type Db = any;
 export type ExtCtx = {
   actor: TokenActor;
   projectId: string;
+  scopeLabel: string;
   operationId?: string;
 };
 type ResolveProjectCtx = { actor: TokenActor; db: Db };
-type ResolveScopeCtx = ExtCtx & { db: Db };
+type ResolveScopeCtx = ResolveProjectCtx & { projectId: string };
 
 export type ExtOperationContinuation = Readonly<{
   replay: (
@@ -966,6 +967,7 @@ export async function handleExt(
     const context: ExtCtx = {
       actor,
       projectId: targetProjectId ?? "",
+      scopeLabel,
       operationId,
     };
 

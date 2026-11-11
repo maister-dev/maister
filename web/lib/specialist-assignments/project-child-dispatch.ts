@@ -2,7 +2,12 @@ import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
 import type { DelegateBody } from "@/lib/orchestrator/delegation-request";
-import type { DelegatedWorkRequest } from "./delegated-intake";
+import type {
+  DelegatedWorkReceipt,
+  DelegatedWorkRequest,
+} from "./delegated-intake";
+import type { NativeDelegationInput } from "@/lib/orchestrator/native-input-types";
+import type { RunResultContract } from "@/lib/run-results/types";
 
 import { eq, sql } from "drizzle-orm";
 
@@ -162,21 +167,101 @@ export async function dispatchProjectAssignmentChild(
         request,
       };
     });
+
+  return launchProjectAssignmentChild(db, {
+    receipt,
+    nativeInput,
+    resultContract,
+    request,
+  });
+}
+
+/** Recover the prior pinned project result and reuse the same repository admission seam. */
+export async function dispatchProjectAssignmentRework(
+  db: Db,
+  request: DelegatedWorkRequest,
+): Promise<{ childRunId: string; status: string }> {
+  const { target, objectiveInput } = request.prepared;
+
+  if (target.kind !== "project_agent" || !request.rework)
+    throw new MaisterError(
+      "CONFIG",
+      "Project rework requires an exact agent continuation",
+    );
+  const { childRunId } = request.rework;
+  const admission = await db.transaction(async (tx) => {
+    const receipt = await retainDelegatedWorkInTransaction(tx, request);
+    const [prior] = await tx
+      .select({ resultContract: runs.resultContract })
+      .from(runs)
+      .where(eq(runs.id, childRunId));
+    const nativeInput = await captureNativeDelegationInput(
+      tx,
+      { kind: "token", tokenId: request.tokenId },
+      {
+        sourceRunId: receipt.work.definition.parent.runId,
+        target: { kind: "agent", id: target.role.agentId },
+        title: "Rework delegated assignment",
+        prompt: objectiveInput.input,
+      },
+    );
+
+    if (!nativeInput || !prior?.resultContract?.required)
+      throw new MaisterError(
+        "PRECONDITION",
+        "The retained project rework input or result contract is unavailable",
+      );
+
+    return {
+      receipt,
+      nativeInput,
+      request,
+      resultContract:
+        prior.resultContract.kind === "agent_operational"
+          ? null
+          : prior.resultContract,
+    };
+  });
+
+  return launchProjectAssignmentChild(db, admission);
+}
+
+async function launchProjectAssignmentChild(
+  db: Db,
+  {
+    receipt,
+    nativeInput,
+    resultContract,
+    request,
+  }: Readonly<{
+    receipt: DelegatedWorkReceipt;
+    nativeInput: NativeDelegationInput;
+    resultContract: RunResultContract | null;
+    request: DelegatedWorkRequest;
+  }>,
+): Promise<{ childRunId: string; status: string }> {
   const { work } = receipt;
+  const { target, parent } = work.definition;
+
+  if (target.kind !== "project_agent")
+    throw new MaisterError(
+      "CONFIG",
+      "Project assignment requires a standalone agent target",
+    );
 
   if (work.childRunId === null) {
     const launched = await launchAgentRun({
       db,
-      agentId,
-      projectId,
+      agentId: target.role.agentId,
+      projectId: target.projectId,
       nativeInput,
       delegatedWork: request,
       resultContract,
       taskId: null,
       workspace: "none",
       runId: work.reservedRunId,
-      parentRunId,
-      rootRunId: work.definition.parent.rootRunId,
+      parentRunId: parent.runId,
+      rootRunId: parent.rootRunId,
       launchMode: "manual",
       trigger: { source: "manual" },
     });

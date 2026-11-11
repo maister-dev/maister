@@ -12,7 +12,9 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { resolveActiveBoundRun } from "@/lib/runs/bound-run";
+import { cooperationScope } from "@/lib/specialist-assignments/cooperation-scope";
 import { prepareDelegatedWorkRework } from "@/lib/specialist-assignments/delegated-intake";
+import { dispatchProjectAssignmentRework } from "@/lib/specialist-assignments/project-child-dispatch";
 import { assignmentWorkReworkSchema } from "@/lib/specialist-assignments/work-types";
 import { postgresTextSchema } from "@/lib/text-schema";
 import { handleExt, httpStatusForExtCode } from "@/lib/tokens/ext-handler";
@@ -66,10 +68,14 @@ async function reworkNativeChild(
       tokenId,
       decision: body.assignmentWork,
     });
-    const result =
-      request.prepared.target.kind === "company_flow"
-        ? await reserveCompanyDelegatedFlowRun(db, request)
-        : await reserveCompanyDelegatedAgentRun(db, request);
+    const { kind } = request.prepared.target;
+    const reserve =
+      kind === "project_agent"
+        ? dispatchProjectAssignmentRework
+        : kind === "company_flow"
+          ? reserveCompanyDelegatedFlowRun
+          : reserveCompanyDelegatedAgentRun;
+    const result = await reserve(db, request);
 
     return NextResponse.json(result, { status: 202 });
   } catch (err) {
@@ -102,8 +108,8 @@ export async function POST(
       endpoint: ENDPOINT,
       method: "POST",
       allowCompanyActorWithoutProject: true,
-      resolveScopeLabel: async ({ actor }) =>
-        actor.companyId === undefined ? "runs:delegate" : "assignments:update",
+      resolveScopeLabel: async ({ actor, db }) =>
+        cooperationScope(db, actor, "runs:delegate"),
       db,
     },
     async (ctx) => {
@@ -134,8 +140,8 @@ export async function POST(
       }
 
       if (
-        ctx.actor.companyId !== undefined ||
-        body.assignmentWork !== undefined
+        body.assignmentWork !== undefined ||
+        ctx.scopeLabel === "assignments:update"
       )
         return reworkNativeChild(db, ctx.actor.tokenId, body);
 

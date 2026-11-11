@@ -138,14 +138,15 @@ professional can send a live clarification to a finite agent child using
 `run_message` with its exact Run ID, `mode: steer`, and a stable request key.
 The shared steer command retains the input and reads back its receipt. A
 definitive refusal creates no successor turn or delivered transcript entry.
-For completed company result-only work, `run_collect` returns the exact work,
+For completed native result-only work, `run_collect` returns the exact work,
 business, input and result revisions. The originating professional uses those
 witnesses with `run_rework` to create an attributed decision and the next
 request revision under the same logical work ID. The original result remains
 attached to its original Run. The continuation uses the original receiving
 pin, current source authorization and the remaining assignment budget. The
-existing scheduler and driver run the new child. Rework for native project work
-and work with external-effect obligations remains open.
+existing scheduler and driver run the new child. Native project work uses the
+attached workspace-none agent and existing project authority. Rework for
+external-effect obligations remains open.
 
 ### Decisive execution fences (T27)
 
@@ -230,7 +231,7 @@ coordinator ownership remain required checks in the T27 native service. Storage
 alone grants no delegation capability. Main migration `0267` requires atomic work
 and attributed intake retention, refuses bare acceptance/rework decisions, and
 binds any executed child to its exact role/Flow pin and native Run link. Main
-`0272` records immutable company result-only rework decisions and requires the
+`0272` records immutable result-only rework decisions and requires the
 exact next work revision in the same transaction. Acceptance and accepted
 context entries remain open. Forward migration `0268` closes
 nullable source/context/target comparisons under the

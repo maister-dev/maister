@@ -13668,7 +13668,8 @@ it("requires current explicit company admission authority even for an administra
 
 it("IT-CBC-01 dispatches one exact workspace-none project child and adopts it on a concurrent replay", async () => {
   const db: Db = database.db;
-  const project = await seedProjectRow(database.db);
+  const repo = await initRepo(join(root, "project-child-rework-repo"));
+  const project = await seedProjectRow(database.db, { repoPath: repo });
   const roleId = "rah:project-dispatch-observer";
   const runnerId = randomUUID();
   const parentRunId = randomUUID();
@@ -13768,6 +13769,10 @@ it("IT-CBC-01 dispatches one exact workspace-none project child and adopts it on
     runId: parentRunId,
     agentId: roleId,
   });
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${credential.secret}`,
+  };
 
   await expect(
     db.transaction((tx) => admitDelegatedChild(tx, { parentRunId })),
@@ -13775,7 +13780,7 @@ it("IT-CBC-01 dispatches one exact workspace-none project child and adopts it on
     code: "PRECONDITION",
     details: { reason: "assignment_work_required" },
   });
-  await fakeExecutionHosts(db);
+  const { fake, hosts } = await fakeExecutionHosts(db);
   const savedAgentCap = process.env.MAISTER_MAX_CONCURRENT_AGENTS;
 
   process.env.MAISTER_MAX_CONCURRENT_AGENTS = "1";
@@ -13802,12 +13807,37 @@ it("IT-CBC-01 dispatches one exact workspace-none project child and adopts it on
         },
       },
     };
-    const [first, replay] = await Promise.all([
+    const [first, transportReplay] = await Promise.all([
       dispatchProjectAssignmentChild(db, request),
-      dispatchProjectAssignmentChild(db, request),
+      delegateExternalRun(
+        new NextRequest("http://localhost/api/v1/ext/runs/delegate", {
+          method: "POST",
+          headers,
+          body: JSON.stringify(request.body),
+        }),
+        {},
+      ),
     ]);
 
+    expect(transportReplay.status).toBe(202);
+    const replay: { childRunId: string } = await transportReplay.json();
+
     expect(first).toEqual({ childRunId: replay.childRunId, status: "Pending" });
+    const legacyRefused = await delegateExternalRun(
+      new NextRequest("http://localhost/api/v1/ext/runs/delegate", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          target: request.body.target,
+          mode: "run",
+          prompt:
+            "Attempt legacy delegation without a native appointment selector.",
+        }),
+      }),
+      {},
+    );
+
+    expect(legacyRefused.status).toBe(403);
     const rows = (
       await database.pool.query(
         `SELECT child.id, child.task_id, child.parent_run_id, work.child_run_id, link.role,
@@ -13921,6 +13951,167 @@ it("IT-CBC-01 dispatches one exact workspace-none project child and adopts it on
     expect(lineage).toEqual([
       { parent_run_id: first.childRunId, root_run_id: parentRunId },
     ]);
+
+    const enteredPrompt = Promise.withResolvers<void>();
+    const releasePrompt = Promise.withResolvers<void>();
+
+    fake.setSteering(true);
+    const scripted = scriptAgentTurn(fake, {
+      text:
+        "```json maister:output\n" +
+        JSON.stringify(operationalSuccessFixture()) +
+        "\n```",
+      onPrompt: async ({ sessionId }) => {
+        enteredPrompt.resolve();
+        await releasePrompt.promise;
+        const session = fake.sessions.get(sessionId);
+
+        if (!session) throw new Error("The project child session is missing");
+        fake.sessions.set(sessionId, {
+          ...session,
+          status: "exited",
+          exitCode: 0,
+          exitedAt: new Date().toISOString(),
+        });
+
+        return { stopReason: "end_turn", meta: null };
+      },
+    });
+    const execution = startAgentSession(first.childRunId, {
+      db,
+      executionHosts: hosts,
+    });
+    const messageHost = vi
+      .spyOn(executionHostServices, "createExecutionHosts")
+      .mockReturnValue(hosts);
+
+    try {
+      await Promise.race([
+        enteredPrompt.promise,
+        execution.then(() => {
+          throw new Error("The project child finished before clarification");
+        }),
+      ]);
+      const clarification = await messageExternalRun(
+        new NextRequest("http://localhost/api/v1/ext/runs/message", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            childRunId: first.childRunId,
+            mode: "steer",
+            requestKey: "project-clarification",
+            prompt: "Include the observation date in the result.",
+          }),
+        }),
+        {},
+      );
+
+      expect(clarification.status).toBe(200);
+      expect(await clarification.json()).toMatchObject({
+        childRunId: first.childRunId,
+        messageState: "applied",
+      });
+    } finally {
+      releasePrompt.resolve();
+      await execution;
+      messageHost.mockRestore();
+    }
+    await fake.waitForCanonicalEvents();
+    const collected = await collectExternalRun(
+      new NextRequest("http://localhost/api/v1/ext/runs/collect", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ childRunId: first.childRunId }),
+      }),
+      {},
+    );
+
+    expect(collected.status).toBe(200);
+    const [exact]: {
+      assignmentWork: {
+        id: string;
+        revision: number;
+        workRevision: number;
+        inputRevision: number;
+      };
+      resultRevision: number;
+      resultStatus: string;
+    }[] = await collected.json();
+
+    expect(exact.resultStatus).toBe("valid");
+    const reworkBody = {
+      childRunId: first.childRunId,
+      prompt: "Recheck the project observation.",
+      assignmentWork: {
+        schemaVersion: 1,
+        expectedRevision: exact.assignmentWork.revision,
+        workRevision: exact.assignmentWork.workRevision,
+        inputRevision: exact.assignmentWork.inputRevision,
+        resultRevision: exact.resultRevision,
+        requestKey: "project-observation-recheck",
+      },
+    };
+    const requestRework = () =>
+      reworkExternalRun(
+        new NextRequest("http://localhost/api/v1/ext/runs/rework", {
+          method: "POST",
+          headers,
+          body: JSON.stringify(reworkBody),
+        }),
+        {},
+      );
+    const continued = await requestRework();
+
+    expect(continued.status).toBe(202);
+    const continuation: { childRunId: string; status: string } =
+      await continued.json();
+    const repeated = await requestRework();
+
+    expect(repeated.status).toBe(202);
+    expect(await repeated.json()).toEqual(continuation);
+    const { rows: continuedWork } = await database.pool.query(
+      `SELECT work.id,work.work_revision,run.project_id,run.task_id,run.parent_run_id
+      FROM specialist_work work JOIN runs run ON run.id=work.child_run_id
+      WHERE run.id=$1`,
+      [continuation.childRunId],
+    );
+
+    expect(continuedWork).toEqual([
+      {
+        id: exact.assignmentWork.id,
+        work_revision: exact.assignmentWork.workRevision + 1,
+        project_id: project.id,
+        task_id: null,
+        parent_run_id: parentRunId,
+      },
+    ]);
+    process.env.MAISTER_MAX_CONCURRENT_AGENTS = "100";
+    await expect(tryStartRun(continuation.childRunId, { db })).resolves.toEqual(
+      { started: true },
+    );
+    await startAgentSession(continuation.childRunId, {
+      db,
+      executionHosts: hosts,
+    });
+    await fake.waitForCanonicalEvents();
+
+    expect(scripted.prompts).toHaveLength(2);
+    expect(scripted.prompts[1]).toContain(reworkBody.prompt);
+    const continuationProjection = await collectChild(db, {
+      parentRunId,
+      projectId: project.id,
+      childRunId: continuation.childRunId,
+      recipient: { kind: "token", tokenId: credential.tokenId },
+    });
+
+    expect(continuationProjection.result).toMatchObject({
+      status: "Done",
+      resultStatus: "valid",
+      assignmentWork: {
+        id: exact.assignmentWork.id,
+        workRevision: exact.assignmentWork.workRevision + 1,
+      },
+    });
   } finally {
     if (savedAgentCap === undefined)
       delete process.env.MAISTER_MAX_CONCURRENT_AGENTS;

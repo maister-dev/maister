@@ -79,9 +79,9 @@ steering. `messageState: "applied"` confirms delivery. A refused message
 creates no new turn. If delivery is uncertain, use the same key and prompt
 to check its outcome.
 
-## Request rework on a completed company result
+## Request rework on a completed specialist result
 
-Collect the result with `run_collect`. For result-only company work, use the
+Collect the result with `run_collect`. For result-only specialist work, use the
 returned work and result revisions in `run_rework`. Supply the exact child
 Run, your rework instructions, and a stable request key. The specialist receives
 a new Run under the same logical work, and you can still inspect the original

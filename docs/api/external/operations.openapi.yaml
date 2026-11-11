@@ -1807,8 +1807,11 @@ paths:
         A missing/oversized key refuses with delegation_launch_key_required (422);
         key/body conflict refuses with delegation_launch_key_conflict (409).
         Operational agents keep their existing typed operational lifecycle.
-        Project calls write a token_audit_log row with scope `runs:delegate` and
-        remain bound to the same current active parent and project.
+        A current project execution with `assignments:update` can delegate
+        exact `assignmentWork` to an attached workspace-none standalone
+        specialist. The server checks its appointment and current project
+        authority. Legacy delegation requires `runs:delegate`. The audit
+        records the resolved scope and the current project.
 
         An active company execution credential with `assignments:update` may
         submit `assignmentWork` for a reviewed workspace-none standalone
@@ -2111,13 +2114,13 @@ paths:
         reached a terminal status is refused `PRECONDITION` → 409 — collect the
         children BEFORE cancelling or finishing the coordinator.
 
-        Project calls write a `token_audit_log` row with scope `runs:collect`
-        after success. Active company execution credentials use
-        `assignments:read` and can collect only exact native work appointed by
-        their current originating role in the same company. Results with
-        native source restrictions also require current source disclosure
-        authority, including the credential's `knowledge:read` scope. The
-        company audit has no project identity.
+        Legacy project collection requires `runs:collect`. An active project
+        professional with only `assignments:read` names an exact native
+        `childRunId`. Active company execution credentials also use
+        `assignments:read` and can collect only work appointed by the current
+        originating role. Native source restrictions require current source
+        disclosure authority and the credential's `knowledge:read` scope.
+        The audit records the resolved scope and owner.
       operationId: extCollectRuns
       security:
         - projectToken: []
@@ -2281,9 +2284,9 @@ paths:
         for receipt reconciliation instead of resending or declaring it refused.
 
         For a native specialist assignment, specify the exact direct agent
-        `childRunId`, `mode: steer`, and a stable `requestKey`. A project caller
-        uses `runs:delegate`. A company caller uses `assignments:update` and
-        must have current originating professional delegation authority. The
+        `childRunId`, `mode: steer`, and a stable `requestKey`. Native project
+        and company callers can use `assignments:update` under current
+        originating professional delegation authority. The
         server checks the work appointment, initiating authority, and current
         source permissions before persisting intent and again before delivery.
         The finite child must have an active prompt on a steering-capable
@@ -2525,15 +2528,17 @@ paths:
   /api/v1/ext/runs/rework:
     post:
       tags: [runs]
-      summary: (Implemented) Continue exact company work or re-open a reviewed project agent
+      summary: (Implemented) Continue exact native work or re-open a reviewed project agent
       description: |
-        For company result-only work, provide `assignmentWork` using the
+        For native result-only work, provide `assignmentWork` using the
         exact revisions returned by `run_collect`. The current originating
         professional needs `assignments:update` and current delegation
         authority. The selected direct child must have a collected valid
         result and a current reviewed receiving binding. The platform retains
-        an immutable rework decision and queues a new native agent or Flow
-        Run under the same logical work identity. The original Run and result
+        an immutable rework decision and queues a new Run under the same
+        logical work identity. The supported targets are a workspace-none
+        standalone project agent, or a company agent or result-only Flow.
+        The original Run and result
         stay inspectable. The next revision shares the remaining assignment
         budget and inherits current source restrictions. An exact replay
         returns the existing continuation. A changed payload under the same
@@ -2593,17 +2598,17 @@ paths:
                 childRunId:
                   type: string
                   format: uuid
-                  description: The exact company child Run or reviewed project agent Run.
+                  description: The exact native child Run or reviewed project agent Run.
                 prompt:
                   type: string
                   minLength: 1
                   description: |
-                    Rework instruction. A native company request is limited to 8,000 characters.
+                    Rework instruction. A native request is limited to 8,000 characters.
                   maxLength: 1000000
                 assignmentWork:
                   type: object
                   additionalProperties: false
-                  description: Required for a native company continuation. Use the business revision and exact result revision from collection.
+                  description: Required for a native continuation. Use the business revision and exact result revision from collection.
                   required: [schemaVersion, expectedRevision, workRevision, inputRevision, resultRevision, requestKey]
                   properties:
                     schemaVersion: { type: integer, enum: [1] }
@@ -2614,7 +2619,7 @@ paths:
                     requestKey: { type: string, pattern: '^[A-Za-z0-9._:-]{8,128}$' }
       responses:
         "202":
-          description: Company continuation retained. The returned status is the current status of that exact Run.
+          description: Native continuation retained. The returned status is the current status of that exact Run.
           content:
             application/json:
               schema:

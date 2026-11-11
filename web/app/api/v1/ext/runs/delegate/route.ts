@@ -40,6 +40,7 @@ import { resolveActiveBoundRun } from "@/lib/runs/bound-run";
 import { addTaskRelation } from "@/lib/social/relations";
 import { dispatchProjectAssignmentChild } from "@/lib/specialist-assignments/project-child-dispatch";
 import { dispatchCompanyAssignmentChild } from "@/lib/specialist-assignments/company-child-dispatch";
+import { cooperationScope } from "@/lib/specialist-assignments/cooperation-scope";
 import { createDelegatedTaskLaunchSource } from "@/lib/orchestrator/delegated-launch-authority";
 import {
   delegationLaunchOperation,
@@ -186,8 +187,8 @@ export async function POST(
       method: "POST",
       successAuditInWork: true,
       allowCompanyActorWithoutProject: true,
-      resolveScopeLabel: async ({ actor }) =>
-        actor.companyId === undefined ? "runs:delegate" : "assignments:update",
+      resolveScopeLabel: async ({ actor, db }) =>
+        cooperationScope(db, actor, "runs:delegate"),
       db,
     },
     async (ctx) => {
@@ -278,6 +279,13 @@ export async function POST(
         }
 
         const parent = boundRes.run;
+        const scope = ctx.scopeLabel;
+
+        if (scope === "assignments:update" && !body.assignmentWork)
+          throw new MaisterError(
+            "UNAUTHORIZED",
+            "Assignment-scoped delegation requires an exact native work selector",
+          );
 
         if (body.assignmentWork) {
           const child = await dispatchProjectAssignmentChild(db, {
@@ -299,7 +307,7 @@ export async function POST(
             {
               ...tokenAuditIdentity(ctx.actor),
               projectId: ctx.projectId,
-              scopeUsed: "runs:delegate",
+              scopeUsed: scope,
               endpoint: ENDPOINT,
               method: "POST",
               result: "ok",

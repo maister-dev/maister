@@ -264,14 +264,15 @@ async function readWorkReworkBasis(
     throw unavailableAssignment();
   if (
     (work.definition.target.kind !== "company_flow" &&
-      work.definition.target.kind !== "company_agent") ||
+      work.definition.target.kind !== "company_agent" &&
+      work.definition.target.kind !== "project_agent") ||
     work.definition.objectiveInput.verification.some(
       (item) => item.kind !== "result",
     )
   )
     throw new MaisterError(
       "PRECONDITION",
-      "Native rework currently requires company result-only work",
+      "Native rework requires result-only work and a supported receiving role",
     );
   if (
     work.workRevision >= 2147483647 ||

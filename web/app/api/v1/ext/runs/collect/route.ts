@@ -12,6 +12,8 @@ import {
   markCollected,
   type CollectedChild,
 } from "@/lib/run-results/collect";
+import { authorizeNativeChildCollection } from "@/lib/specialist-assignments/child-authority";
+import { cooperationScope } from "@/lib/specialist-assignments/cooperation-scope";
 import { handleExt, httpStatusForExtCode } from "@/lib/tokens/ext-handler";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -44,8 +46,8 @@ export async function POST(
       endpoint: ENDPOINT,
       method: "POST",
       allowCompanyActorWithoutProject: true,
-      resolveScopeLabel: async ({ actor }) =>
-        actor.companyId === undefined ? "runs:collect" : "assignments:read",
+      resolveScopeLabel: async ({ actor, db }) =>
+        cooperationScope(db, actor, "runs:collect"),
       db,
     },
     async (ctx) => {
@@ -82,6 +84,18 @@ export async function POST(
         ctx.actor.companyId === undefined
           ? { projectId: ctx.projectId }
           : { companyId: ctx.actor.companyId };
+      const exactProjectWork =
+        owner.projectId !== undefined && ctx.scopeLabel === "assignments:read";
+
+      if (exactProjectWork && !body.childRunId)
+        return NextResponse.json(
+          {
+            code: "CONFIG",
+            message:
+              "Assignment-scoped collection requires an exact childRunId",
+          },
+          { status: 422 },
+        );
 
       if (owner.projectId !== undefined) {
         const boundRes = await resolveActiveBoundRun(
@@ -112,12 +126,25 @@ export async function POST(
 
       try {
         for (const id of childRunIds) {
+          const recipient = {
+            kind: "token",
+            tokenId: ctx.actor.tokenId,
+          } as const;
+
+          if (exactProjectWork)
+            await db.transaction((tx: Db) =>
+              authorizeNativeChildCollection(tx, {
+                parentRunId,
+                childRunId: id,
+                recipient,
+              }),
+            );
           collected.push(
             await collectChild(db, {
               parentRunId,
               ...owner,
               childRunId: id,
-              recipient: { kind: "token", tokenId: ctx.actor.tokenId },
+              recipient,
             }),
           );
         }

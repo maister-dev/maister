@@ -10,6 +10,7 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { resolveActiveBoundRun } from "@/lib/runs/bound-run";
+import { cooperationScope } from "@/lib/specialist-assignments/cooperation-scope";
 import { handleExt, httpStatusForExtCode } from "@/lib/tokens/ext-handler";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches lib/services/tasks.ts).
@@ -101,8 +102,8 @@ export async function POST(
       endpoint: ENDPOINT,
       method: "POST",
       allowCompanyActorWithoutProject: true,
-      resolveScopeLabel: async ({ actor }) =>
-        actor.companyId === undefined ? "runs:delegate" : "assignments:update",
+      resolveScopeLabel: async ({ actor, db }) =>
+        cooperationScope(db, actor, "runs:delegate"),
       db,
     },
     async (ctx) => {
@@ -199,6 +200,14 @@ export async function POST(
       }
       if (child.delegated)
         return messageDelegatedChild(db, body, callerRunId, ctx.actor.tokenId);
+      if (ctx.scopeLabel === "assignments:update")
+        return NextResponse.json(
+          {
+            code: "UNAUTHORIZED",
+            message: "Assignment-scoped messaging requires exact native work",
+          },
+          { status: 403 },
+        );
 
       // ADR-163 D2: branch on run_kind BEFORE the persistent check, so a flow
       // child gets the reason that actually applies to it — a flow child has no

@@ -5692,7 +5692,7 @@ identity after optional catalog FK removal, and does not rewrite history or
 change table shape. See the [guard and lifetime contract](db/specialist-assignments-domain.md#backfill-guards-and-lifetime).
 
 Main `0274_specialist_work_rework` adds `specialist_work_decisions` for
-company result-only continuations. A decision identifies the exact collected
+result-only continuations. A decision identifies the exact collected
 result and author. The next work revision shares the existing logical identity
 and is retained in the same transaction. Historical work, results, and links
 keep their original revisions.
