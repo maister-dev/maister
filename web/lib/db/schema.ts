@@ -10853,7 +10853,7 @@ export const specialistWork = pgTable(
       sql`(
       char_length(${t.id}) BETWEEN 1 AND 128 AND ${t.workRevision}>0 AND ${t.inputRevision}>0 AND ${t.revision}>0
       AND char_length(${t.logicalWorkId}) BETWEEN 1 AND 128 AND ${t.logicalWorkId} ~ '^[A-Za-z0-9._:-]+$'
-      AND ${t.decisionState} IN ('open','clarification_requested','accepted','rework_requested','cancelled')
+      AND ${t.decisionState} IN ('open','clarification_requested','accepted','rejected','rework_requested','cancelled')
       AND ${t.inputSha256} ~ '^[a-f0-9]{64}$' AND ${t.definitionSha256} ~ '^[a-f0-9]{64}$'
       AND ${t.requestSha256} ~ '^[a-f0-9]{64}$' AND ${t.sourceKey} ~ '^[a-f0-9]{64}$'
       AND char_length(${t.reservedRunId}) BETWEEN 1 AND 128 AND ${t.reservedRunId}<>${t.parentRunId}
@@ -10990,7 +10990,7 @@ export const specialistWorkDecisions = pgTable(
     authoritySnapshot: jsonb("authority_snapshot")
       .$type<AssignmentAuthoritySnapshot>()
       .notNull(),
-    decision: text("decision").$type<"rework" | "accept">().notNull(),
+    decision: text("decision").$type<"rework" | "accept" | "reject">().notNull(),
     resultId: text("result_id")
       .notNull()
       .references(() => runResults.id, { onDelete: "restrict" }),
@@ -11020,13 +11020,13 @@ export const specialistWorkDecisions = pgTable(
       "specialist_work_decisions_shape_check",
       sql`(
         ${t.workRevision}>0 AND ${t.expectedRevision}>0 AND ${t.inputRevision}>0
-        AND ${t.resultRevision}>0 AND ${t.decision} IN ('rework','accept')
+        AND ${t.resultRevision}>0 AND ${t.decision} IN ('rework','accept','reject')
         AND ${t.requestKey} ~ '^[A-Za-z0-9._:-]{8,128}$'
         AND ${t.requestSha256} ~ '^[a-f0-9]{64}$'
         AND char_length(${t.reason}) BETWEEN 1 AND 8000
         AND ${specialistActorShape(t.actor)}
         AND ((${t.decision}='rework' AND ${t.actor}->>'kind'='agent')
-          OR (${t.decision}='accept' AND (
+          OR (${t.decision} IN ('accept','reject') AND (
             (${t.actor}->>'kind'='user' AND ${t.actor}->'runId'='null'::jsonb AND ${t.actor}->'attemptId'='null'::jsonb)
             OR (${t.actor}->>'kind'='agent' AND jsonb_typeof(${t.actor}->'runId')='string')
           )))

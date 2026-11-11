@@ -10,7 +10,7 @@ import {
 import { getDb } from "@/lib/db/client";
 import { readBoundedJson } from "@/lib/http/bounded-json";
 import { decodeRouteParam } from "@/lib/route-params";
-import { acceptSpecialistWork } from "@/lib/specialist-assignments/work-acceptance";
+import { decideSpecialistWork } from "@/lib/specialist-assignments/work-decision";
 
 const endpoint =
   "POST /api/specialist-assignments/[assignmentId]/work/[workId]/decisions";
@@ -28,7 +28,7 @@ export async function POST(
     const { assignmentId, workId } = await params;
 
     return knowledgeJson(
-      await acceptSpecialistWork(getDb(), {
+      await decideSpecialistWork(getDb(), {
         userId: user.id,
         assignmentId: decodeRouteParam(assignmentId, "assignmentId"),
         workId: decodeRouteParam(workId, "workId"),

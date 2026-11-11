@@ -904,14 +904,14 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   specialist_assignment_work_decide: {
     description:
-      "Accept a collected direct child result using its exact assignment, work, input and result revisions. Requires current acceptance authority. Retains the decision and original finding identities while the assignment stays active.",
+      "Accept or reject a collected direct child result using its exact assignment, work, input and result revisions. Requires current acceptance authority. The decision is retained and the assignment stays open for separate review.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
         assignmentId: { type: "string", minLength: 1, maxLength: 128 },
         workId: { type: "string", minLength: 1, maxLength: 128 },
-        decision: { type: "string", enum: ["accept"] },
+        decision: { type: "string", enum: ["accept", "reject"] },
         expectedRevision: { type: "integer", minimum: 1, maximum: 2147483647 },
         workRevision: { type: "integer", minimum: 1, maximum: 2147483647 },
         inputRevision: { type: "integer", minimum: 1, maximum: 2147483647 },
@@ -2137,7 +2137,7 @@ function resolveRouting(
       const { assignmentId, workId, ...body } = args as {
         assignmentId: string;
         workId: string;
-        decision: "accept";
+        decision: "accept" | "reject";
         expectedRevision: number;
         workRevision: number;
         inputRevision: number;

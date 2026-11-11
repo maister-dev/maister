@@ -1919,6 +1919,13 @@
       "when": 1794606477980,
       "tag": "0277_specialist_assignment_acceptance",
       "breakpoints": true
+    },
+    {
+      "idx": 278,
+      "version": "7",
+      "when": 1794606477981,
+      "tag": "0278_specialist_work_rejection",
+      "breakpoints": true
     }
   ]
 }

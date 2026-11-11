@@ -49,29 +49,29 @@ import { FINDINGS_CONTRACT } from "@/lib/run-results/findings-contract";
 import { postgresTextSchema } from "@/lib/text-schema";
 
 const log = pino({
-  name: "specialist-work-acceptance",
+  name: "specialist-work-decision",
   level: process.env.LOG_LEVEL ?? "info",
 });
-const workAcceptanceSchema = z
+const workDecisionSchema = z
   .object({
     expectedRevision: knowledgeRevisionSchema,
     workRevision: knowledgeRevisionSchema,
     inputRevision: knowledgeRevisionSchema,
     resultRevision: knowledgeRevisionSchema,
-    decision: z.literal("accept"),
+    decision: z.enum(["accept", "reject"]),
     reason: postgresTextSchema.min(1).max(2000).regex(/\S/),
     idempotencyKey: knowledgeDeliveryKeySchema,
   })
   .strict();
 
-type WorkAcceptance = z.infer<typeof workAcceptanceSchema>;
-type WorkAcceptanceReceipt = Readonly<{
+type WorkDecision = z.infer<typeof workDecisionSchema>;
+type WorkDecisionReceipt = Readonly<{
   id: string;
   revision: number;
-  status: "accepted";
+  status: "accepted" | "rejected";
   duplicate: boolean;
 }>;
-type WorkAcceptanceRequest = Readonly<{
+type WorkDecisionRequest = Readonly<{
   assignmentId: string;
   workId: string;
   value: unknown;
@@ -119,7 +119,7 @@ async function readWorkResult(
   )
     throw new MaisterError(
       "PRECONDITION",
-      "Work acceptance requires the exact collected result and available source evidence",
+      "A work decision requires the exact collected result and available source evidence",
       { details: { reason: "work_acceptance_result_unavailable" } },
     );
   const sourceFindings =
@@ -140,40 +140,41 @@ async function readWorkResult(
   };
 }
 
-/** Accept one exact collected child result and retain the attributed context entry atomically. */
-export function acceptSpecialistWork(
+/** Review one exact collected child result and retain the attributed context entry atomically. */
+export function decideSpecialistWork(
   db: SqlDatabase,
-  { userId, ...input }: WorkAcceptanceRequest & Readonly<{ userId: string }>,
-): Promise<WorkAcceptanceReceipt> {
-  return acceptWork(db, input, { kind: "user", userId }, null);
+  { userId, ...input }: WorkDecisionRequest & Readonly<{ userId: string }>,
+): Promise<WorkDecisionReceipt> {
+  return decideWork(db, input, { kind: "user", userId }, null);
 }
 
-export function acceptSpecialistWorkByToken(
+export function decideSpecialistWorkByToken(
   db: SqlDatabase,
   {
     tokenId,
     boundRunId,
     ...input
-  }: WorkAcceptanceRequest &
+  }: WorkDecisionRequest &
     Readonly<{ tokenId: string; boundRunId: string | null }>,
-): Promise<WorkAcceptanceReceipt> {
-  return acceptWork(db, input, { kind: "token", tokenId }, boundRunId);
+): Promise<WorkDecisionReceipt> {
+  return decideWork(db, input, { kind: "token", tokenId }, boundRunId);
 }
 
-async function acceptWork(
+async function decideWork(
   db: SqlDatabase,
-  input: WorkAcceptanceRequest,
+  input: WorkDecisionRequest,
   principal: AssignmentContextPrincipal,
   boundRunId: string | null,
-): Promise<WorkAcceptanceReceipt> {
-  const parsed = workAcceptanceSchema.safeParse(input.value);
+): Promise<WorkDecisionReceipt> {
+  const parsed = workDecisionSchema.safeParse(input.value);
 
   if (!parsed.success)
     throw new MaisterError(
       "CONFIG",
-      "Work acceptance requires the exact input, work and result revisions",
+      "A work decision requires the exact input, work and result revisions",
     );
-  const decision: WorkAcceptance = parsed.data;
+  const decision: WorkDecision = parsed.data;
+  const status = decision.decision === "accept" ? "accepted" : "rejected";
 
   return db.transaction(async (tx) => {
     const { assignmentId, workId } = input;
@@ -238,10 +239,11 @@ async function acceptWork(
     const definition = assignmentWorkDefinitionSchema.parse(work.definition);
 
     if (
-      !definition.objectiveInput.expectedResult.required ||
-      definition.objectiveInput.verification.some(
-        (obligation) => obligation.kind !== "result" && obligation.required,
-      )
+      status === "accepted" &&
+      (!definition.objectiveInput.expectedResult.required ||
+        definition.objectiveInput.verification.some(
+          (obligation) => obligation.kind !== "result" && obligation.required,
+        ))
     )
       throw new MaisterError(
         "PRECONDITION",
@@ -286,7 +288,7 @@ async function acceptWork(
       )
         throw staleWork();
 
-      return { id: existing.id, revision, status: "accepted", duplicate: true };
+      return { id: existing.id, revision, status, duplicate: true };
     }
     if (
       work.revision !== decision.expectedRevision ||
@@ -305,9 +307,9 @@ async function acceptWork(
     await tx.execute(sql`INSERT INTO specialist_work_decisions
       (id,work_id,work_revision,expected_revision,input_revision,actor,authority_snapshot,decision,result_id,result_revision,request_key,request_sha256,reason)
       VALUES(${id},${workId},${decision.workRevision},${decision.expectedRevision},${decision.inputRevision},${JSON.stringify(authority.actor)}::jsonb,${JSON.stringify(authority)}::jsonb,
-        'accept',${result.id},${decision.resultRevision},${decision.idempotencyKey},${requestDigest},${decision.reason})`);
+        ${decision.decision},${result.id},${decision.resultRevision},${decision.idempotencyKey},${requestDigest},${decision.reason})`);
     await tx.execute(
-      sql`UPDATE specialist_work SET decision_state='accepted',revision=${revision} WHERE id=${workId} AND work_revision=${decision.workRevision}`,
+      sql`UPDATE specialist_work SET decision_state=${status},revision=${revision} WHERE id=${workId} AND work_revision=${decision.workRevision}`,
     );
     const current = await readSpecialistAssignmentContextInTransaction(
       tx,
@@ -333,18 +335,22 @@ async function acceptWork(
         {
           entry: {
             id,
-            kind: "accepted",
-            state: "accepted",
             text: decision.reason,
             references: [],
-            acceptedWork: {
-              decisionId: id,
-              workId,
-              workRevision: decision.workRevision,
-              childRunId,
-              resultRevision: decision.resultRevision,
-              sourceFindings: result.sourceFindings,
-            },
+            ...(status === "accepted"
+              ? {
+                  kind: "accepted",
+                  state: "accepted",
+                  acceptedWork: {
+                    decisionId: id,
+                    workId,
+                    workRevision: decision.workRevision,
+                    childRunId,
+                    resultRevision: decision.resultRevision,
+                    sourceFindings: result.sourceFindings,
+                  },
+                }
+              : { kind: "decision", state: "resolved" }),
           },
           actor: authority.actor,
           introducedRevision: contextRevision,
@@ -359,7 +365,7 @@ async function acceptWork(
       snapshot,
       actor: authority.actor,
       sourceRestrictions: restrictionsForKnowledgeAccess(access),
-      requestKey: `accept-${id}`,
+      requestKey: `${decision.decision}-${id}`,
       requestDigest,
     });
     await tx.execute(
@@ -391,10 +397,11 @@ async function acceptWork(
         decisionId: id,
         resultRevision: decision.resultRevision,
         contextRevision,
+        status,
       },
-      "exact specialist work accepted",
+      "exact specialist work decision retained",
     );
 
-    return { id, revision, status: "accepted", duplicate: false };
+    return { id, revision, status, duplicate: false };
   });
 }

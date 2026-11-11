@@ -141,6 +141,7 @@ export const SPECIALIST_WORK_DECISION_STATES = [
   "open",
   "clarification_requested",
   "accepted",
+  "rejected",
   "rework_requested",
   "cancelled",
 ] as const;

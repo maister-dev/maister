@@ -239,7 +239,10 @@ the child result and original finding identities. The assignment remains
 active. Forward main `0274` also allows the originating company professional
 to accept exact work through the scoped bearer API and MCP. The reviewed
 scope, current role grant, current initiating-user grant and direct work
-appointment all apply. Result-only assignment completion uses its separate
+appointment all apply. Main `0276` adds rejection under the same current
+review authority. The rejected work revision retains its collected result,
+and the attributed working context carries the reviewer’s reason without
+adding accepted findings. Result-only assignment completion uses its separate
 root acceptance. Independent effect verification remains open. Forward migration `0268` closes
 nullable source/context/target comparisons under the
 [persistence guard contract](../db/specialist-assignments-domain.md#backfill-guards-and-lifetime);

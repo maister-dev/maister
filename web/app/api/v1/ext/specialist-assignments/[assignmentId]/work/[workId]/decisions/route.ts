@@ -11,7 +11,7 @@ import {
 import { getDb } from "@/lib/db/client";
 import { readBoundedJson } from "@/lib/http/bounded-json";
 import { decodeRouteParam } from "@/lib/route-params";
-import { acceptSpecialistWorkByToken } from "@/lib/specialist-assignments/work-acceptance";
+import { decideSpecialistWorkByToken } from "@/lib/specialist-assignments/work-decision";
 import { handleOwnedExt } from "@/lib/tokens/owned-ext-handler";
 
 const endpoint =
@@ -32,7 +32,7 @@ export async function POST(
       const { assignmentId, workId } = await params;
 
       return knowledgeJson(
-        await acceptSpecialistWorkByToken(getDb(), {
+        await decideSpecialistWorkByToken(getDb(), {
           tokenId: actor.tokenId,
           boundRunId: actor.boundRunId,
           assignmentId: decodeRouteParam(assignmentId, "assignmentId"),

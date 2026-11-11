@@ -88,9 +88,10 @@ a new Run under the same logical work, and you can still inspect the original
 result. Reuse the same request key and instructions to check an uncertain
 request.
 
-An authorized reviewer can accept a collected child result through the
-assignment API. The accepted working-context entry links to the original
-result and findings. The assignment stays open for its final decision.
+An authorized reviewer can accept or reject a collected child result through
+the assignment API. Acceptance links to the original result and findings in
+the working context. Rejection records the reviewer’s reason and keeps the
+original result available. The assignment stays open for its final decision.
 
 For result-only assignments, a valid result from the completed root Run
 makes the assignment ready for acceptance. An authorized reviewer can accept

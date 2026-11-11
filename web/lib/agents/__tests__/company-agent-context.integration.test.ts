@@ -10661,7 +10661,7 @@ async function reserveContextFixture(
   return { ...appointment, credential };
 }
 
-it("IT-CBC-01 requires current company delegation grants for a repository-free work receipt and replay", async () => {
+it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains exact results through Flow rework and acceptance", async () => {
   const db: Db = database.db;
   const roleId = "rah:delegating-observer";
   const receivingRoleId = "rah:company-dispatch-observer";
@@ -13907,7 +13907,7 @@ it("requires current explicit company admission authority even for an administra
   ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
 });
 
-it("IT-CBC-01 dispatches one exact workspace-none project child and adopts it on a concurrent replay", async () => {
+it("IT-CBC-01 IT-CBC-04 dispatches one exact project child and retains a rejected continuation", async () => {
   const db: Db = database.db;
   const repo = await initRepo(join(root, "project-child-rework-repo"));
   const project = await seedProjectRow(database.db, { repoPath: repo });
@@ -14338,14 +14338,20 @@ it("IT-CBC-01 dispatches one exact workspace-none project child and adopts it on
 
     expect(scripted.prompts).toHaveLength(2);
     expect(scripted.prompts[1]).toContain(reworkBody.prompt);
-    const continuationProjection = await collectChild(db, {
-      parentRunId,
-      projectId: project.id,
-      childRunId: continuation.childRunId,
-      recipient: { kind: "token", tokenId: credential.tokenId },
-    });
+    const continuationResponse = await collectExternalRun(
+      new NextRequest("http://localhost/api/v1/ext/runs/collect", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ childRunId: continuation.childRunId }),
+      }),
+      {},
+    );
 
-    expect(continuationProjection.result).toMatchObject({
+    expect(continuationResponse.status).toBe(200);
+    const [continuationProjection]: (typeof exact)[] =
+      await continuationResponse.json();
+
+    expect(continuationProjection).toMatchObject({
       status: "Done",
       resultStatus: "valid",
       assignmentWork: {
@@ -14353,6 +14359,99 @@ it("IT-CBC-01 dispatches one exact workspace-none project child and adopts it on
         workRevision: exact.assignmentWork.workRevision + 1,
       },
     });
+    const review = {
+      expectedRevision: continuationProjection.assignmentWork.revision,
+      workRevision: continuationProjection.assignmentWork.workRevision,
+      inputRevision: continuationProjection.assignmentWork.inputRevision,
+      resultRevision: continuationProjection.resultRevision,
+      decision: "reject",
+      reason: "The continued result does not resolve the disputed observation.",
+      idempotencyKey: "reject-project-observation",
+    };
+    const decide = (value: typeof review) =>
+      decideSpecialistWork(
+        new NextRequest(
+          `http://localhost/api/specialist-assignments/${assignment.id}/work/${exact.assignmentWork.id}/decisions`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(value),
+          },
+        ),
+        {
+          params: Promise.resolve({
+            assignmentId: assignment.id,
+            workId: exact.assignmentWork.id,
+          }),
+        },
+      );
+
+    browserSession.user = await requireActiveUserById(userId);
+    try {
+      await expect(
+        database.pool.query(
+          "UPDATE specialist_work SET decision_state='rejected',revision=revision+1 WHERE id=$1 AND work_revision=$2",
+          [exact.assignmentWork.id, review.workRevision],
+        ),
+      ).rejects.toMatchObject({
+        constraint: "specialist_work_decision_required",
+      });
+      const rejected = await decide(review);
+
+      expect(rejected.status).toBe(200);
+      const decision: { id: string; status: string } = await rejected.json();
+
+      expect(decision.status).toBe("rejected");
+      const replay = await decide(review);
+
+      expect(replay.status).toBe(200);
+      expect(await replay.json()).toMatchObject({
+        id: decision.id,
+        duplicate: true,
+      });
+      expect((await decide({ ...review, decision: "accept" })).status).toBe(
+        409,
+      );
+      const { rows } = await database.pool.query(
+        `SELECT work.decision_state,decision.actor->>'id' AS reviewer,result.validity,result.run_id
+        FROM specialist_work_decisions decision JOIN specialist_work work
+          ON work.id=decision.work_id AND work.work_revision=decision.work_revision
+        JOIN run_results result ON result.id=decision.result_id WHERE decision.id=$1`,
+        [decision.id],
+      );
+
+      expect(rows).toEqual([
+        {
+          decision_state: "rejected",
+          reviewer: userId,
+          validity: "valid",
+          run_id: continuation.childRunId,
+        },
+      ]);
+      await expect(
+        getSpecialistAssignment(db, userId, assignment.id),
+      ).resolves.toMatchObject({ status: "active" });
+      const context = await getSpecialistAssignmentTokenContext(
+        db,
+        credential.tokenId,
+        assignment.id,
+      );
+
+      expect(context.entries).toContainEqual(
+        expect.objectContaining({
+          actor: expect.objectContaining({ id: userId, kind: "user" }),
+          entry: {
+            id: decision.id,
+            kind: "decision",
+            state: "resolved",
+            text: review.reason,
+            references: [],
+          },
+        }),
+      );
+    } finally {
+      browserSession.user = null;
+    }
   } finally {
     if (savedAgentCap === undefined)
       delete process.env.MAISTER_MAX_CONCURRENT_AGENTS;

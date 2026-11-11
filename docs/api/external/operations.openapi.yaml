@@ -6686,15 +6686,17 @@ paths:
   /api/v1/ext/specialist-assignments/{assignmentId}/work/{workId}/decisions:
     post:
       operationId: extSpecialistWorkDecide
-      summary: Accept an exact collected child result with a scoped bearer
+      summary: Accept or reject an exact collected child result with a scoped bearer
       description: |
         Requires a current assignments:accept bearer and current acceptance
         authority. A company execution must be the original professional
         responsible for the direct child. Its reviewed scope and current role
         grant must permit acceptance, and its initiating user must still have
         the same action. The server derives the actor, verifies the exact
-        collected result and retains a linked context revision. The same
-        request key returns the same decision under current authority.
+        collected result and retains a linked context revision. Acceptance
+        retains the original finding identities. Rejection records the reason
+        and reviewer and keeps the original result. An exact replay under
+        current authority returns the original receipt.
       x-implementation-status: Implemented
       x-required-scope: assignments:accept
       requestBody:
@@ -6702,14 +6704,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CBExactWorkAcceptance"
+              $ref: "#/components/schemas/CBExactCollectedWorkDecision"
       responses:
         "200":
           description: Authorized explicit DTO or idempotent safe existing receipt.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CBReceipt"
+                $ref: "#/components/schemas/CBExactCollectedWorkDecisionReceipt"
         "401":
           $ref: "#/components/responses/CBFailure"
         "403":
@@ -17294,7 +17296,7 @@ components:
             minLength: 1
             maxLength: 1000
           maxItems: 32
-    CBExactWorkAcceptance:
+    CBExactCollectedWorkDecision:
       type: object
       additionalProperties: false
       required: [expectedRevision, workRevision, inputRevision, resultRevision, decision, reason, idempotencyKey]
@@ -17303,9 +17305,15 @@ components:
         workRevision: { type: integer, minimum: 1, maximum: 2147483647 }
         inputRevision: { type: integer, minimum: 1, maximum: 2147483647 }
         resultRevision: { type: integer, minimum: 1, maximum: 2147483647 }
-        decision: { type: string, enum: [accept] }
+        decision: { type: string, enum: [accept, reject] }
         reason: { type: string, minLength: 1, maxLength: 2000 }
         idempotencyKey: { type: string, pattern: '^[A-Za-z0-9._:-]{8,128}$' }
+    CBExactCollectedWorkDecisionReceipt:
+      allOf:
+        - $ref: "#/components/schemas/CBReceipt"
+        - type: object
+          properties:
+            status: { type: string, enum: [accepted, rejected] }
     CBWorkDecision:
       type: object
       additionalProperties: false
