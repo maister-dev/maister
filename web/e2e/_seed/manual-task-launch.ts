@@ -1,8 +1,9 @@
+import "../../scripts/_register-shim.mjs";
+
 import type { RepositoryFence } from "@/lib/project-config-persistence/repository-lock";
 
 import { randomUUID } from "node:crypto";
 import { cp, mkdir, writeFile } from "node:fs/promises";
-import { register } from "node:module";
 import path from "node:path";
 
 import { withE2EDb } from "./db";
@@ -206,10 +207,6 @@ export async function seedManualTaskLaunchFixture(): Promise<ManualTaskLaunchFix
 export async function holdManualTaskLaunchRepository(
   repo: string,
 ): Promise<RepositoryFence> {
-  register(
-    new URL("../../scripts/_server-only-shim.mjs", import.meta.url),
-    import.meta.url,
-  );
   const { acquireRepositoryMutationFence } =
     await import("@/lib/project-config-persistence/repository-lock");
 
@@ -221,10 +218,6 @@ export async function manualQualifierCheckoutPath(
   projectSlug: string,
   runId: string,
 ): Promise<string> {
-  register(
-    new URL("../../scripts/_server-only-shim.mjs", import.meta.url),
-    import.meta.url,
-  );
   const { agentReadOnlyWorkdirPath } =
     await import("@/lib/agents/workspace-paths");
 

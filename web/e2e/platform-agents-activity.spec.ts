@@ -431,7 +431,9 @@ test.describe("Agent execution visibility and retained history", () => {
         `/projects/${slug}/agents/${encodeURIComponent(operationId)}`,
       );
       await expect(
-        page.getByTestId("agent-retry-history-toolbar"),
+        page
+          .getByRole("region", { name: "History", exact: true })
+          .getByTestId("agent-retry-history-toolbar"),
       ).toBeVisible();
       await page.goto(`/runs/${source.runId}`);
       const actions = page.getByTestId("agent-run-actions");

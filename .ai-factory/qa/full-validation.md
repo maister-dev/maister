@@ -78,6 +78,19 @@ full typecheck, MCP tests and 518 supervisor unit cases pass as well. Explicit
 `.ts` imports remove Vite's native-config warnings. The browser checkpoint above
 precedes this database follow-up; its final browser rerun is reported on the PR.
 
+Node 26's hosted browser run exposed the CLI shim's deprecated
+`module.register()` call. The shim now uses synchronous `registerHooks()`;
+manual-launch fixtures import that registration once instead of stacking
+loaders. Real ESM/CommonJS imports pass on both Node majors with
+`--throw-deprecation`. The complete Node 26 ordinary browser rerun passes
+278/278 in 386.503 s, with zero skips, retries and leaks and deprecations fatal.
+Its initial run exposed two additional hidden-page locator races; diagnostics
+now select the owned consumer/stream and retry history selects its visible
+History region. All 28 real CLI inventory/copy and database-fixture integration
+cases also pass under the same Node 26 settings. Evidence:
+`module-register-red.log`, `e2e-node26-final.json`, and
+`shim-cli-integration.log` in the rebased evidence directory.
+
 Upstream native-toolchain notices remain visible: Mintlify's optional
 keytar/prebuild-install uses a deprecated filesystem constant, and the optional
 cpu-features native build emits a Node-header cast warning. Debian slim images
