@@ -14,6 +14,7 @@ import { sql } from "drizzle-orm";
 import { FINDINGS_CONTRACT } from "./findings-contract";
 import { evidenceFindingsV1Schema } from "./findings-types";
 
+import { OPERATIONAL_EVIDENCE_CONTRACT } from "@/lib/agents/kind";
 import { knowledgeAccessCaptureSchema } from "@/lib/company/types";
 import { contentDigest } from "@/lib/evaluations/digest";
 import { MaisterError } from "@/lib/errors";
@@ -224,8 +225,12 @@ export async function inspectFindingsReduction(
     SELECT result.id,result.value_bytes+coalesce(octet_length(child.knowledge_access::text),0) AS input_bytes,
       child.result_contract->>'sha256'=result.schema_sha256 AND child.result_contract->>'schemaRef'=result.schema_ref AS contract_matches
     FROM runs child JOIN run_results result ON result.run_id=child.id
-    WHERE child.parent_run_id=${runId} AND child.result_contract->>'nativeContract'=${FINDINGS_CONTRACT}
-      AND child.result_contract->>'kind' IN ('agent_profile','flow_export') AND result.first_collected_at IS NOT NULL
+    WHERE child.parent_run_id=${runId} AND (
+      (child.result_contract->>'nativeContract'=${FINDINGS_CONTRACT}
+        AND child.result_contract->>'kind' IN ('agent_profile','flow_export'))
+      OR (child.result_contract->>'kind'='agent_operational'
+        AND child.result_contract->>'contractName'=${OPERATIONAL_EVIDENCE_CONTRACT})
+    ) AND result.first_collected_at IS NOT NULL
       AND (result.revision=(SELECT max(consumed.revision) FROM run_results consumed WHERE consumed.run_id=child.id AND consumed.first_collected_at IS NOT NULL) OR ${named})
     ORDER BY child.id,result.revision LIMIT ${MAX_SOURCE_FINDINGS + 1} FOR SHARE OF child,result
   `)
@@ -246,7 +251,9 @@ export async function inspectFindingsReduction(
       ? []
       : ((
           await tx.execute(sql`
-    SELECT child.id AS child_run_id,result.revision,result.validity,result.value,child.knowledge_access
+    SELECT child.id AS child_run_id,result.revision,result.validity,
+      CASE WHEN child.result_contract->>'kind'='agent_operational'
+        THEN result.value->'findings' ELSE result.value END AS value,child.knowledge_access
     FROM run_results result JOIN runs child ON child.id=result.run_id
     WHERE result.id IN (${sql.join(
       metadata.map((row) => sql`${row.id}`),

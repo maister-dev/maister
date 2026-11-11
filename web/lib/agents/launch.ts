@@ -266,10 +266,8 @@ import {
   assertNativeRunKnowledgeInputsInTransaction,
   recordNativeRunSources,
 } from "@/lib/brain/knowledge-execution-access";
-import {
-  isNativeFindingsContract,
-  usesStructuredKnowledgeContext,
-} from "@/lib/run-results/contract";
+import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
+import { OPERATIONAL_EVIDENCE_CONTRACT } from "@/lib/agents/kind";
 import { type AgentMcpServer } from "@/lib/capabilities/agent-map";
 import {
   materializeAdapterCapabilityHome,
@@ -1522,6 +1520,11 @@ async function launchAgentRunWithAdmission(
       }
     : currentContext;
 
+  if (
+    ctx.effective.parsed.completion?.contract === OPERATIONAL_EVIDENCE_CONTRACT
+  )
+    assertNativeWorkspaceMode(input.workspaceMode);
+
   if (retryIntent)
     assertScheduledRequestMatches(
       scheduledRequestSnapshot,
@@ -2132,6 +2135,7 @@ async function launchAgentRunWithAdmission(
         },
         {
           configuration: agentConfig,
+          operationalContract: ctx.effective.parsed.completion?.contract,
           trigger: input.trigger,
           taskId: input.taskId ?? null,
           runner: resolution.runnerSnapshot,
@@ -4216,10 +4220,7 @@ async function driveAgentSession(
   if (!baseRun || baseRun.runKind !== "agent") {
     throw new MaisterError("PRECONDITION", `run ${runId} is not an agent run`);
   }
-  if (
-    baseRun.knowledgeAccess != null ||
-    isNativeFindingsContract(baseRun.resultContract)
-  )
+  if (usesStructuredKnowledgeContext(baseRun))
     assertNativeWorkspaceMode(baseRun.workspaceMode);
 
   const assignmentId =

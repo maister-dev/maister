@@ -12,13 +12,12 @@ import type { RunResultContract } from "./types";
 import { sql } from "drizzle-orm";
 import pino from "pino";
 
-import { FINDINGS_CONTRACT } from "./findings-contract";
 import {
   inspectFindingsReduction,
   retainsEvidenceReference,
   type InheritedResultReference,
 } from "./findings-reduction";
-import { evidenceFindingsV1Schema } from "./findings-types";
+import { parseNativeFindings } from "./findings-projection";
 
 import { authorizeKnowledge } from "@/lib/brain/knowledge-access";
 import { recordKnowledgeDisclosure } from "@/lib/brain/knowledge-disclosure";
@@ -123,12 +122,7 @@ export async function validateFindingsReferences(
   nodeAttemptId?: string,
 ): Promise<AgentResultDecision> {
   if (decision.kind !== "valid" || contract === null) return decision;
-  const native =
-    contract.kind !== "agent_operational" &&
-    contract.nativeContract === FINDINGS_CONTRACT;
-  const parsed = native
-    ? evidenceFindingsV1Schema.safeParse(decision.value)
-    : null;
+  const parsed = parseNativeFindings(contract, decision.value);
 
   if (parsed && !parsed.success)
     return {
@@ -148,7 +142,7 @@ export async function validateFindingsReferences(
       )
     ).rows[0];
 
-    if (!native && row?.knowledge_access === null) return decision;
+    if (parsed === null && row?.knowledge_access === null) return decision;
     const capture = knowledgeAccessCaptureSchema.safeParse(
       row?.knowledge_access,
     );

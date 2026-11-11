@@ -216,7 +216,7 @@ plus a `tools` allow-list that omits the subagent tool
 
 ### Structured specialist evidence (Implemented / Designed)
 
-[Evidence findings](evidence-findings.md) owns implemented `evidence_findings_v1`, bounded original-source closure and exact result/reduction semantics. Existing profiles and frozen `operational_v1` remain compatible. The separate receipt-backed `operational_evidence_v2` contract remains Designed until its stand-operation writer and qualification land.
+[Evidence findings](evidence-findings.md) owns `evidence_findings_v1`, bounded original-source closure and exact result/reduction semantics. The `operational_evidence_v2` contract embeds those findings and carries separate operation and verification IDs. Result publication refuses unresolved IDs. Stand operation resolution and qualification remain open. Existing profiles and frozen `operational_v1` remain compatible.
 
 ## Expectations
 

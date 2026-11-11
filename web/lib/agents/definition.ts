@@ -341,7 +341,7 @@ export const agentDefinitionFrontmatterSchema = z
         code: z.ZodIssueCode.custom,
         path: ["completion"],
         message:
-          "operational kind requires completion.contract=operational_v1; code_delivery has no operational completion",
+          "operational kind requires a supported completion.contract; code_delivery has no operational completion",
       });
     }
     if (

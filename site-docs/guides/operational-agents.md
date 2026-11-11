@@ -31,6 +31,11 @@ required GitHub connection. Configure repository and batch settings per project
 attachment. This choice does not grant automatic tool approval. Normal
 permissions, isolation, budgets and human-in-the-loop decisions still apply.
 
+Specialist packages can declare `operational_evidence_v2` with
+`compat.engine_min: "3.12.0"` to report structured findings. Operation and
+verification IDs require platform evidence. A report can describe missing
+evidence and uncertainty.
+
 ## Read the result
 
 The completing turn must publish one `json maister:output` object using the

@@ -5,6 +5,8 @@ import type { KnowledgeAccessCapture } from "@/lib/company/types";
 
 import { FINDINGS_CONTRACT } from "./findings-contract";
 
+import { OPERATIONAL_EVIDENCE_CONTRACT } from "@/lib/agents/kind";
+
 // ADR-165 (D2): the launch-time contract snapshot and the schema reference that
 // identifies it. Pure — no db, no `server-only` — so the launcher, the seam and
 // the read models all build the SAME string from the SAME inputs.
@@ -32,6 +34,8 @@ export function usesStructuredKnowledgeContext(
 ): boolean {
   return (
     isNativeFindingsContract(run.resultContract) ||
+    (run.resultContract?.kind === "agent_operational" &&
+      run.resultContract.contractName === OPERATIONAL_EVIDENCE_CONTRACT) ||
     (run.knowledgeAccess !== undefined && run.knowledgeAccess !== null)
   );
 }

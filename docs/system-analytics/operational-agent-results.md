@@ -132,9 +132,17 @@ Run details localize the violated rule and remediation; collect exposes the same
 safe diagnostics. Invalid output remains unavailable and failure-terminal. Legacy
 receipts without these optional details remain readable without invented reasons.
 
-### Structured specialist evidence (Designed)
+### Structured specialist evidence
 
-[Stand maintenance](stand-maintenance.md) and [native findings](evidence-findings.md) define a new versioned evidence contract resolving real operation/verification receipts. Model-reported confirmed state in operational_v1 remains a reported value, not new authority or effect proof.
+`operational_evidence_v2` adds the native findings envelope and distinct
+operation and verification ID lists. The platform validates and retains the
+original finding identities through collection and reduction. Empty evidence
+lists are valid for an observation without an effect or health obligation.
+The terminal path refuses unresolved IDs and a success claim without required
+effect or health evidence. The [stand maintenance connector](stand-maintenance.md)
+will resolve those identities against authoritative target receipts and
+independent observations. Historical `operational_v1` output and digest
+witnesses remain readable.
 
 ## Expectations
 

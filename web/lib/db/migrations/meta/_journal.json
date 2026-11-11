@@ -1926,6 +1926,13 @@
       "when": 1794606477981,
       "tag": "0278_specialist_work_rejection",
       "breakpoints": true
+    },
+    {
+      "idx": 279,
+      "version": "7",
+      "when": 1794606477982,
+      "tag": "0279_operational_evidence_contract",
+      "breakpoints": true
     }
   ]
 }

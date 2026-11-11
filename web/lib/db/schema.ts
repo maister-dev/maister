@@ -1227,7 +1227,7 @@ export const agents = pgTable(
     ),
     kindCompletionCheck: check(
       "agents_kind_completion_check",
-      sql`((${t.kind} = 'code_delivery' AND ${t.completionContract} IS NULL) OR (${t.kind} = 'operational' AND ${t.completionContract} = '{"contract":"operational_v1"}'::jsonb AND ${t.mode} = 'session' AND ${t.flowRef} IS NULL)) IS TRUE`,
+      sql`((${t.kind} = 'code_delivery' AND ${t.completionContract} IS NULL) OR (${t.kind} = 'operational' AND ${t.completionContract} IN ('{"contract":"operational_v1"}'::jsonb,'{"contract":"operational_evidence_v2"}'::jsonb) AND ${t.mode} = 'session' AND ${t.flowRef} IS NULL)) IS TRUE`,
     ),
   }),
 );
@@ -2698,7 +2698,12 @@ export const runs = pgTable(
       ),
     operationalContractCheck: check(
       "runs_operational_contract_check",
-      sql`((${t.agentKind} IS NULL OR ${t.agentKind} = 'code_delivery') AND coalesce(${t.resultContract}->>'kind', '') <> 'agent_operational' OR ${t.agentKind} = 'operational' AND ${t.runKind} = 'agent' AND ${t.persistent} = false AND NOT (coalesce(${t.workspaceMode}, 'own') = 'shared' AND ${t.agentWorkspace} = 'worktree') AND ${t.agentWorkspace} IN ('none','repo_read','worktree') AND ${t.resultContract}->>'kind' = 'agent_operational' AND ${t.resultContract}->'schemaVersion' = '1'::jsonb AND ${t.resultContract}->'semanticVersion' = '1'::jsonb AND ${t.resultContract}->'required' = 'true'::jsonb AND ${t.resultContract}->>'sha256' ~ '^[a-f0-9]{64}$' AND jsonb_typeof(${t.resultContract}->'schema') = 'object' AND jsonb_typeof(${t.resultContract}->'definition') = 'object' AND jsonb_typeof(${t.resultContract}->'provenance') = 'object') IS TRUE`,
+      sql`((${t.agentKind} IS NULL OR ${t.agentKind} = 'code_delivery') AND coalesce(${t.resultContract}->>'kind', '') <> 'agent_operational' OR ${t.agentKind} = 'operational' AND ${t.runKind} = 'agent' AND ${t.persistent} = false AND NOT (coalesce(${t.workspaceMode}, 'own') = 'shared' AND ${t.agentWorkspace} = 'worktree') AND ${t.agentWorkspace} IN ('none','repo_read','worktree') AND ${t.resultContract}->>'kind' = 'agent_operational' AND
+        ((${t.resultContract}->'schemaVersion' = '1'::jsonb AND ${t.resultContract}->'semanticVersion' = '1'::jsonb)
+        OR (${t.resultContract}->>'contractName'='operational_evidence_v2' AND ${t.resultContract}->'schemaVersion'='2'::jsonb AND ${t.resultContract}->'semanticVersion'='2'::jsonb
+          AND ${t.resultContract}->'definition'->'completion'->>'contract'='operational_evidence_v2'
+          AND ${t.resultContract}->>'schemaRef'='maister:operational_evidence_v2@'||(${t.resultContract}->>'sha256')))
+        AND ${t.resultContract}->'required' = 'true'::jsonb AND ${t.resultContract}->>'sha256' ~ '^[a-f0-9]{64}$' AND jsonb_typeof(${t.resultContract}->'schema') = 'object' AND jsonb_typeof(${t.resultContract}->'definition') = 'object' AND jsonb_typeof(${t.resultContract}->'provenance') = 'object') IS TRUE`,
     ),
     operationalTerminalCheck: check(
       "runs_operational_terminal_check",

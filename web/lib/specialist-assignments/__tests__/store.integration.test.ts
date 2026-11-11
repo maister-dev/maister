@@ -3069,6 +3069,7 @@ it("IT-CBX-01 logical-work upgrade preserves old intake and opaque child labels 
       await applyMainMigration(tx, "0276_specialist_execution_work_acceptance");
       await applyMainMigration(tx, "0277_specialist_assignment_acceptance");
       await applyMainMigration(tx, "0278_specialist_work_rejection");
+      await applyMainMigration(tx, "0279_operational_evidence_contract");
     });
     expect(
       (

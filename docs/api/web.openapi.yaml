@@ -25235,6 +25235,7 @@ components:
           type: string
           enum:
             - operational_v1
+            - operational_evidence_v2
     OperationalAcknowledgementBody:
       type: object
       additionalProperties: false
@@ -25322,6 +25323,8 @@ components:
             - complete_coverage_remaining
             - not_started_has_scanned
             - duplicate_reference
+            - operation_receipt_requires_server_reference
+            - evidence_reference_unavailable
             - undeclared_diagnostic_reference
             - success_inconsistent
             - partial_requires_progress
@@ -25432,6 +25435,7 @@ components:
         reportedResult:
           oneOf:
             - $ref: "#/components/schemas/OperationalResultV1"
+            - $ref: "#/components/schemas/CBOperationalEvidenceV2"
             - type: object
               nullable: true
               enum: [null]
@@ -41244,7 +41248,11 @@ components:
           type: array
           maxItems: 1000
           items:
-            $ref: "#/components/schemas/OperationalReference"
+            allOf:
+              - $ref: "#/components/schemas/OperationalReference"
+              - type: object
+                properties:
+                  kind: { type: string, enum: [task, external_issue, other] }
         diagnostics:
           type: array
           maxItems: 100
@@ -41254,6 +41262,7 @@ components:
           $ref: "#/components/schemas/CBFindings"
         operationIds:
           type: array
+          uniqueItems: true
           items:
             type: string
             minLength: 1
@@ -41261,13 +41270,17 @@ components:
           maxItems: 32
         verificationIds:
           type: array
+          uniqueItems: true
           items:
             type: string
             minLength: 1
             maxLength: 128
           maxItems: 32
-      description: Designed — separate immutable operational_evidence_v2 contract. Existing v1 remains unchanged;
-        every effect/health ID is server-resolved.
+      description: |
+        Versioned operational_evidence_v2 result with native findings. Requires engine
+        3.12.0 or later. Operation and verification IDs require authoritative platform
+        evidence. An unavailable identity or unmet required verification cannot yield a
+        successful result.
     CBError:
       type: object
       additionalProperties: false

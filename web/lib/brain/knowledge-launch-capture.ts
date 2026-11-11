@@ -13,7 +13,7 @@ import { canonicalKnowledgeRestrictions } from "./knowledge-disclosure";
 
 import { knowledgeAccessCaptureSchema } from "@/lib/company/types";
 import { MaisterError } from "@/lib/errors";
-import { FINDINGS_CONTRACT } from "@/lib/run-results/findings-contract";
+import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
 
 /** Initialize only the native capture protocol; historical contracts retain unknown classification. */
 export async function nativeKnowledgeCaptureAtLaunch(
@@ -24,9 +24,9 @@ export async function nativeKnowledgeCaptureAtLaunch(
     sourceRestrictions: readonly KnowledgeAccessRestriction[];
   }>,
 ): Promise<KnowledgeAccessCapture | null> {
-  const nativeResult =
-    contract?.kind !== "agent_operational" &&
-    contract?.nativeContract === FINDINGS_CONTRACT;
+  const nativeResult = usesStructuredKnowledgeContext({
+    resultContract: contract,
+  });
   let inherited: readonly KnowledgeAccessRestriction[] = [];
   let enrolledParent = false;
 

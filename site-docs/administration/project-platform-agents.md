@@ -112,4 +112,4 @@ contract; the project admin must inspect and release it.
 
 ## Deliverable kind
 
-The package declares `kind: code_delivery` (the default) or `kind: operational` with `completion.contract: operational_v1`. The project attachment cannot override kind or completion. Operational sessions retain normal tool approval and isolation. Their validated result determines Done or failure, independently of workspace access. See [operational agents](/guides/operational-agents).
+The package declares `kind: code_delivery` (the default) or `kind: operational` with a versioned completion contract. The project attachment retains the declared kind and completion. Operational sessions retain normal tool approval and isolation. Their validated result determines Done or failure, independently of workspace access. See [operational agents](/guides/operational-agents).

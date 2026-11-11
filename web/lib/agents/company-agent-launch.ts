@@ -306,6 +306,7 @@ async function insertCompanyAgentRun(
       buildAgentActivitySnapshot(definition.id, context.effective),
       {
         configuration: context.binding.snapshot.effectiveConfiguration,
+        operationalContract: definition.completion?.contract,
         trigger,
         taskId: null,
         runner: resolution.runnerSnapshot,

@@ -9,6 +9,8 @@ import { join } from "node:path";
 import { parseAgentDefinition, qualifyAgentId } from "@/lib/agents/definition";
 import {
   TASK_QUALIFICATION_ENGINE_MIN,
+  OPERATIONAL_EVIDENCE_CONTRACT,
+  OPERATIONAL_EVIDENCE_ENGINE_MIN,
   OPERATIONAL_ENGINE_MIN,
 } from "@/lib/agents/kind";
 import { MaisterError } from "@/lib/errors";
@@ -21,13 +23,16 @@ export function assertOperationalAgentCompatibility(
   compat: MaisterPackageManifest["compat"],
 ): void {
   if (definition.kind !== "operational") return;
-  if (
-    !compat?.engine_min ||
-    !semverGte(compat.engine_min, OPERATIONAL_ENGINE_MIN)
-  ) {
+  const contract = definition.completion?.contract;
+  const minimum =
+    contract === OPERATIONAL_EVIDENCE_CONTRACT
+      ? OPERATIONAL_EVIDENCE_ENGINE_MIN
+      : OPERATIONAL_ENGINE_MIN;
+
+  if (!compat?.engine_min || !semverGte(compat.engine_min, minimum)) {
     throw new MaisterError(
       "CONFIG",
-      `agent ${definition.id}: operational_v1 requires package compat.engine_min >= ${OPERATIONAL_ENGINE_MIN}`,
+      `agent ${definition.id}: ${contract} requires package compat.engine_min >= ${minimum}`,
     );
   }
   if (

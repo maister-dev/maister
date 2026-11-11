@@ -51,6 +51,7 @@ import {
 
 import { applyAgentTerminalIncidents } from "@/lib/runs/agent-incidents";
 import { parseOperationalResult } from "@/lib/run-results/operational-schema";
+import { validateOperationalEvidenceReferences } from "@/lib/run-results/operational-evidence";
 import { terminalCauseReason } from "@/lib/domain-events/taxonomy";
 import { closedAnswerResponse } from "@/lib/hitl-closed-answer";
 import { getDb } from "@/lib/db/client";
@@ -884,7 +885,7 @@ async function prepareAgentFinalization(
       return { finalized: false };
     }
 
-    const referenceDecision = usesStructuredKnowledgeContext({
+    const findingsDecision = usesStructuredKnowledgeContext({
       resultContract,
       knowledgeAccess: current?.run.knowledgeAccess,
     })
@@ -895,19 +896,30 @@ async function prepareAgentFinalization(
           resultDecision,
         )
       : resultDecision;
+    const referenceDecision = await validateOperationalEvidenceReferences(
+      tx,
+      runId,
+      resultContract,
+      findingsDecision,
+    );
+    const operationalContract =
+      resultContract?.kind === "agent_operational"
+        ? resultContract.contractName
+        : undefined;
     const publicationDecision = operationalIntegrity
       ? operationalTerminalDecision({
           requested: outcome,
           result: referenceDecision,
           integrity: operationalIntegrity,
+          contract: operationalContract,
         })
       : null;
     const publication = await qualificationPublication(
       tx,
       publicationDecision?.successful ?? false,
-      referenceDecision.kind === "valid" &&
-        resultContract?.kind === "agent_operational"
-        ? (parseOperationalResult(referenceDecision.value)?.references ?? [])
+      referenceDecision.kind === "valid" && operationalContract
+        ? (parseOperationalResult(referenceDecision.value, operationalContract)
+            ?.references ?? [])
         : [],
     );
     const terminalDecision =
@@ -1132,9 +1144,8 @@ async function prepareAgentFinalization(
       reason: opts.causeReason ?? opts.reason,
       terminal: operationalTerminal,
       reported:
-        referenceDecision.kind === "valid" &&
-        resultContract?.kind === "agent_operational"
-          ? parseOperationalResult(referenceDecision.value)
+        referenceDecision.kind === "valid" && operationalContract
+          ? parseOperationalResult(referenceDecision.value, operationalContract)
           : null,
     });
 

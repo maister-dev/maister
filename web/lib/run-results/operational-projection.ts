@@ -7,11 +7,12 @@ import type {
   OperationalTerminal,
   OperationalOutcome,
 } from "@/lib/run-results/operational-types";
+import type { RunResultContract } from "@/lib/run-results/types";
 
 import { and, eq, inArray, sql } from "drizzle-orm";
 
 import { runs, runResults, tasks, projects } from "@/lib/db/schema";
-import { operationalResultV1Schema } from "@/lib/run-results/operational-schema";
+import { parseOperationalResult } from "@/lib/run-results/operational-schema";
 import { authorizeRunsKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 
 /** Diagnostic plane: a failed operation never becomes an ordinary usable result. */
@@ -52,6 +53,7 @@ export async function inspectOperationalOutcomes(
       projectId: runs.projectId,
       terminal: runs.operationalTerminal,
       cleanup: runs.operationalCleanup,
+      contract: runs.resultContract,
       value: runResults.value,
     })
     .from(runs)
@@ -68,7 +70,7 @@ export async function inspectOperationalOutcomes(
   const projected = rows.map((row) => ({
     row,
     outcome: projectOperationalOutcome(
-      { terminal: row.terminal, cleanup: row.cleanup },
+      { terminal: row.terminal, cleanup: row.cleanup, contract: row.contract },
       row.value,
     ),
   }));
@@ -135,15 +137,20 @@ function projectOperationalOutcome(
   run: {
     terminal: OperationalTerminal | null;
     cleanup: OperationalCleanup | null;
+    contract: RunResultContract | null;
   },
   value: unknown,
 ): OperationalOutcome {
   const receipt = run.terminal;
-  const parsed =
+  const result =
     receipt?.validation === "valid"
-      ? operationalResultV1Schema.safeParse(value)
+      ? parseOperationalResult(
+          value,
+          run.contract?.kind === "agent_operational"
+            ? run.contract.contractName
+            : undefined,
+        )
       : null;
-  const result = parsed?.success ? parsed.data : null;
 
   return {
     version: 1,

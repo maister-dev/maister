@@ -8782,6 +8782,7 @@ components:
           type: string
           enum:
             - operational_v1
+            - operational_evidence_v2
     OperationalAcknowledgementBody:
       type: object
       additionalProperties: false
@@ -8845,6 +8846,44 @@ components:
           type: array
           items: { type: string }
           description: Opaque retained diagnostic object IDs, authorized through the run object-content endpoint.
+    OperationalValidationDiagnostic:
+      type: object
+      additionalProperties: false
+      required: [code, path]
+      description: Platform-owned validation detail. Contains no rejected values, unknown property names or raw provider/validator messages.
+      properties:
+        code:
+          type: string
+          enum:
+            - result_missing
+            - malformed_json
+            - oversize
+            - unsupported_version
+            - field_required
+            - invalid_type
+            - invalid_value
+            - unknown_fields
+            - invalid_structure
+            - attempted_count_mismatch
+            - scanned_count_exceeded
+            - created_count_exceeded
+            - complete_coverage_remaining
+            - not_started_has_scanned
+            - duplicate_reference
+            - operation_receipt_requires_server_reference
+            - evidence_reference_unavailable
+            - undeclared_diagnostic_reference
+            - success_inconsistent
+            - partial_requires_progress
+            - partial_requires_incomplete_work
+            - error_diagnostic_required
+            - failed_work_requires_error
+            - creation_reference_missing
+        path:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Canonical schema-known field path with numeric indices, or $ for the root.
     OperationalPreparationFailure:
       type: object
       additionalProperties: false
@@ -8943,9 +8982,15 @@ components:
         reportedResult:
           oneOf:
             - $ref: "#/components/schemas/OperationalResultV1"
+            - $ref: "#/components/schemas/CBOperationalEvidenceV2"
             - type: object
               nullable: true
               enum: [null]
+        validationDiagnostics:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/OperationalValidationDiagnostic"
         infrastructureFailure:
           $ref: "#/components/schemas/OperationalPreparationFailure"
         referenceLinks:
@@ -18221,7 +18266,11 @@ components:
           type: array
           maxItems: 1000
           items:
-            $ref: "#/components/schemas/OperationalReference"
+            allOf:
+              - $ref: "#/components/schemas/OperationalReference"
+              - type: object
+                properties:
+                  kind: { type: string, enum: [task, external_issue, other] }
         diagnostics:
           type: array
           maxItems: 100
@@ -18231,6 +18280,7 @@ components:
           $ref: "#/components/schemas/CBFindings"
         operationIds:
           type: array
+          uniqueItems: true
           items:
             type: string
             minLength: 1
@@ -18238,13 +18288,17 @@ components:
           maxItems: 32
         verificationIds:
           type: array
+          uniqueItems: true
           items:
             type: string
             minLength: 1
             maxLength: 128
           maxItems: 32
-      description: Designed — separate immutable operational_evidence_v2 contract. Existing v1 remains unchanged;
-        every effect/health ID is server-resolved.
+      description: |
+        Versioned operational_evidence_v2 result with native findings. Requires engine
+        3.12.0 or later. Operation and verification IDs require authoritative platform
+        evidence. An unavailable identity or unmet required verification cannot yield a
+        successful result.
     CBError:
       type: object
       additionalProperties: false

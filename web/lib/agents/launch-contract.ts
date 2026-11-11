@@ -9,7 +9,11 @@ import { createHash } from "node:crypto";
 import { canonicalCommandJson } from "../../../runtime/command-json";
 
 import { MaisterError } from "@/lib/errors";
-import { OPERATIONAL_FORM_SCHEMA } from "@/lib/run-results/operational-schema";
+import { OPERATIONAL_EVIDENCE_CONTRACT } from "@/lib/agents/kind";
+import {
+  OPERATIONAL_EVIDENCE_FORM_SCHEMA,
+  OPERATIONAL_FORM_SCHEMA,
+} from "@/lib/run-results/operational-schema";
 
 type FrozenRun = {
   agentKind?: AgentKind | null;
@@ -37,21 +41,35 @@ const SUPPORTED_V1_DIGESTS: readonly string[] = [
   "29aabe79a069790492a8e2cb89b1cec5f6ec4afa0573fb155b21506dc29c7319",
 ];
 
+const EVIDENCE_APPENDIX = `Operational completion contract: operational_evidence_v2 (semantic version 2).
+Use the existing permission, isolation and human clarification policy. End the completing turn with exactly one fenced json maister:output object:
+{"schemaVersion":2,"outcome":"success","summary":"Read-only observation finished.","coverage":{"state":"complete","remainingKnown":0},"counts":{"scanned":0,"attempted":0,"completed":0,"failed":0,"skipped":0,"created":0},"references":[],"diagnostics":[],"findings":{"schemaVersion":1,"findings":[],"knowledgeProposals":[],"selection":[]},"operationIds":[],"verificationIds":[]}
+Keep findings in evidence_findings_v1, including limitations, open questions and exact original child references. Use empty evidence arrays when evidence is missing. Do not invent IDs, sources or confirmation.
+Use operationIds only for exact operations recorded by the platform and verificationIds only for independently recorded verification. Report uncertainty and unmet obligations explicitly. The platform validates the witnesses. Do not put operation receipts or confirmations into references. No credentials, private paths or raw logs.
+Outcome is success, partial, blocked or failed. Success requires complete coverage and no failed work, errors or unresolved effects. Blocked and failed require an actionable error diagnostic. Report distinct work counts with attempted=completed+failed, attempted+skipped<=scanned and created<=attempted.`;
+
 function schemaDigest(
   schema: OperationalContract["schema"],
   appendix: string,
+  semanticVersion: OperationalContract["semanticVersion"],
 ): string {
   return createHash("sha256")
-    .update(canonicalCommandJson({ schema, semanticVersion: 1, appendix }))
+    .update(canonicalCommandJson({ schema, semanticVersion, appendix }))
     .digest("hex");
+}
+
+function evidenceDigest(): string {
+  return schemaDigest(OPERATIONAL_EVIDENCE_FORM_SCHEMA, EVIDENCE_APPENDIX, 2);
 }
 
 export function buildOperationalContract(
   effective: EffectiveAgentDefinition,
 ): OperationalContract {
+  const name = effective.parsed.completion?.contract;
+
   if (
     effective.parsed.kind !== "operational" ||
-    effective.parsed.completion?.contract !== "operational_v1" ||
+    (name !== "operational_v1" && name !== OPERATIONAL_EVIDENCE_CONTRACT) ||
     !effective.resolvedRevision
   ) {
     throw new MaisterError(
@@ -64,17 +82,9 @@ export function buildOperationalContract(
       "PRECONDITION",
       "operational package must be trusted",
     );
-  const sha256 = schemaDigest(OPERATIONAL_FORM_SCHEMA, APPENDIX);
-
-  return {
+  const frozen = {
     kind: "agent_operational",
-    contractName: "operational_v1",
-    schemaRef: `maister:operational_v1@${sha256}`,
-    schemaVersion: 1,
-    semanticVersion: 1,
-    sha256,
     required: true,
-    schema: structuredClone(OPERATIONAL_FORM_SCHEMA),
     definition: structuredClone(effective.parsed),
     provenance: {
       packageName: effective.packageName,
@@ -89,8 +99,55 @@ export function buildOperationalContract(
       manifest: structuredClone(effective.manifest),
       execTrust: effective.execTrust,
     },
+  } as const;
+
+  if (name === OPERATIONAL_EVIDENCE_CONTRACT) {
+    const sha256 = evidenceDigest();
+
+    return {
+      ...frozen,
+      contractName: name,
+      schemaRef: `maister:${name}@${sha256}`,
+      schemaVersion: 2,
+      semanticVersion: 2,
+      sha256,
+      schema: structuredClone(OPERATIONAL_EVIDENCE_FORM_SCHEMA),
+      promptAppendix: EVIDENCE_APPENDIX,
+    };
+  }
+  const sha256 = schemaDigest(OPERATIONAL_FORM_SCHEMA, APPENDIX, 1);
+
+  return {
+    ...frozen,
+    contractName: name,
+    schemaRef: `maister:${name}@${sha256}`,
+    schemaVersion: 1,
+    semanticVersion: 1,
+    sha256,
+    schema: structuredClone(OPERATIONAL_FORM_SCHEMA),
     promptAppendix: APPENDIX,
   };
+}
+
+function hasSupportedOperationalDigest(contract: OperationalContract): boolean {
+  if (contract.contractName === OPERATIONAL_EVIDENCE_CONTRACT)
+    return (
+      contract.schemaVersion === 2 &&
+      contract.semanticVersion === 2 &&
+      contract.sha256 === evidenceDigest() &&
+      contract.sha256 ===
+        schemaDigest(contract.schema, contract.promptAppendix, 2)
+    );
+
+  return (
+    contract.contractName === "operational_v1" &&
+    contract.semanticVersion === 1 &&
+    SUPPORTED_V1_DIGESTS.includes(contract.sha256) &&
+    contract.sha256 ===
+      schemaDigest(contract.schema, contract.promptAppendix, 1) &&
+    contract.sha256 ===
+      schemaDigest(OPERATIONAL_FORM_SCHEMA, contract.promptAppendix, 1)
+  );
 }
 
 /** Operational readers never re-resolve mutable package/catalog definitions. */
@@ -102,15 +159,9 @@ export function frozenOperationalDefinition(
 
   if (
     contract?.kind !== "agent_operational" ||
-    contract.contractName !== "operational_v1" ||
-    contract.semanticVersion !== 1 ||
-    contract.sha256 !==
-      schemaDigest(contract.schema, contract.promptAppendix) ||
-    contract.sha256 !==
-      schemaDigest(OPERATIONAL_FORM_SCHEMA, contract.promptAppendix) ||
-    !SUPPORTED_V1_DIGESTS.includes(contract.sha256) ||
+    !hasSupportedOperationalDigest(contract) ||
     contract.definition?.kind !== "operational" ||
-    contract.definition.completion?.contract !== "operational_v1" ||
+    contract.definition.completion?.contract !== contract.contractName ||
     contract.provenance?.definitionSha256 !==
       createHash("sha256")
         .update(canonicalCommandJson(contract.definition))

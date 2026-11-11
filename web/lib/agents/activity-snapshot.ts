@@ -5,6 +5,7 @@ import type { RunnerSnapshot } from "@/lib/acp-runners/resolve";
 import type { AgentWorkspace } from "@/lib/db/schema";
 import type { LaunchAgentRunInput } from "@/lib/agents/launch";
 import type { ParsedAgentDefinition } from "@/lib/agents/definition";
+import type { OperationalCompletion } from "@/lib/agents/kind";
 
 import { createHash } from "node:crypto";
 
@@ -42,6 +43,7 @@ export function withAgentComparisonScopes(
   snapshot: AgentActivitySnapshot,
   input: {
     configuration: Record<string, unknown> | null;
+    operationalContract?: OperationalCompletion["contract"];
     trigger: LaunchAgentRunInput["trigger"];
     taskId: string | null;
     runner: RunnerSnapshot;
@@ -67,7 +69,7 @@ export function withAgentComparisonScopes(
       business: scopeHash({
         version: 1,
         definition: snapshot.definitionSha256,
-        contract: "operational_v1",
+        contract: input.operationalContract ?? "operational_v1",
         configuration: input.configuration,
         trigger,
       }),

@@ -82,6 +82,8 @@ import * as agentLaunch from "../launch";
 import { startAgentContinuationWorker } from "../continuation-worker";
 import { getCompanyAgentRunHistory } from "../activity-queries";
 
+import { validateOperationalEvidenceReferences } from "@/lib/run-results/operational-evidence";
+import { decideAgentResult } from "@/lib/run-results/agent-result";
 import * as flowRunner from "@/lib/flows/runner";
 import { poll } from "@/test-support/durable-workers-ledger";
 import { answerAssignmentQuestion } from "@/lib/services/assignment-question-response";
@@ -443,6 +445,13 @@ beforeAll(async () => {
     primarySource,
   );
   await writeFile(
+    join(source, "maister-agents/evidence-observer.md"),
+    primarySource.replace(
+      "contract: operational_v1",
+      "contract: operational_evidence_v2",
+    ),
+  );
+  await writeFile(
     join(source, "maister-agents/context-source-observer.md"),
     primarySource,
   );
@@ -612,6 +621,7 @@ beforeAll(async () => {
     manifestPath,
     stringify({
       ...manifest,
+      compat: { engine_min: "3.12.0" },
       flows: [
         ...manifest.flows,
         { id: "rah-company-child", path: "flows/rah-company-child" },
@@ -10574,6 +10584,7 @@ it("CBS-02 authorizes only the executing specialist's exact assignment input wit
 async function reserveContextFixture(
   roleId: string,
   actions: readonly CompanyAction[],
+  verification = assignmentInput.objectiveInput.verification,
 ): Promise<
   Awaited<ReturnType<typeof reserveCompanyFixtureRun>> & {
     credential: Awaited<ReturnType<typeof issueCompanyAgentRunToken>>;
@@ -10598,8 +10609,19 @@ async function reserveContextFixture(
       idempotencyKey: randomUUID(),
     },
   );
+  const result = buildOperationalContract(effective);
   const input: PreparedSpecialistAssignment = {
     ...assignmentInput,
+    objectiveInput: {
+      ...assignmentInput.objectiveInput,
+      expectedResult: {
+        schemaRef: result.schemaRef,
+        schemaVersion: result.schemaVersion,
+        sha256: result.sha256,
+        required: true,
+      },
+      verification,
+    },
     specialistBindingId: binding.specialist.bindingId,
     responsibleAgentId: roleId,
     standingDefinition: {
@@ -10660,6 +10682,56 @@ async function reserveContextFixture(
 
   return { ...appointment, credential };
 }
+
+it("IT-CBO-08 refuses an otherwise valid observation when the exact company input requires independent health evidence", async () => {
+  const appointment = await reserveContextFixture(
+    "rah:evidence-observer",
+    ["assignments:read"],
+    [{ kind: "health", required: true, referenceId: null }],
+  );
+  const [run] = await database.db
+    .select({ contract: runs.resultContract })
+    .from(runs)
+    .where(eq(runs.id, appointment.runId));
+  const contract = run?.contract;
+
+  expect(contract).toMatchObject({ contractName: "operational_evidence_v2" });
+  if (!contract) throw new Error("The installed evidence contract is missing");
+  const value = {
+    ...operationalSuccessFixture(),
+    schemaVersion: 2,
+    findings: {
+      schemaVersion: 1,
+      findings: [],
+      selection: [],
+      knowledgeProposals: [],
+    },
+    operationIds: [],
+    verificationIds: [],
+  };
+  const decision = decideAgentResult({
+    contract,
+    finalText: "```json maister:output\n" + JSON.stringify(value) + "\n```",
+  });
+
+  expect(decision.kind).toBe("valid");
+  await expect(
+    database.db.transaction((tx) =>
+      validateOperationalEvidenceReferences(
+        tx,
+        appointment.runId,
+        contract,
+        decision,
+      ),
+    ),
+  ).resolves.toMatchObject({
+    kind: "invalid",
+    validationDiagnostics: [
+      { code: "evidence_reference_unavailable", path: "verificationIds" },
+    ],
+  });
+  await revokeAgentRunTokensForRun(appointment.runId, database.db);
+});
 
 it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains exact results through Flow rework and acceptance", async () => {
   const db: Db = database.db;

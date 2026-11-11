@@ -6379,6 +6379,14 @@
         "creation_reference_missing": {
           "message": "Confirmed creations require confirmed references.",
           "remediation": "Add a confirmed reference for every creation or correct the created count."
+        },
+        "operation_receipt_requires_server_reference": {
+          "message": "The report includes an operation receipt outside the platform evidence list.",
+          "remediation": "Use the operation ID recorded by the platform in operationIds."
+        },
+        "evidence_reference_unavailable": {
+          "message": "The required operation or verification evidence is unavailable.",
+          "remediation": "Check the recorded operation and independent verification before reporting success."
         }
       }
     },

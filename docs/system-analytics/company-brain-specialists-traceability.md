@@ -69,7 +69,7 @@
 | CBO-05 | [stand-maintenance](./stand-maintenance.md) | T33 | `IT-CBO-05` — `web/lib/stand-operations/__tests__/reconcile.integration.test.ts` (web integration) | Planned |
 | CBO-06 | [stand-maintenance](./stand-maintenance.md) | T32,T33 | `IT-CBO-06` — `web/lib/stand-operations/__tests__/connector.integration.test.ts` (web integration) | Planned |
 | CBO-07 | [stand-maintenance](./stand-maintenance.md) | T31,T33,T37 | `IT-CBO-07` — `web/lib/stand-operations/__tests__/reconcile.integration.test.ts` (web integration) | Planned |
-| CBO-08 | [stand-maintenance](./stand-maintenance.md) | T28.1,T33,T36 | `IT-CBO-08` — `web/lib/agents/__tests__/agent-run-result.integration.test.ts` (web integration) | Planned |
+| CBO-08 | [stand-maintenance](./stand-maintenance.md) | T28.1,T33,T36 | `IT-CBO-08` — `web/lib/agents/__tests__/agent-run-result.integration.test.ts` and `web/lib/agents/__tests__/company-agent-context.integration.test.ts` (v1/v2 and missing/forged reference handling qualified; target receipts and pilot package remain open) | Planned |
 | CBO-09 | [stand-maintenance](./stand-maintenance.md) | T25,T39 | `IT-CBO-09` — `web/lib/runs/__tests__/agent-incidents.integration.test.ts` (web integration) | Planned |
 | EDGE-CBO-01 | [stand-maintenance](./stand-maintenance.md) | T31,T32,T33 | `IT-CBO-02` — `web/lib/stand-operations/__tests__/connector.integration.test.ts` (web integration) | Planned |
 | EDGE-CBO-02 | [stand-maintenance](./stand-maintenance.md) | T31,T32,T33 | `IT-CBO-03` — `web/lib/stand-operations/__tests__/connector.integration.test.ts` (web integration) | Planned |

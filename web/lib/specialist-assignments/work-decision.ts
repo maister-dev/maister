@@ -2,6 +2,7 @@ import "server-only";
 
 import type { SqlDatabase, SqlTransaction } from "@/lib/db/sql-types";
 import type { AssignmentContextPrincipal } from "./context-access";
+import type { RunResultContract } from "@/lib/run-results/types";
 
 import { randomUUID } from "node:crypto";
 
@@ -44,8 +45,7 @@ import { emitSpecialistAssignmentChange } from "@/lib/domain-events/outbox";
 import { MaisterError } from "@/lib/errors";
 import { contentDigest } from "@/lib/evaluations/digest";
 import { lockDelegationParent } from "@/lib/orchestrator/admission";
-import { evidenceFindingsV1Schema } from "@/lib/run-results/findings-types";
-import { FINDINGS_CONTRACT } from "@/lib/run-results/findings-contract";
+import { projectNativeFindings } from "@/lib/run-results/findings-projection";
 import { postgresTextSchema } from "@/lib/text-schema";
 
 const log = pino({
@@ -99,7 +99,7 @@ async function readWorkResult(
 ) {
   const [result] = (
     await tx.execute(sql`
-    SELECT result.id,result.value,child.knowledge_access,child.result_contract->>'nativeContract' AS native_contract
+    SELECT result.id,result.value,child.knowledge_access,child.result_contract
     FROM runs child JOIN run_results result ON result.run_id=child.id
     WHERE child.id=${childRunId} AND child.status='Done' AND result.revision=${resultRevision}
       AND result.validity='valid' AND result.first_collected_at IS NOT NULL
@@ -123,15 +123,14 @@ async function readWorkResult(
       { details: { reason: "work_acceptance_result_unavailable" } },
     );
   const sourceFindings =
-    result.native_contract === FINDINGS_CONTRACT
-      ? evidenceFindingsV1Schema
-          .parse(result.value)
-          .findings.map((finding) => ({
-            childRunId,
-            resultRevision,
-            findingId: finding.id,
-          }))
-      : [];
+    projectNativeFindings(
+      result.result_contract as RunResultContract | null,
+      result.value,
+    )?.findings.map((finding) => ({
+      childRunId,
+      resultRevision,
+      findingId: finding.id,
+    })) ?? [];
 
   return {
     id: result.id,
