@@ -25,6 +25,7 @@ import {
 } from "./types";
 import { getAdapterRuntime, resolveAdapterBinary } from "./adapter-registry";
 import { effectiveStartSessionRequest } from "./runner-provisioner";
+import { claudeModelOptions } from "./claude-tool-arbitration";
 import { UnstartedSessionProcessError } from "./session-create-outcome";
 import { UnsettledSessionCreateError } from "./session-create-outcome";
 import { attachHeartbeat } from "./heartbeat";
@@ -106,6 +107,10 @@ export function buildChildEnv(
   // ADR-166: mounts come from the resolved workspace (the adopted handle) —
   // the request body never carries a path.
   const contextMounts = opts.contextMounts;
+  const modelOptions =
+    request.executor.agent === "claude"
+      ? claudeModelOptions(request.executor.model)
+      : {};
 
   return {
     ...process.env,
@@ -129,6 +134,8 @@ export function buildChildEnv(
       ? { MAISTER_CONTEXT_REPOS: JSON.stringify(contextMounts) }
       : {}),
     ...(opts.outputPaths ?? {}),
+    // The declared model wins over inherited, runner and adapter environment.
+    ...(modelOptions.model ? { ANTHROPIC_MODEL: modelOptions.model } : {}),
   };
 }
 

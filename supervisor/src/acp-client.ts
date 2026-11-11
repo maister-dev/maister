@@ -13,7 +13,10 @@ import { isNativeKnowledgeReadTool } from "../../runtime/knowledge-tool-effects"
 
 import { connectAcpClient, type AcpConnection } from "./acp-connection";
 import { readSessionModels, type SessionModelView } from "./session-models";
-import { claudeToolArbitrationMeta } from "./claude-tool-arbitration";
+import {
+  claudeModelOptions,
+  claudeToolArbitrationOptions,
+} from "./claude-tool-arbitration";
 import { boundedAcpStream, type BoundedAcpClient } from "./bounded-acp-stream";
 import {
   clientCapabilitiesForAdapter,
@@ -73,6 +76,8 @@ export type CreateAcpConnectionArgs = {
   publishTextFrame?: (events: SessionTextFrameEvents) => void;
   logger: Logger;
   adapter: ExecutorAgent;
+  /** Effective declared model, also supplied for executor-only legacy requests. */
+  model?: string;
   pendingPermissions?: PendingPermissionRegistry;
   mcpServers?: McpServerInput[];
   // When set, resume the prior ACP session via the `session/resume` call
@@ -1126,10 +1131,15 @@ export async function createAcpConnection(
     };
   });
 
-  const permissionMeta =
-    args.adapter === "claude" &&
-    (record.enforcementProfile || record.readOnlySession)
-      ? { _meta: claudeToolArbitrationMeta() }
+  const claudeOptions = {
+    ...claudeModelOptions(args.runner?.model ?? args.model),
+    ...(record.enforcementProfile || record.readOnlySession
+      ? claudeToolArbitrationOptions()
+      : {}),
+  };
+  const sessionMeta =
+    args.adapter === "claude" && Object.keys(claudeOptions).length > 0
+      ? { _meta: { claudeCode: { options: claudeOptions } } }
       : {};
 
   // Resume uses the ACP `session/resume` call: it restores the prior
@@ -1155,7 +1165,7 @@ export async function createAcpConnection(
         timeoutMs: handshakeTimeoutMs,
         run: () =>
           connection.resumeSession({
-            ...permissionMeta,
+            ...sessionMeta,
             sessionId: resumeSessionId,
             cwd: worktreePath,
             mcpServers: acpMcpServers as acp.McpServer[],
@@ -1206,7 +1216,7 @@ export async function createAcpConnection(
     timeoutMs: handshakeTimeoutMs,
     run: () =>
       connection.newSession({
-        ...permissionMeta,
+        ...sessionMeta,
         cwd: worktreePath,
         mcpServers: acpMcpServers as acp.McpServer[],
       }),

@@ -2842,6 +2842,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
               emitter,
               logger,
               adapter: request.runner?.adapter ?? request.executor.agent,
+              model: request.runner?.model ?? request.executor.model,
               mcpServers: request.mcpServers,
               resumeSessionId: request.resumeSessionId,
               runner: request.runner,

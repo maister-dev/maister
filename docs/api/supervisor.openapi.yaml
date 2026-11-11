@@ -1172,6 +1172,11 @@ paths:
         an `acpSessionId`; everything after that is observable via the SSE
         stream.
 
+        An explicit effective Claude model is passed to both the adapter
+        process and the SDK on creation and resume. The explicit selection
+        takes precedence over model environment values. The `default`
+        selection retains native model resolution.
+
         Capability launch fields are server-derived by the web tier.
         `capabilityProfileObjectId` and `capabilityInstructionsObjectId` name
         manager-catalogued opaque objects; the host validates each

@@ -8,7 +8,10 @@
 import type { RunnerLaunch } from "../types";
 import type { RuntimeEventEnvelope } from "../runtime-events";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { modelCatalogCache } from "../model-catalog/cache";
 import { draftFromRunner } from "../model-catalog/harvest";
@@ -94,6 +97,7 @@ afterEach(async () => {
     booted = null;
   }
   delete process.env.MOCK_ACP_MODELS_MODE;
+  vi.unstubAllEnvs();
 });
 
 describe("T5.3 — configured model application + advisory", () => {
@@ -133,6 +137,78 @@ describe("T5.3 — configured model application + advisory", () => {
 
     expect(advisoryOf(await readEvents(booted, "run-adv"))).toBeUndefined();
   });
+});
+
+describe("Claude model pin in the actual ACP child environment", () => {
+  it.each([
+    { model: "glm-5.3", resume: false, expected: "glm-5.3" },
+    { model: "glm-5.3", resume: true, expected: "glm-5.3" },
+    { model: "default", resume: false, expected: "adapter-env-model" },
+  ])(
+    "pins $model on resume=$resume after every environment layer",
+    async ({ model, resume, expected }) => {
+      if (!booted) throw new Error("not booted");
+      await booted.stop();
+      await cleanupRuntimeRoot(booted.runtimeRoot);
+      process.env.MOCK_ACP_MODELS_MODE = "env-model";
+      vi.stubEnv("ANTHROPIC_MODEL", "inherited-env-model");
+      booted = await boot();
+      const tracePath = path.join(booted.runtimeRoot, "model-trace.json");
+      const settingsPath = path.join(
+        booted.runtimeRoot,
+        "workspaces/run-model-pin/.claude/settings.local.json",
+      );
+      const originalSettings = JSON.stringify({
+        env: { ANTHROPIC_MODEL: "settings-env-model" },
+        permissions: { allow: ["Read"] },
+      });
+
+      await mkdir(path.dirname(settingsPath), { recursive: true });
+      await writeFile(settingsPath, originalSettings);
+      const res = await postJson(
+        `${booted.url}/sessions`,
+        await createEnvelope(
+          booted,
+          { runId: "run-model-pin" },
+          {
+            ...(resume ? { resumeSessionId: "retained-model-session" } : {}),
+            executor: { agent: "claude", model },
+            readOnlySession: resume,
+            runner: {
+              version: 1,
+              runnerId: "claude-model-pin",
+              adapter: "claude",
+              capabilityAgent: "claude",
+              model,
+              provider: { kind: "anthropic" },
+              permissionPolicy: "default",
+              env: { ANTHROPIC_MODEL: "runner-env-model" },
+            },
+            adapterLaunch: {
+              env: {
+                ANTHROPIC_MODEL: "adapter-env-model",
+                MOCK_ACP_MODELS_TRACE_PATH: tracePath,
+              },
+            },
+          },
+        ),
+      );
+
+      expect(res.status).toBe(201);
+      expect(JSON.parse(await readFile(tracePath, "utf8"))).toEqual({
+        method: resume ? "session/resume" : "session/new",
+        model: expected,
+        sdkModel: model === "default" ? "settings-env-model" : model,
+        configuredModelOption: model === "default" ? null : model,
+        permissionAsk: resume ? ["*"] : null,
+      });
+      expect(await readFile(settingsPath, "utf8")).toBe(originalSettings);
+      if (model !== "default")
+        expect(
+          advisoryOf(await readEvents(booted, "run-model-pin")),
+        ).toBeUndefined();
+    },
+  );
 });
 
 // T3.2 resumed-session regression: every resume is a fresh adapter process, so

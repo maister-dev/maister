@@ -49,8 +49,10 @@ resolve(draft, ctx): Promise<{ models: ModelEntry[]; status: SourceStatus }> }`.
 - **Suggestion DTO** — the web-facing, source-grouped shape the runner modal
   renders: `{ groups: [{ source; label; status; reason?; models: [{ id;
 displayName? }] }]; resolvedAt; ttlSeconds }`. (Implemented)
-- **Application channel** — how the configured model is pinned: **claude** via the
-  ADR-043 `settings.local.json { model, availableModels }` materialization;
+- **Application channel** — how the configured model is pinned: **claude** via
+  the supervisor's child `ANTHROPIC_MODEL` and ACP Claude SDK model option at
+  session creation and resume. The ADR-043 settings materializer supplies the
+  Flow model picker configuration;
   **codex** via the ACP 1.x `session/set_config_option` call on the adapter's
   "model" select (`configOptions`, category `model`; the pre-1.0
   `unstable_setSessionModel` is gone from SDK 1.x — ADR-076 amendment,
@@ -271,10 +273,11 @@ NAMES)` — names, NEVER secret values; two drafts differing
 - The curated GLM list MUST be the source of truth for `anthropic_compatible`
   (z.ai); any authed `GET {base}/models` MUST be best-effort and MUST fall back to
   curated on any error.
-- For a claude runner with `model` set, the materialized `settings.local.json` MUST
-  carry `{ model }` (+ an `availableModels` allowlist for
-  `anthropic_compatible`) on EVERY claude session, not only when permission
-  entries exist.
+- For Claude, an explicit effective model MUST reach both the adapter process
+  and the SDK on creation and resume. The explicit model takes precedence over
+  inherited and supplied model environment values. The `default` selection
+  retains native model resolution. Usage events record the observed model
+  independently of the configured selection and ACP picker metadata.
 - For a codex session the supervisor MUST call `session/set_config_option` on the
   adapter's "model" select with `runner.model` after `session/new` AND after
   `session/resume` iff `runner.model !==` that option's `currentValue` (an absent

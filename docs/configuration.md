@@ -34,8 +34,6 @@ acp_runners:
   - id: claude-code
     adapter: claude
     model: claude-sonnet-4-6
-    env:
-      ANTHROPIC_MODEL: env:CLAUDE_CODE_MODEL
     provider:
       kind: anthropic
     permission_policy: default
@@ -86,10 +84,11 @@ Rules:
   launch snapshots. Operators do not enter it manually.
 - Secret values are references such as `env:NAME`, never literal tokens.
 - `acp_runners[].env` is an editable child-process env override map. Keys are
-  env vars passed to the spawned ACP adapter (`ANTHROPIC_MODEL`, custom
-  gateway knobs, etc.). Raw values are passed to the child as-is; values with
-  the `env:NAME` form are resolved from the supervisor process environment at
-  launch.
+  env vars passed to the spawned ACP adapter. Values in the `env:NAME` form
+  resolve from the supervisor process environment at launch.
+- An explicit Claude runner model takes precedence over `ANTHROPIC_MODEL`
+  in the runner environment. With `model: default`, Claude uses its
+  environment and provider routing.
 - Unsupported provider/policy combinations are saved only as
   `NotReady` with reason codes, or are rejected when they would create an
   invalid default.
@@ -1477,8 +1476,6 @@ acp_runners:
   - id: claude-glm
     adapter: claude
     model: glm-5.1
-    env:
-      ANTHROPIC_MODEL: env:CLAUDE_CODE_MODEL
     provider:
       kind: anthropic_compatible
       base_url: https://api.z.ai/api/anthropic

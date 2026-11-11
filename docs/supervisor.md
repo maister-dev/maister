@@ -139,11 +139,10 @@ Request payload (`envelope.payload`):
   "stepId": "plan",                         // step attribution; log file: <runId>/<hostSessionId>.log
   "runner": {
     "version": 1,
-    "runnerId": "claude-code-env-router",
+    "runnerId": "claude-code-glm",
     "adapter": "claude",
     "capabilityAgent": "claude",
     "model": "glm-5.1",
-    "env": { "ANTHROPIC_MODEL": "env:CLAUDE_CODE_MODEL" },
     "provider": {
       "kind": "anthropic_compatible",
       "baseUrl": "https://api.z.ai/api/anthropic",
@@ -1500,7 +1499,6 @@ until the web tier calls `POST /sessions/:id/input`.
     "adapter": "claude",
     "capabilityAgent": "claude",
     "model": "claude-sonnet-4-6",
-    "env": { "ANTHROPIC_MODEL": "env:CLAUDE_CODE_MODEL" },
     "provider": { "kind": "anthropic" },
     "permissionPolicy": "default"
   },
@@ -1514,6 +1512,11 @@ During migration `executor` remains required for backward compatibility. When
 launch source of truth and derives the effective executor/env/argv from it.
 `runner.env` values keep their stored form; the supervisor resolves only values
 with the `env:` prefix and passes all other values literally.
+
+For Claude, the explicit effective model takes precedence over inherited,
+runner and adapter model environment values. The supervisor passes it as
+`ANTHROPIC_MODEL` and as the SDK model option when it creates or resumes a
+session. The `default` selection uses Claude's native model resolution.
 
 The response includes the negotiated ACP session id:
 

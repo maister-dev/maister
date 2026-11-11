@@ -125,6 +125,7 @@ describe("buildChildEnv — env layering precedence", () => {
       A: "1",
       MAISTER_CAPABILITY_PROFILE_PATH: profilePath,
       B: "2",
+      ANTHROPIC_MODEL: "claude-sonnet-4-6",
     };
 
     expect(withEmpty).toEqual(expected);
