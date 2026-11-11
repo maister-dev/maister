@@ -1,5 +1,6 @@
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 import type { PreparedSpecialistAssignment } from "../types";
+import type { Db } from "@/lib/execution-host/db";
 
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -61,6 +62,10 @@ import { buildFlowExportContract } from "@/lib/run-results/contract";
 import { resumeCrashedRun } from "@/lib/runs/recover";
 import { recoverHttpResponse } from "@/lib/runs/recover-http";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
+import {
+  mintAssignment,
+  releaseAssignmentForRun,
+} from "@/lib/execution-host/assignments";
 import {
   startMainAndBrainPostgresTestDb,
   startMainPostgresTestDbUpTo,
@@ -2066,6 +2071,7 @@ it("IT-CBA-03 retains cancellation and recovery facts and original input rather 
 });
 
 it("IT-CBA-01 links existing same-owner runs exactly once, refuses project carriers for company work and never treats run success as assignment completion", async () => {
+  const db: Db = database.db;
   const projectId = randomUUID();
   const runId = randomUUID();
   const replacementRunId = randomUUID();
@@ -2218,7 +2224,7 @@ it("IT-CBA-01 links existing same-owner runs exactly once, refuses project carri
   ).resolves.toMatchObject({
     assignment: { revision: 3, runIds: [runId, replacementRunId] },
   });
-  const { hosts } = await fakeExecutionHosts(database.db);
+  const { hosts, hostId } = await fakeExecutionHosts(database.db);
   const holder = await database.pool.connect();
 
   try {
@@ -2264,9 +2270,41 @@ it("IT-CBA-01 links existing same-owner runs exactly once, refuses project carri
   await database.pool.query("UPDATE runs SET status='Done' WHERE id=$1", [
     runId,
   ]);
-  await database.pool.query("UPDATE runs SET status='Done' WHERE id=$1", [
+  await db.transaction((tx) =>
+    mintAssignment(tx, {
+      runId: replacementRunId,
+      hostId,
+      reason: "launch",
+    }),
+  );
+  await database.pool.query("UPDATE runs SET status='Crashed' WHERE id=$1", [
     replacementRunId,
   ]);
+  await expect(
+    cancelSpecialistAssignment(
+      database.db,
+      requesterId,
+      project.id,
+      3,
+      "The crashed execution still has an active placement",
+    ),
+  ).rejects.toMatchObject({
+    code: "CONFLICT",
+    details: { reason: "assignment_execution_unsettled" },
+  });
+  await expect(
+    appendSpecialistAssignmentInput(database.db, requesterId, project.id, {
+      expectedRevision: 3,
+      input: "Cannot change input before placement release",
+      references: [],
+    }),
+  ).rejects.toMatchObject({
+    code: "CONFLICT",
+    details: { reason: "assignment_execution_unsettled" },
+  });
+  await db.transaction((tx) =>
+    releaseAssignmentForRun(tx, replacementRunId, "verified_quiescent"),
+  );
   expect(
     await cancelSpecialistAssignment(
       database.db,

@@ -566,12 +566,24 @@ async function assertNoUnsettledAssignmentRuns(
     )
   ).rows;
 
-  if (runs.some((run) => !isTerminalRunStatus(String(run.status))))
-    throw new MaisterError(
-      "CONFLICT",
-      "Stop or settle linked execution before changing assignment input or terminal state",
-      { details: { reason: "assignment_execution_unsettled" } },
-    );
+  // Placement mint takes the Run lock. Read active placements after locking
+  // the linked Runs so a concurrent mint cannot hide behind the prior snapshot.
+  if (runs.every((run) => isTerminalRunStatus(String(run.status)))) {
+    const activePlacements = await tx.execute(sql`
+      SELECT 1 FROM specialist_run_links link
+      JOIN execution_assignments placement ON placement.run_id=link.run_id
+      WHERE link.assignment_id=${assignmentId} AND placement.state='active'
+      LIMIT 1
+    `);
+
+    if (!activePlacements.rows.length) return;
+  }
+
+  throw new MaisterError(
+    "CONFLICT",
+    "Stop or settle linked execution before changing assignment input or terminal state",
+    { details: { reason: "assignment_execution_unsettled" } },
+  );
 }
 
 export async function appendSpecialistAssignmentInputInTransaction(

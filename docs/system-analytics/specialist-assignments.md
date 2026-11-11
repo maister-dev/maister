@@ -128,6 +128,12 @@ All assignments require nonblank objective (<=8000 characters), expected outcome
 | Explicit reopen | failed/cancelled only, current recovery authority and fresh recovery/input revision | New owner epoch; preserve original terminal event; outstanding unknown effect routes to reconciling, not dispatch |
 | Completed replay | completed and exact original request/decision | Safe existing receipt only; independent new objective is new assignment |
 
+The assignment store requires linked Runs to be terminal and their placements
+to be released before standalone input changes, cancellation, or reopening.
+An active placement on a crashed Run still blocks these changes. An authorized
+answer to a retained clarification uses its own checkpoint and input-lineage
+contract.
+
 For result-only assignments, the existing result consumer moves the current
 assignment to `awaiting_acceptance` when the appointed root Run is Done and
 its valid result matches the frozen contract. Required external effects and
