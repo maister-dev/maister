@@ -6,6 +6,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
+import { withPackageInstall } from "@/lib/studio/package-links";
 import { apiErrorText, readApiErrorBody } from "@/lib/api-error";
 
 // (M39 A3) Forks ONE element of an installed package into a NEW centralized local
@@ -15,11 +16,13 @@ import { apiErrorText, readApiErrorBody } from "@/lib/api-error";
 // the install; `elementName` is the new package's display name.
 export function ElementForkButton({
   refName,
+  installId,
   elementPath,
   elementName,
   label,
 }: {
   refName: string;
+  installId?: string;
   elementPath: string;
   elementName: string;
   label: string;
@@ -37,7 +40,10 @@ export function ElementForkButton({
 
     try {
       const res = await fetch(
-        `/api/studio/packages/${encodeURIComponent(refName)}/fork-element`,
+        withPackageInstall(
+          `/api/studio/packages/${encodeURIComponent(refName)}/fork-element`,
+          installId,
+        ),
         {
           method: "POST",
           headers: { "content-type": "application/json" },

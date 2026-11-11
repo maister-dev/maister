@@ -17,7 +17,6 @@ import {
 import { MarkdownDocumentView } from "@/components/studio/markdown-document-view";
 import { SkillBundleView } from "@/components/studio/skill-bundle-view";
 import { isMarkdownRichPath } from "@/components/workbench/markdown-rich-view";
-import { requireSession } from "@/lib/authz";
 import { splitFrontmatter } from "@/lib/flows/artifact-frontmatter";
 import {
   imageMimeForPath,
@@ -27,11 +26,19 @@ import {
   resolveBundledSkillPrefix,
 } from "@/lib/flows/package-content";
 import { getStudioPackageInstalledPath } from "@/lib/studio/package-path";
-import { resolveStudioPackageByRef } from "@/lib/studio/load";
+import { loadStudioPackagePage } from "@/components/studio/package-selection";
+import {
+  studioPackagePath,
+  withPackageInstall,
+} from "@/lib/studio/package-links";
 
 type PageProps = {
   params: Promise<{ ref: string; path: string[] }>;
-  searchParams: Promise<{ file?: string | string[]; view?: string | string[] }>;
+  searchParams: Promise<{
+    install?: string | string[];
+    file?: string | string[];
+    view?: string | string[];
+  }>;
 };
 
 function firstParam(raw: string | string[] | undefined): string | null {
@@ -42,10 +49,10 @@ function firstParam(raw: string | string[] | undefined): string | null {
 
 export async function generateMetadata({
   params,
-}: PageProps): Promise<Metadata> {
+}: Pick<PageProps, "params">): Promise<Metadata> {
   const { path } = await params;
 
-  return { title: path.map(decodeURIComponent).join("/") };
+  return { title: path.join("/") };
 }
 
 function frontmatterStrings(
@@ -73,9 +80,10 @@ function markdownMode(raw: string | string[] | undefined): "preview" | "code" {
 function fileHref(
   baseHref: string,
   relPath: string,
+  installId: string,
   view?: "preview" | "code",
 ): string {
-  const params = new URLSearchParams();
+  const params = new URLSearchParams({ install: installId });
 
   params.set("file", relPath);
   if (view === "code") params.set("view", "code");
@@ -88,18 +96,20 @@ export default async function StudioSkillDetailPage({
   searchParams,
 }: PageProps): Promise<ReactElement> {
   const { ref, path: rawPath } = await params;
-  const { file: rawFile, view: rawView } = await searchParams;
-  const decodedRef = decodeURIComponent(ref);
-  const skillId = rawPath.map(decodeURIComponent).join("/");
+  const query = await searchParams;
+  const { file: rawFile, view: rawView } = query;
+  const decodedRef = ref;
+  const skillId = rawPath.join("/");
 
-  const user = await requireSession();
-  const resolution = await resolveStudioPackageByRef(
-    user.id,
-    user.role,
-    decodedRef,
+  const selected = await loadStudioPackagePage(
+    ref,
+    ["skills", ...rawPath],
+    query,
   );
 
-  if (resolution.status !== "ok") notFound();
+  if (selected.kind === "choice") return selected.chooser;
+
+  const { resolution } = selected;
 
   const installedPath = await getStudioPackageInstalledPath(
     resolution.installId,
@@ -111,12 +121,12 @@ export default async function StudioSkillDetailPage({
   const tViewer = await getTranslations("studio.viewer");
   // Generic file-state strings are shared with the per-project viewer.
   const tFile = await getTranslations("packages.viewer");
-  const packageBaseHref = `/studio/packages/${encodeURIComponent(decodedRef)}`;
-  const packageHref = `${packageBaseHref}?tab=skills`;
-  const skillBase = `${packageBaseHref}/skills/${skillId
-    .split("/")
-    .map(encodeURIComponent)
-    .join("/")}`;
+  const packageHref = withPackageInstall(
+    studioPackagePath(ref),
+    resolution.installId,
+    { tab: "skills" },
+  );
+  const skillBase = studioPackagePath(ref, "skills", ...rawPath);
 
   const fileLabels: PackageFileViewLabels = {
     binary: tFile("fileBinary"),
@@ -229,7 +239,12 @@ export default async function StudioSkillDetailPage({
         documentView={
           selectedMarkdownPath !== null && selectedFile?.state === "text" ? (
             <MarkdownDocumentView
-              codeHref={fileHref(skillBase, selectedMarkdownPath, "code")}
+              codeHref={fileHref(
+                skillBase,
+                selectedMarkdownPath,
+                resolution.installId,
+                "code",
+              )}
               editor={
                 <CodeEditor
                   key={selectedMarkdownPath}
@@ -247,7 +262,11 @@ export default async function StudioSkillDetailPage({
               }}
               mode={selectedView}
               path={selectedMarkdownPath}
-              previewHref={fileHref(skillBase, selectedMarkdownPath)}
+              previewHref={fileHref(
+                skillBase,
+                selectedMarkdownPath,
+                resolution.installId,
+              )}
               source={selectedFile.content}
             />
           ) : undefined
@@ -265,7 +284,9 @@ export default async function StudioSkillDetailPage({
         }
         files={files}
         frontmatter={frontmatter}
-        hrefFor={(relPath) => fileHref(skillBase, relPath)}
+        hrefFor={(relPath) =>
+          fileHref(skillBase, relPath, resolution.installId)
+        }
         labels={{
           filesTitle: tViewer("skillFilesTitle"),
           frontmatterTitle: tViewer("skillFrontmatterTitle"),

@@ -9,6 +9,7 @@ import type { FlowLayout } from "@/lib/flows/graph/presentation-layout";
 import type { GraphTopology } from "@/lib/queries/flow-graph-view";
 
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
@@ -414,6 +415,83 @@ export async function getAvailablePackageInstalls(): Promise<
       };
     }),
   );
+}
+
+export async function getStudioInstallForFlowRevision(
+  projectId: string,
+  flowId: string,
+  revision: { resolvedRevision: string; versionLabel: string; source?: string },
+): Promise<{ id: string; name: string } | null> {
+  if (!revision.source) return null;
+
+  const { source } = revision;
+
+  const installs = schemaModule.packageInstalls;
+  const attachments = schemaModule.projectPackageAttachments;
+  const rows = await getDb()
+    .select({
+      id: installs.id,
+      name: installs.name,
+      manifest: installs.manifest,
+      installedPath: installs.installedPath,
+      versionLabel: installs.versionLabel,
+      attachmentId: attachments.id,
+    })
+    .from(installs)
+    .leftJoin(
+      attachments,
+      and(
+        eq(attachments.projectId, projectId),
+        eq(attachments.packageInstallId, installs.id),
+      ),
+    )
+    .where(
+      and(
+        eq(installs.packageStatus, "Installed"),
+        eq(installs.resolvedRevision, revision.resolvedRevision),
+      ),
+    );
+  const matches = rows.filter((row) => {
+    const manifest = row.manifest as PackageInstallManifest;
+    const member = manifest.spec?.flows?.find((flow) => flow.id === flowId);
+
+    if (!member) return false;
+
+    const memberPath = join(row.installedPath, member.path);
+
+    return (
+      (source === memberPath || source === pathToFileURL(memberPath).href) &&
+      // Package attachment normalizes Git tag labels for member Flow revisions.
+      row.versionLabel.replaceAll("/", "-") === revision.versionLabel
+    );
+  });
+
+  const attached = matches.filter((row) => row.attachmentId);
+  const match =
+    attached.length === 1
+      ? attached[0]
+      : matches.length === 1
+        ? matches[0]
+        : null;
+
+  return match && { id: match.id, name: match.name };
+}
+
+export async function getNamedPackageAttachmentIds(
+  name: string,
+  projectIds: string[],
+): Promise<Map<string, string>> {
+  if (!projectIds.length) return new Map();
+
+  const table = schemaModule.projectPackageAttachments;
+  const rows = await getDb()
+    .select({ projectId: table.projectId, installId: table.packageInstallId })
+    .from(table)
+    .where(
+      and(eq(table.packageName, name), inArray(table.projectId, projectIds)),
+    );
+
+  return new Map(rows.map((row) => [row.projectId, row.installId]));
 }
 
 // The set of project ids that have the named package attached (any version) —

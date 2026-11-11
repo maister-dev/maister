@@ -11,6 +11,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
+import {
+  studioPackagePath,
+  withPackageInstall,
+} from "@/lib/studio/package-links";
 import { readApiErrorBody } from "@/lib/api-error";
 import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
 
@@ -284,7 +288,10 @@ export function ProjectPackagesSection({
                     <td className="px-4 py-3 font-mono text-[12.5px] text-ink">
                       <Link
                         className="underline-offset-2 hover:underline"
-                        href={`/studio/packages/${encodeURIComponent(att.packageName)}`}
+                        href={withPackageInstall(
+                          studioPackagePath(att.packageName),
+                          att.packageInstallId,
+                        )}
                       >
                         {att.packageName}
                       </Link>

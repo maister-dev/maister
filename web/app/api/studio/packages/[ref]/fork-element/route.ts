@@ -26,7 +26,7 @@ const bodySchema = z
   })
   .strict();
 
-// (M39 A3) `ref` (url-param) resolves server-side to its newest install.
+// An exact install selector disambiguates the package name in `ref`.
 // `elementPath`/`elementName` are body-controlled: `elementPath` is confined
 // inside the source bundle by the service before any fs copy; `elementName` is a
 // display name only. Forks EXACTLY ONE element into a NEW centralized local
@@ -41,7 +41,11 @@ export async function POST(
   try {
     const user = await requireGlobalRole("member");
     const { ref } = await params;
-    const parsed = bodySchema.safeParse(await req.json());
+    const body: unknown = await req.json().catch((error: unknown) => {
+      if (error instanceof SyntaxError) return undefined;
+      throw error;
+    });
+    const parsed = bodySchema.safeParse(body);
 
     if (!parsed.success) {
       return NextResponse.json(
@@ -53,7 +57,14 @@ export async function POST(
       );
     }
 
-    const resolution = await resolveStudioPackageByRef(user.id, user.role, ref);
+    const selectors = req.nextUrl.searchParams.getAll("install");
+    const install = selectors.length > 1 ? selectors : selectors[0];
+    const resolution = await resolveStudioPackageByRef(
+      user.id,
+      user.role,
+      ref,
+      install,
+    );
 
     if (resolution.status === "not-found") {
       return notFoundResponse("package not found");
@@ -72,6 +83,7 @@ export async function POST(
     log.info(
       {
         ref,
+        installId: resolution.installId,
         elementPath: parsed.data.elementPath,
         localPackageId: result.localPackageId,
       },

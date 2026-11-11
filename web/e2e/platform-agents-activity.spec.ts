@@ -192,6 +192,23 @@ test.describe("Agent execution visibility and retained history", () => {
       await expect(
         page.getByTestId("agent-history-row").filter({ visible: true }),
       ).toHaveCount(1 + addedHistoryRuns);
+      const origin = page.url();
+
+      await page
+        .getByTestId("agent-history-row")
+        .filter({ visible: true })
+        .first()
+        .locator('a[href^="/runs/"]')
+        .first()
+        .click();
+      const historyLink = page.getByTestId("run-header").getByRole("link", {
+        name: locale === "en" ? /^All .+ runs$/ : /^Все запуски/,
+      });
+
+      await expect(historyLink).toHaveAttribute("href", `${path}?tab=history`);
+      await page.goBack();
+      await expect(page).toHaveURL(origin);
+
       if (locale === "en") {
         await withE2EDb((pool) =>
           pool.query(
@@ -413,20 +430,15 @@ test.describe("Agent execution visibility and retained history", () => {
       ).toBeVisible();
       await page.goto(`/runs/${source.runId}`);
       const actions = page.getByTestId("agent-run-actions");
-      const historyBounds = await actions
-        .getByRole("link", { name: "History", exact: true })
-        .boundingBox();
-      const retryBounds = await actions
-        .getByRole("button", { name: "Run again…", exact: true })
-        .boundingBox();
 
-      expect(historyBounds).not.toBeNull();
-      expect(retryBounds).not.toBeNull();
-      if (historyBounds && retryBounds && historyBounds.y === retryBounds.y) {
-        expect(
-          retryBounds.x - historyBounds.x - historyBounds.width,
-        ).toBeGreaterThanOrEqual(8);
-      }
+      await expect(
+        page
+          .getByTestId("run-header")
+          .getByRole("link", { name: /^All .+ runs$/ }),
+      ).toBeVisible();
+      await expect(
+        actions.getByRole("link", { name: "History", exact: true }),
+      ).toHaveCount(0);
       await page
         .getByRole("button", { name: "Run again…", exact: true })
         .filter({ visible: true })

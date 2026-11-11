@@ -379,6 +379,9 @@ test("main history loads the latest portion, retries an automatic earlier load a
     expect(displayed).toEqual(
       Array.from({ length: 250 }, (_, index) => `Parent history ${index + 1}`),
     );
+    const jump = transcript.getByRole("button", { name: "Jump to latest" });
+
+    await expect(jump).not.toHaveAttribute("data-new-messages", "true");
     await withE2EDb((pool) =>
       pool.query(
         "UPDATE run_messages SET content='Parent history 250 (continued)' WHERE run_id=$1 AND sequence=250",
@@ -405,9 +408,59 @@ test("main history loads the latest portion, retries an automatic earlier load a
     await expect
       .poll(async () => Math.abs((await reading.boundingBox())!.y - top))
       .toBeLessThan(2);
-    await transcript
-      .getByRole("button", { name: "Jump to latest", exact: true })
-      .click();
+    await page.getByTestId("librarian-trigger").click();
+    await expect(page.getByTestId("librarian-panel")).toHaveAttribute(
+      "data-mode",
+      "docked",
+    );
+    const jumpIsContained = (): Promise<boolean> =>
+      jump.evaluate((button) => {
+        const bounds = button.getBoundingClientRect();
+        const owner = button
+          .closest('[data-testid="run-transcript-history"]')!
+          .getBoundingClientRect();
+        const hit = document.elementFromPoint(
+          bounds.x + bounds.width / 2,
+          bounds.y + bounds.height / 2,
+        );
+
+        return (
+          bounds.left >= owner.left &&
+          bounds.right <= owner.right &&
+          bounds.top >= owner.top &&
+          bounds.bottom <= owner.bottom &&
+          button.contains(hit)
+        );
+      });
+
+    await expect.poll(jumpIsContained).toBe(true);
+    const shortHeight = await transcript.evaluate((element) =>
+      Math.min(
+        window.innerHeight,
+        Math.ceil(element.getBoundingClientRect().top + window.scrollY + 60),
+      ),
+    );
+
+    await page.setViewportSize({ width: 1600, height: shortHeight });
+    await transcript.evaluate((element) =>
+      window.scrollBy(
+        0,
+        element.getBoundingClientRect().top - window.innerHeight + 60,
+      ),
+    );
+    await expect
+      .poll(() =>
+        transcript.evaluate((element) =>
+          Math.abs(
+            window.innerHeight - element.getBoundingClientRect().top - 60,
+          ),
+        ),
+      )
+      .toBeLessThan(2);
+    await expect.poll(jumpIsContained).toBe(true);
+    await page.setViewportSize({ width: 1600, height: 1000 });
+    await jump.click();
+    await page.getByTestId("librarian-close").click();
     await expect(messages).toHaveCount(100);
     await expect(
       transcript.getByText("Parent history 251", { exact: true }),

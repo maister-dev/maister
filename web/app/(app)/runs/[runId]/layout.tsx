@@ -126,7 +126,10 @@ import { presentationLayout } from "@/lib/flows/graph/presentation-layout";
 import { buildGraphTopology } from "@/lib/queries/flow-graph-view";
 import { getRunNodeStatuses } from "@/lib/queries/run-node-status";
 import { loadRunManifest } from "@/lib/queries/run-manifest";
-import { getRunReadiness } from "@/lib/queries/readiness";
+import {
+  getFlowRunVerification,
+  getRunReadiness,
+} from "@/lib/queries/readiness";
 import {
   getRunCapabilityProfiles,
   getRunCostSummary,
@@ -386,7 +389,10 @@ export default async function RunDetailLayout({
   const capabilityProfiles = await getRunCapabilityProfiles(runId);
   const resolvedSet = await getRunResolvedCapabilitySet(runId);
   const evidence = await buildEvidenceGraph(runId);
-  const readiness = await getRunReadiness(runId, detail.projectId);
+  const verification =
+    detail.runKind === "flow"
+      ? await getFlowRunVerification(runId, detail.projectId)
+      : null;
   // M39 Stream B (ADR-107): provenance for a flow that came from a centralized
   // local-package cut — "from <package> @ <version>". Null otherwise.
   const packageProvenance = await getRunPackageProvenance(runId);
@@ -451,6 +457,8 @@ export default async function RunDetailLayout({
   const evidenceLabels: EvidenceGraphLabels = {
     title: tEvidence("title"),
     empty: tEvidence("empty"),
+    noMatches: tEvidence("noMatches"),
+    clearFilters: tEvidence("clearFilters"),
     openPayload: tEvidence("openPayload"),
     payloadGone: tEvidence("payloadGone"),
     payloadError: tEvidence("payloadError"),
@@ -460,6 +468,7 @@ export default async function RunDetailLayout({
     filterKind: tEvidence("filterKind"),
     filterState: tEvidence("filterState"),
     filterAny: tEvidence("filterAny"),
+    filterItem: tEvidence("filterItem"),
     stateCurrent: tEvidence("stateCurrent"),
     stateStale: tEvidence("stateStale"),
     stateSuperseded: tEvidence("stateSuperseded"),
@@ -787,7 +796,9 @@ export default async function RunDetailLayout({
       }
     }
 
-    reviewReadiness = await getRunReadiness(detail.runId, detail.projectId);
+    reviewReadiness =
+      verification?.rollup ??
+      (await getRunReadiness(detail.runId, detail.projectId));
 
     // ADR-141: behind/ahead + branch-sync dialog seed. Only when a
     // real target + worktree are known (never for the legacy-relaunch fallback).
@@ -985,7 +996,7 @@ export default async function RunDetailLayout({
       : null,
     timeline,
     evidence,
-    readiness,
+    readiness: verification?.rollup ?? null,
     cost: costSummary,
     settings,
     pendingHitl: detail.pendingHitl,
@@ -1442,14 +1453,6 @@ export default async function RunDetailLayout({
               className="mb-4 flex flex-wrap items-center gap-3"
               data-testid="agent-run-actions"
             >
-              {detail.sourceAgentId ? (
-                <Link
-                  className="inline-flex text-sm text-mute underline"
-                  href={`/projects/${detail.projectSlug}/agents/${encodeURIComponent(detail.sourceAgentId)}`}
-                >
-                  {tActivity("history")}
-                </Link>
-              ) : null}
               {detail.retryOfRunId ? (
                 <p className="text-xs text-mute">
                   {tActivity("retryOf")}{" "}
@@ -1511,6 +1514,16 @@ export default async function RunDetailLayout({
         runStatus={detail.status}
       />
       <RunShell
+        agentHistory={
+          detail.runKind === "agent" && detail.sourceAgentId
+            ? {
+                href: `/projects/${encodeURIComponent(detail.projectSlug)}/agents/${encodeURIComponent(detail.sourceAgentId)}?tab=history`,
+                label: tActivity("allRuns", {
+                  agent: detail.sourceAgentDisplayName ?? detail.sourceAgentId,
+                }),
+              }
+            : undefined
+        }
         branch={detail.branch}
         budgetStatus={detail.budgetStatus}
         canReopen={canAct}
@@ -1642,24 +1655,58 @@ export default async function RunDetailLayout({
             />
           ) : null}
 
-          {readiness &&
-          detail.status !== "Failed" &&
-          detail.status !== "Crashed" ? (
+          {verification ? (
             <ReadinessSummary
               labels={{
                 state: {
-                  ready: tReadiness("ready"),
+                  ready: tReadiness("recordedClear"),
+                  none: tReadiness("noChecks"),
+                  excluded: tReadiness("policyExcluded"),
+                  unevaluated: tReadiness("unevaluated"),
+                  unknown: tReadiness("verificationUnknown"),
                   blocked: tReadiness("blocked"),
                   stale: tReadiness("stale"),
                   failed: tReadiness("failed"),
                   waiting: tReadiness("waiting"),
                   overridden: tReadiness("overridden"),
                 },
-                summary: tReadiness("summary"),
+                summary: tReadiness("flowVerification"),
                 reasons: tReadiness("reasons"),
               }}
-              reasons={readiness.reasons}
-              state={readiness.readiness}
+              reasons={verification.reasons.map((reason) => {
+                if (reason.kind === "artifact")
+                  return {
+                    id: `artifact:${reason.id}`,
+                    explanation: tReadiness("missingEvidence", {
+                      id: reason.id,
+                    }),
+                    nextAction: tReadiness("produceEvidence"),
+                  };
+
+                const { status } = reason;
+                const evidenceQuery = new URLSearchParams({
+                  wb: "evidence",
+                  evidenceItem: `gate:${reason.rowId}`,
+                });
+
+                return {
+                  id: `gate:${reason.rowId}`,
+                  explanation: tReadiness(`gateDetails.${status}.reason`, {
+                    id: reason.id,
+                  }),
+                  nextAction: tReadiness(`gateDetails.${status}.nextAction`),
+                  evidence:
+                    status === "pending" || status === "running"
+                      ? undefined
+                      : {
+                          href: `/runs/${runId}?${evidenceQuery}`,
+                          label: tReadiness("viewGateEvidence", {
+                            id: reason.id,
+                          }),
+                        },
+                };
+              })}
+              state={verification.state}
             />
           ) : null}
 

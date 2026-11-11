@@ -64,7 +64,7 @@ async function withDb<T>(fn: (pool: Pool) => Promise<T>): Promise<T> {
   }
 }
 
-test("evidence graph renders, artifact payload opens, and the board readiness badge tracks stale/merge-blocked", async ({
+test("UX-03C/D evidence filters fit artifacts and the board readiness badge tracks stale/merge-blocked", async ({
   page,
 }) => {
   const fx = loadM12Fixture();
@@ -80,7 +80,8 @@ test("evidence graph renders, artifact payload opens, and the board readiness ba
   // evidence container and finds it hidden, which is what this spec had been
   // failing on. Clicking the tab is what a reader does; this is the URL that
   // tab links to.
-  await page.goto(`/runs/${fx.runId}?wb=evidence`);
+  await page.goto(`/runs/${fx.runId}`);
+  await page.getByRole("tab", { name: "Evidence", exact: true }).click();
 
   await expect(page.locator('[data-testid="evidence-graph"]')).toBeVisible();
 
@@ -101,6 +102,41 @@ test("evidence graph renders, artifact payload opens, and the board readiness ba
     ).toBeVisible();
   }
 
+  // Change both native selects before a navigation can commit.
+  await page.evaluate(() => {
+    for (const value of ["artifact", "current"]) {
+      const select = document.querySelector<HTMLSelectElement>(
+        `select:has(option[value="${value}"])`,
+      );
+
+      if (!select) throw new Error(`Evidence filter for ${value} is missing`);
+
+      select.value = value;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  });
+  await expect(page).toHaveURL(/kind=artifact.*state=current/);
+  const canvas = page.getByTestId("evidence-graph").locator(".react-flow");
+
+  const fullyVisible = (): Promise<number> =>
+    canvas.evaluate((el) => {
+      const bounds = el.getBoundingClientRect();
+
+      return [...el.querySelectorAll(".react-flow__node")].filter((node) => {
+        const rect = node.getBoundingClientRect();
+
+        return (
+          rect.width > 0 &&
+          rect.left >= bounds.left &&
+          rect.right <= bounds.right &&
+          rect.top >= bounds.top &&
+          rect.bottom <= bounds.bottom
+        );
+      }).length;
+    });
+
+  await expect.poll(fullyVisible).toBe(7);
+
   // (2) Click the impl-diff artifact node → payload drawer opens → the REAL
   // payload API returns the inline diff text.
   await implDiff.click();
@@ -112,6 +148,21 @@ test("evidence graph renders, artifact payload opens, and the board readiness ba
 
   // Close the modal (Escape) before navigating on.
   await page.keyboard.press("Escape");
+  const viewport = canvas.locator(".react-flow__viewport");
+  const beforeZoom = await viewport.getAttribute("style");
+
+  await canvas.getByRole("button", { name: "Zoom in" }).click();
+  await expect(viewport).not.toHaveAttribute("style", beforeZoom!);
+  const manualCamera = await viewport.getAttribute("style");
+
+  await page.getByRole("button", { name: "Switch to dark mode" }).click();
+  await expect(canvas).toHaveClass(/dark/);
+  await expect(viewport).toHaveAttribute("style", manualCamera!);
+  const evidencePane = page.getByTestId("evidence-pane");
+  const state = evidencePane.getByRole("combobox", {
+    name: "State",
+    exact: true,
+  });
 
   // (3a) Simulate rework → stale: impl-diff validity=stale + gate status=failed.
   await withDb(async (pool) => {
@@ -126,13 +177,64 @@ test("evidence graph renders, artifact payload opens, and the board readiness ba
   });
 
   try {
-    // Reload run detail → impl-diff node now surfaces `stale`.
-    await page.goto(`/runs/${fx.runId}?wb=evidence`);
-    await expect(
-      page.locator(
-        `[data-testid="evidence-node"][data-artifact-id="${fx.implDiffArtifactId}"]`,
-      ),
-    ).toHaveAttribute("data-state", "stale");
+    // The first stream-ready refresh belongs to this same filtered route.
+    const runPath = `/runs/${fx.runId}`;
+    const staleUrl = `${runPath}?wb=evidence&kind=artifact&state=stale`;
+    const connectedRefresh = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+
+      return (
+        url.pathname === runPath && response.request().headers().rsc === "1"
+      );
+    });
+
+    await page.goto(staleUrl);
+    await connectedRefresh;
+    await expect(implDiff).toHaveAttribute("data-state", "stale");
+    await expect.poll(fullyVisible).toBe(1);
+
+    const fitted = await viewport.getAttribute("style");
+
+    await canvas.getByRole("button", { name: "Zoom out" }).click();
+    await expect(viewport).not.toHaveAttribute("style", fitted!);
+    const staleCamera = await viewport.getAttribute("style");
+    const liveUpdate = async (
+      validity: "current" | "stale",
+      status: "Running" | "NeedsInput",
+    ): Promise<void> => {
+      await withDb(async (pool) => {
+        await pool.query(
+          "UPDATE artifact_instances SET validity = $1 WHERE id = $2",
+          [validity, fx.implDiffArtifactId],
+        );
+        await pool.query("UPDATE runs SET status = $1 WHERE id = $2", [
+          status,
+          fx.runId,
+        ]);
+      });
+    };
+
+    // Keep the same mounted URL while live data removes and restores its
+    // only matching artifact.
+    await liveUpdate("current", "Running");
+    await expect(page.getByTestId("run-header-status").visible()).toContainText(
+      "Running",
+    );
+    await expect(page.getByTestId("evidence-empty")).toBeVisible();
+    await expect(page).toHaveURL(staleUrl);
+    await expect.soft(state).toHaveValue("stale");
+
+    await liveUpdate("stale", "NeedsInput");
+    await expect(implDiff).toBeVisible();
+    await expect.soft(viewport).toHaveAttribute("style", staleCamera!);
+    const clear = evidencePane.getByRole("button", { name: "Clear filters" });
+
+    await expect(clear).toBeVisible();
+    await clear.click();
+    await expect(page).toHaveURL(`${runPath}?wb=evidence`);
+    await page.goBack();
+    await expect(page).toHaveURL(staleUrl);
+    await expect(state).toHaveValue("stale");
 
     // The board card now shows the unified readiness badge. T15: a failed
     // blocking gate dominates the rollup, so the badge reads "Failed".
@@ -153,6 +255,9 @@ test("evidence graph renders, artifact payload opens, and the board readiness ba
         `UPDATE gate_results SET status = 'passed' WHERE id = $1`,
         [fx.gateResultId],
       );
+      await pool.query("UPDATE runs SET status = 'NeedsInput' WHERE id = $1", [
+        fx.runId,
+      ]);
     });
   }
 

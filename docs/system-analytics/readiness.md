@@ -3,9 +3,10 @@
 > **Status: Implemented, as of 2026-06-03.** All-kind readiness enforcement at
 > the Review chokepoint, verdict calibration at gate execution, the shared
 > `readiness-core.ts` classifier, the `overridden` summary state, and the unified
-> readiness summary on run-detail / board / portfolio are shipped, on top of the graph
+> readiness summary on board and portfolio are shipped, on top of the graph
 > gate-execution lifecycle, the artifact-validity rules, and the `external_check`
-> loop. The merge-refuse-for-flow-runs acceptance clause is **Implemented (ADR-058)** —
+> loop. The Flow Run page uses the separate verification indicator described below.
+> The merge-refuse-for-flow-runs acceptance clause is **Implemented (ADR-058)** —
 > `promoteRun` calls `assertEvidenceReady` and refuses on failing blocking gates. Locked decisions:
 > [ADR-048](../decisions.md#adr-048-readiness-enforcement-over-all-blocking-gate-kinds--verdict-calibration-m15),
 > bounded by [ADR-028](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped)
@@ -240,6 +241,23 @@ UI acceptance:
 Logging requirements: INFO when an auto trigger is scheduled or fired with `runId`,
 `projectId`, and non-secret policy fields; WARN when a CAS cancel misses or when auto
 delivery degrades to manual with status, command, and bounded conflict paths.
+
+### Run-page verification (Implemented)
+
+The Flow Run page presents recorded blocking gates and required evidence in a
+compact indicator. The keyboard-operable disclosure names the gate or evidence,
+explains its recorded state, and gives a relevant next step. Skipped explains
+why the gate blocks, pending and running have distinct explanations, and an
+override explains that it supplied the decision. Evidence links open the exact
+gate row, even when other gates have the same status. Failed, stale, blocked,
+waiting and overridden contributions keep their existing precedence. Show
+recorded clear results separately from the lifecycle state. A known compatible
+pin and applicable requirements distinguish no checks, policy exclusion and
+checks awaiting evaluation. When applicability is unknown, show uncertainty
+instead of claiming no checks. Operational agent and Scratch presentations
+use their own lifecycle and result state. Agent code-delivery Review consumes
+the enforcement rollup for promotion controls. A historical execution error
+describes that attempt (UX-07A–C).
 
 ## Expectations
 

@@ -35,8 +35,9 @@ Attach, enable, upgrade-to and launch controls are disabled.
 - **ADRs:** ADR-092 (Studio IA / node-visual scheme), ADR-075 (package
   viewer / fork / kind-by-path). No new ADR.
 
-`ref` is the package **name** (Phase A semantics); two sources exposing the same
-name surface a collision picker rather than silently choosing one. The
+`ref` is the package **name** and `install` selects the exact installed revision
+(Implemented). An ambiguous name opens a linked source/version picker. See
+[installed package identity](../../system-analytics/flow-packages.md#studio-address-and-provenance-implemented). The
 `installed_path` is resolved **server-side only** and never enters a client prop
 or DTO — every disk read happens in the RSC/server layer and only rendered
 content + metadata cross to the browser.
@@ -45,12 +46,12 @@ content + metadata cross to the browser.
 
 Replaces the flat chip lists with a **tabbed, paged, card-based** bill-of-materials.
 
-- **Header (kept):** name · Local/Installed badge · newest version label · source
+- **Header:** name · Local/Installed badge · selected version label · source
   URL · lifecycle actions (**Attach to project**, **Trust** (admin)) ·
   **Rework**. **Attach to project** opens a dialog over the viewer's manageable
-  projects: a project the package is already attached to appears as a link to its
-  project Packages tab, while a project it is not yet attached to gets a one-click
-  attach of the newest install. Rework forks the installed package into a local
+  projects: an exact attachment links to the project Packages tab, an occupied
+  slot identifies the conflict, and an empty slot can attach the selected
+  install. Rework forks the selected install into a local
   package, then opens the local editor. The **Import (⤓)** affordance is
   intentionally **ABSENT** on installed packages — only local packages can import
   external archives.

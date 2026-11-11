@@ -1107,6 +1107,7 @@ export function LocalPackageEditor({
             )
           ) : (
             <FlowEditorTabs
+              key={flowPath}
               canManage={!readOnly}
               canvasAvailable={canvasAvailable}
               capId={identity.slug}

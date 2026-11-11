@@ -2608,11 +2608,13 @@ describe("Flow prompt owners through the production graph driver", () => {
           expect(
             afterResume
               .filter((command) => command.kind === "session.delete")
-              .map((command) => command.id),
+              .map((command) => command.id)
+              .sort(),
           ).toEqual(
             beforeResume
               .filter((command) => command.kind === "session.delete")
-              .map((command) => command.id),
+              .map((command) => command.id)
+              .sort(),
           );
         }
         ownerWorker = startPromptOwnerWorker({

@@ -1,5 +1,7 @@
 "use client";
 
+import type { RefObject } from "react";
+import type { Viewport } from "@xyflow/react";
 import type { FlowGraphViewLabels } from "@/components/board/flow-graph-view";
 import type { EditorValidationSummaryLabels } from "@/components/flows/editor-validation-summary";
 import type { FlowMetadataFormLabels } from "@/components/flows/node-form/flow-metadata-form";
@@ -33,7 +35,6 @@ import { createPortal } from "react-dom";
 import { MapIcon, TrashIcon } from "@heroicons/react/24/outline";
 import {
   Background,
-  Controls,
   Handle,
   MiniMap,
   Panel,
@@ -41,6 +42,7 @@ import {
   ReactFlow,
   useEdgesState,
   useNodesState,
+  useReactFlow,
 } from "@xyflow/react";
 
 import { FlowNodeBody } from "@/components/board/flow-graph-view";
@@ -53,6 +55,11 @@ import { FlowMetadataForm } from "@/components/flows/node-form/flow-metadata-for
 import { NodeSideForm } from "@/components/flows/node-form/node-side-form";
 import { toFlowGraphView } from "@/lib/board/flow-graph-view-layout";
 import { edgeOutcomeStyle, isBackEdgeOutcome } from "@/lib/flows/edge-style";
+import {
+  GRAPH_MIN_ZOOM,
+  GraphViewportControls,
+  useGraphViewportLabels,
+} from "@/components/graphs/graph-viewport-controls";
 import { useTheme } from "@/lib/theme";
 import {
   addGate,
@@ -95,6 +102,7 @@ export type FlowGraphEditorLabels = FlowEditorToolbarLabels & {
 
 export interface FlowGraphEditorProps {
   initialManifest: FlowYamlV1;
+  cameraRef?: RefObject<Viewport | null>;
   topology: GraphTopology;
   layout: FlowLayout;
   draftVersion: number;
@@ -376,8 +384,28 @@ function bumpDeclaredGate(node: Node): Node {
   return { ...node, data: nextData as unknown as Record<string, unknown> };
 }
 
+function EditorMiniMap({
+  cameraRef,
+}: {
+  cameraRef: RefObject<Viewport | null>;
+}): ReactElement {
+  const flow = useReactFlow();
+
+  // XYFlow reports minimap transforms as programmatic movement.
+  function rememberCamera(): void {
+    cameraRef.current = flow.getViewport();
+  }
+
+  return (
+    <div onPointerDownCapture={rememberCamera} onWheelCapture={rememberCamera}>
+      <MiniMap pannable zoomable style={{ marginBottom: 44 }} />
+    </div>
+  );
+}
+
 export default function FlowGraphEditor({
   initialManifest,
+  cameraRef,
   topology,
   layout,
   draftVersion,
@@ -398,6 +426,9 @@ export default function FlowGraphEditor({
   // app's `.light` token rule and resets the design tokens to light values
   // INSIDE the canvas even in dark mode — turning the minimap white.
   const { resolvedTheme } = useTheme();
+  const localCamera = useRef<Viewport | null>(null);
+  const viewportCamera = cameraRef ?? localCamera;
+  const viewportLabels = useGraphViewportLabels();
   const seeded = useMemo(
     () => toFlowGraphView(topology, layout),
     [topology, layout],
@@ -718,24 +749,34 @@ export default function FlowGraphEditor({
         />
         <div className="min-h-0 w-full flex-1">
           <ReactFlow
-            fitView
             nodesConnectable
             nodesDraggable
+            ariaLabelConfig={viewportLabels}
             colorMode={resolvedTheme}
             edges={edges}
+            minZoom={GRAPH_MIN_ZOOM}
             nodeTypes={nodeTypes}
             nodes={renderedNodes}
             onConnect={handleConnect}
             onEdgesChange={onEdgesChange}
+            onMoveEnd={(event, next) => {
+              if (event || viewportCamera.current)
+                viewportCamera.current = next;
+            }}
             onNodeClick={(_event, node) => select(node.id)}
             onNodesChange={handleNodesChange}
             onPaneClick={() => select(null)}
           >
             <Background />
-            {minimapOpen ? (
-              <MiniMap pannable zoomable style={{ marginBottom: 44 }} />
-            ) : null}
-            <Controls showInteractive={false} />
+            {minimapOpen ? <EditorMiniMap cameraRef={viewportCamera} /> : null}
+            <GraphViewportControls
+              cameraRef={viewportCamera}
+              nodes={renderedNodes.map((node) => ({
+                id: node.id,
+                label: String(node.data.label ?? node.id),
+              }))}
+              onLocate={select}
+            />
             <Panel position="bottom-right">
               <button
                 aria-label={labels.toggleMinimap}

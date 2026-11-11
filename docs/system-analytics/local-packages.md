@@ -98,15 +98,16 @@ flowchart TD
     C --> D[git init + initial commit --no-verify]
     D --> E[open /studio/edit/:id/flows/:flow-id/flow.yaml]
 
-    F["Fork PACKAGE to local (POST /api/studio/packages/:ref/fork)"] --> G1[resolve :ref → newest install server-side]
-    G1 --> G2["clean-copy ALL install working files (exclude .git) → fresh working_dir"]
+    F["Fork PACKAGE to local (POST /api/studio/packages/:ref/fork)"] --> G1[require active global member and resolve exact install or unique legacy source]
+    G1 -->|fresh copy| G2["clean-copy ALL install working files (exclude .git) → fresh working_dir"]
+    G1 -->|existing active fork and no force| G3[return existing fork]
     G2 --> H[record source_install_id + source_ref; name = ref-local]
     H --> D
 
-    K["Fork ONE ELEMENT (POST /api/studio/packages/:ref/fork-element)"] --> K1["validate body projectId ∈ getAccessibleProjects (else 404, no write)"]
-    K1 --> K2[ensure project default local package, race-safe]
-    K2 --> K3["confine elementPath in SOURCE bundle + DEST working_dir"]
-    K3 --> K4["copy EXACTLY that one element (flow dir / skill / agent .md / rule)"]
+    K["Fork ONE ELEMENT (POST /api/studio/packages/:ref/fork-element)"] --> K1[require active global member and validate element body]
+    K1 --> K2[resolve exact install or unique legacy source]
+    K2 --> K3["confine elementPath in source bundle"]
+    K3 --> K4["create standalone local package, confine the destination, copy one element"]
 ```
 
 **Fork mechanism (finalized):** a fork **copies the installed revision's
@@ -115,24 +116,16 @@ on-disk content** (`package_installs.installedPath`, server-only) excluding any
 upstream source or reuse its history (a clone-source variant was rejected: the
 install bytes are already content-addressed and present, so a copy is
 deterministic and credential-free). A package fork copies the whole bundle into
-a NEW `<ref>-local` package; an element fork copies exactly one confined element
-into the project's default. **Neither executes anything** — no `setup.sh`, no MCP
+a new `<ref>-local` package; an element fork copies one confined element into
+a new standalone package named `<elementName> (local)`. Neither executes
+`setup.sh` or starts MCP
 spawn. A missing/unreadable source bundle → `CONFIG`, nothing persisted.
 
-**Element-fork project selection:** the element fork is the only fork that names
-a project, because its destination is that project's default package. The
-`projectId` is body-controlled, so it is validated against the caller's
-`getAccessibleProjects(userId, role)` set (admin → all non-archived; member →
-their memberships) — an unknown or inaccessible project is a 404 with no write,
-and the default is never created. The package fork takes no project (its output
-is platform-scoped and named).
-
-**Default-package race ("create on first use"):** the first element fork for a
-project has no default yet. The ensure step scaffolds + `git init`s a working
-dir, then `insert(...).onConflictDoNothing()` on the partial-unique
-`(project_id) WHERE is_default`; a concurrent racer that lost re-selects the
-winner's row and `rm`s its own orphan scaffold — never a read-then-write SELECT
-(no TOCTOU).
+Both Studio operations create platform-scoped working copies. The element
+operation accepts only `elementPath` and `elementName` and returns `422 CONFIG`
+for absent, malformed, or invalid JSON. A valid body with an invalid install
+selector returns `404 NOT_FOUND` before creating a working copy. The whole
+fork keeps its legacy dedup defaults for an absent or malformed options body.
 
 Edit + save under the lock:
 
@@ -794,6 +787,17 @@ tab surfaces one shared **Import** button wired to the existing
   unparseable moved `flow.yaml` fails the rename with `MaisterError("CONFIG")`.
 - Malformed `maister-package.yaml` in the local source → empty/degraded BOM
   (manifest parse → `CONFIG`/empty), never a thrown landing.
+
+### Studio fork selection (Implemented)
+
+The installed-package and element fork operations accept the same optional
+`install` query as the Studio viewer. The active global member check and
+exact catalog lookup run before the existing fork service claims a working
+directory. Ambiguous legacy names or invalid explicit IDs return 404. A
+unique legacy name still resolves to its first catalog version. Whole-package
+deduplication and lineage use the resolved install ID. Element path confinement
+and the existing partial-copy behavior apply to that exact bundle (UX-01C).
+See the [Web API](../api/web.openapi.yaml).
 
 ## Expectations
 

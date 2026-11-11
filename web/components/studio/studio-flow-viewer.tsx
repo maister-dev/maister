@@ -33,6 +33,7 @@ export function StudioFlowViewer({
   graphTitle,
   yamlTitle,
   forkRef,
+  forkInstallId,
 }: {
   topology: ComponentProps<typeof GraphView>["topology"] | null;
   layout: ComponentProps<typeof GraphView>["layout"] | null;
@@ -48,6 +49,7 @@ export function StudioFlowViewer({
   // Package name (Phase A ref) when the viewer may fork-to-edit; undefined hides
   // the Edit control. Keeps the immutable-installed model: edit = fork to local.
   forkRef?: string;
+  forkInstallId?: string;
 }): ReactElement {
   const [yamlOpen, setYamlOpen] = useState(
     !graphAvailable && Boolean(flowYaml),
@@ -65,7 +67,11 @@ export function StudioFlowViewer({
         </h2>
         <div className="flex items-center gap-2">
           {forkRef ? (
-            <ForkToEditButton refName={forkRef} targetPath={flowPath} />
+            <ForkToEditButton
+              installId={forkInstallId}
+              refName={forkRef}
+              targetPath={flowPath}
+            />
           ) : null}
           {flowYaml ? (
             <button

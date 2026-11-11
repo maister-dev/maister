@@ -51,8 +51,9 @@ Flow run detail.
 Failed attempts show a localized explanation, an allow-listed diagnostic error
 code, and the recorded exit code in the selected node, agent result, and
 timeline. Raw command bodies and server output are not copied into these
-messages. A failed node does not show a successful readiness summary; missing
-or unrecognized error codes receive the localized unknown-cause explanation.
+messages. Missing or unrecognized error codes receive the localized
+unknown-cause explanation. Flow verification describes recorded checks
+separately from the Run and attempt statuses.
 
 ## Admission and failure provenance
 
@@ -264,7 +265,7 @@ rendered, and a cause with neither copy nor reason renders no notice. The
   visual language and type tooltip as the Studio editor.
 - `getRunTimeline(runId)` (each `TimelineEntry` now carries the per-attempt
   `resolvedPrompt`), `buildEvidenceGraph(runId)`,
-  `getRunReadiness(runId, projectId)`, `getRunCostSummary(runId)`,
+  `getFlowRunVerification(runId, projectId)`, `getRunCostSummary(runId)`,
   `getRunSettings(runId)`, and capability profile queries feed the selected
   node result and inspector summaries.
 - `GET /api/runs/{runId}/stream` supplies the SSE change trigger.
@@ -553,3 +554,5 @@ Descendant entries open the [read-only peek](child-run-peek.md); interactive act
 ## Scheduled agent input
 
 An agent-driven cron run retains its claimed request independently of task.prompt. Request-bearing Flow admission pins the checked revision and refuses any graph with a successful path that avoids a primary AI action. Supported node, AI-gate and consensus prompts receive literal input after ordinary rendering; permission-resume prompts and owned replay keep their existing contract. Execution history and the inspector expose the original text only with readRepoFiles, through the [scheduled input contract](../../system-analytics/scheduled-agent-requests.md).
+
+The Run layout follows the [Flow verification contract](../../system-analytics/readiness.md#run-page-verification-implemented).

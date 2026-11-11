@@ -20,6 +20,7 @@ export interface RunShellProps {
   subtitle?: string;
   keyRef?: string | null;
   taskHref?: string | null;
+  agentHistory?: { href: string; label: string };
   projectHref?: string | null;
   projectLabel?: string | null;
   taskPrompt?: string | null;
@@ -45,6 +46,7 @@ export function RunShell({
   subtitle,
   keyRef,
   taskHref,
+  agentHistory,
   projectHref,
   projectLabel,
   taskPrompt,
@@ -78,6 +80,7 @@ export function RunShell({
       data-testid="run-shell"
     >
       <RunHeader
+        agentHistory={agentHistory}
         branch={branch}
         budgetStatus={budgetStatus}
         canReopen={canReopen}

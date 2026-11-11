@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import type { TranscriptPage } from "@/lib/runs/transcript-page";
 import type { TranscriptLabels } from "@/components/run-transcript/transcript-view";
 
+import { Button } from "@heroui/react";
 import {
   useCallback,
   useEffect,
@@ -14,7 +15,9 @@ import {
 import { useTranslations } from "next-intl";
 
 import { TranscriptView } from "@/components/run-transcript/transcript-view";
+import { useRunPeek } from "@/components/runs/run-peek-controller";
 import { useRunPageStream } from "@/components/runs/run-stream-provider";
+import { useLatestRef } from "@/lib/use-latest-ref";
 
 class TranscriptReadFailure extends Error {
   constructor(
@@ -27,7 +30,11 @@ class TranscriptReadFailure extends Error {
 
 type Direction = "earlier" | "later";
 type ContiguousEarlier = { boundaryId: string; page: TranscriptPage };
-type History = { pages: TranscriptPage[]; newerAvailable: boolean };
+type History = {
+  pages: TranscriptPage[];
+  newerAvailable: boolean;
+  liveUpdate?: boolean;
+};
 type ReadError = {
   failure: TranscriptReadFailure;
   direction: Direction | "refresh" | "latest";
@@ -211,6 +218,10 @@ export function RunTranscriptHistory({
   const t = useTranslations("runPeek"),
     runT = useTranslations("run");
   const stream = useRunPageStream(runId, live);
+  const peek = useRunPeek();
+  const parentPeekOpen = useLatestRef(
+    peek?.anchor === runId && peek.selected !== null,
+  );
   const [history, setHistory] = useState<History>({
     pages: [],
     newerAvailable: false,
@@ -233,10 +244,13 @@ export function RunTranscriptHistory({
   const previousAttempt = useRef<string | null | undefined>(undefined);
   const following = useRef(true);
   const liveCatchup = useRef(false);
+  const latestObserved = useRef<TranscriptPage["messages"][number] | undefined>(
+    undefined,
+  );
   const positioned = useRef(false);
   const scrollPosition = useRef(0);
   const pendingAnchor = useRef<ScrollAnchor | null>(null);
-  const pendingBottom = useRef(false);
+  const pendingBottom = useRef<"automatic" | "requested" | null>(null);
   const refreshRef = useRef<() => void>(() => {});
   const navigateRef = useRef<(direction: Direction) => void>(() => {});
   const jumpRef = useRef<() => void>(() => {});
@@ -488,7 +502,8 @@ export function RunTranscriptHistory({
           following.current = true;
           liveCatchup.current = false;
           setReadingEarlier(false);
-          pendingBottom.current = true;
+          pendingBottom.current = "automatic";
+          latestObserved.current = latest.messages.at(-1);
           publish({ pages: [latest], newerAvailable: false });
           publishError(null);
 
@@ -520,7 +535,30 @@ export function RunTranscriptHistory({
           ? new URLSearchParams({ anchor: visibleAnchor })
           : retainedQuery(selected);
         const refreshed = query
-          ? await fetchTranscriptPage(runId, nodeId, query, abort.signal)
+          ? await fetchTranscriptPage(runId, nodeId, query, abort.signal).catch(
+              async (failure: unknown) => {
+                if (
+                  nodeId &&
+                  failure instanceof TranscriptReadFailure &&
+                  failure.reason === "invalid_anchor"
+                ) {
+                  // The current attempt can change between the latest and anchored reads.
+                  const current = await fetchTranscriptPage(
+                    runId,
+                    nodeId,
+                    new URLSearchParams(),
+                    abort.signal,
+                  );
+
+                  if (current.attemptId !== latest.attemptId)
+                    throw new TranscriptReadFailure(
+                      409,
+                      "transcript_attempt_changed",
+                    );
+                }
+                throw failure;
+              },
+            )
           : null;
 
         if (!valid()) return;
@@ -567,6 +605,20 @@ export function RunTranscriptHistory({
           (message) =>
             retainedMessages.get(message.id)?.content !== message.content,
         );
+        const lastObserved = latestObserved.current;
+        const latestMessage = latest.messages.at(-1);
+        const liveUpdate =
+          !following.current &&
+          (cached.liveUpdate === true ||
+            (latestMessage !== undefined &&
+              lastObserved !== undefined &&
+              (lastObserved.id !== latestMessage.id ||
+                lastObserved.content !== latestMessage.content)) ||
+            [...observedMessages.values()].some(
+              (message) =>
+                retainedMessages.has(message.id) &&
+                retainedMessages.get(message.id)?.content !== message.content,
+            ));
         const unseen =
           !following.current &&
           (cached.newerAvailable || hasNewer || contentChanged);
@@ -647,14 +699,16 @@ export function RunTranscriptHistory({
           }
           if (following.current) {
             pendingAnchor.current = null;
-            pendingBottom.current = true;
+            pendingBottom.current = "automatic";
           } else retainScroll();
           if (bounded !== pages) {
             seenBoundaries.current.clear();
             setNotice("historyBound");
           }
+          latestObserved.current = latestMessage;
           publish({
             pages: bounded,
+            liveUpdate,
             newerAvailable:
               !following.current || stillNewer || bounded.at(-1)!.hasLater,
           });
@@ -691,14 +745,16 @@ export function RunTranscriptHistory({
           }
           if (following.current) {
             pendingAnchor.current = null;
-            pendingBottom.current = true;
+            pendingBottom.current = "automatic";
           } else retainScroll();
           if (bounded !== updated) {
             seenBoundaries.current.clear();
             setNotice("historyBound");
           }
+          latestObserved.current = latestMessage;
           publish({
             pages: bounded,
+            liveUpdate,
             newerAvailable: unseen || bounded.at(-1)!.hasLater,
           });
         }
@@ -874,6 +930,7 @@ export function RunTranscriptHistory({
         revision.current++;
         publish({
           pages: bounded,
+          liveUpdate: current.liveUpdate,
           newerAvailable:
             direction === "earlier"
               ? current.newerAvailable || evicted || bounded.at(-1)!.hasLater
@@ -944,9 +1001,10 @@ export function RunTranscriptHistory({
       setReadingEarlier(false);
       seenBoundaries.current.clear();
       pendingAnchor.current = null;
-      pendingBottom.current = true;
+      pendingBottom.current = "requested";
       setNotice(null);
       revision.current++;
+      latestObserved.current = latest.messages.at(-1);
       publish({ pages: [latest], newerAvailable: false });
     } catch (failure) {
       if (!owned.signal.aborted && ownedRevision === revision.current)
@@ -987,7 +1045,13 @@ export function RunTranscriptHistory({
       host.current.style.paddingBottom = nested
         ? `${Math.max(0, nested.getBoundingClientRect().bottom - window.innerHeight)}px`
         : "";
-    if (pendingBottom.current && owner && end.current) {
+    // While a child peek is open, its navigation owns the parent scroll.
+    if (
+      pendingBottom.current &&
+      (!parentPeekOpen.current || pendingBottom.current === "requested") &&
+      owner &&
+      end.current
+    ) {
       const bounds = viewport();
 
       owner.scrollTop +=
@@ -1006,7 +1070,7 @@ export function RunTranscriptHistory({
     }
     if (owner && (pendingBottom.current || pendingAnchor.current))
       scrollPosition.current = owner.scrollTop;
-    pendingBottom.current = false;
+    pendingBottom.current = null;
     pendingAnchor.current = null;
     // Native scroll events can coalesce with a refresh's anchor restoration.
     // Recheck the same edge after layout releases its scroll ownership.
@@ -1020,6 +1084,7 @@ export function RunTranscriptHistory({
     scrollOwner,
     viewport,
     maybeLoadEarlier,
+    parentPeekOpen,
   ]);
 
   useEffect(() => {
@@ -1067,7 +1132,7 @@ export function RunTranscriptHistory({
       }
       if (atLatest && cached.newerAvailable) {
         retainScroll();
-        publish({ ...cached, newerAvailable: false });
+        publish({ ...cached, newerAvailable: false, liveUpdate: false });
       }
       const visible = [
         ...(host.current?.querySelectorAll<HTMLElement>(
@@ -1100,7 +1165,12 @@ export function RunTranscriptHistory({
     const onViewportChange = (): void => {
       if (nested instanceof HTMLElement && host.current)
         host.current.style.paddingBottom = `${Math.max(0, nested.getBoundingClientRect().bottom - window.innerHeight)}px`;
-      if (following.current && positioned.current && end.current) {
+      if (
+        !parentPeekOpen.current &&
+        following.current &&
+        positioned.current &&
+        end.current
+      ) {
         owner.scrollTop +=
           end.current.getBoundingClientRect().bottom - viewport().bottom;
         scrollPosition.current = owner.scrollTop;
@@ -1117,7 +1187,14 @@ export function RunTranscriptHistory({
       window.removeEventListener("resize", onViewportChange);
       if (nested) window.removeEventListener("scroll", onViewportChange);
     };
-  }, [scrollOwner, viewport, retainScroll, publish, maybeLoadEarlier]);
+  }, [
+    scrollOwner,
+    viewport,
+    retainScroll,
+    publish,
+    maybeLoadEarlier,
+    parentPeekOpen,
+  ]);
 
   const pages = history.pages;
   const first = pages[0],
@@ -1165,6 +1242,14 @@ export function RunTranscriptHistory({
     else refreshRef.current();
   };
 
+  const controlClass =
+    "h-7 min-w-0 rounded-md border-line bg-paper px-2.5 text-xs font-medium text-ink hover:border-amber";
+  const updateLabel = history.liveUpdate
+    ? t("newerMessages")
+    : history.newerAvailable
+      ? t("laterAvailable")
+      : null;
+
   return (
     <div
       ref={host}
@@ -1182,7 +1267,12 @@ export function RunTranscriptHistory({
                   ? "unavailable"
                   : "error",
           )}{" "}
-          <button type="button" onClick={retry}>
+          <Button
+            className={controlClass}
+            size="sm"
+            variant="outline"
+            onPress={retry}
+          >
             {t(
               error.direction === "earlier"
                 ? "retryEarlier"
@@ -1190,7 +1280,7 @@ export function RunTranscriptHistory({
                   ? "retryLater"
                   : "retry",
             )}
-          </button>
+          </Button>
         </p>
       ) : null}
       {notice ? <p role="status">{t(notice)}</p> : null}
@@ -1198,14 +1288,16 @@ export function RunTranscriptHistory({
         <p role="status">{t("loadingTranscript")}</p>
       ) : null}
       {first?.hasEarlier ? (
-        <button
+        <Button
+          className={controlClass}
           data-testid="transcript-earlier"
-          disabled={loading !== null}
-          type="button"
-          onClick={() => navigateRef.current("earlier")}
+          isDisabled={loading !== null}
+          size="sm"
+          variant="outline"
+          onPress={() => navigateRef.current("earlier")}
         >
           {t("earlierMessages")}
-        </button>
+        </Button>
       ) : null}
       {loading ? (
         <p data-testid="transcript-history-loading" role="status">
@@ -1218,28 +1310,6 @@ export function RunTranscriptHistory({
           )}
         </p>
       ) : null}
-      {history.newerAvailable ? (
-        <p role="status">{t("newerMessages")}</p>
-      ) : null}
-      {readingEarlier || history.newerAvailable ? (
-        <button
-          className="sticky top-2 z-10 rounded border border-line bg-paper px-2 py-1"
-          data-new-messages={history.newerAvailable ? "true" : undefined}
-          data-testid="transcript-jump-latest"
-          disabled={loading === "latest"}
-          title={history.newerAvailable ? t("newerMessages") : undefined}
-          type="button"
-          onClick={() => jumpRef.current()}
-        >
-          {t("latestMessages")}
-          {history.newerAvailable ? (
-            <span
-              aria-hidden="true"
-              className="ml-2 inline-block h-2 w-2 rounded-full bg-amber"
-            />
-          ) : null}
-        </button>
-      ) : null}
       {last?.projection.state === "pending" ? (
         <p role="status">{t("projectionPending")}</p>
       ) : null}
@@ -1251,21 +1321,58 @@ export function RunTranscriptHistory({
       {last?.projection.state === "caught_up" && messages.length === 0 ? (
         <p>{t("emptyTranscript")}</p>
       ) : null}
-      <TranscriptView
-        labels={labels}
-        messages={messages}
-        running={live && stream.liveness === "live"}
-      />
+      <div className="grid min-w-0 grid-cols-1">
+        <div className="col-start-1 row-start-1 min-w-0">
+          <TranscriptView
+            labels={labels}
+            messages={messages}
+            running={live && stream.liveness === "live"}
+          />
+        </div>
+        {readingEarlier || updateLabel ? (
+          <div className="pointer-events-none sticky bottom-12 z-10 col-start-1 row-start-1 flex min-w-0 justify-end self-end">
+            <div
+              className="pointer-events-auto flex items-center gap-2 rounded-md bg-paper p-1"
+              title={updateLabel ?? undefined}
+            >
+              {updateLabel ? (
+                <span className="sr-only" role="status">
+                  {updateLabel}
+                </span>
+              ) : null}
+              <Button
+                className={controlClass}
+                data-new-messages={history.liveUpdate ? "true" : undefined}
+                data-testid="transcript-jump-latest"
+                isDisabled={loading === "latest"}
+                size="sm"
+                variant="outline"
+                onPress={() => jumpRef.current()}
+              >
+                {t("latestMessages")}
+                {history.liveUpdate ? (
+                  <span
+                    aria-hidden="true"
+                    className="inline-block h-2 w-2 rounded-full bg-amber"
+                  />
+                ) : null}
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </div>
       <div ref={end} data-testid="transcript-tail" />
       {last?.hasLater ? (
-        <button
+        <Button
+          className={controlClass}
           data-testid="transcript-later"
-          disabled={loading !== null}
-          type="button"
-          onClick={() => navigateRef.current("later")}
+          isDisabled={loading !== null}
+          size="sm"
+          variant="outline"
+          onPress={() => navigateRef.current("later")}
         >
           {t("laterMessages")}
-        </button>
+        </Button>
       ) : null}
     </div>
   );

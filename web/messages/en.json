@@ -1,4 +1,10 @@
 {
+  "graphViewport": {
+    "locate": "Locate a node",
+    "fit": "Fit View",
+    "zoomIn": "Zoom in",
+    "zoomOut": "Zoom out"
+  },
   "common": {
     "appName": "MAIster",
     "signIn": "Sign in",
@@ -234,6 +240,8 @@
     "attachEmpty": "You don't manage any projects yet.",
     "trust": "Trust",
     "rework": "Rework",
+    "attachmentOccupied": "Another version or source is attached",
+    "packageProvenanceUnavailable": "This revision is unavailable in Studio.",
     "reworkHint": "Local rework lands with the editor redesign.",
     "forkExists": "You already forked this package.",
     "forkOpenExisting": "Open your fork",
@@ -3036,7 +3044,7 @@
         "CONFIG": "The step configuration is invalid. Check the Flow, runner and required settings.",
         "SPAWN": "The agent process could not start. Check the runner installation and access on the execution host.",
         "CRASH": "The step stopped unexpectedly. Check the web and supervisor logs for this run.",
-        "EXECUTOR_UNAVAILABLE": "The execution host or runner is unavailable. Restore its readiness before restarting.",
+        "EXECUTOR_UNAVAILABLE": "The execution host or runner was unavailable during this attempt. Check current availability before retrying.",
         "BUDGET_EXCEEDED": "The run reached its budget limit. Review the budget before restarting.",
         "CHECKPOINT": "The agent session could not resume from its checkpoint. Check adapter resume support and supervisor logs.",
         "PRECONDITION": "A prerequisite for this step was not met. Check the Flow inputs and required resources.",
@@ -3169,6 +3177,9 @@
   "evidence": {
     "title": "Evidence graph",
     "empty": "No evidence yet for this run.",
+    "noMatches": "No evidence matches these filters.",
+    "clearFilters": "Clear filters",
+    "filterItem": "Evidence item",
     "openPayload": "Artifact payload",
     "payloadGone": "Payload is gone (the backing file was deleted).",
     "payloadError": "Could not load the artifact payload.",
@@ -3192,6 +3203,41 @@
     "artifactKindPlan": "Plan"
   },
   "readiness": {
+    "flowVerification": "Flow verification",
+    "recordedClear": "Recorded checks clear",
+    "noChecks": "No blocking checks configured",
+    "policyExcluded": "Checks excluded by policy",
+    "unevaluated": "Not yet evaluated",
+    "verificationUnknown": "Verification unavailable",
+    "missingEvidence": "Required evidence {id} has no current result.",
+    "produceEvidence": "Produce or refresh the required evidence before continuing.",
+    "viewGateEvidence": "View gate evidence for {id}",
+    "gateDetails": {
+      "pending": {
+        "reason": "Gate {id} is pending. No result has been recorded.",
+        "nextAction": "Wait for a result."
+      },
+      "running": {
+        "reason": "Gate {id} is still running.",
+        "nextAction": "Wait for the current check to finish."
+      },
+      "skipped": {
+        "reason": "Gate {id} was skipped, so the blocking check is still unresolved.",
+        "nextAction": "Arrange for the check to run before proceeding."
+      },
+      "failed": {
+        "reason": "Gate {id} failed.",
+        "nextAction": "Inspect the failed check before retrying."
+      },
+      "stale": {
+        "reason": "The result for gate {id} is out of date.",
+        "nextAction": "Obtain a fresh result for this run."
+      },
+      "overridden": {
+        "reason": "Gate {id} was overridden. An override supplied the decision.",
+        "nextAction": "Review the recorded decision before proceeding."
+      }
+    },
     "summary": "Readiness",
     "reasons": "Reasons",
     "ready": "Ready",
@@ -6183,6 +6229,7 @@
     }
   },
   "agentActivity": {
+    "allRuns": "All {agent} runs",
     "title": "Agent activity",
     "activeTitle": "Agent executions",
     "noneActive": "No active agent executions",
@@ -6581,6 +6628,7 @@
     "preview": "Bounded preview",
     "previewBytes": "Original size: {bytes} bytes",
     "historyBound": "Some displayed history was unloaded. Scroll to either end to load it again, or jump to latest.",
+    "laterAvailable": "Later messages are available",
     "newerMessages": "Newer messages are available. Choose Jump to latest to read them.",
     "projectionPending": "Conversation is catching up.",
     "attemptChanged": "The node attempt changed. Showing the latest attempt.",

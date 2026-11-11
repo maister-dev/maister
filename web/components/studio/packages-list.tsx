@@ -8,6 +8,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 
+import {
+  studioPackagePath,
+  withPackageInstall,
+} from "@/lib/studio/package-links";
 import { useNewLocalPackage } from "@/components/studio/use-new-local-package";
 import { CreateFlowDialog } from "@/components/studio/create-flow-dialog";
 
@@ -132,7 +136,10 @@ export function PackagesList({
             <li key={group.key}>
               <Link
                 className="flex flex-col gap-2 rounded-[14px] border border-line bg-paper px-5 py-4 transition-colors hover:border-amber"
-                href={`/studio/packages/${encodeURIComponent(group.name)}`}
+                href={withPackageInstall(
+                  studioPackagePath(group.name),
+                  group.versions[0]?.installId,
+                )}
               >
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-[15px] font-semibold text-ink">

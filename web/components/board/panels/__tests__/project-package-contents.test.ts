@@ -37,6 +37,7 @@ describe("ProjectPackageContents", () => {
         contents: [
           {
             packageName: "aif",
+            packageInstallId: "inst-1",
             versionLabel: "aif/v1.0.0",
             flows: [
               {
@@ -63,11 +64,11 @@ describe("ProjectPackageContents", () => {
     );
 
     expect(markup).toContain("contentsTitle");
-    expect(markup).toContain("/studio/packages/aif");
+    expect(markup).toContain("/studio/packages/aif?install=inst-1");
     expect(markup).toContain("/projects/demo/packages/dev");
     // Each flow card also carries the Studio flow URL (right-aligned icon link).
     expect(markup).toContain(
-      'data-studio-href="/studio/packages/aif/flows/dev"',
+      'data-studio-href="/studio/packages/aif/flows/dev?install=inst-1"',
     );
     // Non-zero kinds only, joined " · ".
     expect(markup).toContain("3 countSkills");

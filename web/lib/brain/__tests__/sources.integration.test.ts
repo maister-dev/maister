@@ -42,7 +42,16 @@ async function createFixtureRepo(): Promise<string> {
   await mkdir(join(repo, "docs/api"), { recursive: true });
   await mkdir(join(repo, "docs/guide"), { recursive: true });
   await mkdir(join(repo, "many"), { recursive: true });
-  await mkdir(join(repo, "src"), { recursive: true });
+  await mkdir(join(repo, "src/[slug]"), { recursive: true });
+  await mkdir(join(repo, "src/s"), { recursive: true });
+  await writeFile(
+    join(repo, "src/[slug]/page.tsx"),
+    "export const bracketed = true;\n",
+  );
+  await writeFile(
+    join(repo, "src/s/page.tsx"),
+    "export const ordinary = true;\n",
+  );
   await writeFile(join(repo, "docs/README.md"), "# Brain Docs\n");
   await writeFile(join(repo, "docs/decisions.md"), "# Decisions\n");
   await writeFile(join(repo, "docs/guide/intro.md"), "# Intro\n");
@@ -184,6 +193,24 @@ describe("Project Brain sources (ADR-127)", () => {
       "docs/decisions.md",
       "docs/guide/intro.md",
     ]);
+  });
+
+  it("UX-04A/B selects bracketed Git paths literally and through globs", async () => {
+    const exact = String.raw`src/\[slug\]/page.tsx`;
+    const read = (path: string) =>
+      readBrainSourceContents({ repoPath, ref: "main", path });
+
+    expect((await read(exact)).files.map((file) => file.path)).toEqual([
+      "src/[slug]/page.tsx",
+    ]);
+    expect(
+      (await read("src/*/page.tsx")).files.map((file) => file.path),
+    ).toEqual(["src/[slug]/page.tsx", "src/s/page.tsx"]);
+    expect(
+      (await read(String.raw`src/\[slug\]/*.tsx`)).files.map(
+        (file) => file.path,
+      ),
+    ).toEqual(["src/[slug]/page.tsx"]);
   });
 
   it("allows broad glob sources because source jobs process them in batches", async () => {

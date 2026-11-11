@@ -2,8 +2,8 @@
 // app + the dedicated e2e DB. The fixture (e2e/_seed/seed-e2e.ts →
 // seedM16Fixture, fixtures.json byKey.m16) plants ONE project `e2e-m16`
 // carrying:
-//   • a LAUNCHABLE Backlog task (real on-disk git repo + enabled flow revision)
-//     so the token-authed task-create + run-launch reach a real 201/202; and
+//   • a launchable Flow with a real Git repository for token-auth task creation
+//     and durable launch admission; and
 //   • a review run parked at a `review` human node whose pre_finish declares a
 //     BLOCKING external_check gate seeded `pending` (gate_results) plus a
 //     pending human_review HITL — the supervisor-INDEPENDENT vehicle for the
@@ -13,7 +13,8 @@
 //   1. session-auth token create → one-time secret captured (UI tab also loads);
 //      scoped user token creation → metadata renders in the Integrations table;
 //   2. Bearer task-create → 201 {taskId};
-//   3. Bearer run-launch against the launchable Backlog task → 202 {runId,...};
+//   3. qualify and arm the new task, read launch options, then accept a keyed
+//      Bearer launch and verify its durable receipt;
 //   4. Bearer readiness on the seeded run → external gate pending, NOT ready;
 //   5. Bearer gate-report {status:"passed",commitSha,...} → 200 {gateId,status,artifactId};
 //   6. re-GET readiness → external gate passed, readiness clears (allow-list);
@@ -33,9 +34,8 @@
 //     web/lib/flows/graph/__tests__/external-check-loop.integration.test.ts.
 //     Readiness "ready" (step 6) means evidence no longer blocks review — NOT
 //     that the human-review HITL was approved (the rollup ignores pending HITL).
-//   • Step 3's 202 proves the token-authed launch CONTRACT + preconditions +
-//     supervisor /health; it does NOT prove an ACP session spawned (the stub
-//     answers only /health — session lifecycle is out of e2e scope).
+//   • Step 3 proves token-authenticated admission. The recovered intent may
+//     still await execution capacity under the stub supervisor.
 //   • Step 8 asserts the latest representative governs (readiness stays passed on
 //     the new commit); the stale-prior + append supersede MECHANISM is proven in
 //     external-check-supersede-readiness.integration.test.ts.
@@ -43,18 +43,21 @@
 // Token creation goes through the reliable API path (POST
 // /api/projects/{slug}/tokens, session-auth via the seeded admin storageState)
 // — the secret is shown once and must be captured for the Bearer calls. The
-// run-launch (step 3) reuses the same enabled-flow path the board fixture
-// proves launchable under the stub supervisor (/health ready, no agent spawn),
-// so it lands a real 202; steps 4-8 drive the SEEDED parked-review run + its
-// external_check gate, which need no worktree and no agent.
+// readiness and gate report steps use the separate parked review Run, which
+// needs no worktree or agent.
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { test, expect } from "@playwright/test";
 
+import { withE2EDb } from "./_seed/db";
+
+import { qualificationFixture } from "@/test-support/task-qualification";
+
 type M16Fixture = {
   projectSlug: string;
-  launchTaskId: string;
+  launchFlowId: string;
   flowId: string;
   runId: string;
   hitlRequestId: string;
@@ -82,6 +85,8 @@ test("external-operations API: token → task → launch → readiness gate repo
   request,
 }) => {
   const fx = loadM16Fixture();
+  const tokenSuffix = randomUUID();
+  const userTokenName = `e2e-personal-webhook-${tokenSuffix}`;
 
   // (auth-negative) A garbage Bearer is unauthenticated on an ext route.
   const noAuth = await request.get(`/api/v1/ext/runs/${fx.runId}/readiness`, {
@@ -104,7 +109,7 @@ test("external-operations API: token → task → launch → readiness gate repo
   // secret is returned exactly once — capture it for the Bearer calls.
   const tokenRes = await request.post(
     `/api/projects/${fx.projectSlug}/tokens`,
-    { data: { name: "e2e-m16-ci" } },
+    { data: { name: `e2e-m16-ci-${tokenSuffix}` } },
   );
 
   expect(tokenRes.status()).toBe(201);
@@ -123,7 +128,7 @@ test("external-operations API: token → task → launch → readiness gate repo
     `/api/projects/${fx.projectSlug}/tokens`,
     {
       data: {
-        name: "e2e-personal-webhook",
+        name: userTokenName,
         kind: "user",
         scopes: ["tasks:create"],
       },
@@ -150,7 +155,7 @@ test("external-operations API: token → task → launch → readiness gate repo
       has: page.getByRole("heading", { name: "API tokens", exact: true }),
     })
     .getByRole("row")
-    .filter({ hasText: "e2e-personal-webhook" });
+    .filter({ hasText: userTokenName });
 
   await expect(userTokenRow).toBeVisible();
   await expect(userTokenRow).toContainText("User token");
@@ -188,7 +193,7 @@ test("external-operations API: token → task → launch → readiness gate repo
       data: {
         title: "External task",
         prompt: "Do the external thing.",
-        flowId: fx.flowId,
+        flowId: fx.launchFlowId,
       },
     },
   );
@@ -199,23 +204,69 @@ test("external-operations API: token → task → launch → readiness gate repo
 
   expect(typeof taskBody.taskId).toBe("string");
 
-  // (3) Token-auth run launch against the SEEDED launchable Backlog task (its
-  // enabled flow revision + real on-disk worktree make the launch deterministic
-  // under the stub supervisor — /health ready, no agent spawn). 202 Accepted.
+  // (3) Publish a current human qualification. Arm the fixture without
+  // enqueueing it, so the external request is the producer of the intent.
+  const inputRevision = await withE2EDb(async (pool) => {
+    const { rows } = await pool.query<{ qualification_input_revision: number }>(
+      "SELECT qualification_input_revision FROM tasks WHERE id = $1",
+      [taskBody.taskId],
+    );
+
+    return rows[0]!.qualification_input_revision;
+  });
+  const qualified = await request.post(
+    `/api/projects/${fx.projectSlug}/tasks/${taskBody.taskId}/qualification`,
+    {
+      data: {
+        requestKey: randomUUID(),
+        expectedInputRevision: inputRevision,
+        expectedQualificationRevision: null,
+        qualification: qualificationFixture(),
+        enqueue: false,
+      },
+    },
+  );
+
+  expect(qualified.status(), await qualified.text()).toBe(200);
+  await withE2EDb((pool) =>
+    pool.query(
+      "UPDATE tasks SET launch_intent = 'triage_then_launch', launch_mode = 'auto' WHERE id = $1",
+      [taskBody.taskId],
+    ),
+  );
+  const options = await request.get(
+    `/api/v1/ext/task-launch-intents/options?${new URLSearchParams({ taskId: taskBody.taskId })}`,
+    { headers: auth },
+  );
+
+  expect(options.status(), await options.text()).toBe(200);
+  const { taskRevision, settingsToken } = (await options.json()) as {
+    taskRevision: number;
+    settingsToken: string;
+  };
   const launchRes = await request.post(`/api/v1/ext/runs`, {
-    headers: auth,
-    data: { taskId: fx.launchTaskId },
+    headers: { ...auth, "Idempotency-Key": randomUUID() },
+    data: {
+      taskId: taskBody.taskId,
+      expectedTaskRevision: taskRevision,
+      expectedSettingsToken: settingsToken,
+    },
   });
 
-  expect(launchRes.status()).toBe(202);
+  expect(launchRes.status(), await launchRes.text()).toBe(202);
 
-  const launchBody = (await launchRes.json()) as {
-    runId: string;
-    status: string;
-  };
+  const { intentId } = (await launchRes.json()) as { intentId: string };
+  const receiptPath = `/api/v1/ext/task-launch-intents/${intentId}`;
 
-  expect(typeof launchBody.runId).toBe("string");
-  expect(launchBody.status).toBeTruthy();
+  expect(launchRes.headers().location).toBe(receiptPath);
+  const receipt = await request.get(receiptPath, { headers: auth });
+
+  expect(receipt.status()).toBe(200);
+  expect(await receipt.json()).toMatchObject({
+    intentId,
+    taskId: taskBody.taskId,
+    basis: "automatic",
+  });
 
   // (4) Readiness on the SEEDED review run is BLOCKED while the external gate is
   // pending: the gate appears pending in externalGates[] and readiness is not

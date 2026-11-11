@@ -413,6 +413,22 @@ non-executable by default. If a later product slice needs `enabled=true`
 visibility, projection must first gain a trust gate and its tests/docs must move
 with it.
 
+### Source selector and tracked path (Implemented)
+
+Source registration uses the authorized project's repository and main branch.
+An ordinary repo-relative path selects one tracked file. Escape literal glob
+metacharacters with a backslash, such as `web/app/\[slug\]/page.tsx`. An
+unescaped glob operator keeps the selector in glob mode, including expressions
+with escaped segments. The saved selector and a resolved Git path are distinct.
+After expansion each match goes to the literal blob reader. Enabled exact
+peers of the same project and kind exclude their decoded paths from a glob.
+
+Invalid input returns 422 CONFIG. Missing sources or a selector with no tracked
+match returns 404 PRECONDITION. Source and path bounds, binary and size checks,
+and existing job error reporting apply. A failed blob produces the existing
+explicit source failure. An all-excluded glob remains distinct from no tracked
+match (UX-04A–C).
+
 ## Expectations
 
 *(E-n pin the spec §13 numbering, top-to-bottom. The B/C guarantees below are

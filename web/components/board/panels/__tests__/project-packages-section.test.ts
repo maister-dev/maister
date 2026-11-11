@@ -98,7 +98,7 @@ describe("ProjectPackagesSection", () => {
 
     expect(markup).toContain("attachmentsTitle");
     expect(markup).toContain("updateAvailable");
-    expect(markup).toContain("/studio/packages/aif");
+    expect(markup).toContain("/studio/packages/aif?install=inst-1");
     expect(markup).not.toContain("package-installs");
     // Upgrade target comes from the DTO (a newer install); trust shown for untrusted.
     expect(markup).toContain("aif/v2.0.0");

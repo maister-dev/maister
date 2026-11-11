@@ -30,11 +30,7 @@ import {
   type PackageFileViewLabels,
   type PackageViewerHeaderLabels,
 } from "@/components/flows/package-viewer";
-import {
-  getProjectRole,
-  getSessionUser,
-  requireProjectAction,
-} from "@/lib/authz";
+import { getSessionUser, requireProjectAction } from "@/lib/authz";
 import { isMaisterError } from "@/lib/errors";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { buildFlowNodeTooltipsFromManifest } from "@/lib/flows/graph/node-tooltips";
@@ -48,8 +44,15 @@ import {
 } from "@/lib/flows/graph/presentation-layout";
 import { buildGraphTopology } from "@/lib/queries/flow-graph-view";
 import { getFlowPackageDetail } from "@/lib/queries/flow-packages";
-import { getProjectPackageAttachments } from "@/lib/queries/packages";
-import { getFlowRunnerBindingScope } from "@/lib/queries/project";
+import { getStudioInstallForFlowRevision } from "@/lib/queries/packages";
+import {
+  studioPackagePath,
+  withPackageInstall,
+} from "@/lib/studio/package-links";
+import {
+  getFlowRunnerBindingScope,
+  getProjectBySlug,
+} from "@/lib/queries/project";
 
 interface PageProps {
   params: Promise<{ slug: string; flowRefId: string }>;
@@ -138,50 +141,47 @@ export default async function FlowPackageViewerPage({
 }: PageProps): Promise<ReactElement> {
   const { slug, flowRefId } = await params;
   const { rev: rawRev, file: rawFile } = await searchParams;
+  const requestedRev = firstParam(rawRev);
 
   const user = await getSessionUser();
 
   if (!user) notFound();
 
+  const project = await getProjectBySlug(slug);
+
+  if (!project) notFound();
+
+  // Check project access before resolving the revision or reading any files.
+  const { role } = await requireProjectAction(
+    project.id,
+    "readRepoFiles",
+  ).catch((error: unknown) => {
+    if (
+      isMaisterError(error) &&
+      (error.code === "UNAUTHORIZED" ||
+        error.code === "UNAUTHENTICATED" ||
+        error.code === "ACCOUNT_INACTIVE" ||
+        error.code === "PASSWORD_CHANGE_REQUIRED")
+    ) {
+      notFound();
+    }
+    throw error;
+  });
+
   const detail: FlowPackageDetail | null = await getFlowPackageDetail(
     slug,
     flowRefId,
+    { projectId: project.id, historicalRevisionId: requestedRev },
   );
 
   if (!detail) notFound();
 
-  // `readRepoFiles` (member) gates every disk read (§4.1, §6.5). The authz call
-  // is the boundary; map a denial to notFound() so existence stays hidden from
-  // under-privileged users (board/observatory convention).
-  try {
-    await requireProjectAction(detail.project.id, "readRepoFiles");
-  } catch (err) {
-    // requireProjectAction → requireActiveSession can throw the session-state
-    // codes too; map every authz denial to notFound() rather than a 500.
-    if (
-      isMaisterError(err) &&
-      (err.code === "UNAUTHORIZED" ||
-        err.code === "UNAUTHENTICATED" ||
-        err.code === "ACCOUNT_INACTIVE" ||
-        err.code === "PASSWORD_CHANGE_REQUIRED")
-    ) {
-      notFound();
-    }
-    throw err;
-  }
-
   // Fork slot (T2.3) is gated on manageCatalog; the route, not this flag, is the
   // real boundary. Global admins are implicit owners.
-  const role =
-    user.role === "admin"
-      ? "owner"
-      : await getProjectRole(user.id, detail.project.id);
   const canManageCatalog = role === "owner" || role === "admin";
 
-  // Revision selection: `?rev=<id>` must belong to THIS flow+project (the query
-  // already source-scoped the list); a foreign/unknown id → notFound. Default =
-  // the flow's enabled revision, else the most-recently-installed.
-  const requestedRev = firstParam(rawRev);
+  // An explicit different-source revision needs a matching Run pin. The
+  // default still uses the enabled revision or most recent current-source one.
   let revision: FlowRevisionDetail | undefined;
 
   if (requestedRev) {
@@ -194,6 +194,8 @@ export default async function FlowPackageViewerPage({
   }
 
   if (!revision) notFound();
+
+  const canManageCurrentSource = canManageCatalog && !revision.historicalOnly;
 
   const t = await getTranslations("packages");
   const tViewer = await getTranslations("packages.viewer");
@@ -268,19 +270,22 @@ export default async function FlowPackageViewerPage({
   // Admin/owner-only (binding is an `editSettings` action).
   const enabledRevisionId = detail.flow.enabledRevisionId ?? null;
   const bindingScope =
-    canManageCatalog && enabledRevisionId && revision.incompatibility === null
+    canManageCurrentSource &&
+    enabledRevisionId &&
+    revision.incompatibility === null
       ? await getFlowRunnerBindingScope(detail.project.id, enabledRevisionId)
       : null;
 
-  // The package that owns this flow (its name is the Studio package ref), used
-  // to deep-link into the Studio flow viewer. Resolved from the project's
-  // attachments by which package's manifest declares this flow id.
-  const attachments = await getProjectPackageAttachments(detail.project.id);
-  const studioPackageName =
-    attachments.find((att) => att.flows.includes(flowRefId))?.packageName ??
-    null;
-  const studioFlowHref = studioPackageName
-    ? `/studio/packages/${encodeURIComponent(studioPackageName)}/flows/${encodeURIComponent(flowRefId)}`
+  const studioInstall = await getStudioInstallForFlowRevision(
+    detail.project.id,
+    flowRefId,
+    revision,
+  );
+  const studioFlowHref = studioInstall
+    ? withPackageInstall(
+        studioPackagePath(studioInstall.name, "flows", flowRefId),
+        studioInstall.id,
+      )
     : null;
 
   return (
@@ -301,7 +306,11 @@ export default async function FlowPackageViewerPage({
             {tStudio("openInStudio")}
             <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
           </Link>
-        ) : null}
+        ) : (
+          <span className="text-sm text-mute">
+            {tStudio("packageProvenanceUnavailable")}
+          </span>
+        )}
       </div>
 
       <PackageViewerHeader
@@ -446,7 +455,7 @@ export default async function FlowPackageViewerPage({
             </div>
           ) : null}
 
-          {canManageCatalog ? (
+          {canManageCurrentSource ? (
             <section
               className="rounded-xl border border-amber-line bg-amber-soft p-4"
               data-testid="package-fork-slot"

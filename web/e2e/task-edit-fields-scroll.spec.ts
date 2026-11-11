@@ -63,3 +63,92 @@ test("edit-task Properties panel scrolls and the Save button is reachable on a s
 
   await expect(saveButton).toBeInViewport();
 });
+
+test("UX-02A/B New task traps focus and retains the draft after failure", async ({
+  page,
+}) => {
+  const { projectSlug } = loadFixtures().byKey.board;
+  const url = `/api/projects/${projectSlug}/tasks`;
+  const title = `Modal task ${Date.now()}`;
+
+  await page.setViewportSize({ width: 390, height: 540 });
+  await page.goto(`/projects/${projectSlug}`);
+  const opener = page.getByRole("button", { name: "New task", exact: true });
+
+  await opener.press("Enter");
+
+  const dialog = page.getByRole("dialog", { name: /new task|create task/i });
+  const titleInput = dialog.getByRole("textbox").first();
+  const prompt = dialog.getByRole("textbox").nth(1);
+  const submit = dialog.getByRole("button", { name: "Create task" });
+
+  await expect(titleInput).toBeFocused();
+  await expect(dialog).toHaveAttribute("aria-modal", "true");
+  await expect
+    .poll(() =>
+      page
+        .getByRole("button", {
+          name: "New task",
+          exact: true,
+          includeHidden: true,
+        })
+        .evaluate((element) =>
+          Boolean(element.closest('[inert], [aria-hidden="true"]')),
+        ),
+    )
+    .toBe(true);
+  await expect(page.locator("html")).toHaveCSS("overflow", "hidden");
+  await expect(submit).toBeDisabled();
+  await titleInput.fill(title);
+  await prompt.fill("Describe the requested change.");
+  await expect(submit).toBeInViewport();
+  await expect(
+    dialog
+      .locator('[data-slot="modal-footer"]')
+      .getByRole("button", { name: "Cancel" }),
+  ).toBeInViewport();
+  for (const key of ["Shift+Tab", "Shift+Tab", "Tab", "Tab", "Tab", "Tab"]) {
+    await page.keyboard.press(key);
+    await expect(dialog.locator(":focus")).toHaveCount(1);
+  }
+  await page.keyboard.press("Escape");
+  await expect(opener).toBeFocused();
+  await opener.click();
+  await expect(titleInput).toHaveValue(title);
+  const releaseFailure = Promise.withResolvers<void>();
+  const posted = page.waitForRequest(
+    (request) => request.url().endsWith(url) && request.method() === "POST",
+  );
+
+  await page.route(
+    url,
+    async (route) => {
+      await releaseFailure.promise;
+      await route.fulfill({
+        status: 503,
+        json: { code: "EXECUTOR_UNAVAILABLE" },
+      });
+    },
+    { times: 1 },
+  );
+  try {
+    await submit.press("Enter");
+    await posted;
+    await expect(submit).toBeDisabled();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeVisible();
+  } finally {
+    releaseFailure.resolve();
+  }
+  await expect(dialog.getByRole("alert")).toBeVisible();
+  await expect(prompt).toHaveValue("Describe the requested change.");
+  const created = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(url) && response.request().method() === "POST",
+  );
+
+  await submit.press("Enter");
+  expect((await created).status()).toBe(201);
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByText(title, { exact: true }).first()).toBeVisible();
+});

@@ -16,7 +16,9 @@ import {
   blockingGateContribution,
   collapseLatestExternalPerGate,
   liveBlockingGates,
+  isEffectivelyBlockingGate,
   rollupReadiness,
+  type ReadinessContribution,
 } from "@/lib/flows/graph/readiness-core";
 import { checksFromSnapshot } from "@/lib/runs/execution-policy";
 
@@ -99,16 +101,83 @@ export type ReadinessDTO = {
   reasons: string[];
 };
 
+export type FlowVerificationState =
+  ReadinessDTO["readiness"] | "none" | "excluded" | "unevaluated" | "unknown";
+export type FlowVerificationReason =
+  | { id: string; kind: "artifact"; state: "blocked" }
+  | {
+      id: string;
+      kind: "gate";
+      rowId: string;
+      state: Exclude<ReadinessContribution, "clear">;
+      status: Exclude<GateResultStatus, "passed">;
+    };
+
 export async function getRunReadiness(
   runId: string,
   projectId: string,
   db?: Db,
 ): Promise<ReadinessDTO | null> {
+  return (await readRunReadiness(runId, projectId, db))?.rollup ?? null;
+}
+
+export async function getFlowRunVerification(
+  runId: string,
+  projectId: string,
+  db?: Db,
+): Promise<{
+  rollup: ReadinessDTO;
+  state: FlowVerificationState;
+  reasons: FlowVerificationReason[];
+} | null> {
+  const d = db ?? getDb();
+  const evidence = await readRunReadiness(runId, projectId, d);
+
+  if (!evidence) return null;
+
+  const { rollup, reasons } = evidence;
+
+  if (rollup.readiness !== "ready" || evidence.hasEvaluations)
+    return { rollup, state: rollup.readiness, reasons };
+
+  const manifest = evidence.binding.flowRevisionId
+    ? await resolveManifest(d, evidence.binding)
+    : null;
+
+  if (!manifest) return { rollup, state: "unknown", reasons };
+
+  const gates = manifest.nodes.flatMap((node) => node.pre_finish?.gates ?? []);
+  const hasRequiredEvidence = manifest.nodes.some(
+    (node) =>
+      node.type === "consensus" ||
+      node.output?.produces?.some(
+        (output) => (output.requiredFor?.length ?? 0) > 0,
+      ),
+  );
+  const hasBlockingGate = gates.some((gate) =>
+    isEffectivelyBlockingGate(evidence.checks, gate.kind, gate.mode),
+  );
+  const state =
+    hasBlockingGate || hasRequiredEvidence
+      ? "unevaluated"
+      : gates.some((gate) => gate.mode === "blocking")
+        ? "excluded"
+        : "none";
+
+  return { rollup, state, reasons };
+}
+
+async function readRunReadiness(runId: string, projectId: string, db?: Db) {
   const d = db ?? getDb();
 
   // Confirm the run exists and belongs to the project.
   const runRows = await d
-    .select({ id: runs.id, executionPolicy: runs.executionPolicy })
+    .select({
+      id: runs.id,
+      executionPolicy: runs.executionPolicy,
+      flowRevisionId: runs.flowRevisionId,
+      flowId: runs.flowId,
+    })
     .from(runs)
     .where(and(eq(runs.id, runId), eq(runs.projectId, projectId)));
 
@@ -269,6 +338,7 @@ export async function getRunReadiness(
 
   // Deterministic rollup via shared SSOT (readiness-core).
   const reasons: string[] = [];
+  const displayReasons: FlowVerificationReason[] = [];
 
   // A required artifact contributes "blocked" when it has no current row
   // (missing or stale-only). The "stale" readiness state comes from a
@@ -278,15 +348,26 @@ export async function getRunReadiness(
   const missingArtifacts = requiredArtifactsResult.filter((a) => !a.present);
 
   for (const a of missingArtifacts) {
+    displayReasons.push({ id: a.defId, kind: "artifact", state: "blocked" });
     reasons.push(`required artifact "${a.defId}" has no current row`);
   }
 
   // Gate contributions: map each blocking gate via blockingGateContribution
   // (the shared SSOT, incl. the failed artifact_required re-eval).
-  for (const g of blockingGates) {
-    const contribution = blockingGateContribution(g, currentDefIds);
+  const evaluatedGates = blockingGates.map((gate) => ({
+    gate,
+    contribution: blockingGateContribution(gate, currentDefIds),
+  }));
 
-    if (contribution === "clear") continue;
+  for (const { gate: g, contribution } of evaluatedGates) {
+    if (contribution === "clear" || g.status === "passed") continue;
+    displayReasons.push({
+      id: g.gateId,
+      kind: "gate",
+      rowId: g.id,
+      state: contribution,
+      status: g.status,
+    });
 
     switch (contribution) {
       case "failed":
@@ -311,18 +392,26 @@ export async function getRunReadiness(
 
   // Artifact contributions: missing current row → "blocked".
   const artifactContributions = missingArtifacts.map(() => "blocked" as const);
-  const gateContributions = blockingGates.map((g) =>
-    blockingGateContribution(g, currentDefIds),
-  );
   const readiness = rollupReadiness([
     ...artifactContributions,
-    ...gateContributions,
+    ...evaluatedGates.map(({ contribution }) => contribution),
   ]);
 
   return {
-    readiness,
-    externalGates,
-    requiredArtifacts: requiredArtifactsResult,
-    reasons,
+    rollup: {
+      readiness,
+      externalGates,
+      requiredArtifacts: requiredArtifactsResult,
+      reasons,
+    },
+    hasEvaluations:
+      blockingGates.length > 0 ||
+      requiredArtifactsResult.some((artifact) => artifact.present),
+    reasons: displayReasons,
+    binding: runRows[0] as {
+      flowRevisionId: string | null;
+      flowId: string | null;
+    },
+    checks,
   };
 }

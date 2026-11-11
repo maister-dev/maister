@@ -72,6 +72,7 @@ export async function buildEvidenceGraph(
   const artifactRows = await client
     .select({
       id: artifactInstances.id,
+      defId: artifactInstances.artifactDefId,
       nodeAttemptId: artifactInstances.nodeAttemptId,
       kind: artifactInstances.kind,
       validity: artifactInstances.validity,
@@ -124,7 +125,7 @@ export async function buildEvidenceGraph(
       kind: "artifact",
       label: art.kind,
       state: art.validity,
-      meta: { kind: art.kind, artifactId: art.id },
+      meta: { kind: art.kind, artifactId: art.id, defId: art.defId },
     });
   }
 

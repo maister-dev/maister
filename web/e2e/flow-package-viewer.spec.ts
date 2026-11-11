@@ -13,10 +13,14 @@
 //       flow.yaml visible, and clicking a file in the list shows its content.
 //   → CLICK Fork → assert navigation to /flows/{projectSlug}/{capId} (editor)
 //   → in the editor, Save the draft → assert it persists across a reload.
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { test, expect, type Page } from "@playwright/test";
+
+import { withE2EDb } from "./_seed/db";
+import { loadFixtures } from "./_seed/fixtures";
 
 type FlowViewerFixture = {
   projectSlug: string;
@@ -34,6 +38,158 @@ function loadFixture(): FlowViewerFixture {
 
   return all.byKey.flowViewer;
 }
+
+for (const denied of ["inactive", "password-reset"] as const) {
+  test(`Studio package navigation denies an existing ${denied} session`, async ({
+    browser,
+    baseURL,
+  }) => {
+    const { flowRefId } = loadFixture();
+    const template = loadFixtures().users.memberCandidate;
+    const userId = randomUUID();
+    const email = `studio-package-${userId}@example.test`;
+    const packagePath = `/studio/packages/${flowRefId}`;
+
+    await withE2EDb(async (pool) => {
+      const created = await pool.query(
+        `INSERT INTO users (id, name, email, password_hash, role, account_status, must_change_password)
+         SELECT $1, 'Studio Package Visitor', $2, password_hash, 'viewer', 'active', false
+           FROM users WHERE id = $3`,
+        [userId, email, template.id],
+      );
+
+      expect(created.rowCount).toBe(1);
+    });
+    const context = await browser.newContext({
+      baseURL,
+      storageState: { cookies: [], origins: [] },
+    });
+
+    try {
+      const page = await context.newPage();
+
+      await page.goto("/login");
+      await page.locator('input[name="email"]').fill(email);
+      await page.locator('input[name="password"]').fill(template.password);
+      await page.locator('form button[type="submit"]').click();
+      await page.waitForURL((url) => !url.pathname.startsWith("/login"));
+      await page.route(
+        (url) => url.pathname === packagePath,
+        (route) =>
+          route.request().headers()["next-router-prefetch"] === "1"
+            ? route.abort()
+            : route.continue(),
+      );
+      await page.goto("/studio/packages");
+      const packageLink = page.locator(`a[href^="${packagePath}?install="]`);
+
+      await expect(packageLink).toBeVisible();
+      await withE2EDb((pool) =>
+        pool.query(
+          "UPDATE users SET account_status = $2, must_change_password = $3 WHERE id = $1",
+          [
+            userId,
+            denied === "inactive" ? "disabled" : "active",
+            denied === "password-reset",
+          ],
+        ),
+      );
+      const navigation = page.waitForRequest(
+        (request) =>
+          new URL(request.url()).pathname === packagePath &&
+          request.headers().rsc === "1",
+      );
+
+      await packageLink.click();
+      await navigation;
+      if (denied === "password-reset") {
+        await expect(page).toHaveURL(/\/change-password$/);
+      } else {
+        await expect(
+          page.locator('meta[name="robots"][content="noindex"]'),
+        ).toHaveCount(1);
+      }
+      await expect(page.getByTestId("package-bom")).toHaveCount(0);
+    } finally {
+      await context.close();
+      await withE2EDb((pool) =>
+        pool.query("DELETE FROM users WHERE id = $1", [userId]),
+      );
+    }
+  });
+}
+
+test("UX-01D Run and explicit viewer links retain the old Flow revision after enablement moves", async ({
+  page,
+}) => {
+  const fx = loadFixture();
+  const newRevision = randomUUID();
+  const run = randomUUID();
+  const manifest = {
+    schemaVersion: 1,
+    name: "Newly enabled manifest",
+    nodes: [
+      {
+        id: "replacement",
+        type: "cli",
+        action: { command: "true" },
+        transitions: { success: "done" },
+      },
+    ],
+  };
+  const path = `/projects/${fx.projectSlug}/packages/${fx.flowRefId}`;
+
+  await withE2EDb(async (pool) => {
+    await pool.query(
+      "INSERT INTO flow_revisions(id,flow_ref_id,source,version_label,resolved_revision,manifest_digest,manifest,schema_version,installed_path,setup_status,package_status) SELECT $1,flow_ref_id,source,'v2-fixture',$2,$2,$3,1,installed_path,setup_status,'Installed' FROM flow_revisions WHERE id=$4",
+      [newRevision, newRevision.replaceAll("-", ""), manifest, fx.revisionId],
+    );
+    await pool.query(
+      "INSERT INTO runs(id,project_id,flow_id,run_kind,status,flow_version,flow_revision_id) SELECT $1,project_id,id,'flow','Done',version,enabled_revision_id FROM flows WHERE enabled_revision_id=$2",
+      [run, fx.revisionId],
+    );
+    await pool.query(
+      "UPDATE flows SET enabled_revision_id=$1, manifest=$2 WHERE enabled_revision_id=$3",
+      [newRevision, manifest, fx.revisionId],
+    );
+  });
+  try {
+    await page.goto(path);
+    await expect(
+      page.locator('.react-flow__node[data-id="replacement"]'),
+    ).toBeVisible();
+    await page.goto(`${path}?rev=${fx.revisionId}`);
+    await expect(
+      page.locator(`.react-flow__node[data-id="${fx.implementNode}"]`),
+    ).toBeVisible();
+    await expect(
+      page.getByText("This revision is unavailable in Studio."),
+    ).toBeVisible();
+    await expect(page.getByTestId("open-flow-in-studio")).toHaveCount(0);
+    const graph = await page.request.get(`/api/runs/${run}/graph`);
+
+    expect(graph.ok(), await graph.text()).toBe(true);
+    const result = (await graph.json()) as {
+      topology: { nodes: { id: string }[] };
+    };
+
+    expect(result.topology.nodes.map((node) => node.id)).toContain(
+      fx.implementNode,
+    );
+    expect(result.topology.nodes.map((node) => node.id)).not.toContain(
+      "replacement",
+    );
+  } finally {
+    await withE2EDb(async (pool) => {
+      await pool.query("DELETE FROM runs WHERE id=$1", [run]);
+      await pool.query(
+        "UPDATE flows SET enabled_revision_id=$1, manifest=(SELECT manifest FROM flow_revisions WHERE id=$1) WHERE enabled_revision_id=$2",
+        [fx.revisionId, newRevision],
+      );
+      await pool.query("DELETE FROM flow_revisions WHERE id=$1", [newRevision]);
+    });
+  }
+});
 
 // Replace the whole CodeMirror buffer with `text` (the editor owns the DOM, so
 // drive the real contenteditable).

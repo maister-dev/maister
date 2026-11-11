@@ -2508,6 +2508,17 @@ async function seedM12EvidenceFixture(
     ],
   ];
 
+  for (const ordinal of [1, 2, 3]) {
+    artifacts.push([
+      randomUUID(),
+      ids.checksAttempt,
+      "checks",
+      `viewport-note-${ordinal}`,
+      "human_note",
+      { kind: "inline", text: `Viewport note ${ordinal}` },
+    ]);
+  }
+
   for (const [
     id,
     nodeAttemptId,
@@ -4293,7 +4304,7 @@ async function seedM15Fixture(
 }
 
 type M16FixtureRecord = ProjectFixture & {
-  launchTaskId: string;
+  launchFlowId: string;
   runId: string;
   hitlRequestId: string;
   gateId: string;
@@ -4415,7 +4426,7 @@ async function seedM16Fixture(
 
   return {
     ...base,
-    launchTaskId: base.taskId as string,
+    launchFlowId: base.flowId,
     flowId: ids.flow,
     runId: ids.run,
     hitlRequestId: ids.hitl,

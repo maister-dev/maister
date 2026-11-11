@@ -6,6 +6,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
+import { withPackageInstall } from "@/lib/studio/package-links";
 import { apiErrorText, readApiErrorBody } from "@/lib/api-error";
 
 // Forks an installed package into a fresh local package, then opens the editor —
@@ -20,9 +21,11 @@ import { apiErrorText, readApiErrorBody } from "@/lib/api-error";
 // existing fork, or make a fresh copy (`forceNew`).
 export function ForkToEditButton({
   refName,
+  installId,
   targetPath,
 }: {
   refName: string;
+  installId?: string;
   targetPath?: string;
 }): ReactElement {
   const t = useTranslations("studio");
@@ -40,7 +43,10 @@ export function ForkToEditButton({
 
     try {
       const res = await fetch(
-        `/api/studio/packages/${encodeURIComponent(refName)}/fork`,
+        withPackageInstall(
+          `/api/studio/packages/${encodeURIComponent(refName)}/fork`,
+          installId,
+        ),
         forceNew
           ? {
               method: "POST",

@@ -24,6 +24,8 @@ import path from "node:path";
 
 import { test, expect } from "@playwright/test";
 
+import { withE2EDb } from "./_seed/db";
+
 type M18Fixture = {
   projectSlug: string;
   repoPath: string;
@@ -51,6 +53,36 @@ test("merge scenario — ReviewPanel shows the diff and promotes (local_merge) t
   page,
 }) => {
   const fx = loadFixture();
+  const original = await withE2EDb(async (pool) => {
+    const {
+      rows: [row],
+    } = await pool.query<{ flow_id: string; flow_revision_id: string | null }>(
+      "SELECT flow_id, flow_revision_id FROM runs WHERE id=$1",
+      [fx.mergeRunId],
+    );
+
+    await pool.query(
+      "UPDATE runs SET run_kind='agent',agent_kind='code_delivery',agent_workspace='worktree',flow_id=NULL,flow_revision_id=NULL WHERE id=$1",
+      [fx.mergeRunId],
+    );
+
+    return row;
+  });
+
+  try {
+    await page.goto(`/runs/${fx.mergeRunId}`);
+    await expect(
+      page.getByTestId("run-header-promote").filter({ visible: true }),
+    ).toBeEnabled();
+    await expect(page.getByTestId("flow-verification")).toHaveCount(0);
+  } finally {
+    await withE2EDb((pool) =>
+      pool.query(
+        "UPDATE runs SET run_kind='flow',agent_kind=NULL,agent_workspace=NULL,flow_id=$2,flow_revision_id=$3 WHERE id=$1",
+        [fx.mergeRunId, original.flow_id, original.flow_revision_id],
+      ),
+    );
+  }
 
   await page.goto(`/runs/${fx.mergeRunId}`);
 
@@ -101,7 +133,9 @@ test("merge scenario — ReviewPanel shows the diff and promotes (local_merge) t
   // hover-only `status-tooltip` span per sibling run, so a text match resolves
   // a hidden element (or another run's status) instead of this run's badge.
   await page.goto(`/runs/${fx.mergeRunId}`);
-  await expect(page.getByTestId("run-header-status")).toHaveText("Done");
+  await expect(
+    page.getByTestId("run-header-status").filter({ visible: true }),
+  ).toHaveText("Run: Done");
 });
 
 test("conflict scenario — a failed local_merge surfaces the conflict/assignment card", async ({
@@ -147,7 +181,9 @@ test("conflict scenario — a failed local_merge surfaces the conflict/assignmen
   // The run did NOT advance to Done — read THIS run's badge rather than
   // counting page-wide "Done" text, which the shared active-workspaces rail
   // supplies for sibling runs.
-  await expect(page.getByTestId("run-header-status")).toHaveText("Review");
+  await expect(
+    page.getByTestId("run-header-status").filter({ visible: true }),
+  ).toHaveText("Run: Review");
 });
 
 test("pr scenario — pull_request promotion mode renders the pre-seeded PR link (display only)", async ({
@@ -159,8 +195,11 @@ test("pr scenario — pull_request promotion mode renders the pre-seeded PR link
 
   // The PR-mode run carries a pre-seeded pr_url/pr_number; the panel renders the
   // PR link / `PR #N`. No promote exec is performed in CI.
-  await expect(
-    page.getByText(`#${fx.prNumber}`, { exact: false }).first(),
-  ).toBeVisible();
-  await expect(page.locator(`a[href="${fx.prUrl}"]`)).toBeVisible();
+  const review = page.getByTestId("review-panel").filter({ visible: true });
+  const link = review.getByRole("link", {
+    name: `Pull request #${fx.prNumber}`,
+  });
+
+  await expect(link).toBeVisible();
+  await expect(link).toHaveAttribute("href", fx.prUrl);
 });

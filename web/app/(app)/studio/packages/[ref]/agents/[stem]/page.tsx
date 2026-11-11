@@ -10,21 +10,27 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 
 import { AgentView } from "@/components/studio/agent-view";
-import { requireSession } from "@/lib/authz";
 import { parseAgentDefinition } from "@/lib/agents/definition";
 import { splitFrontmatter } from "@/lib/flows/artifact-frontmatter";
 import { readInstalledPackageFile } from "@/lib/flows/package-content";
 import { getStudioPackageInstalledPath } from "@/lib/studio/package-path";
-import { resolveStudioPackageByRef } from "@/lib/studio/load";
+import { loadStudioPackagePage } from "@/components/studio/package-selection";
+import {
+  studioPackagePath,
+  withPackageInstall,
+} from "@/lib/studio/package-links";
 
-type PageProps = { params: Promise<{ ref: string; stem: string }> };
+type PageProps = {
+  params: Promise<{ ref: string; stem: string }>;
+  searchParams: Promise<{ install?: string | string[] }>;
+};
 
 export async function generateMetadata({
   params,
-}: PageProps): Promise<Metadata> {
+}: Pick<PageProps, "params">): Promise<Metadata> {
   const { stem } = await params;
 
-  return { title: decodeURIComponent(stem) };
+  return { title: stem };
 }
 
 function capitalize(value: string): string {
@@ -48,19 +54,21 @@ function lenientNameDescription(
 
 export default async function StudioAgentDetailPage({
   params,
+  searchParams,
 }: PageProps): Promise<ReactElement> {
   const { ref, stem: rawStem } = await params;
-  const decodedRef = decodeURIComponent(ref);
-  const stem = decodeURIComponent(rawStem);
+  const decodedRef = ref;
+  const stem = rawStem;
 
-  const user = await requireSession();
-  const resolution = await resolveStudioPackageByRef(
-    user.id,
-    user.role,
-    decodedRef,
+  const selected = await loadStudioPackagePage(
+    ref,
+    ["agents", stem],
+    await searchParams,
   );
 
-  if (resolution.status !== "ok") notFound();
+  if (selected.kind === "choice") return selected.chooser;
+
+  const { resolution } = selected;
 
   const installedPath = await getStudioPackageInstalledPath(
     resolution.installId,
@@ -69,7 +77,11 @@ export default async function StudioAgentDetailPage({
   if (!installedPath) notFound();
 
   const tViewer = await getTranslations("studio.viewer");
-  const packageHref = `/studio/packages/${encodeURIComponent(decodedRef)}?tab=agents`;
+  const packageHref = withPackageInstall(
+    studioPackagePath(ref),
+    resolution.installId,
+    { tab: "agents" },
+  );
 
   // Platform-agents live at the package root `maister-agents/<stem>.md`.
   const read = await readInstalledPackageFile(

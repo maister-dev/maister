@@ -395,6 +395,16 @@ flowchart TD
     Review --> Regate["getOpenRelationBlockers sees counterpart in InFlight, dependents re-gate as blocked"]
 ```
 
+### New task modal (Implemented)
+
+The board opens a named modal with initial Title focus, background isolation
+and contained Tab navigation. Idle dismissal restores the opener and keeps
+the in-session draft. During submission the dialog prevents repeated submit
+and dismissal. Validation or request failure leaves inputs available with an
+accessible error. Success clears the draft and refreshes the board. A bounded
+scrollable body keeps both HeroUI actions reachable. The opener uses the shared
+Heroicons add affordance (UX-02A–B).
+
 ## Expectations
 
 - Task ↔ Run cardinality is 1:N; a task can spawn many runs over its

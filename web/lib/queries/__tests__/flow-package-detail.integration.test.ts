@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { pathToFileURL } from "node:url";
 
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -20,8 +21,10 @@ vi.mock("@/lib/db/client", () => ({
 }));
 
 let getFlowPackageDetail: typeof import("@/lib/queries/flow-packages").getFlowPackageDetail;
+let getStudioInstallForFlowRevision: typeof import("@/lib/queries/packages").getStudioInstallForFlowRevision;
 
 const PROJECT_ID = randomUUID();
+const FLOW_ID = randomUUID();
 const REVISION_ID = randomUUID();
 const LEGACY_REVISION_ID = randomUUID();
 const MANIFEST = {
@@ -44,6 +47,8 @@ beforeAll(async () => {
   db = testDatabase.db;
 
   ({ getFlowPackageDetail } = await import("@/lib/queries/flow-packages"));
+  ({ getStudioInstallForFlowRevision } =
+    await import("@/lib/queries/packages"));
 
   await db.insert(schema.projects).values({
     id: PROJECT_ID,
@@ -87,7 +92,7 @@ beforeAll(async () => {
   });
 
   await db.insert(schema.flows).values({
-    id: randomUUID(),
+    id: FLOW_ID,
     projectId: PROJECT_ID,
     flowRefId: "aif-dev",
     source: "file:///tmp/pkg/flows/dev",
@@ -129,5 +134,143 @@ describe("getFlowPackageDetail (integration)", () => {
     });
     expect(legacy).not.toHaveProperty("manifest");
     expect(legacy).not.toHaveProperty("installedPath");
+  });
+
+  it("opens a different-source revision only when the project and Flow row have a matching Run pin", async () => {
+    const foreignProjectId = randomUUID();
+    const foreignFlowId = randomUUID();
+    const historicalRevisionId = randomUUID();
+    const historicalSource = "file:///tmp/old-bundle/flows/dev";
+    const resolvedRevision = randomUUID().replaceAll("-", "");
+
+    await db.insert(schema.projects).values({
+      id: foreignProjectId,
+      taskKey: "TFOREIGNFLOW",
+      slug: "flow-link-foreign",
+      name: "Foreign Flow",
+      repoPath: "/tmp/flow-link-foreign-repo",
+      maisterYamlPath: "/tmp/flow-link-foreign-repo/maister.yaml",
+    });
+    await db.insert(schema.flowRevisions).values({
+      id: historicalRevisionId,
+      flowRefId: "aif-dev",
+      source: historicalSource,
+      versionLabel: "aif-v1.5.0",
+      resolvedRevision,
+      manifestDigest: "historical-digest",
+      manifest: MANIFEST,
+      schemaVersion: 1,
+      installedPath: "/tmp/old-bundle/flows/dev",
+      setupStatus: "not_required",
+      packageStatus: "Installed",
+      execTrust: "trusted",
+    });
+    await db.insert(schema.flows).values({
+      id: foreignFlowId,
+      projectId: foreignProjectId,
+      flowRefId: "aif-dev",
+      source: historicalSource,
+      version: "aif-v1.5.0",
+      installedPath: "/tmp/old-bundle/flows/dev",
+      manifest: MANIFEST,
+      schemaVersion: 1,
+      enabledRevisionId: historicalRevisionId,
+    });
+
+    async function retainRun(projectId: string, flowId: string): Promise<void> {
+      await db.insert(schema.runs).values({
+        id: randomUUID(),
+        projectId,
+        flowId,
+        runKind: "flow",
+        status: "Done",
+        flowVersion: "aif-v1.5.0",
+        flowRevision: resolvedRevision,
+        flowRevisionId: historicalRevisionId,
+      });
+    }
+
+    const historicalSelection = { projectId: PROJECT_ID, historicalRevisionId };
+
+    await retainRun(foreignProjectId, foreignFlowId);
+    const foreignOnly = await getFlowPackageDetail(
+      "flow-link-fix",
+      "aif-dev",
+      historicalSelection,
+    );
+
+    expect(foreignOnly?.revisions.map((revision) => revision.id)).not.toContain(
+      historicalRevisionId,
+    );
+
+    await retainRun(PROJECT_ID, FLOW_ID);
+    const pinned = await getFlowPackageDetail(
+      "flow-link-fix",
+      "aif-dev",
+      historicalSelection,
+    );
+    const current = await getFlowPackageDetail("flow-link-fix", "aif-dev");
+
+    expect(pinned?.revisions.map((revision) => revision.id)).toContain(
+      historicalRevisionId,
+    );
+    expect(current?.revisions.map((revision) => revision.id)).not.toContain(
+      historicalRevisionId,
+    );
+  });
+
+  it("requires a proven Studio install when identical Git revisions are available from two sources", async () => {
+    const detail = await getFlowPackageDetail("flow-link-fix", "aif-dev");
+    const revision = detail?.revisions.find(
+      (candidate) => candidate.id === REVISION_ID,
+    );
+
+    expect(revision).toBeDefined();
+
+    const attached = randomUUID();
+    const competing = randomUUID();
+    const installedPath = "/tmp/package store/aif";
+    const memberRevision = {
+      ...revision!,
+      source: pathToFileURL(`${installedPath}/flows/dev`).href,
+    };
+
+    await db.insert(schema.packageInstalls).values(
+      [attached, competing].map((id) => ({
+        id,
+        name: "aif",
+        sourceUrl: `file:///tmp/${id}`,
+        installedPath,
+        versionLabel: "aif/v2.1.0",
+        resolvedRevision: revision!.resolvedRevision,
+        manifestDigest: "test-digest",
+        manifest: { spec: { flows: [{ id: "aif-dev", path: "flows/dev" }] } },
+        packageStatus: "Installed",
+      })),
+    );
+    expect(
+      await getStudioInstallForFlowRevision(
+        PROJECT_ID,
+        "aif-dev",
+        memberRevision,
+      ),
+    ).toBeNull();
+
+    await db.insert(schema.projectPackageAttachments).values({
+      id: randomUUID(),
+      projectId: PROJECT_ID,
+      packageInstallId: attached,
+      packageName: "aif",
+    });
+    expect(
+      await getStudioInstallForFlowRevision(
+        PROJECT_ID,
+        "aif-dev",
+        memberRevision,
+      ),
+    ).toEqual({
+      id: attached,
+      name: "aif",
+    });
   });
 });

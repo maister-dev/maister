@@ -860,6 +860,12 @@ it("DB03 preserves populated 0226 history and leaves new origin, context and par
           ...historicalIntent,
           state: "queued",
           state_version: 1,
+          // Replay the frozen request as a fresh 0226 queue entry, regardless
+          // of which lifecycle state the source fixture has reached.
+          run_id: null,
+          original_run_id: null,
+          dispatch_committed_at: null,
+          attempts: 0,
           reason: null,
           cancellation_receipt: null,
         }),

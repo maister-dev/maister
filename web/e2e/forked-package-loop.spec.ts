@@ -313,6 +313,15 @@ test("install → fork → edit → cut → evaluation batch shows fork-vs-upstr
     )
   ).id;
 
+  await page.goto(`/studio/packages/${RUN_TAG}`);
+  const chooser = page.getByTestId("studio-package-chooser");
+
+  await expect(
+    chooser.locator(`a[href$="install=${upstreamInstallId}"]`),
+  ).toBeVisible();
+  await chooser.locator(`a[href$="install=${cut1InstallId}"]`).click();
+  await expect(page).toHaveURL(new RegExp(`install=${cut1InstallId}`));
+
   // Task bound to the package's flow → controlled evaluation A=upstream /
   // B=fork cut (ADR-149: the experiment lab this used to open is retired; the
   // provenance now lives on the Evaluation Study surface).
@@ -557,7 +566,7 @@ test("upstream re-tag → install & sync with conflict → resolve → publish b
 
   await page.goto(`/studio/edit/${fork1Id}`);
   await lockReacquired;
-  await page.getByTestId("local-editor-sync").click();
+  await page.getByTestId("local-editor-sync").filter({ visible: true }).click();
   await page
     .getByTestId("sync-target-select")
     .selectOption({ label: `Install & sync — ${RUN_TAG}/v2.0.0` });
@@ -576,10 +585,12 @@ test("upstream re-tag → install & sync with conflict → resolve → publish b
 
   // The pending banner lists the conflicted file.
   await page.reload();
-  await expect(page.getByTestId("sync-banner")).toBeVisible({
+  const syncBanner = page.getByTestId("sync-banner").filter({ visible: true });
+
+  await expect(syncBanner).toBeVisible({
     timeout: 30_000,
   });
-  await expect(page.getByTestId("sync-conflicted-file")).toContainText(
+  await expect(syncBanner.getByTestId("sync-conflicted-file")).toContainText(
     "docs/README.md",
   );
 
@@ -596,11 +607,11 @@ test("upstream re-tag → install & sync with conflict → resolve → publish b
     );
   });
   await page.goto(`/studio/edit/${fork1Id}`);
-  await expect(page.getByTestId("sync-banner")).toBeVisible({
+  await expect(syncBanner).toBeVisible({
     timeout: 30_000,
   });
-  await page.getByTestId("sync-resolve").click();
-  await expect(page.getByTestId("sync-banner")).toHaveCount(0, {
+  await syncBanner.getByTestId("sync-resolve").click();
+  await expect(syncBanner).toHaveCount(0, {
     timeout: 30_000,
   });
 
@@ -619,22 +630,28 @@ test("upstream re-tag → install & sync with conflict → resolve → publish b
   git(barePath, "init", "--bare");
   await addGitSource(page, barePath, "develop");
 
-  await page.goto(`/studio/edit/${fork1Id}`);
-  await page.getByTestId("local-editor-publish").click();
-  await page.getByTestId("publish-source").selectOption({ label: bareUrl });
-  await page.getByTestId("publish-submit").click();
-  await expect(page.getByTestId("publish-result")).toBeVisible({
-    timeout: 60_000,
+  const publishEndpoint = `/api/studio/local-packages/${fork1Id}/publish`;
+  const publishOptions = await page.request.get(publishEndpoint);
+
+  expect(publishOptions.status()).toBe(200);
+  const { sources, defaultBranch } = (await publishOptions.json()) as {
+    defaultBranch: string;
+    sources: { id: string; url: string; baseBranch: string | null }[];
+  };
+  const localTarget = sources.find((source) => source.url === bareUrl);
+
+  expect(localTarget?.baseBranch).toBe("develop");
+  const data = { targetSourceId: localTarget!.id, branchName: defaultBranch };
+  const published = await page.request.post(publishEndpoint, { data });
+
+  expect(published.status(), await published.text()).toBe(200);
+  expect(await published.json()).toMatchObject({
+    pushed: true,
+    branch: defaultBranch,
   });
-  await page.getByTestId("publish-cancel").click();
 
-  // Move the remote maister/<slug> branch independently → the next publish
-  // refuses with "upstream moved — sync first" and the sync CTA (canSync).
-  const branch = gitOut(barePath, "for-each-ref", "--format=%(refname:short)")
-    .split("\n")
-    .find((name) => name.startsWith("maister/"))!;
-
-  expect(branch).toBeTruthy();
+  // Advance the local remote independently to verify the exact sync-first refusal.
+  const branch = defaultBranch;
   const parent = gitOut(barePath, "rev-parse", branch);
   const tree = gitOut(barePath, "rev-parse", `${branch}^{tree}`);
   const moved = gitOut(
@@ -649,13 +666,27 @@ test("upstream re-tag → install & sync with conflict → resolve → publish b
 
   git(barePath, "update-ref", `refs/heads/${branch}`, moved);
 
-  await page.getByTestId("local-editor-publish").click();
-  await page.getByTestId("publish-source").selectOption({ label: bareUrl });
-  await page.getByTestId("publish-submit").click();
-  await expect(page.getByTestId("publish-upstream-moved")).toBeVisible({
-    timeout: 60_000,
+  const refusal = await page.request.post(publishEndpoint, { data });
+
+  expect(refusal.status(), await refusal.text()).toBe(409);
+  expect(await refusal.json()).toMatchObject({
+    details: { reason: "upstream_moved", canSync: true },
   });
-  await expect(page.getByTestId("publish-close-and-sync")).toBeVisible();
-  // The remote branch was NOT force-updated.
   expect(gitOut(barePath, "rev-parse", branch)).toBe(moved);
+
+  const latest = await findInstall(
+    page,
+    (install) => install.versionLabel === `${RUN_TAG}/v2.0.0`,
+  );
+  const { projectSlug } = loadFixtures().byKey.board;
+
+  await page.goto(`/projects/${projectSlug}?tab=packages`);
+  await page.getByRole("link", { name: RUN_TAG, exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`install=${upstreamInstallId}`));
+  await page
+    .getByRole("link", { name: latest.versionLabel, exact: true })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`install=${latest.id}`));
+  await page.goBack();
+  await expect(page).toHaveURL(new RegExp(`install=${upstreamInstallId}`));
 });

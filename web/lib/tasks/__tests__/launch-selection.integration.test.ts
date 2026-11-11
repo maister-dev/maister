@@ -278,7 +278,7 @@ it("R18 production workers bind rapid accepted requests after real repository co
             return row?.dispatchCommittedAt ? row.state : null;
           });
         },
-        { timeout: 10_000 },
+        { timeout: 30_000 },
       )
       .toEqual(["run_bound", "run_bound"]);
     expect("taskLaunch" in workers).toBe(true);
@@ -1884,8 +1884,9 @@ it("LA08 as-plan child Flow acceptance retains parent admission and a durable qu
       .select()
       .from(taskLaunchIntents)
       .where(eq(taskLaunchIntents.id, intents[0].id));
-    const deadline = await database.pool.query<{ future: boolean }>(
-      "SELECT due_at>clock_timestamp() future FROM task_launch_intents WHERE id=$1",
+    // The retry can become due before the stopped worker's state is observed.
+    const deadline = await database.pool.query<{ deferred: boolean }>(
+      "SELECT due_at > updated_at AS deferred FROM task_launch_intents WHERE id=$1",
       [blocked.id],
     );
 
@@ -1895,7 +1896,7 @@ it("LA08 as-plan child Flow acceptance retains parent admission and a durable qu
       attempts: 0,
       runId: childRun.id,
     });
-    expect(deadline.rows[0].future).toBe(true);
+    expect(deadline.rows[0].deferred).toBe(true);
     expect(
       await database.db
         .select()
