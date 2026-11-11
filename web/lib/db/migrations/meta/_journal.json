@@ -1877,6 +1877,13 @@
       "when": 1794606477974,
       "tag": "0271_specialist_company_child_reservation",
       "breakpoints": true
+    },
+    {
+      "idx": 272,
+      "version": "7",
+      "when": 1794606477975,
+      "tag": "0272_specialist_company_child_credentials",
+      "breakpoints": true
     }
   ]
 }

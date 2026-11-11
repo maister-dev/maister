@@ -217,6 +217,11 @@ binding and grant, and the work’s assignment input and required result. The
 deferred link guard checks that the same transaction binds that native work
 appointment. Company child lineage and launch contracts are immutable. The
 migration retains the existing v1 snapshot shape and writes no historical rows.
+Main `0272_specialist_company_child_credentials` extends the credential insert
+guard to resolve the reviewed receiving role through that exact child
+appointment. The child uses the existing token kind, scope checks, expiry and
+rotation. Historical root credentials and current company Flow node credentials
+continue to use their existing bindings.
 
 **Implemented standalone storage/runtime (T20, 0238):** `runs.company_id` and `runs.company_execution_snapshot` are nullable on legacy rows. New company standalone runs retain a closed version-1 server capture with company owner, business revision at reservation, exact assignment/input ID/revision/digest, specialist configuration ID/revision/digest and initiating user's current `assignments:update` grant witness. Company ownership requires a workspace-none finite operational agent, null project/task/Flow/local-package ownership and exact result contract. The snapshot is immutable, at most 32 KiB, validated against available owned main-store configuration/input history and linked through `specialist_run_links` atomically. Linking advances the assignment business revision separately from its immutable launch receipt. No new run kind or execution ledger is added. Company graph and delegated native-result shapes extend this CHECK only in their owning runtime slices. Old project/private/librarian rows are not assigned guessed company metadata.
 

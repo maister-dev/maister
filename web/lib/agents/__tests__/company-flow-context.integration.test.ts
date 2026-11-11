@@ -907,10 +907,25 @@ async function seedRetainedStandalone(): Promise<void> {
       },
     })
     .where(eq(runs.id, retainedRunId));
-  retainedCompanyCredential = await issueCompanyAgentRunToken({
-    db: database.db,
-    runId: retainedRunId,
-  });
+  // Populate the historical credential through its original 0239 database guard.
+  // Current issuance also checks the logical-work tables added after this baseline.
+  const credential = generateToken();
+  const tokenId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO project_tokens(id,company_id,company_run_id,name,token_kind,owner_user_id,agent_id,prefix,token_hash,scopes,expires_at) VALUES($1,$2,$3,$4,'agent',$5,$6,$7,$8,'[]'::jsonb,now()+interval '1 hour')",
+    [
+      tokenId,
+      request.companyId,
+      retainedRunId,
+      `agent-run:${retainedRunId}`,
+      requesterId,
+      effective.parsed.id,
+      credential.prefix,
+      credential.hash,
+    ],
+  );
+  retainedCompanyCredential = { tokenId, secret: credential.secret };
 }
 
 it("preserves populated standalone/project/private Run and credential bytes through 0233–0239 and keeps project deletion independent of Brain", async () => {

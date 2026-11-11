@@ -6,7 +6,7 @@ import type { ExecutionWorkspaceId } from "./types";
 
 import { stat } from "node:fs/promises";
 
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
 import { asExecutionWorkspaceId } from "./types";
@@ -17,6 +17,7 @@ import {
   localPackages,
   projects,
   runs,
+  specialistWork,
   workspaces,
 } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -54,6 +55,7 @@ export type WorkspaceSpecInput = {
         companyId: string;
         cwd: string;
         executionKind: "agent" | "flow";
+        delegatedWorkId?: string;
       };
     }
 );
@@ -84,7 +86,7 @@ export function workspaceSpecFor(
       input.workspace !== null ||
       (run.contextMounts?.length ?? 0) > 0 ||
       run.workspaceMode !== null ||
-      run.rootRunId !== null
+      (run.rootRunId !== null && !input.company.delegatedWorkId)
     )
       throw missingWorkspace(run.id, "isolated company owner");
 
@@ -186,6 +188,7 @@ export async function loadWorkspaceSpecInput(
       localPackageId: runs.localPackageId,
       contextMounts: runs.contextMounts,
       rootRunId: runs.rootRunId,
+      parentRunId: runs.parentRunId,
       workspaceMode: runs.workspaceMode,
       projectId: runs.projectId,
       companyId: runs.companyId,
@@ -213,6 +216,27 @@ export async function loadWorkspaceSpecInput(
     )
       throw missingWorkspace(runId, "company owner");
 
+    const [delegated] =
+      run.parentRunId && run.rootRunId
+        ? await db
+            .select({ id: specialistWork.id })
+            .from(specialistWork)
+            .where(
+              and(
+                eq(specialistWork.childRunId, run.id),
+                eq(specialistWork.reservedRunId, run.id),
+                eq(specialistWork.parentRunId, run.parentRunId),
+                eq(specialistWork.decisionState, "open"),
+                sql`${specialistWork.definition}->'parent'->>'rootRunId'=${run.rootRunId}`,
+                sql`specialist_run_has_input(${run.id},${specialistWork.assignmentId},${specialistWork.inputRevision},${specialistWork.inputSha256})`,
+              ),
+            )
+            .limit(1)
+        : [];
+
+    if ((run.parentRunId || run.rootRunId) && !delegated)
+      throw missingWorkspace(runId, "exact company work appointment");
+
     return {
       run,
       project: null,
@@ -220,6 +244,7 @@ export async function loadWorkspaceSpecInput(
         companyId: owner.companyId,
         cwd: owner.cwd,
         executionKind: run.runKind,
+        ...(delegated && { delegatedWorkId: delegated.id }),
       },
       workspace: null,
       localPackage: null,

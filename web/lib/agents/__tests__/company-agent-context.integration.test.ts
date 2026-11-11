@@ -10779,7 +10779,28 @@ it("IT-CBC-01 requires current company delegation grants for a repository-free w
       ]);
       const { reserveCompanyDelegatedAgentRun } =
         await import("../company-agent-launch");
-      const { hosts } = await fakeExecutionHosts(database.db);
+      const fake = createFakeExecutionHost();
+      const { prompts } = scriptAgentTurn(fake, {
+        text:
+          "```json maister:output\n" +
+          JSON.stringify(operationalSuccessFixture()) +
+          "\n```",
+        onPrompt: ({ sessionId }) => {
+          const session = fake.sessions.get(sessionId);
+
+          if (!session)
+            throw new Error("The delegated company session was not created");
+          fake.sessions.set(sessionId, {
+            ...session,
+            status: "exited",
+            exitCode: 0,
+            exitedAt: new Date().toISOString(),
+          });
+
+          return { stopReason: "end_turn", meta: null };
+        },
+      });
+      const { hosts } = await fakeExecutionHosts(db, { fake });
       const dispatch = () =>
         reserveCompanyDelegatedAgentRun(database.db, workRequest, hosts);
 
@@ -10895,12 +10916,77 @@ it("IT-CBC-01 requires current company delegation grants for a repository-free w
         );
 
       await expect(captureChildInput()).resolves.toBeUndefined();
+      const previousCap = process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+
+      process.env.MAISTER_MAX_CONCURRENT_AGENTS = "100";
+      try {
+        await expect(tryStartRun(first.childRunId, { db })).resolves.toEqual({
+          started: true,
+        });
+      } finally {
+        if (previousCap === undefined)
+          delete process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+        else process.env.MAISTER_MAX_CONCURRENT_AGENTS = previousCap;
+      }
+      const childCredential = await issueCompanyAgentRunToken({
+        db,
+        runId: first.childRunId,
+      });
+
+      await expect(
+        verifyToken(childCredential.secret, db),
+      ).resolves.toMatchObject({
+        boundRunId: first.childRunId,
+        companyId: request.companyId,
+        projectId: null,
+        agentId: receivingRoleId,
+        scopes: ["assignments:read"],
+      });
       await revoke(receivingGrant);
       await expect(loadChild()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
       await expect(dispatch()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
       await expect(captureChildInput()).rejects.toMatchObject({
         code: "UNAUTHORIZED",
       });
+      await expect(
+        verifyToken(childCredential.secret, db),
+      ).rejects.toMatchObject({ kind: "owner-unavailable" });
+      await createCompanyGrants(db, administratorId, {
+        principalKind: "agent",
+        principalId: receivingRoleId,
+        actions: ["assignments:read"],
+        idempotencyKey: randomUUID(),
+      });
+      await startAgentSession(first.childRunId, { db, executionHosts: hosts });
+      await fake.waitForCanonicalEvents();
+
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]).toContain(prepared.objectiveInput.objective);
+      expect(
+        prompts[0].split("## Assignment working context", 1)[0],
+      ).not.toContain(assignmentInput.objectiveInput.objective);
+      expect(prompts[0]).not.toContain(assignmentInput.objectiveInput.input);
+      const resultResponse = await collectExternalRun(
+        new NextRequest("http://localhost/api/v1/ext/runs/collect", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ childRunId: first.childRunId }),
+        }),
+        {},
+      );
+
+      expect(resultResponse.status).toBe(200);
+      expect(await resultResponse.json()).toMatchObject([
+        {
+          childRunId: first.childRunId,
+          status: "Done",
+          resultStatus: "valid",
+          result: { value: { outcome: "success" } },
+        },
+      ]);
+      await expect(
+        getSpecialistAssignment(db, userId, assignment.id),
+      ).resolves.toMatchObject({ status: "active" });
     } finally {
       await revoke(professional);
     }
