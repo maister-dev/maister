@@ -4,8 +4,7 @@ import { expect, test } from "@playwright/test";
 // (ADR-094). The admin spec runs as the seeded admin via AUTHED_SPEC
 // (`platform-agents-.*`); the member spec opens its own unauthenticated context
 // and signs in as the seeded non-admin member.
-const MEMBER_EMAIL = "e2e-member@maister.local";
-const MEMBER_PASSWORD = "E2eMember!pass1";
+import { loadFixtures } from "./_seed/fixtures";
 
 test("admin reaches /agents from the nav and sees the platform-agents panel", async ({
   page,
@@ -32,13 +31,14 @@ test("a non-admin member has no /agents nav link and is forbidden on the route",
   // straight to the portfolio, the email input never renders and the fill()
   // below eats the whole test budget. Opt out explicitly to get a signed-out
   // context this spec can sign in as the member.
+  const member = loadFixtures().users.memberCandidate;
   const context = await browser.newContext({ storageState: undefined });
   const page = await context.newPage();
 
   try {
     await page.goto("/login");
-    await page.locator('input[name="email"]').fill(MEMBER_EMAIL);
-    await page.locator('input[name="password"]').fill(MEMBER_PASSWORD);
+    await page.locator('input[name="email"]').fill(member.email);
+    await page.locator('input[name="password"]').fill(member.password);
     await page.locator('form button[type="submit"]').click();
     await page.waitForURL((url) => !url.pathname.startsWith("/login"), {
       timeout: 30_000,
@@ -51,14 +51,10 @@ test("a non-admin member has no /agents nav link and is forbidden on the route",
 
     // Direct navigation is gated: forbidden copy, no panel affordance.
     await page.goto("/agents");
-    // `.first()`: the admin-gate copy renders twice — the shared refusal frame
-    // emits a visible variant and a hidden one — so an unscoped match is a
-    // strict-mode violation, and which of the two it reported was a race. Same
-    // shape as the refusal in project-registration.spec.ts.
     await expect(
       page
         .getByText("You do not have access to the platform agents catalog.")
-        .first(),
+        .filter({ visible: true }),
     ).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Re-sync catalog" }),

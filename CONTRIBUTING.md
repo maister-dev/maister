@@ -90,6 +90,12 @@ tests require Docker; see [Getting Started](docs/getting-started.md) for their
 environment and exact commands. Do not hide a failing check. Explain a known,
 pre-existing failure and provide evidence that the change did not introduce it.
 
+For a shared VPS, use the opt-in [worker limit and sequential validation
+recipe](docs/system-analytics/test-infrastructure.md#validation-on-a-shared-host).
+The default local worker settings are unchanged. The web integration remainder
+is intended to accompany the mandatory A/B and isolation lanes; it is not a
+replacement for complete integration coverage.
+
 Run the full Supervisor integration suite with
 `pnpm --filter @maister/supervisor test:integration`. It inventories every
 integration file and uses the existing invocation runner to own processes,

@@ -58,9 +58,12 @@ test("flow-bound agent launch records its selected Flow settings and any actual 
   }
 
   await page.goto(`/projects/${fx.projectSlug}`);
-  await expect(page.getByText("Bound-agent flow target")).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Bound-agent flow target", exact: true }),
+  ).toBeVisible();
 
   const card = page
+    .getByRole("main")
     .locator("article")
     .filter({ hasText: "Bound-agent flow target" });
 

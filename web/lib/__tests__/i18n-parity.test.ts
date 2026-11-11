@@ -96,3 +96,177 @@ describe("i18n en/ru parity", () => {
     expect(Object.prototype.hasOwnProperty.call(ru, "flowEditor")).toBe(true);
   });
 });
+
+type MessageTree = { readonly [key: string]: string | MessageTree };
+
+function messageAt(catalog: MessageTree, path: string): string | undefined {
+  let value: string | MessageTree | undefined = catalog;
+
+  for (const segment of path.split(".")) {
+    if (value === undefined || typeof value === "string") return undefined;
+    value = value[segment];
+  }
+
+  return typeof value === "string" ? value : undefined;
+}
+
+const requiredMessages: ReadonlyArray<{
+  namespace: string;
+  keys: readonly string[];
+}> = [
+  {
+    namespace: "run",
+    keys: [
+      "settingsTitle",
+      "settingsDeclaredIntentNote",
+      "settingsVerdictEnforced",
+      "settingsVerdictInstructed",
+      "settingsVerdictRefused",
+      "settingsClassMcps",
+      "settingsClassTools",
+      "settingsClassSkills",
+      "settingsClassRestrictions",
+      "settingsClassPermissionMode",
+      "settingsClassWorkspaceAccess",
+      "settingsClassHooks",
+      "settingsNoConstraints",
+      "settingsRefusalReason",
+      "settingsRefusedHint",
+    ],
+  },
+  {
+    namespace: "settings",
+    keys: [
+      "addRunner",
+      "createRunnerTitle",
+      "editRunnerTitle",
+      "editAction",
+      "deleteRunner",
+      "fromPreset",
+      "colId",
+      "colAdapter",
+      "colModel",
+      "colProvider",
+      "colPolicy",
+      "colReadiness",
+      "readinessReady",
+      "readinessNotReady",
+      "readinessUnknown",
+      "readinessAmbient",
+      "colEnabled",
+      "colActions",
+      "fieldId",
+      "fieldModel",
+      "fieldProviderKind",
+      "fieldBaseUrl",
+      "fieldAuthToken",
+      "fieldApiKey",
+      "fieldWireApi",
+      "fieldPermissionPolicy",
+      "fieldEnabled",
+      "deleteConfirm",
+      "deleteBlockedTitle",
+      "deleteBlockedIntro",
+      "validId",
+      "validEnvRef",
+      "validUrl",
+      "policyDefault",
+      "policyDangerous",
+      "saveFailed",
+      "providerPresetsReference",
+      "usePreset",
+      "cancel",
+      "save",
+      "saving",
+      "modelSuggestions.loading",
+      "modelSuggestions.empty",
+      "modelSuggestions.refresh",
+      "modelSuggestions.unknownModelHint",
+      "modelSuggestions.error",
+      "modelSuggestions.sources.agent",
+      "modelSuggestions.sources.provider",
+      "modelSuggestions.sources.curated",
+      "modelSuggestions.sources.observed",
+      "modelSuggestions.sources.preset",
+    ],
+  },
+  {
+    namespace: "tokens",
+    keys: [
+      "title",
+      "empty",
+      "adminOnly",
+      "create",
+      "createTitle",
+      "nameLabel",
+      "namePlaceholder",
+      "expiresLabel",
+      "cancel",
+      "confirm",
+      "secretTitle",
+      "secretWarning",
+      "copy",
+      "copied",
+      "revoke",
+      "revokeConfirm",
+      "colName",
+      "colPrefix",
+      "colStatus",
+      "colCreated",
+      "colLastUsed",
+      "colExpires",
+      "statusActive",
+      "statusRevoked",
+      "statusExpired",
+      "errorGeneric",
+    ],
+  },
+  {
+    namespace: "nav",
+    keys: ["integrations"],
+  },
+  {
+    namespace: "readiness",
+    keys: [
+      "summary",
+      "reasons",
+      "ready",
+      "blocked",
+      "stale",
+      "failed",
+      "waiting",
+      "overridden",
+    ],
+  },
+];
+
+describe("required UI messages", () => {
+  for (const [locale, catalog] of [
+    ["en", en],
+    ["ru", ru],
+  ] as const) {
+    it.each(requiredMessages)(
+      `${locale}.$namespace has non-empty required copy`,
+      ({ namespace, keys }) => {
+        for (const key of keys) {
+          const path = `${namespace}.${key}`;
+
+          expect(messageAt(catalog, path), `${locale}.${path}`).toEqual(
+            expect.stringMatching(/\S/u),
+          );
+        }
+      },
+    );
+  }
+
+  it("preserves the placeholders the Desk substitutes", () => {
+    for (const catalog of [en, ru]) {
+      expect(catalog.desk.workEmptyFiltered).toContain("$stage");
+      expect(catalog.desk.workCount).toContain("$count");
+      for (const [key, value] of Object.entries(catalog.desk)) {
+        expect(value, key).not.toMatch(/\{count\}/u);
+        if (/Count$/u.test(key)) expect(value, key).toContain("$count");
+      }
+    }
+  });
+});

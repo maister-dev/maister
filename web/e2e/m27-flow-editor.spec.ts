@@ -17,13 +17,14 @@ function loadM27(): M27Fixture {
 // of truth carried by the hidden `flowYaml` input (the save payload), so we read
 // the buffer from that input rather than scraping CodeMirror's virtualized DOM.
 function flowYamlValue(page: Page): Promise<string> {
-  return page.locator('input[name="flowYaml"]').inputValue();
+  return page.getByRole("main").locator('input[name="flowYaml"]').inputValue();
 }
 
 // Replace the whole CodeMirror buffer with `text`: focus the contenteditable,
 // select-all, delete, insert (mirrors flows-authoring.spec.ts).
 async function replaceYamlEditor(page: Page, text: string): Promise<void> {
   const content = page
+    .getByRole("main")
     .getByTestId("flow-yaml-editor")
     .locator(".cm-content")
     .first();
@@ -65,32 +66,42 @@ test("M27 flow editor: canvas add-node saves + persists; invalid edit refused", 
   await page.goto(url);
 
   // Editor mounted: tabs + canvas (dynamic ssr:false) + toolbar add-node.
-  await expect(page.getByTestId("flow-editor-tabs")).toBeVisible();
-  await expect(page.getByTestId("flow-graph-editor")).toBeVisible({
+  await expect(
+    page.getByRole("main").getByTestId("flow-editor-tabs"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("main").getByTestId("flow-graph-editor"),
+  ).toBeVisible({
     timeout: 15000,
   });
 
-  const addCli = page.getByTestId("add-node-cli");
+  const addCli = page.getByRole("main").getByTestId("add-node-cli");
 
   await expect(addCli).toBeVisible({ timeout: 15000 });
 
   // Add a cli node via the toolbar; the new id (cli_1) lands in the shared
   // flowYaml → visible on the raw-YAML tab.
   await addCli.click();
-  await page.getByTestId("flow-tab-yaml").click();
-  await expect(page.getByTestId("flow-yaml-editor")).toBeVisible();
+  await page.getByRole("main").getByTestId("flow-tab-yaml").click();
+  await expect(
+    page.getByRole("main").getByTestId("flow-yaml-editor"),
+  ).toBeVisible();
 
   // Retrying assertion: the canvas edit reaches the hidden input on a React
   // state flush, which can lag on a loaded host.
-  await expect(page.locator('input[name="flowYaml"]')).toHaveValue(/cli_1/);
+  await expect(
+    page.getByRole("main").locator('input[name="flowYaml"]'),
+  ).toHaveValue(/cli_1/);
 
   // Save the draft through the existing updateAuthoredFlowAction form.
   await saveDraft(page, url);
 
   // Reopen → the added node persisted.
   await page.goto(url);
-  await page.getByTestId("flow-tab-yaml").click();
-  await expect(page.getByTestId("flow-yaml-editor")).toBeVisible();
+  await page.getByRole("main").getByTestId("flow-tab-yaml").click();
+  await expect(
+    page.getByRole("main").getByTestId("flow-yaml-editor"),
+  ).toBeVisible();
   const afterReopen = await flowYamlValue(page);
 
   expect(afterReopen).toContain("cli_1");
@@ -129,15 +140,17 @@ test("M27 flow editor: canvas add-node saves + persists; invalid edit refused", 
   ].join("\n");
 
   await replaceYamlEditor(page, badYaml);
-  await expect(page.locator('input[name="flowYaml"]')).toHaveValue(
-    /Broken Draft/,
-  );
+  await expect(
+    page.getByRole("main").locator('input[name="flowYaml"]'),
+  ).toHaveValue(/Broken Draft/);
   await saveDraft(page, url);
 
   // Draft unchanged on reopen: still the valid cli_1 draft, not the rejected one.
   await page.goto(url);
-  await page.getByTestId("flow-tab-yaml").click();
-  await expect(page.getByTestId("flow-yaml-editor")).toBeVisible();
+  await page.getByRole("main").getByTestId("flow-tab-yaml").click();
+  await expect(
+    page.getByRole("main").getByTestId("flow-yaml-editor"),
+  ).toBeVisible();
   const afterInvalid = await flowYamlValue(page);
 
   expect(afterInvalid).toContain("cli_1");

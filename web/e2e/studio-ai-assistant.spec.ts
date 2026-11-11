@@ -196,10 +196,11 @@ test("bottom AI assistant: start the assistant from the editor panel", async ({
   await expect(page.getByTestId("scratch-conversation")).toBeVisible({
     timeout: 30_000,
   });
-  await expect(page.getByTestId("scratch-conversation-status")).toContainText(
-    "Waiting for you",
-    { timeout: 30_000 },
-  );
+  await expect(
+    page
+      .getByTestId("local-editor-ai-panel")
+      .getByText("Waiting for you", { exact: true }),
+  ).toContainText("Waiting for you", { timeout: 30_000 });
 
   const messageResponse = page.waitForResponse(
     (response) =>

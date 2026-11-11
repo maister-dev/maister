@@ -12,8 +12,9 @@
     "lint": "eslint --fix",
     "typecheck": "tsc --noEmit",
     "test": "pnpm test:unit && pnpm test:integration",
-    "test:unit": "vitest run --project unit --passWithNoTests",
-    "test:integration": "vitest run --project integration --passWithNoTests",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "test:integration:remainder": "node ../scripts/run-web-integration-remainder.mjs",
     "test:integration:ab": "node ../scripts/run-stage-ab-tests.mjs web",
     "test:integration:isolation": "node ../scripts/run-stage-ab-tests.mjs isolation",
     "test:watch": "vitest --project unit",
@@ -150,6 +151,6 @@
     "vitest": "^5.0.5"
   },
   "engines": {
-    "node": ">=24.15.0 <25"
+    "node": ">=24.15.0 <25 || >=26.13.0 <27"
   }
 }

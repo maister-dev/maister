@@ -14,7 +14,9 @@ test("admin can filter and edit a user account", async ({ page }) => {
   await page
     .getByRole("searchbox", { name: "Search by name or email…" })
     .fill(users.editTarget.email);
-  await expect(page.getByText(users.editTarget.email)).toBeVisible();
+  await expect(
+    page.getByRole("table").getByText(users.editTarget.email),
+  ).toBeVisible();
 
   await page
     .getByRole("button", { name: `Edit · ${users.editTarget.name}` })
@@ -104,7 +106,9 @@ test("admin edits a user's name and email", async ({ page }) => {
   await page
     .getByRole("searchbox", { name: "Search by name or email…" })
     .fill(users.member.email);
-  await expect(page.getByText(users.member.email)).toBeVisible();
+  await expect(
+    page.getByRole("table").getByText(users.member.email),
+  ).toBeVisible();
 
   await page
     .getByRole("button", { name: `Edit · ${users.member.name}`, exact: true })
@@ -153,7 +157,9 @@ test("admin hard-deletes an unused pending user", async ({ page }) => {
   await page
     .getByRole("searchbox", { name: "Search by name or email…" })
     .fill(users.deletable.email);
-  await expect(page.getByText(users.deletable.email)).toBeVisible();
+  await expect(
+    page.getByRole("table").getByText(users.deletable.email),
+  ).toBeVisible();
 
   await page
     .getByRole("button", { name: `Edit · ${users.deletable.name}` })
@@ -189,7 +195,9 @@ test("hard-delete is blocked for an active user", async ({ page }) => {
   await page
     .getByRole("searchbox", { name: "Search by name or email…" })
     .fill(users.editTarget.email);
-  await expect(page.getByText(users.editTarget.email)).toBeVisible();
+  await expect(
+    page.getByRole("table").getByText(users.editTarget.email),
+  ).toBeVisible();
 
   await page
     .getByRole("button", { name: `Edit · ${users.editTarget.name}` })

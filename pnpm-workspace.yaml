@@ -7,6 +7,14 @@ packages:
 
 dangerouslyAllowAllBuilds: true
 
+# Remove these scoped security pins when the direct owners adopt patched ranges.
+overrides:
+  '@mintlify/cli>sharp': 0.35.5
+  '@mintlify/package-builder>js-yaml': 4.3.2
+  '@esbuild-kit/core-utils>esbuild': 0.25.12
+  'archiver-utils>glob': 14.0.4
+  '@typescript-eslint/typescript-estree>minimatch': 11.0.8
+
 minimumReleaseAgeExclude:
   - icu-minify@4.13.0
   - next-intl-swc-plugin-extractor@4.13.0
@@ -14,3 +22,7 @@ minimumReleaseAgeExclude:
   - use-intl@4.13.0
   - '@xyflow/react@12.11.0'
   - '@xyflow/system@0.0.77'
+  - '@mintlify/cli@4.1.17'
+  - '@mintlify/package-builder@0.0.147'
+  - mint@4.3.17
+  - minimatch@11.0.8

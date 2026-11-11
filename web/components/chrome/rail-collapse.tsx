@@ -80,7 +80,7 @@ export function RailCollapseView({
         </div>
       ) : (
         <div
-          className="mt-2.5 flex min-h-0 flex-1 flex-col gap-3.5"
+          className="mt-2.5 flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto"
           data-testid="rail-content"
         >
           {children}

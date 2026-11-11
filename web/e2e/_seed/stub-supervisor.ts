@@ -30,6 +30,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import path from "node:path";
 
+import { e2eSupervisorDiagnostics } from "./supervisor-diagnostics";
+
 export const STUB_SUPERVISOR_PORT = Number(
   process.env.E2E_SUPERVISOR_PORT ?? 7788,
 );
@@ -537,24 +539,7 @@ export function startStubSupervisor(): Promise<Server> {
     }
 
     if (req.method === "GET" && req.url === "/diagnostics") {
-      const body = JSON.stringify({
-        status: "ready",
-        version: "e2e-stub",
-        checkedAt: new Date().toISOString(),
-        adapters: [
-          {
-            id: "claude",
-            binary: "claude-agent-acp",
-            available: true,
-          },
-          {
-            id: "codex",
-            binary: "codex-acp",
-            available: true,
-          },
-        ],
-        envRefs: [{ name: "ZAI_API_KEY", present: false }],
-      });
+      const body = JSON.stringify(e2eSupervisorDiagnostics("e2e-stub"));
 
       res.writeHead(200, { "content-type": "application/json" });
       res.end(body);

@@ -3,7 +3,7 @@
 # Workspace: monorepo (pnpm) with `web/` (Next.js) and `supervisor/` (ACP daemon).
 # Build stages: builder → development → production.
 
-ARG NODE_VERSION=24.19.0-bookworm-slim@sha256:a9f5f7c91a432850b2a8a7797adf5eadb6c733ceed61167806cee7ea7fbc29df
+ARG NODE_VERSION=24.22.2-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9
 ARG PNPM_VERSION=11.3.0
 ARG UV_VERSION=0.11.16
 ARG PYTHON_VERSION=3.12
@@ -47,8 +47,7 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 COPY web/ ./web/
 COPY supervisor/ ./supervisor/
-# `next build` type-checks web's whole tsconfig program, which includes tests
-# that import mcp/src (the librarian toolset contract).
+# The MCP facade is part of the runtime image.
 COPY mcp/ ./mcp/
 COPY runtime/ ./runtime/
 COPY scripts/ ./scripts/

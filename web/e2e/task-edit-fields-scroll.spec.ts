@@ -21,7 +21,7 @@ test("edit-task Properties panel scrolls and the Save button is reachable on a s
   await page.goto(`/projects/${fx.projectSlug}`);
 
   const card = page
-    .locator("[data-board]")
+    .getByRole("region", { name: "Task board", exact: true })
     .getByText("Acceptance backlog launch")
     .locator("xpath=ancestor::article");
 

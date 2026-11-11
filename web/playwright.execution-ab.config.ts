@@ -34,7 +34,7 @@ export default defineConfig({
   globalSetup: "./e2e/execution-ab-global-setup.ts",
   use: {
     baseURL: BASE_URL,
-    trace: "on-first-retry",
+    trace: "retain-on-failure",
   },
   projects: [
     { name: "setup", testMatch: /.*\.setup\.ts$/ },
@@ -49,11 +49,14 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `pnpm exec next dev -p ${PORT}`,
+    // Playwright waits for this process; exec keeps it alive through owned cleanup.
+    command: "exec node --import tsx e2e/web-server.ts",
     url: BASE_URL,
     timeout: 180_000,
     reuseExistingServer: false,
+    gracefulShutdown: { signal: "SIGTERM", timeout: 35_000 },
     env: {
+      PORT: String(PORT),
       DB_URL: databaseUrl,
       AUTH_SECRET,
       // Disjoint from the supervisor's runtime root (a fresh temp dir owned by

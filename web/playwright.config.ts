@@ -2,6 +2,8 @@ import path from "node:path";
 
 import { defineConfig, devices } from "@playwright/test";
 
+import { testMaxWorkers } from "../scripts/validation-resources.mjs";
+
 import { resolvePostgresDbUrl } from "./lib/db/postgres-url";
 import { FAKE_GH_BIN_DIR, FAKE_GH_STATE } from "./e2e/_seed/fake-gh";
 import { STUB_SUPERVISOR_URL } from "./e2e/_seed/stub-supervisor";
@@ -53,18 +55,14 @@ export default defineConfig({
   testIgnore: ["**/__tests__/**"],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
-  // Local retries absorb residual cross-test interference on the ONE shared
-  // e2e DB (CI already retries 2); a deterministic regression still fails.
-  retries: process.env.CI ? 2 : 1,
-  // The local suite runs against ONE dev-mode Next server; the per-core
-  // default (8 workers on 16 cores) thrashes route compiles into timeout
-  // flakes. CI keeps Playwright's default.
-  workers: process.env.CI ? undefined : 4,
+  retries: 0,
+  // Bound local browser concurrency; CI keeps Playwright's default unless configured.
+  workers: testMaxWorkers(process.env) ?? (process.env.CI ? undefined : 4),
   reporter: "list",
   globalSetup: "./e2e/global-setup.ts",
   use: {
     baseURL: BASE_URL,
-    trace: "on-first-retry",
+    trace: "retain-on-failure",
   },
   projects: [
     // Signs the seeded admin in and saves storageState for the authed project.
@@ -86,7 +84,7 @@ export default defineConfig({
         // line it ran UNAUTHENTICATED in the default lane and contributed four
         // guaranteed failures to every full-suite run.
         /execution-ab-.*\.spec\.ts$/,
-        /librarian-acceptance\.spec\.ts$/,
+        /librarian-(acceptance|live)\.spec\.ts$/,
       ],
     },
     // M11a/M11b/M11c + portfolio/launch/registration/admin/scratch/platform specs run as
@@ -97,15 +95,18 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: AUTH_FILE },
       dependencies: ["setup"],
       testMatch: AUTHED_SPEC,
-      testIgnore: /librarian-acceptance\.spec\.ts$/,
+      testIgnore: /librarian-(acceptance|live)\.spec\.ts$/,
     },
   ],
   webServer: {
-    command: `pnpm exec next dev -p ${PORT}`,
+    // Playwright waits for this process; exec keeps it alive through owned cleanup.
+    command: "exec node --import tsx e2e/web-server.ts",
     url: BASE_URL,
     timeout: 180_000,
     reuseExistingServer: false,
+    gracefulShutdown: { signal: "SIGTERM", timeout: 35_000 },
     env: {
+      PORT: String(PORT),
       DB_URL: databaseUrl,
       AUTH_SECRET,
       MAISTER_RUNTIME_ROOT: path.resolve("e2e/.runtime"),

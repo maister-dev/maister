@@ -95,14 +95,19 @@ test("merge scenario — ReviewPanel shows the diff and promotes (local_merge) t
   await expect(
     page.getByText(fx.mergeTargetBranch, { exact: false }).first(),
   ).toBeVisible();
-  const diffView = page.locator('[data-testid="diff-view"]');
+  const diffView = page
+    .getByTestId("run-diff")
+    .filter({ visible: true })
+    .getByTestId("diff-view");
 
   await expect(diffView).toBeVisible();
   await expect(diffView).toContainText("clean merge change");
 
   // An immediately promotable review exposes the shared operation in the
   // header, not a weaker route or a duplicate request shape.
-  const promote = page.getByTestId("run-header-promote");
+  const promote = page
+    .getByTestId("run-header-promote")
+    .filter({ visible: true });
 
   await expect(promote).toBeVisible();
 

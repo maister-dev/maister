@@ -1,4 +1,4 @@
-export const SUPPORTED_NODE_RANGE = ">=24.15.0 <25";
+export const SUPPORTED_NODE_RANGE = ">=24.15.0 <25 || >=26.13.0 <27";
 
 export class RuntimeVersionError extends Error {
   constructor(version: string) {
@@ -11,6 +11,10 @@ export class RuntimeVersionError extends Error {
 export function assertSupportedNode(version: string): void {
   const parts = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
 
-  if (!parts || Number(parts[1]) !== 24 || Number(parts[2]) < 15)
+  if (!parts) throw new RuntimeVersionError(version);
+  const major = Number(parts[1]);
+  const minor = Number(parts[2]);
+
+  if (!((major === 24 && minor >= 15) || (major === 26 && minor >= 13)))
     throw new RuntimeVersionError(version);
 }

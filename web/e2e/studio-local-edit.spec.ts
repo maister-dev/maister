@@ -441,7 +441,7 @@ test("canonical Studio wizard creates a package Flow and adds another Flow in th
 
   await page.goto(`/projects/${fx.projectSlug}`);
   const launch = page
-    .locator("[data-board]")
+    .getByRole("region", { name: "Task board", exact: true })
     .getByText(taskTitle)
     .locator("xpath=ancestor::article")
     .getByRole("button", { name: "Launch", exact: true });

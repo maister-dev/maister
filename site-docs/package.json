@@ -9,7 +9,7 @@
     "links": "mint broken-links --check-anchors"
   },
   "devDependencies": {
-    "mint": "4.2.1126",
+    "mint": "4.3.17",
     "pagefind": "1.5.2"
   }
 }

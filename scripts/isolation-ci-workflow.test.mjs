@@ -79,8 +79,8 @@ test("isolation CI uses three independent serial VM parts and a failure-closed c
 
   assert.deepEqual(downloads.map((step) => step.with.name), ["execution-isolation-part-1-of-3-reports", "execution-isolation-part-2-of-3-reports", "execution-isolation-part-3-of-3-reports"]);
   assert(gate.steps.some((step) => step.run?.includes("isolation-ci-evidence.mjs")));
-  assert.deepEqual(workflow.jobs["execution-data-plane"].strategy.matrix, { node: ["24.15.0", "24.19.0"], shard: [1, 2] });
-  assert.deepEqual(workflow.jobs["execution-runtime-supervisor"].strategy.matrix, { node: ["24.15.0", "24.19.0"] });
+  assert.deepEqual(workflow.jobs["execution-data-plane"].strategy.matrix, { node: ["24.22.3"], shard: [1, 2] });
+  assert.deepEqual(workflow.jobs["execution-runtime-supervisor"].strategy.matrix, { node: ["24.22.3", "26.13.1"] });
 });
 
 test("isolation compile cache proves real inherited compilation before publishing a fresh private path and refuses disabled or missing capabilities", (context) => {

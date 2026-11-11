@@ -30,7 +30,7 @@ Full description: `.ai-factory/DESCRIPTION.md`.
   and `mimo acp` adapter binaries
 - **Tests:** vitest (unit + integration), Playwright (E2E)
 - **Package manager:** pnpm (monorepo workspace: `web` + `supervisor`)
-- **Node:** 24
+- **Node:** 24 deployment; 26 LTS compatibility
 
 ## Project Structure
 
@@ -96,7 +96,7 @@ mAIster/
 │   │   ├── cost.ts             # cache/input/output usage normalization
 │   │   ├── registry.ts         # In-memory SessionRecord map + per-session event ring buffer
 │   │   ├── types.ts            # Zod schemas + SessionEvent union + SupervisorError
-│   │   └── __tests__/          # 30 unit + 9 integration tests
+│   │   └── __tests__/          # Unit + integration suites
 │   ├── test/fixtures/
 │   │   └── fake-acp.mjs        # Stand-in for the real ACP binary in tests
 │   ├── package.json            # @maister/supervisor; tsx runtime

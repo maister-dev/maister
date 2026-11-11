@@ -39,7 +39,9 @@ test("schedules tab: create via modal, pause/resume, trigger-now outcome", async
   });
 
   await page.goto(`/projects/${fx.projectSlug}?tab=automations`);
-  await expect(page.getByText("No schedules yet")).toBeVisible();
+  await expect(
+    page.getByRole("cell", { name: "No schedules yet", exact: true }),
+  ).toBeVisible();
 
   await page.getByRole("button", { name: "New schedule" }).click();
 

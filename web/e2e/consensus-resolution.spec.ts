@@ -223,7 +223,7 @@ test.describe("P0-5 consensus inbox evidence", () => {
       },
     ]);
     await page.goto("/inbox");
-    const card = page.getByTestId("hitl-card").filter({
+    const card = page.getByRole("main").getByTestId("hitl-card").filter({
       hasText: "P0-5 consensus evidence",
     });
 
@@ -275,7 +275,7 @@ test.describe("P0-5 consensus inbox evidence", () => {
       },
     ]);
     await page.goto("/inbox");
-    const card = page.getByTestId("hitl-card").filter({
+    const card = page.getByRole("main").getByTestId("hitl-card").filter({
       hasText: "P0-5 consensus evidence",
     });
 

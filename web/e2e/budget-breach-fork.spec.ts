@@ -14,7 +14,7 @@ test.describe("Budget breach fork HITL surface", () => {
 
     const card = page
       .getByTestId("hitl-card")
-      .filter({ hasText: fx.taskTitle });
+      .filter({ hasText: fx.taskTitle, visible: true });
 
     await expect(card).toBeVisible();
 
@@ -47,7 +47,9 @@ test.describe("Budget breach fork HITL surface", () => {
 
     await page.goto(`/runs/${fx.runId}`);
 
-    const panel = page.getByTestId("budget-breach-card");
+    const panel = page
+      .getByTestId("budget-breach-card")
+      .filter({ visible: true });
 
     await expect(panel).toBeVisible();
     await expect(panel).toContainText("Превышение бюджета");
@@ -73,7 +75,9 @@ test.describe("Budget breach fork HITL surface", () => {
 
     await page.goto(`/runs/${fx.runId}`);
 
-    const panel = page.getByTestId("budget-breach-card");
+    const panel = page
+      .getByTestId("budget-breach-card")
+      .filter({ visible: true });
 
     await expect(panel).toBeVisible();
 
@@ -90,6 +94,8 @@ test.describe("Budget breach fork HITL surface", () => {
     const response = await responsePromise;
 
     expect(response.status()).toBe(202);
-    await expect(page.getByTestId("budget-breach-card")).toHaveCount(0);
+    await expect(
+      page.getByTestId("budget-breach-card").filter({ visible: true }),
+    ).toHaveCount(0);
   });
 });

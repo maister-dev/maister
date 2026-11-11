@@ -96,7 +96,11 @@ test.describe("run git panel (ADR-181)", () => {
     await page.getByTestId("git-panel-action-openPr").click();
     expect((await opened).status()).toBe(200);
     await expect(page.getByTestId("git-panel-pr-chip")).toContainText("open");
-    expect(readFakeGhState().creates).toEqual([
+    expect(
+      readFakeGhState().creates.filter(
+        (request) => request.head === fx.publicBranch,
+      ),
+    ).toEqual([
       {
         head: fx.publicBranch,
         base: "main",
@@ -104,6 +108,15 @@ test.describe("run git panel (ADR-181)", () => {
         draft: true,
       },
     ]);
+    const ownedPrs = readFakeGhState().prs.filter(
+      (pr) => pr.head === fx.publicBranch,
+    );
+
+    expect(ownedPrs).toHaveLength(1);
+    const [ownedPr] = ownedPrs;
+
+    if (!ownedPr)
+      throw new Error("Workbench PR was not recorded by the provider");
 
     // (6) Finalize: outside Review the click is confirmed first (no readiness
     // is asserted), then the run is Done at the head the operator published.
@@ -125,14 +138,21 @@ test.describe("run git panel (ADR-181)", () => {
 
     // The provider was asked to create exactly one PR — a finalize opens none —
     // and the finalize read the PR it declared delivered (Codex F5).
-    expect(readFakeGhState().creates).toHaveLength(1);
-    expect(readFakeGhState().views).toContain(1);
+    expect(
+      readFakeGhState().creates.filter(
+        (request) => request.head === fx.publicBranch,
+      ),
+    ).toHaveLength(1);
+    expect(readFakeGhState().views).toContain(ownedPr.number);
 
     // The board follows the run: a Done run whose worktree is still present is
     // in its shipping window, the In Delivery column (lib/board.ts).
     await page.goto(`/projects/${fx.projectSlug}`);
     await expect(
-      page.locator('[data-stage="delivery"]').getByText("Fix the widget"),
+      page
+        .getByRole("main")
+        .locator('[data-stage="delivery"]')
+        .getByText("Fix the widget"),
     ).toBeVisible();
   });
 });

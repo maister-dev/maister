@@ -12,7 +12,7 @@ fail() {
 source /etc/os-release
 [[ "$ID" == ubuntu && "$VERSION_ID" == 24.04 ]] || fail 'qualification requires Ubuntu 24.04'
 node_version=$(node --print 'process.versions.node')
-[[ "$node_version" == 24.15.0 || "$node_version" == 24.19.0 ]] || fail 'use exactly Node 24.15.0 or 24.19.0'
+[[ "$node_version" == 24.22.3 || "$node_version" == 26.13.1 ]] || fail 'use exactly Node 24.22.3 or 26.13.1'
 [[ -z "${NODE_OPTIONS-}" && -z "${LD_PRELOAD-}" && -z "${LD_LIBRARY_PATH-}" ]] || fail 'ambient Node/loader authority is forbidden during capability setup'
 [[ -r /proc/sys/kernel/yama/ptrace_scope ]] || fail 'existing Yama ptrace_scope 1–3 is required; do not change host sysctls'
 ptrace_scope=$(cat /proc/sys/kernel/yama/ptrace_scope)

@@ -70,27 +70,12 @@ function loadFixture(): ReviewCommentsFixture {
 // checked that passes.
 test.use({ viewport: { width: 1920, height: 1080 } });
 
-// KNOWN FAILING (measured 2026-09-17, not yet fixed). With the viewport above
-// and the centring below, this gets as far as the composer never opening. What
-// the DOM says immediately after the hover, on the widget's own element:
-//
-//   wrapper visibility: visible      (so the group-hover reveal DID fire)
-//   button rect:        [719,187,20,20]
-//   elementFromPoint(729,197) -> the diff-view container DIV, not the button
-//
-// The button is painted but clipped out of the hit-test tree by the scroller,
-// so nothing routes a pointer to it — a real click, a coordinate click and
-// `force` all land on the container. `dispatchEvent("click")` reaches the node
-// and still does not open the composer, so the library wants a real pointer
-// sequence. The row also renders TWO stacked `.diff-add-widget`s at the exact
-// same rect (gutter cell + content cell), which is worth ruling in or out
-// first. This needs the widget's own event contract, not another locator.
-
 // Opens the inline composer on a NEW-side diff line: the gutter cell renders
 // the lib's hover add-widget (`group-hover:visible`), so hover the cell first,
 // then click the revealed "+" button.
 async function openComposerOnNewLine(page: Page, line: number): Promise<void> {
   const row = page
+    .getByRole("region", { name: "Review workspace", exact: true })
     .locator('[data-testid="diff-view"] tr.diff-line')
     .filter({
       has: page.locator(`td.diff-line-new-num span[data-line-num="${line}"]`),
@@ -121,32 +106,35 @@ test("review gate: seeded threads render; add root + reply; resolve; rework deci
 
   await page.goto(`/runs/${fx.runId}?wb=review&scope=review`);
 
-  const workspace = page.locator('[data-testid="review-workspace"]');
+  const workspace = page.getByRole("region", {
+    name: "Review workspace",
+    exact: true,
+  });
 
   await expect(workspace).toBeVisible();
 
   // (1) Gate panel: the loop chip + counts computed server-side against the
   // live diff. Seeded: 3 open roots, 1 of them outdated (stale line_content).
-  await expect(page.locator('[data-testid="review-loop-chip"]')).toHaveText(
-    `Rework loop ${fx.gateAttempt} of ${fx.maxLoops + 1}`,
-  );
-  await expect(page.locator('[data-testid="review-open-count"]')).toHaveText(
-    "3 unresolved",
-  );
   await expect(
-    page.locator('[data-testid="review-outdated-count"]'),
+    workspace.locator('[data-testid="review-loop-chip"]'),
+  ).toHaveText(`Rework loop ${fx.gateAttempt} of ${fx.maxLoops + 1}`);
+  await expect(
+    workspace.locator('[data-testid="review-open-count"]'),
+  ).toHaveText("3 unresolved");
+  await expect(
+    workspace.locator('[data-testid="review-outdated-count"]'),
   ).toHaveText("1 outdated");
 
   // Approve soft-warn while open threads exist — and approve stays ENABLED
   // (the warn never blocks). Rework is NOT exhausted at visit 2 of 4.
   await expect(
-    page.locator('[data-testid="review-approve-open-warn"]'),
+    workspace.locator('[data-testid="review-approve-open-warn"]'),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Approve", exact: true }),
   ).toBeEnabled();
   await expect(
-    page.locator('[data-testid="review-rework-exhausted"]'),
+    workspace.locator('[data-testid="review-rework-exhausted"]'),
   ).toHaveCount(0);
 
   const rework = page.getByRole("button", {
@@ -171,7 +159,7 @@ test("review gate: seeded threads render; add root + reply; resolve; rework deci
     gateDiff.locator('[data-testid="review-inline-threads"]'),
   ).toHaveCount(2);
 
-  const inlineCard = page.locator('[data-testid="review-thread"]', {
+  const inlineCard = workspace.locator('[data-testid="review-thread"]', {
     hasText: fx.inline.body,
   });
 
@@ -183,7 +171,7 @@ test("review gate: seeded threads render; add root + reply; resolve; rework deci
     inlineCard.locator('[data-testid="review-reply"]'),
   ).toContainText(fx.inline.reply);
 
-  const secondCard = page.locator('[data-testid="review-thread"]', {
+  const secondCard = workspace.locator('[data-testid="review-thread"]', {
     hasText: fx.second.body,
   });
 
@@ -191,7 +179,7 @@ test("review gate: seeded threads render; add root + reply; resolve; rework deci
 
   // (1) The outdated seeded thread renders in the collapsible Outdated
   // section below the diff: file:line (side) + the quoted stale snapshot.
-  const outdatedSection = page.locator('[data-testid="outdated-threads"]');
+  const outdatedSection = workspace.locator('[data-testid="outdated-threads"]');
 
   await expect(outdatedSection).toBeVisible();
   await expect(outdatedSection.locator("summary")).toContainText(
@@ -216,7 +204,7 @@ test("review gate: seeded threads render; add root + reply; resolve; rework deci
   const newRootBody = "Please add a JSDoc comment for greet().";
 
   await openComposerOnNewLine(page, fx.composeLine);
-  const widget = page.locator('[data-testid="review-widget"]');
+  const widget = workspace.locator('[data-testid="review-widget"]');
 
   await expect(widget).toBeVisible();
   await widget
@@ -232,7 +220,7 @@ test("review gate: seeded threads render; add root + reply; resolve; rework deci
   await widget.locator('[data-testid="review-composer-submit"]').click();
   expect((await createRootPromise).status()).toBe(201);
 
-  const newCard = page.locator('[data-testid="review-thread"]', {
+  const newCard = workspace.locator('[data-testid="review-thread"]', {
     hasText: newRootBody,
   });
 
@@ -240,9 +228,9 @@ test("review gate: seeded threads render; add root + reply; resolve; rework deci
   await expect(
     newCard.locator('[data-testid="review-iteration-badge"]'),
   ).toHaveText(String(fx.gateAttempt));
-  await expect(page.locator('[data-testid="review-open-count"]')).toHaveText(
-    "4 unresolved",
-  );
+  await expect(
+    workspace.locator('[data-testid="review-open-count"]'),
+  ).toHaveText("4 unresolved");
 
   // (2) REPLY to the new thread via the reply affordance on its card.
   const replyBody = "Reply: covered by the docs pass.";
@@ -276,7 +264,7 @@ test("review gate: seeded threads render; add root + reply; resolve; rework deci
   await secondCard.locator('[data-testid="review-thread-resolve"]').click();
   expect((await resolvePromise).status()).toBe(200);
 
-  const resolvedCard = page.locator(
+  const resolvedCard = workspace.locator(
     '[data-testid="review-thread"][data-status="resolved"]',
   );
 
@@ -284,14 +272,14 @@ test("review gate: seeded threads render; add root + reply; resolve; rework deci
   await expect(
     resolvedCard.locator('[data-testid="review-thread-resolved"]'),
   ).toBeVisible();
-  await expect(page.locator('[data-testid="review-open-count"]')).toHaveText(
-    "3 unresolved",
-  );
+  await expect(
+    workspace.locator('[data-testid="review-open-count"]'),
+  ).toHaveText("3 unresolved");
 
   // (4) Request changes first obtains the server-derived packet. Only a
   // reviewer who sees that packet can confirm the response carrying its fresh
   // source/feedback fingerprints.
-  await page
+  await workspace
     .locator("#hitl-review-comments")
     .fill("Apply the inline comments, then re-request review.");
 
@@ -307,12 +295,12 @@ test("review gate: seeded threads render; add root + reply; resolve; rework deci
   const preview = await previewPromise;
 
   expect(preview.status()).toBe(200);
-  await expect(
-    page.locator('[data-testid="review-feedback-preview"]'),
-  ).toBeVisible();
-  await expect(
-    page.locator('[data-testid="review-feedback-preview"] pre'),
-  ).toContainText("Apply the inline comments");
+  const previewDialog = page.getByRole("dialog");
+
+  await expect(previewDialog).toBeVisible();
+  await expect(previewDialog.locator("pre")).toContainText(
+    "Apply the inline comments",
+  );
 
   const respondPromise = page.waitForResponse(
     (r) =>
@@ -321,7 +309,7 @@ test("review gate: seeded threads render; add root + reply; resolve; rework deci
       r.request().method() === "POST",
   );
 
-  await page.locator('[data-testid="review-feedback-preview-confirm"]').click();
+  await previewDialog.getByTestId("review-feedback-preview-confirm").click();
 
   const respond = await respondPromise;
 

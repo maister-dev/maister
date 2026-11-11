@@ -29,7 +29,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 24.19.0
+          node-version: 24.22.3
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
@@ -78,7 +78,7 @@ jobs:
         run: pnpm --filter @maister/mcp test
 
   integration:
-    name: integration tests (web testcontainers)
+    name: integration remainder (web testcontainers)
     runs-on: ubuntu-latest
     if: contains(github.event.pull_request.labels.*.name, 'integration')
     steps:
@@ -93,15 +93,15 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 24.19.0
+          node-version: 24.22.3
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install dependencies (monorepo root)
         run: pnpm install --frozen-lockfile
 
-      - name: Integration tests (web)
-        run: pnpm --filter maister-web test:integration
+      - name: Integration tests outside the mandatory A/B and isolation jobs
+        run: pnpm --filter maister-web test:integration:remainder
 
   librarian-acceptance:
     name: Librarian browser acceptance
@@ -114,7 +114,7 @@ jobs:
           version: 11.3.0
       - uses: actions/setup-node@v4
         with:
-          node-version: 24.19.0
+          node-version: 24.22.3
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
@@ -133,7 +133,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [24.15.0, 24.19.0]
+        node: [24.22.3]
         shard: [1, 2]
     steps:
       - uses: actions/checkout@v4
@@ -162,7 +162,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [24.15.0, 24.19.0]
+        node: [24.22.3, 26.13.1]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -185,8 +185,40 @@ jobs:
           path: /tmp/maister-ab-*/vitest.json
           if-no-files-found: error
 
+  node26-compatibility:
+    name: Node 26 web compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MAISTER_TEST_MAX_WORKERS: "1"
+      MAISTER_BUILD_MAX_WORKERS: "1"
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.3.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26.13.1
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter maister-web test:unit
+      - run: pnpm test:runtime:compatibility
+      - run: pnpm --filter maister-web exec playwright install --with-deps chromium
+      - run: pnpm --filter maister-web test:e2e:execution-ab
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: node-26-web-compatibility
+          path: |
+            /tmp/maister-ab-*/vitest.json
+            web/test-results
+          if-no-files-found: error
+
   execution-isolation:
-    name: A/B isolation (macOS Intel, Node 24.19.0, part ${{ matrix.part }}/3)
+    name: A/B isolation (macOS Intel, Node 24.22.3, part ${{ matrix.part }}/3)
     runs-on: macos-15-intel
     timeout-minutes: 60
     strategy:
@@ -213,7 +245,7 @@ jobs:
           version: 11.3.0
       - uses: actions/setup-node@v4
         with:
-          node-version: 24.19.0
+          node-version: 24.22.3
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
@@ -312,7 +344,7 @@ jobs:
           version: 11.3.0
       - uses: actions/setup-node@v4
         with:
-          node-version: 24.19.0
+          node-version: 24.22.3
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
@@ -349,7 +381,7 @@ jobs:
           version: 11.3.0
       - uses: actions/setup-node@v4
         with:
-          node-version: 24.19.0
+          node-version: 24.22.3
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile

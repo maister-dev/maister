@@ -94,7 +94,7 @@ test("orchestrator loop: launch → park with child subtree → resume to termin
   await page.goto(`/projects/${fx.projectSlug}`);
 
   const launchControl = page
-    .locator("[data-board]")
+    .getByRole("region", { name: "Task board", exact: true })
     .getByText("Coordinate the delivery")
     .locator("xpath=ancestor::article")
     // The seeded task has never run, so its card button reads "Launch" —

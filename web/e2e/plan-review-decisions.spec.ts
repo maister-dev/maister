@@ -7,9 +7,9 @@ test.describe("Plan-review decision requests", () => {
     page,
   }) => {
     const fixture = loadFixtures().byKey.planReview;
-    const inboxProject = page.locator(
-      'section[aria-label="MAIster E2E Plan Review"]',
-    );
+    const inboxProject = page.getByRole("region", {
+      name: "MAIster E2E Plan Review",
+    });
 
     await page.goto("/inbox");
 
@@ -36,9 +36,11 @@ test.describe("Plan-review decision requests", () => {
     await page.goto(`/runs/${fixture.runId}`);
 
     await expect(
-      page.getByText(fixture.taskTitle, { exact: true }),
+      page.getByRole("heading", { name: fixture.taskTitle, exact: true }),
     ).toBeVisible();
-    const decisionCards = page.getByTestId("plan-decision-card");
+    const decisionCards = page
+      .getByRole("main")
+      .getByTestId("plan-decision-card");
     const databaseDecision = decisionCards.filter({
       hasText: "Choose a database",
     });
@@ -46,14 +48,16 @@ test.describe("Plan-review decision requests", () => {
       hasText: "Choose a resume mode",
     });
 
-    await expect(page.locator("#agent-chat")).toBeVisible();
+    await expect(page.getByRole("main").locator("#agent-chat")).toBeVisible();
     await expect(decisionCards).toHaveCount(1);
     await expect(databaseDecision).toHaveCount(0);
     await expect(resumeDecision).toHaveCount(1);
 
     await resumeDecision.getByRole("button", { name: /Graph/ }).click();
 
-    await expect(page.getByTestId("plan-decision-card")).toHaveCount(0);
-    await expect(page.locator("#agent-chat")).toHaveCount(0);
+    await expect(
+      page.getByRole("main").getByTestId("plan-decision-card"),
+    ).toHaveCount(0);
+    await expect(page.getByRole("main").locator("#agent-chat")).toHaveCount(0);
   });
 });

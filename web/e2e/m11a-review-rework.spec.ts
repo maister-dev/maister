@@ -50,9 +50,13 @@ test("review HITL: off-list decision is rejected, then a UI rework request is ac
   // two declared decision buttons (and nothing outside the allow-list).
   await page.goto(`/runs/${fx.runId}?wb=review&scope=review`);
 
-  await expect(page.locator('[data-testid="review-workspace"]')).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Review workspace" }),
+  ).toBeVisible();
 
-  const comments = page.locator("#hitl-review-comments");
+  const comments = page
+    .getByRole("region", { name: "Review workspace" })
+    .locator("#hitl-review-comments");
 
   await expect(comments).toBeVisible();
   await expect(

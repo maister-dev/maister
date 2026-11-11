@@ -2,6 +2,8 @@ import path from "node:path";
 
 import { defineConfig, devices } from "@playwright/test";
 
+import { testMaxWorkers } from "../scripts/validation-resources.mjs";
+
 import { resolvePostgresDbUrl } from "./lib/db/postgres-url";
 import { resolveTestWorktreesRoot } from "./test-support/worktree-test-root";
 
@@ -26,11 +28,12 @@ export default defineConfig({
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: 0,
+  workers: testMaxWorkers(process.env),
   reporter: "list",
   globalSetup: "./e2e/global-setup.ts",
   use: {
     baseURL: BASE_URL,
-    trace: "on-first-retry",
+    trace: "retain-on-failure",
   },
   projects: [
     { name: "setup", testMatch: /.*\.setup\.ts$/ },

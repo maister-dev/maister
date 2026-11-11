@@ -23,7 +23,7 @@
 //     web/lib/flows/graph/__tests__/review-refusal.integration.test.ts (T4.4,
 //     real worktree: gate fails → review refused → run Failed (≠ Done); artifact
 //     current → approve → run reaches Review — Done is the M18 promotion path,
-//     not the graph terminal). See the documented test.skip at the bottom.
+//     not the graph terminal).
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -264,14 +264,4 @@ test("UX-03C/D evidence filters fit artifacts and the board readiness badge trac
   // The re-produced run (current artifact + passed gate) is ready → no badge at all.
   await page.goto(`/projects/${fx.projectSlug}`);
   await expect(page.locator("[data-readiness]")).toHaveCount(0);
-});
-
-// (4) Runner-side approve→done refusal: NOT e2e-drivable under the stub
-// supervisor (no on-disk worktree for the m12 fixture; the respond route
-// resumes the graph runner in a background microtask with no deterministic UI
-// signal). The blocking pre_finish artifact_required gate that refuses approval
-// while impl-diff is not current is integration-proven, with a real worktree,
-// in web/lib/flows/graph/__tests__/review-refusal.integration.test.ts (T4.4).
-test.skip("runner refuses approve→done while impl-diff is stale (integration-proven, not e2e)", () => {
-  // Intentionally empty — see the comment above and review-refusal.integration.test.ts.
 });

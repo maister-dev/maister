@@ -77,19 +77,29 @@ test.describe("M19 reconcile + GC UI", () => {
     await page.goto(`/runs/${fx.crashedRunId}`);
 
     // The Crashed section is shown only when status === 'Crashed'.
-    const section = page.getByTestId("run-crashed-section");
+    const section = page
+      .getByTestId("run-crashed-section")
+      .filter({ visible: true });
 
     await expect(section).toBeVisible();
 
     // The run IS recoverable (acpSessionId + ai_coding node) → the recover
     // actions component renders, not the not-recoverable note.
-    const actions = page.getByTestId("run-recover-actions");
+    const actions = page
+      .getByTestId("run-recover-actions")
+      .filter({ visible: true });
 
     await expect(actions).toBeVisible();
-    await expect(page.getByTestId("run-not-recoverable")).toHaveCount(0);
+    await expect(
+      page.getByTestId("run-not-recoverable").filter({ visible: true }),
+    ).toHaveCount(0);
 
-    const recoverButton = page.getByTestId("recover-button");
-    const discardButton = page.getByTestId("discard-button");
+    const recoverButton = page
+      .getByTestId("recover-button")
+      .filter({ visible: true });
+    const discardButton = page
+      .getByTestId("discard-button")
+      .filter({ visible: true });
 
     await expect(recoverButton).toBeVisible();
     await expect(discardButton).toBeVisible();
@@ -98,7 +108,9 @@ test.describe("M19 reconcile + GC UI", () => {
     // recovery re-runs the current node (the contract's "warns re-runs node").
     await recoverButton.click();
 
-    const confirm = page.getByTestId("recover-confirm");
+    const confirm = page
+      .getByTestId("recover-confirm")
+      .filter({ visible: true });
 
     await expect(confirm).toBeVisible();
     // The warning copy mentions re-running (run.recoverConfirmBody). Matched
@@ -106,7 +118,9 @@ test.describe("M19 reconcile + GC UI", () => {
     // keeps the latin stem still satisfies; the i18n catalog carries the full
     // sentence.
     await expect(confirm).toContainText(/re-?\s?runs?/i);
-    await expect(page.getByTestId("recover-confirm-submit")).toBeVisible();
+    await expect(
+      page.getByTestId("recover-confirm-submit").filter({ visible: true }),
+    ).toBeVisible();
   });
 
   test("(a2) a Discard confirm dialog opens from the Crashed section", async ({
@@ -116,13 +130,19 @@ test.describe("M19 reconcile + GC UI", () => {
 
     await page.goto(`/runs/${fx.crashedRunId}`);
 
-    await expect(page.getByTestId("run-crashed-section")).toBeVisible();
-    await page.getByTestId("discard-button").click();
+    await expect(
+      page.getByTestId("run-crashed-section").filter({ visible: true }),
+    ).toBeVisible();
+    await page.getByTestId("discard-button").filter({ visible: true }).click();
 
-    const confirm = page.getByTestId("discard-confirm");
+    const confirm = page
+      .getByTestId("discard-confirm")
+      .filter({ visible: true });
 
     await expect(confirm).toBeVisible();
-    await expect(page.getByTestId("discard-confirm-submit")).toBeVisible();
+    await expect(
+      page.getByTestId("discard-confirm-submit").filter({ visible: true }),
+    ).toBeVisible();
   });
 
   test("(a3) a non-recoverable Crashed run-detail hides Recover but still shows Discard", async ({
@@ -133,16 +153,24 @@ test.describe("M19 reconcile + GC UI", () => {
     await page.goto(`/runs/${fx.notRecoverableRunId}`);
 
     // The Crashed section renders for every Crashed run.
-    await expect(page.getByTestId("run-crashed-section")).toBeVisible();
+    await expect(
+      page.getByTestId("run-crashed-section").filter({ visible: true }),
+    ).toBeVisible();
 
     // No acpSessionId → recoverable:false → the not-recoverable note shows and
     // the Recover button is absent.
-    await expect(page.getByTestId("run-not-recoverable")).toBeVisible();
-    await expect(page.getByTestId("recover-button")).toHaveCount(0);
+    await expect(
+      page.getByTestId("run-not-recoverable").filter({ visible: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("recover-button").filter({ visible: true }),
+    ).toHaveCount(0);
 
     // Discard MUST still be available — it is the only UI path into the GC
     // countdown for a run that cannot be resumed.
-    await expect(page.getByTestId("discard-button")).toBeVisible();
+    await expect(
+      page.getByTestId("discard-button").filter({ visible: true }),
+    ).toBeVisible();
   });
 
   test("(b) the board shows the Crashed run in the dedicated Crashed column", async ({
@@ -152,7 +180,7 @@ test.describe("M19 reconcile + GC UI", () => {
 
     await page.goto(`/projects/${fx.projectSlug}`);
 
-    const board = page.locator("[data-board]");
+    const board = page.getByRole("region", { name: "Task board", exact: true });
 
     await expect(board).toBeVisible();
 

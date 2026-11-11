@@ -276,7 +276,11 @@ test("assignment queue actions: take over → release → claim stay consistent 
   ).toBeVisible();
 
   await page.goto(`/runs/${fx.runId}`);
-  await expect(page.getByText("claimed by E2E Admin")).toBeVisible();
+  await expect(
+    page.getByText("claimed by E2E Admin").filter({ visible: true }),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: "Release" })).toBeVisible();
-  await expect(page.getByText("roles: maintainer")).toBeVisible();
+  await expect(
+    page.getByRole("main").getByText("roles: maintainer"),
+  ).toBeVisible();
 });
