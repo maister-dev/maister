@@ -1961,6 +1961,13 @@
       "when": 1794606477986,
       "tag": "0283_specialist_root_appointment_epoch",
       "breakpoints": true
+    },
+    {
+      "idx": 284,
+      "version": "7",
+      "when": 1794606477987,
+      "tag": "0284_specialist_root_branch_settlement",
+      "breakpoints": true
     }
   ]
 }

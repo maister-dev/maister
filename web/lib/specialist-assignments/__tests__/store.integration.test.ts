@@ -719,6 +719,55 @@ it("IT-CBC-01 retains and replays immutable work through the current executing p
     code: "23514",
     constraint: "specialist_work_child_live",
   });
+  const replacementRunId = randomUUID();
+
+  await database.pool.query("UPDATE runs SET status='Done' WHERE id=$1", [
+    parentRunId,
+  ]);
+  await database.pool.query(
+    "INSERT INTO runs(id,project_id,flow_version) VALUES($1,$2,'replacement')",
+    [replacementRunId, project.id],
+  );
+  const current = await getSpecialistAssignment(
+    database.db,
+    requesterId,
+    assignment.id,
+  );
+  const appointReplacement = () =>
+    linkSpecialistAssignmentRun(database.db, requesterId, assignment.id, {
+      expectedRevision: current.revision,
+      inputRevision: current.inputRevision,
+      runId: replacementRunId,
+      role: "continuation",
+      work: null,
+    });
+
+  await expect(appointReplacement()).rejects.toMatchObject({
+    code: "CONFLICT",
+    details: { reason: "assignment_root_unsettled" },
+  });
+  await database.pool.query("UPDATE runs SET status='Done' WHERE id=$1", [
+    reservedRunId,
+  ]);
+  await expect(appointReplacement()).resolves.toMatchObject({
+    assignment: {
+      runIds: expect.arrayContaining([
+        parentRunId,
+        reservedRunId,
+        replacementRunId,
+      ]),
+    },
+  });
+  await database.pool.query("UPDATE runs SET status='Crashed' WHERE id=$1", [
+    reservedRunId,
+  ]);
+  await expect(
+    database.pool.query("UPDATE runs SET status='Running' WHERE id=$1", [
+      reservedRunId,
+    ]),
+  ).rejects.toMatchObject({
+    constraint: "specialist_assignment_root_recovery_conflict",
+  });
 });
 
 it("IT-CBA-04 refuses a context head without its exact immutable retained revision", async () => {
@@ -3200,6 +3249,7 @@ it("IT-CBX-01 logical-work upgrade preserves old intake and opaque child labels 
       await applyMainMigration(tx, "0281_specialist_root_admission_fence");
       await applyMainMigration(tx, "0282_specialist_root_recovery_fence");
       await applyMainMigration(tx, "0283_specialist_root_appointment_epoch");
+      await applyMainMigration(tx, "0284_specialist_root_branch_settlement");
     });
     expect(
       (

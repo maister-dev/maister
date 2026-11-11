@@ -284,6 +284,10 @@ assignment awaiting acceptance cannot acquire a new live root. A lone legacy
 root is still usable; ambiguous historical links receive no invented order.
 The existing answer lineage carries the same root across an authorized
 clarification without rewriting the original link or minting a new epoch.
+Migration `0284_specialist_root_branch_settlement` also checks native children
+with exact work links. A successor waits for live children of the predecessor
+to settle. After handoff, crashed children of the old root cannot reenter
+Pending or Running through generic recovery.
 
 Assignment executor lease is 120 seconds, renewed every 40 seconds by one fenced owner; each claim/renew/write checks current epoch, owner ID and fresh expiry in a transaction. A stable assignment-row CAS increments epoch when replacing an owner. Execution-host assignment epoch remains a separate lower boundary. Current permissions are checked in addition to both fences. A stale owner yields with a typed conflict; it cannot finalize another run's current work or classify itself as a new failure.
 
