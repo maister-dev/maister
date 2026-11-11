@@ -58,6 +58,7 @@ afterAll(async () => {
 // the returned userId. Returns runId, projectId, userId.
 async function seedRunWithGatesAndArtifacts(opts: {
   gates?: Array<{
+    gateId?: string;
     kind: string;
     mode: "blocking" | "advisory";
     status: string;
@@ -163,7 +164,7 @@ async function seedRunWithGatesAndArtifacts(opts: {
       id: randomUUID(),
       runId,
       nodeAttemptId,
-      gateId: `gate-${randomUUID().slice(0, 8)}`,
+      gateId: g.gateId ?? `gate-${randomUUID().slice(0, 8)}`,
       kind: g.kind,
       mode: g.mode,
       status: g.status,
@@ -437,6 +438,65 @@ describe("SSOT-invariant: getRunReadiness == board == portfolio for every readin
 });
 
 describe("UX-07A Flow verification", () => {
+  it("retains each recorded gate status alongside its contribution", async () => {
+    const gateReasons = [
+      { id: "await-report", status: "pending", state: "waiting" },
+      { id: "active-check", status: "running", state: "waiting" },
+      { id: "skipped-check", status: "skipped", state: "blocked" },
+      { id: "failed-check", status: "failed", state: "failed" },
+      { id: "stale-check", status: "stale", state: "stale" },
+      { id: "review-decision", status: "overridden", state: "overridden" },
+    ];
+    const { runId, projectId } = await seedRunWithGatesAndArtifacts({
+      gates: [
+        ...gateReasons.map(({ id, status }) => ({
+          gateId: id,
+          status,
+          kind: status === "pending" ? "external_check" : "command_check",
+          mode: "blocking" as const,
+        })),
+        {
+          gateId: "passed-check",
+          kind: "command_check",
+          mode: "blocking",
+          status: "passed",
+        },
+        {
+          gateId: "advisory-check",
+          kind: "command_check",
+          mode: "advisory",
+          status: "failed",
+        },
+      ],
+      artifacts: [
+        {
+          artifactDefId: "required-proof",
+          validity: "stale",
+          requiredFor: ["review"],
+        },
+      ],
+    });
+    const verification = await getFlowRunVerification(runId, projectId, db);
+
+    expect(verification?.state).toBe("failed");
+    expect(verification?.reasons).toHaveLength(gateReasons.length + 1);
+    expect(verification?.reasons).toEqual(
+      expect.arrayContaining([
+        ...gateReasons.map((reason) =>
+          expect.objectContaining({ ...reason, kind: "gate" }),
+        ),
+        expect.objectContaining({
+          id: "required-proof",
+          kind: "artifact",
+          state: "blocked",
+        }),
+      ]),
+    );
+    expect(verification?.rollup).toEqual(
+      await getRunReadiness(runId, projectId, db),
+    );
+  });
+
   it("distinguishes an immutable no-check Flow from unknown or unevaluated verification without changing the rollup", async () => {
     const { runId, projectId } = await seedRunWithGatesAndArtifacts({});
     const before = await getRunReadiness(runId, projectId, db);

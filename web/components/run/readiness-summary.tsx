@@ -2,6 +2,7 @@ import type { FlowVerificationState } from "@/lib/queries/readiness";
 import type { ReactElement } from "react";
 
 import clsx from "clsx";
+import Link from "next/link";
 
 import { READINESS_BADGE } from "@/components/readiness-badge";
 
@@ -11,19 +12,22 @@ export interface ReadinessSummaryLabels {
   reasons: string;
 }
 
+interface ReadinessSummaryReason {
+  id: string;
+  explanation: string;
+  nextAction: string;
+  evidence?: { href: string; label: string };
+}
+
 export interface ReadinessSummaryProps {
   state: FlowVerificationState;
-  reasons: string[];
-  evidenceHref?: string;
-  evidenceLabel?: string;
+  reasons: ReadinessSummaryReason[];
   labels: ReadinessSummaryLabels;
 }
 
 export function ReadinessSummary({
   state,
   reasons,
-  evidenceHref,
-  evidenceLabel,
   labels,
 }: ReadinessSummaryProps): ReactElement {
   const stateLabel = labels.state[state];
@@ -65,20 +69,26 @@ export function ReadinessSummary({
           {labels.reasons}
         </h3>
         <ul className="mt-2 flex flex-col gap-1.5">
-          {reasons.map((reason, idx) => (
+          {reasons.map((reason) => (
             <li
-              key={idx}
+              key={reason.id}
               className="flex gap-2 text-[13px] leading-[1.4] text-body before:flex-none before:text-mute before:content-['•']"
             >
-              {reason}
+              <div className="min-w-0">
+                <p className="break-words">{reason.explanation}</p>
+                <p className="text-xs text-mute">{reason.nextAction}</p>
+                {reason.evidence ? (
+                  <Link
+                    className="text-xs underline"
+                    href={reason.evidence.href}
+                  >
+                    {reason.evidence.label}
+                  </Link>
+                ) : null}
+              </div>
             </li>
           ))}
         </ul>
-        {evidenceHref && evidenceLabel ? (
-          <a className="text-xs underline" href={evidenceHref}>
-            {evidenceLabel}
-          </a>
-        ) : null}
       </div>
     </details>
   );

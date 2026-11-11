@@ -76,13 +76,27 @@ test("readiness summary: badge on board/portfolio + panel on run-detail", async 
   await page.locator(`a[href="/runs/${fx.failedRunId}"]`).first().click();
   await page.waitForURL(`/runs/${fx.failedRunId}*`);
 
-  const disclosure = page.getByTestId("flow-verification").locator("summary");
+  const verification = page.getByTestId("flow-verification");
+  const disclosure = verification.locator("summary");
 
   await expect(disclosure).toContainText("Flow verification");
   await disclosure.focus();
   await disclosure.press("Enter");
+  const failedReason = verification
+    .getByRole("listitem")
+    .filter({ hasText: fx.gateId });
+
+  await expect(failedReason).toContainText(
+    "Inspect the failed check before retrying.",
+  );
+  await failedReason.getByRole("link", { name: "View gate evidence" }).click();
+  await expect(page).toHaveURL(
+    `/runs/${fx.failedRunId}?wb=evidence&kind=gate&state=failed`,
+  );
   await expect(
-    page.getByTestId("flow-verification").getByRole("list"),
+    page
+      .locator('[data-testid="evidence-node"][data-state="failed"]')
+      .filter({ hasText: fx.gateId }),
   ).toBeVisible();
 
   // (3) Navigate back to the board and click the overridden run card.
@@ -97,8 +111,23 @@ test("readiness summary: badge on board/portfolio + panel on run-detail", async 
   await page.locator(`a[href="/runs/${fx.overriddenRunId}"]`).first().click();
   await page.waitForURL(`/runs/${fx.overriddenRunId}*`);
 
-  await expect(page.getByTestId("flow-verification")).toContainText(
-    "Overridden",
+  await expect(disclosure).toContainText("Overridden");
+  await disclosure.press("Enter");
+  const overrideReason = verification
+    .getByRole("listitem")
+    .filter({ hasText: fx.gateId });
+
+  await expect(overrideReason).toContainText(
+    "An override supplied the decision.",
+  );
+  await expect(overrideReason).toContainText(
+    "Review the recorded decision before proceeding.",
+  );
+  await expect(
+    overrideReason.getByRole("link", { name: "View gate evidence" }),
+  ).toHaveAttribute(
+    "href",
+    `/runs/${fx.overriddenRunId}?wb=evidence&kind=gate&state=overridden`,
   );
 
   // (4) Navigate to the portfolio (ADR-172 D2 moved it off `/`). The workspace
@@ -204,6 +233,85 @@ test("UX-07 Running operational work and historical executor failure stay separa
         .filter({ visible: true })
         .getByTestId("attempt-failure"),
     ).toContainText("was unavailable during this attempt");
+
+    const gateReasons = [
+      {
+        status: "pending",
+        kind: "external_check",
+        reason: "is pending. No result has been recorded.",
+        action: "Wait for a result.",
+        evidence: false,
+      },
+      {
+        status: "running",
+        kind: "command_check",
+        reason: "is still running",
+        action: "Wait for the current check to finish.",
+        evidence: false,
+      },
+      {
+        status: "skipped",
+        kind: "command_check",
+        reason: "was skipped, so the blocking check is still unresolved",
+        action: "Arrange for the check to run before proceeding.",
+        evidence: true,
+      },
+      {
+        status: "stale",
+        kind: "external_check",
+        reason: "is out of date",
+        action: "Obtain a fresh result for this run.",
+        evidence: true,
+      },
+    ];
+
+    await withE2EDb(async (pool) => {
+      for (const { status, kind } of gateReasons) {
+        await pool.query(
+          "INSERT INTO gate_results(id,run_id,node_attempt_id,gate_id,kind,mode,status) VALUES($1,$2,$3,$4,$5,'blocking',$6)",
+          [randomUUID(), flow, attempt, `${status}-check`, kind, status],
+        );
+      }
+      await pool.query(
+        "INSERT INTO artifact_instances(id,run_id,node_attempt_id,artifact_def_id,kind,producer,locator,validity,required_for) VALUES($1,$2,$3,'required-proof','test_report','runner',$4,'stale',$5)",
+        [
+          randomUUID(),
+          flow,
+          attempt,
+          { kind: "inline", text: "outdated" },
+          JSON.stringify(["review"]),
+        ],
+      );
+    });
+    await page.reload();
+    await verification.locator("summary").press("Enter");
+    for (const { status, reason, action, evidence } of gateReasons) {
+      const item = verification
+        .getByRole("listitem")
+        .filter({ hasText: `${status}-check` });
+
+      await expect(item).toContainText(reason);
+      await expect(item).toContainText(action);
+      if (evidence) {
+        await expect(
+          item.getByRole("link", { name: "View gate evidence" }),
+        ).toHaveAttribute(
+          "href",
+          `/runs/${flow}?wb=evidence&kind=gate&state=${status}`,
+        );
+      } else {
+        await expect(item.getByRole("link")).toHaveCount(0);
+      }
+    }
+    const artifact = verification
+      .getByRole("listitem")
+      .filter({ hasText: "required-proof" });
+
+    await expect(artifact).toContainText("has no current result.");
+    await expect(artifact).toContainText(
+      "Produce or refresh the required evidence before continuing.",
+    );
+
     await page.goto(`/runs/${noChecksRun}`);
     await expect(verification).toContainText("No blocking checks configured");
   } finally {

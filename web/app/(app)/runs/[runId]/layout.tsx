@@ -1656,8 +1656,6 @@ export default async function RunDetailLayout({
 
           {verification ? (
             <ReadinessSummary
-              evidenceHref={`/runs/${runId}?wb=evidence`}
-              evidenceLabel={tReadiness("openEvidence")}
               labels={{
                 state: {
                   ready: tReadiness("recordedClear"),
@@ -1674,14 +1672,40 @@ export default async function RunDetailLayout({
                 summary: tReadiness("flowVerification"),
                 reasons: tReadiness("reasons"),
               }}
-              reasons={verification.reasons.map((reason) =>
-                reason.kind === "artifact"
-                  ? tReadiness("missingEvidence", { id: reason.id })
-                  : tReadiness("gateReason", {
+              reasons={verification.reasons.map((reason) => {
+                if (reason.kind === "artifact")
+                  return {
+                    id: `artifact:${reason.id}`,
+                    explanation: tReadiness("missingEvidence", {
                       id: reason.id,
-                      state: tReadiness(reason.state),
                     }),
-              )}
+                    nextAction: tReadiness("produceEvidence"),
+                  };
+
+                const { status } = reason;
+                const evidenceQuery = new URLSearchParams({
+                  wb: "evidence",
+                  kind: "gate",
+                  state: status,
+                });
+
+                return {
+                  id: `gate:${reason.rowId}`,
+                  explanation: tReadiness(`gateDetails.${status}.reason`, {
+                    id: reason.id,
+                  }),
+                  nextAction: tReadiness(`gateDetails.${status}.nextAction`),
+                  evidence:
+                    status === "pending" || status === "running"
+                      ? undefined
+                      : {
+                          href: `/runs/${runId}?${evidenceQuery}`,
+                          label: tReadiness("viewGateEvidence", {
+                            id: reason.id,
+                          }),
+                        },
+                };
+              })}
               state={verification.state}
             />
           ) : null}

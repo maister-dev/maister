@@ -413,8 +413,8 @@ test("main history loads the latest portion, retries an automatic earlier load a
       "data-mode",
       "docked",
     );
-    expect(
-      await jump.evaluate((button) => {
+    const jumpIsContained = (): Promise<boolean> =>
+      jump.evaluate((button) => {
         const bounds = button.getBoundingClientRect();
         const owner = button
           .closest('[data-testid="run-transcript-history"]')!
@@ -427,10 +427,38 @@ test("main history loads the latest portion, retries an automatic earlier load a
         return (
           bounds.left >= owner.left &&
           bounds.right <= owner.right &&
+          bounds.top >= owner.top &&
+          bounds.bottom <= owner.bottom &&
           button.contains(hit)
         );
-      }),
-    ).toBe(true);
+      });
+
+    await expect.poll(jumpIsContained).toBe(true);
+    const shortHeight = await transcript.evaluate((element) =>
+      Math.min(
+        window.innerHeight,
+        Math.ceil(element.getBoundingClientRect().top + window.scrollY + 60),
+      ),
+    );
+
+    await page.setViewportSize({ width: 1600, height: shortHeight });
+    await transcript.evaluate((element) =>
+      window.scrollBy(
+        0,
+        element.getBoundingClientRect().top - window.innerHeight + 60,
+      ),
+    );
+    await expect
+      .poll(() =>
+        transcript.evaluate((element) =>
+          Math.abs(
+            window.innerHeight - element.getBoundingClientRect().top - 60,
+          ),
+        ),
+      )
+      .toBeLessThan(2);
+    await expect.poll(jumpIsContained).toBe(true);
+    await page.setViewportSize({ width: 1600, height: 1000 });
     await jump.click();
     await page.getByTestId("librarian-close").click();
     await expect(messages).toHaveCount(100);

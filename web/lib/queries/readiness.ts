@@ -18,6 +18,7 @@ import {
   liveBlockingGates,
   isEffectivelyBlockingGate,
   rollupReadiness,
+  type ReadinessContribution,
 } from "@/lib/flows/graph/readiness-core";
 import { checksFromSnapshot } from "@/lib/runs/execution-policy";
 
@@ -102,11 +103,15 @@ export type ReadinessDTO = {
 
 export type FlowVerificationState =
   ReadinessDTO["readiness"] | "none" | "excluded" | "unevaluated" | "unknown";
-export type FlowVerificationReason = {
-  id: string;
-  kind: "artifact" | "gate";
-  state: "blocked" | "failed" | "stale" | "waiting" | "overridden";
-};
+export type FlowVerificationReason =
+  | { id: string; kind: "artifact"; state: "blocked" }
+  | {
+      id: string;
+      kind: "gate";
+      rowId: string;
+      state: Exclude<ReadinessContribution, "clear">;
+      status: Exclude<GateResultStatus, "passed">;
+    };
 
 export async function getRunReadiness(
   runId: string,
@@ -355,8 +360,14 @@ async function readRunReadiness(runId: string, projectId: string, db?: Db) {
   }));
 
   for (const { gate: g, contribution } of evaluatedGates) {
-    if (contribution === "clear") continue;
-    displayReasons.push({ id: g.gateId, kind: "gate", state: contribution });
+    if (contribution === "clear" || g.status === "passed") continue;
+    displayReasons.push({
+      id: g.gateId,
+      kind: "gate",
+      rowId: g.id,
+      state: contribution,
+      status: g.status,
+    });
 
     switch (contribution) {
       case "failed":

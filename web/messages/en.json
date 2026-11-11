@@ -3208,9 +3208,35 @@
     "policyExcluded": "Checks excluded by policy",
     "unevaluated": "Not yet evaluated",
     "verificationUnknown": "Verification unavailable",
-    "openEvidence": "Open evidence",
     "missingEvidence": "Required evidence {id} has no current result.",
-    "gateReason": "Gate {id} · {state}",
+    "produceEvidence": "Produce or refresh the required evidence before continuing.",
+    "viewGateEvidence": "View gate evidence for {id}",
+    "gateDetails": {
+      "pending": {
+        "reason": "Gate {id} is pending. No result has been recorded.",
+        "nextAction": "Wait for a result."
+      },
+      "running": {
+        "reason": "Gate {id} is still running.",
+        "nextAction": "Wait for the current check to finish."
+      },
+      "skipped": {
+        "reason": "Gate {id} was skipped, so the blocking check is still unresolved.",
+        "nextAction": "Arrange for the check to run before proceeding."
+      },
+      "failed": {
+        "reason": "Gate {id} failed.",
+        "nextAction": "Inspect the failed check before retrying."
+      },
+      "stale": {
+        "reason": "The result for gate {id} is out of date.",
+        "nextAction": "Obtain a fresh result for this run."
+      },
+      "overridden": {
+        "reason": "Gate {id} was overridden. An override supplied the decision.",
+        "nextAction": "Review the recorded decision before proceeding."
+      }
+    },
     "summary": "Readiness",
     "reasons": "Reasons",
     "ready": "Ready",

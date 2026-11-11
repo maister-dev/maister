@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import type { TranscriptPage } from "@/lib/runs/transcript-page";
 import type { TranscriptLabels } from "@/components/run-transcript/transcript-view";
 
+import { Button } from "@heroui/react";
 import {
   useCallback,
   useEffect,
@@ -1242,7 +1243,7 @@ export function RunTranscriptHistory({
   };
 
   const controlClass =
-    "rounded-md border border-line bg-paper px-2.5 py-1 text-xs font-medium text-ink hover:border-amber focus-visible:outline-amber disabled:opacity-60";
+    "h-7 min-w-0 rounded-md border-line bg-paper px-2.5 text-xs font-medium text-ink hover:border-amber";
   const updateLabel = history.liveUpdate
     ? t("newerMessages")
     : history.newerAvailable
@@ -1266,7 +1267,12 @@ export function RunTranscriptHistory({
                   ? "unavailable"
                   : "error",
           )}{" "}
-          <button className={controlClass} type="button" onClick={retry}>
+          <Button
+            className={controlClass}
+            size="sm"
+            variant="outline"
+            onPress={retry}
+          >
             {t(
               error.direction === "earlier"
                 ? "retryEarlier"
@@ -1274,7 +1280,7 @@ export function RunTranscriptHistory({
                   ? "retryLater"
                   : "retry",
             )}
-          </button>
+          </Button>
         </p>
       ) : null}
       {notice ? <p role="status">{t(notice)}</p> : null}
@@ -1282,15 +1288,16 @@ export function RunTranscriptHistory({
         <p role="status">{t("loadingTranscript")}</p>
       ) : null}
       {first?.hasEarlier ? (
-        <button
+        <Button
           className={controlClass}
           data-testid="transcript-earlier"
-          disabled={loading !== null}
-          type="button"
-          onClick={() => navigateRef.current("earlier")}
+          isDisabled={loading !== null}
+          size="sm"
+          variant="outline"
+          onPress={() => navigateRef.current("earlier")}
         >
           {t("earlierMessages")}
-        </button>
+        </Button>
       ) : null}
       {loading ? (
         <p data-testid="transcript-history-loading" role="status">
@@ -1314,50 +1321,58 @@ export function RunTranscriptHistory({
       {last?.projection.state === "caught_up" && messages.length === 0 ? (
         <p>{t("emptyTranscript")}</p>
       ) : null}
-      <TranscriptView
-        labels={labels}
-        messages={messages}
-        running={live && stream.liveness === "live"}
-      />
-      {readingEarlier || updateLabel ? (
-        <div className="pointer-events-none sticky bottom-12 z-10 flex h-0 min-w-0 justify-end">
-          <div className="pointer-events-auto flex -translate-y-full items-center gap-2 rounded-md bg-paper p-1">
-            {updateLabel ? (
-              <span className="sr-only" role="status">
-                {updateLabel}
-              </span>
-            ) : null}
-            <button
-              className={controlClass}
-              data-new-messages={history.liveUpdate ? "true" : undefined}
-              data-testid="transcript-jump-latest"
-              disabled={loading === "latest"}
-              title={updateLabel ?? undefined}
-              type="button"
-              onClick={() => jumpRef.current()}
-            >
-              {t("latestMessages")}
-              {history.liveUpdate ? (
-                <span
-                  aria-hidden="true"
-                  className="ml-2 inline-block h-2 w-2 rounded-full bg-amber"
-                />
-              ) : null}
-            </button>
-          </div>
+      <div className="grid min-w-0 grid-cols-1">
+        <div className="col-start-1 row-start-1 min-w-0">
+          <TranscriptView
+            labels={labels}
+            messages={messages}
+            running={live && stream.liveness === "live"}
+          />
         </div>
-      ) : null}
+        {readingEarlier || updateLabel ? (
+          <div className="pointer-events-none sticky bottom-12 z-10 col-start-1 row-start-1 flex min-w-0 justify-end self-end">
+            <div
+              className="pointer-events-auto flex items-center gap-2 rounded-md bg-paper p-1"
+              title={updateLabel ?? undefined}
+            >
+              {updateLabel ? (
+                <span className="sr-only" role="status">
+                  {updateLabel}
+                </span>
+              ) : null}
+              <Button
+                className={controlClass}
+                data-new-messages={history.liveUpdate ? "true" : undefined}
+                data-testid="transcript-jump-latest"
+                isDisabled={loading === "latest"}
+                size="sm"
+                variant="outline"
+                onPress={() => jumpRef.current()}
+              >
+                {t("latestMessages")}
+                {history.liveUpdate ? (
+                  <span
+                    aria-hidden="true"
+                    className="inline-block h-2 w-2 rounded-full bg-amber"
+                  />
+                ) : null}
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </div>
       <div ref={end} data-testid="transcript-tail" />
       {last?.hasLater ? (
-        <button
+        <Button
           className={controlClass}
           data-testid="transcript-later"
-          disabled={loading !== null}
-          type="button"
-          onClick={() => navigateRef.current("later")}
+          isDisabled={loading !== null}
+          size="sm"
+          variant="outline"
+          onPress={() => navigateRef.current("later")}
         >
           {t("laterMessages")}
-        </button>
+        </Button>
       ) : null}
     </div>
   );

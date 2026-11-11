@@ -1103,7 +1103,11 @@ test("E2E-PKN-12 E2E-PKD-07: malformed child URLs do not disconnect the readable
         fixture.anchor,
       ]),
     );
-    await expect(page.getByTestId("run-header-status")).toContainText("Review");
+    await expect(
+      page
+        .locator('[data-testid="run-shell"]:visible')
+        .getByTestId("run-header-status"),
+    ).toContainText("Review");
     await expect(peek(page)).toHaveAttribute("data-selected-run", "invalid");
   } finally {
     await withE2EDb((pool) =>
@@ -1643,12 +1647,15 @@ test("E2E-PKN-04 E2E-PKN-10: a tall inspector cannot clamp the parent scroll whe
 }) => {
   await page.setViewportSize({ width: 1600, height: 900 });
   await page.goto(`/runs/${fixture.anchor}`);
-  const list = page
-    .locator('[data-testid="run-shell"]:visible')
-    .getByTestId("run-inspector-child-runs");
+  const shell = page.locator('[data-testid="run-shell"]:visible');
+  const transcript = shell.getByTestId("run-transcript-history");
+  const list = shell.getByTestId("run-inspector-child-runs");
 
-  await list.evaluate((element) => {
-    element.style.marginTop = "3500px";
+  // Wait for the initial transcript to finish positioning before scrolling.
+  await expect(transcript).toBeVisible();
+  await expect(transcript.getByText(/loading history/i)).toHaveCount(0);
+  await page.addStyleTag({
+    content: '[data-testid="run-inspector-child-runs"] { margin-top: 3500px; }',
   });
   const trigger = list.locator(`[data-child-run-id="${fixture.child}"] a`);
 

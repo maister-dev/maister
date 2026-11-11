@@ -4,17 +4,10 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { ReadinessSummary } from "@/components/run/readiness-summary";
-
-type ReadinessSummaryProps = {
-  state: FlowVerificationState;
-  reasons: string[];
-  labels: {
-    state: Record<FlowVerificationState, string>;
-    summary: string;
-    reasons: string;
-  };
-};
+import {
+  ReadinessSummary,
+  type ReadinessSummaryProps,
+} from "@/components/run/readiness-summary";
 
 const baseLabels: ReadinessSummaryProps["labels"] = {
   state: {
@@ -35,6 +28,16 @@ const baseLabels: ReadinessSummaryProps["labels"] = {
 
 function render(props: ReadinessSummaryProps): string {
   return renderToStaticMarkup(createElement(ReadinessSummary, props));
+}
+
+function buildReasons(
+  explanations: string[],
+): ReadinessSummaryProps["reasons"] {
+  return explanations.map((explanation) => ({
+    id: explanation,
+    explanation,
+    nextAction: "Review the recorded result.",
+  }));
 }
 
 describe("ReadinessSummary — readiness state display (M15)", () => {
@@ -116,12 +119,17 @@ describe("ReadinessSummary — readiness state display (M15)", () => {
     expect(html).toContain("Readiness");
   });
 
-  it("renders all reasons when reasons array is non-empty", () => {
-    const reasons = [
+  it("renders escaped explanations, next actions and the available evidence link", () => {
+    const reasons = buildReasons([
       'blocking gate "linter" failed',
       'required artifact "cov-report" is stale',
       'blocking gate "merge-safety" is skipped',
-    ];
+    ]);
+
+    reasons[0].evidence = {
+      href: "/runs/run-id?wb=evidence&kind=gate&state=failed",
+      label: "View gate evidence for linter",
+    };
     const html = render({
       state: "failed",
       reasons,
@@ -130,9 +138,14 @@ describe("ReadinessSummary — readiness state display (M15)", () => {
 
     // React auto-escapes double quotes in text children to &quot; (house
     // convention: plain auto-escaped child, never dangerouslySetInnerHTML).
-    for (const reason of reasons) {
-      expect(html).toContain(reason.replaceAll('"', "&quot;"));
+    for (const { explanation } of reasons) {
+      expect(html).toContain(explanation.replaceAll('"', "&quot;"));
     }
+    expect(html).toContain("Review the recorded result.");
+    expect(html).toContain(
+      'href="/runs/run-id?wb=evidence&amp;kind=gate&amp;state=failed"',
+    );
+    expect(html).toContain("View gate evidence for linter");
   });
 
   it("omits the reasons list when reasons array is empty", () => {
@@ -149,10 +162,10 @@ describe("ReadinessSummary — readiness state display (M15)", () => {
   it("shows the summary heading and state badge for blocked state with multiple reasons", () => {
     const html = render({
       state: "blocked",
-      reasons: [
+      reasons: buildReasons([
         'required artifact "config" has no current row',
         'blocking gate "smoke" is skipped — not passed/overridden',
-      ],
+      ]),
       labels: baseLabels,
     });
 
@@ -178,7 +191,9 @@ describe("ReadinessSummary — readiness state display (M15)", () => {
     for (const state of allStates) {
       const html = render({
         state,
-        reasons: Array.from({ length: 3 }, (_, i) => `reason ${i + 1}`),
+        reasons: buildReasons(
+          Array.from({ length: 3 }, (_, i) => `reason ${i + 1}`),
+        ),
         labels: baseLabels,
       });
 
