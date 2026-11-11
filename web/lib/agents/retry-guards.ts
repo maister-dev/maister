@@ -71,6 +71,19 @@ export async function assertQualificationRetryAuthority(
     );
 }
 
+/** A native appointment can commit before the Run captures its knowledge or result contract. */
+async function hasSpecialistRetrySource(
+  db: Db,
+  runId: string,
+): Promise<boolean> {
+  const { rows } = await db.execute(sql`
+    SELECT 1 FROM specialist_run_links WHERE run_id=${runId}
+      AND (work_witness IS NOT NULL OR (work_id IS NULL AND role IN ('specialist','coordinator','continuation')))
+  `);
+
+  return rows.length > 0;
+}
+
 /** Fresh assessment does not replay the failed operation or assert its absence of business effects. */
 export async function freshQualificationSafetyReason(
   db: Db,
@@ -84,6 +97,8 @@ export async function freshQualificationSafetyReason(
     source.workspaceMode === "shared" ||
     !source.taskId
   )
+    return "retry_source_unsupported";
+  if (await hasSpecialistRetrySource(db, source.id))
     return "retry_source_unsupported";
   if (source.status !== "Failed" && source.status !== "Crashed")
     return "retry_source_not_failed";
@@ -167,6 +182,8 @@ export async function retrySafetyReason(
     source.parentRunId ||
     source.workspaceMode === "shared"
   )
+    return "retry_source_unsupported";
+  if (await hasSpecialistRetrySource(db, source.id))
     return "retry_source_unsupported";
   if (source.status !== "Failed" && source.status !== "Crashed")
     return "retry_source_not_failed";

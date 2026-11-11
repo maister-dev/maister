@@ -9,7 +9,7 @@ import { join, resolve } from "node:path";
 
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import {
   createSpecialistAssignment,
@@ -65,6 +65,9 @@ import {
 import { buildFlowExportContract } from "@/lib/run-results/contract";
 import { resumeCrashedRun } from "@/lib/runs/recover";
 import { recoverHttpResponse } from "@/lib/runs/recover-http";
+import { retrySafetyReason } from "@/lib/agents/retry-guards";
+import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { runs } from "@/lib/db/schema";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   mintAssignment,
@@ -2182,7 +2185,7 @@ it("IT-CBA-01 links existing same-owner runs exactly once, refuses project carri
     [randomUUID(), projectId, requesterId],
   );
   await database.pool.query(
-    "INSERT INTO runs(id,project_id,flow_version) VALUES($1,$3,'retained-existing-run'),($2,$3,'retained-replacement-run')",
+    "INSERT INTO runs(id,project_id,run_kind,flow_version) VALUES($1,$3,'flow','retained-existing-run'),($2,$3,'agent','retained-replacement-run')",
     [runId, replacementRunId, projectId],
   );
   const company = await createSpecialistAssignment(
@@ -2397,6 +2400,27 @@ it("IT-CBA-01 links existing same-owner runs exactly once, refuses project carri
   });
   await db.transaction((tx) =>
     releaseAssignmentForRun(tx, replacementRunId, "verified_quiescent"),
+  );
+  await emitDomainEvent({
+    db,
+    kind: "run.crashed",
+    projectId,
+    runId: replacementRunId,
+    parentRunId: null,
+    cause: { code: "CRASH", source: "agent", reason: "agent_dispatch_failed" },
+    payload: { failurePhase: "before_dispatch" },
+  });
+  const [retrySource] = await db
+    .select()
+    .from(runs)
+    .where(eq(runs.id, replacementRunId));
+
+  expect(retrySource).toMatchObject({
+    knowledgeAccess: null,
+    resultContract: null,
+  });
+  await expect(retrySafetyReason(db, retrySource)).resolves.toBe(
+    "retry_source_unsupported",
   );
   expect(
     await cancelSpecialistAssignment(
