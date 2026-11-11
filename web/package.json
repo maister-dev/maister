@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "pnpm test:unit && pnpm test:integration",
     "test:unit": "vitest run --project unit",
-    "test:integration": "vitest run --project integration",
+    "test:integration": "pnpm --filter @maister/mcp build && vitest run --project integration",
     "test:integration:remainder": "node ../scripts/run-web-integration-remainder.mjs",
     "test:integration:ab": "node ../scripts/run-stage-ab-tests.mjs web",
     "test:integration:isolation": "node ../scripts/run-stage-ab-tests.mjs isolation",
