@@ -213,6 +213,13 @@ test("package source → discovery → install → attach → detach round-trip"
       ).status(),
     ).toBe(404);
   }
+  expect(
+    (
+      await page.request.post(
+        `/api/studio/packages/different-package/fork?install=${localInstall.id}`,
+      )
+    ).status(),
+  ).toBe(404);
   const forkElement = await page.request.post(
     `${elementPath}?install=${localInstall.id}`,
     { data: element },
@@ -283,6 +290,7 @@ test("package source → discovery → install → attach → detach round-trip"
   expect(localAttachment.status(), await localAttachment.text()).toBe(201);
   const { attachmentId: localAttachmentId } =
     (await localAttachment.json()) as { attachmentId: string };
+
   await page.goto(`/projects/${localProject}?tab=packages`);
   await page.getByRole("link", { name: RUN_TAG, exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`install=${localInstall.id}`));
@@ -291,6 +299,7 @@ test("package source → discovery → install → attach → detach round-trip"
   );
 
   expect(detached.ok(), await detached.text()).toBe(true);
+
   await page.goto(`/projects/${projectSlug}?tab=packages`);
 
   // 5. Detach → attachment gone (empty state or no link).

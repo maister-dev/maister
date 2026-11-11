@@ -418,9 +418,11 @@ existing source guard.
 | ID absent and multiple sources | Display linked source/version choices on the package or member page. |
 | Explicit ID empty, repeated, invalid, unknown, removed or mismatched | Return not found. |
 
-An attachment links to its installed revision. A historical Flow selection
-requires a unique match of the selected revision's SHA, bundle source and
-manifest member before emitting a Studio link. When attribution is unavailable,
+An attachment links to its installed revision. A Flow selection matches the
+selected revision's SHA, bundle source, manifest member and version label after
+the attachment's tag normalization. A matching project attachment takes
+precedence. Without one, the Studio link requires a unique matching install.
+When attribution is unavailable,
 keep the revision view and explain why Studio is unavailable. Existing Runs
 resolve their persisted Flow revision and SHA. Neither an attachment update nor
 a digest-only package badge can supply historical identity (UX-01A–D).

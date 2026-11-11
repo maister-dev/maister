@@ -141,15 +141,17 @@ describe("getFlowPackageDetail (integration)", () => {
     );
 
     expect(revision).toBeDefined();
+
     const attached = randomUUID();
     const competing = randomUUID();
+
     await db.insert(schema.packageInstalls).values(
       [attached, competing].map((id) => ({
         id,
         name: "aif",
         sourceUrl: `file:///tmp/${id}`,
         installedPath: "/tmp/pkg",
-        versionLabel: revision!.versionLabel,
+        versionLabel: "aif/v2.1.0",
         resolvedRevision: revision!.resolvedRevision,
         manifestDigest: "test-digest",
         manifest: { spec: { flows: [{ id: "aif-dev", path: "flows/dev" }] } },

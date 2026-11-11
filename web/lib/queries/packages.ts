@@ -453,12 +453,15 @@ export async function getStudioInstallForFlowRevision(
     const manifest = row.manifest as PackageInstallManifest;
     const member = manifest.spec?.flows?.find((flow) => flow.id === flowId);
 
-    return member && join(row.installedPath, member.path) === source;
+    return (
+      member &&
+      join(row.installedPath, member.path) === source &&
+      // Package attachment normalizes Git tag labels for member Flow revisions.
+      row.versionLabel.replaceAll("/", "-") === revision.versionLabel
+    );
   });
 
-  const attached = matches.filter(
-    (row) => row.attachmentId && row.versionLabel === revision.versionLabel,
-  );
+  const attached = matches.filter((row) => row.attachmentId);
   const match =
     attached.length === 1
       ? attached[0]

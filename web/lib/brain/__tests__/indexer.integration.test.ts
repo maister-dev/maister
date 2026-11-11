@@ -19,6 +19,7 @@ import {
   BRAIN_SOURCE_MAX_GLOB_MATCHES,
   createBrainSource,
   enqueueBrainSourceReindex,
+  listBrainSources,
 } from "@/lib/brain/sources";
 import { runBrainReindexSweep } from "@/lib/brain/reindex";
 import { enqueueSourceReindexForEvents } from "@/lib/brain/index-triggers";
@@ -425,12 +426,7 @@ describe("Project Brain source indexer (ADR-127)", () => {
       maxItemsPerJob: 10,
     });
 
-    const exactPaths = await ctx.db.execute(sql`
-      SELECT DISTINCT path
-      FROM brain_chunks
-      WHERE source_id = ${exact.id}
-      ORDER BY path ASC
-    `);
+    const sources = await listBrainSources(ctx.db, overlapProjectId);
     const globPaths = await ctx.db.execute(sql`
       SELECT DISTINCT path
       FROM brain_chunks
@@ -438,9 +434,10 @@ describe("Project Brain source indexer (ADR-127)", () => {
       ORDER BY path ASC
     `);
 
-    expect(new Set(exactPaths.rows.map((row) => row.path))).toEqual(
-      new Set(["docs/[slug]/page.md"]),
-    );
+    expect(sources.find((source) => source.id === exact.id)).toMatchObject({
+      indexedFilePaths: ["docs/[slug]/page.md"],
+      lastError: null,
+    });
     expect(new Set(globPaths.rows.map((row) => row.path))).toEqual(
       new Set(["docs/decisions.md", "docs/README.md", "docs/guide/intro.md"]),
     );
