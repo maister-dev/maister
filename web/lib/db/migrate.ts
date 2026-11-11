@@ -246,12 +246,9 @@ async function main(): Promise<void> {
     { driver: "postgres", url: maskDbUrl(url), stage },
     "running migrations",
   );
-  const pool = new Pool({ connectionString: url });
-
-  pool.on("connect", (client) => {
-    declareWriterCapability(client).catch((err: unknown) => {
-      log.error({ err }, "writer capability declaration failed");
-    });
+  const pool = new Pool({
+    connectionString: url,
+    onConnect: declareWriterCapability,
   });
   const db = drizzle(pool);
   let preM43MigrationRoot: string | null = null;

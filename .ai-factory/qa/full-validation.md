@@ -66,6 +66,24 @@ for the Intel macOS pnpm 11 boundary; pnpm owns the lockfile-keyed store cache.
 All 41 runtime/CI contracts pass after the action migration. The public Next
 site also builds without warnings in 4.242 s.
 
+The PostgreSQL follow-up replaces fire-and-forget `connect` declarations with
+the pool's awaited `onConnect` hook in the web client, migration CLI and shared
+fixtures. The existing writer-floor owner first fails under
+`NODE_OPTIONS=--throw-deprecation` against the queued declaration. After the
+fix, all 22 cases across writer-floor, operational upgrade and fixture lifecycle
+owners pass with deprecations fatal and zero leaks. The writer-floor case now
+checks concurrent real writes. A normal production build after this follow-up
+passes in 36.633 s with one worker, TypeScript enabled and zero build warnings;
+full typecheck, MCP tests and 518 supervisor unit cases pass as well. Explicit
+`.ts` imports remove Vite's native-config warnings. The browser checkpoint above
+precedes this database follow-up; its final browser rerun is reported on the PR.
+
+Upstream native-toolchain notices remain visible: Mintlify's optional
+keytar/prebuild-install uses a deprecated filesystem constant, and the optional
+cpu-features native build emits a Node-header cast warning. Debian slim images
+also report absent manual-page alternatives. No incompatible dependency alias,
+native-feature removal or warning suppression is used for these notices.
+
 Evidence: `production-build.log`, `web-unit.log`, `web-lint-zero.log`,
 `root-contracts-final.log`, `integration-paths.log`,
 `operational-integrity-fixed.log`, `drizzle-export-configured.log`,

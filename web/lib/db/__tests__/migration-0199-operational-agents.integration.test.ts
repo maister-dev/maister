@@ -31,9 +31,9 @@ beforeAll(async () => {
     { databaseName: "operational_upgrade" },
     "0198_project_config_attachment_binding_guard",
   );
-  database.pool.on("connect", (client) => {
-    void client.query("SET maister.agent_preparation_writer='v1'");
-  });
+  database.pool.options.onConnect = async (client): Promise<void> => {
+    await client.query("SET maister.agent_preparation_writer='v1'");
+  };
   projectId = (await seedProjectRow(database.db)).id;
   for (const row of historical)
     await seedRun(database.db, { ...row, projectId, runKind: "agent" });

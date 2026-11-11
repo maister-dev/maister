@@ -276,19 +276,26 @@ describe("0169_cutover_writer_floor", () => {
   });
 
   it("declares the capability on every connection the web client opens", async () => {
-    const runId = await seedRun();
+    const runIds: string[] = [];
+
+    for (let index = 0; index < 3; index++) runIds.push(await seedRun());
     const previous = process.env.DB_URL;
 
     process.env.DB_URL = testDatabase.databaseUrl;
     const db = buildClient();
 
     try {
-      await db.execute(
-        sql`insert into execution_data_plane_imports (run_id, source_kind) values (${runId}, 'events')`,
+      await Promise.all(
+        runIds.map((runId) =>
+          db.execute(
+            sql`insert into execution_data_plane_imports (run_id, source_kind) values (${runId}, 'events')`,
+          ),
+        ),
       );
-      expect(await laneRows(runId)).toEqual([
-        { state: "pending", fingerprint: null },
-      ]);
+      for (const runId of runIds)
+        expect(await laneRows(runId)).toEqual([
+          { state: "pending", fingerprint: null },
+        ]);
     } finally {
       await db.$client.end();
       if (previous === undefined) delete process.env.DB_URL;

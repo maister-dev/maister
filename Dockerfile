@@ -78,7 +78,7 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN groupadd --system --gid 1001 app \
- && useradd  --system --uid 1001 --gid app --home /app --shell /usr/sbin/nologin app \
+ && useradd  --uid 1001 --gid app --home /app --shell /usr/sbin/nologin app \
  && mkdir -p /app/.maister \
  && chown -R app:app /app
 
