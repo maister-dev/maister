@@ -14535,10 +14535,10 @@ paths:
           legacy name returns 404.
     post:
       tags: [flow-packages]
-      summary: (ADR-096 — Designed) Fork a whole package to a local package
+      summary: Fork a whole installed package to a local package
       description: |
-        (ADR-096 — Designed, Flow Studio Phase C.) Resolves the installed
-        package by `ref` server-side, then clean-copies ALL of that install's
+        Resolves the installed package by `ref` and optional `install`
+        server-side, then clean-copies all of that install's
         working files (excluding `.git`) into a fresh git-init'd local package
         auto-named `<ref>-local`, recording `source_install_id` + `source_ref`.
         Executes NOTHING (no `setup.sh`, no MCP). A missing/unreadable source
@@ -14553,7 +14553,8 @@ paths:
         (ADR-105) The optional body bypasses dedup: `forceNew: true` makes a fresh
         `<ref>-local` copy ("Fork a new copy"); `customize: true` is the
         centralized "diverge this package" affordance — it forces a fresh copy
-        named `<ref> (custom)` (no project). An empty/absent body → dedup.
+        named `<ref> (custom)` (no project). An absent, empty, malformed, or
+        invalid options body uses the legacy dedup defaults.
       operationId: forkStudioPackage
       requestBody:
         required: false
@@ -14610,12 +14611,15 @@ paths:
         ADR-096 project-default variant.) Members only (`requireGlobalRole("member")`).
         Copies EXACTLY ONE element (a flow dir /
         skill bundle / agent `.md` / rule file at `elementPath`) from the package
-        `ref` into a NEW centralized local package named `<elementName> (local)`;
+        selected by `ref` and optional `install` into a new centralized local
+        package named `<elementName> (local)`;
         the editor then opens on it. No project target. The new package carries NO
         `source_install_id` lineage (it is a partial copy, so whole-package fork
         dedup never conflates it). `elementPath` is confined inside the source
         bundle AND the destination working dir; an escape → `PRECONDITION` (409).
-        Copying the rest of the source is forbidden. Executes NOTHING.
+        Copying the rest of the source is forbidden. Executes nothing.
+        Absent, malformed, or invalid JSON returns `422 CONFIG` before install
+        resolution. Extra properties are rejected.
       operationId: forkStudioPackageElement
       requestBody:
         required: true
@@ -19534,8 +19538,9 @@ components:
           schema: { $ref: "#/components/schemas/MaisterErrorBody" }
     Forbidden:
       description: |
-        Caller lacks the required project role (`UNAUTHORIZED`) or the account
-        must change its password first (`PASSWORD_CHANGE_REQUIRED`).
+        Caller lacks the required role (`UNAUTHORIZED`), the account is inactive
+        (`ACCOUNT_INACTIVE`), or it must change its password first
+        (`PASSWORD_CHANGE_REQUIRED`).
       content:
         application/json:
           schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -29583,6 +29588,7 @@ components:
         targetRef: "aif/v2.1.0"
     ForkElementBody:
       type: object
+      additionalProperties: false
       required: [elementPath, elementName]
       properties:
         elementPath:

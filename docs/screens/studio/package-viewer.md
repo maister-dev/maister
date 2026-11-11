@@ -46,12 +46,12 @@ content + metadata cross to the browser.
 
 Replaces the flat chip lists with a **tabbed, paged, card-based** bill-of-materials.
 
-- **Header (kept):** name · Local/Installed badge · newest version label · source
+- **Header:** name · Local/Installed badge · selected version label · source
   URL · lifecycle actions (**Attach to project**, **Trust** (admin)) ·
   **Rework**. **Attach to project** opens a dialog over the viewer's manageable
-  projects: a project the package is already attached to appears as a link to its
-  project Packages tab, while a project it is not yet attached to gets a one-click
-  attach of the selected install. Rework forks the installed package into a local
+  projects: an exact attachment links to the project Packages tab, an occupied
+  slot identifies the conflict, and an empty slot can attach the selected
+  install. Rework forks the selected install into a local
   package, then opens the local editor. The **Import (⤓)** affordance is
   intentionally **ABSENT** on installed packages — only local packages can import
   external archives.

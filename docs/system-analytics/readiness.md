@@ -3,9 +3,10 @@
 > **Status: Implemented, as of 2026-06-03.** All-kind readiness enforcement at
 > the Review chokepoint, verdict calibration at gate execution, the shared
 > `readiness-core.ts` classifier, the `overridden` summary state, and the unified
-> readiness summary on run-detail / board / portfolio are shipped, on top of the graph
+> readiness summary on board and portfolio are shipped, on top of the graph
 > gate-execution lifecycle, the artifact-validity rules, and the `external_check`
-> loop. The merge-refuse-for-flow-runs acceptance clause is **Implemented (ADR-058)** —
+> loop. The Flow Run page uses the separate verification indicator described below.
+> The merge-refuse-for-flow-runs acceptance clause is **Implemented (ADR-058)** —
 > `promoteRun` calls `assertEvidenceReady` and refuses on failing blocking gates. Locked decisions:
 > [ADR-048](../decisions.md#adr-048-readiness-enforcement-over-all-blocking-gate-kinds--verdict-calibration-m15),
 > bounded by [ADR-028](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped)
@@ -244,9 +245,12 @@ delivery degrades to manual with status, command, and bounded conflict paths.
 ### Run-page verification (Implemented)
 
 The Flow Run page presents recorded blocking gates and required evidence in a
-compact indicator. Actionable reasons open in a keyboard-operable disclosure.
-Failed, stale, blocked, waiting and
-overridden contributions keep their existing precedence and reasons. Show
+compact indicator. The keyboard-operable disclosure names the gate or evidence,
+explains its recorded state, and gives a relevant next step. Skipped explains
+why the gate blocks, pending and running have distinct explanations, and an
+override explains that it supplied the decision. Evidence links are offered
+when they can locate the affected gate or evidence. Failed, stale, blocked,
+waiting and overridden contributions keep their existing precedence. Show
 recorded clear results separately from the lifecycle state. A known compatible
 pin and applicable requirements distinguish no checks, policy exclusion and
 checks awaiting evaluation. When applicability is unknown, show uncertainty

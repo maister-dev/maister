@@ -402,7 +402,8 @@ and contained Tab navigation. Idle dismissal restores the opener and keeps
 the in-session draft. During submission the dialog prevents repeated submit
 and dismissal. Validation or request failure leaves inputs available with an
 accessible error. Success clears the draft and refreshes the board. A bounded
-scrollable body keeps both actions reachable (UX-02A–B).
+scrollable body keeps both HeroUI actions reachable. The opener uses the shared
+Heroicons add affordance (UX-02A–B).
 
 ## Expectations
 

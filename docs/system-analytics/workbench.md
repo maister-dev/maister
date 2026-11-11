@@ -200,15 +200,18 @@ flowchart LR
 
 Evidence fits after the visible pane and its nodes are measured, and again
 after a change to the URL's node, kind or state filters. An unchanged filter
-with refreshed data or a changed selection preserves deliberate camera movement.
-Empty results retain filter controls. A singleton is fitted with a zoom cap
+with refreshed data or a changed selection preserves deliberate camera movement,
+including when matching nodes disappear and return. An active filter remains
+visible and clearable if its last option disappears. Empty results retain filter
+controls. A singleton is fitted with a zoom cap
 (UX-03C–D).
 
 ### Transcript viewport (Implemented)
 
 Main and child transcripts keep their scroll owners. Earlier history loading,
 errors and retries appear at the top boundary. Jump remains inside the
-transcript and resumes follow-tail. A retained later page and a live message
+transcript on both axes, including when the transcript enters the viewport near
+its bottom edge, and resumes follow-tail. A retained later page and a live message
 arrival have distinct announcements. Inserting controls and messages keeps the
 visible anchor while the reader is above the tail. An open child peek keeps
 automatic parent transcript following from moving the page (UX-09A–B).

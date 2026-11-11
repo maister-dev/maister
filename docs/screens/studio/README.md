@@ -209,7 +209,7 @@ branch, per-source re-check button).
     markdown Preview/Code definition).
   - **Lifecycle actions:** **Attach to project** (a dialog over the viewer's
     manageable projects — already-attached ones link to their packages tab, the
-    rest one-click attach the newest install), **Trust** (admin), **Versions**
+    rest can attach the selected install when its slot is empty), **Trust** (admin), **Versions**
     (list). **Rework** forks an installed package into a local package and opens
     `/studio/edit/{localPackageId}`; the **Import (⤓)** affordance is absent on
     installed (immutable) packages.

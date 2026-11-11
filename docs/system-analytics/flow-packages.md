@@ -406,8 +406,10 @@ flowchart LR
 ### Studio address and provenance (Implemented)
 
 An installed revision is addressed by exported package name and the existing
-`package_installs.id`. Studio authenticates the viewer and resolves the ID
-against installed catalog entries with that name. The project Flow viewer
+`package_installs.id`. Every Studio package content page checks the active
+account before resolving the ID or reading content. Inactive accounts return
+to sign-in and password-reset-required accounts go to password change. The
+viewer resolves the ID against installed catalog entries with that name. The project Flow viewer
 also requires `readRepoFiles` for its project and scopes the revision to its
 existing source guard.
 
@@ -422,10 +424,13 @@ An attachment links to its installed revision. A Flow selection matches the
 selected revision's SHA, bundle source, manifest member and version label after
 the attachment's tag normalization. A matching project attachment takes
 precedence. Without one, the Studio link requires a unique matching install.
-When attribution is unavailable,
-keep the revision view and explain why Studio is unavailable. Existing Runs
-resolve their persisted Flow revision and SHA. Neither an attachment update nor
-a digest-only package badge can supply historical identity (UX-01A–D).
+For an explicit historical revision whose source differs from the current
+bundle path, a Run pinned to that revision on the same project and Flow row
+proves the association. A matching Flow ref or revision ID alone grants no
+access. Default selection still uses the current source and enabled revision.
+When Studio attribution is unavailable, keep the authorized revision view and
+explain why Studio is unavailable. Existing Runs resolve their persisted Flow
+revision and SHA (UX-01A–D).
 
 ## Plan-review source compatibility (Implemented — ADR-137)
 
