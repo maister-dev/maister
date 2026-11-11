@@ -1,0 +1,154 @@
+{
+  "schemaVersion": 1,
+  "status": "failed_complete_frozen_regression",
+  "sourceHead": "a08ef0d08ae009676c203a39a7d5e9d1ba59a9d0",
+  "startedAt": "2026-11-10T10:29:57.049Z",
+  "finishedAt": "2026-11-10T11:42:19.375Z",
+  "exitCode": 1,
+  "maxWorkers": 2,
+  "invocation": {
+    "id": "7485abe2-a363-41a9-bf62-e3d2e51e2ec3",
+    "directory": "/private/tmp/cb-a08ef0d08-full-ledger"
+  },
+  "durationSeconds": 4338.04,
+  "files": {
+    "passed": 688,
+    "failed": 1,
+    "skipped": 2,
+    "total": 691
+  },
+  "tests": {
+    "passed": 6310,
+    "failed": 1,
+    "skipped": 2,
+    "total": 6313
+  },
+  "unhandledErrorsReported": 0,
+  "reportingNote": "File totals use the final Vitest summary. Vitest JSON testResults marks opt-in skipped-only files passed and suite counts include nested describes; those are not claimed as executed files.",
+  "failure": [
+    {
+      "file": "lib/flows/graph/__tests__/dirty-protocol.integration.test.ts",
+      "tests": [
+        {
+          "name": "runReviewHuman stamps review_tip_sha (ADR-082) records the worktree HEAD sha on the review HITL insert",
+          "failureMessages": [
+            "TypeError: tx.select(...).from(...).where(...).for is not a function\n    at assertHitlBudgetAdmission (/private/tmp/maister-cb1-work-intake-1640/web/lib/runs/hitl-create.ts:99:6)\n    at createHitlRequest (/private/tmp/maister-cb1-work-intake-1640/web/lib/runs/hitl-create.ts:56:9)\n    at persistHitlRequestAndAssignment (/private/tmp/maister-cb1-work-intake-1640/web/lib/flows/graph/runner-graph.ts:1201:11)\n    at Object.transaction (/private/tmp/maister-cb1-work-intake-1640/web/lib/flows/graph/__tests__/dirty-protocol.integration.test.ts:284:66)\n    at runReviewHuman (/private/tmp/maister-cb1-work-intake-1640/web/lib/flows/graph/runner-graph.ts:1256:41)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at /private/tmp/maister-cb1-work-intake-1640/web/lib/flows/graph/__tests__/dirty-protocol.integration.test.ts:303:20\n    at async file:///private/tmp/maister-cb1-work-intake-1640/node_modules/.pnpm/vitest@5.0.5_@opentelemetry+api@1.10.0_@types+node@24.19.2_@vitest+ui@5.0.5_jsdom@30.1._8f276dc81fd7a2b6d83e5e4abe7a604c/node_modules/vitest/dist/chunks/run.BPv-BBRv.js:2801:20"
+          ]
+        }
+      ]
+    }
+  ],
+  "remediation": {
+    "commit": "ef98fba38",
+    "receipt": "../review-fixture-lock-20261110/evidence.json",
+    "scope": "Only an existing fake builder gains .for(); production and original Git SHA assertion remain unchanged.",
+    "owningPassed": 11,
+    "fullRerunRequired": true
+  },
+  "productionBuild": {
+    "revision": "a08ef0d08ae009676c203a39a7d5e9d1ba59a9d0",
+    "buildId": "o-sMX5FD4IQ1IavT5dqE7",
+    "artifactPath": "/private/tmp/maister-cb1-work-intake-1640/web/.next",
+    "invocationId": "7485abe2-a363-41a9-bf62-e3d2e51e2ec3"
+  },
+  "sourceHeadUnchanged": true,
+  "cleanFrozenSource": true,
+  "cleanup": {
+    "wrapperErrors": [],
+    "independentOwnedProcesses": 0,
+    "containers": 0,
+    "roots": 0,
+    "errors": []
+  },
+  "readiness": "The owning correction does not turn this original failed probe green. Current model-propagation repair and renewed complete regression remain open.",
+  "artifacts": [
+    {
+      "sourceName": "cb-a08ef0d08-frozen-full-web-integration.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "0dc005c6392485827dacfbf99bd31b05612e891ad0a5c19c2478b1834a0be32f",
+      "compressedSha256": "fc8f785196838a3dc066080e29d7c77190734dc9991a5c60ee7c75e427da04f6",
+      "parts": [
+        {
+          "path": "cb-a08ef0d08-frozen-full-web-integration.log.gz.part001",
+          "sha256": "e544fb339d94af204a1da3f567af85848474030aa910b6d17c3712b5f3fa1018"
+        },
+        {
+          "path": "cb-a08ef0d08-frozen-full-web-integration.log.gz.part002",
+          "sha256": "ff8903269e3547fac58e112ce934314b6d21eaa89fef7ba2ab0390b8a8bb0e05"
+        },
+        {
+          "path": "cb-a08ef0d08-frozen-full-web-integration.log.gz.part003",
+          "sha256": "803ae115f0f203c7aaf989c93b3e1e5b88fa461b390b1d742d8752f20b387dc3"
+        },
+        {
+          "path": "cb-a08ef0d08-frozen-full-web-integration.log.gz.part004",
+          "sha256": "e40e96317f8d4fae06540017a88289ef67e7c12faa18a4a664fa7a2ffeefd9ec"
+        },
+        {
+          "path": "cb-a08ef0d08-frozen-full-web-integration.log.gz.part005",
+          "sha256": "fd5148a94d12ecbf915a2204bd2bfe46425b80106d58d4e3c4797ef67be41f6d"
+        },
+        {
+          "path": "cb-a08ef0d08-frozen-full-web-integration.log.gz.part006",
+          "sha256": "7f1d479ba43be9718e6b9d74736a551c0285d5d0abe1f26a8327ac43a586ab9e"
+        },
+        {
+          "path": "cb-a08ef0d08-frozen-full-web-integration.log.gz.part007",
+          "sha256": "8c44081bcff962842a71824acb84b164973fa84fcdc64d9b7fb3493a502bda3a"
+        },
+        {
+          "path": "cb-a08ef0d08-frozen-full-web-integration.log.gz.part008",
+          "sha256": "197a2987de9808a97be000ca759debadc7e3e30344c079734eb17f7569fddd33"
+        }
+      ]
+    },
+    {
+      "sourceName": "cb-a08ef0d08-frozen-full-web-integration.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "3b21613400f9b1a3f47261f779c5c95c67680e2f176935e6eaf0426104920a1f",
+      "compressedSha256": "62d2f328db10de81613c784ebb18d4d42691d44d158df9c71e2144b86a0ed8c5",
+      "parts": [
+        {
+          "path": "cb-a08ef0d08-frozen-full-web-integration.json.gz",
+          "sha256": "62d2f328db10de81613c784ebb18d4d42691d44d158df9c71e2144b86a0ed8c5"
+        }
+      ]
+    },
+    {
+      "sourceName": "cb-a08ef0d08-frozen-full-web-integration-metadata.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "328d57505f179c95bc96afa4ca21c4febe896ad61a18e554487feaa8f6d54c36",
+      "compressedSha256": "e45fda040a71ae6c1b97fba4ffdd5808390cf1decd060700262a5ebf18b3cd8e",
+      "parts": [
+        {
+          "path": "cb-a08ef0d08-frozen-full-web-integration-metadata.json.gz",
+          "sha256": "e45fda040a71ae6c1b97fba4ffdd5808390cf1decd060700262a5ebf18b3cd8e"
+        }
+      ]
+    },
+    {
+      "sourceName": "cb-a08ef0d08-full-launch.mjs",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "b43b6ab29182ee5471d5b90605257f8b82e41e5d01f1451274a240556d69ef6e",
+      "compressedSha256": "8e9e757abcbfd85dcfa35aa9e879ff2f2908f76c3defe324e977acadc504c489",
+      "parts": [
+        {
+          "path": "cb-a08ef0d08-full-launch.mjs.gz",
+          "sha256": "8e9e757abcbfd85dcfa35aa9e879ff2f2908f76c3defe324e977acadc504c489"
+        }
+      ]
+    },
+    {
+      "sourceName": "cb-a08-full-independent-cleanup.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "c89c10012c4196d12dfc2610203bcb5ebfd9a9b69d2908ad1c1f34b0b769c09a",
+      "compressedSha256": "5417365475fe64f5886d7ec522166034222091ba200b213c97b8365460c9ed9c",
+      "parts": [
+        {
+          "path": "cb-a08-full-independent-cleanup.log.gz",
+          "sha256": "5417365475fe64f5886d7ec522166034222091ba200b213c97b8365460c9ed9c"
+        }
+      ]
+    }
+  ]
+}

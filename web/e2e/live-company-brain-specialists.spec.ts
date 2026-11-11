@@ -64,6 +64,62 @@ type RunDiagnostic = Readonly<{
   promptHasNativeGrammar: boolean;
 }>;
 
+const runtimeModelWitnessSchema = z.object({
+  runId: z.string(),
+  sessionId: z.string(),
+  runnerId: z.string().nullable(),
+  configuredModel: z.string().nullable(),
+  observedModels: z.array(z.string()),
+});
+
+/** Meter model IDs come from host usage events, independently of the configured runner snapshot. */
+async function inspectRuntimeModels(
+  rootIds: readonly string[],
+): Promise<Array<z.infer<typeof runtimeModelWitnessSchema>>> {
+  return withE2EDb(async (pool) => {
+    const rows = await pool.query(
+      `WITH RECURSIVE tree AS (
+        SELECT id,0 AS depth FROM runs WHERE id=ANY($1::text[])
+        UNION ALL SELECT r.id,t.depth+1 FROM runs r JOIN tree t ON r.parent_run_id=t.id WHERE t.depth<3
+      ) SELECT DISTINCT t.id AS "runId",s.acp_session_id AS "sessionId",s.runner_id AS "runnerId",
+        s.runner_snapshot->>'model' AS "configuredModel",
+        ARRAY(SELECT DISTINCT e.payload->>'model' FROM execution_events e
+          WHERE e.run_id=t.id AND e.source='host' AND e.event_type='usage.recorded'
+            AND EXISTS (SELECT 1 FROM run_session_incarnations i
+              WHERE i.run_session_id=s.id AND i.run_id=t.id
+                AND i.execution_host_id=e.execution_host_id
+                AND i.host_session_id=e.host_session_id)
+            AND jsonb_typeof(e.payload->'model')='string'
+          ORDER BY e.payload->>'model') AS "observedModels"
+      FROM tree t JOIN run_sessions s ON s.run_id=t.id WHERE s.acp_session_id IS NOT NULL
+      ORDER BY t.id,s.acp_session_id`,
+      [rootIds],
+    );
+
+    return z.array(runtimeModelWitnessSchema).parse(rows.rows);
+  });
+}
+
+async function assertRuntimeModels(
+  rootId: string,
+  tree: readonly RunProof[],
+  runner: Readonly<{ id: string; model: string }>,
+): Promise<void> {
+  const witnesses = await inspectRuntimeModels([rootId]);
+
+  expect(witnesses).toHaveLength(
+    tree.reduce((count, run) => count + run.sessionIds.length, 0),
+  );
+  for (const witness of witnesses) {
+    expect(witness.runnerId).toBe(runner.id);
+    expect(witness.configuredModel).toBe(runner.model);
+    expect(
+      witness.observedModels,
+      `Run ${witness.runId} session ${witness.sessionId} must retain actual host usage for the requested model`,
+    ).toEqual([runner.model]);
+  }
+}
+
 function requiredSetting(name: string): string {
   const value = process.env[name];
 
@@ -668,6 +724,8 @@ test("QL-CBX-03 the real pinned RAH package retrieves structured company knowled
       ).toMatch(/^(Done|Review)$/);
       const tree = await inspectTree(launched.runId);
 
+      await assertRuntimeModels(launched.runId, tree, runner);
+
       expect(
         tree.every((run) => run.status === "Done" || run.status === "Review"),
         JSON.stringify(tree.map(({ runId, status }) => ({ runId, status }))),
@@ -888,6 +946,8 @@ test("QL-CBX-03 the real pinned RAH package retrieves structured company knowled
       );
     const unavailable = await inspectTree(unavailableRun.runId);
 
+    await assertRuntimeModels(unavailableRun.runId, unavailable, runner);
+
     proofs.push(unavailable);
     expect(unavailable).toHaveLength(1);
     expect(
@@ -951,6 +1011,7 @@ test("QL-CBX-03 the real pinned RAH package retrieves structured company knowled
       }
     }
   } finally {
+    const runtimeModelWitnesses = await inspectRuntimeModels(runIds);
     const ledgerDiagnostics = await withE2EDb(async (pool) => {
       const result = await pool.query<RunDiagnostic>(
         `WITH RECURSIVE tree AS (
@@ -1002,6 +1063,7 @@ test("QL-CBX-03 the real pinned RAH package retrieves structured company knowled
           nativeProposalIds: [...nativeProposalIds],
           ledgerDiagnostics,
           executionDiagnostics,
+          runtimeModelWitnesses,
         },
         null,
         2,

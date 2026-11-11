@@ -1,0 +1,134 @@
+{
+  "schemaVersion": 1,
+  "status": "passed_scoped_checks",
+  "sourceHead": "ef98fba38e2d3079b78e6eb9503e305a5c391cad",
+  "candidateSha256": "e78f13b0636e52d0dcc0f7c96277241cde20da48ec7e5726e9b8d0f6f1e7fd57",
+  "tests": {
+    "webUnit": 9312,
+    "supervisorUnit": 523,
+    "supervisorIntegration": 393
+  },
+  "focusedRetries": {
+    "cb-model-pin-clarification-retry": {
+      "passed": 4,
+      "intentionallyExcluded": 47,
+      "cleanupErrors": []
+    },
+    "cb-model-pin-flow-ownership-retry": {
+      "passed": 2,
+      "intentionallyExcluded": 64,
+      "cleanupErrors": []
+    }
+  },
+  "scope": "Web unit requires permitted localhost sockets. Supervisor tests used the same production source before formatting-only edits to fixture tests. The scoped reruns cover company clarification and Flow lease/rework independently of the complete integration outcome.",
+  "providerSecretValueScan": {
+    "artifactsScanned": 8,
+    "matches": 0
+  },
+  "artifacts": [
+    {
+      "sourceName": "web-unit.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "3f784ed71d70eae901a32d8f30d891a966074fc9d465d657fd2957b2d2fd05fb",
+      "rawBytes": 498342,
+      "compressedSha256": "40e397dad09d319fa8b88f8127164e6cdb51d572255c516bbaa52b54c38076ba",
+      "parts": [
+        {
+          "path": "web-unit.log.gz",
+          "sha256": "40e397dad09d319fa8b88f8127164e6cdb51d572255c516bbaa52b54c38076ba"
+        }
+      ]
+    },
+    {
+      "sourceName": "supervisor-tests.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "864cd9c80ccb43f545d5e14cd41906e6fb97282f3a5dd6943a2d38d5303d931a",
+      "rawBytes": 38189,
+      "compressedSha256": "afa2b5be44ec6fe1c1c7a4450cba31c99340b1c308c70839c5eb0e2d54b43733",
+      "parts": [
+        {
+          "path": "supervisor-tests.log.gz",
+          "sha256": "afa2b5be44ec6fe1c1c7a4450cba31c99340b1c308c70839c5eb0e2d54b43733"
+        }
+      ]
+    },
+    {
+      "sourceName": "docs.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "eececa52753defc0ad85a8832534d7eff678bca288f57a0fc8d8887dd69ca8f9",
+      "rawBytes": 687,
+      "compressedSha256": "3ebfeae9e61431abcac67b0c2010ca46bcfd5b7e7fe55e23be67e123f3e90551",
+      "parts": [
+        {
+          "path": "docs.log.gz",
+          "sha256": "3ebfeae9e61431abcac67b0c2010ca46bcfd5b7e7fe55e23be67e123f3e90551"
+        }
+      ]
+    },
+    {
+      "sourceName": "contracts.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "6f844419423e54606dc91cc5050eda788b0be34ee34c33a7f8052b10e24e268d",
+      "rawBytes": 3075,
+      "compressedSha256": "ac12b0d2bd24e2896d57d6b06c532f1d096d653f6f07eaaabbad2dc4576a630b",
+      "parts": [
+        {
+          "path": "contracts.log.gz",
+          "sha256": "ac12b0d2bd24e2896d57d6b06c532f1d096d653f6f07eaaabbad2dc4576a630b"
+        }
+      ]
+    },
+    {
+      "sourceName": "cb-model-pin-clarification-retry-metadata.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "77b39c0d19fc66cca7c3da2e050c3b764581c4fc438777178858037bebd880ba",
+      "rawBytes": 803,
+      "compressedSha256": "1875158636abe31f41a262434d574cf0873e1aa01347c2b37ac39f26ddc7e625",
+      "parts": [
+        {
+          "path": "cb-model-pin-clarification-retry-metadata.json.gz",
+          "sha256": "1875158636abe31f41a262434d574cf0873e1aa01347c2b37ac39f26ddc7e625"
+        }
+      ]
+    },
+    {
+      "sourceName": "cb-model-pin-clarification-retry.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "f8bed74eb260e98870907899eea3162815fd4bf9860bc2f4f650469597ee4545",
+      "rawBytes": 18905,
+      "compressedSha256": "f6099860366ba2befe13c1b200f96e6e6d26eefae19532d4ec6e01ae03c6eedd",
+      "parts": [
+        {
+          "path": "cb-model-pin-clarification-retry.json.gz",
+          "sha256": "f6099860366ba2befe13c1b200f96e6e6d26eefae19532d4ec6e01ae03c6eedd"
+        }
+      ]
+    },
+    {
+      "sourceName": "cb-model-pin-flow-ownership-retry-metadata.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "b1e8db50aafccfdf2aece20585b8c4a68b06d71cfea65fd2703890601fb24bcc",
+      "rawBytes": 803,
+      "compressedSha256": "4cce18bfcf44750df031a995dff099f1741a7ec02b9b588082ffe88b3b367114",
+      "parts": [
+        {
+          "path": "cb-model-pin-flow-ownership-retry-metadata.json.gz",
+          "sha256": "4cce18bfcf44750df031a995dff099f1741a7ec02b9b588082ffe88b3b367114"
+        }
+      ]
+    },
+    {
+      "sourceName": "cb-model-pin-flow-ownership-retry.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "1536949baa1f1d5a5c7e4741b2d013ed6bc6c01370084e1471a050aba70656d2",
+      "rawBytes": 27743,
+      "compressedSha256": "c3db99af4894a338841f8d8c3ec2a20951a18dcbe35fd165e5a068d38a59a442",
+      "parts": [
+        {
+          "path": "cb-model-pin-flow-ownership-retry.json.gz",
+          "sha256": "c3db99af4894a338841f8d8c3ec2a20951a18dcbe35fd165e5a068d38a59a442"
+        }
+      ]
+    }
+  ]
+}
