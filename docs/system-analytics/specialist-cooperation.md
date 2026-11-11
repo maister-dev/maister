@@ -89,6 +89,16 @@ Designed default maxima are depth 2 (absolute from root), fanout 4, active child
 
 Usage projects from existing run/session/turn usage with stable identity, including all coordinator replacements/rework attempts. Cumulative updates charge only the monotonic delta once; replay cannot double-charge. Assignment budget projection is not a new attempt ledger. Existing global pool locks/counters gate new and resumed work, including company rows. Parent WaitingOnChildren/Review/NeedsInputIdle release capacity as existing run predicates specify; continuation reacquires capacity rather than directly writing Running.
 
+Canonical intake now checks assignment usage before it reserves new work. It
+uses the earliest Run appointment for elapsed time, counts each reserved or
+linked child identity once, and reads base token totals from existing Run
+rollups. Resume counters are subsets of those totals. Exact replay returns the
+existing reservation before charging any new work. Later reservations inherit
+the strictest retained bounds for the assignment. At exhaustion, intake
+returns `PRECONDITION/assignment_budget_exhausted` with the meter, observed
+value and limit. Runtime teardown and replacement admission remain separate
+from this intake check.
+
 ### Decisive execution fences (T27)
 
 Tree-root-then-parent advisory keys serialize admission counts. Before deciding,

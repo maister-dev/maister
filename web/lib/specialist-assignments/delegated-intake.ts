@@ -19,6 +19,7 @@ import {
   resolveAssignmentContextPrincipal,
 } from "./context-access";
 import { assertAssignmentAppointment } from "./appointment";
+import { admitAssignmentWorkBudget } from "./delegated-budget";
 import {
   readAuthorizedAssignmentInput,
   readSpecialistAssignmentContextInTransaction,
@@ -351,7 +352,17 @@ export async function retainDelegatedWorkInTransaction(
       "PRECONDITION",
       "New work requires a running responsible professional, current receiving binding, and initial work revision",
     );
-  await admitDelegatedChild(tx, { parentRunId });
+  const effectiveBounds = await admitAssignmentWorkBudget(tx, {
+    assignmentId,
+    parentRunId,
+    rootRunId,
+    requested: bounds,
+  });
+
+  await admitDelegatedChild(tx, {
+    parentRunId,
+    assignmentBounds: effectiveBounds,
+  });
   const { value: context, access } =
     await readSpecialistAssignmentContextInTransaction(
       tx,
@@ -397,7 +408,7 @@ export async function retainDelegatedWorkInTransaction(
   const reservedRunId = randomUUID();
   const [inserted] = (
     await tx.execute(sql`INSERT INTO specialist_work(work_revision,assignment_id,input_revision,input_sha256,logical_work_id,parent_run_id,definition,definition_sha256,actor,authority_snapshot,bounds,source_restrictions,request_sha256,source_key,reserved_run_id)
-      VALUES(${workRevision},${assignmentId},${inputRevision},${selectedInput.digest},${logicalWorkId},${parentRunId},${JSON.stringify(definition)}::jsonb,${definitionSha256},${JSON.stringify(actor)}::jsonb,${JSON.stringify(authority)}::jsonb,${JSON.stringify(bounds)}::jsonb,${JSON.stringify(sourceRestrictions)}::jsonb,${requestSha256},${sourceKey},${reservedRunId}) RETURNING *`)
+      VALUES(${workRevision},${assignmentId},${inputRevision},${selectedInput.digest},${logicalWorkId},${parentRunId},${JSON.stringify(definition)}::jsonb,${definitionSha256},${JSON.stringify(actor)}::jsonb,${JSON.stringify(authority)}::jsonb,${JSON.stringify(effectiveBounds)}::jsonb,${JSON.stringify(sourceRestrictions)}::jsonb,${requestSha256},${sourceKey},${reservedRunId}) RETURNING *`)
   ).rows;
 
   if (!inserted || actor.kind !== "agent" || actor.id === null)
@@ -433,7 +444,7 @@ export async function retainDelegatedWorkInTransaction(
       parentRunId,
       workId: work.id,
       workRevision,
-      bounds,
+      bounds: effectiveBounds,
       disposition: "delegated",
     },
     "delegated intake retained one work reservation",

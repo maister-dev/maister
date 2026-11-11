@@ -326,7 +326,7 @@ it("IT-CBC-01 retains and replays immutable work through the current executing p
     maxDepth: 2,
     maxFanout: 4,
     maxActiveChildren: 2,
-    maxChildRuns: 8,
+    maxChildRuns: 1,
     maxTokens: 100000,
     wallClockMinutes: 30,
     consecutiveFailures: 3,
@@ -362,6 +362,20 @@ it("IT-CBC-01 retains and replays immutable work through the current executing p
       retainDelegatedWorkInTransaction(tx, input),
     );
 
+  await database.pool.query(
+    "INSERT INTO run_cost_rollups(run_id,project_id,input_tokens,cache_read_tokens,resume_input_tokens) VALUES($1,$2,30,20,30)",
+    [parentRunId, project.id],
+  );
+  await expect(
+    retain({
+      ...request,
+      prepared: { ...request.prepared, bounds: { ...bounds, maxTokens: 50 } },
+    }),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "assignment_budget_exhausted", meter: "tokens" },
+  });
+
   await database.db.transaction(async (tx) => {
     await tx.execute(
       sql`SELECT id FROM specialist_assignments WHERE id=${assignment.id} FOR UPDATE`,
@@ -392,6 +406,20 @@ it("IT-CBC-01 retains and replays immutable work through the current executing p
   await expect(retain(staleHeads)).resolves.toEqual({
     duplicate: true,
     work: first.work,
+  });
+  await expect(
+    retain({
+      ...rotated,
+      selector: {
+        ...rotated.selector,
+        expectedRevision: head.revision + 1,
+        logicalWorkId: "second-diagnosis",
+      },
+      prepared: { ...rotated.prepared, bounds: { ...bounds, maxChildRuns: 8 } },
+    }),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "assignment_budget_exhausted", meter: "child_runs" },
   });
   await expect(
     retain({

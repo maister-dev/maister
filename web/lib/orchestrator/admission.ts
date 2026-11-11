@@ -289,7 +289,12 @@ async function countLiveDelegatedChildren(
  */
 export async function admitDelegatedChild(
   tx: Db,
-  args: { parentRunId: string; incoming?: number; launchIntentId?: string },
+  args: {
+    parentRunId: string;
+    incoming?: number;
+    launchIntentId?: string;
+    assignmentBounds?: { maxDepth: number; maxFanout: number };
+  },
 ): Promise<void> {
   const incoming = args.incoming ?? 1;
 
@@ -321,6 +326,7 @@ export async function admitDelegatedChild(
     envDepth,
     rootBounds?.maxDepth ?? envDepth,
     parentBounds?.maxDepth ?? envDepth,
+    args.assignmentBounds?.maxDepth ?? envDepth,
   );
   const boundsSource =
     parentBounds?.source === "node" || rootBounds?.source === "node"
@@ -350,7 +356,11 @@ export async function admitDelegatedChild(
     args.launchIntentId ?? null,
   );
   const envFanout = orchestratorMaxFanout();
-  const maxFanout = Math.min(envFanout, parentBounds?.maxFanout ?? envFanout);
+  const maxFanout = Math.min(
+    envFanout,
+    parentBounds?.maxFanout ?? envFanout,
+    args.assignmentBounds?.maxFanout ?? envFanout,
+  );
 
   if (live + incoming > maxFanout) {
     log.warn(
