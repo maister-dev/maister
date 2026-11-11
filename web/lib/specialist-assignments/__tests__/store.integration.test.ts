@@ -58,6 +58,9 @@ import {
   trustPackageRevision,
 } from "@/lib/packages/attach";
 import { buildFlowExportContract } from "@/lib/run-results/contract";
+import { resumeCrashedRun } from "@/lib/runs/recover";
+import { recoverHttpResponse } from "@/lib/runs/recover-http";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   startMainAndBrainPostgresTestDb,
   startMainPostgresTestDbUpTo,
@@ -2202,6 +2205,9 @@ it("IT-CBA-01 links existing same-owner runs exactly once, refuses project carri
       )
     ).rows,
   ).toEqual([{ assignment_id: project.id, input_revision: 1, run_id: runId }]);
+  await database.pool.query("UPDATE runs SET status='Crashed' WHERE id=$1", [
+    runId,
+  ]);
   await expect(
     linkSpecialistAssignmentRun(database.db, requesterId, project.id, {
       ...link,
@@ -2212,6 +2218,52 @@ it("IT-CBA-01 links existing same-owner runs exactly once, refuses project carri
   ).resolves.toMatchObject({
     assignment: { revision: 3, runIds: [runId, replacementRunId] },
   });
+  const { hosts } = await fakeExecutionHosts(database.db);
+  const holder = await database.pool.connect();
+
+  try {
+    await holder.query("BEGIN");
+    await holder.query(
+      "SELECT id FROM specialist_assignments WHERE id=$1 FOR UPDATE",
+      [project.id],
+    );
+    await expect(
+      resumeCrashedRun(runId, { db: database.db, executionHosts: hosts }),
+    ).resolves.toEqual({ state: "transient" });
+  } finally {
+    await holder.query("ROLLBACK");
+    holder.release();
+  }
+  const refused = await resumeCrashedRun(runId, {
+    db: database.db,
+    executionHosts: hosts,
+  });
+
+  expect(recoverHttpResponse(refused)).toMatchObject({
+    httpStatus: 409,
+    body: {
+      code: "CONFLICT",
+      details: { reason: "assignment_root_recovery_conflict" },
+    },
+  });
+  await expect(
+    database.pool.query("UPDATE runs SET status='Running' WHERE id=$1", [
+      runId,
+    ]),
+  ).rejects.toMatchObject({
+    constraint: "specialist_assignment_root_recovery_conflict",
+  });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT status,execution_assignment_id FROM runs WHERE id=$1",
+        [runId],
+      )
+    ).rows,
+  ).toEqual([{ status: "Crashed", execution_assignment_id: null }]);
+  await database.pool.query("UPDATE runs SET status='Done' WHERE id=$1", [
+    runId,
+  ]);
   await database.pool.query("UPDATE runs SET status='Done' WHERE id=$1", [
     replacementRunId,
   ]);
@@ -3108,6 +3160,7 @@ it("IT-CBX-01 logical-work upgrade preserves old intake and opaque child labels 
       await applyMainMigration(tx, "0279_operational_evidence_contract");
       await applyMainMigration(tx, "0280_specialist_context_owner_fence");
       await applyMainMigration(tx, "0281_specialist_root_admission_fence");
+      await applyMainMigration(tx, "0282_specialist_root_recovery_fence");
     });
     expect(
       (

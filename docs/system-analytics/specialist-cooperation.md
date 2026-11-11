@@ -270,6 +270,12 @@ revision cannot appoint a competing root while the predecessor is unsettled,
 including a parked Run or a crashed Run with an active placement. Existing
 links remain immutable; settled results stay inspectable after replacement.
 This is the admission gate in migration `0281_specialist_root_admission_fence`.
+Migration `0282_specialist_root_recovery_fence` applies the same exclusion to
+crashed roots returning to Pending or Running. Recovery also requires the
+current assignment input and a state that permits execution. A locked
+assignment yields a transient refusal to avoid waiting while holding the Run
+lock; a conflicting appointment returns `assignment_root_recovery_conflict`
+before a placement is minted.
 
 Assignment executor lease is 120 seconds, renewed every 40 seconds by one fenced owner; each claim/renew/write checks current epoch, owner ID and fresh expiry in a transaction. A stable assignment-row CAS increments epoch when replacing an owner. Execution-host assignment epoch remains a separate lower boundary. Current permissions are checked in addition to both fences. A stale owner yields with a typed conflict; it cannot finalize another run's current work or classify itself as a new failure.
 

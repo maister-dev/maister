@@ -11022,9 +11022,12 @@ paths:
             or a parked PR finalize inside its promotion claim — so nothing
             moved and the recover is retryable once that operation finishes.
 
-            (ADR-175) The four are machine-distinguishable on
+            Refusals are machine-distinguishable on
             `details.reason`: `discard_only`, `recover_cas_lost`, `launch_recovery_conflict`,
-            `workspace_removed`, `busy`. An unattended caller branches on that
+            `assignment_root_recovery_conflict`, `workspace_removed`, `busy`.
+            `assignment_root_recovery_conflict` means the retained Run cannot
+            resume the current specialist assignment; inspect the assignment
+            and its current work. An unattended caller branches on that
             reason to tell "retry later" from "this run is unrecoverable"; the
             UI branches on `code`, and on `busy` alone among the reasons (its
             "retry once it finishes" notice).

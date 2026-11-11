@@ -3041,11 +3041,11 @@ paths:
         `details.reason` is `busy` (ADR-181): a live workbench claim — a git
         panel operation inside its lease, or a parked PR finalize — owns the
         worktree, nothing moved, and the recover succeeds once it finishes.
-        Every other `409`, and `410`, is a terminal classification — this run
-        cannot continue, and the caller should
-        `POST /api/v1/ext/runs/{runId}/discard` instead. (ADR-175) The four
-        `409` outcomes are machine-distinguishable on `details.reason`:
-        `discard_only`, `recover_cas_lost`, `launch_recovery_conflict`, `workspace_removed`, `busy`.
+        Other `409` responses and `410` refuse this recovery. When
+        `details.reason` is `assignment_root_recovery_conflict`, inspect the
+        specialist assignment and its current work. Other reasons are
+        `discard_only`, `recover_cas_lost`, `launch_recovery_conflict`,
+        `workspace_removed`, and `busy`.
 
         **Identifiers (trust contour).** The `projectId` is derived SERVER-SIDE
         from the run row, existence-hidden `404` on mismatch. The body is empty

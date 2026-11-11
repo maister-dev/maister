@@ -5,7 +5,7 @@ import type { CreateSessionInput } from "@/lib/execution-host";
 import type { ExecutionHosts } from "@/lib/execution-host";
 import type { TaskLaunchRecoveryAuthority } from "@/lib/tasks/launch-continuation";
 
-import { and, count, eq, inArray, isNull } from "drizzle-orm";
+import { and, count, eq, inArray, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { childObligationCounts } from "@/lib/orchestrator/child-obligations";
@@ -95,6 +95,7 @@ export type RecoverResult =
   | { state: "workspace-busy" }
   | { state: "conflict" }
   | { state: "launch-conflict" }
+  | { state: "assignment-conflict" }
   | { state: "unresumable" }
   | { state: "transient" };
 
@@ -205,6 +206,31 @@ export async function resumeCrashedRun(
 
       return { state: "conflict" };
     }
+
+    const [appointment]: readonly { disposition: unknown }[] = (
+      await tx.execute(
+        sql`SELECT inspect_specialist_root_recovery(${runId}) AS disposition`,
+      )
+    ).rows;
+
+    if (appointment?.disposition === "busy") {
+      log.info(
+        { runId },
+        "Assignment admission holds the recovery appointment",
+      );
+
+      return { state: "transient" };
+    }
+    if (appointment?.disposition === "conflict") {
+      log.info({ runId }, "Retained Run cannot recover the current assignment");
+
+      return { state: "assignment-conflict" };
+    }
+    if (appointment?.disposition !== "allowed")
+      throw new MaisterError(
+        "CRASH",
+        "Invalid assignment recovery disposition",
+      );
 
     const workspaceRows = await tx
       .select({
