@@ -403,6 +403,28 @@ flowchart LR
     Fork --> Editor[authored flow draft editor]
 ```
 
+### Studio address and provenance (Designed)
+
+An installed revision is addressed by exported package name and the existing
+`package_installs.id`. Studio authenticates the viewer and resolves the ID
+against installed catalog entries with that name. The project Flow viewer
+also requires `readRepoFiles` for its project and scopes the revision to its
+existing source guard.
+
+| Selection | Result |
+| --- | --- |
+| Exact name and one installed ID | Render that revision's inventory and content. Keep its ID on member, tab, page, back and action links. |
+| ID absent and one source | Redirect the page to the first catalog version for that source. |
+| ID absent and multiple sources | Display linked source/version choices on the package or member page. |
+| Explicit ID empty, repeated, invalid, unknown, removed or mismatched | Return not found. |
+
+An attachment links to its installed revision. A historical Flow selection
+requires a unique match of the selected revision's SHA, bundle source and
+manifest member before emitting a Studio link. When attribution is unavailable,
+keep the revision view and explain why Studio is unavailable. Existing Runs
+resolve their persisted Flow revision and SHA. Neither an attachment update nor
+a digest-only package badge can supply historical identity (UX-01A–D).
+
 ## Plan-review source compatibility (Implemented — ADR-137)
 
 Only the released source Flow definitions that actually perform Plan review are

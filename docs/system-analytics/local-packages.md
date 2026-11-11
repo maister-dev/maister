@@ -795,6 +795,17 @@ tab surfaces one shared **Import** button wired to the existing
 - Malformed `maister-package.yaml` in the local source → empty/degraded BOM
   (manifest parse → `CONFIG`/empty), never a thrown landing.
 
+### Studio fork selection (Designed)
+
+The installed-package and element fork operations accept the same optional
+`install` query as the Studio viewer. The active global member check and
+exact catalog lookup run before the existing fork service claims a working
+directory. Ambiguous legacy names or invalid explicit IDs return 404. A
+unique legacy name still resolves to its first catalog version. Whole-package
+deduplication and lineage use the resolved install ID. Element path confinement
+and the existing partial-copy behavior apply to that exact bundle (UX-01C).
+See the [Web API](../api/web.openapi.yaml).
+
 ## Expectations
 
 - A `local_packages` row MUST have a UNIQUE `slug`; its `working_dir` MUST

@@ -241,6 +241,18 @@ Logging requirements: INFO when an auto trigger is scheduled or fired with `runI
 `projectId`, and non-secret policy fields; WARN when a CAS cancel misses or when auto
 delivery degrades to manual with status, command, and bounded conflict paths.
 
+### Run-page verification (Designed)
+
+The Flow Run page presents recorded blocking gates and required evidence in a
+compact, keyboard-operable disclosure. Failed, stale, blocked, waiting and
+overridden contributions keep their existing precedence and reasons. Show
+recorded clear results separately from the lifecycle state. A known compatible
+pin and applicable requirements distinguish no checks, policy exclusion and
+checks awaiting evaluation. When applicability is unknown, show uncertainty
+instead of claiming no checks. Operational agent and Scratch presentations
+use their own lifecycle and result state. A historical execution error
+describes that attempt (UX-07A–C).
+
 ## Expectations
 
 - A blocking gate (`mode: "blocking"`) on the live `node_attempts` row MUST clear a phase

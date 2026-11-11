@@ -14523,7 +14523,16 @@ paths:
         in: path
         required: true
         schema: { type: string }
-        description: "Package name (url-param). Resolved server-side to its newest install; the body controls nothing."
+        description: Exported package name.
+      - name: install
+        in: query
+        required: false
+        schema: { type: string, minLength: 1, maxLength: 128 }
+        description: |
+          Designed. Exact installed revision ID. It must belong to ref. Empty,
+          duplicate, unknown, removed or mismatched IDs return 404. When omitted,
+          a unique source resolves to its first catalog version. An ambiguous
+          legacy name returns 404.
     post:
       tags: [flow-packages]
       summary: (ADR-096 — Designed) Fork a whole package to a local package
@@ -14573,6 +14582,7 @@ paths:
               schema: { $ref: "#/components/schemas/ForkResult" }
         "400": { $ref: "#/components/responses/Config" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
 
@@ -14582,7 +14592,16 @@ paths:
         in: path
         required: true
         schema: { type: string }
-        description: "Package name (url-param). Resolved server-side to its newest install."
+        description: Exported package name.
+      - name: install
+        in: query
+        required: false
+        schema: { type: string, minLength: 1, maxLength: 128 }
+        description: |
+          Designed. Exact installed revision ID. It must belong to ref. Empty,
+          duplicate, unknown, removed or mismatched IDs return 404. When omitted,
+          a unique source resolves to its first catalog version. An ambiguous
+          legacy name returns 404.
     post:
       tags: [flow-packages]
       summary: (ADR-105 — Implemented) Fork ONE element into a new local package
@@ -14611,6 +14630,7 @@ paths:
               schema: { $ref: "#/components/schemas/ForkResult" }
         "400": { $ref: "#/components/responses/Config" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/Config" }
@@ -30563,7 +30583,11 @@ components:
           type: string
           minLength: 1
           maxLength: 512
-          description: Repo-relative file path or allowed glob.
+          description: |
+            Repo-relative file selector. Designed literal escaping allows
+            web/app/\[slug\]/page.tsx to select the bracketed path. An unescaped
+            glob operator keeps glob interpretation. The server resolves the
+            selector against the authorized project's repository and branch.
         chunkerId:
           type: string
           minLength: 1

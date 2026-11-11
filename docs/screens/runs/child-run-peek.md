@@ -28,3 +28,5 @@ Loading, empty, denied, unavailable, incompatible, error, disconnected and termi
 - [Navigation contract](../../system-analytics/run-peek-navigation.md).
 - [Data and live-delivery contract](../../system-analytics/run-peek-data.md).
 - [Run inspector](run-inspector.md).
+
+Peek transcript controls follow the [viewport contract](../../system-analytics/workbench.md#evidence-and-transcript-viewports-designed) (Designed).

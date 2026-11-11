@@ -241,6 +241,13 @@ not fabricated from lastAttemptFence.
 
 Per-cron current input and immutable claim/run retention are specified in [scheduled agent requests](scheduled-agent-requests.md). Protected request bodies are stored separately from viewer-safe trigger telemetry; existing admission, completion and permission policies remain authoritative.
 
+### Run header navigation (Designed)
+
+The Run header's **All {agent} runs** link opens the project-scoped History
+tab for the recorded source agent. Use the Run's stored display name when
+available. Task attempts have their own destination. Browser Back restores
+the originating list URL including filter and signed cursor (UX-09C).
+
 ## Expectations
 
 - **UX-01:** a package update, schedule deletion, detach/reattach or catalog deletion does not reclassify or lose provably associated retained runs. An unresolved legacy identity is explicit and never merged into another agent's history. Enforced by the owning services/constraints below and primary acceptance in [traceability](agent-activity-traceability.md).

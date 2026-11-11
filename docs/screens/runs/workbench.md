@@ -296,3 +296,5 @@ is at the bottom. Reading history preserves the visible message and offers
 **Jump to latest**, with an indicator when new messages arrive. Individually
 oversized records retain their normal message/tool presentation with a bounded
 preview and an authorized **Download complete content** action.
+
+Evidence filtering and transcript controls follow the [viewport contract](../../system-analytics/workbench.md#evidence-and-transcript-viewports-designed) (Designed).

@@ -196,6 +196,20 @@ flowchart LR
     FRange --> DV["git-diff-view split/inline via ?diffview=; collapsible hunks; server-built Shiki bundle (Implemented, ADR-066)"]
 ```
 
+### Evidence and transcript viewports (Designed)
+
+Evidence fits after the visible pane and its nodes are measured, and again
+after a change to the URL's node, kind or state filters. An unchanged filter
+with refreshed data or a changed selection preserves deliberate camera movement.
+Empty results retain filter controls. A singleton is fitted with a zoom cap
+(UX-03C–D).
+
+Main and child transcripts keep their scroll owners. Earlier history loading,
+errors and retries appear at the top boundary. Jump remains inside the
+transcript and resumes follow-tail. A retained later page and a live message
+arrival have distinct announcements. Inserting controls and messages keeps the
+visible anchor while the reader is above the tail (UX-09A–B).
+
 ## Expectations
 
 - Node color is the **highest-`attempt` `node_attempts.status`** for each `node_id`

@@ -379,3 +379,5 @@ cancel reasons, the launch-hold reason — to `taskDetail`, with EN + RU parity.
   `web/components/social/markdown-body.tsx`,
   `web/components/social/task-detail-prompt-editor.tsx`,
   `web/lib/queries/board.ts`.
+
+New task follows the [modal interaction contract](../../system-analytics/tasks.md#new-task-modal-designed) (Designed).

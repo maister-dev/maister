@@ -713,6 +713,15 @@ list (`gate-form.tsx`).
 - Run/preview status keeps the existing `FlowGraphView` coloring; the static
   editor canvas has no status ring.
 
+### Flow editor viewport (Designed)
+
+Fit waits for a visible measured canvas and measured nodes. Initial fit and
+explicit Fit use the same padding and scale limits. The overview refits on a
+usable resize. A deliberate camera change persists across normal edits and
+same-Flow reseeds. Selecting a node through the keyboard locator centers it at
+a readable scale and opens its properties. Empty and singleton layouts retain
+usable controls (UX-03A–B).
+
 ## Linked artifacts
 
 - **Studio redesign (Phase A — Implemented):**

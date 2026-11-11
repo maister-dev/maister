@@ -35,8 +35,9 @@ Attach, enable, upgrade-to and launch controls are disabled.
 - **ADRs:** ADR-092 (Studio IA / node-visual scheme), ADR-075 (package
   viewer / fork / kind-by-path). No new ADR.
 
-`ref` is the package **name** (Phase A semantics); two sources exposing the same
-name surface a collision picker rather than silently choosing one. The
+`ref` is the package **name** and `install` selects the exact installed revision
+(Designed). An ambiguous name opens a linked source/version picker. See
+[installed package identity](../../system-analytics/flow-packages.md#studio-address-and-provenance-designed). The
 `installed_path` is resolved **server-side only** and never enters a client prop
 or DTO — every disk read happens in the RSC/server layer and only rendered
 content + metadata cross to the browser.
