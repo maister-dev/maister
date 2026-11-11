@@ -312,6 +312,8 @@ export type BudgetTermination = Readonly<{
   id: string;
   scope: BudgetScope;
   meter: "tokens" | "failures" | "wallclock";
+  /** Absent on historical and run/task/tree budget stops. */
+  trigger?: "node_duration";
   current: number;
   limit: number;
   requestedAt: string;

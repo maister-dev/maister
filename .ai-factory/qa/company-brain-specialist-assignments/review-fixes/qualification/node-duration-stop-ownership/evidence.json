@@ -1,0 +1,143 @@
+{
+  "schemaVersion": 1,
+  "status": "passed_focused_verification",
+  "sourceHead": "f203ad5fb544b260b566799bc39fb280a40bbc87",
+  "candidateSha256": "8a7a9d0a2205f4d4ea70ea0b1240ed1c59f4739d4e42e9b75900e4667bb87c32",
+  "red": {
+    "passed": 2,
+    "failed": 1
+  },
+  "integration": {
+    "passed": 26,
+    "failed": 0
+  },
+  "webUnit": {
+    "passed": 9312,
+    "failed": 0
+  },
+  "durationAndBudgetCapsChanged": false,
+  "assertion": "Retain the exact node-duration stop before DELETE, yield the prompt driver, retain the owner through an unconfirmed teardown and record one confirmed terminal failure.",
+  "providerSecretValueScan": {
+    "artifactsScanned": 9,
+    "matches": 0
+  },
+  "artifacts": [
+    {
+      "sourceName": "candidate.patch",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "8a7a9d0a2205f4d4ea70ea0b1240ed1c59f4739d4e42e9b75900e4667bb87c32",
+      "rawBytes": 14582,
+      "compressedSha256": "beb0513674a26825c36fea7cd510db3fdcadc26797817d844969c93c86567f44",
+      "parts": [
+        {
+          "path": "candidate.patch.gz",
+          "sha256": "beb0513674a26825c36fea7cd510db3fdcadc26797817d844969c93c86567f44"
+        }
+      ]
+    },
+    {
+      "sourceName": "watchdog-red.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "b9850b26444270089a94b806a872135fb105a1c8e0adcec5529bb2214f78247b",
+      "rawBytes": 41398,
+      "compressedSha256": "02a4c734bbceea90f1e381d6beba5d0d24001deb9a5019ec2801ee6603a05f81",
+      "parts": [
+        {
+          "path": "watchdog-red.log.gz",
+          "sha256": "02a4c734bbceea90f1e381d6beba5d0d24001deb9a5019ec2801ee6603a05f81"
+        }
+      ]
+    },
+    {
+      "sourceName": "watchdog-green.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "4ac90c33cd427f1c6a698ad4306bbfa95deb6c7f28eff4d59d9ce233a55f01bf",
+      "rawBytes": 87341,
+      "compressedSha256": "f334c9d33f799457ec27231daa0f0728e3faceb1193244c19452f01cb5517bc3",
+      "parts": [
+        {
+          "path": "watchdog-green.log.gz",
+          "sha256": "f334c9d33f799457ec27231daa0f0728e3faceb1193244c19452f01cb5517bc3"
+        }
+      ]
+    },
+    {
+      "sourceName": "unit.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "3f55a5029bbb49a4e7e117ab83d2a78b0724abb43a22dbb5bf9de80998281182",
+      "rawBytes": 498249,
+      "compressedSha256": "ffe924636dbdc608eaf1492d1c4453cfaf44f272580732ea93a6e20f3a471bc5",
+      "parts": [
+        {
+          "path": "unit.log.gz",
+          "sha256": "ffe924636dbdc608eaf1492d1c4453cfaf44f272580732ea93a6e20f3a471bc5"
+        }
+      ]
+    },
+    {
+      "sourceName": "web-types.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92",
+      "rawBytes": 15,
+      "compressedSha256": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237",
+      "parts": [
+        {
+          "path": "web-types.log.gz",
+          "sha256": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237"
+        }
+      ]
+    },
+    {
+      "sourceName": "supervisor-types.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92",
+      "rawBytes": 15,
+      "compressedSha256": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237",
+      "parts": [
+        {
+          "path": "supervisor-types.log.gz",
+          "sha256": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237"
+        }
+      ]
+    },
+    {
+      "sourceName": "mcp-types.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92",
+      "rawBytes": 15,
+      "compressedSha256": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237",
+      "parts": [
+        {
+          "path": "mcp-types.log.gz",
+          "sha256": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237"
+        }
+      ]
+    },
+    {
+      "sourceName": "docs.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "cfd5d8483f0a150de84a1ded1044761912912f9087c7e6d7ebe49264d6c80501",
+      "rawBytes": 5006,
+      "compressedSha256": "dc6682b8cafaca98cd4043cceca401057ace784b06f0987a04dc0b42d0fda7eb",
+      "parts": [
+        {
+          "path": "docs.log.gz",
+          "sha256": "dc6682b8cafaca98cd4043cceca401057ace784b06f0987a04dc0b42d0fda7eb"
+        }
+      ]
+    },
+    {
+      "sourceName": "contracts.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "015600c03c2540957531312e8306a9343da4b304a41b3b374f63eacfeb3f11f4",
+      "rawBytes": 3073,
+      "compressedSha256": "ef208a8a41843982a7827673fbc8f0cfd7fa75bd4ceca5fac182212dcf4993f0",
+      "parts": [
+        {
+          "path": "contracts.log.gz",
+          "sha256": "ef208a8a41843982a7827673fbc8f0cfd7fa75bd4ceca5fac182212dcf4993f0"
+        }
+      ]
+    }
+  ]
+}

@@ -585,6 +585,9 @@ type TimeLimitCandidate = {
   flowId: string | null;
   flowRevisionId: string | null;
   currentStepId: string | null;
+  budgetState: BudgetState | null;
+  executionAssignmentId: string | null;
+  flowDriverToken: string | null;
 };
 
 async function fetchTimeLimitCandidates(db: Db): Promise<TimeLimitCandidate[]> {
@@ -594,6 +597,9 @@ async function fetchTimeLimitCandidates(db: Db): Promise<TimeLimitCandidate[]> {
       flowId: runs.flowId,
       flowRevisionId: runs.flowRevisionId,
       currentStepId: runs.currentStepId,
+      budgetState: runs.budgetState,
+      executionAssignmentId: runs.executionAssignmentId,
+      flowDriverToken: runs.flowDriverToken,
     })
     .from(runs)
     .where(
@@ -722,11 +728,14 @@ async function runTimeLimitPass(
   let deferredCompleted = 0;
 
   await runWithConcurrency(candidates, PER_PASS_CONCURRENCY, async (row) => {
-    const manifest = await resolveRunManifest(db, row);
+    const pending = await currentBudgetTermination(db, row);
 
-    if (!manifest || !row.currentStepId) return;
-
-    const cap = maxDurationMinutesFor(manifest, row.currentStepId);
+    if (!row.currentStepId || (pending && pending.trigger !== "node_duration"))
+      return;
+    const manifest = pending ? null : await resolveRunManifest(db, row);
+    const cap =
+      pending?.limit ??
+      (manifest ? maxDurationMinutesFor(manifest, row.currentStepId) : null);
 
     if (cap === null) return;
 
@@ -741,11 +750,13 @@ async function runTimeLimitPass(
       "watchdog armed for capped Running node",
     );
 
-    if (elapsedMs <= cap * 60_000) return;
+    if (!pending && elapsedMs <= cap * 60_000) return;
     // A finished turn a writer will still move is never killed: the owner
     // applies or poisons a settled one, and a completed receipt settles only
     // while the host's stream is alive (see `completedTurnWitness`).
-    const completed = await completedTurnWitness(db, hosts, row.id, attempt.id);
+    const completed = pending
+      ? null
+      : await completedTurnWitness(db, hosts, row.id, attempt.id);
 
     if (completed) {
       deferredCompleted += 1;
@@ -763,11 +774,8 @@ async function runTimeLimitPass(
       return;
     }
 
-    // Match the live host session by the server-owned (runId, stepId) through
-    // the run's bound client: only the EXACT capped node's session is torn
-    // down, never a later node's live session. When the host cannot be asked
-    // we cannot distinguish "gone" from "unreachable" — leave the run Running
-    // for the next tick rather than mark it Failed with a live agent.
+    // Inventory is scoped to the run. The durable claim below binds the
+    // observed session and exact attempt under the same lock as graph progress.
     let client: BoundClient;
     let live: SupervisorSessionRecord | undefined;
 
@@ -786,23 +794,23 @@ async function runTimeLimitPass(
       return;
     }
 
+    const termination = await claimBudgetTermination(db, {
+      runId: row.id,
+      nodeId: row.currentStepId,
+      nodeDurationAttemptId: attempt.id,
+      scope: "run",
+      meter: "wallclock",
+      current: elapsedMs / 60_000,
+      limit: cap,
+      assignmentId: client.assignment.id,
+      sessionId: live?.sessionId ?? null,
+    });
+
+    if (!termination) return;
     if (live) {
       try {
         await client.deleteSession(live.sessionId);
       } catch (err) {
-        // 5xx / network → retryable: leave the run Running and retry next tick.
-        // Marking Failed without confirming teardown is the split-brain we must
-        // avoid (terminal run, still-live agent).
-        if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
-          log.warn(
-            { runId: row.id, err: err.message },
-            "watchdog deleteSession 5xx — leaving Running for next tick",
-          );
-
-          return;
-        }
-        // A fence means a newer driver generation took the run over between
-        // the candidate scan and the kill: it is not ours to terminate.
         if (isFencedError(err)) {
           log.warn(
             { runId: row.id },
@@ -811,15 +819,17 @@ async function runTimeLimitPass(
 
           return;
         }
-        // Terminal failure (e.g. 404 unknown session) → the session is already
-        // gone; safe to proceed to the terminal transition.
         log.warn(
           {
             runId: row.id,
+            terminationId: termination.id,
+            code: isMaisterError(err) ? err.code : null,
             err: err instanceof Error ? err.message : String(err),
           },
-          "watchdog deleteSession terminal failure — session unrecoverable, proceeding",
+          "watchdog teardown unconfirmed — retaining duration stop",
         );
+
+        return;
       }
     }
     // No live session for this (run, node): the capped node's agent is not
@@ -833,17 +843,15 @@ async function runTimeLimitPass(
     // PRECONDITION the sweeper owns, NOT a pending-permission deferred expiry
     // (that is HITL_TIMEOUT). ADR-008 closed union: reuse PRECONDITION.
     const claimed: boolean = await db.transaction(async (tx: Db) => {
-      const [current] = await tx
-        .select()
-        .from(runs)
-        .where(eq(runs.id, row.id))
-        .for("no key update");
-
-      if (current && (await currentBudgetTermination(tx, current)))
-        return false;
+      if (!(await ownsBudgetTermination(tx, row.id, termination))) return false;
       const upd = await tx
         .update(runs)
-        .set({ status: "Failed", endedAt: new Date(), currentStepId: null })
+        .set({
+          status: "Failed",
+          endedAt: new Date(),
+          currentStepId: null,
+          budgetState: sql`${runs.budgetState} - 'termination'`,
+        })
         .where(
           and(
             eq(runs.id, row.id),
@@ -904,6 +912,7 @@ async function runTimeLimitPass(
     });
 
     if (!claimed) {
+      await releaseBudgetTermination(db, row.id, termination);
       log.debug(
         { runId: row.id, nodeId: row.currentStepId },
         "watchdog claim lost — run advanced concurrently; no ledger mutation",
@@ -2601,6 +2610,7 @@ async function runBudgetPass(db: Db, hosts: ExecutionHosts): Promise<number> {
       const pending = await currentBudgetTermination(db, candidate);
 
       if (pending) {
+        if (pending.trigger === "node_duration") return;
         const verdict: BudgetVerdict = {
           rung: "terminate",
           scope: pending.scope,

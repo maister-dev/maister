@@ -1,0 +1,170 @@
+{
+  "schemaVersion": 1,
+  "status": "failed_actual_installed_package_all_glm53",
+  "sourceHead": "f203ad5fb544b260b566799bc39fb280a40bbc87",
+  "candidateSha256": "8a7a9d0a2205f4d4ea70ea0b1240ed1c59f4739d4e42e9b75900e4667bb87c32",
+  "mcpBundleSha256": "0baeb2a9d0d879d0f0e3ba320acddae1a3828a129bc53284b7ec796d772115f0",
+  "sourceUnchanged": true,
+  "startedAt": "2026-11-11T10:33:05.072305+00:00",
+  "finishedAt": "2026-11-11T10:46:55.905565+00:00",
+  "exitCode": 1,
+  "invocationId": "df879c5e-3514-4a65-b316-2ed3d08731ab",
+  "package": {
+    "tag": "rah/v1.0.8",
+    "commit": "74bc5a139c2247428782a0154d9a362310dc7a1c"
+  },
+  "runner": {
+    "id": "cb-live-claude",
+    "adapter": "claude",
+    "model": "glm-5.3",
+    "permissionPolicy": "default"
+  },
+  "adapterPackageVersion": "0.95.0",
+  "providerEndpoint": "https://api.z.ai/api/anthropic",
+  "qualifier": "QL-CBX-03",
+  "playwrightStats": {
+    "startTime": "2026-11-11T10:33:13.759Z",
+    "duration": 821753.528,
+    "expected": 1,
+    "skipped": 0,
+    "unexpected": 1,
+    "flaky": 0
+  },
+  "runtimeModelWitnesses": 3,
+  "qualifiedTrees": 0,
+  "finding": "A researcher changed one character in an exact knowledge record ID, resulting in reference_invalid. The depth-one root failed qualification.",
+  "observedFailures": [
+    "reference_invalid"
+  ],
+  "cleanup": {
+    "id": "df879c5e-3514-4a65-b316-2ed3d08731ab",
+    "errors": [],
+    "containers": [],
+    "containerRemoved": true,
+    "volumeRemoved": true,
+    "adapterBinaryUnchanged": true
+  },
+  "providerSecretValueScan": {
+    "artifactsScanned": 9,
+    "matches": 0
+  },
+  "artifacts": [
+    {
+      "sourceName": "launch-metadata.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "9fd5e2aa8a434b5efa2c22c64fda2d66d6ac69fcb95c647bc4d8039de3d66008",
+      "rawBytes": 544,
+      "compressedSha256": "2474327d5c5a6b3cc43dd1aa92c436f01ee3af2ebe6faf9201f752983dda6f87",
+      "parts": [
+        {
+          "path": "launch-metadata.json.gz",
+          "sha256": "2474327d5c5a6b3cc43dd1aa92c436f01ee3af2ebe6faf9201f752983dda6f87"
+        }
+      ]
+    },
+    {
+      "sourceName": "playwright.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "f8d3a97caca4f4e6298a4091189a528ded76fb2ef0637478b5a91f5e1c5abced",
+      "rawBytes": 10498,
+      "compressedSha256": "77be23541aa6dc9d06ab8638263ee8e946b911f249732e459a7eb930e9cbee9d",
+      "parts": [
+        {
+          "path": "playwright.json.gz",
+          "sha256": "77be23541aa6dc9d06ab8638263ee8e946b911f249732e459a7eb930e9cbee9d"
+        }
+      ]
+    },
+    {
+      "sourceName": "native-package-qualification.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "c67319f4f14c8832d6a047d7af23c742188764e67f0dc5bd5165f99767ab1451",
+      "rawBytes": 53649,
+      "compressedSha256": "57474569723cb0367103f301171ae809eaf35104485e0c739643421e31ba2624",
+      "parts": [
+        {
+          "path": "native-package-qualification.json.gz",
+          "sha256": "57474569723cb0367103f301171ae809eaf35104485e0c739643421e31ba2624"
+        }
+      ]
+    },
+    {
+      "sourceName": "live.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "7905e80d6ee85a7d0e82e335d934bcdabbb41c85525a20bf183423e41f7c3368",
+      "rawBytes": 19333,
+      "compressedSha256": "8e456bf5608d717802e04f2e5139479af323418443d58243745ed25c652877b4",
+      "parts": [
+        {
+          "path": "live.log.gz",
+          "sha256": "8e456bf5608d717802e04f2e5139479af323418443d58243745ed25c652877b4"
+        }
+      ]
+    },
+    {
+      "sourceName": "candidate.patch",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "8a7a9d0a2205f4d4ea70ea0b1240ed1c59f4739d4e42e9b75900e4667bb87c32",
+      "rawBytes": 14582,
+      "compressedSha256": "beb0513674a26825c36fea7cd510db3fdcadc26797817d844969c93c86567f44",
+      "parts": [
+        {
+          "path": "candidate.patch.gz",
+          "sha256": "beb0513674a26825c36fea7cd510db3fdcadc26797817d844969c93c86567f44"
+        }
+      ]
+    },
+    {
+      "sourceName": "sanitized-ledger-snapshot.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "f78c6894c84432a4ed9cf7e4b460f40323a565c6e2e4ad8ded6cfb4fda9022c4",
+      "rawBytes": 14552,
+      "compressedSha256": "4229444e8ed2d1b7ccd4f8e513e159595c361f3c09642580a4d609b15168a60d",
+      "parts": [
+        {
+          "path": "sanitized-ledger-snapshot.json.gz",
+          "sha256": "4229444e8ed2d1b7ccd4f8e513e159595c361f3c09642580a4d609b15168a60d"
+        }
+      ]
+    },
+    {
+      "sourceName": "database-volume-witness.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "26228557acf0abfe11ca1b95a39caf0b0455c679facfd1e02afea0040e5338e7",
+      "rawBytes": 772,
+      "compressedSha256": "d932c535102c0c5ad5ce3c713d4e33c419a889270869385131b5ad208ce76c9a",
+      "parts": [
+        {
+          "path": "database-volume-witness.json.gz",
+          "sha256": "d932c535102c0c5ad5ce3c713d4e33c419a889270869385131b5ad208ce76c9a"
+        }
+      ]
+    },
+    {
+      "sourceName": "database-volume-cleanup.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "a0b11ed58cd52a134ec92a8a3250906746ee99d172dc8f327de5e29a91e8b590",
+      "rawBytes": 90,
+      "compressedSha256": "427180a8c026aadb6cf7c26cf1a04bf82b160fec578194f1bf4f6236dfc115c8",
+      "parts": [
+        {
+          "path": "database-volume-cleanup.json.gz",
+          "sha256": "427180a8c026aadb6cf7c26cf1a04bf82b160fec578194f1bf4f6236dfc115c8"
+        }
+      ]
+    },
+    {
+      "sourceName": "independent-cleanup.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "ff403588b6f24c8b9762b3a133ada8ac57fb926bcb090a02362aefca6f7285f6",
+      "rawBytes": 393,
+      "compressedSha256": "d31c54d8716cfa345b816f80ea0d7f3bfac17d5d17d04280cc9434c6d4820c90",
+      "parts": [
+        {
+          "path": "independent-cleanup.log.gz",
+          "sha256": "d31c54d8716cfa345b816f80ea0d7f3bfac17d5d17d04280cc9434c6d4820c90"
+        }
+      ]
+    }
+  ]
+}

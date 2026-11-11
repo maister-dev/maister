@@ -67,9 +67,10 @@ afterAll(async () => {
   await database?.stop();
 });
 
-it.each(["run", "tree"] as const)(
-  "%s budget retains terminal ownership when DELETE interrupts an accepted ACP prompt",
+it.each(["run", "tree", "node_duration"] as const)(
+  "%s stop retains terminal ownership when DELETE interrupts an accepted ACP prompt",
   async (scope) => {
+    const nodeDuration = scope === "node_duration";
     const db = database.db as Db;
     const name = randomUUID();
     const repoPath = await initRepo(`${supervisor.runtimeRoot}/repo-${name}`);
@@ -87,6 +88,9 @@ it.each(["run", "tree"] as const)(
           {
             id: "work",
             type: "ai_coding",
+            ...(nodeDuration
+              ? { settings: { limits: { maxDurationMinutes: 1 } } }
+              : {}),
             action: { prompt: "Wait for the budget stop" },
             transitions: { success: "done" },
           },
@@ -99,7 +103,7 @@ it.each(["run", "tree"] as const)(
           executionPolicy: {
             preset: "supervised",
             overrides: {
-              budget: { [scope]: { maxTokens: 100 } },
+              budget: nodeDuration ? {} : { [scope]: { maxTokens: 100 } },
               onBudgetBreach: "terminate",
             },
           },
@@ -146,6 +150,11 @@ it.each(["run", "tree"] as const)(
           { timeout: 30_000 },
         )
         .toBe("accepted");
+      if (nodeDuration)
+        await db
+          .update(nodeAttempts)
+          .set({ startedAt: new Date(Date.now() - 120_000) })
+          .where(eq(nodeAttempts.runId, seeded.runId));
       await appendManagerRunStreamEvent(db, {
         runId: seeded.runId,
         sourceKey: `budget-stop:${seeded.runId}`,
@@ -202,7 +211,8 @@ it.each(["run", "tree"] as const)(
 
       expect(retryable.status).toBe("Running");
       expect(retryable.budgetState?.termination?.id).toBeDefined();
-      expect(retryable.budgetState?.notified?.[scope]).not.toBe("terminate");
+      if (!nodeDuration)
+        expect(retryable.budgetState?.notified?.[scope]).not.toBe("terminate");
       const [pendingPrompt] = await db
         .select()
         .from(executionCommands)
@@ -268,6 +278,17 @@ it.each(["run", "tree"] as const)(
         )
         .toBe(true);
       await driving;
+      expect(
+        await db
+          .select({ id: executionCommands.id })
+          .from(executionCommands)
+          .where(
+            and(
+              eq(executionCommands.runId, seeded.runId),
+              eq(executionCommands.kind, "session.delete"),
+            ),
+          ),
+      ).toHaveLength(2);
       const [held] = await db
         .select()
         .from(runs)
@@ -282,7 +303,8 @@ it.each(["run", "tree"] as const)(
       );
       expect(held.status).toBe("Running");
       expect(assignment.state).toBe("active");
-      expect(held.budgetState?.notified?.[scope]).not.toBe("terminate");
+      if (!nodeDuration)
+        expect(held.budgetState?.notified?.[scope]).not.toBe("terminate");
     } catch (error) {
       errors.push(error);
     } finally {
@@ -318,13 +340,16 @@ it.each(["run", "tree"] as const)(
       );
 
     expect(settled.status).toBe("Failed");
-    expect(settled.budgetState?.notified?.[scope]).toBe("terminate");
+    if (!nodeDuration)
+      expect(settled.budgetState?.notified?.[scope]).toBe("terminate");
     expect(attempts).toHaveLength(1);
-    expect(attempts[0].errorCode).toBe("BUDGET_EXCEEDED");
+    const code = nodeDuration ? "PRECONDITION" : "BUDGET_EXCEEDED";
+
+    expect(attempts[0].errorCode).toBe(code);
     expect(events).toHaveLength(1);
     expect(events[0].payload.cause).toMatchObject({
-      code: "BUDGET_EXCEEDED",
-      reason: "budget_breach",
+      code,
+      reason: nodeDuration ? "max_duration" : "budget_breach",
       source: "sweeper",
     });
   },

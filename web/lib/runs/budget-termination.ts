@@ -12,6 +12,9 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { FLOW_NODE_ATTEMPT_VARIANTS } from "@/lib/execution-host/prompt-owner-contract";
+import { classifyPromptEvidence } from "@/lib/reconcile-evidence";
+import { loadPromptEvidence } from "@/lib/reconcile-evidence-db";
 import {
   executionCommands,
   nodeAttempts,
@@ -104,6 +107,7 @@ export async function claimBudgetTermination(
     limit: number;
     assignmentId: string | null;
     sessionId: string | null;
+    nodeDurationAttemptId?: string;
   }>,
 ): Promise<BudgetTermination | null> {
   return db.transaction(async (tx) => {
@@ -124,7 +128,11 @@ export async function claimBudgetTermination(
     const current = await currentBudgetTermination(tx, run);
 
     if (current)
-      return input.sessionId === null || input.sessionId === current.sessionId
+      return (input.nodeDurationAttemptId
+        ? current.trigger === "node_duration" &&
+          current.nodeAttemptId === input.nodeDurationAttemptId
+        : current.trigger !== "node_duration") &&
+        (input.sessionId === null || input.sessionId === current.sessionId)
         ? current
         : null;
     const [attempt] = input.nodeId
@@ -144,7 +152,23 @@ export async function claimBudgetTermination(
     // Preserve a result/failure committed before the stop request. Only an open
     // action is interrupted; a budget observer cannot relabel its old failure.
     if (attempt && attempt.status !== "Running") return null;
-    if (input.sessionId || input.nodeId) {
+    if (input.nodeDurationAttemptId) {
+      if (
+        run.status !== "Running" ||
+        attempt?.id !== input.nodeDurationAttemptId
+      )
+        return null;
+      const evidence = classifyPromptEvidence(
+        await loadPromptEvidence(tx, {
+          runId: run.id,
+          nodeAttemptId: attempt.id,
+          variants: FLOW_NODE_ATTEMPT_VARIANTS,
+        }),
+      );
+
+      if (evidence === "pending_application" || evidence === "applying")
+        return null;
+    } else if (input.sessionId || input.nodeId) {
       const [terminalPrompt] = await tx
         .select({ state: executionCommands.state })
         .from(executionCommands)
@@ -200,6 +224,7 @@ export async function claimBudgetTermination(
       id: randomUUID(),
       scope: input.scope,
       meter: input.meter,
+      ...(input.nodeDurationAttemptId ? { trigger: "node_duration" } : {}),
       current: input.current,
       limit: input.limit,
       requestedAt: new Date().toISOString(),
@@ -222,6 +247,7 @@ export async function claimBudgetTermination(
         scope: intent.scope,
         nodeAttemptId: intent.nodeAttemptId,
         assignmentId: intent.assignmentId,
+        trigger: intent.trigger ?? "budget",
       },
       "[FIX] budget termination retained before teardown",
     );
