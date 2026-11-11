@@ -10923,6 +10923,64 @@ export const specialistWork = pgTable(
   }),
 );
 
+/** Immutable decisions about exact collected results from an appointed child. */
+export const specialistWorkDecisions = pgTable(
+  "specialist_work_decisions",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    workId: text("work_id").notNull(),
+    workRevision: integer("work_revision").notNull(),
+    expectedRevision: integer("expected_revision").notNull(),
+    inputRevision: integer("input_revision").notNull(),
+    actor: jsonb("actor").$type<KnowledgeAttribution>().notNull(),
+    authoritySnapshot: jsonb("authority_snapshot")
+      .$type<AssignmentAuthoritySnapshot>()
+      .notNull(),
+    decision: text("decision").$type<"rework">().notNull(),
+    resultId: text("result_id")
+      .notNull()
+      .references(() => runResults.id, { onDelete: "restrict" }),
+    resultRevision: integer("result_revision").notNull(),
+    requestKey: text("request_key").notNull(),
+    requestSha256: text("request_sha256").notNull(),
+    reason: text("reason").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    work: foreignKey({
+      name: "specialist_work_decisions_work_fk",
+      columns: [t.workId, t.workRevision],
+      foreignColumns: [specialistWork.id, specialistWork.workRevision],
+    }).onDelete("restrict"),
+    delivery: unique("specialist_work_decisions_delivery_uq").on(
+      t.workId,
+      t.requestKey,
+    ),
+    terminalDecision: unique("specialist_work_decisions_revision_uq").on(
+      t.workId,
+      t.workRevision,
+    ),
+    shape: check(
+      "specialist_work_decisions_shape_check",
+      sql`(
+        ${t.workRevision}>0 AND ${t.expectedRevision}>0 AND ${t.inputRevision}>0
+        AND ${t.resultRevision}>0 AND ${t.decision}='rework'
+        AND ${t.requestKey} ~ '^[A-Za-z0-9._:-]{8,128}$'
+        AND ${t.requestSha256} ~ '^[a-f0-9]{64}$'
+        AND char_length(${t.reason}) BETWEEN 1 AND 8000
+        AND ${specialistActorShape(t.actor)} AND ${t.actor}->>'kind'='agent'
+        AND ${t.authoritySnapshot}->'schemaVersion'='1'::jsonb
+        AND ${t.authoritySnapshot}->'actor'=${t.actor}
+        AND pg_column_size(${t.authoritySnapshot})<=32768
+      ) IS TRUE`,
+    ),
+  }),
+);
+
 export const specialistRunLinks = pgTable(
   "specialist_run_links",
   {

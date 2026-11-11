@@ -539,7 +539,7 @@ describe("MCP stdio wire contract", () => {
     }
   });
 
-  it("forwards exact delegated work, collection and clarification through the built company facade", async () => {
+  it("forwards exact delegated work, collection, clarification and rework through the built company facade", async () => {
     const company = await connectClient({
       token: "mai_company_delegation_wire",
       toolset: "company",
@@ -568,12 +568,25 @@ describe("MCP stdio wire contract", () => {
       mode: "steer",
       prompt: "Check if the observation still applies.",
     };
+    const rework = {
+      ...child,
+      prompt: "Recheck the conclusion.",
+      assignmentWork: {
+        schemaVersion: 1,
+        expectedRevision: 2,
+        workRevision: 1,
+        inputRevision: 1,
+        resultRevision: 1,
+        requestKey: "recheck-conclusion",
+      },
+    };
 
     try {
       for (const [name, path, input] of [
         ["run_delegate", "/api/v1/ext/runs/delegate", body],
         ["run_collect", "/api/v1/ext/runs/collect", child],
         ["run_message", "/api/v1/ext/runs/message", clarification],
+        ["run_rework", "/api/v1/ext/runs/rework", rework],
       ] as const) {
         expect(
           (await company.callTool({ name, arguments: input })).isError,
@@ -1016,6 +1029,7 @@ describe("MCP stdio wire contract", () => {
           "run_delegate",
           "run_collect",
           "run_message",
+          "run_rework",
         ].sort(),
       );
       const inspected = await company.callTool({
@@ -1038,7 +1052,6 @@ describe("MCP stdio wire contract", () => {
         "librarian_memory_remember",
         "agent_memory_write",
         "run_promote",
-        "run_rework",
       ]) {
         const refused = await company.callTool({ name, arguments: {} });
 

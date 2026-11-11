@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { CollectedWorkRevision } from "@/lib/specialist-assignments/child-authority";
 import type { KnowledgeAccessCapture } from "@/lib/company/types";
 import type { KnowledgeRecipient } from "@/lib/brain/knowledge-run-disclosure";
 import type { OperationalOutcome } from "@/lib/run-results/operational-types";
@@ -65,6 +66,7 @@ export type CollectResult = {
   resultStatus: ResultStatus;
   result: PublicRunResult | null;
   resultRevision: number | null;
+  assignmentWork?: CollectedWorkRevision;
   resultFailure: { reason: RunResultInvalidReason; message: string } | null;
   artifacts: CollectArtifact[];
   diffRef?: string;
@@ -214,8 +216,9 @@ export async function collectChild(
       "run is not a child of the bound orchestrator run",
     );
   }
-  if (run.nativeWork)
-    await db.transaction((tx: Db) => authorizeNativeChildCollection(tx, args));
+  const assignmentWork = run.nativeWork
+    ? await db.transaction((tx: Db) => authorizeNativeChildCollection(tx, args))
+    : undefined;
 
   const knowledgeDisclosureRequired = usesStructuredKnowledgeContext(run);
 
@@ -276,6 +279,7 @@ export async function collectChild(
         ? { schemaRef: servedRow.schemaRef, value: servedRow.value }
         : null,
       resultRevision: valid?.revision ?? newest?.revision ?? null,
+      ...(assignmentWork ? { assignmentWork } : {}),
       // The invalid row is the ONE durable source. A failure-terminal child that
       // simply died (W4) has none, and reports null rather than a guess.
       resultFailure:

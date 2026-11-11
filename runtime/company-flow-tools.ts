@@ -28,6 +28,11 @@ export const COMPANY_FLOW_TOOL_CONTRACT = [
     scope: "assignments:update",
     requiredActions: ["assignments:read", "assignments:delegate", "knowledge:read"],
   },
+  {
+    name: "run_rework",
+    scope: "assignments:update",
+    requiredActions: ["assignments:read", "assignments:delegate", "knowledge:read"],
+  },
 ] as const;
 export const COMPANY_FLOW_TOKEN_SCOPES = [
   ...new Set(COMPANY_FLOW_TOOL_CONTRACT.map((tool) => tool.scope)),

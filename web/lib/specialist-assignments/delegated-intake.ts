@@ -1,9 +1,10 @@
 import "server-only";
 
-import type { SqlTransaction } from "@/lib/db/sql-types";
+import type { SqlDatabase, SqlTransaction } from "@/lib/db/sql-types";
 import type { ResolvedAssignmentContextPrincipal } from "./context-access";
 import type {
   AssignmentWorkSelector,
+  AssignmentWorkRework,
   PreparedAssignmentWork,
   SpecialistWorkRecord,
 } from "./work-types";
@@ -44,11 +45,15 @@ import { additionalKnowledgeRestrictions } from "@/lib/brain/knowledge-disclosur
 import { recordNativeRunSourcesInTransaction } from "@/lib/brain/knowledge-execution-access";
 import { knowledgeActorSchema } from "@/lib/brain/knowledge-read-types";
 import { inspectKnowledgeEvidenceReference } from "@/lib/brain/knowledge-reference";
+import { authorizeRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import {
   authorizeSourceRestrictions,
   restrictionsForKnowledgeAccess,
 } from "@/lib/brain/knowledge-restrictions";
-import { knowledgeRestrictionsSchema } from "@/lib/company/types";
+import {
+  knowledgeAccessCaptureSchema,
+  knowledgeRestrictionsSchema,
+} from "@/lib/company/types";
 import { pgErrorOf } from "@/lib/db/pg-error";
 import { databaseTimestamp } from "@/lib/db/timestamp";
 import { emitSpecialistAssignmentChange } from "@/lib/domain-events/outbox";
@@ -105,6 +110,11 @@ export type DelegatedWorkRequest = Readonly<{
   tokenId: string;
   selector: AssignmentWorkSelector;
   prepared: PreparedAssignmentWork;
+  rework?: WorkReworkSource;
+}>;
+type WorkReworkSource = Readonly<{
+  childRunId: string;
+  decision: AssignmentWorkRework;
 }>;
 type DelegatedWorkOrigin = Readonly<{
   principal: ResolvedAssignmentContextPrincipal;
@@ -229,6 +239,197 @@ async function lockDelegatedWorkOrigin(
   return { principal, source, consumer, parentRunId, rootRunId, assignmentRow };
 }
 
+async function readWorkReworkBasis(
+  tx: SqlTransaction,
+  origin: DelegatedWorkOrigin,
+  tokenId: string,
+  assignmentId: string,
+  request: WorkReworkSource,
+  prompt: string,
+) {
+  const { childRunId, decision } = request;
+  const [row] = (
+    await tx.execute(sql`
+      SELECT * FROM specialist_work WHERE child_run_id=${childRunId}
+        AND parent_run_id=${origin.parentRunId} AND assignment_id=${assignmentId}
+      FOR UPDATE
+    `)
+  ).rows;
+
+  if (!row || row.work_revision !== decision.workRevision)
+    throw unavailableAssignment();
+  const work = decodeWork(row);
+
+  if (work.actor.id !== origin.principal.identity.actor.id)
+    throw unavailableAssignment();
+  if (
+    (work.definition.target.kind !== "company_flow" &&
+      work.definition.target.kind !== "company_agent") ||
+    work.definition.objectiveInput.verification.some(
+      (item) => item.kind !== "result",
+    )
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "Native rework currently requires company result-only work",
+    );
+  if (
+    work.workRevision >= 2147483647 ||
+    work.inputRevision !== decision.inputRevision
+  )
+    throw workConflict();
+  await readAuthorizedAssignmentInput(
+    tx,
+    origin.source,
+    assignmentId,
+    work.inputRevision,
+  );
+  await authorizeSourceRestrictions(tx, origin.source, work.sourceRestrictions);
+  await authorizeRunKnowledgeDisclosure(
+    tx,
+    { kind: "token", tokenId },
+    childRunId,
+  );
+
+  const requestSha256 = contentDigest({ childRunId, decision, prompt });
+  const [previous] = (
+    await tx.execute(sql`
+      SELECT request_sha256,work_revision FROM specialist_work_decisions
+      WHERE work_id=${work.id} AND request_key=${decision.requestKey}
+    `)
+  ).rows;
+
+  if (
+    previous &&
+    (previous.request_sha256 !== requestSha256 ||
+      previous.work_revision !== decision.workRevision)
+  )
+    throw workConflict();
+  if (
+    !previous &&
+    (work.decisionState !== "open" ||
+      work.revision !== decision.expectedRevision)
+  )
+    throw workConflict();
+  const result = work.definition.objectiveInput.expectedResult;
+  const [witness] = (
+    await tx.execute(sql`
+      SELECT result.id,child.knowledge_access FROM run_results result
+      JOIN runs child ON child.id=result.run_id
+      WHERE child.id=${childRunId} AND child.status='Done'
+        AND result.revision=${decision.resultRevision} AND result.validity='valid'
+        AND result.first_collected_at IS NOT NULL
+        AND result.schema_ref=${result?.schemaRef ?? null}
+        AND result.schema_version=${result?.schemaVersion ?? null}
+        AND result.schema_sha256=${result?.sha256 ?? null}
+      FOR SHARE OF result
+    `)
+  ).rows;
+  const capture = knowledgeAccessCaptureSchema.safeParse(
+    witness?.knowledge_access,
+  );
+
+  if (
+    typeof witness?.id !== "string" ||
+    !capture.success ||
+    capture.data.state !== "complete"
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "Native rework requires the exact collected result and available evidence",
+      { details: { reason: "work_rework_result_unavailable" } },
+    );
+
+  return {
+    work,
+    requestSha256,
+    resultId: witness.id,
+    restrictions: capture.data.restrictions,
+    duplicate: previous !== undefined,
+  };
+}
+
+/** Derive the next request from the exact current result and original receiving pin. */
+export async function prepareDelegatedWorkRework(
+  db: SqlDatabase,
+  input: WorkReworkSource & Readonly<{ tokenId: string; prompt: string }>,
+): Promise<DelegatedWorkRequest> {
+  return db.transaction(async (tx) => {
+    await beginAssignmentTransaction(tx);
+    const [locator] = (
+      await tx.execute(
+        sql`SELECT assignment_id FROM specialist_work WHERE child_run_id=${input.childRunId}`,
+      )
+    ).rows;
+
+    if (typeof locator?.assignment_id !== "string")
+      throw unavailableAssignment();
+    const assignmentId = locator.assignment_id;
+    const origin = await lockDelegatedWorkOrigin(
+      tx,
+      input.tokenId,
+      assignmentId,
+    );
+    const basis = await readWorkReworkBasis(
+      tx,
+      origin,
+      input.tokenId,
+      assignmentId,
+      input,
+      input.prompt,
+    );
+    const { work } = basis;
+    const head = assignmentHeadSchema.parse(origin.assignmentRow);
+    const workRevision = work.workRevision + 1;
+    const [existing] = basis.duplicate
+      ? (
+          await tx.execute(
+            sql`SELECT * FROM specialist_work WHERE id=${work.id} AND work_revision=${workRevision}`,
+          )
+        ).rows
+      : [];
+    const retained = existing ? decodeWork(existing) : null;
+
+    if (basis.duplicate && !retained)
+      throw new MaisterError(
+        "CRASH",
+        "The retained rework continuation is unavailable",
+      );
+
+    return {
+      tokenId: input.tokenId,
+      selector: {
+        schemaVersion: 1,
+        assignmentId,
+        expectedRevision: head.revision,
+        inputRevision: retained?.inputRevision ?? head.input_revision,
+        contextRevision:
+          retained?.definition.context.revision ?? head.context_revision,
+        logicalWorkId: work.logicalWorkId,
+        workRevision,
+      },
+      rework: { childRunId: input.childRunId, decision: input.decision },
+      prepared: {
+        objectiveInput: {
+          ...work.definition.objectiveInput,
+          objective: input.prompt,
+          input: input.prompt,
+        },
+        target: work.definition.target,
+        bounds: work.bounds,
+        sourceRestrictions: [
+          ...new Map(
+            [...work.sourceRestrictions, ...basis.restrictions].map(
+              (restriction) =>
+                [contentDigest(restriction), restriction] as const,
+            ),
+          ).values(),
+        ],
+      },
+    };
+  });
+}
+
 /** Retain an authorized work definition and its canonical intake receipt under the existing tree fences. */
 export async function retainDelegatedWorkInTransaction(
   tx: SqlTransaction,
@@ -257,9 +458,11 @@ export async function retainDelegatedWorkInTransaction(
     objectiveInput,
     target,
     bounds,
+    ...(input.rework ? { rework: input.rework } : {}),
   });
 
   await beginAssignmentTransaction(tx);
+  const origin = await lockDelegatedWorkOrigin(tx, input.tokenId, assignmentId);
   const {
     principal,
     source,
@@ -267,7 +470,7 @@ export async function retainDelegatedWorkInTransaction(
     parentRunId,
     rootRunId,
     assignmentRow: row,
-  } = await lockDelegatedWorkOrigin(tx, input.tokenId, assignmentId);
+  } = origin;
   const owner = knowledgeOwner(row);
   const head = assignmentHeadSchema.parse(row);
   const selectedInput = await readAuthorizedAssignmentInput(
@@ -282,6 +485,24 @@ export async function retainDelegatedWorkInTransaction(
     owner,
     selectedInput.snapshot.authoritySnapshot.executionPolicy,
   );
+  const rework = input.rework
+    ? await readWorkReworkBasis(
+        tx,
+        origin,
+        input.tokenId,
+        assignmentId,
+        input.rework,
+        objectiveInput.objective,
+      )
+    : null;
+
+  if (
+    rework &&
+    (rework.work.logicalWorkId !== logicalWorkId ||
+      rework.work.workRevision + 1 !== workRevision ||
+      contentDigest(rework.work.definition.target) !== contentDigest(target))
+  )
+    throw workConflict();
   const [retained] = (
     await tx.execute(
       sql`SELECT work.* FROM specialist_work work JOIN specialist_intake_receipts receipt
@@ -348,12 +569,12 @@ export async function retainDelegatedWorkInTransaction(
   if (
     !running ||
     !["active", "waiting_children"].includes(head.status) ||
-    workRevision !== 1 ||
+    (workRevision !== 1 && rework === null) ||
     receivingBinding?.available !== true
   )
     throw new MaisterError(
       "PRECONDITION",
-      "New work requires a running responsible professional, current receiving binding, and initial work revision",
+      "New work requires a running responsible professional, current receiving binding and an admissible work revision",
     );
   const effectiveBounds = await admitAssignmentWorkBudget(tx, {
     assignmentId,
@@ -409,9 +630,21 @@ export async function retainDelegatedWorkInTransaction(
   const definitionSha256 = contentDigest(definition);
   const actor = authority.actor;
   const reservedRunId = randomUUID();
+  const workId = rework?.work.id ?? randomUUID();
+
+  if (rework && input.rework) {
+    const { decision } = input.rework;
+
+    await tx.execute(sql`INSERT INTO specialist_work_decisions
+      (work_id,work_revision,expected_revision,input_revision,actor,authority_snapshot,decision,result_id,result_revision,request_key,request_sha256,reason)
+      VALUES(${workId},${decision.workRevision},${decision.expectedRevision},${decision.inputRevision},${JSON.stringify(actor)}::jsonb,${JSON.stringify(authority)}::jsonb,
+        'rework',${rework.resultId},${decision.resultRevision},${decision.requestKey},${rework.requestSha256},${objectiveInput.objective})`);
+    await tx.execute(sql`UPDATE specialist_work SET decision_state='rework_requested',revision=revision+1
+      WHERE id=${workId} AND work_revision=${decision.workRevision} AND revision=${decision.expectedRevision}`);
+  }
   const [inserted] = (
-    await tx.execute(sql`INSERT INTO specialist_work(work_revision,assignment_id,input_revision,input_sha256,logical_work_id,parent_run_id,definition,definition_sha256,actor,authority_snapshot,bounds,source_restrictions,request_sha256,source_key,reserved_run_id)
-      VALUES(${workRevision},${assignmentId},${inputRevision},${selectedInput.digest},${logicalWorkId},${parentRunId},${JSON.stringify(definition)}::jsonb,${definitionSha256},${JSON.stringify(actor)}::jsonb,${JSON.stringify(authority)}::jsonb,${JSON.stringify(effectiveBounds)}::jsonb,${JSON.stringify(sourceRestrictions)}::jsonb,${requestSha256},${sourceKey},${reservedRunId}) RETURNING *`)
+    await tx.execute(sql`INSERT INTO specialist_work(id,work_revision,assignment_id,input_revision,input_sha256,logical_work_id,parent_run_id,definition,definition_sha256,actor,authority_snapshot,bounds,source_restrictions,request_sha256,source_key,reserved_run_id)
+      VALUES(${workId},${workRevision},${assignmentId},${inputRevision},${selectedInput.digest},${logicalWorkId},${parentRunId},${JSON.stringify(definition)}::jsonb,${definitionSha256},${JSON.stringify(actor)}::jsonb,${JSON.stringify(authority)}::jsonb,${JSON.stringify(effectiveBounds)}::jsonb,${JSON.stringify(sourceRestrictions)}::jsonb,${requestSha256},${sourceKey},${reservedRunId}) RETURNING *`)
   ).rows;
 
   if (!inserted || actor.kind !== "agent" || actor.id === null)

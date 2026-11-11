@@ -130,6 +130,7 @@ import * as executionHostServices from "@/lib/execution-host";
 import { POST as delegateExternalRun } from "@/app/api/v1/ext/runs/delegate/route";
 import { POST as collectExternalRun } from "@/app/api/v1/ext/runs/collect/route";
 import { POST as messageExternalRun } from "@/app/api/v1/ext/runs/message/route";
+import { POST as reworkExternalRun } from "@/app/api/v1/ext/runs/rework/route";
 import { runFlow } from "@/lib/flows/runner";
 import { captureNativeChildInput } from "@/lib/orchestrator/native-child-input";
 import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
@@ -11418,12 +11419,178 @@ it("IT-CBC-01 requires current company delegation grants for a repository-free w
         );
 
         expect(collectedGraph.status).toBe(200);
-        expect(await collectedGraph.json()).toMatchObject([
+        const graphResult: {
+          resultRevision: number;
+          assignmentWork: {
+            id: string;
+            revision: number;
+            workRevision: number;
+            inputRevision: number;
+          };
+        }[] = await collectedGraph.json();
+
+        expect(graphResult).toMatchObject([
           {
             childRunId: graph.childRunId,
             status: "Done",
             resultStatus: "valid",
             result: { value: findings },
+          },
+        ]);
+        const { assignmentWork: work, resultRevision } = graphResult[0];
+        const reworkBody = {
+          childRunId: graph.childRunId,
+          prompt: "Recheck the conclusion against the retained evidence.",
+          assignmentWork: {
+            schemaVersion: 1,
+            expectedRevision: work.revision,
+            workRevision: work.workRevision,
+            inputRevision: work.inputRevision,
+            resultRevision,
+            requestKey: "recheck-collected-conclusion",
+          },
+        };
+        const sendRework = (body: typeof reworkBody) =>
+          reworkExternalRun(
+            new NextRequest("http://localhost/api/v1/ext/runs/rework", {
+              method: "POST",
+              headers,
+              body: JSON.stringify(body),
+            }),
+            {},
+          );
+        const wrongResult = await sendRework({
+          ...reworkBody,
+          assignmentWork: {
+            ...reworkBody.assignmentWork,
+            resultRevision: resultRevision + 1,
+          },
+        });
+
+        expect(wrongResult.status).toBe(409);
+        expect(await wrongResult.json()).toMatchObject({
+          details: { reason: "work_rework_result_unavailable" },
+        });
+        await database.pool.query(
+          "INSERT INTO run_cost_rollups(run_id,input_tokens) VALUES($1,100000)",
+          [appointment.runId],
+        );
+        try {
+          const blocked = await sendRework(reworkBody);
+
+          expect(blocked.status).toBe(409);
+          expect(await blocked.json()).toMatchObject({
+            details: { reason: "assignment_budget_exhausted" },
+          });
+        } finally {
+          await database.pool.query(
+            "DELETE FROM run_cost_rollups WHERE run_id=$1",
+            [appointment.runId],
+          );
+        }
+        const reworked = await sendRework(reworkBody);
+
+        expect(reworked.status).toBe(202);
+        const continuation: { childRunId: string; status: string } =
+          await reworked.json();
+        const replayed = await sendRework(reworkBody);
+
+        expect(continuation.status).toBe("Pending");
+        expect(continuation.childRunId).not.toBe(graph.childRunId);
+        expect(replayed.status).toBe(202);
+        expect(await replayed.json()).toEqual(continuation);
+        const mismatched = await sendRework({
+          ...reworkBody,
+          prompt: "Change the previous rework request.",
+        });
+
+        expect(mismatched.status).toBe(409);
+        const retained = await database.pool.query(
+          `SELECT id, work_revision, child_run_id, decision_state
+          FROM specialist_work WHERE id=$1 ORDER BY work_revision`,
+          [work.id],
+        );
+
+        expect(retained.rows).toEqual([
+          {
+            id: work.id,
+            work_revision: work.workRevision,
+            child_run_id: graph.childRunId,
+            decision_state: "rework_requested",
+          },
+          {
+            id: work.id,
+            work_revision: work.workRevision + 1,
+            child_run_id: continuation.childRunId,
+            decision_state: "open",
+          },
+        ]);
+        expect(
+          (
+            await database.pool.query(
+              `SELECT result.validity,result.run_id,result.revision
+              FROM specialist_work_decisions decision
+              JOIN run_results result ON result.id=decision.result_id
+              WHERE decision.work_id=$1 AND decision.work_revision=$2`,
+              [work.id, work.workRevision],
+            )
+          ).rows,
+        ).toEqual([
+          {
+            validity: "valid",
+            run_id: graph.childRunId,
+            revision: resultRevision,
+          },
+        ]);
+        await expect(
+          database.pool.query(
+            "UPDATE specialist_work_decisions SET reason='overwrite' WHERE work_id=$1",
+            [work.id],
+          ),
+        ).rejects.toMatchObject({
+          code: "23514",
+          constraint: "specialist_work_decision_immutable",
+        });
+        const continuationPrompt = scriptAgentTurn(fake, {
+          ...scriptedTurn,
+          text: "```json maister:output\n" + JSON.stringify(findings) + "\n```",
+        });
+
+        process.env.MAISTER_MAX_CONCURRENT_RUNS = "100";
+        try {
+          await expect(
+            tryStartRun(continuation.childRunId, { db }),
+          ).resolves.toEqual({
+            started: true,
+          });
+          await runFlow(continuation.childRunId, { db, executionHosts: hosts });
+          await fake.waitForCanonicalEvents();
+        } finally {
+          if (savedFlowCap === undefined)
+            delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
+          else process.env.MAISTER_MAX_CONCURRENT_RUNS = savedFlowCap;
+        }
+        expect(continuationPrompt.prompts).toHaveLength(1);
+        expect(continuationPrompt.prompts[0]).toContain(reworkBody.prompt);
+        const continuationResult = await collectExternalRun(
+          new NextRequest("http://localhost/api/v1/ext/runs/collect", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ childRunId: continuation.childRunId }),
+          }),
+          {},
+        );
+
+        expect(continuationResult.status).toBe(200);
+        expect(await continuationResult.json()).toMatchObject([
+          {
+            childRunId: continuation.childRunId,
+            status: "Done",
+            resultStatus: "valid",
+            assignmentWork: {
+              id: work.id,
+              workRevision: work.workRevision + 1,
+            },
           },
         ]);
       } finally {

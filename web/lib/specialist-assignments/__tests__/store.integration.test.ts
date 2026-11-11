@@ -3064,6 +3064,7 @@ it("IT-CBX-01 logical-work upgrade preserves old intake and opaque child labels 
       await applyMainMigration(tx, "0271_specialist_company_child_reservation");
       await applyMainMigration(tx, "0272_specialist_company_child_credentials");
       await applyMainMigration(tx, "0273_specialist_company_flow_children");
+      await applyMainMigration(tx, "0274_specialist_work_rework");
     });
     expect(
       (
@@ -3080,10 +3081,11 @@ it("IT-CBX-01 logical-work upgrade preserves old intake and opaque child labels 
     expect(
       (
         await legacy.pool.query(
-          "SELECT count(*)::int AS count FROM specialist_work",
+          `SELECT (SELECT count(*)::int FROM specialist_work) AS work_count,
+            (SELECT count(*)::int FROM specialist_work_decisions) AS decision_count`,
         )
       ).rows,
-    ).toEqual([{ count: 0 }]);
+    ).toEqual([{ work_count: 0, decision_count: 0 }]);
     const input = await getSpecialistAssignmentInput(
       legacy.db,
       requesterId,

@@ -3358,6 +3358,30 @@ table specialist_work {
   }
 }
 
+table specialist_work_decisions {
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  work_id text [not null]
+  work_revision integer [not null]
+  expected_revision integer [not null]
+  input_revision integer [not null]
+  actor jsonb [not null]
+  authority_snapshot jsonb [not null]
+  decision text [not null]
+  result_id text [not null]
+  result_revision integer [not null]
+  request_key text [not null]
+  request_sha256 text [not null]
+  reason text [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+
+    (work_id, request_key) [name: 'specialist_work_decisions_delivery_uq', unique]
+    (work_id, work_revision) [name: 'specialist_work_decisions_revision_uq', unique]
+
+  }
+}
+
 table task_activity {
   id text [pk, not null]
   task_id text [not null]
@@ -4907,6 +4931,10 @@ ref specialist_work_parent_run_id_runs_id_fk: specialist_work.parent_run_id > ru
 ref specialist_work_child_run_id_runs_id_fk: specialist_work.child_run_id > runs.id [delete: restrict, update: no action]
 
 ref specialist_work_input_fk: specialist_work.(assignment_id, input_revision) > specialist_input_revisions.(assignment_id, revision) [delete: restrict, update: no action]
+
+ref specialist_work_decisions_result_id_run_results_id_fk: specialist_work_decisions.result_id > run_results.id [delete: restrict, update: no action]
+
+ref specialist_work_decisions_work_fk: specialist_work_decisions.(work_id, work_revision) > specialist_work.(id, work_revision) [delete: restrict, update: no action]
 
 ref task_activity_task_id_tasks_id_fk: task_activity.task_id > tasks.id [delete: cascade, update: no action]
 

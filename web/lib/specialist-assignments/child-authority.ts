@@ -23,10 +23,18 @@ type ChildAuthorityInput = Readonly<{
   childRunId: string;
   recipient: KnowledgeRecipient;
 }>;
+export type CollectedWorkRevision = Readonly<{
+  id: string;
+  assignmentId: string;
+  workRevision: number;
+  inputRevision: number;
+  revision: number;
+}>;
 type ChildAuthority = Readonly<{
   principal: ResolvedAssignmentContextPrincipal;
   owner: Owner;
   policy: ExecutionPolicy;
+  work: CollectedWorkRevision;
 }>;
 
 function unavailableChild(): MaisterError {
@@ -64,7 +72,8 @@ async function currentNativeChild(
     throw unavailableChild();
   const [work] = (
     await tx.execute(sql`
-      SELECT work.assignment_id, work.input_revision, work.source_restrictions,
+      SELECT work.id, work.assignment_id, work.input_revision, work.work_revision,
+        work.revision, work.source_restrictions,
         assignment.project_id, assignment.company_id
       FROM specialist_work work
       JOIN specialist_assignments assignment ON assignment.id=work.assignment_id
@@ -81,8 +90,11 @@ async function currentNativeChild(
   ).rows;
 
   if (
-    typeof work?.assignment_id !== "string" ||
-    typeof work.input_revision !== "number"
+    typeof work?.id !== "string" ||
+    typeof work.assignment_id !== "string" ||
+    typeof work.input_revision !== "number" ||
+    typeof work.work_revision !== "number" ||
+    typeof work.revision !== "number"
   )
     throw unavailableChild();
   const input = await readAuthorizedAssignmentInput(
@@ -102,6 +114,13 @@ async function currentNativeChild(
     principal,
     owner: knowledgeOwner(work),
     policy: input.snapshot.authoritySnapshot.executionPolicy,
+    work: {
+      id: work.id,
+      assignmentId: work.assignment_id,
+      inputRevision: work.input_revision,
+      workRevision: work.work_revision,
+      revision: work.revision,
+    },
   };
 }
 
@@ -109,8 +128,12 @@ async function currentNativeChild(
 export async function authorizeNativeChildCollection(
   tx: SqlTransaction,
   input: ChildAuthorityInput,
-): Promise<void> {
-  if (!(await currentNativeChild(tx, input))) throw unavailableChild();
+): Promise<CollectedWorkRevision> {
+  const current = await currentNativeChild(tx, input);
+
+  if (!current) throw unavailableChild();
+
+  return current.work;
 }
 
 /** Messaging and rework reuse the existing delegation authority before transferring private input. */

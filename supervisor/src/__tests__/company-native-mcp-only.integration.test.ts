@@ -105,21 +105,34 @@ afterEach(async () => {
 
 describe("company native MCP-only enforcement", () => {
   it.each([
-    { extraActions: ["assignments:delegate"], expectedDenials: 0 },
-    { extraActions: [], expectedDenials: 2 },
+    {
+      scenario: "company_native_delegation",
+      extraActions: ["assignments:delegate"],
+      expectedDenials: 0,
+    },
+    {
+      scenario: "company_native_delegation",
+      extraActions: [],
+      expectedDenials: 2,
+    },
+    {
+      scenario: "company_native_rework",
+      extraActions: ["assignments:delegate"],
+      expectedDenials: 0,
+    },
+    { scenario: "company_native_rework", extraActions: [], expectedDenials: 1 },
   ])(
-    "requires a reviewed delegation action for writes ($expectedDenials denials)",
-    async ({ extraActions, expectedDenials }) => {
+    "requires a reviewed delegation action for $scenario ($expectedDenials denials)",
+    async ({ scenario, extraActions, expectedDenials }) => {
       const scopes = [
         "knowledge:read",
         "assignments:read",
         "assignments:update",
       ] as const;
-      const events = await runCompanyScenario(
-        "company_native_delegation",
-        scopes,
-        [...scopes, ...extraActions],
-      );
+      const events = await runCompanyScenario(scenario, scopes, [
+        ...scopes,
+        ...extraActions,
+      ]);
 
       expect(trips(events)).toHaveLength(expectedDenials);
     },

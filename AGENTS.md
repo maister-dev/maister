@@ -19,7 +19,7 @@ Full description: `.ai-factory/DESCRIPTION.md`.
 
 ## Tech Stack
 
-- **Framework:** Next.js 16.4 (App Router)
+- **Framework:** Next.js 16.2 (App Router)
 - **Language:** TypeScript 5.6 (strict)
 - **UI library:** HeroUI v3 (`@heroui/react` 3.2.6)
 - **Styling:** Tailwind CSS 4 + `tailwind-variants`
@@ -30,7 +30,7 @@ Full description: `.ai-factory/DESCRIPTION.md`.
   and `mimo acp` adapter binaries
 - **Tests:** vitest (unit + integration), Playwright (E2E)
 - **Package manager:** pnpm (monorepo workspace: `web` + `supervisor`)
-- **Node:** 24 deployment; 26 LTS compatibility
+- **Node:** 24
 
 ## Project Structure
 
@@ -96,7 +96,7 @@ mAIster/
 │   │   ├── cost.ts             # cache/input/output usage normalization
 │   │   ├── registry.ts         # In-memory SessionRecord map + per-session event ring buffer
 │   │   ├── types.ts            # Zod schemas + SessionEvent union + SupervisorError
-│   │   └── __tests__/          # Unit + integration suites
+│   │   └── __tests__/          # unit and integration suites
 │   ├── test/fixtures/
 │   │   └── fake-acp.mjs        # Stand-in for the real ACP binary in tests
 │   ├── package.json            # @maister/supervisor; tsx runtime
@@ -116,7 +116,7 @@ mAIster/
 │   ├── package.json            # Dependencies, scripts (dev/build/start/lint)
 │   ├── tsconfig.json           # strict, @/* path alias
 │   ├── next.config.mjs
-│   ├── eslint.config.mjs       # ESLint 10 flat config
+│   ├── eslint.config.mjs       # ESLint 9 flat config
 │   └── postcss.config.mjs      # @tailwindcss/postcss
 ├── CLAUDE.md                   # Root project instructions for AI agents
 ├── AGENTS.md                   # This file
@@ -215,7 +215,7 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | Getting Started | `docs/getting-started.md` | Install, dev workflow, first run |
 | Russian Guide | `docs/ru/README.md` | Purpose, workflow, operator guide |
 | Supervisor | `docs/supervisor.md` | ACP daemon: HTTP+SSE API, lifecycle, durable events, runtime objects, env vars |
-| Database Schema | `docs/database-schema.md` | 171 tables, FK cascade chain, indexes, Drizzle workflow |
+| Database Schema | `docs/database-schema.md` | 178 tables, FK cascade chain, indexes, Drizzle workflow |
 | Error Taxonomy | `docs/error-taxonomy.md` | `MaisterError` codes — when each fires, what the UI does |
 | Configuration | `docs/configuration.md` | `maister.yaml` v2 + `flow.yaml` v1 + `form_schema` versioning + env vars |
 | Project configuration persistence | `docs/system-analytics/project-config-persistence.md` | Reviewed export, commits, recovery and push; Implemented |
@@ -223,7 +223,7 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | Product View | `docs/PRODUCT_VIEW.md` | Lean Canvas, JTBD, gaps, MVP / Phase 2 / Later |
 | Architecture | `docs/architecture.md` | Current system architecture, C4 diagrams, data flows |
 | Decisions | `docs/decisions.md` | ADRs and locked technical decisions |
-| Company Brain design | `docs/system-analytics/company-brain.md` | Native structured ownership, review, evidence and EN/RU UI; runtime qualification pending |
+| Company Brain design | `docs/system-analytics/company-brain.md` | Native structured ownership, review, evidence and EN/RU UI; CB0 locally qualified, CB1 pilot open |
 | Agent activity design | `docs/system-analytics/agent-activity-history.md` | Active executions and retained history |
 | Task qualification design | `docs/system-analytics/task-qualification.md` | Incoming requests and admission contracts |
 | Task launch admission | `docs/system-analytics/task-launch-admission.md` | Explicit manual authority and qualified automation |

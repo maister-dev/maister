@@ -2525,12 +2525,19 @@ paths:
   /api/v1/ext/runs/rework:
     post:
       tags: [runs]
-      summary: (M37 — Implemented) Re-open a reviewed delegated child for another turn
+      summary: (Implemented) Continue exact company work or re-open a reviewed project agent
       description: |
-        Native rework transfers the current source union to the direct agent
-        child before turn acceptance, using current origin and receiving role
-        authority. Unknown/legacy capture or unavailable/revoked sources refuse
-        with PRECONDITION (409) without invalidating a result or starting a turn.
+        For company result-only work, provide `assignmentWork` using the
+        exact revisions returned by `run_collect`. The current originating
+        professional needs `assignments:update` and current delegation
+        authority. The selected direct child must have a collected valid
+        result and a current reviewed receiving binding. The platform retains
+        an immutable rework decision and queues a new native agent or Flow
+        Run under the same logical work identity. The original Run and result
+        stay inspectable. The next revision shares the remaining assignment
+        budget and inherits current source restrictions. An exact replay
+        returns the existing continuation. A changed payload under the same
+        key, stale work revision or unavailable result is refused with 409.
 
         (M37 — Implemented, ADR-100.) Scope `runs:delegate` (a run-bound
         orchestrator addressing its own child). CAS-flips a reviewed child
@@ -2551,9 +2558,8 @@ paths:
         orchestrator, in the token's project, and currently in `Review`
         (otherwise `PRECONDITION` → 409).
 
-        **(Implemented — [ADR-163](../../decisions.md#adr-163-flow-target-delegation--carrier-task-shared-admission-canonical-flow-launcher))** `childRunId` MUST
-        additionally be an AGENT child. `run_rework` does not apply to a FLOW
-        child — a flow child owns its own `human`/`rework` loop — and is refused
+        **(Implemented — [ADR-163](../../decisions.md#adr-163-flow-target-delegation--carrier-task-shared-admission-canonical-flow-launcher))** In the project Review path, `childRunId` MUST
+        identify an agent child. A project Flow owns its own `human`/`rework` loop and is refused
         `PRECONDITION` → 409 at the route, BEFORE any dispatch, so the child is
         left untouched (still `Review`, `promotion_state` unchanged) and
         `run_promote` on the same child still succeeds. Resolve a flow child by
@@ -2564,7 +2570,7 @@ paths:
         (the rework fences on the allocator workspace's `promotion_state`), so a
         rework cannot mutate the shared branch during the tree-promote merge.
 
-        Writes a `token_audit_log` row with scope `runs:delegate` after success.
+        Writes a `token_audit_log` row with the resolved caller scope after success.
 
         (Designed — ADR-186, open) ADR-186 D4 names this route among those the
         librarian uses, but its scope is `runs:delegate`, which
@@ -2587,14 +2593,37 @@ paths:
                 childRunId:
                   type: string
                   format: uuid
-                  description: The reviewed child run to re-open.
+                  description: The exact company child Run or reviewed project agent Run.
                 prompt:
                   type: string
                   minLength: 1
                   description: |
-                    Rework instruction delivered to the resumed child session.
+                    Rework instruction. A native company request is limited to 8,000 characters.
                   maxLength: 1000000
+                assignmentWork:
+                  type: object
+                  additionalProperties: false
+                  description: Required for a native company continuation. Use the business revision and exact result revision from collection.
+                  required: [schemaVersion, expectedRevision, workRevision, inputRevision, resultRevision, requestKey]
+                  properties:
+                    schemaVersion: { type: integer, enum: [1] }
+                    expectedRevision: { type: integer, minimum: 1, maximum: 2147483647 }
+                    workRevision: { type: integer, minimum: 1, maximum: 2147483647 }
+                    inputRevision: { type: integer, minimum: 1, maximum: 2147483647 }
+                    resultRevision: { type: integer, minimum: 1, maximum: 2147483647 }
+                    requestKey: { type: string, pattern: '^[A-Za-z0-9._:-]{8,128}$' }
       responses:
+        "202":
+          description: Company continuation retained. The returned status is the current status of that exact Run.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [childRunId, status]
+                properties:
+                  childRunId: { type: string, format: uuid }
+                  status: { type: string }
         "200":
           description: Rework admitted; the returned status is current and may already reflect completion.
           content:
@@ -11953,6 +11982,17 @@ components:
           description: |
             (Implemented — ADR-165) 1-based revision number of the row `result`
             came from; null when there is no result row.
+        assignmentWork:
+          type: object
+          additionalProperties: false
+          description: Exact work and business revisions for an authorized native child.
+          required: [id, assignmentId, revision, workRevision, inputRevision]
+          properties:
+            id: { type: string }
+            assignmentId: { type: string }
+            revision: { type: integer, minimum: 1 }
+            workRevision: { type: integer, minimum: 1 }
+            inputRevision: { type: integer, minimum: 1 }
         resultFailure:
           nullable: true
           type: object

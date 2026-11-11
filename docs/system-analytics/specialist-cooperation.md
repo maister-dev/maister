@@ -138,7 +138,14 @@ professional can send a live clarification to a finite agent child using
 `run_message` with its exact Run ID, `mode: steer`, and a stable request key.
 The shared steer command retains the input and reads back its receipt. A
 definitive refusal creates no successor turn or delivered transcript entry.
-Native rework and Flow continuation remain open.
+For completed company result-only work, `run_collect` returns the exact work,
+business, input and result revisions. The originating professional uses those
+witnesses with `run_rework` to create an attributed decision and the next
+request revision under the same logical work ID. The original result remains
+attached to its original Run. The continuation uses the original receiving
+pin, current source authorization and the remaining assignment budget. The
+existing scheduler and driver run the new child. Rework for native project work
+and work with external-effect obligations remains open.
 
 ### Decisive execution fences (T27)
 
@@ -189,8 +196,8 @@ views derive from the retained reservation and existing Run/result facts; a
 second execution status or attempt ledger is not introduced. A reserved Run
 identity is an admission intent, not an executed child. Binding requires that
 same owned reservation and actual direct parent relation. A result-ready view
-requires an exact validated result; it does not accept the work or complete the
-assignment.
+requires an exact validated result. The assignment stays active pending a
+separate acceptance decision.
 
 Delegated requests extend the existing canonical intake receipt with a distinct
 `delegated` disposition and exact work/request revision. Its source identity binds
@@ -222,9 +229,10 @@ witnesses without a Brain FK. Source access, receiving-role authority and curren
 coordinator ownership remain required checks in the T27 native service. Storage
 alone grants no delegation capability. Main migration `0267` requires atomic work
 and attributed intake retention, refuses bare acceptance/rework decisions, and
-binds any executed child to its exact role/Flow pin and native Run link. T28 will
-enable later request revisions and decisions through their actual receipt writer;
-the storage foundation refuses them until then. Forward migration `0268` closes
+binds any executed child to its exact role/Flow pin and native Run link. Main
+`0272` records immutable company result-only rework decisions and requires the
+exact next work revision in the same transaction. Acceptance and accepted
+context entries remain open. Forward migration `0268` closes
 nullable source/context/target comparisons under the
 [persistence guard contract](../db/specialist-assignments-domain.md#backfill-guards-and-lifetime);
 retained company source identity survives catalog FK removal.

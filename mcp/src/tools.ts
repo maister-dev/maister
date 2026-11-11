@@ -872,12 +872,32 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   run_rework: {
     description:
-      "Re-open a reviewed delegated child of the calling orchestrator for another turn with a rework prompt. Agent children only — a flow child owns its own review/rework loop and is refused PRECONDITION (promote or cancel it instead). The child must be a direct child of the bound orchestrator run and currently in Review. A full agent pool refuses the claim with CONFLICT. The accepted prompt is retained with its new assignment and survives Web restart. It resumes with prior context against its existing worktree, then re-reviews on its next end_turn. Returns { childRunId, status } with the current run status, which may already reflect completion.",
+      "Request rework from an exact direct child. For native company work, use assignmentWork with the work and result revisions returned by run_collect. The new result-only agent or Flow run keeps the original result and consumes the remaining assignment budget. Retry the same requestKey with identical input to read the same continuation. Legacy project rework uses a direct agent child in Review and resumes its existing worktree. Returns { childRunId, status }.",
     inputSchema: {
       type: "object",
       properties: {
         childRunId: { type: "string" },
         prompt: { type: "string", minLength: 1, maxLength: 1_000_000 },
+        assignmentWork: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            schemaVersion: { type: "integer", const: 1 },
+            expectedRevision: { type: "integer", minimum: 1 },
+            workRevision: { type: "integer", minimum: 1 },
+            inputRevision: { type: "integer", minimum: 1 },
+            resultRevision: { type: "integer", minimum: 1 },
+            requestKey: { type: "string", pattern: "^[A-Za-z0-9._:-]{8,128}$" },
+          },
+          required: [
+            "schemaVersion",
+            "expectedRevision",
+            "workRevision",
+            "inputRevision",
+            "resultRevision",
+            "requestKey",
+          ],
+        },
       },
       required: ["childRunId", "prompt"],
     },
@@ -2067,15 +2087,20 @@ function resolveRouting(
       };
     }
     case "run_rework": {
-      const { childRunId, prompt } = args as {
+      const { childRunId, prompt, assignmentWork } = args as {
         childRunId: string;
         prompt: string;
+        assignmentWork?: Record<string, unknown>;
       };
 
       return {
         method: "POST",
         path: `/api/v1/ext/runs/rework`,
-        body: { childRunId, prompt },
+        body: {
+          childRunId,
+          prompt,
+          ...(assignmentWork ? { assignmentWork } : {}),
+        },
       };
     }
     case "run_sync": {

@@ -1891,6 +1891,13 @@
       "when": 1794606477976,
       "tag": "0273_specialist_company_flow_children",
       "breakpoints": true
+    },
+    {
+      "idx": 274,
+      "version": "7",
+      "when": 1794606477977,
+      "tag": "0274_specialist_work_rework",
+      "breakpoints": true
     }
   ]
 }

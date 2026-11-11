@@ -30,6 +30,18 @@ export const assignmentWorkSelectorSchema = z
   })
   .strict();
 
+export const assignmentWorkReworkSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    expectedRevision: knowledgeRevisionSchema,
+    workRevision: knowledgeRevisionSchema,
+    inputRevision: knowledgeRevisionSchema,
+    resultRevision: knowledgeRevisionSchema,
+    requestKey: logicalWorkIdSchema.min(8),
+  })
+  .strict();
+export type AssignmentWorkRework = z.infer<typeof assignmentWorkReworkSchema>;
+
 /** Explicit enrollment distinguishes native appointments from historical opaque work labels. */
 export const assignmentWorkWitnessSchema = z
   .object({
