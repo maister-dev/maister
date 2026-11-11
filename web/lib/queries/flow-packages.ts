@@ -3,7 +3,16 @@ import "server-only";
 import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { and, asc, eq, inArray, notInArray, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  exists,
+  inArray,
+  notInArray,
+  or,
+  sql,
+} from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
@@ -279,6 +288,7 @@ export interface FlowRevisionDetail {
   packageStatus: string;
   installedPath: string;
   source?: string;
+  historicalOnly: boolean;
 }
 
 export interface FlowRevisionDetailDTO {
@@ -331,20 +341,25 @@ function toRevisionDetailDTO(r: FlowRevisionDetail): FlowRevisionDetailDTO {
 
 // Resolve a single installed package for the viewer page (§5.4): the project,
 // the (projectId, flowRefId) flows row, and its source-scoped installed
-// revisions (the same source-scope guard as getFlowPackages — a project must
-// not see/select a revision installed by another project from a different
-// source under the same flow id, ADR-021). Returns null when the project or the
-// flow does not exist → the page calls notFound().
+// revisions. A viewer may explicitly request a revision from another source
+// when a retained Run on this exact project and Flow row pins it. Callers
+// without a requested historical revision keep their current-source scope.
 export async function getFlowPackageDetail(
   slug: string,
   flowRefId: string,
+  viewer?: { projectId: string; historicalRevisionId?: string | null },
 ): Promise<FlowPackageDetail | null> {
   const client = db();
 
   const projectRows = await client
     .select({ id: projects.id, slug: projects.slug, name: projects.name })
     .from(projects)
-    .where(eq(projects.slug, slug));
+    .where(
+      and(
+        eq(projects.slug, slug),
+        viewer ? eq(projects.id, viewer.projectId) : undefined,
+      ),
+    );
   const project = projectRows[0];
 
   if (!project) return null;
@@ -368,6 +383,29 @@ export async function getFlowPackageDetail(
 
   if (!flow) return null;
 
+  // The attachment and direct install write paths differ on the file scheme.
+  const currentSource = sql<boolean>`replace(${flowRevisions.source}, 'file://', '') = ${flow.source.replace("file://", "")}`;
+  const historicalRevisionId = viewer?.historicalRevisionId;
+  const revisionScope = historicalRevisionId
+    ? or(
+        currentSource,
+        and(
+          eq(flowRevisions.id, historicalRevisionId),
+          exists(
+            client
+              .select({ id: runs.id })
+              .from(runs)
+              .where(
+                and(
+                  eq(runs.projectId, project.id),
+                  eq(runs.flowId, flow.id),
+                  eq(runs.flowRevisionId, flowRevisions.id),
+                ),
+              ),
+          ),
+        ),
+      )
+    : currentSource;
   const revisionRows = await client
     .select({
       id: flowRevisions.id,
@@ -381,16 +419,13 @@ export async function getFlowPackageDetail(
       installedPath: flowRevisions.installedPath,
       source: flowRevisions.source,
       installedAt: flowRevisions.installedAt,
+      matchesCurrentSource: currentSource,
     })
     .from(flowRevisions)
     .where(
       and(
         eq(flowRevisions.flowRefId, flow.flowRefId),
-        // flows.source can carry a `file://` scheme that flow_revisions.source
-        // lacks (inconsistent install/attach write paths); strip it on both
-        // sides so the same install path matches. The ADR-021 source-scope
-        // guard still holds on the normalized path.
-        sql`replace(${flowRevisions.source}, 'file://', '') = ${flow.source.replace("file://", "")}`,
+        revisionScope,
         notInArray(flowRevisions.packageStatus, ["Removed"]),
       ),
     )
@@ -411,6 +446,7 @@ export async function getFlowPackageDetail(
       packageStatus: r.packageStatus,
       installedPath: r.installedPath,
       source: r.source,
+      historicalOnly: !r.matchesCurrentSource,
     };
   });
 

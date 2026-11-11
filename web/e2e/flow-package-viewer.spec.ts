@@ -20,6 +20,7 @@ import path from "node:path";
 import { test, expect, type Page } from "@playwright/test";
 
 import { withE2EDb } from "./_seed/db";
+import { loadFixtures } from "./_seed/fixtures";
 
 type FlowViewerFixture = {
   projectSlug: string;
@@ -36,6 +37,86 @@ function loadFixture(): FlowViewerFixture {
   ) as { byKey: { flowViewer: FlowViewerFixture } };
 
   return all.byKey.flowViewer;
+}
+
+for (const denied of ["inactive", "password-reset"] as const) {
+  test(`Studio package navigation denies an existing ${denied} session`, async ({
+    browser,
+    baseURL,
+  }) => {
+    const { flowRefId } = loadFixture();
+    const template = loadFixtures().users.memberCandidate;
+    const userId = randomUUID();
+    const email = `studio-package-${userId}@example.test`;
+    const packagePath = `/studio/packages/${flowRefId}`;
+
+    await withE2EDb(async (pool) => {
+      const created = await pool.query(
+        `INSERT INTO users (id, name, email, password_hash, role, account_status, must_change_password)
+         SELECT $1, 'Studio Package Visitor', $2, password_hash, 'viewer', 'active', false
+           FROM users WHERE id = $3`,
+        [userId, email, template.id],
+      );
+
+      expect(created.rowCount).toBe(1);
+    });
+    const context = await browser.newContext({
+      baseURL,
+      storageState: { cookies: [], origins: [] },
+    });
+
+    try {
+      const page = await context.newPage();
+
+      await page.goto("/login");
+      await page.locator('input[name="email"]').fill(email);
+      await page.locator('input[name="password"]').fill(template.password);
+      await page.locator('form button[type="submit"]').click();
+      await page.waitForURL((url) => !url.pathname.startsWith("/login"));
+      await page.route(
+        (url) => url.pathname === packagePath,
+        (route) =>
+          route.request().headers()["next-router-prefetch"] === "1"
+            ? route.abort()
+            : route.continue(),
+      );
+      await page.goto("/studio/packages");
+      const packageLink = page.locator(`a[href^="${packagePath}?install="]`);
+
+      await expect(packageLink).toBeVisible();
+      await withE2EDb((pool) =>
+        pool.query(
+          "UPDATE users SET account_status = $2, must_change_password = $3 WHERE id = $1",
+          [
+            userId,
+            denied === "inactive" ? "disabled" : "active",
+            denied === "password-reset",
+          ],
+        ),
+      );
+      const navigation = page.waitForRequest(
+        (request) =>
+          new URL(request.url()).pathname === packagePath &&
+          request.headers().rsc === "1",
+      );
+
+      await packageLink.click();
+      await navigation;
+      if (denied === "password-reset") {
+        await expect(page).toHaveURL(/\/change-password$/);
+      } else {
+        await expect(
+          page.locator('meta[name="robots"][content="noindex"]'),
+        ).toHaveCount(1);
+      }
+      await expect(page.getByTestId("package-bom")).toHaveCount(0);
+    } finally {
+      await context.close();
+      await withE2EDb((pool) =>
+        pool.query("DELETE FROM users WHERE id = $1", [userId]),
+      );
+    }
+  });
 }
 
 test("UX-01D Run and explicit viewer links retain the old Flow revision after enablement moves", async ({
@@ -81,6 +162,10 @@ test("UX-01D Run and explicit viewer links retain the old Flow revision after en
     await expect(
       page.locator(`.react-flow__node[data-id="${fx.implementNode}"]`),
     ).toBeVisible();
+    await expect(
+      page.getByText("This revision is unavailable in Studio."),
+    ).toBeVisible();
+    await expect(page.getByTestId("open-flow-in-studio")).toHaveCount(0);
     const graph = await page.request.get(`/api/runs/${run}/graph`);
 
     expect(graph.ok(), await graph.text()).toBe(true);

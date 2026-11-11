@@ -41,7 +41,11 @@ export async function POST(
   try {
     const user = await requireGlobalRole("member");
     const { ref } = await params;
-    const parsed = bodySchema.safeParse(await req.json());
+    const body: unknown = await req.json().catch((error: unknown) => {
+      if (error instanceof SyntaxError) return undefined;
+      throw error;
+    });
+    const parsed = bodySchema.safeParse(body);
 
     if (!parsed.success) {
       return NextResponse.json(

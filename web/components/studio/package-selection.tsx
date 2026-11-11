@@ -4,7 +4,8 @@ import Link from "next/link";
 import { getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
 
-import { requireSession } from "@/lib/authz";
+import { requireActiveSession } from "@/lib/authz";
+import { isMaisterError } from "@/lib/errors";
 import { resolveStudioPackageByRef } from "@/lib/studio/load";
 import {
   studioPackagePath,
@@ -16,7 +17,15 @@ export async function loadStudioPackagePage(
   segments: string[],
   query: Record<string, string | string[] | undefined>,
 ) {
-  const user = await requireSession();
+  const user = await requireActiveSession().catch((error: unknown) => {
+    if (isMaisterError(error)) {
+      if (error.code === "PASSWORD_CHANGE_REQUIRED")
+        redirect("/change-password");
+      if (error.code === "UNAUTHENTICATED") redirect("/login");
+      if (error.code === "ACCOUNT_INACTIVE") notFound();
+    }
+    throw error;
+  });
   const resolution = await resolveStudioPackageByRef(
     user.id,
     user.role,

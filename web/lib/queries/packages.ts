@@ -9,6 +9,7 @@ import type { FlowLayout } from "@/lib/flows/graph/presentation-layout";
 import type { GraphTopology } from "@/lib/queries/flow-graph-view";
 
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
@@ -423,7 +424,8 @@ export async function getStudioInstallForFlowRevision(
 ): Promise<{ id: string; name: string } | null> {
   if (!revision.source) return null;
 
-  const source = revision.source.replace(/^file:\/\//, "");
+  const { source } = revision;
+
   const installs = schemaModule.packageInstalls;
   const attachments = schemaModule.projectPackageAttachments;
   const rows = await getDb()
@@ -453,9 +455,12 @@ export async function getStudioInstallForFlowRevision(
     const manifest = row.manifest as PackageInstallManifest;
     const member = manifest.spec?.flows?.find((flow) => flow.id === flowId);
 
+    if (!member) return false;
+
+    const memberPath = join(row.installedPath, member.path);
+
     return (
-      member &&
-      join(row.installedPath, member.path) === source &&
+      (source === memberPath || source === pathToFileURL(memberPath).href) &&
       // Package attachment normalizes Git tag labels for member Flow revisions.
       row.versionLabel.replaceAll("/", "-") === revision.versionLabel
     );

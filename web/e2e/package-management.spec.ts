@@ -1,11 +1,15 @@
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { test, expect } from "@playwright/test";
 
+import { createE2EDbPool, withE2EDb } from "./_seed/db";
 import { loadFixtures } from "./_seed/fixtures";
+
+import { resolvePostgresDbUrl } from "@/lib/db/postgres-url";
 
 // (ADR-088) End-to-end package management: add a platform source (local git
 // monorepo fixture built by THIS spec), refresh discovery, install a tag,
@@ -200,26 +204,26 @@ test("package source → discovery → install → attach → detach round-trip"
     await viewerContext.close();
   }
 
-  for (const query of [
-    "",
-    "?install=",
-    "?install=unknown",
-    `?install=${localInstall.id}&install=${localInstall.id}`,
+  for (const [ref, query] of [
+    [RUN_TAG, ""],
+    [RUN_TAG, "?install="],
+    [RUN_TAG, "?install=unknown"],
+    [RUN_TAG, `?install=${localInstall.id}&install=${localInstall.id}`],
+    ["different-package", `?install=${localInstall.id}`],
   ]) {
-    expect((await page.request.post(`${forkPath}${query}`)).status()).toBe(404);
+    const invalidFork = `/api/studio/packages/${ref}/fork`;
+
+    expect((await page.request.post(`${invalidFork}${query}`)).status()).toBe(
+      404,
+    );
     expect(
       (
-        await page.request.post(`${elementPath}${query}`, { data: element })
+        await page.request.post(`${invalidFork}-element${query}`, {
+          data: element,
+        })
       ).status(),
     ).toBe(404);
   }
-  expect(
-    (
-      await page.request.post(
-        `/api/studio/packages/different-package/fork?install=${localInstall.id}`,
-      )
-    ).status(),
-  ).toBe(404);
   const forkElement = await page.request.post(
     `${elementPath}?install=${localInstall.id}`,
     { data: element },
@@ -250,6 +254,26 @@ test("package source → discovery → install → attach → detach round-trip"
   expect(repeated.status()).toBe(200);
   expect(await repeated.json()).toEqual({ ...forked, alreadyExists: true });
 
+  for (const data of [undefined, "{", { ...element, unexpected: true }]) {
+    const response = await page.request.post(
+      `${elementPath}?install=${localInstall.id}`,
+      { data, headers: { "content-type": "application/json" } },
+    );
+
+    expect(response.status()).toBe(422);
+    expect(await response.json()).toMatchObject({ code: "CONFIG" });
+  }
+  const malformedWholeFork = await page.request.post(
+    `${forkPath}?install=${localInstall.id}`,
+    { data: "{", headers: { "content-type": "application/json" } },
+  );
+
+  expect(malformedWholeFork.status()).toBe(200);
+  expect(await malformedWholeFork.json()).toEqual({
+    ...forked,
+    alreadyExists: true,
+  });
+
   // 4. Attach to the seeded project from the packages tab.
   await page.goto(`/projects/${projectSlug}?tab=packages`);
   await expect(
@@ -277,7 +301,140 @@ test("package source → discovery → install → attach → detach round-trip"
     "href",
     upstreamHref!,
   );
+  const flowViewerPath = new URL(page.url()).pathname;
+
+  // Installing a newer tag leaves the project's existing attachment on v1.
+  const upstreamManifest = join(
+    repo,
+    "packages",
+    RUN_TAG,
+    "flows/e2e-flow/flow.yaml",
+  );
+
+  writeFileSync(
+    upstreamManifest,
+    readFileSync(upstreamManifest, "utf8")
+      .replace("id: s1", "id: upgraded-step")
+      .replace("echo hi", "echo upstream-v2"),
+  );
+  git(repo, "add", "-A");
+  git(repo, "commit", "-m", "v2");
+  git(repo, "tag", `${RUN_TAG}/v2.0.0`);
+  await page.goto("/studio/sources");
+  await page
+    .locator("tr", { hasText: repo })
+    .getByRole("button", { name: "Refresh", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: `${RUN_TAG}/v2.0.0 · install` })
+    .click();
+  await expect(
+    page.getByRole("button", { name: `${RUN_TAG}/v2.0.0 · installed` }),
+  ).toBeVisible({ timeout: 30_000 });
+
+  await page.goto(`/projects/${projectSlug}?tab=packages`);
+  await page.getByRole("link", { name: RUN_TAG, exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`install=${upstreamId}`));
+  const newer = page.getByRole("link", {
+    name: `${RUN_TAG}/v2.0.0`,
+    exact: true,
+  });
+
+  await expect(newer).toBeVisible();
+  const newerHref = await newer.getAttribute("href");
+
+  expect(newerHref).not.toBeNull();
+  const newerInstallId = new URL(newerHref!, page.url()).searchParams.get(
+    "install",
+  );
+
+  expect(newerInstallId).toBeTruthy();
+  await newer.click();
+  await expect(newer).toHaveAttribute("aria-current", "page");
   await page.goBack();
+  await expect(page).toHaveURL(new RegExp(`install=${upstreamId}`));
+
+  const runId = randomUUID();
+  const beforeUpgrade = await withE2EDb(async (pool) => {
+    const { rows } = await pool.query<{
+      attachment_id: string;
+      revision_id: string;
+      source: string;
+    }>(
+      `SELECT a.id AS attachment_id, f.enabled_revision_id AS revision_id, f.source
+         FROM projects p
+         JOIN flows f ON f.project_id = p.id
+         JOIN project_package_attachments a
+           ON a.project_id = p.id AND a.package_install_id = f.package_install_id
+        WHERE p.slug = $1 AND f.flow_ref_id = $2`,
+      [projectSlug, `${RUN_TAG}-flow`],
+    );
+    const [pinned] = rows;
+
+    expect(pinned?.revision_id).toBeTruthy();
+    const retained = await pool.query(
+      `INSERT INTO runs (id, project_id, flow_id, run_kind, status, flow_version, flow_revision, flow_revision_id)
+       SELECT $1, f.project_id, f.id, 'flow', 'Done', f.version, r.resolved_revision, r.id
+         FROM flows f JOIN flow_revisions r ON r.id = f.enabled_revision_id
+         JOIN projects p ON p.id = f.project_id
+        WHERE p.slug = $2 AND r.id = $3`,
+      [runId, projectSlug, pinned.revision_id],
+    );
+
+    expect(retained.rowCount).toBe(1);
+
+    return pinned;
+  });
+
+  try {
+    const upgraded = await page.request.post(
+      `/api/projects/${projectSlug}/packages/${beforeUpgrade.attachment_id}/upgrade`,
+      { data: { packageInstallId: newerInstallId } },
+    );
+
+    expect(upgraded.ok(), await upgraded.text()).toBe(true);
+    const afterUpgrade = await withE2EDb(async (pool) => {
+      const { rows } = await pool.query<{ source: string }>(
+        `SELECT f.source FROM flows f JOIN projects p ON p.id = f.project_id
+          WHERE p.slug = $1 AND f.flow_ref_id = $2`,
+        [projectSlug, `${RUN_TAG}-flow`],
+      );
+
+      return rows[0];
+    });
+
+    expect(afterUpgrade?.source).toBeTruthy();
+    expect(afterUpgrade?.source).not.toBe(beforeUpgrade.source);
+
+    await page.goto(flowViewerPath);
+    const currentStudioLink = page.getByTestId("open-flow-in-studio");
+
+    await expect(currentStudioLink).toHaveAttribute(
+      "href",
+      `${memberPath}?install=${newerInstallId}`,
+    );
+    await currentStudioLink.click();
+    await expect(page).toHaveURL(`${memberPath}?install=${newerInstallId}`);
+    await expect(page.getByRole("textbox", { name: "Command" })).toHaveValue(
+      "echo upstream-v2",
+    );
+
+    await page.goto(`${flowViewerPath}?rev=${beforeUpgrade.revision_id}`);
+    const historicalStudioLink = page.getByTestId("open-flow-in-studio");
+
+    await expect(historicalStudioLink).toHaveAttribute("href", upstreamHref!);
+    await expect(page.getByTestId("package-fork-slot")).toHaveCount(0);
+    await expect(page.getByTestId("package-runner-bindings")).toHaveCount(0);
+    await historicalStudioLink.click();
+    await expect(page).toHaveURL(upstreamHref!);
+    await expect(page.getByRole("textbox", { name: "Command" })).toHaveValue(
+      "echo hi",
+    );
+  } finally {
+    await withE2EDb((pool) =>
+      pool.query("DELETE FROM runs WHERE id = $1", [runId]),
+    );
+  }
 
   const localProject = fixtures.m22.projectSlug;
   const localAttachment = await page.request.post(
@@ -315,4 +472,35 @@ test("package source → discovery → install → attach → detach round-trip"
   await expect(
     page.getByRole("link", { name: RUN_TAG, exact: true }),
   ).toHaveCount(0, { timeout: 30_000 });
+
+  const db = createE2EDbPool(resolvePostgresDbUrl());
+
+  try {
+    const removed = await db.query(
+      "UPDATE package_installs SET package_status = 'Removed' WHERE id = $1",
+      [localInstall.id],
+    );
+
+    expect(removed.rowCount).toBe(1);
+    await page.goto(`${memberPath}?install=${localInstall.id}`);
+    // Next can stream the app shell before the member lookup returns not-found.
+    await expect(
+      page.locator('meta[name="robots"][content="noindex"]'),
+    ).toHaveCount(1);
+    await expect(page.getByTestId("flow-yaml-toggle")).toHaveCount(0);
+    expect(
+      (
+        await page.request.post(`${forkPath}?install=${localInstall.id}`)
+      ).status(),
+    ).toBe(404);
+    expect(
+      (
+        await page.request.post(`${elementPath}?install=${localInstall.id}`, {
+          data: element,
+        })
+      ).status(),
+    ).toBe(404);
+  } finally {
+    await db.end();
+  }
 });
