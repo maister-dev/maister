@@ -48,6 +48,7 @@ import {
 } from "@/lib/execution-host/host-pressure";
 import { CRASH_RECOVER_BUDGET_RESET } from "@/lib/runs/crash-recover";
 import { SLOT_HOLDING_RUN_STATUSES } from "@/lib/runs/run-status-sets";
+import { assignmentBudgetAllowsDispatchSql } from "@/lib/specialist-assignments/delegated-budget";
 import {
   automaticProjectFootprintSql,
   clearC2Claim,
@@ -343,7 +344,7 @@ function queuedRunHasAvailableSlots(): SQL<boolean> {
           AND child.id <> ${runs.id}
           AND child.status IN (${holdingStatuses})
       ) >= (parent.delegation_bounds->>'maxActiveChildren')::integer
-  )`;
+  ) AND (${assignmentBudgetAllowsDispatchSql(sql`runs.id`)})`;
 }
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -499,6 +500,7 @@ export async function tryStartRun(
       workspaceMode: string | null;
       rootRunId: string | null;
       parentRunId: string | null;
+      assignmentBudgetAvailable: boolean;
     }> = await tx
       .select({
         runKind: runs.runKind,
@@ -506,6 +508,9 @@ export async function tryStartRun(
         workspaceMode: runs.workspaceMode,
         rootRunId: runs.rootRunId,
         parentRunId: runs.parentRunId,
+        assignmentBudgetAvailable: assignmentBudgetAllowsDispatchSql(
+          sql`runs.id`,
+        ),
       })
       .from(runs)
       .where(eq(runs.id, runId));
@@ -561,6 +566,8 @@ export async function tryStartRun(
         )
       : null;
     const activeChildrenBlocked = activeChildren?.atCap === true;
+    const assignmentBudgetBlocked =
+      targetRows[0]?.assignmentBudgetAvailable === false;
 
     if (activeChildrenBlocked) {
       log.info(
@@ -605,13 +612,20 @@ export async function tryStartRun(
       automaticAllowed &&
       !sharedBlocked &&
       !activeChildrenBlocked &&
+      !assignmentBudgetBlocked &&
       liveCount - (acceptedDispatch?.ownsCapacity ? 1 : 0) < cap
     ) {
       await acceptedDispatch?.apply(tx);
       const startedRows: Array<{ projectId: string | null }> = await tx
         .update(runs)
         .set({ status: "Running", startedAt: new Date() })
-        .where(and(eq(runs.id, runId), eq(runs.status, "Pending")))
+        .where(
+          and(
+            eq(runs.id, runId),
+            eq(runs.status, "Pending"),
+            assignmentBudgetAllowsDispatchSql(sql`runs.id`),
+          ),
+        )
         .returning({ projectId: runs.projectId });
 
       if (startedRows[0]?.projectId != null) {
@@ -656,7 +670,15 @@ export async function tryStartRun(
     const queuePosition = Number(aheadRows[0]?.count ?? 0) + 1;
 
     log.info(
-      { runId, pool, liveCount, cap, queuePosition, fence: effective.fence },
+      {
+        runId,
+        pool,
+        liveCount,
+        cap,
+        queuePosition,
+        fence: effective.fence,
+        assignmentBudgetBlocked,
+      },
       "tryStartRun → queued",
     );
 
@@ -1167,6 +1189,7 @@ export async function promoteNextPending(
             and(
               eq(runs.id, runId),
               eq(runs.status, cand.cls === "C1" ? "Pending" : "NeedsInputIdle"),
+              assignmentBudgetAllowsDispatchSql(sql`runs.id`),
             ),
           )
           .for("update", { skipLocked: true });

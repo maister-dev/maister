@@ -380,6 +380,22 @@ it("IT-CBC-01 retains and replays immutable work through the current executing p
     code: "PRECONDITION",
     details: { reason: "assignment_budget_exhausted", meter: "tokens" },
   });
+  await expect(
+    database.db.transaction(async (tx) => {
+      await tx.execute(
+        sql`UPDATE runs SET delegation_bounds='{"budget":{"maxTokens":49}}'::jsonb WHERE id=${parentRunId}`,
+      );
+
+      return retainDelegatedWorkInTransaction(tx, request);
+    }),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: {
+      reason: "assignment_budget_exhausted",
+      meter: "tokens",
+      limit: 49,
+    },
+  });
 
   await database.db.transaction(async (tx) => {
     await tx.execute(

@@ -99,8 +99,11 @@ returns `PRECONDITION/assignment_budget_exhausted` with the meter, observed
 value and limit. Binding a project child rechecks the current budget under the
 same assignment fence and credits the child’s existing reservation. A refusal
 rolls back Run creation and leaves the logical work receipt available for
-inspection. Scheduler promotion, runtime teardown and replacement admission
-remain open.
+inspection. Current ancestor ceilings also constrain new reservations. The
+existing scheduler checks assignment usage and open work before a direct start
+or queued promotion. A budget-blocked child stays Pending and does not take a
+slot or occupy the eligible queue window. Teardown of already-running work and
+replacement admission remain open.
 Shared tree admission also counts open native reservations against the parent
 fanout and ancestor child-attempt ceilings. The binding transaction credits
 only its exact open reservation when it rechecks those ceilings.
@@ -131,7 +134,7 @@ decision.
 graph driver restores the delegated objective and frozen runner sessions. It
 checks inherited source restrictions against the current node before prompt
 delivery, and `run_collect` serves the valid pinned export. Native message and
-rework delivery and scheduler-level assignment budget enforcement remain open.
+rework delivery remain open.
 
 ### Decisive execution fences (T27)
 

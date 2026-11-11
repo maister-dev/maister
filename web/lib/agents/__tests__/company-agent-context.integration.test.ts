@@ -10964,6 +10964,28 @@ it("IT-CBC-01 requires current company delegation grants for a repository-free w
 
       process.env.MAISTER_MAX_CONCURRENT_AGENTS = "100";
       try {
+        await database.pool.query(
+          "INSERT INTO run_cost_rollups(run_id,input_tokens) VALUES($1,100000)",
+          [appointment.runId],
+        );
+        await expect(
+          tryStartRun(first.childRunId, { db }),
+        ).resolves.toMatchObject({ started: false });
+        await promoteNextPending({
+          db,
+          pool: "agent",
+          startAgentRun: () => {},
+        });
+        const [budgetBlocked] = await db
+          .select({ status: runs.status })
+          .from(runs)
+          .where(eq(runs.id, first.childRunId));
+
+        expect(budgetBlocked?.status).toBe("Pending");
+        await database.pool.query(
+          "DELETE FROM run_cost_rollups WHERE run_id=$1",
+          [appointment.runId],
+        );
         await expect(tryStartRun(first.childRunId, { db })).resolves.toEqual({
           started: true,
         });

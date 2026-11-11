@@ -133,6 +133,16 @@ async function walkAncestorChain(
   return chain;
 }
 
+/** Read current ancestor policy while the caller retains the rooted admission fence. */
+export async function readAncestorDelegationBounds(
+  tx: Db,
+  parentRunId: string,
+): Promise<readonly DelegationBounds[]> {
+  const chain = await walkAncestorChain(tx, parentRunId);
+
+  return chain.flatMap(({ bounds }) => (bounds ? [bounds] : []));
+}
+
 /** Never hold a nested parent key while waiting for its root; recheck the actual chain after a wait. */
 async function lockDelegationTree(
   tx: Db,
