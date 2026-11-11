@@ -29,4 +29,4 @@ Loading, empty, denied, unavailable, incompatible, error, disconnected and termi
 - [Data and live-delivery contract](../../system-analytics/run-peek-data.md).
 - [Run inspector](run-inspector.md).
 
-Peek transcript controls follow the [viewport contract](../../system-analytics/workbench.md#evidence-and-transcript-viewports-designed) (Designed).
+Peek transcript controls follow the [viewport contract](../../system-analytics/workbench.md#transcript-viewport-implemented).

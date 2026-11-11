@@ -10,6 +10,7 @@
 
 import { randomUUID } from "node:crypto";
 
+import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -19,7 +20,10 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
-import { getRunReadiness } from "@/lib/queries/readiness";
+import {
+  getFlowRunVerification,
+  getRunReadiness,
+} from "@/lib/queries/readiness";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -200,6 +204,15 @@ async function readinessFromAllSurfaces(
 }> {
   const dto = await getRunReadiness(runId, projectId, db);
   const readinessQuery = dto?.readiness ?? "(null dto)";
+  const verification = await getFlowRunVerification(runId, projectId, db);
+
+  expect(verification?.rollup).toEqual(dto);
+  expect(verification?.state).toBe(readinessQuery);
+  if (readinessQuery !== "ready") {
+    expect(verification?.reasons).toContainEqual(
+      expect.objectContaining({ state: readinessQuery }),
+    );
+  }
 
   const board = await getBoardData(projectId);
   let readinessBoard = "(not found)";
@@ -420,5 +433,159 @@ describe("SSOT-invariant: getRunReadiness == board == portfolio for every readin
     expect(reviewGuard.ready).toBe(true);
     // …but Merge does.
     expect(mergeGuard.ready).toBe(false);
+  });
+});
+
+describe("UX-07A Flow verification", () => {
+  it("distinguishes an immutable no-check Flow from unknown or unevaluated verification without changing the rollup", async () => {
+    const { runId, projectId } = await seedRunWithGatesAndArtifacts({});
+    const before = await getRunReadiness(runId, projectId, db);
+
+    expect(before?.readiness).toBe("ready");
+    expect((await getFlowRunVerification(runId, projectId, db))?.state).toBe(
+      "unknown",
+    );
+    const revisionId = randomUUID();
+    const node = {
+      id: "step",
+      type: "cli",
+      action: { command: "echo done" },
+      transitions: { success: "done" },
+    };
+    const manifest = {
+      schemaVersion: 1,
+      name: "ssot-flow",
+      compat: { engine_min: "1.0.0" },
+      nodes: [node],
+    };
+
+    const unevaluatedId = randomUUID();
+    const policyId = randomUUID();
+    const consensusId = randomUUID();
+    const commonRevision = {
+      flowRefId: "ssot-flow",
+      source: "github.com/x/y",
+      versionLabel: "v1.0.0",
+      manifestDigest: "0".repeat(64),
+      schemaVersion: 1,
+      installedPath: "/tmp/flows/ssot",
+    };
+
+    await db.insert(schema.flowRevisions).values([
+      {
+        ...commonRevision,
+        id: revisionId,
+        resolvedRevision: randomUUID(),
+        manifest,
+      },
+      {
+        ...commonRevision,
+        id: unevaluatedId,
+        resolvedRevision: randomUUID(),
+        manifest: {
+          ...manifest,
+          nodes: [
+            {
+              ...node,
+              output: {
+                produces: [
+                  { id: "proof", kind: "test_report", requiredFor: ["review"] },
+                ],
+              },
+            },
+          ],
+        },
+      },
+      {
+        ...commonRevision,
+        id: policyId,
+        resolvedRevision: randomUUID(),
+        manifest: {
+          ...manifest,
+          nodes: [
+            {
+              ...node,
+              pre_finish: {
+                gates: [
+                  {
+                    id: "smoke",
+                    kind: "command_check",
+                    mode: "blocking",
+                    command: "true",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      },
+      {
+        ...commonRevision,
+        id: consensusId,
+        resolvedRevision: randomUUID(),
+        manifest: {
+          ...manifest,
+          nodes: [
+            {
+              id: "decide",
+              type: "consensus",
+              prompt: "Choose a plan",
+              participants: [
+                { id: "architect", runner: "claude" },
+                { id: "qa", runner: "claude" },
+              ],
+              workspace: { mode: "repo_read" },
+              material_axes: ["scope"],
+              rounds: { mode: "single_pass", max: 1 },
+              on_no_consensus: "escalate",
+              synthesizer: { runner: "claude" },
+              output: {
+                produces: [
+                  { id: "consensus_plan", kind: "plan", current: true },
+                  { id: "debate_log", kind: "human_note", current: true },
+                ],
+              },
+              transitions: { success: "done", agreement: "done" },
+            },
+          ],
+        },
+      },
+    ]);
+    await db
+      .update(schema.runs)
+      .set({ flowRevisionId: revisionId })
+      .where(eq(schema.runs.id, runId));
+    expect((await getFlowRunVerification(runId, projectId, db))?.state).toBe(
+      "none",
+    );
+
+    await db
+      .update(schema.runs)
+      .set({ flowRevisionId: unevaluatedId })
+      .where(eq(schema.runs.id, runId));
+    expect((await getFlowRunVerification(runId, projectId, db))?.state).toBe(
+      "unevaluated",
+    );
+    await db
+      .update(schema.runs)
+      .set({
+        flowRevisionId: policyId,
+        executionPolicy: {
+          preset: "supervised",
+          overrides: { checks: "skip" },
+        },
+      })
+      .where(eq(schema.runs.id, runId));
+    expect((await getFlowRunVerification(runId, projectId, db))?.state).toBe(
+      "excluded",
+    );
+    await db
+      .update(schema.runs)
+      .set({ flowRevisionId: consensusId })
+      .where(eq(schema.runs.id, runId));
+    expect((await getFlowRunVerification(runId, projectId, db))?.state).toBe(
+      "unevaluated",
+    );
+    expect(await getRunReadiness(runId, projectId, db)).toEqual(before);
   });
 });

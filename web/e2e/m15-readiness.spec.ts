@@ -29,10 +29,13 @@
 //   • i18n labels ("Failed", "Overridden", reasons) resolve from the
 //     getRunReadinessSummary DTO; the EN messages are asserted here.
 
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { test, expect } from "@playwright/test";
+
+import { withE2EDb } from "./_seed/db";
 
 type M15Fixture = {
   projectSlug: string;
@@ -73,28 +76,14 @@ test("readiness summary: badge on board/portfolio + panel on run-detail", async 
   await page.locator(`a[href="/runs/${fx.failedRunId}"]`).first().click();
   await page.waitForURL(`/runs/${fx.failedRunId}*`);
 
-  // The ReadinessSummary panel is present with the failed state badge.
-  const failedStateSpan = page.locator(`[data-readiness="failed"]`);
+  const disclosure = page.getByTestId("flow-verification").locator("summary");
 
-  await expect(failedStateSpan).toBeVisible();
-
-  // The panel heading is visible (localize as needed for i18n).
-  const readinessSummaryHeading = page
-    .getByRole("heading", { name: "Readiness" })
-    .first();
-
-  await expect(readinessSummaryHeading).toBeVisible();
-
-  // The reasons list should be present (the blocking gate is the reason). The
-  // run-detail page now also renders the ReviewPanel's own readiness list
-  // ([data-testid="review-readiness"]) for flow Review runs, so scope to the
-  // first reasons list to keep the locator unambiguous.
-  const reasonsList = page
-    .locator("section[class*='border'][class*='rounded']")
-    .locator("ul")
-    .first();
-
-  await expect(reasonsList).toBeVisible();
+  await expect(disclosure).toContainText("Flow verification");
+  await disclosure.focus();
+  await disclosure.press("Enter");
+  await expect(
+    page.getByTestId("flow-verification").getByRole("list"),
+  ).toBeVisible();
 
   // (3) Navigate back to the board and click the overridden run card.
   // The run-detail page loads and the ReadinessSummary panel renders
@@ -108,17 +97,9 @@ test("readiness summary: badge on board/portfolio + panel on run-detail", async 
   await page.locator(`a[href="/runs/${fx.overriddenRunId}"]`).first().click();
   await page.waitForURL(`/runs/${fx.overriddenRunId}*`);
 
-  // The ReadinessSummary panel renders with the overridden state badge.
-  const overriddenStateSpan = page.locator(`[data-readiness="overridden"]`);
-
-  await expect(overriddenStateSpan).toBeVisible();
-
-  // The panel heading is visible.
-  const overriddenHeading = page
-    .getByRole("heading", { name: "Readiness" })
-    .first();
-
-  await expect(overriddenHeading).toBeVisible();
+  await expect(page.getByTestId("flow-verification")).toContainText(
+    "Overridden",
+  );
 
   // (4) Navigate to the portfolio (ADR-172 D2 moved it off `/`). The workspace
   // cards for both runs should display readiness badges
@@ -137,4 +118,102 @@ test("readiness summary: badge on board/portfolio + panel on run-detail", async 
 
   await expect(portfolioFailedBadge).toBeVisible();
   await expect(portfolioOverriddenBadge).toBeVisible();
+});
+
+test("UX-07 Running operational work and historical executor failure stay separate from Flow verification", async ({
+  page,
+}) => {
+  const { failedRunId } = loadM15Fixture();
+  const operational = randomUUID();
+  const scratch = randomUUID();
+  const flow = randomUUID();
+  const attempt = randomUUID();
+  const noChecksRun = randomUUID();
+  const noChecksRevision = randomUUID();
+  const operationalContract = readFileSync(
+    path.resolve("e2e/_seed/operational-contract.json"),
+    "utf8",
+  );
+
+  await withE2EDb(async (pool) => {
+    await pool.query(
+      "INSERT INTO runs(id,project_id,run_kind,agent_kind,status,agent_workspace,flow_version,result_contract) SELECT $1,project_id,'agent','operational','Running','none','test',$3 FROM runs WHERE id=$2",
+      [operational, failedRunId, operationalContract],
+    );
+    await pool.query(
+      "INSERT INTO runs(id,project_id,run_kind,status,flow_version) SELECT $1,project_id,'scratch','Running','test' FROM runs WHERE id=$2",
+      [scratch, failedRunId],
+    );
+    await pool.query(
+      "INSERT INTO runs(id,project_id,flow_id,run_kind,status,flow_version,current_step_id) SELECT $1,project_id,flow_id,'flow','Running',flow_version,'review' FROM runs WHERE id=$2",
+      [flow, failedRunId],
+    );
+    await pool.query(
+      "INSERT INTO node_attempts(id,run_id,node_id,node_type,attempt,status,error_code) VALUES($1,$2,'review','human',1,'Failed','EXECUTOR_UNAVAILABLE')",
+      [attempt, flow],
+    );
+    await pool.query(
+      "INSERT INTO gate_results(id,run_id,node_attempt_id,gate_id,kind,mode,status,ended_at) VALUES($1,$2,$3,'quality-check','external_check','blocking','passed',now())",
+      [randomUUID(), flow, attempt],
+    );
+    await pool.query(
+      "INSERT INTO flow_revisions(id,flow_ref_id,source,version_label,resolved_revision,manifest_digest,manifest,schema_version,installed_path,setup_status,package_status) SELECT $1,flow_ref_id,source,'no-checks',$2,$2,$3,1,installed_path,'not_required','Installed' FROM flows WHERE id=(SELECT flow_id FROM runs WHERE id=$4)",
+      [
+        noChecksRevision,
+        noChecksRevision.replaceAll("-", ""),
+        {
+          schemaVersion: 1,
+          name: "Known Flow without checks",
+          nodes: [
+            {
+              id: "work",
+              type: "cli",
+              action: { command: "true" },
+              transitions: { success: "done" },
+            },
+          ],
+        },
+        flow,
+      ],
+    );
+    await pool.query(
+      "INSERT INTO runs(id,project_id,flow_id,run_kind,status,flow_version,flow_revision_id) SELECT $1,project_id,flow_id,'flow','Running','no-checks',$2 FROM runs WHERE id=$3",
+      [noChecksRun, noChecksRevision, flow],
+    );
+  });
+  try {
+    const verification = page
+      .getByTestId("flow-verification")
+      .filter({ visible: true });
+
+    for (const runId of [operational, scratch]) {
+      await page.goto(`/runs/${runId}`);
+      await expect(
+        page.getByTestId("run-shell").filter({ visible: true }),
+      ).toBeVisible();
+      await expect(page.getByTestId("flow-verification")).toHaveCount(0);
+    }
+    await page.goto(`/runs/${flow}`);
+    await expect(verification).toContainText("Recorded checks clear");
+    await expect(
+      page.getByTestId("run-header-status").filter({ visible: true }),
+    ).toContainText("Running");
+    await expect(
+      page
+        .getByTestId("flow-run-node-attempts")
+        .filter({ visible: true })
+        .getByTestId("attempt-failure"),
+    ).toContainText("was unavailable during this attempt");
+    await page.goto(`/runs/${noChecksRun}`);
+    await expect(verification).toContainText("No blocking checks configured");
+  } finally {
+    await withE2EDb(async (pool) => {
+      await pool.query("DELETE FROM runs WHERE id=ANY($1::text[])", [
+        [operational, scratch, flow, noChecksRun],
+      ]);
+      await pool.query("DELETE FROM flow_revisions WHERE id=$1", [
+        noChecksRevision,
+      ]);
+    });
+  }
 });

@@ -297,4 +297,4 @@ is at the bottom. Reading history preserves the visible message and offers
 oversized records retain their normal message/tool presentation with a bounded
 preview and an authorized **Download complete content** action.
 
-Evidence filtering and transcript controls follow the [viewport contract](../../system-analytics/workbench.md#evidence-and-transcript-viewports-designed) (Designed).
+Evidence filtering follows the [Evidence viewport contract](../../system-analytics/workbench.md#evidence-viewport-implemented). Transcript controls follow the [transcript viewport contract](../../system-analytics/workbench.md#transcript-viewport-implemented).

@@ -3044,7 +3044,7 @@
         "CONFIG": "The step configuration is invalid. Check the Flow, runner and required settings.",
         "SPAWN": "The agent process could not start. Check the runner installation and access on the execution host.",
         "CRASH": "The step stopped unexpectedly. Check the web and supervisor logs for this run.",
-        "EXECUTOR_UNAVAILABLE": "The execution host or runner is unavailable. Restore its readiness before restarting.",
+        "EXECUTOR_UNAVAILABLE": "The execution host or runner was unavailable during this attempt. Check current availability before retrying.",
         "BUDGET_EXCEEDED": "The run reached its budget limit. Review the budget before restarting.",
         "CHECKPOINT": "The agent session could not resume from its checkpoint. Check adapter resume support and supervisor logs.",
         "PRECONDITION": "A prerequisite for this step was not met. Check the Flow inputs and required resources.",
@@ -3200,6 +3200,15 @@
     "artifactKindPlan": "Plan"
   },
   "readiness": {
+    "flowVerification": "Flow verification",
+    "recordedClear": "Recorded checks clear",
+    "noChecks": "No blocking checks configured",
+    "policyExcluded": "Checks excluded by policy",
+    "unevaluated": "Not yet evaluated",
+    "verificationUnknown": "Verification unavailable",
+    "openEvidence": "Open evidence",
+    "missingEvidence": "Required evidence {id} has no current result.",
+    "gateReason": "Gate {id} · {state}",
     "summary": "Readiness",
     "reasons": "Reasons",
     "ready": "Ready",
@@ -6191,6 +6200,7 @@
     }
   },
   "agentActivity": {
+    "allRuns": "All {agent} runs",
     "title": "Agent activity",
     "activeTitle": "Agent executions",
     "noneActive": "No active agent executions",
@@ -6589,6 +6599,7 @@
     "preview": "Bounded preview",
     "previewBytes": "Original size: {bytes} bytes",
     "historyBound": "Some displayed history was unloaded. Scroll to either end to load it again, or jump to latest.",
+    "laterAvailable": "Later messages are available",
     "newerMessages": "Newer messages are available. Choose Jump to latest to read them.",
     "projectionPending": "Conversation is catching up.",
     "attemptChanged": "The node attempt changed. Showing the latest attempt.",

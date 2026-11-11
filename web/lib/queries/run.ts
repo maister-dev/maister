@@ -121,6 +121,7 @@ import {
 
 const {
   actorIdentities,
+  agents,
   assignmentEvents,
   assignments,
   capabilityImports,
@@ -187,6 +188,7 @@ function isPlanReviewParentHitl(hitl: RunPendingHitl): boolean {
 
 export interface RunDetail {
   sourceAgentId: string | null;
+  sourceAgentDisplayName?: string | null;
   retryOfRunId: string | null;
   agentWorkspace: "none" | "repo_read" | "worktree" | null;
   runId: string;
@@ -536,6 +538,10 @@ export const getRunDetail = cache(async function getRunDetail(
       // ADR-181 D1a: the git fact loader's workspace inputs.
       agentWorkspace: runs.agentWorkspace,
       sourceAgentId: runs.sourceAgentId,
+      sourceAgentDisplayName: sql<string | null>`coalesce(
+        nullif(${runs.agentActivitySnapshot}->>'displayName', ''),
+        (select ${agents.name} from ${agents} where ${agents.id} = ${runs.sourceAgentId})
+      )`,
       retryOfRunId: runs.retryOfRunId,
       rootRunId: runs.rootRunId,
       publishedBranch: workspaces.publishedBranch,
@@ -883,6 +889,7 @@ export const getRunDetail = cache(async function getRunDetail(
   return {
     runId: row.runId,
     sourceAgentId: row.sourceAgentId,
+    sourceAgentDisplayName: row.sourceAgentDisplayName,
     retryOfRunId: row.retryOfRunId,
     agentWorkspace: row.agentWorkspace,
     // The inner join on projects guarantees a project here; a project-less

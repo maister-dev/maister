@@ -66,7 +66,7 @@ export function RunTranscriptPanel({
         <span aria-hidden="true">{open ? "−" : "+"}</span>
       </button>
       {open ? (
-        <div className="mt-2 min-w-0 max-w-full overflow-hidden">
+        <div className="mt-2 min-w-0 max-w-full overflow-clip">
           {initialMessages === undefined ? (
             <RunTranscriptHistory
               key={`${runId}:${nodeId ?? ""}`}

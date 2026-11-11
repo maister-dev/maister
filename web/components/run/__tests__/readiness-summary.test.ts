@@ -1,4 +1,4 @@
-import type { ReadinessState } from "@/lib/flows/graph/readiness-core";
+import type { FlowVerificationState } from "@/lib/queries/readiness";
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -7,10 +7,10 @@ import { describe, expect, it } from "vitest";
 import { ReadinessSummary } from "@/components/run/readiness-summary";
 
 type ReadinessSummaryProps = {
-  state: ReadinessState;
+  state: FlowVerificationState;
   reasons: string[];
   labels: {
-    state: Record<ReadinessState, string>;
+    state: Record<FlowVerificationState, string>;
     summary: string;
     reasons: string;
   };
@@ -19,6 +19,10 @@ type ReadinessSummaryProps = {
 const baseLabels: ReadinessSummaryProps["labels"] = {
   state: {
     ready: "Ready",
+    none: "No checks",
+    excluded: "Excluded",
+    unevaluated: "Unevaluated",
+    unknown: "Unknown",
     blocked: "Blocked",
     stale: "Stale",
     failed: "Failed",
@@ -162,7 +166,7 @@ describe("ReadinessSummary — readiness state display (M15)", () => {
   });
 
   it("preserves state badge across all states even with many reasons", () => {
-    const allStates: ReadinessState[] = [
+    const allStates: FlowVerificationState[] = [
       "ready",
       "blocked",
       "stale",

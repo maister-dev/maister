@@ -241,7 +241,7 @@ Logging requirements: INFO when an auto trigger is scheduled or fired with `runI
 `projectId`, and non-secret policy fields; WARN when a CAS cancel misses or when auto
 delivery degrades to manual with status, command, and bounded conflict paths.
 
-### Run-page verification (Designed)
+### Run-page verification (Implemented)
 
 The Flow Run page presents recorded blocking gates and required evidence in a
 compact, keyboard-operable disclosure. Failed, stale, blocked, waiting and

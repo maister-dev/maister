@@ -241,7 +241,7 @@ not fabricated from lastAttemptFence.
 
 Per-cron current input and immutable claim/run retention are specified in [scheduled agent requests](scheduled-agent-requests.md). Protected request bodies are stored separately from viewer-safe trigger telemetry; existing admission, completion and permission policies remain authoritative.
 
-### Run header navigation (Designed)
+### Run header navigation (Implemented)
 
 The Run header's **All {agent} runs** link opens the project-scoped History
 tab for the recorded source agent. Use the Run's stored display name when

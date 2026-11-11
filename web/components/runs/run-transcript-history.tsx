@@ -27,7 +27,11 @@ class TranscriptReadFailure extends Error {
 
 type Direction = "earlier" | "later";
 type ContiguousEarlier = { boundaryId: string; page: TranscriptPage };
-type History = { pages: TranscriptPage[]; newerAvailable: boolean };
+type History = {
+  pages: TranscriptPage[];
+  newerAvailable: boolean;
+  liveUpdate?: boolean;
+};
 type ReadError = {
   failure: TranscriptReadFailure;
   direction: Direction | "refresh" | "latest";
@@ -233,6 +237,9 @@ export function RunTranscriptHistory({
   const previousAttempt = useRef<string | null | undefined>(undefined);
   const following = useRef(true);
   const liveCatchup = useRef(false);
+  const latestObserved = useRef<TranscriptPage["messages"][number] | undefined>(
+    undefined,
+  );
   const positioned = useRef(false);
   const scrollPosition = useRef(0);
   const pendingAnchor = useRef<ScrollAnchor | null>(null);
@@ -489,6 +496,7 @@ export function RunTranscriptHistory({
           liveCatchup.current = false;
           setReadingEarlier(false);
           pendingBottom.current = true;
+          latestObserved.current = latest.messages.at(-1);
           publish({ pages: [latest], newerAvailable: false });
           publishError(null);
 
@@ -520,7 +528,30 @@ export function RunTranscriptHistory({
           ? new URLSearchParams({ anchor: visibleAnchor })
           : retainedQuery(selected);
         const refreshed = query
-          ? await fetchTranscriptPage(runId, nodeId, query, abort.signal)
+          ? await fetchTranscriptPage(runId, nodeId, query, abort.signal).catch(
+              async (failure: unknown) => {
+                if (
+                  nodeId &&
+                  failure instanceof TranscriptReadFailure &&
+                  failure.reason === "invalid_anchor"
+                ) {
+                  // The current attempt can change between the latest and anchored reads.
+                  const current = await fetchTranscriptPage(
+                    runId,
+                    nodeId,
+                    new URLSearchParams(),
+                    abort.signal,
+                  );
+
+                  if (current.attemptId !== latest.attemptId)
+                    throw new TranscriptReadFailure(
+                      409,
+                      "transcript_attempt_changed",
+                    );
+                }
+                throw failure;
+              },
+            )
           : null;
 
         if (!valid()) return;
@@ -567,6 +598,20 @@ export function RunTranscriptHistory({
           (message) =>
             retainedMessages.get(message.id)?.content !== message.content,
         );
+        const lastObserved = latestObserved.current;
+        const latestMessage = latest.messages.at(-1);
+        const liveUpdate =
+          !following.current &&
+          (cached.liveUpdate === true ||
+            (latestMessage !== undefined &&
+              lastObserved !== undefined &&
+              (lastObserved.id !== latestMessage.id ||
+                lastObserved.content !== latestMessage.content)) ||
+            [...observedMessages.values()].some(
+              (message) =>
+                retainedMessages.has(message.id) &&
+                retainedMessages.get(message.id)?.content !== message.content,
+            ));
         const unseen =
           !following.current &&
           (cached.newerAvailable || hasNewer || contentChanged);
@@ -653,8 +698,10 @@ export function RunTranscriptHistory({
             seenBoundaries.current.clear();
             setNotice("historyBound");
           }
+          latestObserved.current = latestMessage;
           publish({
             pages: bounded,
+            liveUpdate,
             newerAvailable:
               !following.current || stillNewer || bounded.at(-1)!.hasLater,
           });
@@ -697,8 +744,10 @@ export function RunTranscriptHistory({
             seenBoundaries.current.clear();
             setNotice("historyBound");
           }
+          latestObserved.current = latestMessage;
           publish({
             pages: bounded,
+            liveUpdate,
             newerAvailable: unseen || bounded.at(-1)!.hasLater,
           });
         }
@@ -874,6 +923,7 @@ export function RunTranscriptHistory({
         revision.current++;
         publish({
           pages: bounded,
+          liveUpdate: current.liveUpdate,
           newerAvailable:
             direction === "earlier"
               ? current.newerAvailable || evicted || bounded.at(-1)!.hasLater
@@ -947,6 +997,7 @@ export function RunTranscriptHistory({
       pendingBottom.current = true;
       setNotice(null);
       revision.current++;
+      latestObserved.current = latest.messages.at(-1);
       publish({ pages: [latest], newerAvailable: false });
     } catch (failure) {
       if (!owned.signal.aborted && ownedRevision === revision.current)
@@ -1067,7 +1118,7 @@ export function RunTranscriptHistory({
       }
       if (atLatest && cached.newerAvailable) {
         retainScroll();
-        publish({ ...cached, newerAvailable: false });
+        publish({ ...cached, newerAvailable: false, liveUpdate: false });
       }
       const visible = [
         ...(host.current?.querySelectorAll<HTMLElement>(
@@ -1165,6 +1216,14 @@ export function RunTranscriptHistory({
     else refreshRef.current();
   };
 
+  const controlClass =
+    "rounded-md border border-line bg-paper px-2.5 py-1 text-xs font-medium text-ink hover:border-amber focus-visible:outline-amber disabled:opacity-60";
+  const updateLabel = history.liveUpdate
+    ? t("newerMessages")
+    : history.newerAvailable
+      ? t("laterAvailable")
+      : null;
+
   return (
     <div
       ref={host}
@@ -1182,7 +1241,7 @@ export function RunTranscriptHistory({
                   ? "unavailable"
                   : "error",
           )}{" "}
-          <button type="button" onClick={retry}>
+          <button className={controlClass} type="button" onClick={retry}>
             {t(
               error.direction === "earlier"
                 ? "retryEarlier"
@@ -1199,6 +1258,7 @@ export function RunTranscriptHistory({
       ) : null}
       {first?.hasEarlier ? (
         <button
+          className={controlClass}
           data-testid="transcript-earlier"
           disabled={loading !== null}
           type="button"
@@ -1218,28 +1278,6 @@ export function RunTranscriptHistory({
           )}
         </p>
       ) : null}
-      {history.newerAvailable ? (
-        <p role="status">{t("newerMessages")}</p>
-      ) : null}
-      {readingEarlier || history.newerAvailable ? (
-        <button
-          className="sticky top-2 z-10 rounded border border-line bg-paper px-2 py-1"
-          data-new-messages={history.newerAvailable ? "true" : undefined}
-          data-testid="transcript-jump-latest"
-          disabled={loading === "latest"}
-          title={history.newerAvailable ? t("newerMessages") : undefined}
-          type="button"
-          onClick={() => jumpRef.current()}
-        >
-          {t("latestMessages")}
-          {history.newerAvailable ? (
-            <span
-              aria-hidden="true"
-              className="ml-2 inline-block h-2 w-2 rounded-full bg-amber"
-            />
-          ) : null}
-        </button>
-      ) : null}
       {last?.projection.state === "pending" ? (
         <p role="status">{t("projectionPending")}</p>
       ) : null}
@@ -1256,9 +1294,38 @@ export function RunTranscriptHistory({
         messages={messages}
         running={live && stream.liveness === "live"}
       />
+      {readingEarlier || updateLabel ? (
+        <div className="pointer-events-none sticky bottom-12 z-10 flex h-0 min-w-0 justify-end">
+          <div className="pointer-events-auto flex -translate-y-full items-center gap-2 rounded-md bg-paper p-1">
+            {updateLabel ? (
+              <span className="sr-only" role="status">
+                {updateLabel}
+              </span>
+            ) : null}
+            <button
+              className={controlClass}
+              data-new-messages={history.liveUpdate ? "true" : undefined}
+              data-testid="transcript-jump-latest"
+              disabled={loading === "latest"}
+              title={updateLabel ?? undefined}
+              type="button"
+              onClick={() => jumpRef.current()}
+            >
+              {t("latestMessages")}
+              {history.liveUpdate ? (
+                <span
+                  aria-hidden="true"
+                  className="ml-2 inline-block h-2 w-2 rounded-full bg-amber"
+                />
+              ) : null}
+            </button>
+          </div>
+        </div>
+      ) : null}
       <div ref={end} data-testid="transcript-tail" />
       {last?.hasLater ? (
         <button
+          className={controlClass}
           data-testid="transcript-later"
           disabled={loading !== null}
           type="button"

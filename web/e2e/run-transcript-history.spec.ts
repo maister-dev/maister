@@ -379,6 +379,9 @@ test("main history loads the latest portion, retries an automatic earlier load a
     expect(displayed).toEqual(
       Array.from({ length: 250 }, (_, index) => `Parent history ${index + 1}`),
     );
+    const jump = transcript.getByRole("button", { name: "Jump to latest" });
+
+    await expect(jump).not.toHaveAttribute("data-new-messages", "true");
     await withE2EDb((pool) =>
       pool.query(
         "UPDATE run_messages SET content='Parent history 250 (continued)' WHERE run_id=$1 AND sequence=250",
@@ -405,9 +408,25 @@ test("main history loads the latest portion, retries an automatic earlier load a
     await expect
       .poll(async () => Math.abs((await reading.boundingBox())!.y - top))
       .toBeLessThan(2);
-    await transcript
-      .getByRole("button", { name: "Jump to latest", exact: true })
-      .click();
+    expect(
+      await jump.evaluate((button) => {
+        const bounds = button.getBoundingClientRect();
+        const owner = button
+          .closest('[data-testid="run-transcript-history"]')!
+          .getBoundingClientRect();
+        const hit = document.elementFromPoint(
+          bounds.x + bounds.width / 2,
+          bounds.y + bounds.height / 2,
+        );
+
+        return (
+          bounds.left >= owner.left &&
+          bounds.right <= owner.right &&
+          button.contains(hit)
+        );
+      }),
+    ).toBe(true);
+    await jump.click();
     await expect(messages).toHaveCount(100);
     await expect(
       transcript.getByText("Parent history 251", { exact: true }),

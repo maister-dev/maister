@@ -56,6 +56,7 @@ export interface RunHeaderProps {
   keyRef?: string | null;
   // Task detail href; turns the KEY-N chip into a link to the task page.
   taskHref?: string | null;
+  agentHistory?: { href: string; label: string };
   projectHref?: string | null;
   projectLabel?: string | null;
   // The launching task's prompt, rendered as a collapsible Markdown block.
@@ -114,6 +115,7 @@ export function RunHeader({
   subtitle,
   keyRef,
   taskHref,
+  agentHistory,
   projectHref,
   projectLabel,
   taskPrompt,
@@ -229,6 +231,14 @@ export function RunHeader({
         <h1 className="m-0 truncate font-sans text-[22px] font-bold leading-tight text-ink md:text-[26px]">
           {title}
         </h1>
+        {agentHistory ? (
+          <Link
+            className="mt-1 inline-block w-fit text-sm text-mute underline"
+            href={agentHistory.href}
+          >
+            {agentHistory.label}
+          </Link>
+        ) : null}
         {taskPrompt ? (
           <details
             className="group mt-2 max-w-[760px]"
