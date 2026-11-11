@@ -128,6 +128,15 @@ All assignments require nonblank objective (<=8000 characters), expected outcome
 | Explicit reopen | failed/cancelled only, current recovery authority and fresh recovery/input revision | New owner epoch; preserve original terminal event; outstanding unknown effect routes to reconciling, not dispatch |
 | Completed replay | completed and exact original request/decision | Safe existing receipt only; independent new objective is new assignment |
 
+For result-only assignments, the existing result consumer moves the current
+assignment to `awaiting_acceptance` when the appointed root Run is Done and
+its valid result matches the frozen contract. Required external effects and
+open child work prevent readiness. The session and personal bearer APIs
+verify the exact input, context, result and current reviewer authority.
+Main `0275` commits the acceptance receipt, completed state and state event
+together. Origin delivery of the accepted outcome and independent effect
+verification remain separate implementation slices.
+
 Business transitions append the existing transactional `specialist.assignment_changed`
 outbox fact with business revision, previous/current state, safe cause and server
 actor in the same transaction as the assignment head. Agent-authored context facts also retain the actual Run/node in an optional content-free `originExecution` payload pointer; lifecycle ownership metadata remains unchanged and no model-provided origin is accepted. Historical facts acquire no invented origin. Reopening cannot erase a

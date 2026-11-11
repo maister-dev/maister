@@ -1912,6 +1912,13 @@
       "when": 1794606477979,
       "tag": "0276_specialist_execution_work_acceptance",
       "breakpoints": true
+    },
+    {
+      "idx": 277,
+      "version": "7",
+      "when": 1794606477980,
+      "tag": "0277_specialist_assignment_acceptance",
+      "breakpoints": true
     }
   ]
 }

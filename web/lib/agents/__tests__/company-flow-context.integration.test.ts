@@ -2452,7 +2452,7 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
           [assignment.id],
         )
       ).rows,
-    ).toEqual([{ status: "active", acceptance_id: null }]);
+    ).toEqual([{ status: "awaiting_acceptance", acceptance_id: null }]);
     expect(await counts()).toEqual(allocationBeforeDelivery);
     await expect(
       database.pool.query(
@@ -2849,7 +2849,7 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
           [assignment.id],
         )
       ).rows,
-    ).toEqual([{ status: "active" }]);
+    ).toEqual([{ status: "awaiting_acceptance" }]);
     expect(
       (await hosts.local().listSessions()).filter(
         (session) => session.runId === receipt.runId,

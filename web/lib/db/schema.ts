@@ -10638,11 +10638,6 @@ export const specialistAssignments = pgTable(
       "specialist_assignments_terminal_check",
       sql`((${t.status}='completed' AND ${t.acceptanceId} IS NOT NULL AND ${t.completedAt} IS NOT NULL AND ${t.terminalReason} IS NULL) OR (${t.status} IN ('failed','cancelled') AND ${t.acceptanceId} IS NULL AND ${t.completedAt} IS NULL AND ${t.terminalReason} ~ '[^[:space:]]' AND char_length(${t.terminalReason})<=2000) OR (${t.status} NOT IN ('completed','failed','cancelled') AND ${t.acceptanceId} IS NULL AND ${t.completedAt} IS NULL AND ${t.terminalReason} IS NULL)) IS TRUE`,
     ),
-    // Replaced by the acceptance-owning migration when exact result/verification acceptance is implemented.
-    completionUnavailable: check(
-      "specialist_assignments_completion_unavailable_check",
-      sql`${t.status}<>'completed'`,
-    ),
     companyStatus: index("specialist_assignments_company_status_idx").on(
       t.companyId,
       t.status,
@@ -10919,6 +10914,63 @@ export const specialistWork = pgTable(
       t.parentRunId,
       t.id,
       t.workRevision,
+    ),
+  }),
+);
+
+/** Final business acceptance references the exact existing root result and input. */
+export const specialistAcceptances = pgTable(
+  "specialist_acceptances",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    assignmentId: text("assignment_id").notNull().unique(),
+    expectedRevision: integer("expected_revision").notNull(),
+    inputRevision: integer("input_revision").notNull(),
+    contextRevision: integer("context_revision").notNull(),
+    resultId: text("result_id")
+      .notNull()
+      .references(() => runResults.id, { onDelete: "restrict" }),
+    resultRevision: integer("result_revision").notNull(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "restrict" }),
+    actor: jsonb("actor").$type<KnowledgeAttribution>().notNull(),
+    authoritySnapshot: jsonb("authority_snapshot")
+      .$type<AssignmentAuthoritySnapshot>()
+      .notNull(),
+    verificationIds: jsonb("verification_ids")
+      .$type<readonly string[]>()
+      .notNull(),
+    requestKey: text("request_key").notNull(),
+    requestSha256: text("request_sha256").notNull(),
+    reason: text("reason").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    input: foreignKey({
+      name: "specialist_acceptances_input_fk",
+      columns: [t.assignmentId, t.inputRevision],
+      foreignColumns: [
+        specialistInputRevisions.assignmentId,
+        specialistInputRevisions.revision,
+      ],
+    }).onDelete("restrict"),
+    shape: check(
+      "specialist_acceptances_shape_check",
+      sql`(
+        ${t.expectedRevision}>0 AND ${t.inputRevision}>0 AND ${t.contextRevision}>=0 AND ${t.resultRevision}>0
+        AND ${specialistActorShape(t.actor)} AND ${t.actor}->>'kind'='user'
+        AND ${t.actor}->'runId'='null'::jsonb AND ${t.actor}->'attemptId'='null'::jsonb
+        AND ${t.authoritySnapshot}->'schemaVersion'='1'::jsonb AND ${t.authoritySnapshot}->'actor'=${t.actor}
+        AND pg_column_size(${t.authoritySnapshot})<=32768
+        AND ${t.verificationIds}='[]'::jsonb
+        AND ${t.requestKey} ~ '^[A-Za-z0-9._:-]{8,128}$' AND ${t.requestSha256} ~ '^[a-f0-9]{64}$'
+        AND char_length(${t.reason}) BETWEEN 1 AND 2000
+      ) IS TRUE`,
     ),
   }),
 );

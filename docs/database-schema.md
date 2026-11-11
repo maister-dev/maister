@@ -5703,12 +5703,16 @@ separately guarded.
 Main `0276_specialist_execution_work_acceptance` adds the reviewed company
 acceptance scope to the existing token contract and binds agent decisions to
 the exact current professional and Run or Flow node.
+Main `0277_specialist_assignment_acceptance` adds the immutable final
+result-only acceptance ledger. A current valid root result can make the
+assignment ready for acceptance. The final receipt, completed state and
+state event commit together under the current authority.
 
 [Specialist persistence](db/specialist-assignments-domain.md) defines implemented `0234_specialist_assignments`: exclusive company/project assignment heads, immutable `specialist_input_revisions` and `specialist_run_links` to existing executions. Business revision, input head and context head are separate. A deferred constraint checks the retained input head at commit; history and run links reject UPDATE/DELETE. State changes use the existing content-free domain outbox. Current authority, source restrictions, exact input CAS, cancellation and reopening are enforced by the assignment store. No legacy runs acquire invented assignments. Generated main `0253_specialist_intake_receipts` binds canonical source deliveries and original request digests to exact existing assignment inputs. Immutable receipt/source/actor guards and the source-key uniqueness prevent duplicate assignment creation; invocation adapters retain their own current authorization and existing Run reservation. Generated main `0254_specialist_project_flow_input` adds nullable initial project-task linkage with same-project/immutable reference guards and permits versioned project coordinator Flow witnesses in new standing snapshots. Legacy input bytes and assignment values remain unchanged; company assignments require no task.
 
 Generated `0235_specialist_metadata` adds nullable `agents.specialist` with bounded responsibility/target-class declarations and a closed JSON shape. The registry handles SET/CLEAR/re-SET; absent metadata preserves old serialized definitions and their hashes. The declaration is descriptive and grants no authority. [Specialist runtime](system-analytics/specialist-runtime.md) owns its contract.
 
-Pinned company bindings and native company standalone/graph execution are implemented. Context human history is implemented; agent integration, questions, coordinator ownership and verified acceptance remain subsequent slices. Completion is refused until exact result/verification acceptance is implemented. Existing `runs`, `node_attempts` and `run_results` remain the execution ledgers. Company result-only Flow pins installed `flow_revisions` with null project/task/project-flow fields; no project `flows` row is fabricated.
+Pinned company bindings, native standalone and graph execution, and attributed human and agent context history are implemented. Exact result-only acceptance uses the existing `runs`, `node_attempts` and `run_results` ledgers. Company result-only Flow pins installed `flow_revisions` with null project, task and project Flow fields. Coordinator ownership recovery and independent effect verification remain open.
 
 Generated main `0265_specialist_result_delivery` adds immutable native result
 witnesses on the existing domain outbox and `specialist_delivery_receipts`.

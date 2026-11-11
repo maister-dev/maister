@@ -37,6 +37,8 @@ import {
 } from "../delivery-read";
 
 import { GET as admissionGet } from "@/app/api/specialist-assignments/[assignmentId]/admission/route";
+import { POST as acceptAssignment } from "@/app/api/specialist-assignments/[assignmentId]/acceptance/route";
+import { POST as acceptExternalAssignment } from "@/app/api/v1/ext/specialist-assignments/[assignmentId]/acceptance/route";
 import { GET as externalAdmissionGet } from "@/app/api/v1/ext/specialist-assignments/[assignmentId]/admission/route";
 import { GET as deliveryGet } from "@/app/api/specialist-assignments/[assignmentId]/delivery/route";
 import { POST as deliveryReplay } from "@/app/api/specialist-assignments/[assignmentId]/delivery/[deliveryId]/replay/route";
@@ -330,9 +332,11 @@ async function recipient(): Promise<{
 async function readyResult(
   target: Awaited<ReturnType<typeof recipient>>,
   destination: AssignmentDestination,
+  verification = preparedBase.objectiveInput.verification,
 ): Promise<{ assignmentId: string; runId: string; deliveryId: string }> {
   const work = await createSpecialistAssignment(database.db, target.userId, {
     ...preparedBase,
+    objectiveInput: { ...preparedBase.objectiveInput, verification },
     sourceRestrictions: [
       { kind: "project_context", projectId: target.projectId },
     ],
@@ -413,6 +417,163 @@ async function readyResult(
 
   return { assignmentId: work.id, runId, deliveryId: rows[0]!.id };
 }
+
+async function finishRootResult(
+  projectId: string,
+  runId: string,
+): Promise<void> {
+  await database.db.transaction(async (tx) => {
+    await tx.execute(
+      sql`UPDATE runs SET status='Done',ended_at=clock_timestamp() WHERE id=${runId}`,
+    );
+    await emitDomainEvent({
+      db: tx,
+      kind: "run.done",
+      projectId,
+      runId,
+      parentRunId: null,
+      actor: { type: "system", id: null },
+      payload: { runId, resultStatus: "valid", cause: "completed" },
+    });
+  });
+  expect(
+    await dispatchDomainEvents({
+      db: database.db,
+      consumers: [specialistAssignmentDeliveryConsumer],
+    }),
+  ).toMatchObject({ failures: 0 });
+}
+
+it("IT-CBA-07 completes only after the exact expected root result is ready and accepted", async () => {
+  const target = await recipient();
+  const { assignmentId, runId } = await readyResult(target, {
+    kind: "inbox",
+    userId: target.userId,
+  });
+
+  expect(await runWebhookDeliveryJob({ db: database.db })).toMatchObject({
+    delivered: 1,
+  });
+  const acceptanceRequest = (
+    head: Awaited<ReturnType<typeof getSpecialistAssignment>>,
+    verificationIds: string[] = [],
+    bearer?: string,
+  ) =>
+    new NextRequest(
+      `http://localhost/api/${bearer ? "v1/ext/" : ""}specialist-assignments/${assignmentId}/acceptance`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
+        },
+        body: JSON.stringify({
+          expectedRevision: head.revision,
+          inputRevision: head.inputRevision,
+          contextRevision: head.contextRevision,
+          result: { runId, revision: 1 },
+          verificationIds,
+          reason: "The expected bounded result is complete.",
+          idempotencyKey: "accept-bounded-assignment",
+        }),
+      },
+    );
+  const params = { params: Promise.resolve({ assignmentId }) };
+
+  deliverySession.userId = target.userId;
+  try {
+    const review = await getSpecialistAssignment(
+      database.db,
+      target.userId,
+      assignmentId,
+    );
+
+    expect(
+      (await acceptAssignment(acceptanceRequest(review), params)).status,
+    ).toBe(409);
+    await finishRootResult(target.projectId, runId);
+    const ready = await getSpecialistAssignment(
+      database.db,
+      target.userId,
+      assignmentId,
+    );
+
+    expect(ready.status).toBe("awaiting_acceptance");
+    expect(
+      (await acceptAssignment(acceptanceRequest(ready, [randomUUID()]), params))
+        .status,
+    ).toBe(409);
+    const accepted = await acceptAssignment(acceptanceRequest(ready), params);
+
+    expect(accepted.status).toBe(200);
+    const receipt: { id: string } = await accepted.json();
+    const credential = await issueUserAccessToken(
+      {
+        ownerUserId: target.userId,
+        name: "assignment-acceptance-reviewer",
+        scopes: ["assignments:accept"],
+      },
+      database.db,
+    );
+    const replay = await acceptExternalAssignment(
+      acceptanceRequest(ready, [], credential.secret),
+      params,
+    );
+
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({
+      id: receipt.id,
+      duplicate: true,
+    });
+    expect(
+      await getSpecialistAssignment(database.db, target.userId, assignmentId),
+    ).toMatchObject({
+      status: "completed",
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT acceptance_id FROM specialist_assignments WHERE id=$1",
+          [assignmentId],
+        )
+      ).rows,
+    ).toEqual([{ acceptance_id: receipt.id }]);
+    await expect(
+      database.pool.query(
+        "UPDATE specialist_acceptances SET reason='replace accepted outcome' WHERE id=$1",
+        [receipt.id],
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "specialist_acceptances_immutable",
+    });
+  } finally {
+    deliverySession.userId = null;
+  }
+});
+
+it("IT-CBA-07 keeps a result with a required independent health check out of final acceptance", async () => {
+  const target = await recipient();
+  const { assignmentId, runId } = await readyResult(
+    target,
+    { kind: "inbox", userId: target.userId },
+    [
+      {
+        kind: "health",
+        referenceId: "configured-health-check",
+        required: true,
+      },
+    ],
+  );
+
+  expect(await runWebhookDeliveryJob({ db: database.db })).toMatchObject({
+    delivered: 1,
+  });
+  await finishRootResult(target.projectId, runId);
+  expect(
+    await getSpecialistAssignment(database.db, target.userId, assignmentId),
+  ).toMatchObject({ status: "active" });
+});
 
 it("IT-CBA-06 delivers one private native Inbox item, hides revoked source access and preserves recipient read state through replay", async () => {
   const target = await recipient();

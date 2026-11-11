@@ -14,7 +14,10 @@ export async function handlePersonalAssignmentExt(
   request: Request,
   scopeLabel: Extract<
     AssignmentAction,
-    "assignments:read" | "assignments:submit" | "assignments:recover"
+    | "assignments:read"
+    | "assignments:submit"
+    | "assignments:recover"
+    | "assignments:accept"
   >,
   endpoint: string,
   work: (userId: string) => Promise<NextResponse>,

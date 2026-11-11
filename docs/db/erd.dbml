@@ -3163,6 +3163,24 @@ table sessions {
   expires "timestamp with time zone" [not null]
 }
 
+table specialist_acceptances {
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  assignment_id text [not null, unique]
+  expected_revision integer [not null]
+  input_revision integer [not null]
+  context_revision integer [not null]
+  result_id text [not null]
+  result_revision integer [not null]
+  run_id text [not null]
+  actor jsonb [not null]
+  authority_snapshot jsonb [not null]
+  verification_ids jsonb [not null]
+  request_key text [not null]
+  request_sha256 text [not null]
+  reason text [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+}
+
 table specialist_assignments {
   id text [pk, not null, default: `gen_random_uuid()::text`]
   company_id text
@@ -3193,7 +3211,6 @@ table specialist_assignments {
 
 
     project_task_id [name: 'specialist_assignments_project_task_idx']
-
 
 
     (company_id, status, updated_at, id) [name: 'specialist_assignments_company_status_idx']
@@ -4901,6 +4918,12 @@ ref scratch_runs_linked_task_id_tasks_id_fk: scratch_runs.linked_task_id > tasks
 ref scratch_runs_created_by_user_id_users_id_fk: scratch_runs.created_by_user_id > users.id [delete: no action, update: no action]
 
 ref sessions_user_id_users_id_fk: sessions.user_id > users.id [delete: cascade, update: no action]
+
+ref specialist_acceptances_result_id_run_results_id_fk: specialist_acceptances.result_id > run_results.id [delete: restrict, update: no action]
+
+ref specialist_acceptances_run_id_runs_id_fk: specialist_acceptances.run_id > runs.id [delete: restrict, update: no action]
+
+ref specialist_acceptances_input_fk: specialist_acceptances.(assignment_id, input_revision) > specialist_input_revisions.(assignment_id, revision) [delete: restrict, update: no action]
 
 ref specialist_assignments_company_id_companies_id_fk: specialist_assignments.company_id > companies.id [delete: restrict, update: no action]
 

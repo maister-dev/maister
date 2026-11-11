@@ -10,6 +10,7 @@ import { sql } from "drizzle-orm";
 import pino from "pino";
 
 import { assignmentResultWitnessSchema } from "./delivery-types";
+import { markSpecialistResultReady } from "./final-acceptance";
 import { beginAssignmentTransaction } from "./store";
 
 import { getDb } from "@/lib/db/client";
@@ -62,6 +63,8 @@ export async function captureSpecialistResultDelivery(
             "Origin delivery identity has a different retained witness",
             { details: { reason: "assignment_delivery_identity_conflict" } },
           );
+        if (event.kind === "run.done")
+          await markSpecialistResultReady(tx, snapshot);
 
         return;
       }
@@ -69,6 +72,8 @@ export async function captureSpecialistResultDelivery(
         INSERT INTO webhook_events(id,type,data,occurred_at,payload)
         VALUES(${outboxId},'assignment.result_available',${JSON.stringify({ ownerUserId: snapshot.requesterUserId, assignmentDeliveryId: id })}::jsonb,${event.occurredAt},NULL)
       `);
+      if (event.kind === "run.done")
+        await markSpecialistResultReady(tx, snapshot);
       log.info(
         {
           assignmentId: snapshot.assignmentId,

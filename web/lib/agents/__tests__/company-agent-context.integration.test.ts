@@ -1869,7 +1869,7 @@ it("IT-CBS-04 completes company HTTP and registered cron intake through the exis
           scheduleId: cron.scheduleId,
           triggerAttemptId: attempt.id,
         },
-        status: "active",
+        status: "awaiting_acceptance",
         scheduled_request: attempt.scheduled_request_snapshot,
       },
     ]);
@@ -6447,14 +6447,17 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
       },
     ]);
     expect((await submit(flowRequest)).status).toBe(200);
-    expect(
-      (
-        await database.pool.query(
-          "SELECT status FROM specialist_assignments WHERE id=$1",
-          [coordinated.id],
-        )
-      ).rows,
-    ).toEqual([{ status: "active" }]);
+    await vi.waitFor(async () => {
+      expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+      expect(
+        (
+          await database.pool.query(
+            "SELECT status,acceptance_id FROM specialist_assignments WHERE id=$1",
+            [coordinated.id],
+          )
+        ).rows,
+      ).toEqual([{ status: "awaiting_acceptance", acceptance_id: null }]);
+    });
     const cronSource = (
       await database.pool.query<{ id: string }>(
         "SELECT id FROM agent_schedules WHERE project_id=$1 AND agent_id='rah:wire-observer' AND trigger_type='cron'",
@@ -6952,14 +6955,17 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
         )
       ).rows,
     ).toEqual([{ validity: "valid" }]);
-    expect(
-      (
-        await database.pool.query(
-          "SELECT status FROM specialist_assignments WHERE id=$1",
-          [flowCron[0]!.id],
-        )
-      ).rows,
-    ).toEqual([{ status: "active" }]);
+    await vi.waitFor(async () => {
+      expect(await dispatchDomainEvents({ db })).toMatchObject({ failures: 0 });
+      expect(
+        (
+          await database.pool.query(
+            "SELECT status,acceptance_id FROM specialist_assignments WHERE id=$1",
+            [flowCron[0]!.id],
+          )
+        ).rows,
+      ).toEqual([{ status: "awaiting_acceptance", acceptance_id: null }]);
+    });
     expect(
       (
         await saveProjectSchedules("rah:wire-observer", [
