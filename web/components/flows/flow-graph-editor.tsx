@@ -42,6 +42,7 @@ import {
   ReactFlow,
   useEdgesState,
   useNodesState,
+  useReactFlow,
 } from "@xyflow/react";
 
 import { FlowNodeBody } from "@/components/board/flow-graph-view";
@@ -381,6 +382,25 @@ function bumpDeclaredGate(node: Node): Node {
   };
 
   return { ...node, data: nextData as unknown as Record<string, unknown> };
+}
+
+function EditorMiniMap({
+  cameraRef,
+}: {
+  cameraRef: RefObject<Viewport | null>;
+}): ReactElement {
+  const flow = useReactFlow();
+
+  // XYFlow reports minimap transforms as programmatic movement.
+  function rememberCamera(): void {
+    cameraRef.current = flow.getViewport();
+  }
+
+  return (
+    <div onPointerDownCapture={rememberCamera} onWheelCapture={rememberCamera}>
+      <MiniMap pannable zoomable style={{ marginBottom: 44 }} />
+    </div>
+  );
 }
 
 export default function FlowGraphEditor({
@@ -748,9 +768,7 @@ export default function FlowGraphEditor({
             onPaneClick={() => select(null)}
           >
             <Background />
-            {minimapOpen ? (
-              <MiniMap pannable zoomable style={{ marginBottom: 44 }} />
-            ) : null}
+            {minimapOpen ? <EditorMiniMap cameraRef={viewportCamera} /> : null}
             <GraphViewportControls
               cameraRef={viewportCamera}
               nodes={renderedNodes.map((node) => ({

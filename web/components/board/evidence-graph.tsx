@@ -7,12 +7,17 @@ import type {
 import type { EvidenceGraph as EvidenceGraphData } from "@/lib/queries/evidence-graph";
 import type { EvidenceNodeKind } from "@/lib/queries/evidence-graph";
 import type { Edge, Node, NodeProps, NodeTypes, Viewport } from "@xyflow/react";
-import type { KeyboardEvent as ReactKeyboardEvent, ReactElement } from "react";
+import type {
+  KeyboardEvent as ReactKeyboardEvent,
+  ReactElement,
+  RefObject,
+} from "react";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { Background, Handle, Position, ReactFlow } from "@xyflow/react";
-import { Chip } from "@heroui/react";
+import { XMarkIcon } from "@heroicons/react/24/outline";
+import { Button, Chip } from "@heroui/react";
 
 import {
   artifactKindLabel,
@@ -34,6 +39,8 @@ import "@xyflow/react/dist/style.css";
 export interface EvidenceGraphLabels extends EvidenceTextLabels {
   title: string;
   empty: string;
+  noMatches: string;
+  clearFilters: string;
   openPayload: string;
   payloadGone: string;
   payloadError: string;
@@ -157,25 +164,30 @@ export default function EvidenceGraph({
   graph,
   labels,
 }: EvidenceGraphProps): ReactElement {
-  const router = useRouter();
   const searchParams = useSearchParams();
 
-  const nodeFilter = searchParams.get("node");
-  const kindFilter = searchParams.get("kind");
-  const stateFilter = searchParams.get("state");
+  const nodeFilter = searchParams.get("node") || null;
+  const kindFilter = searchParams.get("kind") || null;
+  const stateFilter = searchParams.get("state") || null;
   const filterKey = JSON.stringify([nodeFilter, kindFilter, stateFilter]);
+  const hasFilters = Boolean(nodeFilter || kindFilter || stateFilter);
+  const hasEvidence = graph.nodes.some((node) => node.kind !== "task-input");
 
   const nodeOptions = useMemo(
-    () => uniq(graph.nodes.map((n) => n.meta.nodeId as string | undefined)),
-    [graph],
+    () =>
+      uniq([
+        nodeFilter,
+        ...graph.nodes.map((node) => node.meta.nodeId as string | undefined),
+      ]),
+    [graph, nodeFilter],
   );
   const kindOptions = useMemo(
-    () => uniq(graph.nodes.map((n) => n.kind)),
-    [graph],
+    () => uniq([kindFilter, ...graph.nodes.map((node) => node.kind)]),
+    [graph, kindFilter],
   );
   const stateOptions = useMemo(
-    () => uniq(graph.nodes.map((n) => n.state)),
-    [graph],
+    () => uniq([stateFilter, ...graph.nodes.map((node) => node.state)]),
+    [graph, stateFilter],
   );
 
   const nodeTypes = useMemo<NodeTypes>(
@@ -206,16 +218,18 @@ export default function EvidenceGraph({
     return { flowNodes: laidOut, flowEdges: fg.edges };
   }, [filtered, openArtifact]);
 
-  const setFilter = useCallback(
-    (key: string, value: string) => {
-      const params = new URLSearchParams(searchParams.toString());
+  function setFilters(
+    changes: Partial<Record<"node" | "kind" | "state", string>>,
+  ): void {
+    // Read the current address so consecutive changes compose before React commits.
+    const url = new URL(window.location.href);
 
-      if (value) params.set(key, value);
-      else params.delete(key);
-      router.push(`?${params.toString()}`);
-    },
-    [router, searchParams],
-  );
+    for (const [key, value] of Object.entries(changes)) {
+      if (value) url.searchParams.set(key, value);
+      else url.searchParams.delete(key);
+    }
+    window.history.pushState(null, "", url);
+  }
 
   const onNodeClick = useCallback(
     (_: unknown, node: Node) => {
@@ -228,26 +242,18 @@ export default function EvidenceGraph({
     [openArtifact],
   );
 
-  // Empty / task-input-only graph → just the empty hint.
-  const meaningful = graph.nodes.filter((n) => n.kind !== "task-input");
-
-  if (meaningful.length === 0) {
-    return (
-      <p
-        className="rounded-[10px] border border-dashed border-line p-6 text-center font-mono text-[12px] text-mute"
-        data-testid="evidence-empty"
-      >
-        {labels.empty}
-      </p>
-    );
-  }
-
   const selectClass =
     "min-h-[30px] rounded-md border border-line bg-paper px-2 font-mono text-[11px] text-ink outline-none focus:border-amber";
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-2">
+      <div
+        className={
+          hasEvidence || hasFilters
+            ? "flex flex-wrap items-center gap-2"
+            : "hidden"
+        }
+      >
         <label className="flex items-center gap-1.5">
           <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-mute">
             {labels.filterNode}
@@ -256,7 +262,7 @@ export default function EvidenceGraph({
             aria-label={labels.filterNode}
             className={selectClass}
             value={nodeFilter ?? ""}
-            onChange={(e) => setFilter("node", e.target.value)}
+            onChange={(event) => setFilters({ node: event.target.value })}
           >
             <option value="">{labels.filterAny}</option>
             {nodeOptions.map((o) => (
@@ -275,7 +281,7 @@ export default function EvidenceGraph({
             aria-label={labels.filterKind}
             className={selectClass}
             value={kindFilter ?? ""}
-            onChange={(e) => setFilter("kind", e.target.value)}
+            onChange={(event) => setFilters({ kind: event.target.value })}
           >
             <option value="">{labels.filterAny}</option>
             {kindOptions.map((o) => (
@@ -294,7 +300,7 @@ export default function EvidenceGraph({
             aria-label={labels.filterState}
             className={selectClass}
             value={stateFilter ?? ""}
-            onChange={(e) => setFilter("state", e.target.value)}
+            onChange={(event) => setFilters({ state: event.target.value })}
           >
             <option value="">{labels.filterAny}</option>
             {stateOptions.map((o) => (
@@ -304,26 +310,35 @@ export default function EvidenceGraph({
             ))}
           </select>
         </label>
+        {hasFilters ? (
+          <Button
+            size="sm"
+            variant="outline"
+            onPress={() => setFilters({ node: "", kind: "", state: "" })}
+          >
+            <XMarkIcon aria-hidden="true" className="size-3" />
+            {labels.clearFilters}
+          </Button>
+        ) : null}
       </div>
 
       <div
-        className="h-[420px] w-full overflow-hidden rounded-[10px] border border-line bg-paper"
+        className={
+          hasEvidence || hasFilters
+            ? "h-[420px] w-full overflow-hidden rounded-[10px] border border-line bg-paper"
+            : "rounded-[10px] border border-dashed border-line font-mono text-[12px]"
+        }
         data-testid="evidence-graph"
       >
-        {flowNodes.length === 0 ? (
-          <p className="p-6 text-center text-mute" data-testid="evidence-empty">
-            {labels.empty}
-          </p>
-        ) : (
-          <EvidenceCanvas
-            key={filterKey}
-            edges={flowEdges}
-            labels={labels}
-            nodeTypes={nodeTypes}
-            nodes={flowNodes}
-            onNodeClick={onNodeClick}
-          />
-        )}
+        <EvidenceResults
+          key={filterKey}
+          edges={flowEdges}
+          emptyMessage={hasFilters ? labels.noMatches : labels.empty}
+          labels={labels}
+          nodeTypes={nodeTypes}
+          nodes={hasEvidence ? flowNodes : []}
+          onNodeClick={onNodeClick}
+        />
       </div>
 
       {payloadArtifactId ? (
@@ -338,22 +353,48 @@ export default function EvidenceGraph({
   );
 }
 
-function EvidenceCanvas({
-  nodes,
-  edges,
-  labels,
-  nodeTypes,
-  onNodeClick,
-}: {
+type EvidenceCanvasProps = {
   nodes: Node[];
   edges: Edge[];
   labels: EvidenceGraphLabels;
   nodeTypes: NodeTypes;
   onNodeClick: (event: unknown, node: Node) => void;
+};
+
+function EvidenceResults({
+  emptyMessage,
+  ...canvas
+}: EvidenceCanvasProps & { emptyMessage: string }): ReactElement {
+  // The filter tuple owns the camera even when live data leaves no nodes to fit.
+  const cameraRef = useRef<Viewport | null>(null);
+
+  if (canvas.nodes.length === 0) {
+    return (
+      <p
+        className="p-6 text-center text-mute"
+        data-testid="evidence-empty"
+        role="status"
+      >
+        {emptyMessage}
+      </p>
+    );
+  }
+
+  return <EvidenceCanvas {...canvas} cameraRef={cameraRef} />;
+}
+
+function EvidenceCanvas({
+  cameraRef,
+  nodes,
+  edges,
+  labels,
+  nodeTypes,
+  onNodeClick,
+}: EvidenceCanvasProps & {
+  cameraRef: RefObject<Viewport | null>;
 }): ReactElement {
   const viewportLabels = useGraphViewportLabels();
   const { resolvedTheme } = useTheme();
-  const cameraRef = useRef<Viewport | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const displayedNodes = useMemo(
     () => nodes.map((node) => ({ ...node, selected: node.id === selectedId })),

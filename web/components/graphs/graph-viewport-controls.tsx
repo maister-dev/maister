@@ -3,6 +3,7 @@
 import type { Viewport } from "@xyflow/react";
 import type { ReactElement, RefObject } from "react";
 
+import { ArrowsPointingOutIcon } from "@heroicons/react/24/outline";
 import {
   ControlButton,
   Controls,
@@ -126,14 +127,7 @@ export function GraphViewportControls({
             fit();
           }}
         >
-          <svg aria-hidden="true" viewBox="0 0 16 16">
-            <path
-              d="M6 2H2v4m8-4h4v4M2 10v4h4m8-4v4h-4"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-            />
-          </svg>
+          <ArrowsPointingOutIcon aria-hidden="true" />
         </ControlButton>
       </Controls>
       {nodes.length > 1 ? (

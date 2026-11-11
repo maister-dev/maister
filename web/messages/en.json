@@ -3177,6 +3177,8 @@
   "evidence": {
     "title": "Evidence graph",
     "empty": "No evidence yet for this run.",
+    "noMatches": "No evidence matches these filters.",
+    "clearFilters": "Clear filters",
     "openPayload": "Artifact payload",
     "payloadGone": "Payload is gone (the backing file was deleted).",
     "payloadError": "Could not load the artifact payload.",

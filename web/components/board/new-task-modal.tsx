@@ -3,12 +3,12 @@
 import type { ProjectFlow } from "@/lib/queries/project";
 import type { ReactElement } from "react";
 
+import { PlusIcon } from "@heroicons/react/24/outline";
 import { Button, Input, Modal } from "@heroui/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { useState, useTransition } from "react";
-import clsx from "clsx";
 
 import { readApiError } from "@/lib/api-error";
 
@@ -106,17 +106,7 @@ export function NewTaskModal({
         className="inline-flex items-center gap-1.5 rounded-lg border border-amber bg-amber px-3 py-[7px] font-mono text-[11px] font-semibold tracking-[0.02em] text-white shadow-[0_6px_18px_-8px_var(--amber)] hover:bg-amber-2"
         type="button"
       >
-        <svg
-          aria-hidden="true"
-          className="h-3 w-3"
-          fill="none"
-          stroke="currentColor"
-          strokeLinecap="round"
-          strokeWidth="1.8"
-          viewBox="0 0 16 16"
-        >
-          <path d="M8 3v10M3 8h10" />
-        </svg>
+        <PlusIcon aria-hidden="true" className="size-3" />
         {labels.trigger}
       </Button>
 
@@ -211,25 +201,25 @@ export function NewTaskModal({
             </Modal.Body>
 
             <Modal.Footer className="flex shrink-0 items-center justify-end gap-2 border-t border-line px-5 py-4">
-              <button
+              <Button
                 className="rounded-lg border border-line bg-paper px-3.5 py-2 font-mono text-[11px] font-semibold tracking-[0.02em] text-mute hover:border-mute hover:text-ink-2"
-                disabled={busy}
+                isDisabled={busy}
+                size="sm"
                 type="button"
-                onClick={() => setOpen(false)}
+                variant="outline"
+                onPress={() => setOpen(false)}
               >
                 {labels.cancel}
-              </button>
-              <button
-                className={clsx(
-                  "rounded-lg border border-amber bg-amber px-3.5 py-2 font-mono text-[11px] font-semibold tracking-[0.02em] text-white hover:bg-amber-2",
-                  disabled && "opacity-60",
-                )}
-                disabled={disabled}
+              </Button>
+              <Button
+                className="rounded-lg border border-amber bg-amber px-3.5 py-2 font-mono text-[11px] font-semibold tracking-[0.02em] text-white hover:bg-amber-2"
+                isDisabled={disabled}
+                size="sm"
                 type="button"
-                onClick={() => void submit()}
+                onPress={() => void submit()}
               >
                 {labels.create}
-              </button>
+              </Button>
             </Modal.Footer>
           </Modal.Dialog>
         </Modal.Container>

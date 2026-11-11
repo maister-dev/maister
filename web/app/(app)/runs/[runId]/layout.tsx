@@ -457,6 +457,8 @@ export default async function RunDetailLayout({
   const evidenceLabels: EvidenceGraphLabels = {
     title: tEvidence("title"),
     empty: tEvidence("empty"),
+    noMatches: tEvidence("noMatches"),
+    clearFilters: tEvidence("clearFilters"),
     openPayload: tEvidence("openPayload"),
     payloadGone: tEvidence("payloadGone"),
     payloadError: tEvidence("payloadError"),

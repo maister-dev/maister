@@ -75,7 +75,7 @@ test("UX-02A/B New task traps focus and retains the draft after failure", async 
   await page.goto(`/projects/${projectSlug}`);
   const opener = page.getByRole("button", { name: "New task", exact: true });
 
-  await opener.click();
+  await opener.press("Enter");
 
   const dialog = page.getByRole("dialog", { name: /new task|create task/i });
   const titleInput = dialog.getByRole("textbox").first();
@@ -115,13 +115,31 @@ test("UX-02A/B New task traps focus and retains the draft after failure", async 
   await expect(opener).toBeFocused();
   await opener.click();
   await expect(titleInput).toHaveValue(title);
+  const releaseFailure = Promise.withResolvers<void>();
+  const posted = page.waitForRequest(
+    (request) => request.url().endsWith(url) && request.method() === "POST",
+  );
+
   await page.route(
     url,
-    (route) =>
-      route.fulfill({ status: 503, json: { code: "EXECUTOR_UNAVAILABLE" } }),
+    async (route) => {
+      await releaseFailure.promise;
+      await route.fulfill({
+        status: 503,
+        json: { code: "EXECUTOR_UNAVAILABLE" },
+      });
+    },
     { times: 1 },
   );
-  await submit.click();
+  try {
+    await submit.press("Enter");
+    await posted;
+    await expect(submit).toBeDisabled();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeVisible();
+  } finally {
+    releaseFailure.resolve();
+  }
   await expect(dialog.getByRole("alert")).toBeVisible();
   await expect(prompt).toHaveValue("Describe the requested change.");
   const created = page.waitForResponse(
@@ -129,7 +147,7 @@ test("UX-02A/B New task traps focus and retains the draft after failure", async 
       response.url().endsWith(url) && response.request().method() === "POST",
   );
 
-  await submit.click();
+  await submit.press("Enter");
   expect((await created).status()).toBe(201);
   await expect(dialog).toHaveCount(0);
   await expect(page.getByText(title, { exact: true }).first()).toBeVisible();

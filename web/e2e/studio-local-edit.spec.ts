@@ -779,10 +779,12 @@ test("UX-03A/B Fit View and keyboard location keep eleven editor nodes reachable
   test.setTimeout(120_000);
   const repo = buildPackageRepo();
   const packagePath = join(repo, "packages", RUN_TAG);
-  const nodes = Array.from(
-    { length: 11 },
-    (_, i) =>
-      `  - id: step-${i}\n    type: cli\n    action:\n      command: echo step\n    transitions:\n      success: ${i < 10 ? `step-${i + 1}` : "done"}`,
+  const nodeIds = Array.from({ length: 11 }, (_, i) =>
+    i === 10 ? "zoom-destination" : `step-${i}`,
+  );
+  const nodes = nodeIds.map(
+    (id, i) =>
+      `  - id: ${id}\n    type: cli\n    action:\n      command: echo step\n    transitions:\n      success: ${nodeIds[i + 1] ?? "done"}`,
   );
 
   writeFileSync(
@@ -827,7 +829,7 @@ test("UX-03A/B Fit View and keyboard location keep eleven editor nodes reachable
     });
 
   await expect.poll(fullyVisible).toBe(11);
-  for (const id of ["step-0", "step-10"]) {
+  for (const id of ["zoom-destination", "step-0"]) {
     await canvas.locator(`.react-flow__node[data-id="${id}"]`).click();
     await expect(page.getByTestId("node-side-form")).toBeVisible();
   }
@@ -837,13 +839,37 @@ test("UX-03A/B Fit View and keyboard location keep eleven editor nodes reachable
 
   await locator.focus();
   await expect(locator).toBeFocused();
-  await locator.selectOption("step-10");
+  await locator.press("z");
   const transform = canvas.locator(".react-flow__viewport");
 
   await expect(transform).toHaveAttribute("style", /scale\(0\.95\)/);
-  await expect(page.getByTestId("node-side-form")).toBeVisible();
+  await expect(page.getByTestId("node-side-form")).toContainText(
+    "zoom-destination · cli",
+  );
   await page.setViewportSize({ width: 1250, height: 850 });
   await expect(transform).toHaveAttribute("style", /scale\(0\.95\)/);
   await controls.click();
   await expect.poll(fullyVisible).toBe(11);
+
+  await canvas.getByRole("button", { name: /minimap/i }).click();
+  await canvas.locator(".react-flow__minimap").hover();
+  const overview = await transform.getAttribute("style");
+
+  await page.mouse.wheel(0, -200);
+  await expect(transform).not.toHaveAttribute("style", overview!);
+  const minimapCamera = await transform.getAttribute("style");
+  const width = await canvas.evaluate((el) => el.clientWidth);
+
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await expect
+    .poll(() => canvas.evaluate((el) => el.clientWidth))
+    .toBeLessThan(width);
+  // Allow the canvas ResizeObserver and the viewport effect to settle.
+  await canvas.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+  );
+  await expect(transform).toHaveAttribute("style", minimapCamera!);
 });
