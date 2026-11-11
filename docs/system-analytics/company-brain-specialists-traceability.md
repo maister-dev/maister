@@ -54,7 +54,7 @@
 | EDGE-CBA-05 | [specialist-assignments](./specialist-assignments.md) | T25 | `IT-CBA-06` — `web/lib/specialist-assignments/__tests__/delivery.integration.test.ts` (web integration) | Implemented |
 | CBC-01 | [specialist-cooperation](./specialist-cooperation.md) | T27,T28 | `IT-CBC-01` — `web/lib/agents/__tests__/company-agent-context.integration.test.ts` (native Web and controlled execution-host integration) | Implemented |
 | CBC-02 | [specialist-cooperation](./specialist-cooperation.md) | T27,T29 | `IT-CBC-02` — `web/lib/specialist-assignments/__tests__/cooperation.integration.test.ts` (web integration) | Planned |
-| CBC-03 | [specialist-cooperation](./specialist-cooperation.md) | T18,T29 | `IT-CBC-03` — `web/lib/specialist-assignments/__tests__/recovery.integration.test.ts` (web integration) | Planned |
+| CBC-03 | [specialist-cooperation](./specialist-cooperation.md) | T18,T29 | `IT-CBC-03` — `web/lib/agents/__tests__/company-agent-context.integration.test.ts` (placement handoff qualified; business ownership and replacement recovery remain open) | Planned |
 | CBC-04 | [specialist-cooperation](./specialist-cooperation.md) | T28 | `IT-CBC-04` — `web/lib/agents/__tests__/company-agent-context.integration.test.ts` (live child clarification, result-only Flow continuation and exact work review) | Implemented |
 | CBC-05 | [specialist-cooperation](./specialist-cooperation.md) | T29,T30 | `IT-CBC-05` — `web/lib/specialist-assignments/__tests__/recovery.integration.test.ts` (web integration) | Planned |
 | EDGE-CBC-01 | [specialist-cooperation](./specialist-cooperation.md) | T27,T29 | `IT-CBC-02` — `web/lib/specialist-assignments/__tests__/cooperation.integration.test.ts` (web integration) | Planned |

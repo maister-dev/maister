@@ -6581,8 +6581,9 @@ paths:
         reviewed and terminal executions cannot write. The streamed body is bounded to 32 KiB; exact context
         and input CAS, explicit supersession and content-guarded replay apply. Authorship comes from the actual
         Run/node or personal user. New context inherits the complete consuming Run source capture even when
-        citations are omitted. Model actor/epoch fields and work acceptance refuse. Current business-owner
-        fencing is a subsequent recovery integration; ownership epoch remains null. Required token audit,
+        citations are omitted. A placed execution records its current executionEpoch. Replaced credentials
+        and expired placement leases cannot append context. Actor and epoch fields are server-owned.
+        Work decisions use their own route. Required token audit,
         private no-store responses and external CONFIG/JSON failures as 422 apply.
       x-implementation-status: Implemented
       x-required-scope: assignments:update
@@ -15762,6 +15763,11 @@ components:
                 minimum: 0
                 exclusiveMinimum: true
                 maximum: 9007199254740991
+              executionEpoch:
+                type: integer
+                minimum: 1
+                maximum: 2147483647
+                description: Server-recorded placement epoch of the originating Run when available.
             required:
               - entry
               - actor

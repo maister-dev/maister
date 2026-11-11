@@ -250,6 +250,13 @@ retained company source identity survives catalog FK removal.
 
 ### Ownership, rework and acceptance
 
+Native execution mutations check the current placement and its lease. The
+placement handoff retires the old Run's native mutation credentials in the
+same transaction. Context revisions record the originating Run's
+`executionEpoch` when available, and exact replay retains the original epoch.
+Historical revisions without a placement witness stay readable. The separate
+business-owner claim and replacement recovery remain open.
+
 Assignment executor lease is 120 seconds, renewed every 40 seconds by one fenced owner; each claim/renew/write checks current epoch, owner ID and fresh expiry in a transaction. A stable assignment-row CAS increments epoch when replacing an owner. Execution-host assignment epoch remains a separate lower boundary. Current permissions are checked in addition to both fences. A stale owner yields with a typed conflict; it cannot finalize another run's current work or classify itself as a new failure.
 
 Acceptance stores responsible server principal, exact input/work/result revision, original evidence refs, limitations and verification decision. Schema validity, child Done or process exit alone cannot accept work. Agent children use supported existing message/rework. Flow children do not gain an unsupported message mutation: work rework creates a linked governed continuation, preserving the previous result and effect receipts. Rework references the new expected input revision and consumes remaining assignment/ancestor budget. Completed external effects are adopted as evidence, not replayed.

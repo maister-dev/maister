@@ -10744,6 +10744,7 @@ export const specialistContextRevisions = pgTable(
       .notNull(),
     actor: jsonb("actor").$type<KnowledgeAttribution>().notNull(),
     ownerEpoch: bigint("owner_epoch", { mode: "number" }),
+    executionEpoch: integer("execution_epoch"),
     principalKey: text("principal_key").notNull(),
     requestKey: text("request_key").notNull(),
     requestDigest: text("request_digest").notNull(),
@@ -10778,6 +10779,10 @@ export const specialistContextRevisions = pgTable(
     actor: check(
       "specialist_context_actor_check",
       sql`(${specialistActorShape(t.actor)} AND (${t.actor}->>'kind'<>'user' OR ${t.ownerEpoch} IS NULL)) IS TRUE`,
+    ),
+    executionEpochShape: check(
+      "specialist_context_execution_epoch_check",
+      sql`(${t.executionEpoch} IS NULL OR (${t.actor}->>'kind'='agent' AND ${t.executionEpoch}>0)) IS TRUE`,
     ),
     snapshot: check(
       "specialist_context_snapshot_check",

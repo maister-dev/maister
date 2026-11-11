@@ -212,12 +212,13 @@ async function decideWork(
       assignmentId,
       decision.inputRevision,
     );
-    const authority = await authorizeAssignmentWorkAcceptance(
-      tx,
-      resolved,
-      assignment.owner,
-      retainedInput.snapshot.authoritySnapshot.executionPolicy,
-    );
+    const { authority, executionEpoch } =
+      await authorizeAssignmentWorkAcceptance(
+        tx,
+        resolved,
+        assignment.owner,
+        retainedInput.snapshot.authoritySnapshot.executionPolicy,
+      );
     const [work] = (
       await tx.execute(sql`
       SELECT revision,input_revision,child_run_id,parent_run_id,actor->>'id' AS origin_role,
@@ -354,6 +355,7 @@ async function decideWork(
           actor: authority.actor,
           introducedRevision: contextRevision,
           ownerEpoch: null,
+          ...(executionEpoch === null ? {} : { executionEpoch }),
         },
       ],
     });
@@ -363,6 +365,7 @@ async function decideWork(
       baseRevision: assignment.contextRevision,
       snapshot,
       actor: authority.actor,
+      executionEpoch,
       sourceRestrictions: restrictionsForKnowledgeAccess(access),
       requestKey: `${decision.decision}-${id}`,
       requestDigest,

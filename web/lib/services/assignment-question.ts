@@ -184,7 +184,9 @@ async function persistAssignmentQuestion(
     assignmentId,
     Number(head.input_revision),
   );
-  const actor = await authorizeAssignmentContextUpdate(
+  const {
+    authority: { actor },
+  } = await authorizeAssignmentContextUpdate(
     tx,
     resolved,
     knowledgeOwner(head),

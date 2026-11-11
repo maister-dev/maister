@@ -1933,6 +1933,13 @@
       "when": 1794606477982,
       "tag": "0279_operational_evidence_contract",
       "breakpoints": true
+    },
+    {
+      "idx": 280,
+      "version": "7",
+      "when": 1794606477983,
+      "tag": "0280_specialist_context_owner_fence",
+      "breakpoints": true
     }
   ]
 }

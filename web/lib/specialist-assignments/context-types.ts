@@ -74,6 +74,7 @@ export const assignmentContextItemSchema = z
     actor: knowledgeActorSchema,
     introducedRevision: knowledgeRevisionSchema,
     ownerEpoch: z.number().int().positive().safe().nullable(),
+    executionEpoch: knowledgeRevisionSchema.optional(),
   })
   .strict();
 export const assignmentContextSnapshotSchema = z

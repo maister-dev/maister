@@ -3230,6 +3230,7 @@ table specialist_context_revisions {
   source_restrictions jsonb [not null]
   actor jsonb [not null]
   owner_epoch bigint
+  execution_epoch integer
   principal_key text [not null]
   request_key text [not null]
   request_digest text [not null]
@@ -3239,6 +3240,7 @@ table specialist_context_revisions {
   indexes {
     (assignment_id, revision) [pk]
     (assignment_id, principal_key, request_key) [name: 'specialist_context_request_uq', unique]
+
 
 
 

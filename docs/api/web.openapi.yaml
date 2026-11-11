@@ -38402,6 +38402,11 @@ components:
                 minimum: 0
                 exclusiveMinimum: true
                 maximum: 9007199254740991
+              executionEpoch:
+                type: integer
+                minimum: 1
+                maximum: 2147483647
+                description: Server-recorded placement epoch of the originating Run when available.
             required:
               - entry
               - actor

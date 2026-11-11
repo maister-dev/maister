@@ -82,6 +82,10 @@ import * as agentLaunch from "../launch";
 import { startAgentContinuationWorker } from "../continuation-worker";
 import { getCompanyAgentRunHistory } from "../activity-queries";
 
+import {
+  mintAssignment,
+  releaseAssignmentForRun,
+} from "@/lib/execution-host/assignments";
 import { validateOperationalEvidenceReferences } from "@/lib/run-results/operational-evidence";
 import { decideAgentResult } from "@/lib/run-results/agent-result";
 import * as flowRunner from "@/lib/flows/runner";
@@ -457,6 +461,10 @@ beforeAll(async () => {
   );
   await writeFile(
     join(source, "maister-agents/context-writer.md"),
+    primarySource,
+  );
+  await writeFile(
+    join(source, "maister-agents/owner-fence-observer.md"),
     primarySource,
   );
   await writeFile(
@@ -10731,6 +10739,135 @@ it("IT-CBO-08 refuses an otherwise valid observation when the exact company inpu
     ],
   });
   await revokeAgentRunTokensForRun(appointment.runId, database.db);
+});
+
+it("IT-CBC-03 fences a company context writer at execution ownership handoff and preserves committed work", async () => {
+  const db: Db = database.db;
+  const roleId = "rah:owner-fence-observer";
+  const appointment = await reserveContextFixture(roleId, [
+    "assignments:read",
+    "assignments:update",
+  ]);
+  const grants = await createCompanyGrants(db, administratorId, {
+    principalKind: "agent",
+    principalId: roleId,
+    actions: ["assignments:update"],
+    idempotencyKey: randomUUID(),
+  });
+  const grant = grants.page.items.find(
+    (item) => item.action === "assignments:update",
+  )!;
+  const { hostId } = await fakeExecutionHosts(db);
+  const url = `http://localhost/api/v1/ext/specialist-assignments/${appointment.assignmentId}/context`;
+  const moveOwner = (reason: "launch" | "recover") =>
+    db.transaction((tx) =>
+      mintAssignment(tx, { runId: appointment.runId, hostId, reason }),
+    );
+  const mintCredential = () =>
+    issueCompanyAgentRunToken({ db, runId: appointment.runId });
+  const update = (revision: number, id: string) => ({
+    expectedRevision: revision,
+    expectedInputRevision: 1,
+    idempotencyKey: `owner-fence-${id}`,
+    updates: [
+      {
+        id,
+        kind: "decision",
+        state: "resolved",
+        text: "Keep the verified observation.",
+        references: [],
+      },
+    ],
+  });
+  const patch = (secret: string, body: ReturnType<typeof update>) =>
+    externalContextPatch(
+      new NextRequest(url, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${secret}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      }),
+      { params: Promise.resolve({ assignmentId: appointment.assignmentId }) },
+    );
+
+  try {
+    const before = await moveOwner("launch");
+    const original = await mintCredential();
+    const first = await patch(original.secret, update(0, "first-observation"));
+
+    expect(first.status).toBe(200);
+    const after = await moveOwner("recover");
+    const continuation = update(1, "second-observation");
+    const stale = await patch(original.secret, continuation);
+
+    expect(stale.status).toBe(401);
+    const owner = await mintCredential();
+    const replay = await patch(owner.secret, update(0, "first-observation"));
+
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({
+      revision: 1,
+      entries: [{ ownerEpoch: null, executionEpoch: before.epoch }],
+    });
+    const recovered = await patch(owner.secret, continuation);
+
+    expect(recovered.status).toBe(200);
+    expect(await recovered.json()).toMatchObject({
+      revision: 2,
+      entries: [
+        {
+          entry: { id: "first-observation" },
+          ownerEpoch: null,
+          executionEpoch: before.epoch,
+        },
+        {
+          entry: { id: "second-observation" },
+          ownerEpoch: null,
+          executionEpoch: after.epoch,
+        },
+      ],
+    });
+    await expect(
+      database.pool.query(
+        `INSERT INTO specialist_context_revisions
+        (assignment_id,revision,base_revision,input_revision,context,source_restrictions,actor,execution_epoch,principal_key,request_key,request_digest,content_digest)
+        SELECT assignment_id,3,2,input_revision,context,source_restrictions,actor,$2,principal_key,'forged-old-epoch',request_digest,content_digest
+        FROM specialist_context_revisions WHERE assignment_id=$1 AND revision=2`,
+        [appointment.assignmentId, before.epoch],
+      ),
+    ).rejects.toMatchObject({
+      constraint: "specialist_context_execution_epoch_required",
+    });
+    await database.pool.query(
+      "UPDATE execution_assignments SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+      [after.id],
+    );
+    const expired = await patch(owner.secret, update(2, "expired-observation"));
+
+    expect(expired.status).toBe(409);
+    expect(await expired.json()).toMatchObject({
+      details: { reason: "assignment_fenced" },
+    });
+    await expect(
+      getSpecialistAssignmentTokenContext(
+        db,
+        owner.tokenId,
+        appointment.assignmentId,
+      ),
+    ).resolves.toMatchObject({ revision: 2 });
+  } finally {
+    await db.transaction((tx) =>
+      releaseAssignmentForRun(tx, appointment.runId, "test_finished"),
+    );
+    await revokeAgentRunTokensForRun(appointment.runId, db);
+    await revokeCompanyGrant(db, administratorId, grant.id, {
+      expectedRevision: grant.revision,
+      reason: "Release ownership qualification authority",
+      idempotencyKey: randomUUID(),
+    });
+  }
 });
 
 it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains exact results through Flow rework and acceptance", async () => {

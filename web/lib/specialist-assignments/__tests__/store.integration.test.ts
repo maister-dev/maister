@@ -2772,6 +2772,9 @@ it("IT-CBX-01 context upgrade preserves populated input/attribution, rolls back 
         )
       ).rows,
     ).toEqual([{ count: 0 }]);
+    await legacy.db.transaction((tx) =>
+      applyMainMigration(tx, "0280_specialist_context_owner_fence"),
+    );
     const context = await appendSpecialistAssignmentContext(
       legacy.db,
       requesterId,
@@ -3070,6 +3073,7 @@ it("IT-CBX-01 logical-work upgrade preserves old intake and opaque child labels 
       await applyMainMigration(tx, "0277_specialist_assignment_acceptance");
       await applyMainMigration(tx, "0278_specialist_work_rejection");
       await applyMainMigration(tx, "0279_operational_evidence_contract");
+      await applyMainMigration(tx, "0280_specialist_context_owner_fence");
     });
     expect(
       (
