@@ -1870,6 +1870,13 @@
       "when": 1794606477973,
       "tag": "0270_specialist_work_witness_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 271,
+      "version": "7",
+      "when": 1794606477974,
+      "tag": "0271_specialist_company_child_reservation",
+      "breakpoints": true
     }
   ]
 }

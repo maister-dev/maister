@@ -11,7 +11,7 @@ import type {
   RunResultInvalidReason,
 } from "@/lib/run-results/types";
 
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -166,11 +166,20 @@ export type CollectedChild = {
   nativeWorkParentId?: string;
 };
 
+type ChildOwner =
+  | { projectId: string; companyId?: never }
+  | { companyId: string; projectId?: never };
+
+function childOwnerPredicate(owner: ChildOwner) {
+  return owner.companyId === undefined
+    ? eq(runs.projectId, owner.projectId)
+    : and(eq(runs.companyId, owner.companyId), isNull(runs.projectId));
+}
+
 export async function collectChild(
   db: Db,
-  args: {
+  args: ChildOwner & {
     parentRunId: string;
-    projectId: string;
     childRunId: string;
     recipient: KnowledgeRecipient;
   },
@@ -189,7 +198,7 @@ export async function collectChild(
       and(
         eq(runs.id, args.childRunId),
         eq(runs.parentRunId, args.parentRunId),
-        eq(runs.projectId, args.projectId),
+        childOwnerPredicate(args),
       ),
     )) as {
     status: string;
@@ -199,7 +208,7 @@ export async function collectChild(
   }[];
   const run = runRows[0];
 
-  if (!run) {
+  if (!run || (args.companyId !== undefined && !run.nativeWork)) {
     throw new MaisterError(
       "PRECONDITION",
       "run is not a child of the bound orchestrator run",
@@ -316,16 +325,13 @@ function invalidReasonMessage(reason: RunResultInvalidReason): string {
 /** The bound orchestrator's DIRECT children, in insertion order. */
 export async function directChildRunIds(
   db: Db,
-  args: { parentRunId: string; projectId: string },
+  args: ChildOwner & { parentRunId: string },
 ): Promise<string[]> {
   const rows = (await db
     .select({ id: runs.id })
     .from(runs)
     .where(
-      and(
-        eq(runs.parentRunId, args.parentRunId),
-        eq(runs.projectId, args.projectId),
-      ),
+      and(eq(runs.parentRunId, args.parentRunId), childOwnerPredicate(args)),
     )) as { id: string }[];
 
   return rows.map((r) => r.id);

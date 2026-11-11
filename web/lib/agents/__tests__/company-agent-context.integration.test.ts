@@ -38,8 +38,15 @@ import {
   captureCompanyAgentExecution,
 } from "../company-agent-context";
 import { detachCompanySpecialistBinding } from "../company-binding-mutations";
-import { createCompanySpecialistBinding } from "../company-bindings";
+import {
+  createCompanySpecialistBinding,
+  getCompanySpecialistBindingRevision,
+} from "../company-bindings";
 import { resolveInstalledAgentDefinition } from "../effective";
+import {
+  buildCompanyAgentPrompt,
+  loadCompanyAgentSessionContext,
+} from "../company-session-context";
 import {
   agentDefinitionSha256,
   buildAgentActivitySnapshot,
@@ -435,6 +442,10 @@ beforeAll(async () => {
   );
   await writeFile(
     join(source, "maister-agents/project-dispatch-observer.md"),
+    primarySource,
+  );
+  await writeFile(
+    join(source, "maister-agents/company-dispatch-observer.md"),
     primarySource,
   );
   await writeFile(
@@ -10591,8 +10602,11 @@ async function reserveContextFixture(
 }
 
 it("IT-CBC-01 requires current company delegation grants for a repository-free work receipt and replay", async () => {
+  const db: Db = database.db;
   const roleId = "rah:delegating-observer";
+  const receivingRoleId = "rah:company-dispatch-observer";
   const appointment = await reserveContextFixture(roleId, [
+    "knowledge:read",
     "assignments:read",
     "assignments:update",
     "assignments:delegate",
@@ -10603,17 +10617,58 @@ it("IT-CBC-01 requires current company delegation grants for a repository-free w
     appointment.assignmentId,
   );
   const effective = await resolveInstalledAgentDefinition(database.db, {
-    agentId: roleId,
+    agentId: receivingRoleId,
     packageInstallId: assignmentInput.standingDefinition.packageInstallId,
   });
+  const runnerId = randomUUID();
+
+  await database.db.insert(platformAcpRunners).values({
+    id: runnerId,
+    adapter: "claude",
+    capabilityAgent: "claude",
+    model: "native-company-dispatch-fixture",
+    provider: { kind: "anthropic" },
+    readinessStatus: "Ready",
+  });
+  const receiving = await createCompanySpecialistBinding(
+    database.db,
+    userId,
+    receivingRoleId,
+    {
+      owner: { kind: "company", companyId: request.companyId },
+      packageInstallId: effective.packageInstallId,
+      packageRevision: effective.resolvedRevision!,
+      definitionSha256: agentDefinitionSha256(effective.parsed),
+      enabled: true,
+      configuration: {},
+      runnerId,
+      grantActions: ["assignments:read"],
+      idempotencyKey: randomUUID(),
+    },
+  );
+  const reviewed = await getCompanySpecialistBindingRevision(
+    database.db,
+    userId,
+    receivingRoleId,
+    receiving.specialist.bindingId,
+    receiving.specialist.configRevision,
+  );
   const prepared = {
-    objectiveInput: assignmentInput.objectiveInput,
+    objectiveInput: {
+      ...assignmentInput.objectiveInput,
+      objective: "Inspect only the retained health observation",
+      input: "Read this one observation",
+    },
     target: {
       kind: "company_agent" as const,
       companyId: request.companyId,
-      specialistBinding: appointment.snapshot.specialistBinding,
+      specialistBinding: {
+        id: reviewed.bindingId,
+        revision: reviewed.revision,
+        snapshotSha256: reviewed.snapshotDigest,
+      },
       role: {
-        agentId: roleId,
+        agentId: receivingRoleId,
         packageInstallId: effective.packageInstallId,
         packageRevision: effective.resolvedRevision!,
         definitionSha256: agentDefinitionSha256(effective.parsed),
@@ -10631,21 +10686,22 @@ it("IT-CBC-01 requires current company delegation grants for a repository-free w
     },
     sourceRestrictions: [],
   };
+  const workRequest = {
+    tokenId: appointment.credential.tokenId,
+    selector: {
+      schemaVersion: 1 as const,
+      assignmentId: assignment.id,
+      expectedRevision: assignment.revision,
+      inputRevision: assignment.inputRevision,
+      contextRevision: assignment.contextRevision,
+      logicalWorkId: "inspect",
+      workRevision: 1,
+    },
+    prepared,
+  };
   const retain = () =>
     database.db.transaction((tx) =>
-      retainDelegatedWorkInTransaction(tx, {
-        tokenId: appointment.credential.tokenId,
-        selector: {
-          schemaVersion: 1,
-          assignmentId: assignment.id,
-          expectedRevision: assignment.revision,
-          inputRevision: assignment.inputRevision,
-          contextRevision: assignment.contextRevision,
-          logicalWorkId: "inspect",
-          workRevision: 1,
-        },
-        prepared,
-      }),
+      retainDelegatedWorkInTransaction(tx, workRequest),
     );
   const userGrant = await createCompanyGrants(database.db, administratorId, {
     principalKind: "user",
@@ -10714,6 +10770,85 @@ it("IT-CBC-01 requires current company delegation grants for a repository-free w
       ).toEqual([
         { company_id: request.companyId, project_id: null, task_id: null },
       ]);
+      const { reserveCompanyDelegatedAgentRun } =
+        await import("../company-agent-launch");
+      const { hosts } = await fakeExecutionHosts(database.db);
+      const dispatch = () =>
+        reserveCompanyDelegatedAgentRun(database.db, workRequest, hosts);
+
+      await expect(dispatch()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+      const { rows: missingChild } = await database.pool.query(
+        "SELECT id FROM runs WHERE id=$1",
+        [receipt.work.reservedRunId],
+      );
+
+      expect(missingChild).toEqual([]);
+      const receivingGrants = await createCompanyGrants(
+        database.db,
+        administratorId,
+        {
+          principalKind: "agent",
+          principalId: receivingRoleId,
+          actions: ["assignments:read"],
+          idempotencyKey: randomUUID(),
+        },
+      );
+      const receivingGrant = receivingGrants.page.items.find(
+        (grant) => grant.action === "assignments:read",
+      )!;
+      const first = await dispatch();
+
+      expect(first).toEqual({
+        childRunId: receipt.work.reservedRunId,
+        status: "Pending",
+      });
+      await expect(dispatch()).resolves.toEqual(first);
+      const loadChild = () =>
+        db.transaction((tx) =>
+          loadCompanyAgentSessionContext(tx, first.childRunId),
+        );
+      const context = await loadChild();
+
+      expect(buildCompanyAgentPrompt(context)).toContain(
+        prepared.objectiveInput.objective,
+      );
+      expect(buildCompanyAgentPrompt(context)).not.toContain(
+        assignmentInput.objectiveInput.objective,
+      );
+      expect(context.run).toMatchObject({
+        agentId: receivingRoleId,
+        companyId: request.companyId,
+        projectId: null,
+        taskId: null,
+        parentRunId: appointment.runId,
+      });
+      await expect(
+        db.transaction((tx) =>
+          tx.execute(sql`
+        INSERT INTO runs SELECT (jsonb_populate_record(NULL::runs,to_jsonb(child)
+          || jsonb_build_object('id',${randomUUID()}::text))).*
+        FROM runs child WHERE child.id=${first.childRunId}
+      `),
+        ),
+      ).rejects.toMatchObject({
+        cause: {
+          code: "23514",
+          constraint: "runs_company_execution_reference_check",
+        },
+      });
+      await expect(
+        collectChild(db, {
+          companyId: request.companyId,
+          parentRunId: appointment.runId,
+          childRunId: first.childRunId,
+          recipient: { kind: "token", tokenId: appointment.credential.tokenId },
+        }),
+      ).resolves.toMatchObject({
+        result: { childRunId: first.childRunId, status: "Pending" },
+      });
+      await revoke(receivingGrant);
+      await expect(loadChild()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+      await expect(dispatch()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     } finally {
       await revoke(professional);
     }

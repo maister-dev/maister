@@ -88,7 +88,8 @@ export async function loadCompanyAgentSessionContext(
     );
   const input = decodeAssignmentInput(row);
   const effective = frozenOperationalDefinition(run);
-  const standing = input.snapshot.standingDefinition;
+  const standing =
+    owner.delegated?.binding ?? input.snapshot.standingDefinition;
 
   if (
     !effective ||
@@ -168,7 +169,9 @@ export async function loadCompanyAgentSessionContext(
   await assertNativeRunKnowledgeInputsInTransaction(tx, runId);
   let access: KnowledgeAccessWalk = { visited: [], remaining: 256 };
 
-  for (const reference of input.snapshot.objectiveInput.inputRefs)
+  for (const reference of (
+    owner.delegated?.definition.objectiveInput ?? input.snapshot.objectiveInput
+  ).inputRefs)
     access = await inspectKnowledgeEvidenceReference(
       tx,
       { kind: "execution", runId, nodeAttemptId: null },
@@ -194,7 +197,8 @@ export function buildCompanyAgentPrompt(
   context: CompanyAgentSessionContext,
 ): string {
   const input = context.input.snapshot;
-  const objective = input.objectiveInput;
+  const objective =
+    context.owner.delegated?.definition.objectiveInput ?? input.objectiveInput;
   const sections = [
     context.effective.parsed.prompt.trim(),
     "## Company assignment scope\n" +
@@ -223,7 +227,9 @@ export function buildCompanyAgentPrompt(
     "## Retained execution policy\nThis historical snapshot does not grant current permissions. Platform authorization and human approvals govern every action.\n" +
       JSON.stringify(input.authoritySnapshot.executionPolicy),
   ];
-  const recurring = scheduledRequestBlock(input.scheduledRequest);
+  const recurring = context.owner.delegated
+    ? null
+    : scheduledRequestBlock(input.scheduledRequest);
 
   if (recurring) sections.push(recurring);
 

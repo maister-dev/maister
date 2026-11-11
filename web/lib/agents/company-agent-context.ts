@@ -101,60 +101,12 @@ export async function prepareCompanySpecialistContext(
     userId,
     request,
   );
-  const bindingHead = decodeCompanyBindingHead(
-    (
-      await tx.execute(
-        sql`SELECT * FROM company_specialist_bindings WHERE id=${request.bindingId} AND company_id=${request.companyId} FOR SHARE`,
-      )
-    ).rows[0],
-  );
-
-  if (bindingHead.revision !== request.bindingRevision)
-    throw new MaisterError(
-      "CONFLICT",
-      "Specialist configuration changed; inspect its current revision before admission",
-      { details: { reason: "company_binding_revision_conflict" } },
-    );
-  const binding = await loadCompanyBindingRevision(
+  const { binding, effective } = await prepareCompanySpecialistRole(
     tx,
-    bindingHead,
-    request.bindingRevision,
+    request,
   );
-
-  if (!binding.snapshot.enabled || binding.snapshot.detachedAt !== null)
-    throw new MaisterError(
-      "PRECONDITION",
-      "Company specialist is disabled or retired",
-      { details: { reason: "company_binding_disabled" } },
-    );
-
-  const catalog = (
-    await tx.execute(
-      sql`SELECT enabled,quarantined_at FROM agents WHERE id=${bindingHead.agentId} FOR SHARE`,
-    )
-  ).rows[0];
-
-  if (!catalog || catalog.enabled !== true || catalog.quarantined_at !== null)
-    throw new MaisterError(
-      "PRECONDITION",
-      "Specialist catalog identity is unavailable, disabled or quarantined",
-      { details: { reason: "company_agent_unavailable" } },
-    );
-  const effective = await resolveInstalledAgentDefinition(tx, {
-    agentId: bindingHead.agentId,
-    packageInstallId: binding.snapshot.packageInstallId,
-  });
   const definition = effective.parsed;
 
-  if (
-    effective.resolvedRevision !== binding.snapshot.packageRevision ||
-    agentDefinitionSha256(definition) !== binding.snapshot.definitionSha256
-  )
-    throw new MaisterError(
-      "PRECONDITION",
-      "The installed specialist does not match its reviewed package and definition witness",
-      { details: { reason: "company_agent_pin_changed" } },
-    );
   if (!definition.triggers.includes(request.triggerSource))
     throw new MaisterError(
       "CONFIG",
@@ -225,6 +177,72 @@ export async function prepareCompanySpecialistContext(
     effective,
     authority,
   };
+}
+
+/** Resolve the current reviewed installed role independently of the work owner. */
+export async function prepareCompanySpecialistRole(
+  tx: SqlTransaction,
+  request: Pick<
+    CompanyAgentContextInput,
+    "companyId" | "bindingId" | "bindingRevision"
+  >,
+): Promise<Pick<CompanySpecialistContext, "binding" | "effective">> {
+  const bindingHead = decodeCompanyBindingHead(
+    (
+      await tx.execute(
+        sql`SELECT * FROM company_specialist_bindings WHERE id=${request.bindingId} AND company_id=${request.companyId} FOR SHARE`,
+      )
+    ).rows[0],
+  );
+
+  if (bindingHead.revision !== request.bindingRevision)
+    throw new MaisterError(
+      "CONFLICT",
+      "Specialist configuration changed; inspect its current revision before admission",
+      { details: { reason: "company_binding_revision_conflict" } },
+    );
+  const binding = await loadCompanyBindingRevision(
+    tx,
+    bindingHead,
+    request.bindingRevision,
+  );
+
+  if (!binding.snapshot.enabled || binding.snapshot.detachedAt !== null)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Company specialist is disabled or retired",
+      { details: { reason: "company_binding_disabled" } },
+    );
+
+  const catalog = (
+    await tx.execute(
+      sql`SELECT enabled,quarantined_at FROM agents WHERE id=${bindingHead.agentId} FOR SHARE`,
+    )
+  ).rows[0];
+
+  if (!catalog || catalog.enabled !== true || catalog.quarantined_at !== null)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Specialist catalog identity is unavailable, disabled or quarantined",
+      { details: { reason: "company_agent_unavailable" } },
+    );
+  const effective = await resolveInstalledAgentDefinition(tx, {
+    agentId: bindingHead.agentId,
+    packageInstallId: binding.snapshot.packageInstallId,
+  });
+
+  if (
+    effective.resolvedRevision !== binding.snapshot.packageRevision ||
+    agentDefinitionSha256(effective.parsed) !==
+      binding.snapshot.definitionSha256
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "The installed specialist does not match its reviewed package and definition witness",
+      { details: { reason: "company_agent_pin_changed" } },
+    );
+
+  return { binding, effective };
 }
 
 /** Lock the business owner before any configuration, matching assignment transition order. */
@@ -313,9 +331,14 @@ export async function prepareCompanyAgentContext(
   return context;
 }
 
+export type CompanySpecialistExecutionIdentityInput = Omit<
+  CompanySpecialistContext,
+  "assignment"
+> & { assignment: Pick<SpecialistAssignment, "id" | "revision"> };
+
 /** Shared identity fields are captured from newly prepared server state, never converted from retained v1 bytes. */
 export function captureCompanySpecialistExecutionIdentity(
-  context: CompanySpecialistContext,
+  context: CompanySpecialistExecutionIdentityInput,
 ): Omit<CompanyAgentExecutionSnapshot, "schemaVersion"> {
   return {
     owner: context.owner,
@@ -338,7 +361,7 @@ export function captureCompanySpecialistExecutionIdentity(
 
 /** Capture only validated server identities; do not use this historical receipt to authorize later actions. */
 export function captureCompanyAgentExecution(
-  context: CompanyAgentContext,
+  context: CompanySpecialistExecutionIdentityInput,
 ): CompanyAgentExecutionSnapshot {
   return companyAgentExecutionSnapshotSchema.parse({
     schemaVersion: 1,

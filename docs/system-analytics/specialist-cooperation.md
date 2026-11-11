@@ -110,8 +110,16 @@ workspace-none agent with a required pinned result contract. The server binds
 the Run, source closure and appointment together. The current originating role
 can collect its direct child. An exact nested appointment preserves the
 initiating user’s authority and attributes new work to the executing child
-through the retained source chain. Repository-free company agent and Flow child
-dispatch and positive native message/rework qualification remain open.
+through the retained source chain.
+
+The company reservation service can bind a repository-free standalone agent
+child to exact retained work. It uses the reviewed receiving binding, current
+receiving assignment-read grant, existing Pending lifecycle, and a required
+operational result. The child prompt uses the delegated objective and omits the
+parent’s standing request. The internal collector accepts a company owner and
+applies the same exact originating-role and source checks as project collection.
+Company tool routing, company Flow children and positive native message/rework
+qualification remain open.
 
 ### Decisive execution fences (T27)
 

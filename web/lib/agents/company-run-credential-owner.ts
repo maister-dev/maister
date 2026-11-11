@@ -4,6 +4,8 @@ import type { SQL } from "drizzle-orm";
 import type { SqlTransaction } from "@/lib/db/sql-types";
 import type { CompanyAction, NativeKnowledgeActor } from "@/lib/company/types";
 import type { CompanyExecutionSnapshot } from "./company-execution-types";
+import type { CompanySpecialistBindingSnapshot } from "./company-binding-types";
+import type { AssignmentWorkDefinition } from "@/lib/specialist-assignments/work-types";
 
 import { sql } from "drizzle-orm";
 import pino from "pino";
@@ -16,6 +18,7 @@ import { bindingActionSubsetSchema } from "./company-binding-types";
 import { currentKnowledgeNodeAttemptPolicy } from "@/lib/brain/knowledge-node-policy";
 import { nativeKnowledgeActorSchema } from "@/lib/company/types";
 import { MaisterError } from "@/lib/errors";
+import { assignmentWorkDefinitionSchema } from "@/lib/specialist-assignments/work-types";
 
 const log = pino({
   name: "agents:company-run-authority",
@@ -31,23 +34,46 @@ export type CompanyRunCredentialOwner = Readonly<{
   bindingId: string;
   snapshot: CompanyExecutionSnapshot;
   professionalRole: NativeKnowledgeActor;
+  delegated?: Readonly<{
+    definition: AssignmentWorkDefinition;
+    binding: CompanySpecialistBindingSnapshot;
+  }>;
 }>;
 
 function companyRunOwnerQuery(runId: string): SQL {
   return sql`
-    SELECT execution.run_kind,execution.company_id,execution.source_agent_id,execution.company_execution_snapshot,configuration.snapshot->'grantActions' AS action_limits,jsonb_build_object('schemaVersion',1,'agentId',binding.agent_id,'packageInstallId',package.id,'packageName',package.name,'definitionSha256',configuration.snapshot->>'definitionSha256') AS professional_role
+    SELECT execution.run_kind,execution.company_id,execution.source_agent_id,execution.company_execution_snapshot,configuration.snapshot->'grantActions' AS action_limits,jsonb_build_object('schemaVersion',1,'agentId',binding.agent_id,'packageInstallId',package.id,'packageName',package.name,'definitionSha256',configuration.snapshot->>'definitionSha256') AS professional_role,
+      work.definition AS delegated_definition,configuration.snapshot AS binding_snapshot
     FROM runs execution
     JOIN specialist_run_links link ON link.run_id=execution.id
     JOIN specialist_assignments assignment ON assignment.id=link.assignment_id AND assignment.company_id=execution.company_id AND assignment.project_id IS NULL
     JOIN specialist_input_revisions input ON input.assignment_id=assignment.id AND input.revision=link.input_revision
-    JOIN company_specialist_bindings binding ON binding.id=assignment.specialist_binding_id AND binding.company_id=execution.company_id AND binding.enabled AND binding.detached_at IS NULL
+    LEFT JOIN specialist_work work ON work.id=link.work_id AND work.work_revision=link.work_revision
+      AND work.assignment_id=assignment.id AND work.input_revision=input.revision AND work.input_sha256=input.digest
+      AND work.child_run_id=execution.id AND work.reserved_run_id=execution.id AND work.parent_run_id=execution.parent_run_id
+    JOIN company_specialist_bindings binding ON binding.id=(CASE WHEN link.work_id IS NULL
+      THEN assignment.specialist_binding_id ELSE work.definition->'target'->'specialistBinding'->>'id' END)
+      AND binding.company_id=execution.company_id AND binding.enabled AND binding.detached_at IS NULL
     JOIN company_specialist_binding_revisions configuration ON configuration.binding_id=binding.id AND configuration.revision=binding.revision
     JOIN package_installs package ON package.id=binding.package_install_id AND package.package_status='Installed' AND package.trust_status IN ('trusted','trusted_by_policy')
     JOIN agents catalog ON catalog.id=binding.agent_id AND catalog.enabled AND catalog.quarantined_at IS NULL
     JOIN users principal ON principal.id=execution.company_execution_snapshot->'authority'->'actor'->>'id' AND principal.account_status='active' AND NOT principal.must_change_password
     JOIN company_grants read_grant ON read_grant.company_id=execution.company_id AND read_grant.principal_type='user' AND read_grant.principal_id=principal.id AND read_grant.action='assignments:read' AND read_grant.revoked_at IS NULL
     WHERE execution.id=${runId} AND execution.company_id IS NOT NULL AND execution.project_id IS NULL AND (
-        (execution.run_kind='agent' AND execution.company_execution_snapshot->>'schemaVersion'='1')
+        (execution.run_kind='agent' AND execution.company_execution_snapshot->>'schemaVersion'='1' AND (
+          link.work_id IS NULL OR (link.role='child' AND work.decision_state='open'
+            AND work.definition->'target'->>'kind'='company_agent'
+            AND specialist_run_has_input(execution.id,assignment.id,input.revision,input.digest)
+            AND specialist_work_target_exists(work.definition->'target',execution.company_id,NULL)
+            AND configuration.snapshot->'grantActions' ? 'assignments:read'
+            AND EXISTS (
+              SELECT 1 FROM company_grants receiving_grant
+              WHERE receiving_grant.company_id=execution.company_id AND receiving_grant.principal_type='agent'
+                AND receiving_grant.principal_id=binding.agent_id AND receiving_grant.action='assignments:read'
+                AND receiving_grant.revoked_at IS NULL FOR SHARE
+            )
+          )
+        ))
         OR (execution.run_kind='flow' AND execution.company_execution_snapshot->>'schemaVersion'='2' AND link.role='coordinator'
           AND EXISTS (
             SELECT 1 FROM company_flow_bindings coordinator
@@ -86,6 +112,7 @@ function decodeCompanyRunOwner(
   const professional = nativeKnowledgeActorSchema.safeParse(
     row?.professional_role,
   );
+  let delegated: CompanyRunCredentialOwner["delegated"];
 
   if (
     !row ||
@@ -103,6 +130,21 @@ function decodeCompanyRunOwner(
       "Current company agent runtime authority is unavailable",
       { details: { reason: "company_agent_runtime_unavailable" } },
     );
+  if (row.delegated_definition !== null) {
+    const definition = assignmentWorkDefinitionSchema.safeParse(
+      row.delegated_definition,
+    );
+    const binding = companySpecialistBindingSnapshotSchema.safeParse(
+      row.binding_snapshot,
+    );
+
+    if (!definition.success || !binding.success)
+      throw new MaisterError(
+        "CONFIG",
+        "The exact delegated company role or work definition is invalid",
+      );
+    delegated = { definition: definition.data, binding: binding.data };
+  }
 
   return {
     companyId: snapshot.data.owner.companyId,
@@ -113,6 +155,7 @@ function decodeCompanyRunOwner(
     bindingId: snapshot.data.specialistBinding.id,
     snapshot: snapshot.data,
     professionalRole: professional.data,
+    ...(delegated && { delegated }),
   };
 }
 
