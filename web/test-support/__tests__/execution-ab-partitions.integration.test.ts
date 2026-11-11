@@ -455,6 +455,8 @@ describe("S5.2 production-boot fault partitions", () => {
 
     expect(before.completion_applied_at).toBeNull();
     await events.awaitReached();
+    // More than one receipt reader can notice the lost ACK before Web exits.
+    // Hold all matching probes so none can reconcile ahead of the restart.
     const receiptProbe = proxy!.arm(
       {
         caseId: "P1-ACK-loss-observed",
@@ -462,7 +464,7 @@ describe("S5.2 production-boot fault partitions", () => {
         path: /^\/commands\/[^/]+$/,
         commandId: reached.commandId!,
       },
-      "hold-request",
+      "hold-requests",
     );
 
     ack.cut();
