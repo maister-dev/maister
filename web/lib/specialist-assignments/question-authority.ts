@@ -15,7 +15,7 @@ import {
   readSpecialistAssignmentContextInTransaction,
 } from "./context";
 import {
-  authorizeAssignmentContextUpdate,
+  authorizeRetainedAssignmentQuestion,
   resolveAssignmentContextPrincipal,
 } from "./context-access";
 
@@ -190,7 +190,7 @@ export async function assertPendingAssignmentQuestion(
     subject.sourceRestrictions,
     context.access,
   );
-  await authorizeAssignmentContextUpdate(
+  await authorizeRetainedAssignmentQuestion(
     tx,
     principal,
     knowledgeOwner(head),

@@ -31,6 +31,7 @@ import {
 } from "@/lib/specialist-assignments/question-types";
 import {
   authorizeAssignmentContextUpdate,
+  authorizeRetainedAssignmentQuestion,
   resolveAssignmentContextPrincipal,
 } from "@/lib/specialist-assignments/context-access";
 import {
@@ -184,14 +185,9 @@ async function persistAssignmentQuestion(
     assignmentId,
     Number(head.input_revision),
   );
-  const {
-    authority: { actor },
-  } = await authorizeAssignmentContextUpdate(
-    tx,
-    resolved,
-    knowledgeOwner(head),
-    currentInput.snapshot.authoritySnapshot.executionPolicy,
-  );
+  const actor = resolved.identity.actor;
+  const owner = knowledgeOwner(head);
+  const policy = currentInput.snapshot.authoritySnapshot.executionPolicy;
   const principalKey = contentDigest(actor);
   const requestDigest = contentDigest(input);
   const previous = (
@@ -205,6 +201,7 @@ async function persistAssignmentQuestion(
   if (previous) {
     const subject = decodeAssignmentQuestionSubject(previous.schema);
 
+    await authorizeRetainedAssignmentQuestion(tx, resolved, owner, policy);
     await authorizeSourceRestrictions(
       tx,
       resolved.source,
@@ -234,6 +231,7 @@ async function persistAssignmentQuestion(
       created: false,
     };
   }
+  await authorizeAssignmentContextUpdate(tx, resolved, owner, policy);
   await assertAssignmentQuestionCapacity(tx, runId, assignmentId);
   if (
     Number(head.revision) >= 2147483646 ||

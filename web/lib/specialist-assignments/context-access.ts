@@ -157,27 +157,51 @@ async function authorizeAssignmentExecutionAction(
   executionPolicy: ExecutionPolicy,
   action: "assignments:update" | "assignments:delegate" | "assignments:accept",
 ): Promise<CurrentAssignmentAction> {
-  const { identity } = principal;
-
-  if (identity.kind === "user")
-    return {
-      authority: {
-        ...(await authorizeAssignment(
+  const executionEpoch =
+    principal.identity.kind === "user"
+      ? null
+      : await lockAssignmentExecutionEpoch(
           tx,
-          identity.user.id,
-          owner,
+          principal.identity.actor.runId,
           action,
-          executionPolicy,
-        )),
-        actor: identity.actor,
-      },
-      executionEpoch: null,
-    };
+        );
+  const authority = await authorizeAssignmentActionGrants(
+    tx,
+    principal,
+    owner,
+    executionPolicy,
+    action,
+  );
+
+  return { authority, executionEpoch };
+}
+
+/** The retained question owns checkpoint activation and replay after placement is released. */
+export async function authorizeRetainedAssignmentQuestion(
+  tx: SqlTransaction,
+  principal: ResolvedAssignmentContextPrincipal,
+  owner: Owner,
+  policy: ExecutionPolicy,
+): Promise<void> {
+  await authorizeAssignmentActionGrants(
+    tx,
+    principal,
+    owner,
+    policy,
+    "assignments:update",
+  );
+}
+
+async function lockAssignmentExecutionEpoch(
+  tx: SqlTransaction,
+  runId: string | null,
+  action: "assignments:update" | "assignments:delegate" | "assignments:accept",
+): Promise<number | null> {
   const active = (
     await tx.execute(
       sql`SELECT execution_assignment_id,execution_assignment_id IS NULL AND EXISTS (
         SELECT 1 FROM execution_assignments placement WHERE placement.run_id=runs.id
-      ) AS lost_execution_owner FROM runs WHERE id=${identity.actor.runId}
+      ) AS lost_execution_owner FROM runs WHERE id=${runId}
         AND ${
           action === "assignments:accept"
             ? sql`status='Running'`
@@ -192,22 +216,46 @@ async function authorizeAssignmentExecutionAction(
       "UNAUTHORIZED",
       "Assignment mutation requires the current active execution",
     );
-  let executionEpoch: number | null = null;
 
   if (active.lost_execution_owner === true) throw fencedAssignmentOwner();
   if (active.execution_assignment_id !== null) {
     const [placement] = (
       await tx.execute(sql`
         SELECT epoch FROM execution_assignments
-        WHERE id=${active.execution_assignment_id} AND run_id=${identity.actor.runId}
+        WHERE id=${active.execution_assignment_id} AND run_id=${runId}
           AND state='active' AND (lease_expires_at IS NULL OR lease_expires_at>clock_timestamp())
         FOR SHARE
       `)
     ).rows;
 
     if (typeof placement?.epoch !== "number") throw fencedAssignmentOwner();
-    executionEpoch = placement.epoch;
+
+    return placement.epoch;
   }
+
+  return null;
+}
+
+async function authorizeAssignmentActionGrants(
+  tx: SqlTransaction,
+  principal: ResolvedAssignmentContextPrincipal,
+  owner: Owner,
+  executionPolicy: ExecutionPolicy,
+  action: "assignments:update" | "assignments:delegate" | "assignments:accept",
+): Promise<CurrentAssignmentAction["authority"]> {
+  const { identity } = principal;
+
+  if (identity.kind === "user")
+    return {
+      ...(await authorizeAssignment(
+        tx,
+        identity.user.id,
+        owner,
+        action,
+        executionPolicy,
+      )),
+      actor: identity.actor,
+    };
   if (identity.kind === "company_agent") {
     if (
       owner.kind !== "company" ||
@@ -237,23 +285,20 @@ async function authorizeAssignmentExecutionAction(
       );
 
     return {
-      authority: {
-        schemaVersion: 1,
-        capturedAt: new Date().toISOString(),
-        actor: identity.actor,
-        executionPolicy,
-        witnesses: [
-          initiatingAuthority.witness,
-          {
-            kind: "company_grant",
-            owner,
-            authorityId: grant.id,
-            revision: grant.revision,
-            action,
-          },
-        ],
-      },
-      executionEpoch,
+      schemaVersion: 1,
+      capturedAt: new Date().toISOString(),
+      actor: identity.actor,
+      executionPolicy,
+      witnesses: [
+        initiatingAuthority.witness,
+        {
+          kind: "company_grant",
+          owner,
+          authorityId: grant.id,
+          revision: grant.revision,
+          action,
+        },
+      ],
     };
   }
   if (owner.kind !== "project" || owner.projectId !== identity.projectId)
@@ -298,16 +343,13 @@ async function authorizeAssignmentExecutionAction(
     );
 
   return {
-    authority: {
-      ...(await authorizeAssignment(
-        tx,
-        run.initiating_user_id,
-        owner,
-        action,
-        executionPolicy,
-      )),
-      actor: identity.actor,
-    },
-    executionEpoch,
+    ...(await authorizeAssignment(
+      tx,
+      run.initiating_user_id,
+      owner,
+      action,
+      executionPolicy,
+    )),
+    actor: identity.actor,
   };
 }
