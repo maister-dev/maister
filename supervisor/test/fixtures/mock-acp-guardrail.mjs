@@ -524,6 +524,8 @@ class GuardrailAgent {
       await this.requestTool(sessionId, "mcp__maister__run_message", "tc-company-message", "other");
     } else if (scenario === "company_native_rework") {
       await this.requestTool(sessionId, "mcp__maister__run_rework", "tc-company-rework", "other");
+    } else if (scenario === "company_native_acceptance") {
+      await this.requestTool(sessionId, "mcp__maister__specialist_assignment_work_decide", "tc-company-accept", "other");
     } else if (scenario === "company_native_read_scope") {
       await this.requestTool(
         sessionId,

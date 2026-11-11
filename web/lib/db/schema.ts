@@ -8332,7 +8332,7 @@ export const projectTokens = pgTable(
   (t) => ({
     companyScopeCheck: check(
       "project_tokens_company_scope_check",
-      sql`((${t.company_id} IS NULL AND ${t.company_run_id} IS NULL) OR (${t.company_id} IS NOT NULL AND ${t.company_run_id} IS NOT NULL AND ${t.project_id} IS NULL AND ${t.token_kind}='agent' AND ${t.agent_id} IS NOT NULL AND ${t.name}='agent-run:'||${t.company_run_id} AND ${t.expires_at} IS NOT NULL AND ${t.librarian_turn_id} IS NULL AND jsonb_typeof(${t.scopes})='array' AND ${t.scopes}<@'["knowledge:read","knowledge:propose","assignments:read","assignments:update"]'::jsonb)) IS TRUE`,
+      sql`((${t.company_id} IS NULL AND ${t.company_run_id} IS NULL) OR (${t.company_id} IS NOT NULL AND ${t.company_run_id} IS NOT NULL AND ${t.project_id} IS NULL AND ${t.token_kind}='agent' AND ${t.agent_id} IS NOT NULL AND ${t.name}='agent-run:'||${t.company_run_id} AND ${t.expires_at} IS NOT NULL AND ${t.librarian_turn_id} IS NULL AND jsonb_typeof(${t.scopes})='array' AND ${t.scopes}<@'["knowledge:read","knowledge:propose","assignments:read","assignments:update","assignments:accept"]'::jsonb)) IS TRUE`,
     ),
     companyLiveRunIndex: uniqueIndex("project_tokens_company_live_run_uq")
       .on(t.company_run_id)
@@ -10974,8 +10974,10 @@ export const specialistWorkDecisions = pgTable(
         AND char_length(${t.reason}) BETWEEN 1 AND 8000
         AND ${specialistActorShape(t.actor)}
         AND ((${t.decision}='rework' AND ${t.actor}->>'kind'='agent')
-          OR (${t.decision}='accept' AND ${t.actor}->>'kind'='user'
-            AND ${t.actor}->'runId'='null'::jsonb AND ${t.actor}->'attemptId'='null'::jsonb))
+          OR (${t.decision}='accept' AND (
+            (${t.actor}->>'kind'='user' AND ${t.actor}->'runId'='null'::jsonb AND ${t.actor}->'attemptId'='null'::jsonb)
+            OR (${t.actor}->>'kind'='agent' AND jsonb_typeof(${t.actor}->'runId')='string')
+          )))
         AND ${t.authoritySnapshot}->'schemaVersion'='1'::jsonb
         AND ${t.authoritySnapshot}->'actor'=${t.actor}
         AND pg_column_size(${t.authoritySnapshot})<=32768

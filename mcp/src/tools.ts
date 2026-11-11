@@ -902,6 +902,36 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       required: ["childRunId", "prompt"],
     },
   },
+  specialist_assignment_work_decide: {
+    description:
+      "Accept a collected direct child result using its exact assignment, work, input and result revisions. Requires current acceptance authority. Retains the decision and original finding identities while the assignment stays active.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        assignmentId: { type: "string", minLength: 1, maxLength: 128 },
+        workId: { type: "string", minLength: 1, maxLength: 128 },
+        decision: { type: "string", enum: ["accept"] },
+        expectedRevision: { type: "integer", minimum: 1, maximum: 2147483647 },
+        workRevision: { type: "integer", minimum: 1, maximum: 2147483647 },
+        inputRevision: { type: "integer", minimum: 1, maximum: 2147483647 },
+        resultRevision: { type: "integer", minimum: 1, maximum: 2147483647 },
+        reason: { type: "string", minLength: 1, maxLength: 2000 },
+        idempotencyKey: { type: "string", pattern: "^[A-Za-z0-9._:-]{8,128}$" },
+      },
+      required: [
+        "assignmentId",
+        "workId",
+        "decision",
+        "expectedRevision",
+        "workRevision",
+        "inputRevision",
+        "resultRevision",
+        "reason",
+        "idempotencyKey",
+      ],
+    },
+  },
   run_sync: {
     description:
       "Sync a Review run's branch onto its promotion target (rebase by default, or merge), force-with-lease pushing when the branch is published. On conflict with agent=true (the default) an AI resolver session is launched; with agent=false the conflicted state is aborted. Returns { runId, attemptId, outcome, behind, pushed } where outcome is noop | synced | conflict | agent_launched.",
@@ -2101,6 +2131,25 @@ function resolveRouting(
           prompt,
           ...(assignmentWork ? { assignmentWork } : {}),
         },
+      };
+    }
+    case "specialist_assignment_work_decide": {
+      const { assignmentId, workId, ...body } = args as {
+        assignmentId: string;
+        workId: string;
+        decision: "accept";
+        expectedRevision: number;
+        workRevision: number;
+        inputRevision: number;
+        resultRevision: number;
+        reason: string;
+        idempotencyKey: string;
+      };
+
+      return {
+        method: "POST",
+        path: `/api/v1/ext/specialist-assignments/${encodeURIComponent(assignmentId)}/work/${encodeURIComponent(workId)}/decisions`,
+        body,
       };
     }
     case "run_sync": {

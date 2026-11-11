@@ -39,7 +39,7 @@ export type ResolvedAssignmentContextPrincipal = Readonly<{
 export async function resolveAssignmentContextPrincipal(
   tx: SqlTransaction,
   principal: AssignmentContextPrincipal,
-  scope: "assignments:read" | "assignments:update",
+  scope: "assignments:read" | "assignments:update" | "assignments:accept",
 ): Promise<ResolvedAssignmentContextPrincipal> {
   const consumer = await lockKnowledgeReadConsumer(tx, principal);
   const identity =
@@ -47,7 +47,7 @@ export async function resolveAssignmentContextPrincipal(
       ? await resolveKnowledgePrincipal(tx, principal, "knowledge:read")
       : await resolveNativeTokenPrincipal(tx, principal.tokenId, scope);
 
-  if (principal.kind === "token" && scope === "assignments:update")
+  if (principal.kind === "token" && scope !== "assignments:read")
     await resolveNativeTokenPrincipal(
       tx,
       principal.tokenId,
@@ -123,12 +123,27 @@ export async function authorizeAssignmentDelegation(
   );
 }
 
+export async function authorizeAssignmentWorkAcceptance(
+  tx: SqlTransaction,
+  principal: ResolvedAssignmentContextPrincipal,
+  owner: Owner,
+  policy: ExecutionPolicy,
+): Promise<AssignmentAuthoritySnapshot & { actor: KnowledgeAuthorityActor }> {
+  return authorizeAssignmentExecutionAction(
+    tx,
+    principal,
+    owner,
+    policy,
+    "assignments:accept",
+  );
+}
+
 async function authorizeAssignmentExecutionAction(
   tx: SqlTransaction,
   principal: ResolvedAssignmentContextPrincipal,
   owner: Owner,
   executionPolicy: ExecutionPolicy,
-  action: "assignments:update" | "assignments:delegate",
+  action: "assignments:update" | "assignments:delegate" | "assignments:accept",
 ): Promise<AssignmentAuthoritySnapshot & { actor: KnowledgeAuthorityActor }> {
   const { identity } = principal;
 
@@ -145,7 +160,13 @@ async function authorizeAssignmentExecutionAction(
     };
   const active = (
     await tx.execute(
-      sql`SELECT id FROM runs WHERE id=${identity.actor.runId} AND status IN ('Running','NeedsInput','NeedsInputIdle','WaitingOnChildren') FOR SHARE`,
+      sql`SELECT id FROM runs WHERE id=${identity.actor.runId}
+        AND ${
+          action === "assignments:accept"
+            ? sql`status='Running'`
+            : sql`status IN ('Running','NeedsInput','NeedsInputIdle','WaitingOnChildren')`
+        }
+        FOR SHARE`,
     )
   ).rows[0];
 

@@ -21505,12 +21505,7 @@ paths:
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: "#/components/schemas/CBWorkDecision"
-                - type: object
-                  required: [resultRevision]
-                  properties:
-                    decision: { type: string, enum: [accept] }
+              $ref: "#/components/schemas/CBExactWorkAcceptance"
       responses:
         "200":
           description: Authorized explicit DTO or idempotent safe existing receipt.
@@ -39975,6 +39970,18 @@ components:
             minLength: 1
             maxLength: 1000
           maxItems: 32
+    CBExactWorkAcceptance:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, workRevision, inputRevision, resultRevision, decision, reason, idempotencyKey]
+      properties:
+        expectedRevision: { type: integer, minimum: 1, maximum: 2147483647 }
+        workRevision: { type: integer, minimum: 1, maximum: 2147483647 }
+        inputRevision: { type: integer, minimum: 1, maximum: 2147483647 }
+        resultRevision: { type: integer, minimum: 1, maximum: 2147483647 }
+        decision: { type: string, enum: [accept] }
+        reason: { type: string, minLength: 1, maxLength: 2000 }
+        idempotencyKey: { type: string, pattern: '^[A-Za-z0-9._:-]{8,128}$' }
     CBWorkDecision:
       type: object
       additionalProperties: false

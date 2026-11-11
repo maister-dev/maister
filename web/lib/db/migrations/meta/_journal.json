@@ -1905,6 +1905,13 @@
       "when": 1794606477978,
       "tag": "0275_specialist_work_acceptance",
       "breakpoints": true
+    },
+    {
+      "idx": 276,
+      "version": "7",
+      "when": 1794606477979,
+      "tag": "0276_specialist_execution_work_acceptance",
+      "breakpoints": true
     }
   ]
 }

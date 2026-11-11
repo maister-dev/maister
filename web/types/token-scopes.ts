@@ -70,6 +70,7 @@ export const TOKEN_SCOPES = [
   "assignments:read",
   "assignments:submit",
   "assignments:update",
+  "assignments:accept",
   // Human answers are never granted to agent, coordinator or librarian credentials.
   "assignments:answer",
   // Human delivery recovery is excluded from every machine grant set.

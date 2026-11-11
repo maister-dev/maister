@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { SqlDatabase, SqlTransaction } from "@/lib/db/sql-types";
+import type { AssignmentContextPrincipal } from "./context-access";
 
 import { randomUUID } from "node:crypto";
 
@@ -8,16 +9,20 @@ import { sql } from "drizzle-orm";
 import pino from "pino";
 import { z } from "zod";
 
-import { authorizeAssignment } from "./access";
 import {
   readAuthorizedAssignmentInput,
   readSpecialistAssignmentContextInTransaction,
   retainAssignmentContextRevision,
 } from "./context";
+import {
+  authorizeAssignmentWorkAcceptance,
+  resolveAssignmentContextPrincipal,
+} from "./context-access";
 import { assignmentContextSnapshotSchema } from "./context-types";
 import {
   beginAssignmentTransaction,
   getSpecialistAssignmentInTransaction,
+  inspectExecutingAssignmentInTransaction,
   unavailableAssignment,
 } from "./store";
 import { assignmentWorkDefinitionSchema } from "./work-types";
@@ -38,6 +43,7 @@ import {
 import { emitSpecialistAssignmentChange } from "@/lib/domain-events/outbox";
 import { MaisterError } from "@/lib/errors";
 import { contentDigest } from "@/lib/evaluations/digest";
+import { lockDelegationParent } from "@/lib/orchestrator/admission";
 import { evidenceFindingsV1Schema } from "@/lib/run-results/findings-types";
 import { FINDINGS_CONTRACT } from "@/lib/run-results/findings-contract";
 import { postgresTextSchema } from "@/lib/text-schema";
@@ -64,6 +70,11 @@ type WorkAcceptanceReceipt = Readonly<{
   revision: number;
   status: "accepted";
   duplicate: boolean;
+}>;
+type WorkAcceptanceRequest = Readonly<{
+  assignmentId: string;
+  workId: string;
+  value: unknown;
 }>;
 
 function staleWork(): MaisterError {
@@ -130,14 +141,30 @@ async function readWorkResult(
 }
 
 /** Accept one exact collected child result and retain the attributed context entry atomically. */
-export async function acceptSpecialistWork(
+export function acceptSpecialistWork(
   db: SqlDatabase,
-  input: Readonly<{
-    userId: string;
-    assignmentId: string;
-    workId: string;
-    value: unknown;
-  }>,
+  { userId, ...input }: WorkAcceptanceRequest & Readonly<{ userId: string }>,
+): Promise<WorkAcceptanceReceipt> {
+  return acceptWork(db, input, { kind: "user", userId }, null);
+}
+
+export function acceptSpecialistWorkByToken(
+  db: SqlDatabase,
+  {
+    tokenId,
+    boundRunId,
+    ...input
+  }: WorkAcceptanceRequest &
+    Readonly<{ tokenId: string; boundRunId: string | null }>,
+): Promise<WorkAcceptanceReceipt> {
+  return acceptWork(db, input, { kind: "token", tokenId }, boundRunId);
+}
+
+async function acceptWork(
+  db: SqlDatabase,
+  input: WorkAcceptanceRequest,
+  principal: AssignmentContextPrincipal,
+  boundRunId: string | null,
 ): Promise<WorkAcceptanceReceipt> {
   const parsed = workAcceptanceSchema.safeParse(input.value);
 
@@ -149,39 +176,63 @@ export async function acceptSpecialistWork(
   const decision: WorkAcceptance = parsed.data;
 
   return db.transaction(async (tx) => {
-    const { assignmentId, workId, userId } = input;
-    const principal = { kind: "user", userId } as const;
+    const { assignmentId, workId } = input;
 
     await beginAssignmentTransaction(tx);
+    if (boundRunId !== null) await lockDelegationParent(tx, boundRunId);
     await tx.execute(
       sql`SELECT id FROM specialist_assignments WHERE id=${assignmentId} FOR UPDATE`,
     );
-    const assignment = await getSpecialistAssignmentInTransaction(
-      tx,
-      userId,
-      assignmentId,
-    );
-    const retainedInput = await readAuthorizedAssignmentInput(
+    const resolved = await resolveAssignmentContextPrincipal(
       tx,
       principal,
+      "assignments:accept",
+    );
+    const { source } = resolved;
+
+    if (source.kind === "execution" && source.runId !== boundRunId)
+      throw unavailableAssignment();
+    const assignment =
+      source.kind === "user"
+        ? await getSpecialistAssignmentInTransaction(
+            tx,
+            source.userId,
+            assignmentId,
+          )
+        : (
+            await inspectExecutingAssignmentInTransaction(
+              tx,
+              source,
+              assignmentId,
+            )
+          ).value;
+    const retainedInput = await readAuthorizedAssignmentInput(
+      tx,
+      source,
       assignmentId,
       decision.inputRevision,
     );
-    const authority = await authorizeAssignment(
+    const authority = await authorizeAssignmentWorkAcceptance(
       tx,
-      userId,
+      resolved,
       assignment.owner,
-      "assignments:accept",
       retainedInput.snapshot.authoritySnapshot.executionPolicy,
     );
     const [work] = (
       await tx.execute(sql`
-      SELECT revision,input_revision,child_run_id,decision_state,definition,source_restrictions FROM specialist_work
+      SELECT revision,input_revision,child_run_id,parent_run_id,actor->>'id' AS origin_role,
+        decision_state,definition,source_restrictions FROM specialist_work
       WHERE id=${workId} AND work_revision=${decision.workRevision} AND assignment_id=${assignmentId} FOR UPDATE
     `)
     ).rows;
 
     if (typeof work?.child_run_id !== "string") throw unavailableAssignment();
+    if (
+      source.kind === "execution" &&
+      (source.runId !== work.parent_run_id ||
+        authority.actor.id !== work.origin_role)
+    )
+      throw unavailableAssignment();
     if (work.input_revision !== decision.inputRevision) throw staleWork();
     const childRunId = work.child_run_id;
     const definition = assignmentWorkDefinitionSchema.parse(work.definition);
@@ -208,7 +259,15 @@ export async function acceptSpecialistWork(
     const requestDigest = contentDigest({
       assignmentId,
       workId,
-      userId,
+      ...(source.kind === "user"
+        ? { userId: source.userId }
+        : {
+            actor: {
+              kind: authority.actor.kind,
+              id: authority.actor.id,
+              runId: source.runId,
+            },
+          }),
       decision,
     });
     const [existing] = (
@@ -252,12 +311,12 @@ export async function acceptSpecialistWork(
     );
     const current = await readSpecialistAssignmentContextInTransaction(
       tx,
-      principal,
+      source,
       assignmentId,
     );
     const access = await authorizeSourceRestrictions(
       tx,
-      principal,
+      source,
       [
         ...knowledgeRestrictionsSchema.parse(work.source_restrictions),
         ...result.restrictions,
@@ -314,7 +373,15 @@ export async function acceptSpecialistWork(
       previousStatus: assignment.status,
       status: assignment.status,
       cause: "work",
-      actor: { type: "user", id: userId },
+      actor: { type: authority.actor.kind, id: authority.actor.id },
+      ...(source.kind === "execution"
+        ? {
+            originExecution: {
+              runId: source.runId,
+              nodeAttemptId: source.nodeAttemptId,
+            },
+          }
+        : {}),
     });
     log.info(
       {

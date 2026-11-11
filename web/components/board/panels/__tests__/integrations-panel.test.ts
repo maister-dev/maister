@@ -126,6 +126,7 @@ const labels: TokenLabels = {
   scopeAssignmentsRead: "Read specialist assignments",
   scopeAssignmentsSubmit: "Submit specialist assignments",
   scopeAssignmentsUpdate: "Update assignments",
+  scopeAssignmentsAccept: "Accept assignment results",
   scopeAssignmentsAnswer: "Answer assignment questions",
   scopeAssignmentsRecover: "Replay assignment deliveries",
   scopeMemoryRead: "Read project memory",

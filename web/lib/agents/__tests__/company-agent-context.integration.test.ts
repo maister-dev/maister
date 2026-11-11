@@ -132,6 +132,7 @@ import { POST as collectExternalRun } from "@/app/api/v1/ext/runs/collect/route"
 import { POST as messageExternalRun } from "@/app/api/v1/ext/runs/message/route";
 import { POST as reworkExternalRun } from "@/app/api/v1/ext/runs/rework/route";
 import { POST as decideSpecialistWork } from "@/app/api/specialist-assignments/[assignmentId]/work/[workId]/decisions/route";
+import { POST as decideSpecialistWorkExternal } from "@/app/api/v1/ext/specialist-assignments/[assignmentId]/work/[workId]/decisions/route";
 import { runFlow } from "@/lib/flows/runner";
 import { captureNativeChildInput } from "@/lib/orchestrator/native-child-input";
 import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
@@ -10663,6 +10664,7 @@ it("IT-CBC-01 requires current company delegation grants for a repository-free w
     "assignments:read",
     "assignments:update",
     "assignments:delegate",
+    "assignments:accept",
   ]);
   const assignment = await getSpecialistAssignment(
     database.db,
@@ -11152,7 +11154,17 @@ it("IT-CBC-01 requires current company delegation grants for a repository-free w
       );
 
       expect(resultResponse.status).toBe(200);
-      expect(await resultResponse.json()).toMatchObject([
+      const initialResults: {
+        resultRevision: number;
+        assignmentWork: {
+          id: string;
+          revision: number;
+          workRevision: number;
+          inputRevision: number;
+        };
+      }[] = await resultResponse.json();
+
+      expect(initialResults).toMatchObject([
         {
           childRunId: first.childRunId,
           status: "Done",
@@ -11160,6 +11172,89 @@ it("IT-CBC-01 requires current company delegation grants for a repository-free w
           result: { value: { outcome: "success" } },
         },
       ]);
+      const [initialResult] = initialResults;
+      const initialWork = initialResult.assignmentWork;
+      const executionDecision = () =>
+        decideSpecialistWorkExternal(
+          new NextRequest(
+            `http://localhost/api/v1/ext/specialist-assignments/${assignment.id}/work/${initialWork.id}/decisions`,
+            {
+              method: "POST",
+              headers,
+              body: JSON.stringify({
+                decision: "accept",
+                expectedRevision: initialWork.revision,
+                workRevision: initialWork.workRevision,
+                inputRevision: initialWork.inputRevision,
+                resultRevision: initialResult.resultRevision,
+                reason: "The child returned the requested typed result.",
+                idempotencyKey: "coordinator-accept-initial-result",
+              }),
+            },
+          ),
+          {
+            params: Promise.resolve({
+              assignmentId: assignment.id,
+              workId: initialWork.id,
+            }),
+          },
+        );
+
+      expect((await executionDecision()).status).toBe(403);
+      const [initiatingAccept, professionalAccept] = await Promise.all([
+        createCompanyGrants(db, administratorId, {
+          principalKind: "user",
+          principalId: userId,
+          actions: ["assignments:accept"],
+          idempotencyKey: randomUUID(),
+        }),
+        createCompanyGrants(db, administratorId, {
+          principalKind: "agent",
+          principalId: roleId,
+          actions: ["assignments:accept"],
+          idempotencyKey: randomUUID(),
+        }),
+      ]);
+      const acceptGrants = [initiatingAccept, professionalAccept].map((grant) =>
+        grant.page.items.find(
+          (entry) => entry.action === "assignments:accept",
+        )!,
+      );
+
+      try {
+        const decision = await executionDecision();
+
+        expect(decision.status).toBe(200);
+        const accepted = await decision.json();
+
+        expect(accepted).toMatchObject({ status: "accepted" });
+        const context = await getSpecialistAssignmentTokenContext(
+          db,
+          appointment.credential.tokenId,
+          assignment.id,
+        );
+
+        expect(context.entries).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              actor: expect.objectContaining({
+                kind: "agent",
+                id: roleId,
+                runId: appointment.runId,
+              }),
+              entry: expect.objectContaining({
+                acceptedWork: expect.objectContaining({
+                  decisionId: accepted.id,
+                  childRunId: first.childRunId,
+                }),
+              }),
+            }),
+          ]),
+        );
+      } finally {
+        for (const grant of acceptGrants) await revoke(grant);
+      }
+      expect((await executionDecision()).status).toBe(403);
       await expect(
         getSpecialistAssignment(db, userId, assignment.id),
       ).resolves.toMatchObject({ status: "active" });
@@ -11235,6 +11330,7 @@ it("IT-CBC-01 requires current company delegation grants for a repository-free w
                 selector: {
                   ...workRequest.selector,
                   expectedRevision: head.revision,
+                  contextRevision: head.contextRevision,
                   logicalWorkId: "review-child",
                 },
                 expectedOutcome: "A pinned structured review",
@@ -11300,6 +11396,7 @@ it("IT-CBC-01 requires current company delegation grants for a repository-free w
                 selector: {
                   ...workRequest.selector,
                   expectedRevision: current.revision,
+                  contextRevision: current.contextRevision,
                   logicalWorkId: "cross-check",
                 },
                 expectedOutcome: "Independent observation",

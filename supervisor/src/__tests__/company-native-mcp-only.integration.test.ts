@@ -105,6 +105,22 @@ afterEach(async () => {
 
 describe("company native MCP-only enforcement", () => {
   it.each([
+    { acceptance: [], expectedDenials: 1 },
+    { acceptance: ["assignments:accept"], expectedDenials: 0 },
+  ] as const)(
+    "requires the reviewed acceptance scope for a work decision ($expectedDenials denials)",
+    async ({ acceptance, expectedDenials }) => {
+      const events = await runCompanyScenario("company_native_acceptance", [
+        "knowledge:read",
+        "assignments:read",
+        "assignments:update",
+        ...acceptance,
+      ]);
+
+      expect(trips(events)).toHaveLength(expectedDenials);
+    },
+  );
+  it.each([
     {
       scenario: "company_native_delegation",
       extraActions: ["assignments:delegate"],

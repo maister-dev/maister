@@ -126,6 +126,7 @@ describe("TOOL_SPECS registry", () => {
         "librarian_memory_remember",
         "project_members_list",
         "runner_list",
+        "specialist_assignment_work_decide",
         "task_complete",
         "task_create",
         "task_get",

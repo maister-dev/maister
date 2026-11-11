@@ -301,6 +301,10 @@ const TOOL_OP: Record<string, { method: string; path: string }> = {
   run_message: { method: "post", path: "/api/v1/ext/runs/message" },
   run_promote: { method: "post", path: "/api/v1/ext/runs/promote" },
   run_rework: { method: "post", path: "/api/v1/ext/runs/rework" },
+  specialist_assignment_work_decide: {
+    method: "post",
+    path: "/api/v1/ext/specialist-assignments/{assignmentId}/work/{workId}/decisions",
+  },
   run_sync: { method: "post", path: "/api/v1/ext/runs/sync" },
   run_reopen: { method: "post", path: "/api/v1/ext/runs/reopen" },
   run_recover: { method: "post", path: "/api/v1/ext/runs/{runId}/recover" },

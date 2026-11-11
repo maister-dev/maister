@@ -236,8 +236,11 @@ exact next work revision in the same transaction. Main `0273` enables human
 acceptance of an exact collected result with a current acceptance grant.
 The same transaction records the work decision and a context revision with
 the child result and original finding identities. The assignment remains
-active. Coordinator acceptance, assignment completion and effect
-verification remain open. Forward migration `0268` closes
+active. Forward main `0274` also allows the originating company professional
+to accept exact work through the scoped bearer API and MCP. The reviewed
+scope, current role grant, current initiating-user grant and direct work
+appointment all apply. Assignment completion and effect verification remain
+open. Forward migration `0268` closes
 nullable source/context/target comparisons under the
 [persistence guard contract](../db/specialist-assignments-domain.md#backfill-guards-and-lifetime);
 retained company source identity survives catalog FK removal.

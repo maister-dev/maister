@@ -5700,6 +5700,9 @@ Main `0275_specialist_work_acceptance` enables authorized human acceptance of
 an exact collected child result and requires an attributed working-context
 entry with the original finding identities. Assignment completion remains
 separately guarded.
+Main `0276_specialist_execution_work_acceptance` adds the reviewed company
+acceptance scope to the existing token contract and binds agent decisions to
+the exact current professional and Run or Flow node.
 
 [Specialist persistence](db/specialist-assignments-domain.md) defines implemented `0234_specialist_assignments`: exclusive company/project assignment heads, immutable `specialist_input_revisions` and `specialist_run_links` to existing executions. Business revision, input head and context head are separate. A deferred constraint checks the retained input head at commit; history and run links reject UPDATE/DELETE. State changes use the existing content-free domain outbox. Current authority, source restrictions, exact input CAS, cancellation and reopening are enforced by the assignment store. No legacy runs acquire invented assignments. Generated main `0253_specialist_intake_receipts` binds canonical source deliveries and original request digests to exact existing assignment inputs. Immutable receipt/source/actor guards and the source-key uniqueness prevent duplicate assignment creation; invocation adapters retain their own current authorization and existing Run reservation. Generated main `0254_specialist_project_flow_input` adds nullable initial project-task linkage with same-project/immutable reference guards and permits versioned project coordinator Flow witnesses in new standing snapshots. Legacy input bytes and assignment values remain unchanged; company assignments require no task.
 

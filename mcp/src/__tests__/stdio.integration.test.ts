@@ -598,6 +598,33 @@ describe("MCP stdio wire contract", () => {
           body: input,
         });
       }
+      const acceptance = {
+        decision: "accept",
+        expectedRevision: 2,
+        workRevision: 1,
+        inputRevision: 1,
+        resultRevision: 1,
+        reason: "The child supplied the requested result.",
+        idempotencyKey: "accept-observation",
+      };
+      expect(
+        (
+          await company.callTool({
+            name: "specialist_assignment_work_decide",
+            arguments: {
+              assignmentId: "assignment",
+              workId: "work",
+              ...acceptance,
+            },
+          })
+        ).isError,
+      ).not.toBe(true);
+      expect(requests.at(-1)).toEqual({
+        method: "POST",
+        url: "/api/v1/ext/specialist-assignments/assignment/work/work/decisions",
+        authorization: "Bearer mai_company_delegation_wire",
+        body: acceptance,
+      });
     } finally {
       await closeClient(company);
     }
@@ -1030,6 +1057,7 @@ describe("MCP stdio wire contract", () => {
           "run_collect",
           "run_message",
           "run_rework",
+          "specialist_assignment_work_decide",
         ].sort(),
       );
       const inspected = await company.callTool({
