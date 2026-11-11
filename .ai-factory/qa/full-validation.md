@@ -38,13 +38,33 @@ storage dependency; no incompatible API alias or log filtering is used.
 
 CI runs PR updates and master pushes once, cancelling superseded work. The
 expensive A/B web inventory runs on 24.22.3; runtime/supervisor and compatibility
-checks cover 26.13.1. Current browser and hosted results are recorded after the
-runs complete; earlier counts below are not attributed to the rebased source.
+checks cover 26.13.1. Current browser results follow; earlier checkpoint counts
+below are not attributed to the rebased source.
+
+The complete rebased ordinary browser suite passes **278/278** in 393.859 s
+including setup and cleanup, with zero retries, skips and owned process leaks.
+Initial invocations exposed six stale selectors/metadata assertions and then
+one hidden-page Flow editor race. The final complete rerun uses accessible
+main/board/rail scopes, the expanded modal opener and the visible 404 result;
+access refusal, real API status and form behavior assertions remain intact.
+Both failed invocations are retained separately. The final full typecheck and
+lint of the corrected browser owners pass.
+
+Hosted Librarian acceptance at `0824293e816960f538bf04d76cc8243736ae6d6c`
+passes 14/14 on Linux x64/Node 24.22.3, including master's human-launch contract,
+with zero owned leaks. Qualification of the final source is reported by
+[PR #39 checks](https://github.com/maister-dev/maister/pull/39/checks), including
+the label-enabled full integration remainder. Workflow cancellation skips the
+combined isolation gate only for cancelled runs; failed parts still reach its
+failure-closed report check. Docker builds receive the worker limit through an
+explicit build argument.
 
 Evidence: `production-build.log`, `web-unit.log`, `web-lint-zero.log`,
 `root-contracts-final.log`, `integration-paths.log`,
 `operational-integrity-fixed.log`, `drizzle-export-configured.log`,
-`audit-final.log`, `peers-final.log` in the rebased evidence directory.
+`audit-final.log`, `peers-final.log`, `e2e-full-final.json`,
+`e2e-full-final.log`, `final-web-typecheck.log`, `cancellation-contract.log`,
+`ci-librarian-0824293.log` in the rebased evidence directory.
 
 ## Resource profile
 
@@ -66,7 +86,7 @@ heaps do not enforce an 8 GiB total-RSS or four-CPU cap; Turbopack native thread
 are outside the page-data/prerender worker control. Unset controls preserve
 local defaults. Commands live in the canonical [shared-host guide](../../docs/system-analytics/test-infrastructure.md#validation-on-a-shared-host).
 
-## Results
+## Original checkpoint: results
 
 | Lane | Result | Evidence under the root above |
 | --- | --- | --- |
@@ -94,7 +114,7 @@ A previous eight-file run was interrupted and has no final report; it is not a
 pass. Root CI checks initially encountered sandbox `listen EPERM`; the rerun
 with local-socket access passes all 41 checks.
 
-## Corrected findings
+## Original checkpoint: corrected findings
 
 - **Event consumer lifetime:** cold `localHost({db: tx})` could start a background
   consumer using a transaction client that was released at commit. Events were

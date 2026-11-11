@@ -148,6 +148,11 @@ Playwright. For broad integration validation, run each owner once:
 Set these variables in that validation job's environment so production fixture
 builds inherit the same budget; leave them unset for ordinary local work.
 
+Docker builds need an explicit build argument because the host environment is
+not inherited by build stages:
+`docker build --target production --build-arg MAISTER_BUILD_MAX_WORKERS=1 .`.
+CI passes its worker setting through this argument as well.
+
 ```sh
 export MAISTER_TEST_MAX_WORKERS=1
 export MAISTER_BUILD_MAX_WORKERS=1

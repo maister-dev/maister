@@ -77,7 +77,7 @@ test("isolation CI uses three independent serial VM parts and a failure-closed c
   assert.equal(diagnostics.with.name, "execution-isolation-part-${{ matrix.part }}-of-3-diagnostics");
   assert(job.steps.indexOf(cleanup) < job.steps.indexOf(diagnostics));
   assert.deepEqual(gate.needs, ["execution-isolation"]);
-  assert.equal(gate.if, "always()");
+  assert.equal(gate.if, "${{ !cancelled() }}");
   assert.equal(gate.env.MAISTER_ISOLATION_JOB_RESULT, "${{ needs.execution-isolation.result }}");
   const downloads = gate.steps.filter((step) => step.uses === "actions/download-artifact@v4");
 

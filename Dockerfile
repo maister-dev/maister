@@ -51,6 +51,7 @@ COPY supervisor/ ./supervisor/
 COPY mcp/ ./mcp/
 COPY runtime/ ./runtime/
 COPY scripts/ ./scripts/
+ARG MAISTER_BUILD_MAX_WORKERS
 RUN NODE_OPTIONS=--max-old-space-size=4096 pnpm --filter maister-web build
 
 # ---------- development: hot reload via pnpm dev / supervisor dev ----------
