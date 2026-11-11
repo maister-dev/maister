@@ -50,6 +50,7 @@ export interface EvidenceGraphLabels extends EvidenceTextLabels {
   filterKind: string;
   filterState: string;
   filterAny: string;
+  filterItem: string;
 }
 
 export interface EvidenceGraphProps {
@@ -133,14 +134,15 @@ function makeEvidenceNodeView(
   };
 }
 
+type EvidenceFilter = "node" | "kind" | "state" | "evidenceItem";
+
 // Drop edges whose endpoints were removed by filtering (no dangling edges).
 function filterGraph(
   graph: EvidenceGraphData,
-  node: string | null,
-  kind: string | null,
-  state: string | null,
+  { node, kind, state, evidenceItem }: Record<EvidenceFilter, string | null>,
 ): EvidenceGraphData {
   const nodes = graph.nodes.filter((n) => {
+    if (evidenceItem && n.id !== evidenceItem) return false;
     if (node && n.meta.nodeId !== node && n.id !== node) return false;
     if (kind && n.kind !== kind) return false;
     if (state && n.state !== state) return false;
@@ -169,9 +171,24 @@ export default function EvidenceGraph({
   const nodeFilter = searchParams.get("node") || null;
   const kindFilter = searchParams.get("kind") || null;
   const stateFilter = searchParams.get("state") || null;
-  const filterKey = JSON.stringify([nodeFilter, kindFilter, stateFilter]);
-  const hasFilters = Boolean(nodeFilter || kindFilter || stateFilter);
+  const evidenceItem = searchParams.get("evidenceItem") || null;
+  const filterKey = JSON.stringify([
+    nodeFilter,
+    kindFilter,
+    stateFilter,
+    evidenceItem,
+  ]);
+  const hasFilters = Boolean(
+    nodeFilter || kindFilter || stateFilter || evidenceItem,
+  );
   const hasEvidence = graph.nodes.some((node) => node.kind !== "task-input");
+  const selectedItem = evidenceItem
+    ? graph.nodes.find((node) => node.id === evidenceItem)
+    : undefined;
+  const selectedItemLabel =
+    selectedItem?.kind === "artifact"
+      ? artifactKindLabel(selectedItem.label, labels)
+      : selectedItem?.label;
 
   const nodeOptions = useMemo(
     () =>
@@ -196,8 +213,14 @@ export default function EvidenceGraph({
   );
 
   const filtered = useMemo(
-    () => filterGraph(graph, nodeFilter, kindFilter, stateFilter),
-    [graph, nodeFilter, kindFilter, stateFilter],
+    () =>
+      filterGraph(graph, {
+        node: nodeFilter,
+        kind: kindFilter,
+        state: stateFilter,
+        evidenceItem,
+      }),
+    [graph, nodeFilter, kindFilter, stateFilter, evidenceItem],
   );
 
   const [payloadArtifactId, setPayloadArtifactId] = useState<string | null>(
@@ -218,9 +241,7 @@ export default function EvidenceGraph({
     return { flowNodes: laidOut, flowEdges: fg.edges };
   }, [filtered, openArtifact]);
 
-  function setFilters(
-    changes: Partial<Record<"node" | "kind" | "state", string>>,
-  ): void {
+  function setFilters(changes: Partial<Record<EvidenceFilter, string>>): void {
     // Read the current address so consecutive changes compose before React commits.
     const url = new URL(window.location.href);
 
@@ -310,11 +331,19 @@ export default function EvidenceGraph({
             ))}
           </select>
         </label>
+        {evidenceItem ? (
+          <span className="max-w-full break-words rounded border border-line px-2 py-1 font-mono text-xs text-ink">
+            {labels.filterItem}
+            {selectedItemLabel ? ` · ${selectedItemLabel}` : ""}
+          </span>
+        ) : null}
         {hasFilters ? (
           <Button
             size="sm"
             variant="outline"
-            onPress={() => setFilters({ node: "", kind: "", state: "" })}
+            onPress={() =>
+              setFilters({ node: "", kind: "", state: "", evidenceItem: "" })
+            }
           >
             <XMarkIcon aria-hidden="true" className="size-3" />
             {labels.clearFilters}

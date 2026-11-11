@@ -73,31 +73,61 @@ test("readiness summary: badge on board/portfolio + panel on run-detail", async 
   // (2) Open the failed run. The readiness badge sits in the card's actions
   // block OUTSIDE the run link (by design — actions need a non-link surface),
   // so navigate via the card's run-detail link instead of the badge.
-  await page.locator(`a[href="/runs/${fx.failedRunId}"]`).first().click();
-  await page.waitForURL(`/runs/${fx.failedRunId}*`);
-
   const verification = page.getByTestId("flow-verification");
   const disclosure = verification.locator("summary");
+  const decoyId = randomUUID();
+  const decoyLabel = "another-failed-check";
+  const failedRowId = await withE2EDb(async (pool) => {
+    const { rows } = await pool.query<{ id: string }>(
+      "SELECT id FROM gate_results WHERE run_id=$1 AND gate_id=$2 AND status='failed'",
+      [fx.failedRunId, fx.gateId],
+    );
 
-  await expect(disclosure).toContainText("Flow verification");
-  await disclosure.focus();
-  await disclosure.press("Enter");
-  const failedReason = verification
-    .getByRole("listitem")
-    .filter({ hasText: fx.gateId });
+    expect(rows).toHaveLength(1);
+    await pool.query(
+      "INSERT INTO gate_results(id,run_id,node_attempt_id,gate_id,kind,mode,status) SELECT $1,run_id,node_attempt_id,$2,kind,mode,status FROM gate_results WHERE id=$3",
+      [decoyId, decoyLabel, rows[0].id],
+    );
 
-  await expect(failedReason).toContainText(
-    "Inspect the failed check before retrying.",
-  );
-  await failedReason.getByRole("link", { name: "View gate evidence" }).click();
-  await expect(page).toHaveURL(
-    `/runs/${fx.failedRunId}?wb=evidence&kind=gate&state=failed`,
-  );
-  await expect(
-    page
-      .locator('[data-testid="evidence-node"][data-state="failed"]')
-      .filter({ hasText: fx.gateId }),
-  ).toBeVisible();
+    return rows[0].id;
+  });
+
+  try {
+    await page.locator(`a[href="/runs/${fx.failedRunId}"]`).first().click();
+    await page.waitForURL(`/runs/${fx.failedRunId}*`);
+    await expect(disclosure).toContainText("Flow verification");
+    await disclosure.focus();
+    await disclosure.press("Enter");
+    const failedReason = verification
+      .getByRole("listitem")
+      .filter({ hasText: fx.gateId });
+
+    await expect(failedReason).toContainText(
+      "Inspect the failed check before retrying.",
+    );
+    await failedReason
+      .getByRole("link", { name: "View gate evidence" })
+      .click();
+    const graph = page.getByTestId("evidence-graph");
+
+    await expect(graph.getByTestId("evidence-node")).toHaveCount(1);
+    await expect(graph.getByTestId("evidence-node")).toContainText(fx.gateId);
+    await expect(page).toHaveURL(
+      `/runs/${fx.failedRunId}?wb=evidence&evidenceItem=gate%3A${failedRowId}`,
+    );
+    await expect(
+      page.getByText(`Evidence item · ${fx.gateId}`, { exact: true }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Clear filters" }).click();
+    await expect(page).toHaveURL(`/runs/${fx.failedRunId}?wb=evidence`);
+    await expect(
+      graph.getByTestId("evidence-node").filter({ hasText: decoyLabel }),
+    ).toBeVisible();
+  } finally {
+    await withE2EDb((pool) =>
+      pool.query("DELETE FROM gate_results WHERE id=$1", [decoyId]),
+    );
+  }
 
   // (3) Navigate back to the board and click the overridden run card.
   // The run-detail page loads and the ReadinessSummary panel renders
@@ -127,7 +157,9 @@ test("readiness summary: badge on board/portfolio + panel on run-detail", async 
     overrideReason.getByRole("link", { name: "View gate evidence" }),
   ).toHaveAttribute(
     "href",
-    `/runs/${fx.overriddenRunId}?wb=evidence&kind=gate&state=overridden`,
+    new RegExp(
+      `^/runs/${fx.overriddenRunId}\\?wb=evidence&evidenceItem=gate%3A`,
+    ),
   );
 
   // (4) Navigate to the portfolio (ADR-172 D2 moved it off `/`). The workspace
@@ -263,13 +295,13 @@ test("UX-07 Running operational work and historical executor failure stay separa
         action: "Obtain a fresh result for this run.",
         evidence: true,
       },
-    ];
+    ].map((reason) => ({ ...reason, rowId: randomUUID() }));
 
     await withE2EDb(async (pool) => {
-      for (const { status, kind } of gateReasons) {
+      for (const { status, kind, rowId } of gateReasons) {
         await pool.query(
           "INSERT INTO gate_results(id,run_id,node_attempt_id,gate_id,kind,mode,status) VALUES($1,$2,$3,$4,$5,'blocking',$6)",
-          [randomUUID(), flow, attempt, `${status}-check`, kind, status],
+          [rowId, flow, attempt, `${status}-check`, kind, status],
         );
       }
       await pool.query(
@@ -285,7 +317,7 @@ test("UX-07 Running operational work and historical executor failure stay separa
     });
     await page.reload();
     await verification.locator("summary").press("Enter");
-    for (const { status, reason, action, evidence } of gateReasons) {
+    for (const { status, reason, action, evidence, rowId } of gateReasons) {
       const item = verification
         .getByRole("listitem")
         .filter({ hasText: `${status}-check` });
@@ -297,7 +329,7 @@ test("UX-07 Running operational work and historical executor failure stay separa
           item.getByRole("link", { name: "View gate evidence" }),
         ).toHaveAttribute(
           "href",
-          `/runs/${flow}?wb=evidence&kind=gate&state=${status}`,
+          `/runs/${flow}?wb=evidence&evidenceItem=gate%3A${rowId}`,
         );
       } else {
         await expect(item.getByRole("link")).toHaveCount(0);

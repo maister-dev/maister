@@ -468,6 +468,7 @@ export default async function RunDetailLayout({
     filterKind: tEvidence("filterKind"),
     filterState: tEvidence("filterState"),
     filterAny: tEvidence("filterAny"),
+    filterItem: tEvidence("filterItem"),
     stateCurrent: tEvidence("stateCurrent"),
     stateStale: tEvidence("stateStale"),
     stateSuperseded: tEvidence("stateSuperseded"),
@@ -1685,8 +1686,7 @@ export default async function RunDetailLayout({
                 const { status } = reason;
                 const evidenceQuery = new URLSearchParams({
                   wb: "evidence",
-                  kind: "gate",
-                  state: status,
+                  evidenceItem: `gate:${reason.rowId}`,
                 });
 
                 return {
