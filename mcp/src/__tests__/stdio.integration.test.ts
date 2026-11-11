@@ -539,7 +539,7 @@ describe("MCP stdio wire contract", () => {
     }
   });
 
-  it("forwards exact delegated work and collection through the built company facade", async () => {
+  it("forwards exact delegated work, collection and clarification through the built company facade", async () => {
     const company = await connectClient({
       token: "mai_company_delegation_wire",
       toolset: "company",
@@ -562,11 +562,18 @@ describe("MCP stdio wire contract", () => {
       },
     };
     const child = { childRunId: "56c46e8e-277f-4b49-8f99-ae3e133371ac" };
+    const clarification = {
+      ...child,
+      requestKey: "clarify-observation",
+      mode: "steer",
+      prompt: "Check if the observation still applies.",
+    };
 
     try {
       for (const [name, path, input] of [
         ["run_delegate", "/api/v1/ext/runs/delegate", body],
         ["run_collect", "/api/v1/ext/runs/collect", child],
+        ["run_message", "/api/v1/ext/runs/message", clarification],
       ] as const) {
         expect(
           (await company.callTool({ name, arguments: input })).isError,
@@ -1008,6 +1015,7 @@ describe("MCP stdio wire contract", () => {
           "assignment_question_ask",
           "run_delegate",
           "run_collect",
+          "run_message",
         ].sort(),
       );
       const inspected = await company.callTool({
@@ -1030,7 +1038,6 @@ describe("MCP stdio wire contract", () => {
         "librarian_memory_remember",
         "agent_memory_write",
         "run_promote",
-        "run_message",
         "run_rework",
       ]) {
         const refused = await company.callTool({ name, arguments: {} });

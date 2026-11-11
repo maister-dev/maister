@@ -24,6 +24,7 @@ import type { TaskLaunchAuditContext } from "@/lib/tasks/launch-intent";
 import type { ProjectAssignmentAdmission } from "@/lib/specialist-assignments/project-admission";
 import type { DelegatedWorkRequest } from "@/lib/specialist-assignments/delegated-intake";
 import type { NativeDelegationInput } from "@/lib/orchestrator/native-input-types";
+import type { ChildInputOrigin } from "@/lib/orchestrator/native-child-input";
 
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, stat } from "node:fs/promises";
@@ -88,6 +89,7 @@ import {
   operationalAgentRuntimePath,
 } from "./workspace-paths";
 
+import { requireDelegatedChildInput } from "@/lib/orchestrator/native-child-input";
 import {
   taskLaunchInputForRun,
   taskLaunchClarificationsForRun,
@@ -3451,6 +3453,47 @@ export async function sendAgentMessage(
   return agentMessageAnswer(_db, childRunId, turn.id);
 }
 
+/** Retain one live-only clarification under the actual professional's authority. */
+export async function sendDelegatedAgentSteer(
+  db: Db,
+  childRunId: string,
+  prompt: string,
+  origin: ChildInputOrigin,
+  requestKey: string,
+): Promise<SendAgentMessageResult> {
+  const accepted = await acceptAgentSteer(
+    db,
+    await steerClientFor(db, createExecutionHosts({ db }), childRunId),
+    childRunId,
+    prompt,
+    { origin, requestKey },
+  );
+
+  if (accepted.kind === "issued")
+    await deliverAgentSteer(db, accepted, () =>
+      db.transaction((tx: ExecutionDb) =>
+        requireDelegatedChildInput(tx, origin, childRunId),
+      ),
+    );
+  const turn = accepted.kind === "issued" ? accepted.steerTurn : accepted.turn;
+  const result = await agentMessageAnswer(db, childRunId, turn.id);
+
+  if (result.messageState === "applied" && result.delivery === "steered")
+    return result;
+  if (result.messageState === "dispatched")
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      "Clarification delivery is unconfirmed. Retry with the same request key.",
+      { details: { reason: "native_steer_reconciliation_required" } },
+    );
+
+  throw new MaisterError(
+    "PRECONDITION",
+    "The delegated child did not receive the clarification",
+    { details: { reason: "delegated_steer_refused" } },
+  );
+}
+
 // The bound client of the run's current generation, or null when the run has
 // none to steer through (the acceptance then queues).
 async function steerClientFor(
@@ -3485,6 +3528,7 @@ async function steerClientFor(
 async function deliverAgentSteer(
   db: Db,
   accepted: Extract<AgentSteerAcceptance, { kind: "issued" }>,
+  authorize?: () => Promise<void>,
 ): Promise<AgentTurn | null> {
   const command = {
     id: accepted.prepared.commandId,
@@ -3494,6 +3538,7 @@ async function deliverAgentSteer(
 
   try {
     await accepted.prepared.deliver({
+      authorize,
       onAck: async (tx) => {
         settled.value = await settleSteerCommand(tx, command, {
           kind: "injected",

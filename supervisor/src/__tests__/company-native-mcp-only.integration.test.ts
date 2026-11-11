@@ -106,7 +106,7 @@ afterEach(async () => {
 describe("company native MCP-only enforcement", () => {
   it.each([
     { extraActions: ["assignments:delegate"], expectedDenials: 0 },
-    { extraActions: [], expectedDenials: 1 },
+    { extraActions: [], expectedDenials: 2 },
   ])(
     "requires a reviewed delegation action for writes ($expectedDenials denials)",
     async ({ extraActions, expectedDenials }) => {

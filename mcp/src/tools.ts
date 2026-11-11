@@ -846,7 +846,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   run_message: {
     description:
-      "Send a follow-up to a PERSISTENT child agent in the calling orchestrator's run-tree by exactly one of addressableKey or childRunId. Input is saved before dispatch. A busy session or full agent pool leaves it queued for normal resume; a completed turn re-parks the child. Reuse requestKey to retry the same message without duplicating it; different input under that key is refused. Addressing stays within the caller's own tree. Flow children have no addressable agent session and are refused PRECONDITION. mode 'steer' injects the prompt into the child's RUNNING turn when its session supports it and queues it otherwise; mode 'queue' (default) always waits for the next turn. Returns { childRunId, messageId, status, messageState, delivery }; delivery 'steered' means it reached the running turn, 'queued' that it awaits the next turn.",
+      "Send a follow-up to a child agent. For native assignment work, the exact originating professional must specify childRunId, mode 'steer', and requestKey. The finite child needs an active turn on a steering-capable session. It never queues a successor on refusal. Reuse the same key and prompt to inspect an uncertain outcome. For a persistent child in the caller's tree, use exactly one of addressableKey or childRunId. The default 'queue' mode waits for its next turn, and 'steer' queues if the running turn cannot accept it. Input is saved before dispatch. Different input under the same key is refused. Flow children require their own continuation. Returns { childRunId, messageId, status, messageState, delivery }.",
     inputSchema: {
       type: "object",
       properties: {

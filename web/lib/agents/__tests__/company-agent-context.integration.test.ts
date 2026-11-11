@@ -129,6 +129,7 @@ import { createExecutionHosts, localHost } from "@/lib/execution-host";
 import * as executionHostServices from "@/lib/execution-host";
 import { POST as delegateExternalRun } from "@/app/api/v1/ext/runs/delegate/route";
 import { POST as collectExternalRun } from "@/app/api/v1/ext/runs/collect/route";
+import { POST as messageExternalRun } from "@/app/api/v1/ext/runs/message/route";
 import { runFlow } from "@/lib/flows/runner";
 import { captureNativeChildInput } from "@/lib/orchestrator/native-child-input";
 import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
@@ -10823,12 +10824,18 @@ it("IT-CBC-01 requires current company delegation grants for a repository-free w
       const { reserveCompanyDelegatedAgentRun } =
         await import("../company-agent-launch");
       const fake = createFakeExecutionHost();
+      const promptEntered = Promise.withResolvers<void>();
+      const releasePrompt = Promise.withResolvers<void>();
+
+      fake.setSteering(true);
       const scriptedTurn = {
         text:
           "```json maister:output\n" +
           JSON.stringify(operationalSuccessFixture()) +
           "\n```",
-        onPrompt: ({ sessionId }: { sessionId: string }) => {
+        onPrompt: async ({ sessionId }: { sessionId: string }) => {
+          promptEntered.resolve();
+          await releasePrompt.promise;
           const session = fake.sessions.get(sessionId);
 
           if (!session)
@@ -11023,7 +11030,105 @@ it("IT-CBC-01 requires current company delegation grants for a repository-free w
         actions: ["assignments:read"],
         idempotencyKey: randomUUID(),
       });
-      await startAgentSession(first.childRunId, { db, executionHosts: hosts });
+      const childExecution = startAgentSession(first.childRunId, {
+        db,
+        executionHosts: hosts,
+      });
+      const messageHost = vi
+        .spyOn(executionHostServices, "createExecutionHosts")
+        .mockReturnValue(hosts);
+      const sendClarification = (
+        prompt: string,
+        requestKey = "clarify-observation",
+      ) =>
+        messageExternalRun(
+          new NextRequest("http://localhost/api/v1/ext/runs/message", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              childRunId: first.childRunId,
+              requestKey,
+              mode: "steer",
+              prompt,
+            }),
+          }),
+          {},
+        );
+
+      try {
+        await Promise.race([
+          promptEntered.promise,
+          childExecution.then(() => {
+            throw new Error("The child finished before the clarification");
+          }),
+        ]);
+        const clarification =
+          "Check whether the retained observation still applies.";
+        const firstMessage = await sendClarification(clarification);
+
+        expect(firstMessage.status).toBe(200);
+        const receipt = await firstMessage.json();
+
+        expect(receipt).toMatchObject({
+          childRunId: first.childRunId,
+          messageState: "applied",
+          delivery: "steered",
+        });
+        const replay = await sendClarification(clarification);
+
+        expect(replay.status).toBe(200);
+        expect(await replay.json()).toEqual(receipt);
+        const conflict = await sendClarification("Change the same request.");
+
+        expect(conflict.status).toBe(409);
+        fake.setSteerBehavior(async () => ({
+          refused: "promptRequired",
+        }));
+        const refusedInput = "This must never become a successor turn.";
+        const refused = await sendClarification(
+          refusedInput,
+          "refused-clarification",
+        );
+        const refusedReplay = await sendClarification(
+          refusedInput,
+          "refused-clarification",
+        );
+
+        expect(refused.status).toBe(409);
+        expect(refusedReplay.status).toBe(409);
+        expect(await refused.json()).toMatchObject({
+          details: { reason: "delegated_steer_refused" },
+        });
+        const commands = await database.pool.query(
+          "SELECT state FROM execution_commands WHERE run_id=$1 AND kind='session.steer' ORDER BY created_at",
+          [first.childRunId],
+        );
+
+        expect(commands.rows).toEqual([
+          { state: "succeeded" },
+          { state: "failed" },
+        ]);
+        const turns = await database.pool.query(
+          "SELECT variant,state FROM agent_turns WHERE run_id=$1 ORDER BY ordinal",
+          [first.childRunId],
+        );
+
+        expect(turns.rows).toEqual([
+          { variant: "initial", state: "dispatched" },
+          { variant: "steer", state: "applied" },
+          { variant: "steer", state: "superseded" },
+        ]);
+        const transcript = await database.pool.query(
+          "SELECT content FROM run_messages WHERE run_id=$1 AND delivery='steered'",
+          [first.childRunId],
+        );
+
+        expect(transcript.rows).toEqual([{ content: clarification }]);
+      } finally {
+        releasePrompt.resolve();
+        await childExecution;
+        messageHost.mockRestore();
+      }
       await fake.waitForCanonicalEvents();
 
       expect(prompts).toHaveLength(1);

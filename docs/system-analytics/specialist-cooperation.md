@@ -133,8 +133,12 @@ decision.
 `run_delegate` also accepts a reviewed company result-only Flow. The existing
 graph driver restores the delegated objective and frozen runner sessions. It
 checks inherited source restrictions against the current node before prompt
-delivery, and `run_collect` serves the valid pinned export. Native message and
-rework delivery remain open.
+delivery, and `run_collect` serves the valid pinned export. The originating
+professional can send a live clarification to a finite agent child using
+`run_message` with its exact Run ID, `mode: steer`, and a stable request key.
+The shared steer command retains the input and reads back its receipt. A
+definitive refusal creates no successor turn or delivered transcript entry.
+Native rework and Flow continuation remain open.
 
 ### Decisive execution fences (T27)
 

@@ -140,6 +140,7 @@ export type PreparedSteer = {
   readonly commandId: string;
   readonly payload: SteerPayload;
   deliver(opts?: {
+    authorize?: () => Promise<void>;
     onAck?: (tx: Db, result: SteerResult) => Promise<void>;
     onReject?: (tx: Db, error: unknown) => Promise<void>;
   }): Promise<SteerResult>;
@@ -356,8 +357,10 @@ function throwSessionCreateFailure(
 async function assertSteerDeliverySources(
   db: Db,
   command: Readonly<{ id: string; runId: string }>,
+  authorize?: () => Promise<void>,
 ): Promise<void> {
   try {
+    await authorize?.();
     await assertNativeRunKnowledgeInputs(db, command.runId);
   } catch (error) {
     const [currentAttempt] = await db
@@ -739,7 +742,11 @@ export function createExecutionHosts(
             deliver<SteerPayload, SteerResult>(
               issued,
               async (env) => {
-                await assertSteerDeliverySources(db, issued.row);
+                await assertSteerDeliverySources(
+                  db,
+                  issued.row,
+                  opts?.authorize,
+                );
 
                 return transport.steer(
                   sessionId,

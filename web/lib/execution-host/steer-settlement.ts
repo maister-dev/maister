@@ -4,6 +4,9 @@ import type { AgentTurn } from "@/lib/db/schema";
 import { and, eq, sql } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
+import { boundPromptBody, eventHorizon } from "./events/prompt-transcript";
+import { appendRunMessage } from "./events/run-message-store";
+
 import { agentTurns, runMessages, runs } from "@/lib/db/schema";
 import {
   CLOSES_MESSAGE_TURNS,
@@ -36,7 +39,7 @@ export type SteerOutcome =
 export type SteerSettlement =
   | Readonly<{
       domain: "agent";
-      kind: "applied" | "converted" | "already_settled";
+      kind: "applied" | "converted" | "refused" | "already_settled";
       steerTurn: AgentTurn;
       successor: AgentTurn | null;
     }>
@@ -53,6 +56,10 @@ const REQUEUE_PREFIX = "message:requeue:";
 
 export function steerRequeueKey(steerTurnId: string): string {
   return `${REQUEUE_PREFIX}${steerTurnId}`;
+}
+
+export function steerTranscriptKey(commandId: string): string {
+  return `steer:${commandId}`;
 }
 
 /** The steer turn a successor's logical key names; null for any other key. */
@@ -81,7 +88,8 @@ export async function settleSteerCommand(
     )
     .for("update");
 
-  if (steer) return settleAgentSteer(tx, steer, outcome, { logger, now });
+  if (steer)
+    return settleAgentSteer(tx, steer, command.id, outcome, { logger, now });
 
   const [message] = await tx
     .select()
@@ -157,6 +165,7 @@ export async function settleSteerCommand(
 async function settleAgentSteer(
   tx: Db,
   steer: AgentTurn,
+  commandId: string,
   outcome: SteerOutcome,
   opts: { logger: Logger; now: Date },
 ): Promise<SteerSettlement> {
@@ -201,12 +210,28 @@ async function settleAgentSteer(
       and(
         eq(agentTurns.id, steer.id),
         eq(agentTurns.state, "dispatched"),
-        eq(agentTurns.commandId, steer.commandId as string),
+        eq(agentTurns.commandId, commandId),
       ),
     )
     .returning();
+  const [run] = await tx
+    .select({ id: runs.id, status: runs.status, persistent: runs.persistent })
+    .from(runs)
+    .where(eq(runs.id, steer.runId))
+    .for("no key update");
 
   if (outcome.kind === "injected") {
+    if (!run.persistent) {
+      await appendRunMessage(tx, {
+        runId: run.id,
+        nodeAttemptId: null,
+        role: "user",
+        content: boundPromptBody(steer.prompt).content,
+        promptDispatchKey: steerTranscriptKey(commandId),
+        supervisorEventId: await eventHorizon(tx, run.id),
+        delivery: "steered",
+      });
+    }
     opts.logger.info(
       {
         runId: steer.runId,
@@ -224,6 +249,24 @@ async function settleAgentSteer(
       successor: null,
     };
   }
+  if (!run.persistent) {
+    opts.logger.info(
+      {
+        runId: run.id,
+        turnId: steer.id,
+        commandId: steer.commandId,
+        reason: outcome.reason,
+      },
+      "delegated-steer-refused",
+    );
+
+    return {
+      domain: "agent",
+      kind: "refused",
+      steerTurn: settled,
+      successor: null,
+    };
+  }
   // The acceptance-time transcript row stays the message's only row: it
   // waits as `queued` until its successor is dispatched (then `prompted`).
   await tx
@@ -232,7 +275,7 @@ async function settleAgentSteer(
     .where(
       and(
         eq(runMessages.runId, steer.runId),
-        eq(runMessages.promptDispatchKey, `steer:${steer.commandId}`),
+        eq(runMessages.promptDispatchKey, steerTranscriptKey(commandId)),
         eq(runMessages.delivery, "steered"),
       ),
     );
@@ -240,11 +283,6 @@ async function settleAgentSteer(
   // finalization that ends the run concurrently either commits first (the
   // status read here closes the successor) or waits for this insert and then
   // supersedes it — never a `queued` successor under a finished run.
-  const [run] = await tx
-    .select({ id: runs.id, status: runs.status })
-    .from(runs)
-    .where(eq(runs.id, steer.runId))
-    .for("update");
   const inserted = await insertAgentMessageTurn(
     tx,
     run,

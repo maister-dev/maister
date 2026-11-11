@@ -70,6 +70,15 @@ Flow children do not expose an addressable agent session for this operation.
 For result collection, `run_collect` accepts exactly one of `childRunId` or
 `all: true`; collection itself does not send a message.
 
+## Clarify work with an active specialist
+
+The professional who delegated a specialist assignment can use
+`run_message` with the exact `childRunId`, `mode: "steer"`, and a
+`requestKey`. The child needs an active turn on a session that supports
+steering. `messageState: "applied"` confirms delivery. A refused message
+creates no new turn. If delivery is uncertain, use the same key and prompt
+to check its outcome.
+
 ## Related guides
 
 - [Human-in-the-loop requests](/guides/human-in-the-loop)

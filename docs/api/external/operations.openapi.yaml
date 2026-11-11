@@ -2266,7 +2266,7 @@ paths:
   /api/v1/ext/runs/message:
     post:
       tags: [runs]
-      summary: (Implemented) Re-message a persistent swarm child
+      summary: (Implemented) Message a persistent or appointed child agent
       description: |
         Native knowledge input is admitted only to a direct professional agent
         child with complete source capture. The server rechecks the originating
@@ -2279,6 +2279,18 @@ paths:
         EXECUTOR_UNAVAILABLE (503), reason
         `native_steer_reconciliation_required`, preserves the existing command
         for receipt reconciliation instead of resending or declaring it refused.
+
+        For a native specialist assignment, specify the exact direct agent
+        `childRunId`, `mode: steer`, and a stable `requestKey`. A project caller
+        uses `runs:delegate`. A company caller uses `assignments:update` and
+        must have current originating professional delegation authority. The
+        server checks the work appointment, initiating authority, and current
+        source permissions before persisting intent and again before delivery.
+        The finite child must have an active prompt on a steering-capable
+        session. A successful response has `messageState: applied` and
+        `delivery: steered`. Definitive refusal returns 409 and creates no
+        successor turn. Unknown delivery returns 503 and the same key reads
+        the existing receipt. A Flow child requires a governed continuation.
 
         (Implemented, ADR-099.) Scope `runs:delegate`. Accepts a follow-up
         prompt to a PERSISTENT addressable child in the calling orchestrator's
@@ -2304,15 +2316,12 @@ paths:
         same-`requestKey` retry answers the same identity. `NeedsInput`
         children accept messages in both modes.
 
-        **Identifiers (trust contour).** The `projectId` and the **caller**
-        `runId` are derived SERVER-SIDE from the orchestrator's `agent:<id>`
-        token — NEVER body fields. The target is resolved by `addressableKey` OR
-        `childRunId` (exactly one required) and is SCOPED to the caller's own
-        tree (`root_run_id`) — a persistent child in another tree is invisible
-        (resolved to `PRECONDITION` → 409). The target MUST be a persistent
-        agent child; a non-persistent or non-agent target → `PRECONDITION` → 409.
+        The server derives the owner and caller Run from the execution token.
+        For legacy persistent messaging, the server resolves `addressableKey`
+        or `childRunId` within that caller's tree. An unavailable target
+        returns `PRECONDITION` (409).
 
-        Writes a `token_audit_log` row with scope `runs:delegate` after success.
+        Writes a `token_audit_log` row with the caller's resolved scope after success.
       operationId: extMessageRun
       security:
         - projectToken: []
@@ -2339,7 +2348,7 @@ paths:
                 childRunId:
                   type: string
                   format: uuid
-                  description: The persistent child's run id, in the caller's tree.
+                  description: The exact appointed agent child, or a persistent child in the caller's tree.
                 prompt:
                   type: string
                   minLength: 1
@@ -2349,12 +2358,12 @@ paths:
                   type: string
                   minLength: 1
                   maxLength: 128
-                  description: Optional retry key scoped to this child run; reuse only for identical input.
+                  description: Required for native assignment work. For persistent children it is optional. Reuse only for identical input.
                 mode:
                   type: string
                   enum: [steer, queue]
                   default: queue
-                  description: (Implemented — ADR-182) `steer` injects into the running turn when possible, else queues; `queue` always queues.
+                  description: Native assignment work requires `steer`. Persistent agents support `queue` and can queue a refused steer.
       responses:
         "200":
           description: Message accepted; its durable identity, application state and current child run status are returned.

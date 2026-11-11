@@ -521,6 +521,7 @@ class GuardrailAgent {
     } else if (scenario === "company_native_delegation") {
       await this.requestTool(sessionId, "mcp__maister__run_delegate", "tc-company-delegate", "other");
       await this.requestTool(sessionId, "mcp__maister__run_collect", "tc-company-collect", "other");
+      await this.requestTool(sessionId, "mcp__maister__run_message", "tc-company-message", "other");
     } else if (scenario === "company_native_read_scope") {
       await this.requestTool(
         sessionId,
