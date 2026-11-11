@@ -10800,6 +10800,29 @@ it("IT-CBC-03 fences a company context writer at execution ownership handoff and
 
     expect(first.status).toBe(200);
     const after = await moveOwner("recover");
+
+    await database.pool.query(
+      "UPDATE specialist_owner_claims SET renewed_at=clock_timestamp()-interval '45 seconds',expires_at=clock_timestamp()+interval '75 seconds' WHERE assignment_id=$1",
+      [appointment.assignmentId],
+    );
+    await expect(
+      database.pool.query(
+        "SELECT renew_specialist_executor($1,$2,$3) AS current",
+        [appointment.runId, before.id, 1],
+      ),
+    ).resolves.toMatchObject({ rows: [{ current: false }] });
+    await expect(
+      database.pool.query(
+        "SELECT renew_specialist_executor($1,$2,$3) AS current",
+        [appointment.runId, after.id, 2],
+      ),
+    ).resolves.toMatchObject({ rows: [{ current: true }] });
+    await expect(
+      database.pool.query(
+        "SELECT epoch,expires_at>clock_timestamp()+interval '110 seconds' AS renewed FROM specialist_owner_claims WHERE assignment_id=$1",
+        [appointment.assignmentId],
+      ),
+    ).resolves.toMatchObject({ rows: [{ epoch: 2, renewed: true }] });
     const continuation = update(1, "second-observation");
     const stale = await patch(original.secret, continuation);
 
@@ -10810,7 +10833,7 @@ it("IT-CBC-03 fences a company context writer at execution ownership handoff and
     expect(replay.status).toBe(200);
     expect(await replay.json()).toMatchObject({
       revision: 1,
-      entries: [{ ownerEpoch: null, executionEpoch: before.epoch }],
+      entries: [{ ownerEpoch: 1, executionEpoch: before.epoch }],
     });
     const recovered = await patch(owner.secret, continuation);
 
@@ -10820,12 +10843,12 @@ it("IT-CBC-03 fences a company context writer at execution ownership handoff and
       entries: [
         {
           entry: { id: "first-observation" },
-          ownerEpoch: null,
+          ownerEpoch: 1,
           executionEpoch: before.epoch,
         },
         {
           entry: { id: "second-observation" },
-          ownerEpoch: null,
+          ownerEpoch: 2,
           executionEpoch: after.epoch,
         },
       ],
@@ -10841,6 +10864,17 @@ it("IT-CBC-03 fences a company context writer at execution ownership handoff and
     ).rejects.toMatchObject({
       constraint: "specialist_context_execution_epoch_required",
     });
+    await expect(
+      database.pool.query(
+        `INSERT INTO specialist_context_revisions
+        (assignment_id,revision,base_revision,input_revision,context,source_restrictions,actor,execution_epoch,owner_epoch,principal_key,request_key,request_digest,content_digest)
+        SELECT assignment_id,3,2,input_revision,context,source_restrictions,actor,execution_epoch,1,principal_key,'forged-old-owner',request_digest,content_digest
+        FROM specialist_context_revisions WHERE assignment_id=$1 AND revision=2`,
+        [appointment.assignmentId],
+      ),
+    ).rejects.toMatchObject({
+      constraint: "specialist_context_owner_epoch_required",
+    });
     await database.pool.query(
       "UPDATE execution_assignments SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",
       [after.id],
@@ -10851,6 +10885,17 @@ it("IT-CBC-03 fences a company context writer at execution ownership handoff and
     expect(await expired.json()).toMatchObject({
       details: { reason: "assignment_fenced" },
     });
+    await database.pool.query(
+      "UPDATE execution_assignments SET lease_expires_at=NULL WHERE id=$1",
+      [after.id],
+    );
+    await database.pool.query(
+      "UPDATE specialist_owner_claims SET renewed_at=clock_timestamp()-interval '121 seconds',expires_at=clock_timestamp()-interval '1 second' WHERE assignment_id=$1",
+      [appointment.assignmentId],
+    );
+    expect((await patch(owner.secret, update(2, "expired-owner"))).status).toBe(
+      409,
+    );
     await expect(
       getSpecialistAssignmentTokenContext(
         db,
@@ -10858,6 +10903,25 @@ it("IT-CBC-03 fences a company context writer at execution ownership handoff and
         appointment.assignmentId,
       ),
     ).resolves.toMatchObject({ revision: 2 });
+    await expect(
+      database.pool.query("SELECT begin_specialist_executor($1,$2) AS epoch", [
+        appointment.runId,
+        after.id,
+      ]),
+    ).resolves.toMatchObject({ rows: [{ epoch: 3 }] });
+    await expect(
+      database.pool.query(
+        "SELECT renew_specialist_executor($1,$2,$3) AS current",
+        [appointment.runId, after.id, 2],
+      ),
+    ).resolves.toMatchObject({ rows: [{ current: false }] });
+    const adopted = await patch(owner.secret, update(2, "adopted-observation"));
+
+    expect(adopted.status).toBe(200);
+    expect(await adopted.json()).toMatchObject({
+      revision: 3,
+      entries: [{ ownerEpoch: 1 }, { ownerEpoch: 2 }, { ownerEpoch: 3 }],
+    });
   } finally {
     await db.transaction((tx) =>
       releaseAssignmentForRun(tx, appointment.runId, "test_finished"),

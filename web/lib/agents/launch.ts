@@ -101,6 +101,7 @@ import {
 } from "@/lib/specialist-assignments/delegated-intake";
 import { contentDigest } from "@/lib/evaluations/digest";
 import { appendSpecialistAssignmentContextPrompt } from "@/lib/specialist-assignments/projection";
+import { withSpecialistExecutor } from "@/lib/specialist-assignments/executor-lease";
 import {
   prepareProjectAssignmentAdmission,
   loadProjectAssignmentExecutionInput,
@@ -4083,7 +4084,12 @@ export async function startAgentSession(
   const db = opts.db ?? getDb();
   const executionHosts = opts.executionHosts ?? createExecutionHosts({ db });
   const [source] = await db
-    .select({ assignmentId: runs.executionAssignmentId })
+    .select({
+      assignmentId: runs.executionAssignmentId,
+      resultContract: runs.resultContract,
+      knowledgeAccess: runs.knowledgeAccess,
+      status: runs.status,
+    })
     .from(runs)
     .where(eq(runs.id, runId));
   const expectedAssignmentId =
@@ -4092,12 +4098,29 @@ export async function startAgentSession(
       : opts.assignmentId;
 
   try {
-    await driveAgentSession(runId, {
-      ...opts,
-      assignmentId: expectedAssignmentId,
-      db,
-      executionHosts,
-    });
+    const drive = (signal?: AbortSignal) =>
+      driveAgentSession(runId, {
+        ...opts,
+        signal,
+        assignmentId: expectedAssignmentId,
+        db,
+        executionHosts,
+      });
+
+    if (
+      source &&
+      (source.status === "Running" || source.status === "NeedsInput") &&
+      expectedAssignmentId &&
+      usesStructuredKnowledgeContext(source)
+    )
+      await withSpecialistExecutor(
+        db,
+        runId,
+        expectedAssignmentId,
+        drive,
+        opts.signal,
+      );
+    else await drive(opts.signal);
   } catch (err) {
     if (isPreparationIdentityRefusal(err)) {
       log.error(

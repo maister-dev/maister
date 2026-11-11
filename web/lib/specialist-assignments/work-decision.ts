@@ -212,7 +212,7 @@ async function decideWork(
       assignmentId,
       decision.inputRevision,
     );
-    const { authority, executionEpoch } =
+    const { authority, executionEpoch, ownerEpoch } =
       await authorizeAssignmentWorkAcceptance(
         tx,
         resolved,
@@ -354,7 +354,7 @@ async function decideWork(
           },
           actor: authority.actor,
           introducedRevision: contextRevision,
-          ownerEpoch: null,
+          ownerEpoch,
           ...(executionEpoch === null ? {} : { executionEpoch }),
         },
       ],
@@ -366,6 +366,7 @@ async function decideWork(
       snapshot,
       actor: authority.actor,
       executionEpoch,
+      ownerEpoch,
       sourceRestrictions: restrictionsForKnowledgeAccess(access),
       requestKey: `${decision.decision}-${id}`,
       requestDigest,

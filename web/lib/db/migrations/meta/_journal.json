@@ -1968,6 +1968,13 @@
       "when": 1794606477987,
       "tag": "0284_specialist_root_branch_settlement",
       "breakpoints": true
+    },
+    {
+      "idx": 285,
+      "version": "7",
+      "when": 1794606477988,
+      "tag": "0285_specialist_executor_lease",
+      "breakpoints": true
     }
   ]
 }

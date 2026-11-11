@@ -37,6 +37,7 @@ export type ResolvedAssignmentContextPrincipal = Readonly<{
 type CurrentAssignmentAction = Readonly<{
   authority: AssignmentAuthoritySnapshot & { actor: KnowledgeAuthorityActor };
   executionEpoch: number | null;
+  ownerEpoch: number | null;
 }>;
 
 function fencedAssignmentOwner(): MaisterError {
@@ -165,6 +166,10 @@ async function authorizeAssignmentExecutionAction(
           principal.identity.actor.runId,
           action,
         );
+  const ownerEpoch =
+    principal.identity.kind === "user"
+      ? null
+      : await readAssignmentOwnerEpoch(tx, principal.identity.actor.runId);
   const authority = await authorizeAssignmentActionGrants(
     tx,
     principal,
@@ -173,7 +178,24 @@ async function authorizeAssignmentExecutionAction(
     action,
   );
 
-  return { authority, executionEpoch };
+  return { authority, executionEpoch, ownerEpoch };
+}
+
+async function readAssignmentOwnerEpoch(
+  tx: SqlTransaction,
+  runId: string | null,
+): Promise<number | null> {
+  const [claim] = (
+    await tx.execute(
+      sql`SELECT specialist_execution_owner_epoch(${runId}) AS epoch`,
+    )
+  ).rows;
+
+  if (claim?.epoch === null) return null;
+  if (typeof claim?.epoch !== "number" || claim.epoch < 1)
+    throw fencedAssignmentOwner();
+
+  return claim.epoch;
 }
 
 /** The retained question owns checkpoint activation and replay after placement is released. */

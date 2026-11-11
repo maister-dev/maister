@@ -79,6 +79,7 @@ export async function retainAssignmentContextRevision(
     snapshot: AssignmentContextSnapshot;
     actor: KnowledgeAttribution;
     executionEpoch: number | null;
+    ownerEpoch: number | null;
     sourceRestrictions: readonly KnowledgeAccessRestriction[];
     requestKey: string;
     requestDigest: string;
@@ -90,6 +91,7 @@ export async function retainAssignmentContextRevision(
     snapshot,
     actor,
     executionEpoch,
+    ownerEpoch,
     sourceRestrictions,
     requestKey,
     requestDigest,
@@ -112,8 +114,8 @@ export async function retainAssignmentContextRevision(
       { details: { reason: "assignment_context_too_large" } },
     );
 
-  await tx.execute(sql`INSERT INTO specialist_context_revisions(assignment_id,revision,base_revision,input_revision,context,source_restrictions,actor,execution_epoch,principal_key,request_key,request_digest,content_digest)
-    VALUES(${assignmentId},${baseRevision + 1},${baseRevision},${snapshot.inputRevision},${JSON.stringify(snapshot)}::jsonb,${JSON.stringify(sourceRestrictions)}::jsonb,${JSON.stringify(actor)}::jsonb,${executionEpoch},${contentDigest(actor)},${requestKey},${requestDigest},${contentDigest(snapshot)})`);
+  await tx.execute(sql`INSERT INTO specialist_context_revisions(assignment_id,revision,base_revision,input_revision,context,source_restrictions,actor,execution_epoch,owner_epoch,principal_key,request_key,request_digest,content_digest)
+    VALUES(${assignmentId},${baseRevision + 1},${baseRevision},${snapshot.inputRevision},${JSON.stringify(snapshot)}::jsonb,${JSON.stringify(sourceRestrictions)}::jsonb,${JSON.stringify(actor)}::jsonb,${executionEpoch},${ownerEpoch},${contentDigest(actor)},${requestKey},${requestDigest},${contentDigest(snapshot)})`);
 }
 
 /** Source policy includes current assignment authority and the exact execution appointment, without user impersonation. */
@@ -492,6 +494,7 @@ async function appendContext(
       const {
         authority: { actor },
         executionEpoch,
+        ownerEpoch,
       } = await authorizeAssignmentContextUpdate(
         tx,
         principal,
@@ -602,7 +605,7 @@ async function appendContext(
             entry,
             actor,
             introducedRevision: nextRevision,
-            ownerEpoch: null,
+            ownerEpoch,
             ...(executionEpoch === null ? {} : { executionEpoch }),
           })),
         ],
@@ -621,6 +624,7 @@ async function appendContext(
         snapshot: snapshot.data,
         actor,
         executionEpoch,
+        ownerEpoch,
         sourceRestrictions: restrictions,
         requestKey: update.idempotencyKey,
         requestDigest,

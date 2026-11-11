@@ -10666,6 +10666,30 @@ export const specialistAssignments = pgTable(
   }),
 );
 
+export const specialistOwnerClaims = pgTable(
+  "specialist_owner_claims",
+  {
+    assignmentId: text("assignment_id")
+      .primaryKey()
+      .references(() => specialistAssignments.id, { onDelete: "restrict" }),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "restrict" }),
+    placementId: text("placement_id")
+      .notNull()
+      .references(() => executionAssignments.id, { onDelete: "restrict" }),
+    epoch: integer("epoch").notNull(),
+    renewedAt: timestamp("renewed_at", { withTimezone: true }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (t) => ({
+    valid: check(
+      "specialist_owner_claims_valid",
+      sql`${t.epoch}>0 AND ${t.expiresAt}>${t.renewedAt}`,
+    ),
+  }),
+);
+
 export const specialistInputRevisions = pgTable(
   "specialist_input_revisions",
   {

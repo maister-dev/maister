@@ -33,6 +33,10 @@ import {
   bindDelegatedWorkRunInTransaction,
   retainDelegatedWorkInTransaction,
 } from "../delegated-intake";
+import {
+  beginSpecialistExecutor,
+  renewSpecialistExecutor,
+} from "../executor-lease";
 
 import { contentDigest } from "@/lib/evaluations/digest";
 import { authorizeSourceRestrictions } from "@/lib/brain/knowledge-restrictions";
@@ -719,6 +723,43 @@ it("IT-CBC-01 retains and replays immutable work through the current executing p
     code: "23514",
     constraint: "specialist_work_child_live",
   });
+  const db: Db = database.db;
+  const { hostId } = await fakeExecutionHosts(db);
+  const childPlacement = await db.transaction(async (tx) => {
+    await mintAssignment(tx, { runId: parentRunId, hostId, reason: "launch" });
+    const child = await mintAssignment(tx, {
+      runId: reservedRunId,
+      hostId,
+      reason: "launch",
+    });
+
+    await tx.execute(
+      sql`UPDATE runs SET status='WaitingOnChildren' WHERE id=${parentRunId}`,
+    );
+    await releaseAssignmentForRun(tx, parentRunId, "waiting_on_children");
+    await tx.execute(
+      sql`UPDATE specialist_owner_claims SET renewed_at=clock_timestamp()-interval '121 seconds',expires_at=clock_timestamp()-interval '1 second' WHERE assignment_id=${assignment.id}`,
+    );
+
+    return child;
+  });
+
+  await expect(
+    beginSpecialistExecutor(db, reservedRunId, childPlacement.id),
+  ).resolves.toBe(2);
+  await database.pool.query(
+    "UPDATE specialist_owner_claims SET renewed_at=clock_timestamp()-interval '45 seconds',expires_at=clock_timestamp()+interval '75 seconds' WHERE assignment_id=$1",
+    [assignment.id],
+  );
+  await renewSpecialistExecutor(db, reservedRunId, childPlacement.id, 2);
+  await expect(
+    database.pool.query(
+      "SELECT run_id,epoch,expires_at>clock_timestamp()+interval '110 seconds' AS renewed FROM specialist_owner_claims WHERE assignment_id=$1",
+      [assignment.id],
+    ),
+  ).resolves.toMatchObject({
+    rows: [{ run_id: parentRunId, epoch: 2, renewed: true }],
+  });
   const replacementRunId = randomUUID();
 
   await database.pool.query("UPDATE runs SET status='Done' WHERE id=$1", [
@@ -749,6 +790,9 @@ it("IT-CBC-01 retains and replays immutable work through the current executing p
   await database.pool.query("UPDATE runs SET status='Done' WHERE id=$1", [
     reservedRunId,
   ]);
+  await db.transaction((tx) =>
+    releaseAssignmentForRun(tx, reservedRunId, "verified_quiescent"),
+  );
   await expect(appointReplacement()).resolves.toMatchObject({
     assignment: {
       runIds: expect.arrayContaining([
@@ -3250,6 +3294,7 @@ it("IT-CBX-01 logical-work upgrade preserves old intake and opaque child labels 
       await applyMainMigration(tx, "0282_specialist_root_recovery_fence");
       await applyMainMigration(tx, "0283_specialist_root_appointment_epoch");
       await applyMainMigration(tx, "0284_specialist_root_branch_settlement");
+      await applyMainMigration(tx, "0285_specialist_executor_lease");
     });
     expect(
       (

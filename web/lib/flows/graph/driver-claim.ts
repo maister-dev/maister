@@ -18,6 +18,11 @@ import {
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { projectionTransaction } from "@/lib/execution-host/events/projection-transaction";
+import {
+  assertSpecialistExecutor,
+  beginSpecialistExecutor,
+  renewSpecialistExecutor,
+} from "@/lib/specialist-assignments/executor-lease";
 import { parseExecutableStoredFlowManifest } from "@/lib/flows/manifest-parser";
 import { manifestDigest } from "@/lib/flows/digest";
 import { currentBudgetTermination } from "@/lib/runs/budget-termination";
@@ -27,6 +32,7 @@ type PlacedFlowDriverScope = Readonly<{
   runId: string;
   assignmentId: string;
   assignmentEpoch: number;
+  specialistOwnerEpoch?: number;
 }>;
 type UnplacedSessionlessFlowDriverScope = Readonly<{
   scope: "unplaced_sessionless";
@@ -216,6 +222,13 @@ export async function assertFlowDriverCommit(
     );
 
   if (!current) throw new FlowDriverClaimLost(claim);
+  if (claim.scope === "assignment" && claim.specialistOwnerEpoch !== undefined)
+    await assertSpecialistExecutor(
+      tx,
+      claim.runId,
+      claim.assignmentId,
+      claim.specialistOwnerEpoch,
+    );
   if (claim.scope === "unplaced_sessionless") {
     const [run] = await tx.select().from(runs).where(eq(runs.id, claim.runId));
 
@@ -274,14 +287,20 @@ export async function claimFlowDriver(
     if (!assignment) return null;
     const token = await acquireFlowDriverLease(tx, input.runId);
 
-    return token
-      ? {
-          ...input,
-          scope: "assignment",
-          assignmentEpoch: assignment.epoch,
-          token,
-        }
-      : null;
+    if (!token) return null;
+    const specialistOwnerEpoch = await beginSpecialistExecutor(
+      tx,
+      input.runId,
+      input.assignmentId,
+    );
+
+    return {
+      ...input,
+      scope: "assignment",
+      assignmentEpoch: assignment.epoch,
+      ...(specialistOwnerEpoch === null ? {} : { specialistOwnerEpoch }),
+      token,
+    };
   });
 }
 
@@ -328,6 +347,16 @@ export async function renewFlowDriverClaim(
 ): Promise<void> {
   await projectionTransaction(db, async (tx) => {
     await assertFlowDriverClaim(tx, claim);
+    if (
+      claim.scope === "assignment" &&
+      claim.specialistOwnerEpoch !== undefined
+    )
+      await renewSpecialistExecutor(
+        tx,
+        claim.runId,
+        claim.assignmentId,
+        claim.specialistOwnerEpoch,
+      );
     await tx
       .update(runs)
       .set({

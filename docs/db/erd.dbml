@@ -3318,6 +3318,15 @@ table specialist_intake_receipts {
   }
 }
 
+table specialist_owner_claims {
+  assignment_id text [pk, not null]
+  run_id text [not null]
+  placement_id text [not null]
+  epoch integer [not null]
+  renewed_at "timestamp with time zone" [not null]
+  expires_at "timestamp with time zone" [not null]
+}
+
 table specialist_run_links {
   assignment_id text [not null]
   run_id text [not null]
@@ -4947,6 +4956,12 @@ ref specialist_input_revisions_assignment_fk: specialist_input_revisions.assignm
 ref specialist_intake_receipts_input_fk: specialist_intake_receipts.(assignment_id, input_revision) > specialist_input_revisions.(assignment_id, revision) [delete: restrict, update: no action]
 
 ref specialist_intake_receipts_work_fk: specialist_intake_receipts.(work_id, work_revision) > specialist_work.(id, work_revision) [delete: restrict, update: no action]
+
+ref specialist_owner_claims_assignment_id_specialist_assignments_id_fk: specialist_owner_claims.assignment_id > specialist_assignments.id [delete: restrict, update: no action]
+
+ref specialist_owner_claims_run_id_runs_id_fk: specialist_owner_claims.run_id > runs.id [delete: restrict, update: no action]
+
+ref specialist_owner_claims_placement_id_execution_assignments_id_fk: specialist_owner_claims.placement_id > execution_assignments.id [delete: restrict, update: no action]
 
 ref specialist_run_links_assignment_id_specialist_assignments_id_fk: specialist_run_links.assignment_id > specialist_assignments.id [delete: restrict, update: no action]
 
