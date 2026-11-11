@@ -9,6 +9,7 @@ import type { KnowledgeReadConsumer } from "@/lib/brain/knowledge-disclosure";
 import type { Owner } from "@/lib/company/types";
 import type { SqlTransaction } from "@/lib/db/sql-types";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
+import type { AssignmentAuthoritySnapshot } from "./types";
 
 import { sql } from "drizzle-orm";
 
@@ -88,19 +89,59 @@ export async function authorizeAssignmentContextUpdate(
   owner: Owner,
   policy: ExecutionPolicy,
 ): Promise<KnowledgeAuthorityActor> {
-  const { identity } = principal;
-
-  if (identity.kind === "user") {
-    await authorizeAssignment(
+  return (
+    await authorizeAssignmentExecutionAction(
       tx,
-      identity.user.id,
+      principal,
       owner,
-      "assignments:update",
       policy,
+      "assignments:update",
+    )
+  ).actor;
+}
+
+/** A delegate action needs current initiating and professional authority for the same appointment. */
+export async function authorizeAssignmentDelegation(
+  tx: SqlTransaction,
+  principal: ResolvedAssignmentContextPrincipal,
+  owner: Owner,
+  policy: ExecutionPolicy,
+): Promise<AssignmentAuthoritySnapshot> {
+  if (principal.identity.kind === "user")
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "Delegation requires the current originating professional execution",
     );
 
-    return identity.actor;
-  }
+  return authorizeAssignmentExecutionAction(
+    tx,
+    principal,
+    owner,
+    policy,
+    "assignments:delegate",
+  );
+}
+
+async function authorizeAssignmentExecutionAction(
+  tx: SqlTransaction,
+  principal: ResolvedAssignmentContextPrincipal,
+  owner: Owner,
+  executionPolicy: ExecutionPolicy,
+  action: "assignments:update" | "assignments:delegate",
+): Promise<AssignmentAuthoritySnapshot & { actor: KnowledgeAuthorityActor }> {
+  const { identity } = principal;
+
+  if (identity.kind === "user")
+    return {
+      ...(await authorizeAssignment(
+        tx,
+        identity.user.id,
+        owner,
+        action,
+        executionPolicy,
+      )),
+      actor: identity.actor,
+    };
   const active = (
     await tx.execute(
       sql`SELECT id FROM runs WHERE id=${identity.actor.runId} AND status IN ('Running','NeedsInput','NeedsInputIdle','WaitingOnChildren') FOR SHARE`,
@@ -110,37 +151,52 @@ export async function authorizeAssignmentContextUpdate(
   if (!active)
     throw new MaisterError(
       "UNAUTHORIZED",
-      "Context mutation requires the current active execution, not a queued or reviewed Run",
+      "Assignment mutation requires the current active execution",
     );
   if (identity.kind === "company_agent") {
     if (
       owner.kind !== "company" ||
       owner.companyId !== identity.companyId ||
-      !identity.actionLimits.includes("assignments:update")
+      !identity.actionLimits.includes(action)
     )
       throw new MaisterError(
         "UNAUTHORIZED",
-        "The current company role does not permit working context updates",
+        "The current company role does not permit the assignment action",
       );
-    await authorizeCompanyUserAction(
+    const initiatingAuthority = await authorizeCompanyUserAction(
       tx,
       identity.initiatingUser.id,
       owner.companyId,
-      "assignments:update",
+      action,
     );
     const grant = (
       await tx.execute(
-        sql`SELECT id FROM company_grants WHERE company_id=${owner.companyId} AND principal_type='agent' AND principal_id=${identity.actor.id} AND action='assignments:update' AND revoked_at IS NULL FOR SHARE`,
+        sql`SELECT id,revision FROM company_grants WHERE company_id=${owner.companyId} AND principal_type='agent' AND principal_id=${identity.actor.id} AND action=${action} AND revoked_at IS NULL FOR SHARE`,
       )
     ).rows[0];
 
-    if (!grant)
+    if (typeof grant?.id !== "string" || typeof grant.revision !== "number")
       throw new MaisterError(
         "UNAUTHORIZED",
-        "Current explicit professional context update authority is required",
+        "Current explicit professional assignment authority is required",
       );
 
-    return identity.actor;
+    return {
+      schemaVersion: 1,
+      capturedAt: new Date().toISOString(),
+      actor: identity.actor,
+      executionPolicy,
+      witnesses: [
+        initiatingAuthority.witness,
+        {
+          kind: "company_grant",
+          owner,
+          authorityId: grant.id,
+          revision: grant.revision,
+          action,
+        },
+      ],
+    };
   }
   if (owner.kind !== "project" || owner.projectId !== identity.projectId)
     throw new MaisterError(
@@ -175,13 +231,15 @@ export async function authorizeAssignmentContextUpdate(
       "UNAUTHORIZED",
       "The current initiating project principal is unavailable",
     );
-  await authorizeAssignment(
-    tx,
-    run.initiating_user_id,
-    owner,
-    "assignments:update",
-    policy,
-  );
 
-  return identity.actor;
+  return {
+    ...(await authorizeAssignment(
+      tx,
+      run.initiating_user_id,
+      owner,
+      action,
+      executionPolicy,
+    )),
+    actor: identity.actor,
+  };
 }

@@ -109,7 +109,10 @@ These fences protect the admission decision. They do not replace current token,
 assignment-owner, receiving-role or source authorization, and do not qualify the
 full cancellation/recovery protocol reserved for T27/T29.
 
-### Logical-work persistence and revision axes (storage Implemented; dispatch/decisions Designed — T27/T28)
+### Logical-work persistence and revision axes
+
+Storage and canonical intake are implemented. Native child dispatch and work
+decisions remain T27/T28 work.
 
 A work subject has a server-generated `id` scoped to its assignment and one
 caller-supplied bounded `logicalWorkId`. `workRevision` identifies an immutable
@@ -148,6 +151,17 @@ content returns a conflict. Replaying historical work does not reapply assignmen
 CAS, re-reserve a child or reset a budget. New work requires the current assignment,
 input and context witnesses. Receipt, definition and business state fact commit
 atomically; incomplete writes roll back.
+
+The delegated intake service checks the current credential, originating
+appointment, and source permissions before returning any receipt. Rotation
+within the same authorized Run can recover its reservation without changing the
+retained actor. The same key with different bounded work input, receiving pin,
+or effective limits conflicts. First admission requires a running responsible
+professional and the exact assignment business, input, and context heads.
+Replay uses the recorded request witnesses and still checks current authority.
+The assignment row is acquired without waiting after the rooted Run fences
+and before company credential resolution reads the assignment. A concurrent
+human transition can then settle without a lock inversion.
 
 Historical run links with only unqualified work labels remain historical unknown
 references. New native work enrollment uses an explicit exact work witness;

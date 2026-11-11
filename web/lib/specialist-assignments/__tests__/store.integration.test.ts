@@ -28,6 +28,7 @@ import {
 import { intakeSpecialistAssignmentInTransaction } from "../intake";
 import { assignmentContextSchema } from "../context-types";
 import { assignmentWorkDefinitionSchema } from "../work-types";
+import { retainDelegatedWorkInTransaction } from "../delegated-intake";
 
 import { contentDigest } from "@/lib/evaluations/digest";
 import {
@@ -35,6 +36,7 @@ import {
   PATCH as contextPatch,
 } from "@/app/api/specialist-assignments/[assignmentId]/context/route";
 import { issueUserAccessToken } from "@/lib/tokens/issue";
+import { issueAgentRunToken, revokeAgentRunToken } from "@/lib/agents/tokens";
 import { PATCH as externalContextPatch } from "@/app/api/v1/ext/specialist-assignments/[assignmentId]/context/route";
 import { seedProjectRow } from "@/test-support/execution-host-seed";
 import { MaisterError } from "@/lib/errors";
@@ -205,7 +207,7 @@ afterAll(async () => {
   }
 });
 
-it("IT-CBC-01 retains immutable work and attributed intake without inventing execution or acceptance", async () => {
+it("IT-CBC-01 retains and replays immutable work through the current executing professional", async () => {
   const project = await seedProjectRow(database.db);
   const membershipId = randomUUID();
   const attachmentId = randomUUID();
@@ -270,7 +272,7 @@ it("IT-CBC-01 retains immutable work and attributed intake without inventing exe
         expectedRevision: 1,
         inputRevision: 1,
         runId: parentRunId,
-        role: "coordinator",
+        role: "specialist",
       },
     ),
   );
@@ -281,6 +283,11 @@ it("IT-CBC-01 retains immutable work and attributed intake without inventing exe
     1,
   );
   const context = await getSpecialistAssignmentContext(
+    database.db,
+    requesterId,
+    assignment.id,
+  );
+  const head = await getSpecialistAssignment(
     database.db,
     requesterId,
     assignment.id,
@@ -314,22 +321,8 @@ it("IT-CBC-01 retains immutable work and attributed intake without inventing exe
     runId: parentRunId,
     attemptId: null,
   };
-  const authority = {
-    schemaVersion: 1,
-    capturedAt: new Date().toISOString(),
-    actor,
-    executionPolicy: prepared.executionPolicy,
-    witnesses: [
-      {
-        kind: "project_membership",
-        projectId: project.id,
-        membershipId,
-        role: "owner",
-      },
-    ],
-  };
   const bounds = {
-    schemaVersion: 1,
+    schemaVersion: 1 as const,
     maxDepth: 2,
     maxFanout: 4,
     maxActiveChildren: 2,
@@ -338,27 +331,114 @@ it("IT-CBC-01 retains immutable work and attributed intake without inventing exe
     wallClockMinutes: 30,
     consecutiveFailures: 3,
   };
-  const workId = randomUUID();
-  const reservedRunId = randomUUID();
-  const sourceKey = contentDigest({
-    assignmentId: assignment.id,
-    inputRevision: 1,
-    logicalWorkId: "diagnose",
-    workRevision: 1,
-  });
-  const requestSha256 = contentDigest({
-    logicalWorkId: "diagnose",
-    definition,
+  const issue = () =>
+    issueAgentRunToken({
+      agentId: prepared.responsibleAgentId,
+      projectId: project.id,
+      runId: parentRunId,
+      db: database.db,
+    });
+  const firstToken = await issue();
+  const request = {
+    tokenId: firstToken.tokenId,
+    selector: {
+      schemaVersion: 1 as const,
+      assignmentId: assignment.id,
+      expectedRevision: head.revision,
+      inputRevision: 1,
+      contextRevision: context.revision,
+      logicalWorkId: "diagnose",
+      workRevision: 1,
+    },
+    prepared: {
+      objectiveInput: definition.objectiveInput,
+      target: definition.target,
+      bounds,
+      sourceRestrictions: [],
+    },
+  };
+  const retain = (input: typeof request) =>
+    database.db.transaction((tx) =>
+      retainDelegatedWorkInTransaction(tx, input),
+    );
+
+  await database.db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT id FROM specialist_assignments WHERE id=${assignment.id} FOR UPDATE`,
+    );
+    await expect(retain(request)).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "assignment_work_busy" },
+    });
   });
 
+  const admitted = await Promise.all([retain(request), retain(request)]);
+  const first = admitted.find((result) => !result.duplicate)!;
+  const duplicate = admitted.find((result) => result.duplicate)!;
+
+  expect(first).toBeDefined();
+  expect(duplicate.work).toEqual(first.work);
+  expect(first.work.actor).toEqual(actor);
+  const { id: workId, reservedRunId, requestSha256 } = first.work;
+
+  await revokeAgentRunToken(firstToken.tokenId, database.db);
+  const rotated = { ...request, tokenId: (await issue()).tokenId };
+  const staleHeads = {
+    ...rotated,
+    selector: { ...rotated.selector, expectedRevision: head.revision - 1 },
+  };
+
+  await expect(retain(request)).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await expect(retain(staleHeads)).resolves.toEqual({
+    duplicate: true,
+    work: first.work,
+  });
   await expect(
-    database.db.transaction(async (tx) => {
-      await tx.execute(sql`INSERT INTO specialist_work(id,work_revision,assignment_id,input_revision,input_sha256,logical_work_id,parent_run_id,definition,definition_sha256,actor,authority_snapshot,bounds,source_restrictions,request_sha256,source_key,reserved_run_id)
-      VALUES(${workId},1,${assignment.id},1,${input.digest},'diagnose',${parentRunId},${JSON.stringify(definition)}::jsonb,${contentDigest(definition)},${JSON.stringify(actor)}::jsonb,${JSON.stringify(authority)}::jsonb,${JSON.stringify(bounds)}::jsonb,'[]'::jsonb,${requestSha256},${sourceKey},${reservedRunId})`);
-      await tx.execute(sql`INSERT INTO specialist_intake_receipts(source_kind,source_key,request_digest,assignment_id,input_revision,actor,disposition,work_id,work_revision)
-      VALUES('delegation',${sourceKey},${requestSha256},${assignment.id},1,${JSON.stringify(actor)}::jsonb,'delegated',${workId},1)`);
+    retain({
+      ...staleHeads,
+      selector: { ...staleHeads.selector, logicalWorkId: "independent" },
     }),
-  ).resolves.toBeUndefined();
+  ).rejects.toMatchObject({
+    code: "CONFLICT",
+    details: { reason: "assignment_revision_conflict" },
+  });
+  await expect(
+    retain({
+      ...rotated,
+      prepared: {
+        ...rotated.prepared,
+        objectiveInput: {
+          ...definition.objectiveInput,
+          objective: "Changed work",
+        },
+      },
+    }),
+  ).rejects.toMatchObject({
+    code: "CONFLICT",
+    details: { reason: "specialist_intake_payload_conflict" },
+  });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT count(*)::int AS count FROM specialist_intake_receipts WHERE disposition='delegated' AND assignment_id=$1",
+        [assignment.id],
+      )
+    ).rows,
+  ).toEqual([{ count: 1 }]);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT actor_type,actor_id,payload->'originExecution' AS origin FROM domain_events WHERE kind='specialist.assignment_changed' AND payload->>'assignmentId'=$1 AND payload->>'cause'='work' AND payload->>'revision'=$2",
+        [assignment.id, String(head.revision + 1)],
+      )
+    ).rows,
+  ).toEqual([
+    {
+      actor_type: "agent",
+      actor_id: actor.id,
+      origin: { runId: parentRunId, nodeAttemptId: null },
+    },
+  ]);
   const retained = (
     await database.pool.query(
       "SELECT revision,decision_state,actor,definition,child_run_id,reserved_run_id FROM specialist_work WHERE id=$1 AND work_revision=1",

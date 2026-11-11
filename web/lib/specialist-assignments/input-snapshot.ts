@@ -85,7 +85,8 @@ const standingSchema = z
       (standing.schemaVersion === 1 ||
         standing.definition.flow === standing.coordinatorFlow.flowRefId),
   );
-const authoritySchema = z
+
+export const assignmentAuthoritySnapshotSchema = z
   .object({
     schemaVersion: z.literal(1),
     capturedAt: z.string().datetime(),
@@ -100,7 +101,7 @@ const snapshotSchema = z
     objectiveInput: assignmentObjectiveInputSchema,
     standingDefinition: standingSchema,
     scheduledRequest: scheduledRequestSnapshotSchema.nullable(),
-    authoritySnapshot: authoritySchema,
+    authoritySnapshot: assignmentAuthoritySnapshotSchema,
     sourceRestrictions: knowledgeRestrictionsSchema,
   })
   .strict();

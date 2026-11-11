@@ -77,6 +77,7 @@ import * as flowRunner from "@/lib/flows/runner";
 import { poll } from "@/test-support/durable-workers-ledger";
 import { answerAssignmentQuestion } from "@/lib/services/assignment-question-response";
 import { assignmentQuestionReceiptSchema } from "@/lib/specialist-assignments/question-types";
+import { retainDelegatedWorkInTransaction } from "@/lib/specialist-assignments/delegated-intake";
 import { getSpecialistAssignmentAdmission } from "@/lib/specialist-assignments/admission-read";
 import { requestTaskRequalificationIfCurrent } from "@/lib/tasks/qualification-requalification";
 import {
@@ -423,6 +424,10 @@ beforeAll(async () => {
   );
   await writeFile(
     join(source, "maister-agents/context-writer.md"),
+    primarySource,
+  );
+  await writeFile(
+    join(source, "maister-agents/delegating-observer.md"),
     primarySource,
   );
   await writeFile(
@@ -10577,6 +10582,148 @@ async function reserveContextFixture(
 
   return { ...appointment, credential };
 }
+
+it("IT-CBC-01 requires current company delegation grants for a repository-free work receipt and replay", async () => {
+  const roleId = "rah:delegating-observer";
+  const appointment = await reserveContextFixture(roleId, [
+    "assignments:read",
+    "assignments:update",
+    "assignments:delegate",
+  ]);
+  const assignment = await getSpecialistAssignment(
+    database.db,
+    userId,
+    appointment.assignmentId,
+  );
+  const effective = await resolveInstalledAgentDefinition(database.db, {
+    agentId: roleId,
+    packageInstallId: assignmentInput.standingDefinition.packageInstallId,
+  });
+  const prepared = {
+    objectiveInput: assignmentInput.objectiveInput,
+    target: {
+      kind: "company_agent" as const,
+      companyId: request.companyId,
+      specialistBinding: appointment.snapshot.specialistBinding,
+      role: {
+        agentId: roleId,
+        packageInstallId: effective.packageInstallId,
+        packageRevision: effective.resolvedRevision!,
+        definitionSha256: agentDefinitionSha256(effective.parsed),
+      },
+    },
+    bounds: {
+      schemaVersion: 1 as const,
+      maxDepth: 2,
+      maxFanout: 4,
+      maxActiveChildren: 2,
+      maxChildRuns: 8,
+      maxTokens: 100000,
+      wallClockMinutes: 30,
+      consecutiveFailures: 3,
+    },
+    sourceRestrictions: [],
+  };
+  const retain = () =>
+    database.db.transaction((tx) =>
+      retainDelegatedWorkInTransaction(tx, {
+        tokenId: appointment.credential.tokenId,
+        selector: {
+          schemaVersion: 1,
+          assignmentId: assignment.id,
+          expectedRevision: assignment.revision,
+          inputRevision: assignment.inputRevision,
+          contextRevision: assignment.contextRevision,
+          logicalWorkId: "inspect",
+          workRevision: 1,
+        },
+        prepared,
+      }),
+    );
+  const userGrant = await createCompanyGrants(database.db, administratorId, {
+    principalKind: "user",
+    principalId: userId,
+    actions: ["assignments:delegate"],
+    idempotencyKey: randomUUID(),
+  });
+  const initiating = userGrant.page.items.find(
+    (entry) => entry.action === "assignments:delegate",
+  )!;
+  const revoke = (grant: { id: string; revision: number }) =>
+    revokeCompanyGrant(database.db, administratorId, grant.id, {
+      expectedRevision: grant.revision,
+      reason: "End company delegation qualification",
+      idempotencyKey: randomUUID(),
+    });
+
+  try {
+    await expect(retain()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    const professionalGrant = await createCompanyGrants(
+      database.db,
+      administratorId,
+      {
+        principalKind: "agent",
+        principalId: roleId,
+        actions: ["assignments:delegate"],
+        idempotencyKey: randomUUID(),
+      },
+    );
+    const professional = professionalGrant.page.items.find(
+      (entry) => entry.action === "assignments:delegate",
+    )!;
+    let receipt: Awaited<ReturnType<typeof retain>>;
+
+    try {
+      await database.db.transaction(async (tx) => {
+        await tx.execute(
+          sql`SELECT id FROM specialist_assignments WHERE id=${assignment.id} FOR UPDATE`,
+        );
+        await expect(retain()).rejects.toMatchObject({
+          code: "CONFLICT",
+          details: { reason: "assignment_work_busy" },
+        });
+      });
+      receipt = await retain();
+      expect(receipt).toMatchObject({
+        duplicate: false,
+        work: {
+          actor: { kind: "agent", id: roleId, runId: appointment.runId },
+          definition: { target: prepared.target },
+          authoritySnapshot: {
+            witnesses: [
+              { authorityId: initiating.id, revision: initiating.revision },
+              { authorityId: professional.id, revision: professional.revision },
+            ],
+          },
+        },
+      });
+      expect(
+        (
+          await database.pool.query(
+            "SELECT company_id, project_id, task_id FROM runs WHERE id=$1",
+            [appointment.runId],
+          )
+        ).rows,
+      ).toEqual([
+        { company_id: request.companyId, project_id: null, task_id: null },
+      ]);
+    } finally {
+      await revoke(professional);
+    }
+
+    await expect(retain()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT id FROM specialist_work WHERE assignment_id=$1",
+          [assignment.id],
+        )
+      ).rows,
+    ).toEqual([{ id: receipt.work.id }]);
+  } finally {
+    await revoke(initiating);
+  }
+});
 
 it("IT-CBA-04 discloses only the appointed company context through a scoped actual credential without granting Brain access", async () => {
   const appointment = await reserveContextFixture("rah:context-observer", [

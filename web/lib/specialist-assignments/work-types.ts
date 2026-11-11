@@ -161,7 +161,8 @@ export type AssignmentWorkBounds = z.infer<typeof assignmentWorkBoundsSchema>;
 
 /** Internal prepared data is rechecked against current storage before it can reserve a child. */
 export type PreparedAssignmentWork = Readonly<{
-  definition: AssignmentWorkDefinition;
+  objectiveInput: AssignmentWorkDefinition["objectiveInput"];
+  target: AssignmentWorkTarget;
   bounds: AssignmentWorkBounds;
   sourceRestrictions: readonly KnowledgeAccessRestriction[];
 }>;

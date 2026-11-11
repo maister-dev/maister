@@ -42,8 +42,10 @@ const DELEGATION_LOCK_NAMESPACE = 0x646c6774;
 export async function lockDelegationParent(
   tx: Db,
   parentRunId: string,
-): Promise<void> {
-  await lockDelegationTree(tx, parentRunId);
+): Promise<string> {
+  const chain = await lockDelegationTree(tx, parentRunId);
+
+  return chain[chain.length - 1]!.id;
 }
 
 async function lockDelegationKey(tx: Db, runId: string): Promise<void> {
