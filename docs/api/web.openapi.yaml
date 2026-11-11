@@ -21698,7 +21698,8 @@ paths:
         result under its current input, context and business revisions.
         This operation accepts result-only obligations. It refuses unknown
         verification IDs or unmet required effects. Acceptance and completion
-        commit together. An exact replay returns the original receipt under
+        commit together and require the current root appointment. A superseded
+        root result remains in history. An exact replay returns the original receipt under
         current authority.
       x-implementation-status: Implemented
       x-required-scope: assignments:accept

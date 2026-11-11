@@ -276,6 +276,14 @@ current assignment input and a state that permits execution. A locked
 assignment yields a transient refusal to avoid waiting while holding the Run
 lock; a conflicting appointment returns `assignment_root_recovery_conflict`
 before a placement is minted.
+Migration `0283_specialist_root_appointment_epoch` numbers live root
+appointments on their existing immutable Run links. Readiness, final
+acceptance, and crashed root recovery require the current appointment for the
+current input. A delayed predecessor event keeps its delivery witness. An
+assignment awaiting acceptance cannot acquire a new live root. A lone legacy
+root is still usable; ambiguous historical links receive no invented order.
+The existing answer lineage carries the same root across an authorized
+clarification without rewriting the original link or minting a new epoch.
 
 Assignment executor lease is 120 seconds, renewed every 40 seconds by one fenced owner; each claim/renew/write checks current epoch, owner ID and fresh expiry in a transaction. A stable assignment-row CAS increments epoch when replacing an owner. Execution-host assignment epoch remains a separate lower boundary. Current permissions are checked in addition to both fences. A stale owner yields with a typed conflict; it cannot finalize another run's current work or classify itself as a new failure.
 

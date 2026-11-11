@@ -1954,6 +1954,13 @@
       "when": 1794606477985,
       "tag": "0282_specialist_root_recovery_fence",
       "breakpoints": true
+    },
+    {
+      "idx": 283,
+      "version": "7",
+      "when": 1794606477986,
+      "tag": "0283_specialist_root_appointment_epoch",
+      "breakpoints": true
     }
   ]
 }

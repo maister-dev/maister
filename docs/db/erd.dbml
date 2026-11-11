@@ -3326,11 +3326,14 @@ table specialist_run_links {
   work_id text
   work_revision integer
   work_witness jsonb
+  root_appointment_epoch integer
   linked_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
     (assignment_id, run_id) [pk]
     run_id [name: 'specialist_run_links_run_uq', unique]
+    (assignment_id, root_appointment_epoch) [name: 'specialist_run_links_root_appointment_uq', unique]
+
 
 
 

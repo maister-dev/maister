@@ -938,7 +938,7 @@ export async function linkSpecialistAssignmentRunInTransaction(
     if (ownership?.blocked === true)
       throw new MaisterError(
         "CONFLICT",
-        "Settle the current root execution before appointing a replacement",
+        "Settle the current root execution or its pending review before appointing a replacement",
         { details: { reason: "assignment_root_unsettled" } },
       );
   }

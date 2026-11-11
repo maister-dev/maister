@@ -28,6 +28,7 @@ import {
   cancelSpecialistAssignment,
   recoverSpecialistAssignment,
   appendSpecialistAssignmentInput,
+  linkSpecialistAssignmentRun,
 } from "../store";
 import { specialistAssignmentDeliveryConsumer } from "../delivery-capture";
 import { assignmentDeliveryViewSchema } from "../delivery-read-types";
@@ -573,6 +574,96 @@ it("IT-CBA-07 keeps a result with a required independent health check out of fin
   expect(
     await getSpecialistAssignment(database.db, target.userId, assignmentId),
   ).toMatchObject({ status: "active" });
+});
+
+it("IT-CBC-03 retains a superseded root result without letting it ready or complete the assignment", async () => {
+  const target = await recipient();
+  const { assignmentId, runId, deliveryId } = await readyResult(target, {
+    kind: "inbox",
+    userId: target.userId,
+  });
+  const replacementRunId = randomUUID();
+  const head = await getSpecialistAssignment(
+    database.db,
+    target.userId,
+    assignmentId,
+  );
+
+  await database.pool.query("UPDATE runs SET status='Done' WHERE id=$1", [
+    runId,
+  ]);
+  await database.pool.query(
+    "INSERT INTO runs(id,project_id,run_kind,status,flow_version,flow_revision_id,result_contract,workspace_mode,knowledge_access) SELECT $2,project_id,run_kind,'Running',flow_version,flow_revision_id,result_contract,workspace_mode,knowledge_access FROM runs WHERE id=$1",
+    [runId, replacementRunId],
+  );
+  await linkSpecialistAssignmentRun(database.db, target.userId, assignmentId, {
+    expectedRevision: head.revision,
+    inputRevision: head.inputRevision,
+    runId: replacementRunId,
+    role: "continuation",
+    work: null,
+  });
+
+  await finishRootResult(target.projectId, runId);
+  expect(
+    await getSpecialistAssignment(database.db, target.userId, assignmentId),
+  ).toMatchObject({ status: "active", runIds: [runId, replacementRunId] });
+  expect(
+    await database.pool.query(
+      "SELECT id FROM specialist_delivery_receipts WHERE run_id=$1",
+      [runId],
+    ),
+  ).toMatchObject({ rows: [{ id: deliveryId }] });
+
+  await database.db.transaction((tx) =>
+    publishRunResult(tx, {
+      runId: replacementRunId,
+      contract,
+      value: output,
+      valueBytes: Buffer.byteLength(JSON.stringify(output)),
+      producerKind: "flow_node",
+      producerRef: "research",
+    }),
+  );
+  await finishRootResult(target.projectId, replacementRunId);
+  const ready = await getSpecialistAssignment(
+    database.db,
+    target.userId,
+    assignmentId,
+  );
+
+  expect(ready.status).toBe("awaiting_acceptance");
+  expect(await runWebhookDeliveryJob({ db: database.db })).toMatchObject({
+    delivered: 2,
+  });
+  const accept = (selectedRunId: string) =>
+    acceptAssignment(
+      new NextRequest(
+        `http://localhost/api/specialist-assignments/${assignmentId}/acceptance`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            expectedRevision: ready.revision,
+            inputRevision: ready.inputRevision,
+            contextRevision: ready.contextRevision,
+            result: { runId: selectedRunId, revision: 1 },
+            verificationIds: [],
+            reason: "Review the current appointment's result.",
+            idempotencyKey: "accept-current-root-appointment",
+          }),
+        },
+      ),
+      { params: Promise.resolve({ assignmentId }) },
+    );
+
+  deliverySession.userId = target.userId;
+  try {
+    expect((await accept(runId)).status).toBe(409);
+    expect((await accept(replacementRunId)).status).toBe(200);
+  } finally {
+    deliverySession.userId = null;
+  }
 });
 
 it("IT-CBA-06 delivers one private native Inbox item, hides revoked source access and preserves recipient read state through replay", async () => {

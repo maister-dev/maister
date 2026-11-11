@@ -11062,6 +11062,7 @@ export const specialistRunLinks = pgTable(
     workId: text("work_id"),
     workRevision: integer("work_revision"),
     workWitness: jsonb("work_witness").$type<AssignmentWorkWitness>(),
+    rootAppointmentEpoch: integer("root_appointment_epoch"),
     linkedAt: timestamp("linked_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -11069,6 +11070,13 @@ export const specialistRunLinks = pgTable(
   (t) => ({
     primary: primaryKey({ columns: [t.assignmentId, t.runId] }),
     oneAssignment: unique("specialist_run_links_run_uq").on(t.runId),
+    rootAppointment: uniqueIndex("specialist_run_links_root_appointment_uq")
+      .on(t.assignmentId, t.rootAppointmentEpoch)
+      .where(sql`${t.rootAppointmentEpoch} IS NOT NULL`),
+    rootAppointmentShape: check(
+      "specialist_run_links_root_appointment_check",
+      sql`${t.rootAppointmentEpoch} IS NULL OR (${t.rootAppointmentEpoch}>0 AND ${t.workId} IS NULL AND ${t.role} IN ('specialist','coordinator','continuation'))`,
+    ),
     input: foreignKey({
       name: "specialist_run_links_input_fk",
       columns: [t.assignmentId, t.inputRevision],

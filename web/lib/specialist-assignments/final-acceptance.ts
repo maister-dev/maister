@@ -61,6 +61,11 @@ export async function markSpecialistResultReady(
   snapshot: AssignmentResultWitness,
 ): Promise<void> {
   const { assignmentId, inputRevision, runId, resultRevision } = snapshot;
+
+  // Re-read the appointment after any competing root admission has committed.
+  await tx.execute(
+    sql`SELECT id FROM specialist_assignments WHERE id=${assignmentId} FOR NO KEY UPDATE`,
+  );
   const [head] = (
     await tx.execute(sql`
     WITH candidate AS (
@@ -68,7 +73,6 @@ export async function markSpecialistResultReady(
       WHERE id=${assignmentId} AND input_revision=${inputRevision}
         AND status IN ('active','reconciling') AND revision<2147483647
         AND specialist_final_result_id(id,${inputRevision},${runId},${resultRevision}) IS NOT NULL
-      FOR UPDATE
     )
     UPDATE specialist_assignments subject SET status='awaiting_acceptance',
       revision=subject.revision+1,updated_at=clock_timestamp()

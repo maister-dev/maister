@@ -3161,13 +3161,14 @@ it("IT-CBX-01 logical-work upgrade preserves old intake and opaque child labels 
       await applyMainMigration(tx, "0280_specialist_context_owner_fence");
       await applyMainMigration(tx, "0281_specialist_root_admission_fence");
       await applyMainMigration(tx, "0282_specialist_root_recovery_fence");
+      await applyMainMigration(tx, "0283_specialist_root_appointment_epoch");
     });
     expect(
       (
         await legacy.pool.query(
           `SELECT to_jsonb(head) AS head,
       (SELECT to_jsonb(input) FROM specialist_input_revisions input WHERE input.assignment_id=head.id) AS input,
-      (SELECT to_jsonb(link)-'work_witness' FROM specialist_run_links link WHERE link.assignment_id=head.id) AS link,
+      (SELECT to_jsonb(link)-ARRAY['work_witness','root_appointment_epoch'] FROM specialist_run_links link WHERE link.assignment_id=head.id) AS link,
       (SELECT to_jsonb(receipt)-ARRAY['work_id','work_revision'] FROM specialist_intake_receipts receipt WHERE receipt.assignment_id=head.id) AS receipt
       FROM specialist_assignments head WHERE id=$1`,
           [assignment.id],
@@ -3178,10 +3179,13 @@ it("IT-CBX-01 logical-work upgrade preserves old intake and opaque child labels 
       (
         await legacy.pool.query(
           `SELECT (SELECT count(*)::int FROM specialist_work) AS work_count,
-            (SELECT count(*)::int FROM specialist_work_decisions) AS decision_count`,
+            (SELECT count(*)::int FROM specialist_work_decisions) AS decision_count,
+            (SELECT count(root_appointment_epoch)::int FROM specialist_run_links) AS root_appointment_count`,
         )
       ).rows,
-    ).toEqual([{ work_count: 0, decision_count: 0 }]);
+    ).toEqual([
+      { work_count: 0, decision_count: 0, root_appointment_count: 0 },
+    ]);
     const input = await getSpecialistAssignmentInput(
       legacy.db,
       requesterId,

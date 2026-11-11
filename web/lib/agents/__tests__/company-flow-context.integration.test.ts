@@ -4052,6 +4052,14 @@ it("IT-CBA-05 parks and resumes the same native company Flow node after an assig
         )
       ).rows,
     ).toEqual([{ specialist_answer_input_revision: 2 }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT specialist_current_root_id($1,2) AS run_id",
+          [input.assignmentId],
+        )
+      ).rows,
+    ).toEqual([{ run_id: runId }]);
   } finally {
     browserUserId = operatorId;
     if (runId) {
