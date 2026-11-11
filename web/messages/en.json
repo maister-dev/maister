@@ -234,6 +234,8 @@
     "attachEmpty": "You don't manage any projects yet.",
     "trust": "Trust",
     "rework": "Rework",
+    "attachmentOccupied": "Another version or source is attached",
+    "packageProvenanceUnavailable": "This revision is unavailable in Studio.",
     "reworkHint": "Local rework lands with the editor redesign.",
     "forkExists": "You already forked this package.",
     "forkOpenExisting": "Open your fork",

@@ -53,7 +53,14 @@ export async function POST(
       );
     }
 
-    const resolution = await resolveStudioPackageByRef(user.id, user.role, ref);
+    const selectors = req.nextUrl.searchParams.getAll("install");
+    const install = selectors.length > 1 ? selectors : selectors[0];
+    const resolution = await resolveStudioPackageByRef(
+      user.id,
+      user.role,
+      ref,
+      install,
+    );
 
     if (resolution.status === "not-found") {
       return notFoundResponse("package not found");

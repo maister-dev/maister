@@ -416,6 +416,54 @@ export async function getAvailablePackageInstalls(): Promise<
   );
 }
 
+export async function getStudioInstallForFlowRevision(
+  flowId: string,
+  revision: { resolvedRevision: string; source?: string },
+): Promise<{ id: string; name: string } | null> {
+  if (!revision.source) return null;
+
+  const source = revision.source.replace(/^file:\/\//, "");
+  const rows = await getDb()
+    .select()
+    .from(schemaModule.packageInstalls)
+    .where(
+      and(
+        eq(schemaModule.packageInstalls.packageStatus, "Installed"),
+        eq(
+          schemaModule.packageInstalls.resolvedRevision,
+          revision.resolvedRevision,
+        ),
+      ),
+    );
+  const matches = rows.filter((row) => {
+    const manifest = row.manifest as PackageInstallManifest;
+    const member = manifest.spec?.flows?.find((flow) => flow.id === flowId);
+
+    return member && join(row.installedPath, member.path) === source;
+  });
+
+  return matches.length === 1
+    ? { id: matches[0].id, name: matches[0].name }
+    : null;
+}
+
+export async function getNamedPackageAttachmentIds(
+  name: string,
+  projectIds: string[],
+): Promise<Map<string, string>> {
+  if (!projectIds.length) return new Map();
+
+  const table = schemaModule.projectPackageAttachments;
+  const rows = await getDb()
+    .select({ projectId: table.projectId, installId: table.packageInstallId })
+    .from(table)
+    .where(
+      and(eq(table.packageName, name), inArray(table.projectId, projectIds)),
+    );
+
+  return new Map(rows.map((row) => [row.projectId, row.installId]));
+}
+
 // The set of project ids that have the named package attached (any version) —
 // powers the Studio "attach to a project" dialog's already-attached markers.
 export async function getProjectIdsAttachedToPackage(

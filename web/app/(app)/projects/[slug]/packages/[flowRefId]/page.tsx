@@ -48,7 +48,11 @@ import {
 } from "@/lib/flows/graph/presentation-layout";
 import { buildGraphTopology } from "@/lib/queries/flow-graph-view";
 import { getFlowPackageDetail } from "@/lib/queries/flow-packages";
-import { getProjectPackageAttachments } from "@/lib/queries/packages";
+import { getStudioInstallForFlowRevision } from "@/lib/queries/packages";
+import {
+  studioPackagePath,
+  withPackageInstall,
+} from "@/lib/studio/package-links";
 import { getFlowRunnerBindingScope } from "@/lib/queries/project";
 
 interface PageProps {
@@ -272,15 +276,15 @@ export default async function FlowPackageViewerPage({
       ? await getFlowRunnerBindingScope(detail.project.id, enabledRevisionId)
       : null;
 
-  // The package that owns this flow (its name is the Studio package ref), used
-  // to deep-link into the Studio flow viewer. Resolved from the project's
-  // attachments by which package's manifest declares this flow id.
-  const attachments = await getProjectPackageAttachments(detail.project.id);
-  const studioPackageName =
-    attachments.find((att) => att.flows.includes(flowRefId))?.packageName ??
-    null;
-  const studioFlowHref = studioPackageName
-    ? `/studio/packages/${encodeURIComponent(studioPackageName)}/flows/${encodeURIComponent(flowRefId)}`
+  const studioInstall = await getStudioInstallForFlowRevision(
+    flowRefId,
+    revision,
+  );
+  const studioFlowHref = studioInstall
+    ? withPackageInstall(
+        studioPackagePath(studioInstall.name, "flows", flowRefId),
+        studioInstall.id,
+      )
     : null;
 
   return (
@@ -301,7 +305,11 @@ export default async function FlowPackageViewerPage({
             {tStudio("openInStudio")}
             <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
           </Link>
-        ) : null}
+        ) : (
+          <span className="text-sm text-mute">
+            {tStudio("packageProvenanceUnavailable")}
+          </span>
+        )}
       </div>
 
       <PackageViewerHeader

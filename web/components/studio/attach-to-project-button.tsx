@@ -18,6 +18,7 @@ export type AttachTarget = {
   slug: string;
   name: string;
   attached: boolean;
+  occupied?: boolean;
 };
 
 export type AttachCompatibility = {
@@ -160,13 +161,15 @@ export function AttachToProjectButton({
                     <span className="truncate text-[13px] font-medium text-ink">
                       {target.name}
                     </span>
-                    {target.attached ? (
+                    {target.attached || target.occupied ? (
                       <Link
                         className="inline-flex shrink-0 items-center gap-1 text-[12px] font-semibold text-emerald-600 hover:underline"
                         href={`/projects/${target.slug}?tab=packages`}
                       >
                         <CheckIcon className="h-4 w-4" />
-                        {t("attachAttached")}
+                        {target.occupied
+                          ? t("attachmentOccupied")
+                          : t("attachAttached")}
                         <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
                       </Link>
                     ) : (

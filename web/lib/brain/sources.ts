@@ -154,8 +154,33 @@ function validateSourcePath(path: string): string {
   return parsed.data;
 }
 
-export function isBrainSourceGlob(path: string): boolean {
-  return /[*?[\]{}]/.test(path);
+export function parseBrainSourceSelector(
+  input: string,
+): { kind: "literal"; path: string } | { kind: "glob"; path: string } {
+  const path = validateSourcePath(input);
+  let hasGlob = false;
+  let escapedOperator = false;
+  const decoded = path.replace(
+    /\\([\\*?[\]{}])|([*?[\]{}])/g,
+    (match, escaped?: string) => {
+      if (escaped === undefined) {
+        hasGlob = true;
+
+        return match;
+      }
+
+      if (escaped !== "\\") escapedOperator = true;
+
+      return escaped;
+    },
+  );
+
+  if (hasGlob) return { kind: "glob", path };
+
+  return {
+    kind: "literal",
+    path: escapedOperator ? validateSourcePath(decoded) : path,
+  };
 }
 
 interface TrackedGlobMatches {
@@ -235,9 +260,9 @@ export async function listBrainSourceMatchedPaths(args: {
   excludePaths?: readonly string[];
   maxMatches?: number;
 }): Promise<TrackedGlobMatches> {
-  const path = validateSourcePath(args.path);
+  const { kind, path } = parseBrainSourceSelector(args.path);
 
-  if (!isBrainSourceGlob(path)) {
+  if (kind === "literal") {
     await readBrainSourceContent({
       repoPath: args.repoPath,
       ref: args.ref,
@@ -301,13 +326,6 @@ export async function readBrainSourceContent(args: {
 }): Promise<SourceContent> {
   const path = validateSourcePath(args.path);
 
-  if (isBrainSourceGlob(path)) {
-    throw new MaisterError(
-      "CONFIG",
-      `Brain source "${path}" is a glob and must be expanded before content read`,
-    );
-  }
-
   const blob = await readBlob({
     repo: args.repoPath,
     ref: args.ref,
@@ -352,34 +370,15 @@ export async function readBrainSourceContents(args: {
   maxMatches?: number;
   maxTotalBytes?: number;
 }): Promise<SourceContentSet> {
-  const path = validateSourcePath(args.path);
+  const { kind, path } = parseBrainSourceSelector(args.path);
 
-  if (!isBrainSourceGlob(path)) {
+  if (kind === "literal") {
     const content = await readBrainSourceContent({ ...args, path });
 
     return { files: [content], sourceHash: content.sourceHash };
   }
 
-  const { trackedMatchCount, matchedPaths } = await listTrackedGlobMatches({
-    repoPath: args.repoPath,
-    ref: args.ref,
-    dir: globSearchRoot(path),
-    sourcePath: path,
-    isMatch: picomatch(path, { dot: true }),
-    excludedPaths: new Set(
-      (args.excludePaths ?? []).map((excludedPath) =>
-        validateSourcePath(excludedPath),
-      ),
-    ),
-    maxMatches: args.maxMatches,
-  });
-
-  if (trackedMatchCount === 0) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `Brain source glob "${path}" matched no tracked files at ${args.ref}`,
-    );
-  }
+  const { matchedPaths } = await listBrainSourceMatchedPaths(args);
 
   if (matchedPaths.length === 0) {
     return { files: [], sourceHash: hashSourceContentSet([]) };
@@ -444,13 +443,7 @@ async function assertSourceReadable(args: {
   ref: string;
   path: string;
 }): Promise<void> {
-  if (isBrainSourceGlob(args.path)) {
-    await listBrainSourceMatchedPaths(args);
-
-    return;
-  }
-
-  await readBrainSourceContent(args);
+  await listBrainSourceMatchedPaths(args);
 }
 
 function shouldValidateSourceUpdate(args: {

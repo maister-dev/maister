@@ -14529,7 +14529,7 @@ paths:
         required: false
         schema: { type: string, minLength: 1, maxLength: 128 }
         description: |
-          Designed. Exact installed revision ID. It must belong to ref. Empty,
+          Exact installed revision ID. It must belong to ref. Empty,
           duplicate, unknown, removed or mismatched IDs return 404. When omitted,
           a unique source resolves to its first catalog version. An ambiguous
           legacy name returns 404.
@@ -14598,7 +14598,7 @@ paths:
         required: false
         schema: { type: string, minLength: 1, maxLength: 128 }
         description: |
-          Designed. Exact installed revision ID. It must belong to ref. Empty,
+          Exact installed revision ID. It must belong to ref. Empty,
           duplicate, unknown, removed or mismatched IDs return 404. When omitted,
           a unique source resolves to its first catalog version. An ambiguous
           legacy name returns 404.
@@ -30584,7 +30584,7 @@ components:
           minLength: 1
           maxLength: 512
           description: |
-            Repo-relative file selector. Designed literal escaping allows
+            Repo-relative file selector. Literal escaping allows
             web/app/\[slug\]/page.tsx to select the bracketed path. An unescaped
             glob operator keeps glob interpretation. The server resolves the
             selector against the authorized project's repository and branch.

@@ -73,9 +73,26 @@ export async function resolveStudioPackageByRef(
   userId: string,
   userRole: GlobalRole,
   ref: string,
+  install?: string | string[],
 ): Promise<StudioPackageResolution> {
+  if (
+    install !== undefined &&
+    (typeof install !== "string" || !install.trim() || install.length > 128)
+  )
+    return { status: "not-found" };
+
   const groups = await loadStudioPackages(userId, userRole);
   const matches = groups.filter((group) => group.name === ref);
+
+  if (typeof install === "string") {
+    const group = matches.find((candidate) =>
+      candidate.versions.some((version) => version.installId === install),
+    );
+
+    return group
+      ? { status: "ok", group, installId: install }
+      : { status: "not-found" };
+  }
 
   if (matches.length === 0) return { status: "not-found" };
   if (matches.length > 1) return { status: "ambiguous", matches };

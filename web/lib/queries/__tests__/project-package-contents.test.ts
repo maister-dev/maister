@@ -60,6 +60,7 @@ describe("getProjectPackageContents", () => {
 
     expect(result).toEqual([
       {
+        packageInstallId: "inst-1",
         packageName: "aif",
         versionLabel: "aif/v1.0.0",
         flows: [flow],

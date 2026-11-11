@@ -2,18 +2,17 @@ import type { Metadata } from "next";
 import type { ReactElement } from "react";
 
 import { getTranslations } from "next-intl/server";
-import { notFound } from "next/navigation";
 import Link from "next/link";
 import pino from "pino";
 
 import { PackageDetail } from "@/components/studio/package-detail";
-import { requireSession } from "@/lib/authz";
 import {
-  getProjectIdsAttachedToPackage,
+  getNamedPackageAttachmentIds,
   getStudioPackageBom,
 } from "@/lib/queries/packages";
 import { getAccessibleProjects } from "@/lib/queries/platform-flows";
-import { loadStudioPackages } from "@/lib/studio/load";
+import { loadStudioPackagePage } from "@/components/studio/package-selection";
+import { studioPackagePath } from "@/lib/studio/package-links";
 
 const log = pino({
   name: "studio/packages/[ref]",
@@ -29,6 +28,7 @@ function firstParam(raw: string | string[] | undefined): string | null {
 type PageProps = {
   params: Promise<{ ref: string }>;
   searchParams: Promise<{
+    install?: string | string[];
     tab?: string | string[];
     page?: string | string[];
   }>;
@@ -39,7 +39,7 @@ export async function generateMetadata({
 }: Pick<PageProps, "params">): Promise<Metadata> {
   const { ref } = await params;
 
-  return { title: decodeURIComponent(ref) };
+  return { title: ref };
 }
 
 export default async function StudioPackageDetailPage({
@@ -47,14 +47,16 @@ export default async function StudioPackageDetailPage({
   searchParams,
 }: PageProps): Promise<ReactElement> {
   const { ref } = await params;
-  const { tab: rawTab, page: rawPage } = await searchParams;
-  const decoded = decodeURIComponent(ref);
-  const user = await requireSession();
-  const groups = await loadStudioPackages(user.id, user.role);
-  const matches = groups.filter((group) => group.name === decoded);
+  const query = await searchParams;
+  const { tab: rawTab, page: rawPage } = query;
+  const selected = await loadStudioPackagePage(ref, [], query);
 
-  if (matches.length === 0) notFound();
+  if (selected.kind === "choice") return selected.chooser;
 
+  const {
+    user,
+    resolution: { group, installId },
+  } = selected;
   const t = await getTranslations("studio");
   const header = (
     <header className="mb-7">
@@ -65,51 +67,28 @@ export default async function StudioPackageDetailPage({
         {t("backToPackages")}
       </Link>
       <h1 className="m-0 text-[28px] font-semibold leading-[1.1] tracking-[-0.022em] text-ink">
-        {decoded}
+        {ref}
       </h1>
     </header>
   );
 
-  // `ref` is the package name only (Phase A); two sources can expose the same
-  // name. A durable base64url(source::name) ref is deferred — for now surface the
-  // collision instead of silently picking one.
-  if (matches.length > 1) {
-    return (
-      <div className="w-full">
-        {header}
-        <p className="mb-1 text-[14px] font-semibold text-ink">
-          {t("ambiguousTitle")}
-        </p>
-        <p className="mb-3 text-[13px] text-mute">{t("ambiguousHint")}</p>
-        <ul className="flex list-none flex-col gap-1.5">
-          {matches.map((group) => (
-            <li
-              key={group.key}
-              className="rounded-[12px] border border-line bg-paper px-4 py-3 font-mono text-[12px] text-ink-2"
-            >
-              {group.sourceUrl}
-            </li>
-          ))}
-        </ul>
-      </div>
-    );
-  }
-
-  const group = matches[0];
   const projects = await getAccessibleProjects(user.id, user.role);
   const canManage = projects.some((project) => project.canManageCatalog);
   const canTrust = user.role === "admin";
-  const installId = group.versions[0]?.installId ?? "";
-  const attachedProjectIds = new Set(
-    await getProjectIdsAttachedToPackage(group.name),
+  const manageableProjects = projects.filter(
+    (project) => project.canManageCatalog,
   );
-  const attachTargets = projects
-    .filter((project) => project.canManageCatalog)
-    .map((project) => ({
-      slug: project.slug,
-      name: project.name,
-      attached: attachedProjectIds.has(project.id),
-    }));
+  const attached = await getNamedPackageAttachmentIds(
+    group.name,
+    manageableProjects.map((project) => project.id),
+  );
+  const attachTargets = manageableProjects.map((project) => ({
+    slug: project.slug,
+    name: project.name,
+    attached: attached.get(project.id) === installId,
+    occupied:
+      attached.has(project.id) && attached.get(project.id) !== installId,
+  }));
   const bom = (await getStudioPackageBom(installId)) ?? {
     flows: [],
     platformAgents: [],
@@ -122,7 +101,7 @@ export default async function StudioPackageDetailPage({
   const pageRaw = Number.parseInt(firstParam(rawPage) ?? "1", 10);
   const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
 
-  log.debug({ ref: decoded, tab, page }, "[studio.packageDetail]");
+  log.debug({ ref, tab, page }, "[studio.packageDetail]");
 
   return (
     <div className="w-full">
@@ -131,7 +110,7 @@ export default async function StudioPackageDetailPage({
         activeTab={tab}
         attachInstallId={installId}
         attachTargets={attachTargets}
-        basePath={`/studio/packages/${encodeURIComponent(group.name)}`}
+        basePath={studioPackagePath(group.name)}
         canManage={canManage}
         canTrust={canTrust}
         page={page}

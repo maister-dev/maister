@@ -2,7 +2,7 @@
 
 Branch: `feature/ux-dogfooding-package-1`
 Created: 2026-11-11
-Status: Refined, ready for specification preflight.
+Status: Implementation in progress.
 Inspection base: `f38053b3192a24738c8b0920852cfd229c56721f` (local master)
 
 ## Settings
@@ -62,11 +62,17 @@ Use existing analytics sections. For each changed process, record inputs and aut
 - Brain keeps the selector spelling in `brain_sources.path` and concrete paths in `brain_chunks.path`. Leave existing persisted glob expressions, the source uniqueness key and job records intact. Coverage exercises existing rows as well as new escaped input. A newly successful indexing attempt writes through the existing indexing path. No automatic reindex or data rewrite is part of this package.
 - Keep Drizzle schema, both migration lineages and journals, ERDs, deploy wiring and dependency manifests outside the diff. Verify with the scoped diff and `pnpm --filter maister-web db:erd --check` through the docs gate. If implementation uncovers a proven persistent contract gap, amend the spec first with the exact missing datum, lossless existing-row behavior or explicit refusal, and fresh/incremental migration tests. Do not substitute a schema change for ambiguous provenance.
 
+## Execution evidence
+
+- T0: frozen dependencies installed on Node 24.15.0 and pnpm 11.3.0. The locked runners found 69 Playwright cases including auth setup and all named integration files. Docs, API contracts and the ERD check passed. In the original 1440×1000 editor fixture 3/11 nodes fit. In the original filtered Evidence fixture 0/7 fit.
+- T1 RED: the local Git and Postgres package-management journey found zero exact install chooser links. The fixed journey opens, reloads and navigates back to the explicit install, and the exact whole-fork request retains dedup.
+- T2 RED: direct literal and glob indexer cases reached the Git blob read and failed because a bracket path was reclassified as a glob. The targeted sources, indexer and reindex run passed 30 tests after the fix.
+
 ## Tasks
 
 ### Phase 0 — Specification and baseline
 
-- [ ] T0. Complete the specification ownership table and preflight. Read the installed Next, HeroUI and XYFlow source for the APIs used. Confirm the locked runner can collect and execute the affected lanes. Capture the original 11-node and seven-artifact bounds with dedicated fixtures. Record the baseline and any independently verified existing failures. Freeze API examples, migration decision, expectation IDs and test owners before touching behavior code. No additional logging required.
+- [x] T0. Complete the specification ownership table and preflight. Read the installed Next, HeroUI and XYFlow source for the APIs used. Confirm the locked runner can collect and execute the affected lanes. Capture the original 11-node and seven-artifact bounds with dedicated fixtures. Record the baseline and any independently verified existing failures. Freeze API examples, migration decision, expectation IDs and test owners before touching behavior code. No additional logging required.
 
 ### Phase 1 — Package identity and Brain paths
 

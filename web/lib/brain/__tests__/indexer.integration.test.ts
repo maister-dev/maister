@@ -388,11 +388,18 @@ describe("Project Brain source indexer (ADR-127)", () => {
       overlapRepoPath,
       "brain-indexer-overlap",
     );
+
+    await mkdir(join(overlapRepoPath, "docs/[slug]"));
+    await updateTrackedFile(
+      overlapRepoPath,
+      "docs/[slug]/page.md",
+      "# Bracketed documentation\n",
+    );
     const exact = await createBrainSource(ctx.db, {
       projectId: overlapProjectId,
       repoPath: overlapRepoPath,
       mainBranch: "main",
-      input: { path: "docs/decisions.md", kind: "markdown" },
+      input: { path: String.raw`docs/\[slug\]/page.md`, kind: "markdown" },
     });
     const glob = await createBrainSource(ctx.db, {
       projectId: overlapProjectId,
@@ -431,10 +438,10 @@ describe("Project Brain source indexer (ADR-127)", () => {
     `);
 
     expect(new Set(exactPaths.rows.map((row) => row.path))).toEqual(
-      new Set(["docs/decisions.md"]),
+      new Set(["docs/[slug]/page.md"]),
     );
     expect(new Set(globPaths.rows.map((row) => row.path))).toEqual(
-      new Set(["docs/README.md", "docs/guide/intro.md"]),
+      new Set(["docs/decisions.md", "docs/README.md", "docs/guide/intro.md"]),
     );
   });
 

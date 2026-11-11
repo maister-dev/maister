@@ -38,7 +38,7 @@ describe("PackagesList", () => {
     );
 
     expect(html).toContain("aif");
-    expect(html).toContain("/studio/packages/aif"); // ref = name
+    expect(html).toContain("/studio/packages/aif?install=i");
     expect(html).toContain("5"); // flows count
     expect(html).toMatch(/local/i); // Local badge
   });

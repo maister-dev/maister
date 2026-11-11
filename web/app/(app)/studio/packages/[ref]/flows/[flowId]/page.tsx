@@ -8,11 +8,14 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 
 import { StudioFlowViewer } from "@/components/studio/studio-flow-viewer";
-import { requireSession } from "@/lib/authz";
 import { buildNodeSideFormLabels } from "@/lib/flows/node-side-form-labels";
 import { getAccessibleProjects } from "@/lib/queries/platform-flows";
 import { getStudioFlowDetail } from "@/lib/studio/flow-detail";
-import { resolveStudioPackageByRef } from "@/lib/studio/load";
+import { loadStudioPackagePage } from "@/components/studio/package-selection";
+import {
+  studioPackagePath,
+  withPackageInstall,
+} from "@/lib/studio/package-links";
 
 // Read-only flow-graph labels (same `workbench.graph.*` namespace as the run
 // layout). The static viewer never overlays run status; the node-status map is
@@ -58,39 +61,43 @@ function buildGraphLabels(
   };
 }
 
-type PageProps = { params: Promise<{ ref: string; flowId: string }> };
+type PageProps = {
+  params: Promise<{ ref: string; flowId: string }>;
+  searchParams: Promise<{ install?: string | string[] }>;
+};
 
 export async function generateMetadata({
   params,
-}: PageProps): Promise<Metadata> {
+}: Pick<PageProps, "params">): Promise<Metadata> {
   const { flowId } = await params;
 
-  return { title: decodeURIComponent(flowId) };
+  return { title: flowId };
 }
 
 export default async function StudioFlowDetailPage({
   params,
+  searchParams,
 }: PageProps): Promise<ReactElement> {
   const { ref, flowId: rawFlowId } = await params;
-  const decodedRef = decodeURIComponent(ref);
-  const flowId = decodeURIComponent(rawFlowId);
+  const decodedRef = ref;
+  const flowId = rawFlowId;
 
-  const user = await requireSession();
-  const resolution = await resolveStudioPackageByRef(
-    user.id,
-    user.role,
-    decodedRef,
+  const selected = await loadStudioPackagePage(
+    ref,
+    ["flows", flowId],
+    await searchParams,
   );
 
-  if (resolution.status === "not-found") notFound();
+  if (selected.kind === "choice") return selected.chooser;
+
+  const { user, resolution } = selected;
 
   const t = await getTranslations("studio");
-  const packageHref = `/studio/packages/${encodeURIComponent(decodedRef)}?tab=flows`;
-
-  if (resolution.status === "ambiguous") {
-    // Same collision surface as the package detail page — pick the source first.
-    notFound();
-  }
+  const packageHref = withPackageInstall(
+    studioPackagePath(ref),
+    resolution.installId,
+    { tab: "flows" },
+  );
 
   const detail = await getStudioFlowDetail(resolution.installId, flowId);
 
@@ -142,6 +149,7 @@ export default async function StudioFlowDetailPage({
       <StudioFlowViewer
         flowPath={detail?.flowPath ?? undefined}
         flowYaml={detail?.flowYaml ?? null}
+        forkInstallId={resolution.installId}
         forkRef={canManage ? decodedRef : undefined}
         graphAvailable={graphAvailable}
         graphLabels={buildGraphLabels(tWorkbench)}

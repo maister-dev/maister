@@ -403,7 +403,7 @@ flowchart LR
     Fork --> Editor[authored flow draft editor]
 ```
 
-### Studio address and provenance (Designed)
+### Studio address and provenance (Implemented)
 
 An installed revision is addressed by exported package name and the existing
 `package_installs.id`. Studio authenticates the viewer and resolves the ID

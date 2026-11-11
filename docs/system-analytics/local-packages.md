@@ -795,7 +795,7 @@ tab surfaces one shared **Import** button wired to the existing
 - Malformed `maister-package.yaml` in the local source → empty/degraded BOM
   (manifest parse → `CONFIG`/empty), never a thrown landing.
 
-### Studio fork selection (Designed)
+### Studio fork selection (Implemented)
 
 The installed-package and element fork operations accept the same optional
 `install` query as the Studio viewer. The active global member check and

@@ -278,6 +278,7 @@ export interface FlowRevisionDetail {
   setupStatus: string;
   packageStatus: string;
   installedPath: string;
+  source?: string;
 }
 
 export interface FlowRevisionDetailDTO {
@@ -409,6 +410,7 @@ export async function getFlowPackageDetail(
       setupStatus: r.setupStatus,
       packageStatus: r.packageStatus,
       installedPath: r.installedPath,
+      source: r.source,
     };
   });
 

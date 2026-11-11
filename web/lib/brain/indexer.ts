@@ -17,7 +17,7 @@ import { sha256, toVectorLiteral } from "./codec";
 import { reanchorBrainEdgesForSource } from "./edges";
 import {
   BRAIN_SOURCE_MAX_GLOB_MATCHES,
-  isBrainSourceGlob,
+  parseBrainSourceSelector,
   listBrainSourceMatchedPaths,
   readBrainSourceFiles,
   readBrainSourceContents,
@@ -181,8 +181,6 @@ async function loadExactPeerSourcePaths(
   db: IndexerTx,
   source: SourceRow,
 ): Promise<string[]> {
-  if (!isBrainSourceGlob(source.path)) return [];
-
   const rows = await db.execute(sql`
     SELECT path
     FROM brain_sources
@@ -193,8 +191,10 @@ async function loadExactPeerSourcePaths(
   `);
 
   return rows.rows
-    .map((row) => String(row.path))
-    .filter((path) => !isBrainSourceGlob(path));
+    .map((row) => parseBrainSourceSelector(String(row.path)))
+    .flatMap((selector) =>
+      selector.kind === "literal" ? [selector.path] : [],
+    );
 }
 
 async function loadExistingChunks(
@@ -764,14 +764,14 @@ export async function processSourceIndexJob(
     return { chunksEmbedded: 0 };
   }
 
-  if (isBrainSourceGlob(source.path)) {
-    return processGlobSourceIndexJob(db, client, job, source);
-  }
-
   let files: SourceContent[];
   let sourceHash: string;
 
   try {
+    if (parseBrainSourceSelector(source.path).kind === "glob") {
+      return processGlobSourceIndexJob(db, client, job, source);
+    }
+
     const read = await readBrainSourceContents({
       repoPath: source.repo_path,
       ref: source.main_branch,

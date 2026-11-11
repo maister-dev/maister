@@ -36,8 +36,8 @@ Attach, enable, upgrade-to and launch controls are disabled.
   viewer / fork / kind-by-path). No new ADR.
 
 `ref` is the package **name** and `install` selects the exact installed revision
-(Designed). An ambiguous name opens a linked source/version picker. See
-[installed package identity](../../system-analytics/flow-packages.md#studio-address-and-provenance-designed). The
+(Implemented). An ambiguous name opens a linked source/version picker. See
+[installed package identity](../../system-analytics/flow-packages.md#studio-address-and-provenance-implemented). The
 `installed_path` is resolved **server-side only** and never enters a client prop
 or DTO — every disk read happens in the RSC/server layer and only rendered
 content + metadata cross to the browser.
@@ -51,7 +51,7 @@ Replaces the flat chip lists with a **tabbed, paged, card-based** bill-of-materi
   **Rework**. **Attach to project** opens a dialog over the viewer's manageable
   projects: a project the package is already attached to appears as a link to its
   project Packages tab, while a project it is not yet attached to gets a one-click
-  attach of the newest install. Rework forks the installed package into a local
+  attach of the selected install. Rework forks the installed package into a local
   package, then opens the local editor. The **Import (⤓)** affordance is
   intentionally **ABSENT** on installed packages — only local packages can import
   external archives.

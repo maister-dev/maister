@@ -8,6 +8,10 @@ import Link from "next/link";
 import { useTranslations } from "next-intl";
 
 import {
+  studioPackagePath,
+  withPackageInstall,
+} from "@/lib/studio/package-links";
+import {
   buildGraphLabels,
   FlowPreviewCard,
 } from "@/components/studio/package-detail";
@@ -73,7 +77,10 @@ export function ProjectPackageContents({
                 </div>
                 <Link
                   className="inline-flex shrink-0 items-center gap-1.5 rounded-[8px] border border-line bg-paper px-3 py-1.5 text-[12px] font-semibold text-ink hover:border-amber"
-                  href={`/studio/packages/${encodeURIComponent(pkg.packageName)}`}
+                  href={withPackageInstall(
+                    studioPackagePath(pkg.packageName),
+                    pkg.packageInstallId,
+                  )}
                 >
                   {t("openInStudio")}
                   <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
@@ -88,7 +95,10 @@ export function ProjectPackageContents({
                       flow={flow}
                       graphLabels={graphLabels}
                       href={`/projects/${slug}/packages/${encodeURIComponent(flow.id)}`}
-                      studioHref={`/studio/packages/${encodeURIComponent(pkg.packageName)}/flows/${encodeURIComponent(flow.id)}`}
+                      studioHref={withPackageInstall(
+                        studioPackagePath(pkg.packageName, "flows", flow.id),
+                        pkg.packageInstallId,
+                      )}
                       t={t}
                     />
                   ))}

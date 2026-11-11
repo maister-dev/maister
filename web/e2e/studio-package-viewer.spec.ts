@@ -91,9 +91,13 @@ test("studio package viewer: tabbed groups, hidden-empty tabs, card → read-onl
   await expect(
     page.getByRole("heading", { level: 1, name: RUN_TAG }),
   ).toBeVisible();
-  await expect(page.getByTestId("package-tab-flows")).toBeVisible();
+  await expect(
+    page.getByTestId("package-tab-flows").filter({ visible: true }),
+  ).toBeVisible();
   await expect(page.getByTestId("package-tab-skills")).toHaveCount(0);
   await expect(page.getByTestId("package-tab-agents")).toHaveCount(0);
+
+  await expect(page).toHaveURL(/\?install=/);
 
   // The flow renders as a card (not a bare id chip); opening it lands on the
   // read-only flow detail (the URL carries the flow segment).

@@ -29,6 +29,7 @@ export interface ElementCardProps {
   // it into a NEW centralized local package; `refName` = the package ref. Omitted
   // → the disabled "later" stub (e.g. mcps, which have no forkable file path).
   refName?: string;
+  installId?: string;
   forkPath?: string | null;
   // The fork affordance is meaningless inside an editable local package (it is
   // already a working copy) — pass `false` there to drop it entirely (ADR-116).
@@ -52,6 +53,7 @@ export function ElementCard({
   description,
   labels,
   refName,
+  installId,
   forkPath,
   showFork = true,
   clickableCard = false,
@@ -123,6 +125,7 @@ export function ElementCard({
             <ElementForkButton
               elementName={name}
               elementPath={forkPath}
+              installId={installId}
               label={labels.fork}
               refName={refName}
             />

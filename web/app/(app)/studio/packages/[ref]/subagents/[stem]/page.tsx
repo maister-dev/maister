@@ -7,7 +7,6 @@ import Link from "next/link";
 
 import { CodeEditor } from "@/components/flows/code-editor";
 import { MarkdownDocumentView } from "@/components/studio/markdown-document-view";
-import { requireSession } from "@/lib/authz";
 import { splitFrontmatter } from "@/lib/flows/artifact-frontmatter";
 import {
   listInstalledPackageFiles,
@@ -15,19 +14,26 @@ import {
   resolveBundledAgentPath,
 } from "@/lib/flows/package-content";
 import { getStudioPackageInstalledPath } from "@/lib/studio/package-path";
-import { resolveStudioPackageByRef } from "@/lib/studio/load";
+import { loadStudioPackagePage } from "@/components/studio/package-selection";
+import {
+  studioPackagePath,
+  withPackageInstall,
+} from "@/lib/studio/package-links";
 
 type PageProps = {
   params: Promise<{ ref: string; stem: string }>;
-  searchParams: Promise<{ view?: string | string[] }>;
+  searchParams: Promise<{
+    install?: string | string[];
+    view?: string | string[];
+  }>;
 };
 
 export async function generateMetadata({
   params,
-}: PageProps): Promise<Metadata> {
+}: Pick<PageProps, "params">): Promise<Metadata> {
   const { stem } = await params;
 
-  return { title: decodeURIComponent(stem) };
+  return { title: stem };
 }
 
 function lenientNameDescription(
@@ -61,18 +67,16 @@ export default async function StudioSubagentDetailPage({
   searchParams,
 }: PageProps): Promise<ReactElement> {
   const { ref, stem: rawStem } = await params;
-  const { view: rawView } = await searchParams;
-  const decodedRef = decodeURIComponent(ref);
-  const stem = decodeURIComponent(rawStem);
+  const query = await searchParams;
+  const { view: rawView } = query;
+  const decodedRef = ref;
+  const stem = rawStem;
 
-  const user = await requireSession();
-  const resolution = await resolveStudioPackageByRef(
-    user.id,
-    user.role,
-    decodedRef,
-  );
+  const selected = await loadStudioPackagePage(ref, ["subagents", stem], query);
 
-  if (resolution.status !== "ok") notFound();
+  if (selected.kind === "choice") return selected.chooser;
+
+  const { resolution } = selected;
 
   const installedPath = await getStudioPackageInstalledPath(
     resolution.installId,
@@ -81,9 +85,13 @@ export default async function StudioSubagentDetailPage({
   if (!installedPath) notFound();
 
   const tViewer = await getTranslations("studio.viewer");
-  const packageBaseHref = `/studio/packages/${encodeURIComponent(decodedRef)}`;
-  const packageHref = `${packageBaseHref}?tab=subagents`;
-  const detailHref = `${packageBaseHref}/subagents/${encodeURIComponent(stem)}`;
+  const packageHref = withPackageInstall(
+    studioPackagePath(ref),
+    resolution.installId,
+    { tab: "subagents" },
+  );
+  const detailPath = studioPackagePath(ref, "subagents", stem);
+  const detailHref = withPackageInstall(detailPath, resolution.installId);
 
   // Subagents nest under `capability/**/agents/<stem>.md`; resolve the real path
   // from the listing, then confined-read the raw `.md`.
@@ -134,7 +142,9 @@ export default async function StudioSubagentDetailPage({
           {tViewer("agentDefinitionTitle")}
         </h2>
         <MarkdownDocumentView
-          codeHref={`${detailHref}?view=code`}
+          codeHref={withPackageInstall(detailPath, resolution.installId, {
+            view: "code",
+          })}
           editor={
             <CodeEditor
               key={stem}

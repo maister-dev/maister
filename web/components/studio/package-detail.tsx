@@ -17,6 +17,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
+import { withPackageInstall } from "@/lib/studio/package-links";
 import { FlowGraphViewSection } from "@/components/board/flow-graph-view-section";
 import {
   AttachToProjectButton,
@@ -98,7 +99,9 @@ export function PackageDetail({
 }): ReactElement {
   const t = useTranslations("studio");
   const tWorkbench = useTranslations("workbench");
-  const newest = pkg.versions[0];
+  const selected =
+    pkg.versions.find((version) => version.installId === attachInstallId) ??
+    pkg.versions[0];
 
   const cardLabels: ElementCardLabels = {
     view: t("viewer.view"),
@@ -139,7 +142,11 @@ export function PackageDetail({
     params.set("tab", tab);
     if (targetPage > 1) params.set("page", String(targetPage));
 
-    return `${basePath}?${params.toString()}`;
+    return withPackageInstall(
+      basePath,
+      selected?.installId,
+      Object.fromEntries(params),
+    );
   };
 
   const cards = buildCards({
@@ -148,6 +155,7 @@ export function PackageDetail({
     start,
     end,
     basePath,
+    installId: selected?.installId,
     labels: cardLabels,
     t,
     graphLabels: buildGraphLabels(tWorkbench),
@@ -161,9 +169,9 @@ export function PackageDetail({
           <span className="rounded-full border border-line bg-ivory px-2 py-px font-mono text-[10px] uppercase tracking-[0.06em] text-mute">
             {pkg.isLocal ? t("localBadge") : t("installedBadge")}
           </span>
-          {newest ? (
+          {selected ? (
             <span className="font-mono text-[11px] text-mute">
-              {newest.versionLabel}
+              {selected.versionLabel}
             </span>
           ) : null}
         </div>
@@ -171,28 +179,38 @@ export function PackageDetail({
           {pkg.sourceUrl}
         </div>
         <div className="mt-2 flex flex-wrap gap-2">
-          {canManage && newest ? (
+          {canManage && selected ? (
             <AttachToProjectButton
               compatibility={{
-                compatible: newest.compatible,
-                incompatibilityReason: newest.incompatibilityReason,
+                compatible: selected.compatible,
+                incompatibilityReason: selected.incompatibilityReason,
               }}
-              installId={attachInstallId ?? ""}
+              installId={selected.installId}
               targets={attachTargets ?? []}
               triggerClassName="rounded-[10px] border border-line bg-ivory px-3 py-1.5 text-[12.5px] font-semibold text-ink transition-colors hover:border-amber"
             />
           ) : null}
-          {canTrust && newest && newest.trustStatus === "untrusted" ? (
-            <TrustButton installId={newest.installId} />
+          {canTrust && selected && selected.trustStatus === "untrusted" ? (
+            <TrustButton installId={selected.installId} />
           ) : null}
           {/* Fork-to-local (M36 T2.4): clones the package into a new local
               package and opens the editor. Import (⤓) stays ABSENT here:
               installed packages are immutable. */}
-          {canManage ? <ForkToEditButton refName={pkg.name} /> : null}
+          {canManage ? (
+            <ForkToEditButton
+              installId={selected?.installId}
+              refName={pkg.name}
+            />
+          ) : null}
           {/* Customize (M39 A3): a deliberate divergent COPY (always fresh,
               named `<ref> (custom)`) — the centralized "diverge this package"
               escape hatch, distinct from the dedup'd fork-to-edit. */}
-          {canManage ? <CustomizeButton refName={pkg.name} /> : null}
+          {canManage ? (
+            <CustomizeButton
+              installId={selected?.installId}
+              refName={pkg.name}
+            />
+          ) : null}
         </div>
       </div>
 
@@ -234,9 +252,17 @@ export function PackageDetail({
               key={version.installId}
               className="flex items-center justify-between gap-3 rounded-[12px] border border-line bg-paper px-4 py-2.5"
             >
-              <span className="font-mono text-[12px] font-semibold text-ink">
+              <Link
+                aria-current={
+                  version.installId === selected?.installId ? "page" : undefined
+                }
+                className="font-mono text-[12px] font-semibold text-ink hover:underline"
+                href={withPackageInstall(basePath, version.installId, {
+                  tab: resolvedTab,
+                })}
+              >
                 {version.versionLabel}
-              </span>
+              </Link>
               <span className="font-mono text-[10.5px] text-mute">
                 {version.trustStatus}
               </span>
@@ -248,7 +274,7 @@ export function PackageDetail({
   );
 }
 
-// One-click platform trust from the package card (admin only). POSTs the newest
+// One-click platform trust from the package card (admin only). POSTs the selected
 // install to the trust route and refreshes. Only rendered for an untrusted
 // revision, so a trusted package shows no button (its versions list reads
 // "trusted").
@@ -307,7 +333,13 @@ function TrustButton({ installId }: { installId: string }): ReactElement {
 // new centralized local package named `<ref> (custom)`, then open the editor.
 // Distinct from fork-to-edit (which dedups to the canonical editable copy): a
 // customize always creates a fresh, separately-editable copy.
-function CustomizeButton({ refName }: { refName: string }): ReactElement {
+function CustomizeButton({
+  refName,
+  installId,
+}: {
+  refName: string;
+  installId?: string;
+}): ReactElement {
   const t = useTranslations("studio");
   const tApiErrors = useTranslations("apiErrors");
   const router = useRouter();
@@ -320,7 +352,10 @@ function CustomizeButton({ refName }: { refName: string }): ReactElement {
 
     try {
       const res = await fetch(
-        `/api/studio/packages/${encodeURIComponent(refName)}/fork`,
+        withPackageInstall(
+          `/api/studio/packages/${encodeURIComponent(refName)}/fork`,
+          installId,
+        ),
         {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -598,6 +633,7 @@ function buildCards({
   start,
   end,
   basePath,
+  installId,
   labels,
   t,
   graphLabels,
@@ -607,6 +643,7 @@ function buildCards({
   start: number;
   end: number;
   basePath: string;
+  installId?: string;
   labels: ElementCardLabels;
   t: TFn;
   graphLabels: FlowGraphViewLabels;
@@ -620,7 +657,10 @@ function buildCards({
             key={flow.id}
             flow={flow}
             graphLabels={graphLabels}
-            href={`${basePath}/flows/${encodeURIComponent(flow.id)}`}
+            href={withPackageInstall(
+              `${basePath}/flows/${encodeURIComponent(flow.id)}`,
+              installId,
+            )}
             t={t}
           />
         ));
@@ -630,10 +670,14 @@ function buildCards({
           key={skill.id}
           description={skill.description || null}
           forkPath={skill.path}
-          href={`${basePath}/skills/${skill.id
-            .split("/")
-            .map(encodeURIComponent)
-            .join("/")}`}
+          href={withPackageInstall(
+            `${basePath}/skills/${skill.id
+              .split("/")
+              .map(encodeURIComponent)
+              .join("/")}`,
+            installId,
+          )}
+          installId={installId}
           labels={labels}
           meta={t("viewer.skillMeta", {
             files: skill.fileCount,
@@ -655,7 +699,11 @@ function buildCards({
               : t("viewer.agentNoTriggers")
           }
           forkPath={agent.path}
-          href={`${basePath}/agents/${encodeURIComponent(agent.id)}`}
+          href={withPackageInstall(
+            `${basePath}/agents/${encodeURIComponent(agent.id)}`,
+            installId,
+          )}
+          installId={installId}
           labels={labels}
           meta={
             agent.riskTier || agent.workspace
@@ -683,7 +731,11 @@ function buildCards({
               subagent.description || t("viewer.subagentNoDescription")
             }
             forkPath={subagent.path}
-            href={`${basePath}/subagents/${encodeURIComponent(subagent.id)}`}
+            href={withPackageInstall(
+              `${basePath}/subagents/${encodeURIComponent(subagent.id)}`,
+              installId,
+            )}
+            installId={installId}
             labels={labels}
             meta={t("viewer.subagentMeta")}
             name={subagent.id}
@@ -696,7 +748,7 @@ function buildCards({
         .map((mcp) => (
           <ElementCard
             key={mcp.id}
-            href={basePath}
+            href={withPackageInstall(basePath, installId)}
             labels={labels}
             name={mcp.id}
           />
@@ -708,7 +760,8 @@ function buildCards({
           <ElementCard
             key={rule.id}
             forkPath={rule.path}
-            href={basePath}
+            href={withPackageInstall(basePath, installId)}
+            installId={installId}
             labels={labels}
             meta={`${t("viewer.rulePath")}: ${rule.path}`}
             name={rule.id}

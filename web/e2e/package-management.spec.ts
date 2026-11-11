@@ -96,6 +96,53 @@ test("package source → discovery → install → attach → detach round-trip"
     page.getByRole("heading", { name: "Installed package revisions" }),
   ).toBeVisible();
 
+  // UX-01A/B: a local install can export the upstream package's name.
+  const localRepo = buildPackageRepo();
+  const localPackage = join(localRepo, "packages", RUN_TAG);
+
+  writeFileSync(join(localPackage, "README.md"), "local revision\n");
+  const local = await page.request.post("/api/admin/package-installs", {
+    data: { localPath: localPackage },
+  });
+
+  expect(local.status(), await local.text()).toBe(201);
+  const localInstall: { id: string } = await local.json();
+
+  await page.goto(`/studio/packages/${RUN_TAG}`);
+  const localChoice = page
+    .getByTestId("studio-package-chooser")
+    .locator(`a[href*="install=${localInstall.id}"]`);
+
+  await expect(localChoice).toHaveCount(1);
+  await localChoice.click();
+  await expect(page).toHaveURL(new RegExp(`install=${localInstall.id}`));
+  await page.reload();
+  await expect(page.getByTestId("package-bom")).toBeVisible();
+  await page.goBack();
+  await expect(localChoice).toBeVisible();
+  await page.goForward();
+  await expect(page).toHaveURL(new RegExp(`install=${localInstall.id}`));
+
+  // UX-01C: whole-fork resolution uses the selected install and retains dedup.
+  const forkPath = `/api/studio/packages/${RUN_TAG}/fork`;
+  const refusal = await page.request.post(
+    `${forkPath}?install=${localInstall.id}&install=${localInstall.id}`,
+  );
+
+  expect(refusal.status()).toBe(404);
+  const fork = await page.request.post(
+    `${forkPath}?install=${localInstall.id}`,
+  );
+
+  expect(fork.status(), await fork.text()).toBe(201);
+  const forked: { localPackageId: string } = await fork.json();
+  const repeated = await page.request.post(
+    `${forkPath}?install=${localInstall.id}`,
+  );
+
+  expect(repeated.status()).toBe(200);
+  expect(await repeated.json()).toEqual({ ...forked, alreadyExists: true });
+
   // 4. Attach to the seeded project from the packages tab.
   await page.goto(`/projects/${projectSlug}?tab=packages`);
   await expect(
@@ -108,6 +155,12 @@ test("package source → discovery → install → attach → detach round-trip"
   await expect(
     page.getByRole("link", { name: RUN_TAG, exact: true }),
   ).toBeVisible({ timeout: 30_000 });
+  const attachmentHref = await page
+    .getByRole("link", { name: RUN_TAG, exact: true })
+    .getAttribute("href");
+
+  expect(attachmentHref).toMatch(/\?install=/);
+  expect(attachmentHref).not.toContain(localInstall.id);
   await expect(page.getByText(`${RUN_TAG}-flow`).first()).toBeVisible();
 
   // 5. Detach → attachment gone (empty state or no link).

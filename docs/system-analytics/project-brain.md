@@ -413,7 +413,7 @@ non-executable by default. If a later product slice needs `enabled=true`
 visibility, projection must first gain a trust gate and its tests/docs must move
 with it.
 
-### Source selector and tracked path (Designed)
+### Source selector and tracked path (Implemented)
 
 Source registration uses the authorized project's repository and main branch.
 An ordinary repo-relative path selects one tracked file. Escape literal glob
