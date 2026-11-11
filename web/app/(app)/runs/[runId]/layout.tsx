@@ -126,7 +126,10 @@ import { presentationLayout } from "@/lib/flows/graph/presentation-layout";
 import { buildGraphTopology } from "@/lib/queries/flow-graph-view";
 import { getRunNodeStatuses } from "@/lib/queries/run-node-status";
 import { loadRunManifest } from "@/lib/queries/run-manifest";
-import { getFlowRunVerification } from "@/lib/queries/readiness";
+import {
+  getFlowRunVerification,
+  getRunReadiness,
+} from "@/lib/queries/readiness";
 import {
   getRunCapabilityProfiles,
   getRunCostSummary,
@@ -790,7 +793,9 @@ export default async function RunDetailLayout({
       }
     }
 
-    reviewReadiness = verification?.rollup ?? null;
+    reviewReadiness =
+      verification?.rollup ??
+      (await getRunReadiness(detail.runId, detail.projectId));
 
     // ADR-141: behind/ahead + branch-sync dialog seed. Only when a
     // real target + worktree are known (never for the legacy-relaunch fallback).

@@ -408,6 +408,11 @@ test("main history loads the latest portion, retries an automatic earlier load a
     await expect
       .poll(async () => Math.abs((await reading.boundingBox())!.y - top))
       .toBeLessThan(2);
+    await page.getByTestId("librarian-trigger").click();
+    await expect(page.getByTestId("librarian-panel")).toHaveAttribute(
+      "data-mode",
+      "docked",
+    );
     expect(
       await jump.evaluate((button) => {
         const bounds = button.getBoundingClientRect();
@@ -427,6 +432,7 @@ test("main history loads the latest portion, retries an automatic earlier load a
       }),
     ).toBe(true);
     await jump.click();
+    await page.getByTestId("librarian-close").click();
     await expect(messages).toHaveCount(100);
     await expect(
       transcript.getByText("Parent history 251", { exact: true }),

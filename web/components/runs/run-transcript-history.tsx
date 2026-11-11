@@ -14,7 +14,9 @@ import {
 import { useTranslations } from "next-intl";
 
 import { TranscriptView } from "@/components/run-transcript/transcript-view";
+import { useRunPeek } from "@/components/runs/run-peek-controller";
 import { useRunPageStream } from "@/components/runs/run-stream-provider";
+import { useLatestRef } from "@/lib/use-latest-ref";
 
 class TranscriptReadFailure extends Error {
   constructor(
@@ -215,6 +217,10 @@ export function RunTranscriptHistory({
   const t = useTranslations("runPeek"),
     runT = useTranslations("run");
   const stream = useRunPageStream(runId, live);
+  const peek = useRunPeek();
+  const parentPeekOpen = useLatestRef(
+    peek?.anchor === runId && peek.selected !== null,
+  );
   const [history, setHistory] = useState<History>({
     pages: [],
     newerAvailable: false,
@@ -243,7 +249,7 @@ export function RunTranscriptHistory({
   const positioned = useRef(false);
   const scrollPosition = useRef(0);
   const pendingAnchor = useRef<ScrollAnchor | null>(null);
-  const pendingBottom = useRef(false);
+  const pendingBottom = useRef<"automatic" | "requested" | null>(null);
   const refreshRef = useRef<() => void>(() => {});
   const navigateRef = useRef<(direction: Direction) => void>(() => {});
   const jumpRef = useRef<() => void>(() => {});
@@ -495,7 +501,7 @@ export function RunTranscriptHistory({
           following.current = true;
           liveCatchup.current = false;
           setReadingEarlier(false);
-          pendingBottom.current = true;
+          pendingBottom.current = "automatic";
           latestObserved.current = latest.messages.at(-1);
           publish({ pages: [latest], newerAvailable: false });
           publishError(null);
@@ -692,7 +698,7 @@ export function RunTranscriptHistory({
           }
           if (following.current) {
             pendingAnchor.current = null;
-            pendingBottom.current = true;
+            pendingBottom.current = "automatic";
           } else retainScroll();
           if (bounded !== pages) {
             seenBoundaries.current.clear();
@@ -738,7 +744,7 @@ export function RunTranscriptHistory({
           }
           if (following.current) {
             pendingAnchor.current = null;
-            pendingBottom.current = true;
+            pendingBottom.current = "automatic";
           } else retainScroll();
           if (bounded !== updated) {
             seenBoundaries.current.clear();
@@ -994,7 +1000,7 @@ export function RunTranscriptHistory({
       setReadingEarlier(false);
       seenBoundaries.current.clear();
       pendingAnchor.current = null;
-      pendingBottom.current = true;
+      pendingBottom.current = "requested";
       setNotice(null);
       revision.current++;
       latestObserved.current = latest.messages.at(-1);
@@ -1038,7 +1044,13 @@ export function RunTranscriptHistory({
       host.current.style.paddingBottom = nested
         ? `${Math.max(0, nested.getBoundingClientRect().bottom - window.innerHeight)}px`
         : "";
-    if (pendingBottom.current && owner && end.current) {
+    // While a child peek is open, its navigation owns the parent scroll.
+    if (
+      pendingBottom.current &&
+      (!parentPeekOpen.current || pendingBottom.current === "requested") &&
+      owner &&
+      end.current
+    ) {
       const bounds = viewport();
 
       owner.scrollTop +=
@@ -1057,7 +1069,7 @@ export function RunTranscriptHistory({
     }
     if (owner && (pendingBottom.current || pendingAnchor.current))
       scrollPosition.current = owner.scrollTop;
-    pendingBottom.current = false;
+    pendingBottom.current = null;
     pendingAnchor.current = null;
     // Native scroll events can coalesce with a refresh's anchor restoration.
     // Recheck the same edge after layout releases its scroll ownership.
@@ -1071,6 +1083,7 @@ export function RunTranscriptHistory({
     scrollOwner,
     viewport,
     maybeLoadEarlier,
+    parentPeekOpen,
   ]);
 
   useEffect(() => {
@@ -1151,7 +1164,12 @@ export function RunTranscriptHistory({
     const onViewportChange = (): void => {
       if (nested instanceof HTMLElement && host.current)
         host.current.style.paddingBottom = `${Math.max(0, nested.getBoundingClientRect().bottom - window.innerHeight)}px`;
-      if (following.current && positioned.current && end.current) {
+      if (
+        !parentPeekOpen.current &&
+        following.current &&
+        positioned.current &&
+        end.current
+      ) {
         owner.scrollTop +=
           end.current.getBoundingClientRect().bottom - viewport().bottom;
         scrollPosition.current = owner.scrollTop;
@@ -1168,7 +1186,14 @@ export function RunTranscriptHistory({
       window.removeEventListener("resize", onViewportChange);
       if (nested) window.removeEventListener("scroll", onViewportChange);
     };
-  }, [scrollOwner, viewport, retainScroll, publish, maybeLoadEarlier]);
+  }, [
+    scrollOwner,
+    viewport,
+    retainScroll,
+    publish,
+    maybeLoadEarlier,
+    parentPeekOpen,
+  ]);
 
   const pages = history.pages;
   const first = pages[0],
