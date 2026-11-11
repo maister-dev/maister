@@ -1807,8 +1807,17 @@ paths:
         A missing/oversized key refuses with delegation_launch_key_required (422);
         key/body conflict refuses with delegation_launch_key_conflict (409).
         Operational agents keep their existing typed operational lifecycle.
-        Writes a token_audit_log row with scope runs:delegate; the token remains
-        bound to the same current active parent and project.
+        Project calls write a token_audit_log row with scope `runs:delegate` and
+        remain bound to the same current active parent and project.
+
+        An active company execution credential with `assignments:update` may
+        submit `assignmentWork` for a reviewed workspace-none standalone
+        company agent using `mode: run`. The server derives the company and
+        parent from the credential. The initiating user and actual origin role
+        need current `assignments:delegate`, and the receiving binding and role
+        need current assignment-read authority. A successful response contains
+        the existing child Run identity and status. The audit uses
+        `assignments:update` and has no project identity.
       operationId: extDelegateRun
       security:
         - projectToken: []
@@ -2102,7 +2111,13 @@ paths:
         reached a terminal status is refused `PRECONDITION` → 409 — collect the
         children BEFORE cancelling or finishing the coordinator.
 
-        Writes a `token_audit_log` row with scope `runs:collect` after success.
+        Project calls write a `token_audit_log` row with scope `runs:collect`
+        after success. Active company execution credentials use
+        `assignments:read` and can collect only exact native work appointed by
+        their current originating role in the same company. Results with
+        native source restrictions also require current source disclosure
+        authority, including the credential's `knowledge:read` scope. The
+        company audit has no project identity.
       operationId: extCollectRuns
       security:
         - projectToken: []

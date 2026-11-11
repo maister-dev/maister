@@ -117,14 +117,16 @@ export async function authorizeNativeChildCollection(
 export async function authorizeNativeChildInput(
   tx: SqlTransaction,
   input: ChildAuthorityInput,
-): Promise<void> {
+): Promise<boolean> {
   const child = await currentNativeChild(tx, input);
 
-  if (!child) return;
+  if (!child) return false;
   await authorizeAssignmentDelegation(
     tx,
     child.principal,
     child.owner,
     child.policy,
   );
+
+  return true;
 }

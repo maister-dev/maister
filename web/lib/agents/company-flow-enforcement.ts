@@ -35,7 +35,7 @@ export async function resolveCompanyFlowNodeEnforcement(
   const scopes = COMPANY_FLOW_TOKEN_SCOPES.filter(
     (action) => owner.platformMcp && owner.actionLimits.includes(action),
   );
-  const profile = companyFlowEnforcementProfile(scopes);
+  const profile = companyFlowEnforcementProfile(scopes, owner.actionLimits);
 
   log.debug(
     {

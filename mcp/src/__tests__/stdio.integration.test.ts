@@ -34,8 +34,10 @@ describe("MCP stdio wire contract", () => {
     await close();
   }
 
-  async function connectClient(identity: Readonly<{token:string;toolset?:string}>): Promise<Client> {
-    const connected = await connectCompiledMcp({baseUrl,...identity});
+  async function connectClient(
+    identity: Readonly<{ token: string; toolset?: string }>,
+  ): Promise<Client> {
+    const connected = await connectCompiledMcp({ baseUrl, ...identity });
 
     processClosers.set(connected.client, connected.close);
 
@@ -537,6 +539,50 @@ describe("MCP stdio wire contract", () => {
     }
   });
 
+  it("forwards exact delegated work and collection through the built company facade", async () => {
+    const company = await connectClient({
+      token: "mai_company_delegation_wire",
+      toolset: "company",
+    });
+    const body = {
+      target: { agentId: "rah:diagnostic" },
+      mode: "run",
+      prompt: "Inspect the retained observation",
+      assignmentWork: {
+        selector: {
+          schemaVersion: 1,
+          assignmentId: "assignment",
+          expectedRevision: 3,
+          inputRevision: 1,
+          contextRevision: 0,
+          logicalWorkId: "inspect",
+          workRevision: 1,
+        },
+        expectedOutcome: "A typed diagnosis",
+      },
+    };
+    const child = { childRunId: "56c46e8e-277f-4b49-8f99-ae3e133371ac" };
+
+    try {
+      for (const [name, path, input] of [
+        ["run_delegate", "/api/v1/ext/runs/delegate", body],
+        ["run_collect", "/api/v1/ext/runs/collect", child],
+      ] as const) {
+        expect(
+          (await company.callTool({ name, arguments: input })).isError,
+        ).not.toBe(true);
+        expect(requests.at(-1)).toEqual({
+          method: "POST",
+          url: path,
+          authorization: "Bearer mai_company_delegation_wire",
+          body: input,
+        });
+      }
+    } finally {
+      await closeClient(company);
+    }
+  });
+
   it("serves native assignment questions through the built facade with exact HTTP forwarding and human answers outside the company toolset", async () => {
     const company = await connectClient({
       token: "mai_question_wire",
@@ -937,7 +983,7 @@ describe("MCP stdio wire contract", () => {
     ]);
   });
 
-  it("the bundled company facade lists only native knowledge/context tools and rejects review, private memory and repository calls before REST", async () => {
+  it("the bundled company facade lists the native knowledge and governed work tools and refuses unrelated operations before REST", async () => {
     const company = await connectClient({
       token: "mai_company_wire",
       toolset: "company",
@@ -960,6 +1006,8 @@ describe("MCP stdio wire contract", () => {
           "assignment_context_get",
           "assignment_context_update",
           "assignment_question_ask",
+          "run_delegate",
+          "run_collect",
         ].sort(),
       );
       const inspected = await company.callTool({
@@ -982,6 +1030,8 @@ describe("MCP stdio wire contract", () => {
         "librarian_memory_remember",
         "agent_memory_write",
         "run_promote",
+        "run_message",
+        "run_rework",
       ]) {
         const refused = await company.callTool({ name, arguments: {} });
 

@@ -116,10 +116,12 @@ The company reservation service can bind a repository-free standalone agent
 child to exact retained work. It uses the reviewed receiving binding, current
 receiving assignment-read grant, existing Pending lifecycle, and a required
 operational result. The child prompt uses the delegated objective and omits the
-parent’s standing request. The internal collector accepts a company owner and
+parent’s standing request. The existing HTTP and MCP delegate and collect tools
+support this company scope through an active execution credential. Collection
 applies the same exact originating-role and source checks as project collection.
-Company tool routing, company Flow children and positive native message/rework
-qualification remain open.
+The shared input admission service can capture source-bearing input for the
+exact same-company child when both roles still have current authority. Company
+Flow children and delivery of native messages and rework remain open.
 
 ### Decisive execution fences (T27)
 

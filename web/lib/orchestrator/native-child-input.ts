@@ -20,14 +20,14 @@ export async function captureNativeChildInput(
   input: Readonly<{ sourceRunId: string; childRunId: string }>,
 ): Promise<void> {
   await db.transaction(async (tx) => {
-    await authorizeNativeChildInput(tx, {
+    const exactWork = await authorizeNativeChildInput(tx, {
       parentRunId: input.sourceRunId,
       childRunId: input.childRunId,
       recipient: principal,
     });
     const source = (
       await tx.execute(
-        sql`SELECT project_id,knowledge_access,result_contract->>'nativeContract' AS native_contract FROM runs WHERE id=${input.sourceRunId} FOR NO KEY UPDATE`,
+        sql`SELECT project_id,company_id,knowledge_access,result_contract->>'nativeContract' AS native_contract FROM runs WHERE id=${input.sourceRunId} FOR NO KEY UPDATE`,
       )
     ).rows[0];
 
@@ -66,14 +66,23 @@ export async function captureNativeChildInput(
       throw unavailableKnowledgeReference();
     const child = (
       await tx.execute(
-        sql`SELECT project_id,parent_run_id,run_kind,knowledge_access FROM runs WHERE id=${input.childRunId} FOR NO KEY UPDATE`,
+        sql`SELECT project_id,company_id,parent_run_id,run_kind,knowledge_access FROM runs WHERE id=${input.childRunId} FOR NO KEY UPDATE`,
       )
     ).rows[0];
 
+    const sameProject =
+      typeof source.project_id === "string" &&
+      child?.project_id === source.project_id;
+    const sameCompanyWork =
+      exactWork &&
+      source.project_id === null &&
+      child?.project_id === null &&
+      typeof source.company_id === "string" &&
+      child.company_id === source.company_id;
+
     if (
       !child ||
-      typeof source.project_id !== "string" ||
-      child.project_id !== source.project_id ||
+      (!sameProject && !sameCompanyWork) ||
       child.parent_run_id !== input.sourceRunId ||
       child.run_kind !== "agent"
     )

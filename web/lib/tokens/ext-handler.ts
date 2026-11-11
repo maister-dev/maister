@@ -447,6 +447,7 @@ export async function handleExt(
     // The 403 body never reveals which scopes the token holds.
     requireScope?: boolean;
     allowGlobalActorWithoutProject?: boolean;
+    allowCompanyActorWithoutProject?: boolean;
     auditProjectId?: string | null;
     resolveProjectId?: (ctx: ResolveProjectCtx) => Promise<string | null>;
     resolveScopeLabel?: (ctx: ResolveScopeCtx) => Promise<string>;
@@ -677,7 +678,11 @@ export async function handleExt(
     }
   }
 
-  if (targetProjectId === null && !opts.allowGlobalActorWithoutProject) {
+  if (
+    targetProjectId === null &&
+    !opts.allowGlobalActorWithoutProject &&
+    !(opts.allowCompanyActorWithoutProject && actor.companyId !== undefined)
+  ) {
     await recordRequiredTokenAudit(
       {
         ...tokenAuditIdentity(actor),

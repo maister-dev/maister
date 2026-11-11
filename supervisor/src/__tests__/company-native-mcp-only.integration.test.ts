@@ -27,6 +27,7 @@ const runId = "company-native-node";
 async function runCompanyScenario(
   scenario: string,
   scopes: readonly CompanyFlowKnowledgeScope[],
+  reviewedActions: readonly string[] = scopes,
 ): Promise<SessionEvent[]> {
   host = await bootHost({
     fixture: "mock-acp-guardrail.mjs",
@@ -63,7 +64,10 @@ async function runCompanyScenario(
       createBody(handle, {
         autoApprovePermissions: true,
         readOnlySession: false,
-        enforcementProfile: companyFlowEnforcementProfile(scopes),
+        enforcementProfile: companyFlowEnforcementProfile(
+          scopes,
+          reviewedActions,
+        ),
       }),
     ),
   );
@@ -100,6 +104,26 @@ afterEach(async () => {
 });
 
 describe("company native MCP-only enforcement", () => {
+  it.each([
+    { extraActions: ["assignments:delegate"], expectedDenials: 0 },
+    { extraActions: [], expectedDenials: 1 },
+  ])(
+    "requires a reviewed delegation action for writes ($expectedDenials denials)",
+    async ({ extraActions, expectedDenials }) => {
+      const scopes = [
+        "knowledge:read",
+        "assignments:read",
+        "assignments:update",
+      ] as const;
+      const events = await runCompanyScenario(
+        "company_native_delegation",
+        scopes,
+        [...scopes, ...extraActions],
+      );
+
+      expect(trips(events)).toHaveLength(expectedDenials);
+    },
+  );
   it("admits exact knowledge tools while denying file, shell, confirmation and private memory despite auto approval", async () => {
     const events = await runCompanyScenario("company_native_mcp_only", [
       "knowledge:read",

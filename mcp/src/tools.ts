@@ -602,22 +602,52 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         assignmentWork: {
           type: "object",
           additionalProperties: false,
-          description: "Exact native project assignment work. Use a standalone workspace-none agent with a required result contract.",
+          description:
+            "Exact native assignment work. Use a standalone workspace-none agent with a required result contract. Company credentials use an explicitly reviewed company binding and cannot select a project.",
           required: ["selector", "expectedOutcome"],
           properties: {
             expectedOutcome: { type: "string", minLength: 1, maxLength: 4000 },
             selector: {
               type: "object",
               additionalProperties: false,
-              required: ["schemaVersion", "assignmentId", "expectedRevision", "inputRevision", "contextRevision", "logicalWorkId", "workRevision"],
+              required: [
+                "schemaVersion",
+                "assignmentId",
+                "expectedRevision",
+                "inputRevision",
+                "contextRevision",
+                "logicalWorkId",
+                "workRevision",
+              ],
               properties: {
                 schemaVersion: { type: "integer", const: 1 },
                 assignmentId: { type: "string", minLength: 1, maxLength: 128 },
-                expectedRevision: { type: "integer", minimum: 1, maximum: 2147483647 },
-                inputRevision: { type: "integer", minimum: 1, maximum: 2147483647 },
-                contextRevision: { type: "integer", minimum: 0, maximum: 2147483647 },
-                logicalWorkId: { type: "string", minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9._:-]+$" },
-                workRevision: { type: "integer", minimum: 1, maximum: 2147483647 },
+                expectedRevision: {
+                  type: "integer",
+                  minimum: 1,
+                  maximum: 2147483647,
+                },
+                inputRevision: {
+                  type: "integer",
+                  minimum: 1,
+                  maximum: 2147483647,
+                },
+                contextRevision: {
+                  type: "integer",
+                  minimum: 0,
+                  maximum: 2147483647,
+                },
+                logicalWorkId: {
+                  type: "string",
+                  minLength: 1,
+                  maxLength: 128,
+                  pattern: "^[A-Za-z0-9._:-]+$",
+                },
+                workRevision: {
+                  type: "integer",
+                  minimum: 1,
+                  maximum: 2147483647,
+                },
               },
             },
           },

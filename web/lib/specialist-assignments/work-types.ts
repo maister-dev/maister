@@ -159,6 +159,17 @@ export type SpecialistWorkDecisionState =
   (typeof SPECIALIST_WORK_DECISION_STATES)[number];
 export type AssignmentWorkBounds = z.infer<typeof assignmentWorkBoundsSchema>;
 
+export const DEFAULT_ASSIGNMENT_WORK_BOUNDS: AssignmentWorkBounds = {
+  schemaVersion: 1,
+  maxDepth: 2,
+  maxFanout: 4,
+  maxActiveChildren: 2,
+  maxChildRuns: 8,
+  maxTokens: 100000,
+  wallClockMinutes: 30,
+  consecutiveFailures: 3,
+};
+
 /** Internal prepared data is rechecked against current storage before it can reserve a child. */
 export type PreparedAssignmentWork = Readonly<{
   objectiveInput: AssignmentWorkDefinition["objectiveInput"];

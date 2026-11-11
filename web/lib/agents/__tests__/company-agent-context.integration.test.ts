@@ -124,6 +124,10 @@ import {
   platformRuntimeSettings,
 } from "@/lib/db/schema";
 import { createExecutionHosts, localHost } from "@/lib/execution-host";
+import * as executionHostServices from "@/lib/execution-host";
+import { POST as delegateExternalRun } from "@/app/api/v1/ext/runs/delegate/route";
+import { POST as collectExternalRun } from "@/app/api/v1/ext/runs/collect/route";
+import { captureNativeChildInput } from "@/lib/orchestrator/native-child-input";
 import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
 import { canonicalProjectors } from "@/lib/execution-host/events/projection-runtime";
 import { startProjectionWorker } from "@/lib/execution-host/events/projection-worker";
@@ -10657,7 +10661,10 @@ it("IT-CBC-01 requires current company delegation grants for a repository-free w
     objectiveInput: {
       ...assignmentInput.objectiveInput,
       objective: "Inspect only the retained health observation",
-      input: "Read this one observation",
+      input: "Inspect only the retained health observation",
+      verification: [
+        { kind: "result" as const, referenceId: null, required: true },
+      ],
     },
     target: {
       kind: "company_agent" as const,
@@ -10803,6 +10810,37 @@ it("IT-CBC-01 requires current company delegation grants for a repository-free w
         status: "Pending",
       });
       await expect(dispatch()).resolves.toEqual(first);
+      const headers = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${appointment.credential.secret}`,
+      };
+      const hostOverride = vi
+        .spyOn(executionHostServices, "createExecutionHosts")
+        .mockReturnValue(hosts);
+
+      try {
+        const replay = await delegateExternalRun(
+          new NextRequest("http://localhost/api/v1/ext/runs/delegate", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              target: { agentId: receivingRoleId },
+              mode: "run",
+              prompt: prepared.objectiveInput.objective,
+              assignmentWork: {
+                selector: workRequest.selector,
+                expectedOutcome: prepared.objectiveInput.expectedOutcome,
+              },
+            }),
+          }),
+          {},
+        );
+
+        expect(replay.status).toBe(202);
+        expect(await replay.json()).toEqual(first);
+      } finally {
+        hostOverride.mockRestore();
+      }
       const loadChild = () =>
         db.transaction((tx) =>
           loadCompanyAgentSessionContext(tx, first.childRunId),
@@ -10836,19 +10874,33 @@ it("IT-CBC-01 requires current company delegation grants for a repository-free w
           constraint: "runs_company_execution_reference_check",
         },
       });
-      await expect(
-        collectChild(db, {
-          companyId: request.companyId,
-          parentRunId: appointment.runId,
-          childRunId: first.childRunId,
-          recipient: { kind: "token", tokenId: appointment.credential.tokenId },
+      const collected = await collectExternalRun(
+        new NextRequest("http://localhost/api/v1/ext/runs/collect", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ childRunId: first.childRunId }),
         }),
-      ).resolves.toMatchObject({
-        result: { childRunId: first.childRunId, status: "Pending" },
-      });
+        {},
+      );
+
+      expect(collected.status).toBe(200);
+      expect(await collected.json()).toMatchObject([
+        { childRunId: first.childRunId, status: "Pending" },
+      ]);
+      const captureChildInput = () =>
+        captureNativeChildInput(
+          db,
+          { kind: "token", tokenId: appointment.credential.tokenId },
+          { sourceRunId: appointment.runId, childRunId: first.childRunId },
+        );
+
+      await expect(captureChildInput()).resolves.toBeUndefined();
       await revoke(receivingGrant);
       await expect(loadChild()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
       await expect(dispatch()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+      await expect(captureChildInput()).rejects.toMatchObject({
+        code: "UNAUTHORIZED",
+      });
     } finally {
       await revoke(professional);
     }

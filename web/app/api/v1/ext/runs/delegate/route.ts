@@ -39,6 +39,7 @@ import { resolveResultContractForDelegation } from "@/lib/run-results/resolve-pr
 import { resolveActiveBoundRun } from "@/lib/runs/bound-run";
 import { addTaskRelation } from "@/lib/social/relations";
 import { dispatchProjectAssignmentChild } from "@/lib/specialist-assignments/project-child-dispatch";
+import { dispatchCompanyAssignmentChild } from "@/lib/specialist-assignments/company-child-dispatch";
 import { createDelegatedTaskLaunchSource } from "@/lib/orchestrator/delegated-launch-authority";
 import {
   delegationLaunchOperation,
@@ -184,6 +185,9 @@ export async function POST(
       endpoint: ENDPOINT,
       method: "POST",
       successAuditInWork: true,
+      allowCompanyActorWithoutProject: true,
+      resolveScopeLabel: async ({ actor }) =>
+        actor.companyId === undefined ? "runs:delegate" : "assignments:update",
       db,
     },
     async (ctx) => {
@@ -230,6 +234,30 @@ export async function POST(
             },
             { status: httpStatusForExtCode("PRECONDITION") },
           );
+        }
+
+        if (ctx.actor.companyId !== undefined) {
+          const child = await dispatchCompanyAssignmentChild(db, {
+            body,
+            companyId: ctx.actor.companyId,
+            parentRunId,
+            tokenId: ctx.actor.tokenId,
+          });
+
+          await recordRequiredTokenAudit(
+            {
+              ...tokenAuditIdentity(ctx.actor),
+              projectId: null,
+              scopeUsed: "assignments:update",
+              endpoint: ENDPOINT,
+              method: "POST",
+              result: "ok",
+              statusCode: 202,
+            },
+            db,
+          );
+
+          return NextResponse.json(child, { status: 202 });
         }
 
         // Finding 1 (Codex adversarial review): resolve the bound orchestrator

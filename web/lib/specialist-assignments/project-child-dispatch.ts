@@ -7,6 +7,7 @@ import type { DelegatedWorkRequest } from "./delegated-intake";
 import { eq, sql } from "drizzle-orm";
 
 import { retainDelegatedWorkInTransaction } from "./delegated-intake";
+import { DEFAULT_ASSIGNMENT_WORK_BOUNDS } from "./work-types";
 
 import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
 import { resolveAgentConfig } from "@/lib/agents/config";
@@ -26,17 +27,6 @@ type DispatchInput = Readonly<{
   parentRunId: string;
   tokenId: string;
 }>;
-
-const defaultBounds = {
-  schemaVersion: 1,
-  maxDepth: 2,
-  maxFanout: 4,
-  maxActiveChildren: 2,
-  maxChildRuns: 8,
-  maxTokens: 100000,
-  wallClockMinutes: 30,
-  consecutiveFailures: 3,
-} as const;
 
 /** Existing standalone launch with an authorized native work reservation and a replayable Run identity. */
 export async function dispatchProjectAssignmentChild(
@@ -128,7 +118,7 @@ export async function dispatchProjectAssignmentChild(
         tokenId,
         selector: assignmentWork.selector,
         prepared: {
-          bounds: defaultBounds,
+          bounds: DEFAULT_ASSIGNMENT_WORK_BOUNDS,
           sourceRestrictions: nativeInput.sourceRestrictions,
           target: {
             kind: "project_agent",
