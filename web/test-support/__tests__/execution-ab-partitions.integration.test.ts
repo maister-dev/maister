@@ -618,9 +618,13 @@ describe("S5.2 production-boot fault partitions", () => {
         expect(row.state).not.toBe("failed");
         expect(row.completion_applied_at).toBeNull();
 
+        // A retry claim increments attempts before its probes finish and
+        // retains the transport state from the preceding attempt.
         return row.state === "queued" &&
           row.transport_state === "reconciliation_required" &&
-          row.attempts >= 3
+          row.attempts >= 3 &&
+          receipts.observations.length >= 15 &&
+          drops.observations.length >= 2
           ? row
           : null;
       },
@@ -629,9 +633,6 @@ describe("S5.2 production-boot fault partitions", () => {
       100,
     );
 
-    expect(unknown.state).toBe("queued");
-    expect(receipts.observations.length).toBeGreaterThanOrEqual(15);
-    expect(drops.observations.length).toBeGreaterThanOrEqual(2);
     expect(unknown.request_sha256).toBe(before.request_sha256);
     // Only this receipt route is partitioned: host identity and an unrelated missing receipt still respond.
     expect((await fetch(`${proxy!.url}/health`)).status).toBe(200);
