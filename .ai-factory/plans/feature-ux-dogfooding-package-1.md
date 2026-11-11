@@ -64,6 +64,16 @@ Use existing analytics sections. For each changed process, record inputs and aut
 | UX-02A–B, UX-03A–D | Drive the native locator with keyboard input and keep the representative geometry assertions. Refresh Evidence without reloading the page as the last matching node disappears and returns. Check the selected filter, Clear filters, and the same-tuple camera. Keep the short modal scenario with the shared buttons. |
 | UX-07A–C, UX-09A–C | Show distinct explanations and next actions for skipped, pending, running, stale, failed, and overridden gates. Links must select the exact gate row through the Evidence-only `evidenceItem` query, with a second same-status gate proving identity. Check all four Jump control bounds, including a transcript entering the viewport and child scroll ownership. Keep the current retention and live-follow assertions. |
 
+### Validation control repairs
+
+| Owning control | Required witness |
+| --- | --- |
+| `web/test-support/__tests__/execution-ab-partitions.integration.test.ts` | P1 holds every receipt probe for the selected command until the original Web process is killed. One observed probe is sufficient to prove the lost ACK was noticed. Retain the host commit, dropped response, fenced writer, one canonical result and adapter-effect assertions. P2 requires the durable queued reconciliation state and all observed retry budgets together. |
+| `web/e2e/m16-external-operations.spec.ts` | Use the documented automatic launch authority and optimistic input. Assert durable 202 acceptance and its authenticated receipt before exercising the independent parked Run's readiness and Evidence. The current legacy launch contract is in `docs/api/external/operations.openapi.yaml`. |
+| `web/e2e/m18-branch-promotion.spec.ts` and `web/e2e/child-run-peek.spec.ts` | Assert the PR link in the visible Review panel. Wait for the parent transcript's settled empty state before creating the tall inspector and measuring the scroll offset. Retain the parent scroll, keyboard focus restoration and actual promotion assertions. |
+| `web/lib/flows/graph/__tests__/{consensus-prompt-owners,prompt-owners}.integration.test.ts` | Keep a bounded wait for eventual session cleanup after consensus recovery. Compare command identities independently of SQL row order, retaining exact counts and original ownership. |
+| `web/lib/tasks/__tests__/launch-selection.integration.test.ts` | Give the real worker a bounded recovery window under load. Prove the capacity retry was scheduled after its persisted write time, and still binds the same Run after capacity returns. |
+
 ### Persistence and migration decision
 
 - **No migration.** `package_installs.id`, its source/name/SHA, `project_package_attachments.package_install_id`, `flows.package_install_id`, `runs.flow_revision_id` and `runs.flow_revision` already provide the identities this package uses. The Flow's current install is mutable and cannot stand in for a Run pin. `flow_revisions` lacks a package-install FK. Match source, member, SHA and the normalized version label server-side. A matching project attachment provides the exact identity, otherwise require a unique install. Keep the pinned Run or revision readable when its historical Studio target cannot be established. Never backfill guesses or use the Run's digest-only badge as link authority.
