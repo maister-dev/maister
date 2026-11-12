@@ -28,6 +28,9 @@ export async function git(cwd: string, ...args: string[]): Promise<string> {
 export async function initRepo(dir: string): Promise<string> {
   await mkdir(dir, { recursive: true });
   await git(dir, "init", "-q", "-b", "main");
+  await git(dir, "config", "user.name", "eh-test");
+  await git(dir, "config", "user.email", "eh-test@example.invalid");
+  await git(dir, "config", "commit.gpgsign", "false");
   await git(dir, "commit", "-q", "--allow-empty", "-m", "init");
 
   return realpath(dir);

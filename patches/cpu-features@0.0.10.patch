@@ -1,0 +1,13 @@
+diff --git a/src/binding.cc b/src/binding.cc
+index 790523921110d7bd3217a1a2f6ca1d70a68195ee..d011ab2386cabc8006259bee4aa2ee3c7cb2fe55 100644
+--- a/src/binding.cc
++++ b/src/binding.cc
+@@ -143,7 +143,7 @@ NAN_METHOD(GetCPUInfo) {
+   info.GetReturnValue().Set(ret);
+ }
+ 
+-NAN_MODULE_INIT(init) {
++void init(v8::Local<v8::Object> target, v8::Local<v8::Value>, void*) {
+   Nan::Set(target, Nan::New<String>("getCPUInfo").ToLocalChecked(),
+     Nan::GetFunction(Nan::New<FunctionTemplate>(GetCPUInfo)).ToLocalChecked());
+ }

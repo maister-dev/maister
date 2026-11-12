@@ -863,6 +863,7 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
       let delegation: ReturnType<typeof acceptQueuedChild> | undefined;
       let parent: Promise<void> | undefined;
       let firstCount = true;
+      let delegationIsHeld = false;
       const observed: number[] = [];
       const counts = vi
         .spyOn(childObligations, "childObligationCounts")
@@ -887,6 +888,7 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
                 RE_ENTRY_POLL,
               )
               .toBe(1);
+            delegationIsHeld = true;
           }
 
           return result;
@@ -905,6 +907,9 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
           runtimeRoot: process.cwd(),
           executionHosts: hosts,
         });
+        // Other run writers may already be waiting. Only release our barrier
+        // after this delegation is actually waiting at it.
+        await expect.poll(() => delegationIsHeld, RE_ENTRY_POLL).toBe(true);
         await expect
           .poll(
             async () =>

@@ -423,7 +423,9 @@ export async function issueOwnedPrompt(
           ]),
         ),
       )
-      .for("update")
+      // Fence binding changes without upgrading the owner's run lock: result
+      // ingestion holds KEY SHARE while writing the same command's evidence.
+      .for("no key update")
       .limit(1);
 
     if (!binding) throw ownedPromptConflict("inactive_incarnation");

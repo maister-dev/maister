@@ -4,7 +4,7 @@ import type { ExecutionAssignment, ExecutionHost } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
 import { rearmPromptAdmission } from "../commands";
@@ -15,6 +15,7 @@ import { projectCanonicalPromptCommands } from "../events/prompt-projector";
 import { releaseAssignmentForRun } from "../assignments";
 import { mintAssignment } from "../assignments";
 import { issueOwnedPrompt } from "../ledger";
+import { lockCurrentSessionAssignment } from "../session-binding";
 import { classifyCommandRequest, readPromptRequest } from "../command-request";
 
 import {
@@ -171,6 +172,45 @@ it("concurrent same-key admission keeps one command and the original request byt
     code: "CONFLICT",
     details: { reason: "command_invariant_conflict" },
   });
+});
+
+it("prompt admission remains compatible with an in-flight result's run reference", async () => {
+  const fixture = await admissionFixture();
+  const reader = await database.pool.connect();
+  const payload = {
+    stepId: "agent",
+    prompt: "admit while a result is persisted",
+  };
+
+  try {
+    await reader.query("BEGIN");
+    await reader.query("SELECT id FROM runs WHERE id = $1 FOR KEY SHARE", [
+      runId,
+    ]);
+    const admitted = await issueOwnedPrompt(db, {
+      assignment,
+      host,
+      targetSessionId: fixture.targetSessionId,
+      payload,
+      maxAttempts: 3,
+      admitOwner: async (tx) => {
+        await tx.execute(sql`SET LOCAL lock_timeout = '2s'`);
+        expect(
+          await lockCurrentSessionAssignment(tx, { runId, assignmentId }),
+        ).toMatchObject({ id: assignmentId, state: "active" });
+
+        return fixture;
+      },
+    });
+
+    expect(admitted.row.state).toBe("queued");
+    expect(readPromptRequest(admitted.row, host.hostKey).payload).toEqual(
+      payload,
+    );
+  } finally {
+    await reader.query("ROLLBACK");
+    reader.release();
+  }
 });
 
 it.each([

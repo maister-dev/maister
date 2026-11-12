@@ -91,11 +91,53 @@ cases also pass under the same Node 26 settings. Evidence:
 `module-register-red.log`, `e2e-node26-final.json`, and
 `shim-cli-integration.log` in the rebased evidence directory.
 
-Upstream native-toolchain notices remain visible: Mintlify's optional
-keytar/prebuild-install uses a deprecated filesystem constant, and the optional
-cpu-features native build emits a Node-header cast warning. Debian slim images
-also report absent manual-page alternatives. No incompatible dependency alias,
-native-feature removal or warning suppression is used for these notices.
+Hosted failures exposed two fixture dependencies: preparation fault barriers
+compared paths with file URLs, and Git fixtures supplied identity only to their
+setup commands. Barriers normalize Node PathLike values; repositories persist
+their own test identity. All 73 preparation, GC, retry and workbench cases pass
+without global Git configuration, including refusal when identity is explicitly
+missing. The supervisor deadline test observes the real surviving process before
+advancing its clock; all 378 supervisor integration cases pass in 97.636 s with
+one worker. Production timeout and ownership semantics remain unchanged.
+
+Version-scoped patches keep ssh2 1.17.0 native crypto working after V8 removed
+Context.GetIsolate, and give cpu-features 0.0.10 its actual Node initializer
+signature. Both addons compile and pass upstream crypto/CPU-detection checks on
+Node 24 and 26; native crypto availability is asserted before the crypto cases.
+Docker dependency stages copy the patches before frozen installation.
+
+The hosted Intel isolation failures exposed a real admission/result deadlock:
+`issueOwnedPrompt` upgraded the owner's run lock to `FOR UPDATE`, conflicting
+with the result writer's `KEY SHARE`. The binding check now uses `NO KEY UPDATE`,
+which still fences binding mutations. A real PostgreSQL regression fails on the
+old query and passes with all 13 immutable-command cases after the fix
+(`admission-lock-red.log`, `admission-lock-green.log`).
+All 139 complete Flow, agent, scratch and session-binding owner cases also pass
+with zero leaks (`lock-siblings-final.log`, 2,355.759 s including cleanup).
+
+Consensus assertions now run the production owner/continuation workers after a
+driver yields. An existing matrix case injects one retryable PostgreSQL failure;
+it fails with the old harness. All 26 complete owner cases pass with zero leaks
+in 303.996 s (`consensus-owner-final.log`). The stale-checkpoint fixture drains
+the accepted event before holding the ACK; its receipt, epoch and stale-write
+checks remain intact. Delegation and scratch-recovery barriers wait for the
+operation they actually interrupt instead of racing unrelated run activity.
+Both complete delegation/scratch-placement files pass 45/45 with zero leaks
+(`fixture-races-final.log`, 37.437 s). The scratch case now asserts the old turn's
+response instead of swallowing every exception.
+
+The first complete hosted remainder on `4c76eb1eac8dee46a983ed65619da3e8c0793273`
+contains 600 files and 5,164 cases: 5,149 pass and 15 fail in the five owners
+corrected above. It completes in 5,128.583 s with zero leaks; this failed full
+invocation remains distinct from the corrected owner reruns and final PR checks.
+
+Remaining upstream notices are Mintlify's optional keytar/prebuild-install
+deprecation, macOS libtool's empty architecture objects, and Debian slim
+manual-page alternatives. No incompatible dependency alias, native-feature
+removal or warning suppression is used. Evidence: `integration-git-identity-red.log`,
+`integration-fixtures-fixed.log`, `supervisor-integration-final.log`,
+`ssh2-native-node26.log`, `ssh2-crypto-node24.log`, `ssh2-crypto-node26.log`,
+and `cpu-features-detection-node26.log`.
 
 Evidence: `production-build.log`, `web-unit.log`, `web-lint-zero.log`,
 `root-contracts-final.log`, `integration-paths.log`,

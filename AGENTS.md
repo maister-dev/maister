@@ -19,7 +19,7 @@ Full description: `.ai-factory/DESCRIPTION.md`.
 
 ## Tech Stack
 
-- **Framework:** Next.js 16.2 (App Router)
+- **Framework:** Next.js 16.4 (App Router)
 - **Language:** TypeScript 5.6 (strict)
 - **UI library:** HeroUI v3 (`@heroui/react` 3.2.6)
 - **Styling:** Tailwind CSS 4 + `tailwind-variants`

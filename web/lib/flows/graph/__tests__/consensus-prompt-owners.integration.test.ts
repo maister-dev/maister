@@ -551,6 +551,41 @@ function drive(runId: string): Promise<unknown> {
   });
 }
 
+/** A driver may yield after a durable retry; production workers own the result. */
+async function awaitConsensusOutcome(
+  runId: string,
+  status: "Review" | "NeedsInput" | "Crashed",
+): Promise<void> {
+  const owners = startPromptOwnerWorker({
+    db: database.db as unknown as Db,
+    owners: flowPromptOwners,
+  });
+  const continuation = startFlowContinuationWorker({
+    db: database.db as unknown as Db,
+    runtimeRoot: supervisor.runtimeRoot,
+    executionHosts: createExecutionHosts({ db: database.db as unknown as Db }),
+  });
+
+  try {
+    await expect
+      .poll(
+        async () => {
+          const [run] = await database.db
+            .select({ status: runs.status })
+            .from(runs)
+            .where(eq(runs.id, runId));
+
+          return run.status;
+        },
+        { timeout: 60_000, interval: 100 },
+      )
+      .toBe(status);
+  } finally {
+    await continuation.stop();
+    await owners.stop();
+  }
+}
+
 async function waitForDraftsDone(parentRunId: string): Promise<void> {
   await expect
     .poll(
@@ -1336,7 +1371,21 @@ describe("Consensus prompt owners through the production graph driver", () => {
     );
 
     await drive(seeded.runId);
-    await settleDraftsAndResume(seeded.runId);
+    const sequence = `consensus_retry_${seeded.runId.replaceAll("-", "")}`;
+
+    await database.pool.query(`CREATE SEQUENCE ${sequence}`);
+    const dropTrigger = await installInsertTrigger(
+      "consensus_round_verdicts",
+      `IF NEW.run_id = '${seeded.runId}' AND nextval('${sequence}') = 1 THEN RAISE EXCEPTION 'retry consensus verdict transaction' USING ERRCODE = '40P01'; END IF; RETURN NEW;`,
+    );
+
+    try {
+      await settleDraftsAndResume(seeded.runId);
+      await awaitConsensusOutcome(seeded.runId, "Review");
+    } finally {
+      await dropTrigger();
+      await database.pool.query(`DROP SEQUENCE ${sequence}`);
+    }
     const [attempt] = await database.db
       .select()
       .from(nodeAttempts)
@@ -1435,6 +1484,14 @@ describe("Consensus prompt owners through the production graph driver", () => {
       },
     );
 
+    const barrierContinuation = startFlowContinuationWorker({
+      db: database.db as unknown as Db,
+      runtimeRoot: supervisor.runtimeRoot,
+      executionHosts: createExecutionHosts({
+        db: database.db as unknown as Db,
+      }),
+    });
+
     try {
       await expect
         .poll(
@@ -1480,6 +1537,7 @@ describe("Consensus prompt owners through the production graph driver", () => {
       await releaseLifecycle();
       throw error;
     } finally {
+      await barrierContinuation.stop();
       await dropTrigger();
     }
 
@@ -1573,6 +1631,14 @@ describe("Consensus prompt owners through the production graph driver", () => {
       },
     );
 
+    const barrierContinuation = startFlowContinuationWorker({
+      db: database.db as unknown as Db,
+      runtimeRoot: supervisor.runtimeRoot,
+      executionHosts: createExecutionHosts({
+        db: database.db as unknown as Db,
+      }),
+    });
+
     try {
       await expect
         .poll(
@@ -1613,6 +1679,7 @@ describe("Consensus prompt owners through the production graph driver", () => {
       await releaseLifecycle();
       throw error;
     } finally {
+      await barrierContinuation.stop();
       await dropTrigger();
     }
 
@@ -1805,6 +1872,7 @@ describe("Consensus prompt owners through the production graph driver", () => {
 
     await drive(seeded.runId);
     await settleDraftsAndResume(seeded.runId);
+    await awaitConsensusOutcome(seeded.runId, "NeedsInput");
     const [attempt] = await database.db
       .select()
       .from(nodeAttempts)
@@ -1874,6 +1942,7 @@ describe("Consensus prompt owners through the production graph driver", () => {
 
     await drive(seeded.runId);
     await settleDraftsAndResume(seeded.runId);
+    await awaitConsensusOutcome(seeded.runId, "Review");
     const [attempt] = await database.db
       .select()
       .from(nodeAttempts)
@@ -1912,52 +1981,21 @@ describe("Consensus prompt owners through the production graph driver", () => {
 
     await drive(seeded.runId);
     await settleDraftsAndResume(seeded.runId);
-    // A driver invocation may yield while an immutable output read is busy.
-    // Run the production continuations until this case owns its final result.
-    const owners = startPromptOwnerWorker({
-      db: database.db as unknown as Db,
-      owners: flowPromptOwners,
-    });
-    const continuation = startFlowContinuationWorker({
-      db: database.db as unknown as Db,
-      runtimeRoot: supervisor.runtimeRoot,
-      executionHosts: createExecutionHosts({
-        db: database.db as unknown as Db,
-      }),
-    });
+    await awaitConsensusOutcome(seeded.runId, "NeedsInput");
+    const [attempt] = await database.db
+      .select({ id: nodeAttempts.id })
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.runId, seeded.runId));
+    const cells = await database.db
+      .select()
+      .from(consensusRoundVerdicts)
+      .where(eq(consensusRoundVerdicts.nodeAttemptId, attempt.id));
 
-    try {
-      await expect
-        .poll(
-          async () => {
-            const [run] = await database.db
-              .select({ status: runs.status })
-              .from(runs)
-              .where(eq(runs.id, seeded.runId));
-
-            return run.status;
-          },
-          { timeout: 60_000, interval: 100 },
-        )
-        .toBe("NeedsInput");
-      const [attempt] = await database.db
-        .select({ id: nodeAttempts.id })
-        .from(nodeAttempts)
-        .where(eq(nodeAttempts.runId, seeded.runId));
-      const cells = await database.db
-        .select()
-        .from(consensusRoundVerdicts)
-        .where(eq(consensusRoundVerdicts.nodeAttemptId, attempt.id));
-
-      expect(cells).toHaveLength(2);
-      expect(
-        cells.every((cell) => cell.errorCode === "output_cap_exceeded"),
-      ).toBe(true);
-      expect(cells.every((cell) => cell.verdict === "disagree")).toBe(true);
-    } finally {
-      await continuation.stop();
-      await owners.stop();
-    }
+    expect(cells).toHaveLength(2);
+    expect(
+      cells.every((cell) => cell.errorCode === "output_cap_exceeded"),
+    ).toBe(true);
+    expect(cells.every((cell) => cell.verdict === "disagree")).toBe(true);
   }, 180_000);
   it("P0-5: max_tokens drafts remain partial evidence and cost no verifier turn", async () => {
     const body = "An unfinished but useful draft";
@@ -1966,6 +2004,7 @@ describe("Consensus prompt owners through the production graph driver", () => {
 
     await drive(seeded.runId);
     await settleDraftsAndResume(seeded.runId, "Failed");
+    await awaitConsensusOutcome(seeded.runId, "NeedsInput");
     const [attempt] = await database.db
       .select()
       .from(nodeAttempts)
@@ -2086,6 +2125,7 @@ describe("Consensus prompt owners through the production graph driver", () => {
 
     await drive(seeded.runId);
     await settleDraftsAndResume(seeded.runId);
+    await awaitConsensusOutcome(seeded.runId, "Review");
     const [attempt] = await database.db
       .select()
       .from(nodeAttempts)
@@ -2227,6 +2267,7 @@ describe("Consensus prompt owners through the production graph driver", () => {
 
     await drive(seeded.runId);
     await settleDraftsAndResume(seeded.runId);
+    await awaitConsensusOutcome(seeded.runId, "NeedsInput");
     const [attempt] = await database.db
       .select()
       .from(nodeAttempts)
@@ -2347,6 +2388,7 @@ describe("Consensus prompt owners through the production graph driver", () => {
 
     await drive(seeded.runId);
     await settleDraftsAndResume(seeded.runId, "Failed");
+    await awaitConsensusOutcome(seeded.runId, "NeedsInput");
     const [attempt] = await database.db
       .select()
       .from(nodeAttempts)
@@ -2460,6 +2502,7 @@ describe("Consensus prompt owners through the production graph driver", () => {
 
     await drive(seeded.runId);
     await settleDraftsAndResume(seeded.runId);
+    await awaitConsensusOutcome(seeded.runId, "NeedsInput");
     const [request] = await consensusRequests(seeded.runId);
     const summaries = decodeConsensusResolutionSchema(
       request.schema,
@@ -2481,6 +2524,7 @@ describe("Consensus prompt owners through the production graph driver", () => {
 
     await drive(seeded.runId);
     await settleDraftsAndResume(seeded.runId);
+    await awaitConsensusOutcome(seeded.runId, "NeedsInput");
     const [request] = await consensusRequests(seeded.runId);
     const inputPath = path.join(
       supervisor.runtimeRoot,
@@ -2563,6 +2607,7 @@ describe("Consensus prompt owners through the production graph driver", () => {
 
     await drive(seeded.runId);
     await settleDraftsAndResume(seeded.runId);
+    await awaitConsensusOutcome(seeded.runId, "NeedsInput");
     const [run] = await database.db
       .select({ status: runs.status })
       .from(runs)
@@ -2607,6 +2652,7 @@ describe("Consensus prompt owners through the production graph driver", () => {
     await drive(seeded.runId);
     await waitForDraftsDone(seeded.runId);
     await settleDraftsAndResume(seeded.runId);
+    await awaitConsensusOutcome(seeded.runId, "Crashed");
     const [failed] = await database.db
       .select()
       .from(nodeAttempts)
@@ -2722,6 +2768,7 @@ describe("Consensus prompt owners through the production graph driver", () => {
     expect(attempts).toHaveLength(2);
     expect(attempts[1].id).not.toBe(failed.id);
     await settleDraftsAndResume(seeded.runId, "Done", attempts[1].id);
+    await awaitConsensusOutcome(seeded.runId, "Review");
     const newSynthesisId = `run:${attempts[1].id}:consensus-synthesis:r1:consensus`;
     const [newSynthesis] = await database.db
       .select()
@@ -2764,6 +2811,7 @@ describe("Consensus prompt owners through the production graph driver", () => {
     await drive(seeded.runId);
     await waitForDraftsDone(seeded.runId);
     await settleDraftsAndResume(seeded.runId);
+    await awaitConsensusOutcome(seeded.runId, "Crashed");
     const [run] = await database.db
       .select({ status: runs.status })
       .from(runs)
@@ -2801,6 +2849,7 @@ describe("Consensus prompt owners through the production graph driver", () => {
 
     await drive(seeded.runId);
     await settleDraftsAndResume(seeded.runId);
+    await awaitConsensusOutcome(seeded.runId, "Review");
     const [attempt] = await database.db
       .select()
       .from(nodeAttempts)
@@ -2863,6 +2912,7 @@ describe("Consensus prompt owners through the production graph driver", () => {
 
     await drive(seeded.runId);
     await settleDraftsAndResume(seeded.runId);
+    await awaitConsensusOutcome(seeded.runId, "NeedsInput");
     const [attempt] = await database.db
       .select()
       .from(nodeAttempts)

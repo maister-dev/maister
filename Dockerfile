@@ -38,6 +38,7 @@ WORKDIR /app
 # ---------- builder: full monorepo deps + web production build ----------
 FROM base AS builder
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches/ ./patches/
 COPY web/package.json ./web/
 COPY supervisor/package.json ./supervisor/
 COPY mcp/package.json ./mcp/
@@ -57,6 +58,7 @@ RUN NODE_OPTIONS=--max-old-space-size=4096 pnpm --filter maister-web build
 # ---------- development: hot reload via pnpm dev / supervisor dev ----------
 FROM base AS development
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches/ ./patches/
 COPY web/package.json ./web/
 COPY supervisor/package.json ./supervisor/
 COPY mcp/package.json ./mcp/

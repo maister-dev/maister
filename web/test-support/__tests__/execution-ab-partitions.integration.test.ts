@@ -894,9 +894,26 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
 
     admission.release();
     await ack.awaitReached();
-    await events.awaitReached();
+    const acceptedEvent = await events.awaitReached();
+
     ack.cut();
     await receipt.awaitReached();
+    // Only the receipt must remain blocked for this stale-checkpoint case.
+    // Drain the accepted event before starting the held ACK's wire deadline.
+    events.release();
+    await poll(
+      async () => {
+        const accepted = await stack.database.pool.query<{ id: string }>(
+          `SELECT id FROM execution_events
+           WHERE run_id=$1 AND host_sequence=$2 AND ingest_disposition='accepted'`,
+          [runId, acceptedEvent.sequence],
+        );
+
+        return accepted.rows[0]?.id ?? null;
+      },
+      30_000,
+      "original prompt acceptance ingested before checkpoint",
+    );
     const originalAttempts = await stack.database.pool.query<{ id: string }>(
       "SELECT id FROM node_attempts WHERE run_id=$1 AND status='Running'",
       [runId],
@@ -1002,7 +1019,6 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
     );
 
     expect(restart.status, await restart.clone().text()).toBe(202);
-    events.release();
     receipt.release();
     // The successor epoch is the stale-ACK boundary. Its preparation can take
     // longer than the held checkpoint's wire deadline on a loaded host; audit

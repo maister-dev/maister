@@ -39,3 +39,8 @@ minimumReleaseAgeExclude:
   - eslint-plugin-react-x@5.30.2
   - eslint-plugin-react-dom@5.30.2
   - eslint-plugin-react-jsx@5.30.2
+
+# Keep native crypto and CPU detection compatible until upstream adopts the current Node/V8 API.
+patchedDependencies:
+  cpu-features@0.0.10: patches/cpu-features@0.0.10.patch
+  ssh2@1.17.0: patches/ssh2@1.17.0.patch
