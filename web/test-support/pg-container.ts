@@ -308,6 +308,23 @@ async function allocatePostgresContainer(
       .withDatabase(options.databaseName)
       .withUsername("test")
       .withPassword("test")
+      // Templates refuse new connections after migration. Probe the server's
+      // maintenance database instead, without spawning four probes per second.
+      .withHealthCheck({
+        test: [
+          "CMD",
+          "pg_isready",
+          "--host",
+          "localhost",
+          "--username",
+          "test",
+          "--dbname",
+          "postgres",
+        ],
+        interval: 1_000,
+        timeout: 1_000,
+        retries: 250,
+      })
       .withTmpFs({ [postgresStorage.storagePath]: "rw,size=512m" })
       .withCommand([
         "postgres",

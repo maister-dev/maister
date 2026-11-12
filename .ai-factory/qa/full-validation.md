@@ -152,7 +152,34 @@ The stable `d1ee92b44c80014d2bd0a9596e980be5ada560f3` local checkpoint passes
 all 51 isolation cases in 538.008 s and all 278 ordinary E2E cases in 384.562 s,
 with no retries, skips or owned leaks. Its normal TypeScript-enabled production
 build passes in 35.709 s without Turbopack warnings. These precede the assignment
-and Docker follow-ups above; final revision qualification belongs to PR checks.
+and Docker follow-ups above. The complete follow-up on
+`f2fe28f869434174b3a058a4f25418fd5dffed64` passes 51/51 isolation in 534.578 s,
+278/278 ordinary E2E in 382.536 s, and the normal production build in 36.179 s;
+no retries, skips or owned leaks. Hosted Node 26 passes 8,981 unit cases, 23
+integration cases and five A/B browser cases. Final hosted qualification belongs
+to the exact revision in PR checks.
+
+The full docs image build exposed a Mintlify HTML-format change after validation
+and link checks had passed: the opening HTML tag now spans multiple lines. The
+locale transformer accepts whitespace and intervening attributes while still
+refusing a missing language attribute. The real 88-page export passes HTML
+checks for 44 English and 44 Russian pages, search bodies and noscript pixels.
+The complete Docker docs build then passes in 26.255 s, including validation,
+links, export and a two-language Pagefind index (`docker-docs-build-green.log`).
+The site production image also builds without the UID-range warning: its
+non-login app user remains UID/GID 1001, home `/app`, shell `/usr/sbin/nologin`.
+
+The hosted `f2fe28f` checkpoint passes both A/B shards and isolation parts 1/2;
+part 3 retains one S3 failure. Its short permission lifetime started before
+canonical session creation committed. The fixture now waits for that durable
+prerequisite within the existing 60-second initial-admission budget, before
+releasing the held prompt; its permission and total-case deadlines are unchanged.
+The full ten-case scratch owner passes in 103.263 s with zero leaks
+(`scratch-readiness-green.log`). PostgreSQL's default 250 ms health probe also
+repeatedly connected to the frozen template. It now checks the maintenance
+database once per second. All four template integration cases pass in 9.562 s;
+the live frozen-template container reports healthy with five consecutive
+successful probes. No warning filter or test retry was added.
 
 The first complete hosted remainder on `4c76eb1eac8dee46a983ed65619da3e8c0793273`
 contains 600 files and 5,164 cases: 5,149 pass and 15 fail in the five owners

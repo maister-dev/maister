@@ -848,8 +848,26 @@ it("S3 transport: a held parked exit is fenced before the canonical scratch cons
     .catch((error: unknown) => error);
 
   try {
+    const initialDeadline = Date.now() + 60_000;
     const initial = await initialPrompt.awaitReached(60_000);
 
+    // Start the short permission lifetime only after session creation is
+    // durably projected. This scenario tests the stale exit, not create lag.
+    await poll(
+      async () => {
+        const result = await fixture!.database.pool.query<{ active: boolean }>(
+          `SELECT i.state = 'active' AS active
+           FROM execution_commands c
+           JOIN run_session_incarnations i ON i.id = c.owner_ref->>'incarnationId'
+           WHERE c.id = $1`,
+          [initial.commandId],
+        );
+
+        return result.rows[0]?.active ? true : null;
+      },
+      initialDeadline - Date.now(),
+      "canonical session creation before the permission lifetime starts",
+    );
     // Install the terminal barrier before the host starts its permission
     // deadline. Persistence of the request can lag that deadline on CI.
     oldTerminal = fixture.proxy.arm(

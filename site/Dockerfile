@@ -66,7 +66,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3001
 
 RUN groupadd --system --gid 1001 site \
- && useradd --system --uid 1001 --gid site --home /app --shell /usr/sbin/nologin site
+ && useradd --uid 1001 --gid site --home /app --shell /usr/sbin/nologin site
 
 WORKDIR /app
 
