@@ -1567,10 +1567,10 @@ export default async function RunDetailLayout({
         keyRef={detail.taskRef}
         labels={shellLabels}
         prHasConflicts={detail.prHasConflicts}
-        prState={detail.prState}
         projectHref={`/projects/${detail.projectSlug}`}
         projectLabel={t("backToBoard")}
         promotionOperation={headerPromotionOperation}
+        prState={detail.prState}
         reviewHref={showReview && reviewData ? "#review-panel" : null}
         runId={detail.runId}
         status={detail.status}
@@ -2170,8 +2170,8 @@ export default async function RunDetailLayout({
               legacyNeedsRelaunch={reviewData.legacyNeedsRelaunch}
               parentRepoPath={detail.parentRepoPath}
               prNumber={detail.prNumber}
-              prUrl={detail.prUrl}
               promotionMode={reviewData.promotionMode}
+              prUrl={detail.prUrl}
               readiness={reviewReadiness}
               reviewedTargetCommit={reviewData.reviewedTargetCommit}
               runBranch={detail.branch}

@@ -2,6 +2,7 @@ import type { Db } from "@/lib/execution-host/db";
 import type { RunResultContract } from "@/lib/run-results/types";
 import type { RealSupervisor } from "@/test-support/real-supervisor";
 import type { ProjectionWorker } from "@/lib/execution-host/events/projection-worker";
+import type { Invocation } from "@/test-support/process-invocation";
 
 import { fork, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -65,6 +66,12 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 import { seedAgentRun } from "@/test-support/agent-run-seed";
+import { readAdapterInvocations } from "@/test-support/adapter-invocations";
+import { captureOwnedAdapterProcess } from "@/test-support/capture-supervisor-process-groups";
+import {
+  invocationFromEnvironment,
+  signalInvocationProcess,
+} from "@/test-support/process-invocation";
 import {
   startRealSupervisor,
   useRealSupervisorUrl,
@@ -74,6 +81,8 @@ let database: StartedPostgresTestDb;
 let db: Db;
 let supervisor: RealSupervisor;
 let worker: ProjectionWorker;
+let invocation: Invocation;
+let adapterLog: string;
 let restoreUrl: () => void = () => {};
 const oldWorktreesRoot = process.env.MAISTER_WORKTREES_ROOT;
 const oldRuntimeRoot = process.env.MAISTER_RUNTIME_ROOT;
@@ -93,6 +102,14 @@ const contract: RunResultContract = {
 };
 
 beforeAll(async () => {
+  const owner = invocationFromEnvironment();
+
+  if (!owner) throw new Error("Agent prompt-owner tests require an invocation");
+  invocation = owner;
+  adapterLog = path.join(
+    invocation.directory,
+    "agent-prompt-owner-adapter.jsonl",
+  );
   database = await startMainPostgresTestDb({
     databaseName: "agent_prompt_owners",
   });
@@ -102,7 +119,15 @@ beforeAll(async () => {
     email: "agent-permission@test.local",
   });
   supervisor = await startRealSupervisor({
-    fixtureArgs: ["--hang", "--lines", "0", "--supports-resume"],
+    fixtureArgs: [
+      "--hang",
+      "--lines",
+      "0",
+      "--supports-resume",
+      "--controlled-terminal",
+      "--invocation-log",
+      adapterLog,
+    ],
   });
   restoreUrl = useRealSupervisorUrl(supervisor.url);
   process.env.MAISTER_WORKTREES_ROOT = path.join(
@@ -167,6 +192,7 @@ async function seedAgent(input: {
   operational?: boolean;
   workspace?: "none" | "worktree";
   terminalDelayMs?: number;
+  terminalBarrier?: string;
   stopReason?: string;
   failMessage?: string;
   persistent?: boolean;
@@ -2654,10 +2680,11 @@ describe("Agent owned prompts through the production launcher", () => {
   );
 
   it("owner-agent-live-message drains distinct queued inputs once after the original launcher dies", async () => {
+    const terminalBarrier = randomUUID();
     const runId = await seedAgent({
       bytes: 0,
       persistent: true,
-      terminalDelayMs: 15_000,
+      terminalBarrier,
     });
     const original = startDriver(runId);
 
@@ -2679,73 +2706,7 @@ describe("Agent owned prompts through the production launcher", () => {
         { timeout: 30_000, interval: 25 },
       )
       .toBe("accepted");
-    const prompts = [
-      'fixture-output:{"bytes":0,"text":"first queued reply"}',
-      'fixture-output:{"bytes":0,"text":"second queued reply"}',
-    ];
-
-    for (const [index, prompt] of prompts.entries()) {
-      const sender = startDriver(runId, prompt, `message-${index}`);
-
-      await expect
-        .poll(sender.returned, { timeout: 10_000, interval: 25 })
-        .toBe(true);
-    }
-    const retry = startDriver(runId, prompts[0], "message-0");
-
-    await expect
-      .poll(retry.returned, { timeout: 10_000, interval: 25 })
-      .toBe(true);
-    const queued = await db
-      .select()
-      .from(agentTurns)
-      .where(
-        and(
-          eq(agentTurns.runId, runId),
-          inArray(agentTurns.variant, ["live_message", "persistent_message"]),
-        ),
-      )
-      .orderBy(asc(agentTurns.ordinal));
-
-    expect(
-      queued.map((turn) => ({
-        prompt: turn.prompt,
-        state: turn.state,
-        variant: turn.variant,
-      })),
-    ).toEqual(
-      prompts.map((prompt) => ({
-        prompt,
-        state: "queued",
-        variant: "live_message",
-      })),
-    );
-    original.child.kill("SIGKILL");
-    await original.exited;
-    startDriver(runId);
-    await expect
-      .poll(
-        async () => {
-          const turns = await db
-            .select()
-            .from(agentTurns)
-            .where(
-              and(
-                eq(agentTurns.runId, runId),
-                inArray(agentTurns.variant, [
-                  "live_message",
-                  "persistent_message",
-                ]),
-              ),
-            )
-            .orderBy(asc(agentTurns.ordinal));
-
-          return turns.map((turn) => turn.state);
-        },
-        { timeout: 65_000, interval: 50 },
-      )
-      .toEqual(["applied", "applied"]);
-    const commands = await db
+    const [source] = await db
       .select()
       .from(executionCommands)
       .where(
@@ -2753,28 +2714,137 @@ describe("Agent owned prompts through the production launcher", () => {
           eq(executionCommands.runId, runId),
           eq(executionCommands.kind, "session.prompt"),
         ),
-      )
-      .orderBy(asc(executionCommands.createdAt));
+      );
 
-    expect(commands).toHaveLength(3);
-    expect(
-      commands.every((command) => command.applicationState === "applied"),
-    ).toBe(true);
-    expect(
-      commands
-        .slice(1)
-        .map((command) =>
-          command.ownerRef && "turnId" in command.ownerRef
-            ? command.ownerRef.turnId
-            : null,
-        ),
-    ).toEqual(queued.map((turn) => turn.id));
-    const [run] = await db.select().from(runs).where(eq(runs.id, runId));
-
-    expect(run).toMatchObject({
-      status: "NeedsInputIdle",
-      resumeRequestedAt: null,
+    if (!source?.targetSessionId)
+      throw new Error("Accepted agent prompt has no host session");
+    const { adapter, sessionRecord } = await captureOwnedAdapterProcess({
+      invocation,
+      supervisor,
+      sessionId: source.targetSessionId,
+      expected: { runId },
     });
+
+    await expect
+      .poll(
+        async () =>
+          (await readAdapterInvocations(adapterLog)).find(
+            (record) =>
+              record.method === "session/prompt/terminal-held" &&
+              record.terminalBarrier === terminalBarrier,
+          ),
+        { timeout: 30_000, interval: 25 },
+      )
+      .toMatchObject({
+        pid: adapter.pid,
+        sessionId: sessionRecord.acpSessionId,
+      });
+    let terminalReleased = false;
+
+    try {
+      const prompts = [
+        'fixture-output:{"bytes":0,"text":"first queued reply"}',
+        'fixture-output:{"bytes":0,"text":"second queued reply"}',
+      ];
+
+      for (const [index, prompt] of prompts.entries()) {
+        const sender = startDriver(runId, prompt, `message-${index}`);
+
+        await expect
+          .poll(sender.returned, { timeout: 10_000, interval: 25 })
+          .toBe(true);
+      }
+      const retry = startDriver(runId, prompts[0], "message-0");
+
+      await expect
+        .poll(retry.returned, { timeout: 10_000, interval: 25 })
+        .toBe(true);
+      const queued = await db
+        .select()
+        .from(agentTurns)
+        .where(
+          and(
+            eq(agentTurns.runId, runId),
+            inArray(agentTurns.variant, ["live_message", "persistent_message"]),
+          ),
+        )
+        .orderBy(asc(agentTurns.ordinal));
+
+      expect(
+        queued.map((turn) => ({
+          prompt: turn.prompt,
+          state: turn.state,
+          variant: turn.variant,
+        })),
+      ).toEqual(
+        prompts.map((prompt) => ({
+          prompt,
+          state: "queued",
+          variant: "live_message",
+        })),
+      );
+      original.child.kill("SIGKILL");
+      await original.exited;
+      // Release only after the launcher dies; queue admission must not race a timer.
+      await signalInvocationProcess(invocation, adapter, "SIGUSR1");
+      terminalReleased = true;
+      startDriver(runId);
+      await expect
+        .poll(
+          async () => {
+            const turns = await db
+              .select()
+              .from(agentTurns)
+              .where(
+                and(
+                  eq(agentTurns.runId, runId),
+                  inArray(agentTurns.variant, [
+                    "live_message",
+                    "persistent_message",
+                  ]),
+                ),
+              )
+              .orderBy(asc(agentTurns.ordinal));
+
+            return turns.map((turn) => turn.state);
+          },
+          { timeout: 65_000, interval: 50 },
+        )
+        .toEqual(["applied", "applied"]);
+      const commands = await db
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, runId),
+            eq(executionCommands.kind, "session.prompt"),
+          ),
+        )
+        .orderBy(asc(executionCommands.createdAt));
+
+      expect(commands).toHaveLength(3);
+      expect(
+        commands.every((command) => command.applicationState === "applied"),
+      ).toBe(true);
+      expect(
+        commands
+          .slice(1)
+          .map((command) =>
+            command.ownerRef && "turnId" in command.ownerRef
+              ? command.ownerRef.turnId
+              : null,
+          ),
+      ).toEqual(queued.map((turn) => turn.id));
+      const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+
+      expect(run).toMatchObject({
+        status: "NeedsInputIdle",
+        resumeRequestedAt: null,
+      });
+    } finally {
+      if (!terminalReleased)
+        await signalInvocationProcess(invocation, adapter, "SIGUSR1");
+    }
   }, 110_000);
 
   it.each(["live", "before_terminal", "before_apply"] as const)(

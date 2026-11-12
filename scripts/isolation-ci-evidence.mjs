@@ -66,7 +66,7 @@ export function validateIsolationReceipt(receipt, reportBytes, { identity, stage
   assert.equal(receipt.parts, 3, "wrong isolation part count");
   assert.equal(receipt.platform, "darwin", "isolation receipt is not macOS");
   assert.equal(receipt.arch, "x64", "isolation receipt is not Intel");
-  assert.equal(receipt.node, "24.19.0", "wrong hosted isolation Node");
+  assert.equal(receipt.node, "24.22.3", "wrong hosted isolation Node");
   assert(typeof receipt.runnerImage?.os === "string" && receipt.runnerImage.os.length > 0 &&
     typeof receipt.runnerImage.version === "string" && receipt.runnerImage.version.length > 0,
   "isolation receipt is missing its actual runner image/version");
@@ -111,7 +111,7 @@ export async function aggregateIsolationEvidence(directory, identity, jobResult)
   assert.equal(parts.reduce((total, row) => total + row.cases, 0), cases, "combined isolation must retain the exact required case manifest");
 
   return {
-    schema: "maister.isolation-ci-combined.v1", identity, outcome: "passed", platform: "darwin/x64", node: "24.19.0",
+    schema: "maister.isolation-ci-combined.v1", identity, outcome: "passed", platform: "darwin/x64", node: "24.22.3",
     files, cases, preflights: 3, jobResult,
     stages: stages.map(({ receipt, receiptSha256 }) => ({ ...receipt, receiptSha256 })),
   };

@@ -1119,6 +1119,27 @@ Field types are limited to `string | number | boolean | enum | array`.
 Add new types by extending `formFieldSchema` in
 `web/lib/config.schema.ts`.
 
+## Test worker limit
+
+`MAISTER_TEST_MAX_WORKERS` is an optional positive integer, read by the web,
+supervisor and MCP Vitest projects, the A/B invocation runner, and the ordinary
+and live Playwright configurations. Invalid values fail before tests start.
+Unset preserves each runner's local defaults. The A/B runner takes the smaller
+of this limit and its CPU-derived limit; isolation and the dedicated browser
+lanes remain serial. Explicit runner CLI worker options take precedence.
+
+This is a per-invocation worker limit, not a memory reservation or a limit on
+MAIster agents, Docker containers, Next compilation, or concurrent invocations.
+Set it in the validation command's environment. It is not a `maister.yaml`
+field. See the [shared-host validation recipe](system-analytics/test-infrastructure.md#validation-on-a-shared-host)
+for an approximately 8 GiB working budget on a 4-vCPU host.
+
+`MAISTER_BUILD_MAX_WORKERS` independently sets Next's page-data/prerender worker
+count through `experimental.cpus`. It uses the same positive-integer validation;
+unset preserves Next's default. It does not cap Turbopack's native compilation
+threads or total build memory. `NODE_OPTIONS=--max-old-space-size=4096` separately
+limits each Node process's old-space heap.
+
 ## Test-only isolation selector
 
 `MAISTER_TEST_ISOLATION` is read only by

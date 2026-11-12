@@ -129,32 +129,38 @@ test("scratch inspector toggles and surfaces change size + actions", async ({
 
   await page.goto(`/scratch-runs/${fx.scratchRunId}`);
 
-  await expect(page.locator('[data-testid="run-shell"]')).toBeVisible();
   await expect(
-    page.locator('[data-testid="run-shell-inspector"]'),
+    page.getByRole("main").locator('[data-testid="run-shell"]'),
   ).toBeVisible();
-  await expect(page.locator('[data-testid="run-inspector"]')).toBeVisible();
+  await expect(
+    page.getByRole("main").locator('[data-testid="run-shell-inspector"]'),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("main").locator('[data-testid="run-inspector"]'),
+  ).toBeVisible();
 
   // The committed branch diff (README.md) gives a non-empty change size in the
   // always-visible header summary.
   await expect(
-    page.locator('[data-testid="run-header-change-summary"]'),
+    page.getByRole("main").locator('[data-testid="run-header-change-summary"]'),
   ).toContainText("+");
 
   // The inspector action group: lifecycle actions + promote (existing routes).
   await expect(
-    page.locator('[data-testid="scratch-inspector-actions"]'),
+    page.getByRole("main").locator('[data-testid="scratch-inspector-actions"]'),
   ).toBeVisible();
-  await expect(page.locator('[data-testid="scratch-promote"]')).toBeVisible();
+  await expect(
+    page.getByRole("main").locator('[data-testid="scratch-promote"]'),
+  ).toBeVisible();
 
   // The inspector toggles closed and back open.
   await page.getByRole("button", { name: "Close inspector" }).click();
-  await expect(page.locator('[data-testid="run-shell-inspector"]')).toHaveCount(
-    0,
-  );
+  await expect(
+    page.getByRole("main").locator('[data-testid="run-shell-inspector"]'),
+  ).toHaveCount(0);
   await page.getByRole("button", { name: "Open inspector" }).click();
   await expect(
-    page.locator('[data-testid="run-shell-inspector"]'),
+    page.getByRole("main").locator('[data-testid="run-shell-inspector"]'),
   ).toBeVisible();
 });
 
@@ -166,16 +172,29 @@ test("scratch workbench exposes the shared Diff renderer and a readable file tre
   await page.goto(`/scratch-runs/${fx.scratchRunId}?wb=diff`);
 
   // Diff deep link opens the collapsed Files/Diff workbench and selects Diff.
-  await expect(page.getByTestId("workbench-disclosure")).toBeVisible();
-  await expect(page.locator('[data-testid="run-diff"]')).toBeVisible();
-  await expect(page.locator('[data-testid="diff-view"]')).toBeVisible();
+  await expect(
+    page
+      .getByRole("main")
+      .getByTestId("workbench-disclosure")
+      .filter({ visible: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("main").locator('[data-testid="run-diff"]'),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("main").locator('[data-testid="diff-view"]'),
+  ).toBeVisible();
 
   // Files tab → the tracked file tree; a member can open a file into the pane.
   await page.getByRole("tab", { name: "Files" }).click();
   await page.waitForURL(/[?&]wb=files/);
-  await expect(page.locator('[data-testid="file-tree"]')).toBeVisible();
   await expect(
-    page.locator('[data-testid="file-tree-entry"]', { hasText: "README.md" }),
+    page.getByRole("main").locator('[data-testid="file-tree"]'),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("main")
+      .locator('[data-testid="file-tree-entry"]', { hasText: "README.md" }),
   ).toBeVisible();
 
   // Open the tracked Markdown file → the shared file pane renders the rich
@@ -187,10 +206,14 @@ test("scratch workbench exposes the shared Diff renderer and a readable file tre
     })
     .click();
   await page.waitForURL(/[?&]file=README\.md/);
-  await expect(page.locator('[data-testid="file-pane-shell"]')).toBeVisible();
-  await expect(page.locator('[data-testid="file-copy-button"]')).toBeVisible();
   await expect(
-    page.locator('[data-testid="markdown-rich-view"]'),
+    page.getByRole("main").locator('[data-testid="file-pane-shell"]'),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("main").locator('[data-testid="file-copy-button"]'),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("main").locator('[data-testid="markdown-rich-view"]'),
   ).toBeVisible();
 });
 

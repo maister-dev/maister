@@ -18,7 +18,9 @@ test("D2 history stays inspectable without resume or promotion controls", async 
 
   await page.goto(`/runs/${fixture.runId}`);
 
-  const banner = page.getByTestId("run-cutover-failure");
+  const banner = page
+    .getByTestId("run-cutover-failure")
+    .filter({ visible: true });
 
   await expect(banner).toBeVisible();
   await expect(banner).toContainText("engine 3.0");
@@ -26,7 +28,9 @@ test("D2 history stays inspectable without resume or promotion controls", async 
   await expect(banner.getByRole("link", { name: /history/i })).toBeVisible();
   await expect(banner.getByRole("link", { name: /evidence/i })).toBeVisible();
   await expect(banner.getByRole("link", { name: /worktree/i })).toBeVisible();
-  await expect(page.getByTestId("run-workbench")).toBeVisible();
+  await expect(
+    page.getByRole("main").getByTestId("run-workbench"),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: /recover|resume|respond|promote|retry/i }),
   ).toHaveCount(0);

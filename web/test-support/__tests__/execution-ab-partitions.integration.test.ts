@@ -14,6 +14,7 @@ import {
 } from "vitest";
 
 import { readLaunchResult } from "@/e2e/_seed/launch-stream";
+import { COMMAND_POLICY } from "@/lib/execution-host/deliverer";
 import {
   readAdapterInvocations,
   readAdapterPrompts,
@@ -894,9 +895,26 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
 
     admission.release();
     await ack.awaitReached();
-    await events.awaitReached();
+    const acceptedEvent = await events.awaitReached();
+
     ack.cut();
     await receipt.awaitReached();
+    // Only the receipt must remain blocked for this stale-checkpoint case.
+    // Drain the accepted event before starting the held ACK's wire deadline.
+    events.release();
+    await poll(
+      async () => {
+        const accepted = await stack.database.pool.query<{ id: string }>(
+          `SELECT id FROM execution_events
+           WHERE run_id=$1 AND host_sequence=$2 AND ingest_disposition='accepted'`,
+          [runId, acceptedEvent.sequence],
+        );
+
+        return accepted.rows[0]?.id ?? null;
+      },
+      30_000,
+      "original prompt acceptance ingested before checkpoint",
+    );
     const originalAttempts = await stack.database.pool.query<{ id: string }>(
       "SELECT id FROM node_attempts WHERE run_id=$1 AND status='Running'",
       [runId],
@@ -930,12 +948,26 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
       .api(`/api/runs/${runId}/node-interrupt`, {
         method: "POST",
       })
-      .then((response) => {
-        oldResponseSettled = true;
+      .then(
+        (response) => {
+          oldResponseSettled = true;
 
-        return response;
-      });
+          return { kind: "response" as const, response };
+        },
+        (error: unknown) => {
+          oldResponseSettled = true;
+
+          return { kind: "error" as const, error };
+        },
+      );
     const request = await checkpointRequest.awaitReached();
+    const checkpointTimeout = COMMAND_POLICY["session.checkpoint"].timeoutMs;
+
+    if (checkpointTimeout === null)
+      throw new Error("The checkpoint wire must have a bounded deadline");
+    // Both prerequisites share the real wire budget; neither gets a fresh
+    // arbitrary deadline that can expire before the held response does.
+    const checkpointDeadline = Date.now() + checkpointTimeout;
     const oldAck = stack.proxy.arm(
       {
         caseId: "P4-stale-ACK",
@@ -1002,7 +1034,6 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
     );
 
     expect(restart.status, await restart.clone().text()).toBe(202);
-    events.release();
     receipt.release();
     // The successor epoch is the stale-ACK boundary. Its preparation can take
     // longer than the held checkpoint's wire deadline on a loaded host; audit
@@ -1029,7 +1060,7 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
 
         return result.rows[0]?.application_state === "superseded" ? true : null;
       },
-      10_000,
+      Math.max(0, checkpointDeadline - Date.now()),
       "old prompt application drained before stale ACK audit",
     );
     const snapshot = async (): Promise<unknown> =>
@@ -1060,7 +1091,7 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
 
         return attempts.rows[0]?.id ?? null;
       },
-      10_000,
+      Math.max(0, checkpointDeadline - Date.now()),
       "successor attempt owns the cursor before stale ACK audit",
     );
 
@@ -1068,8 +1099,12 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
     await stack.database.pool.query("TRUNCATE s52_stale_writes");
     const before = await snapshot();
 
+    expect(oldResponseSettled, "old ACK still owns a live wire").toBe(false);
     oldAck.release();
-    const stale = await oldResponse;
+    const outcome = await oldResponse;
+
+    if (outcome.kind === "error") throw outcome.error;
+    const stale = outcome.response;
 
     expect(oldAck.responseClosures).toEqual([
       {

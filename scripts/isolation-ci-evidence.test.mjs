@@ -19,7 +19,7 @@ function stageEvidence(stage, part) {
   const bytes = Buffer.from(JSON.stringify(report));
   const receipt = {
     schema: isolationReceiptSchema, identity, stage, part, parts: 3,
-    platform: "darwin", arch: "x64", node: "24.19.0", concurrency: 1,
+    platform: "darwin", arch: "x64", node: "24.22.3", concurrency: 1,
     runnerImage: { os: "macos15", version: "20261019.14" },
     invocationId: `00000000-0000-4000-8000-00000000000${part * 2 + (stage === "part" ? 1 : 0)}`,
     files, cases, reportSha256: evidenceSha256(bytes), outcome: { code: 0, signal: null },

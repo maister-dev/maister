@@ -42,18 +42,18 @@ test.describe("ADR-130 capability enforcement: capability_guard hook_trip surfac
 
     await page.goto(`/runs/${fx.runId}`);
 
-    await expect(page.getByTestId("hook-trip-card")).toBeVisible();
-    await expect(page.getByTestId("hook-trip-resume")).toBeVisible();
-    await expect(page.getByTestId("hook-trip-abort")).toBeVisible();
+    const card = page.getByTestId("hook-trip-card").filter({ visible: true });
+
+    await expect(card).toBeVisible();
+    await expect(card.getByTestId("hook-trip-resume")).toBeVisible();
+    await expect(card.getByTestId("hook-trip-abort")).toBeVisible();
 
     // The localized capability_guard rule label renders
     // (hookTripRule.capability_guard = "capability guard") — proof the rule
     // survived the full fan-out to the run-detail card.
-    await expect(page.getByTestId("hook-trip-card")).toContainText(
-      "capability guard",
-    );
+    await expect(card).toContainText("capability guard");
     // The out-of-profile offending tool call renders on its own line.
-    await expect(page.getByTestId("hook-trip-tool-call")).toContainText(
+    await expect(card.getByTestId("hook-trip-tool-call")).toContainText(
       "WebFetch",
     );
   });
@@ -65,7 +65,10 @@ test.describe("ADR-130 capability enforcement: capability_guard hook_trip surfac
 
     await page.goto(`/runs/${fx.runId}`);
 
-    const resume = page.getByTestId("hook-trip-resume");
+    const resume = page
+      .getByTestId("hook-trip-card")
+      .filter({ visible: true })
+      .getByTestId("hook-trip-resume");
 
     await expect(resume).toBeVisible();
 

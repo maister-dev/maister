@@ -24,7 +24,7 @@ export default defineConfig({
   workers: 1,
   reporter: "list",
   globalSetup: "./e2e/librarian-global-setup.ts",
-  use: { baseURL, trace: "on-first-retry" },
+  use: { baseURL, trace: "retain-on-failure" },
   projects: [
     { name: "setup", testMatch: /.*\.setup\.ts$/ },
     {
@@ -40,10 +40,11 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "node e2e/librarian-web-server.mjs",
+    command: "exec node e2e/librarian-web-server.mjs",
     url: baseURL,
     timeout: 180_000,
     reuseExistingServer: false,
+    gracefulShutdown: { signal: "SIGTERM", timeout: 35_000 },
     stdout: "pipe",
     env: {
       DB_URL: resolvePostgresDbUrl(),

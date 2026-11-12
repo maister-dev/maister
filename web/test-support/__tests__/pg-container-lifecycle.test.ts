@@ -26,6 +26,10 @@ vi.mock("@testcontainers/postgresql", () => {
       return this;
     }
 
+    withHealthCheck(): this {
+      return this;
+    }
+
     withTmpFs(): this {
       return this;
     }

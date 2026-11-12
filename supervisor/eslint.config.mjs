@@ -1,23 +1,11 @@
 import { defineConfig, globalIgnores } from "eslint/config";
-import { fixupConfigRules, fixupPluginRules } from "@eslint/compat";
 import unusedImports from "eslint-plugin-unused-imports";
-import _import from "eslint-plugin-import";
 import typescriptEslint from "@typescript-eslint/eslint-plugin";
-import prettier from "eslint-plugin-prettier";
+import prettierRecommended from "eslint-plugin-prettier/recommended";
+import stylistic from "@stylistic/eslint-plugin";
 import globals from "globals";
 import tsParser from "@typescript-eslint/parser";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import js from "@eslint/js";
-import { FlatCompat } from "@eslint/eslintrc";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const compat = new FlatCompat({
-  baseDirectory: __dirname,
-  recommendedConfig: js.configs.recommended,
-  allConfig: js.configs.all,
-});
+import { importX } from "eslint-plugin-import-x";
 
 export default defineConfig([
   globalIgnores([
@@ -28,13 +16,13 @@ export default defineConfig([
     "**/.DS_Store",
   ]),
   {
-    extends: fixupConfigRules(compat.extends("plugin:prettier/recommended")),
+    extends: [prettierRecommended],
 
     plugins: {
       "unused-imports": unusedImports,
-      import: fixupPluginRules(_import),
+      "import-x": importX,
       "@typescript-eslint": typescriptEslint,
-      prettier: fixupPluginRules(prettier),
+      "@stylistic": stylistic,
     },
 
     languageOptions: {
@@ -65,7 +53,7 @@ export default defineConfig([
         },
       ],
 
-      "import/order": [
+      "import-x/order": [
         "warn",
         {
           groups: [
@@ -83,7 +71,7 @@ export default defineConfig([
         },
       ],
 
-      "padding-line-between-statements": [
+      "@stylistic/padding-line-between-statements": [
         "warn",
         {
           blankLine: "always",

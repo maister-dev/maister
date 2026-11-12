@@ -23,7 +23,7 @@ two long-running Node processes:
   integration: `cli` nodes and requirement probes run through `bash`, Flow
   and capability installs create symlinks, and `MAISTER_WORKSPACE_ROOTS` is
   colon-separated, so a native Windows host is not supported.
-- **Node >=24.15.0 <25** (`nvm install 24.19.0` and `nvm use 24.19.0` for the qualified current patch)
+- **Node >=24.15.0 <25 or >=26.13.0 <27** (`nvm install 24.22.3` and `nvm use 24.22.3` for the default runtime; CI also checks Node 26.13.1)
 - **pnpm 11** (package manager — `npm install -g pnpm` if missing)
 - **git** with `git worktree` support (any modern version)
 - **pre-commit** (one-time `pre-commit install` writes the git hook)
@@ -66,7 +66,7 @@ hosted gates remain open. The prerequisite and qualification contract is owned b
 Do not interpret a Linux process-inspection smoke as driver qualification.
 
 Local Linux qualification requires an Ubuntu 24.04 **amd64 native host or VM**,
-ordinary nonroot harness, separate exact Node 24.15.0 and 24.19.0 environments,
+ordinary nonroot harness, separate exact Node 24.22.3 and 26.13.1 environments,
 frozen pnpm install, Docker-backed Postgres 16, readable host proc identities,
 GNU coreutils, Git, a C compiler and an authenticated distro Bubblewrap package
 supporting every required namespace option. Record the installed package
@@ -610,7 +610,7 @@ mAIster/
 ## Common pitfalls
 
 - **Wrong Node version** — Next.js 16 + React 19 require recent Node.
-  `nvm use 24.19.0` if installed; otherwise install a supported Node 24 patch (minimum 24.15.0).
+  `nvm use 24.22.3` if installed; otherwise install a supported Node 24 patch (minimum 24.15.0) or Node 26 LTS (minimum 26.13.0).
 - **`npm install` instead of `pnpm install`** — the project is pnpm-only.
   An npm lockfile will diverge from the pnpm one and break CI later.
 - **Editing `app/about`, `app/blog`, `app/docs`, `app/pricing`** — those are

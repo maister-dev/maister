@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 
 import { defineConfig } from "vitest/config";
 
-import projects from "./vitest.workspace";
+import projects from "./vitest.workspace.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -15,7 +15,6 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    passWithNoTests: true,
     projects,
   },
 });

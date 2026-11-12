@@ -85,6 +85,10 @@ sequenceDiagram
 ### E2E lifecycle
 
 The E2E wrapper owns its complete database lifecycle, including cancellation.
+Ordinary and execution A/B browsers use an invocation-owned production build and
+server through `e2e/web-server.ts`. Compilation finishes before browser workers
+start; Playwright sends SIGTERM and allows the wrapper to stop its owned server.
+Run browser lanes sequentially because they share the `.next` build directory.
 
 ```mermaid
 sequenceDiagram
@@ -122,6 +126,76 @@ and ownership markers, fails the lane, and still reaches database teardown.
 The combined browser lane qualifies this cleanup order locally; hosted
 qualification remains separate.
 
+## Validation on a shared host
+
+For a 4-vCPU host with approximately 8 GiB available to validation, run stages
+sequentially and allow only one validation invocation at a time. Start with two
+unit workers and one database/browser/process worker. Configure the optional
+[worker limit](../configuration.md#test-worker-limit) on commands executed by
+the MAIster task; ordinary local invocations retain their defaults.
+
+```sh
+MAISTER_TEST_MAX_WORKERS=2 pnpm --filter maister-web test:unit
+MAISTER_TEST_MAX_WORKERS=2 pnpm --filter @maister/supervisor test:unit
+MAISTER_TEST_MAX_WORKERS=1 pnpm --filter @maister/mcp test
+NODE_OPTIONS=--max-old-space-size=4096 pnpm --filter maister-web typecheck
+MAISTER_BUILD_MAX_WORKERS=1 NODE_OPTIONS=--max-old-space-size=4096 pnpm --filter maister-web build
+```
+
+For focused validation, select the relevant existing files with Vitest or
+Playwright. For broad integration validation, run each owner once:
+
+Set these variables in that validation job's environment so production fixture
+builds inherit the same budget; leave them unset for ordinary local work.
+
+Docker builds need an explicit build argument because the host environment is
+not inherited by build stages:
+`docker build --target production --build-arg MAISTER_BUILD_MAX_WORKERS=1 .`.
+CI passes its worker setting through this argument as well.
+
+```sh
+export MAISTER_TEST_MAX_WORKERS=1
+export MAISTER_BUILD_MAX_WORKERS=1
+export NODE_OPTIONS=--max-old-space-size=4096
+pnpm --filter maister-web test:integration:ab
+pnpm --filter maister-web test:integration:remainder
+pnpm --filter maister-web test:integration:isolation
+pnpm --filter @maister/supervisor test:integration
+pnpm --filter @maister/mcp test:integration
+pnpm --filter maister-web test:e2e
+pnpm --filter maister-web test:e2e:execution-ab
+pnpm --filter maister-web test:e2e:librarian
+```
+
+Isolation needs the supported kernel driver described below. Its CI preflight
+remains a separate prerequisite. Live-provider and load qualification remain
+explicit opt-ins, with their existing credentials and environment gates.
+`test:integration` still selects the complete web integration project; do not
+run it in addition to the partitioned commands above. The remainder discovers
+new ordinary integration files automatically, excludes files owned by A/B,
+isolation, preflight and load qualification, and uses the existing invocation
+cleanup/report validator. The partition test requires complete, disjoint
+ownership of all non-load files. CI uses this remainder in its label-gated job.
+
+The 4 GiB Node heap option applies to each Node process, not the process tree or
+Docker. PostgreSQL's 512 MiB tmpfs is also not a whole-container memory limit.
+These settings are a starting resource budget, not a verified 8 GiB peak-RSS
+guarantee. A hard host budget requires resource limits on the executing service
+and its test containers; several simultaneous MAIster tasks multiply usage.
+Measure peak RSS, container memory and wall time on the actual VPS before
+raising concurrency.
+
+Production Next builds use `web/tsconfig.build.json`, excluding tests, fixtures
+and test tools from their initial TypeScript program. Runtime imports and
+generated route validators remain checked. `typecheck` retains the full
+`tsconfig.json` program, including test code; run it as the separate validation
+stage. This avoids repeating test type checking in every production/test-fixture
+build without disabling the ordinary production type gate.
+
+The ordinary browser lane has no automatic test retries and retains failure
+traces. Live Librarian scenarios belong only to their dedicated configuration.
+An empty Vitest selection fails in all three packages.
+
 ## A/B stabilization isolation and fault injection (implemented; final S5.2 qualification open)
 
 **As built.** `web/test-support/filesystem-ownership.ts` is the operation-scoped scanner: it parses every production source (`.ts/.tsx/.mts/.cts/.js/.mjs/.cjs` under `app`, `lib`, `components`, `scripts`, `i18n`, `config`, `types`, the top-level entrypoints and the shared `../runtime`), role-tags test sources instead of dropping them, resolves `node:fs`, `node:fs/promises`, `node:child_process` and `node:sqlite` bindings through import aliases, `require`/`createRequire`/dynamic-import forms, destructuring and `promisify`, records each callsite as `{source, enclosing function, callee, operation, literal command}`, reports value uses it cannot resolve to a call as `unresolved`, and closes "performs a filesystem effect" over each module's local calls to enumerate exported wrappers. The inventory (`web/lib/execution-host/__tests__/fixtures/runtime-data-boundary-inventory.ts`) classifies 537 callsites in 110 modules and 261 wrappers in 80 modules; wrappers flagged path-generic (`atomicWriteJson`, the config/package loaders, …) have every caller enumerated, and the guard (`runtime-data-boundary-inventory.test.ts`) fails on any unclassified callsite, stale entry, `supervisor-runtime` class, `watch` operation or unexplained unresolved use, and carries three mutation cases (a host-runtime read injected into an already classified mixed file, a new call of a path-generic wrapper, an fs-using `.tsx` page and script). RED evidence: the previous file-level guard, brought current with the tree, passed 4/4 with the same host read injected into an allow-listed file.
@@ -131,7 +205,7 @@ qualification remains separate.
 ### S5.2 close-out protocol (as built; hosted CI qualification pending)
 
 Option B is selected: the real `sandbox-exec` driver runs in two independent
-GitHub `macos-15-intel` jobs with Node 24.19.0 and a pinned Colima/Lima Docker
+GitHub `macos-15-intel` jobs with Node 24.22.3 and a pinned Colima/Lima Docker
 runtime (implemented split; owner-authorized 2026-10-20, hosted qualification
 pending). Each job runs serially. The local owner Mac is ARM64 and keeps its existing driver;
 no Rosetta requirement is imposed locally. The Intel pin is for the hosted
@@ -508,15 +582,20 @@ claim acquisition; it does not extend shutdown or lease timeouts.
 
 ### S5.2 hosted CI repair contract (Implemented; hosted qualification pending)
 
-The mandatory push workflow keeps both Node 24.15.0 and 24.19.0 and a 60-minute
-limit per job. `execution-data-plane` selects two deterministic, disjoint web
-file lists for each Node version; the selections' union is exactly the explicit
-`laneSuites.web` inventory; `scripts/run-stage-ab-tests.test.mjs` pins the
-complete, disjoint partition. All six Linux legs run `runtime:check`. The
-two-version `execution-runtime-supervisor` job also runs `test:runtime`,
-`test:stage-ab-lane` and the complete supervisor A/B inventory once per Node.
-Each of the six legs has a unique artifact
-name and uploads its actual JSON reporter with `if-no-files-found: error`.
+The mandatory push workflow runs the expensive web A/B inventory once on Node
+24.22.3, in two deterministic, disjoint file lists with a 60-minute limit per
+job. Their union is exactly `laneSuites.web`; the runner tests check complete,
+disjoint ownership. Runtime and supervisor A/B checks run on Node 24.22.3 and
+26.13.1. These four Linux legs run `runtime:check`, keep unique artifacts and
+upload their actual JSON reporter with `if-no-files-found: error`.
+
+The separate Node 26 compatibility job runs all web unit tests, four integration
+owners (host registration, event ingestion, production boot and real supervisor
+lifecycle), then the complete execution A/B browser lane. It has one test/build
+worker and a 4 GiB Node heap. This exercises the newer LTS without repeating the
+entire expensive web A/B inventory. The deployment image remains on Node 24;
+local results do not constitute hosted or image qualification.
+
 The runner passes exactly its selected file list to Vitest and
 `validateLaneReport`; that validator rejects absent, duplicate, unexpected,
 empty, skipped and failed suites/cases. `--shard 1/2` and `--shard 2/2` remain web-only. The isolation split uses
@@ -660,7 +739,7 @@ Test inventory and mutation intent:
 | Browser outcomes | Q/O; dedicated Playwright real-supervisor config/project | New `web/e2e/execution-ab-lifecycle.spec.ts` and `execution-ab-content.spec.ts`; retain existing `execution-host-contract.spec.ts` as supporting fake-peer coverage | AT-12 and user-visible history/HITL/cancel/resume/completion with unsafe artifact MIME. |
 | Pure invariants only | Owning maintainer; existing unit projects | Only canonical request/identity transformation, bounded framing, range/digest parsing, pure reducer tables where stable | No mock-only replica of a real integration scenario; minimum added unit coverage. |
 
-Current `web/vitest.workspace.ts` discovers lib/app/scripts/test-support/e2e integration tests and has `passWithNoTests` scripts. Supervisor integration discovers `src/**/*.integration.test.ts`. Playwright default `AUTHED_SPEC` is an explicit regex; new names do not automatically join authenticated tests. S0/S5 must wire the new real project and prove discovery. `vitest list` and `playwright test --list` must show each promised file/case; an empty successful run fails acceptance.
+Current `web/vitest.workspace.ts` discovers lib/app/scripts/test-support/e2e integration tests; empty selections fail. Supervisor integration discovers `src/**/*.integration.test.ts`. Playwright default `AUTHED_SPEC` is an explicit regex; new names do not automatically join authenticated tests. S0/S5 must wire the new real project and prove discovery. `vitest list` and `playwright test --list` must show each promised file/case; an empty successful run fails acceptance.
 
 Phase gates use the actual package scripts, as separate commands:
 
@@ -1054,9 +1133,9 @@ pre-containment leak observations.
 
 | Environment | Required runtime/provisioning | Evidence meaning |
 |---|---|---|
-| Local qualification | Ubuntu 24.04 amd64 native/VM, ordinary nonroot harness; separate Node 24.15.0 and 24.19.0, frozen pnpm, real Docker Postgres 16, host proc inspection, authenticated pinned distro bwrap/source, GNU coreutils/Git/C compiler, permitted required namespaces/AppArmor | Current full Linux 56 plus independent I-CI, source/build/runtime identities, exact report validation, timings and zero leaks; prerequisite for hosting amendment |
+| Local qualification | Ubuntu 24.04 amd64 native/VM, ordinary nonroot harness; separate Node 24.22.3 and 26.13.1, frozen pnpm, real Docker Postgres 16, host proc inspection, authenticated pinned distro bwrap/source, GNU coreutils/Git/C compiler, permitted required namespaces/AppArmor | Current full Linux 56 plus independent I-CI, source/build/runtime identities, exact report validation, timings and zero leaks; prerequisite for hosting amendment |
 | ARM64 container development | Record image digest/host kernel/architecture/UID mapping/seccomp/capabilities/nested namespace policy; nonroot apps, no blanket privileged mode/host PID/host root bind | Development only; cannot close amd64 or hosted gates |
-| Proposed hosted qualification | Standard ubuntu-24.04 amd64, Node 24.19.0, authenticated packages and narrowly scoped bwrap AppArmor allowance if needed; tests/apps ordinary nonroot | Exact owner-pushed candidate, current Linux 56 plus independent I-CI and all other mandatory jobs green; capability and speed measured |
+| Proposed hosted qualification | Standard ubuntu-24.04 amd64, Node 24.22.3, authenticated packages and narrowly scoped bwrap AppArmor allowance if needed; tests/apps ordinary nonroot | Exact owner-pushed candidate, current Linux 56 plus independent I-CI and all other mandatory jobs green; capability and speed measured |
 | Darwin regression | Existing sandbox-exec and separate preflight/current 51, labeled architecture/Node/source | Preserves Darwin behavior; cannot qualify Linux |
 
 Validation child processes use umask `0022`, matching the existing atomic-file
@@ -1352,7 +1431,7 @@ AT-17. Browser half stays open under S5.3.
 - [Colima provisioning script](../../scripts/setup-isolation-ci-runtime.sh)
 - [feature specification](../../.ai-factory/specs/feature-unified-test-database-testcontainers.md)
 
-The mandatory push workflow runs the explicit web A/B inventory in two shards per Node version and the complete supervisor A/B inventory once per Node, as specified above. Missing files, empty discovery, failed or skipped cases fail each leg. The same runner owns the serial `isolation` slice (AT-16 core, above) and the AT-12 browser lane is `pnpm --filter maister-web test:e2e:execution-ab` (`playwright.execution-ab.config.ts`: a REAL supervisor started by `e2e/execution-ab-global-setup.ts` behind a `next dev` web server; `e2e/execution-ab-content.spec.ts`). The real-supervisor fixture refuses to start without a process invocation, so the lane's wrapper `web/e2e/run.ts` mints one the way the A/B runner does and replaces any caller-supplied `MAISTER_TEST_WORKTREE_INVOCATION_ID`; the Playwright process, the web server, the supervisor and its adapters all carry the tag and are released through the same `releaseInvocation` as the A/B lanes when the lane ends. That lane must run on an otherwise idle host — concurrent CPU load or file writes under `web/` livelocked the dev server's edge-instrumentation recompile at boot (observed before the 2026-09-08 instrumentation split: ~135k warning lines and a 180 s readiness timeout versus ~3k lines and readiness in ~15 s when idle). `web/instrumentation.ts` now reaches its Node-only body (`web/instrumentation-node.ts`) solely through the `NEXT_RUNTIME === "nodejs"` branch, so the Edge instrumentation entry no longer bundles the server graph and a dev boot plus page compile prints none of those warnings; the idle-host requirement has not been re-measured since. The isolation slice is wired to the mandatory three-part `execution-isolation` macOS Intel matrix (19/22/10 cases) and combined gate; each part retains the 39-minute production budget and independent preflight. Hosted qualification requires all three reports from the same source SHA. The browser lane stays with S5.3. A separate mandatory image job builds the pinned Dockerfile, exercises real binary HTTP and runs `web/scripts/smoke-production-image.ts` through the default image ENTRYPOINT/CMD with a migrated PostgreSQL container. It verifies HTTP readiness, SIGTERM completion and no remaining web PostgreSQL sessions. The browser runtime/image matrix remains part of S5.3.
+The mandatory workflow runs once per pull-request update and on master pushes, using the runtime matrix and disjoint A/B partitions specified above. Superseded runs are cancelled. Missing files, empty discovery, failed or skipped cases fail each leg. The same runner owns the serial `isolation` slice (AT-16 core, above) and the AT-12 browser lane is `pnpm --filter maister-web test:e2e:execution-ab` (`playwright.execution-ab.config.ts`: a REAL supervisor started by `e2e/execution-ab-global-setup.ts` behind the production server from `e2e/web-server.ts`; `e2e/execution-ab-content.spec.ts`). The real-supervisor fixture refuses to start without a process invocation, so the lane's wrapper `web/e2e/run.ts` mints one the way the A/B runner does and replaces any caller-supplied `MAISTER_TEST_WORKTREE_INVOCATION_ID`; the Playwright process, the web server, the supervisor and its adapters all carry the tag and are released through the same `releaseInvocation` as the A/B lanes when the lane ends. Browser and production-fixture lanes run sequentially on a host, with fixed sources for the duration of each run, because they share build artifacts and the configured resource budget. The isolation slice is wired to the mandatory three-part `execution-isolation` macOS Intel matrix (19/22/10 cases) and combined gate; each part retains the 39-minute production budget and independent preflight. Hosted qualification requires all three reports from the same source SHA. The browser lane stays with S5.3. A separate mandatory image job builds the pinned Dockerfile, exercises real binary HTTP and runs `web/scripts/smoke-production-image.ts` through the default image ENTRYPOINT/CMD with a migrated PostgreSQL container. It verifies HTTP readiness, SIGTERM completion and no remaining web PostgreSQL sessions. The browser runtime/image matrix remains part of S5.3.
 
 Admin browser specs are opt-in alternatives in `AUTHED_SPEC`; discovery is a
 contract because any omitted filename falls into the unauthenticated Chromium

@@ -9,6 +9,7 @@
 // the outcomes. Logs go to stderr only; stdout is the ACP channel.
 import { randomUUID } from "node:crypto";
 import { Readable, Writable } from "node:stream";
+import { setTimeout as delay } from "node:timers/promises";
 
 import * as acp from "@agentclientprotocol/sdk/unstable";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -154,10 +155,14 @@ class LibrarianAgent {
           results.push({ tool: call.tool, denied: true });
           continue;
         }
-        const output = await client.callTool({
+        let output = await client.callTool({
           name: call.tool,
           arguments: call.args ?? {},
         });
+        // Acceptance does not dispatch a Run. Keep the turn authority alive
+        // while this scripted agent observes the same receipt a real caller reads.
+        if (call.tool === "task_launch" && output.isError !== true)
+          output = await this.observeTaskLaunch(sessionId, client, output);
         const text = output.content?.find((part) => part.type === "text")?.text;
 
         results.push({
@@ -172,6 +177,76 @@ class LibrarianAgent {
     log("tools called", { count: results.length });
 
     return results;
+  }
+
+  async observeTaskLaunch(sessionId, client, accepted) {
+    const receiptText = accepted.content?.find(
+      (part) => part.type === "text",
+    )?.text;
+    const { intentId } = JSON.parse(receiptText);
+    for (const tool of ["task_launch_status", "run_get"]) {
+      const permission = await this.connection.requestPermission({
+        sessionId,
+        toolCall: {
+          toolCallId: `tc-${randomUUID()}`,
+          kind: "other",
+          title: `mcp__maister__${tool}`,
+        },
+        options: OPTIONS,
+      });
+
+      if (
+        permission.outcome.outcome !== "selected" ||
+        permission.outcome.optionId !== "allow"
+      )
+        throw new Error(`${tool} permission refused for ${intentId}`);
+    }
+    const deadline = Date.now() + 30_000;
+
+    while (Date.now() < deadline) {
+      const output = await client.callTool({
+        name: "task_launch_status",
+        arguments: { intentId },
+      });
+      const text = output.content?.find((part) => part.type === "text")?.text;
+
+      if (output.isError === true)
+        throw new Error(`Launch status refused for ${intentId}: ${text}`);
+      const receipt = JSON.parse(text);
+
+      if (["held", "cancelled", "superseded"].includes(receipt.state))
+        throw new Error(
+          `Launch stopped for ${intentId}: ${receipt.state} ${receipt.reason}`,
+        );
+      if (receipt.runId) {
+        const runOutput = await client.callTool({
+          name: "run_get",
+          arguments: { runId: receipt.runId },
+        });
+        const runText = runOutput.content?.find(
+          (part) => part.type === "text",
+        )?.text;
+
+        if (runOutput.isError === true)
+          throw new Error(`Run read refused for ${receipt.runId}: ${runText}`);
+        const run = JSON.parse(runText);
+
+        if (
+          [
+            "Running",
+            "NeedsInput",
+            "NeedsInputIdle",
+            "Review",
+            "Done",
+          ].includes(run.status)
+        )
+          return output;
+        if (run.status !== "Pending")
+          throw new Error(`Launch failed for ${receipt.runId}: ${run.status}`);
+      }
+      await delay(100);
+    }
+    throw new Error(`Launch did not dispatch within 30 seconds: ${intentId}`);
   }
 
   async prompt(params) {

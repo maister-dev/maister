@@ -3,7 +3,7 @@
 # Workspace: monorepo (pnpm) with `web/` (Next.js) and `supervisor/` (ACP daemon).
 # Build stages: builder → development → production.
 
-ARG NODE_VERSION=24.19.0-bookworm-slim@sha256:a9f5f7c91a432850b2a8a7797adf5eadb6c733ceed61167806cee7ea7fbc29df
+ARG NODE_VERSION=24.22.2-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9
 ARG PNPM_VERSION=11.3.0
 ARG UV_VERSION=0.11.16
 ARG PYTHON_VERSION=3.12
@@ -15,7 +15,7 @@ ARG UV_VERSION
 ARG PYTHON_VERSION
 
 ENV PNPM_HOME=/usr/local/pnpm
-ENV PATH=/root/.local/bin:$PNPM_HOME:$PATH
+ENV PATH=$PNPM_HOME:$PATH
 ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python
 ENV UV_PYTHON_PREFERENCE=only-managed
 
@@ -30,40 +30,49 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && corepack enable \
  && corepack prepare pnpm@${PNPM_VERSION} --activate \
- && curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh \
- && uv python install ${PYTHON_VERSION}
+ && curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh \
+ && UV_PYTHON_BIN_DIR=/usr/local/bin uv python install ${PYTHON_VERSION} \
+ && ln -s "$(uv python find "${PYTHON_VERSION}")" /usr/local/bin/python3 \
+ && ln -s python3 /usr/local/bin/python
 
 WORKDIR /app
 
 # ---------- builder: full monorepo deps + web production build ----------
 FROM base AS builder
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches/ ./patches/
 COPY web/package.json ./web/
 COPY supervisor/package.json ./supervisor/
 COPY mcp/package.json ./mcp/
 COPY site/package.json ./site/
 COPY site-docs/package.json ./site-docs/
-RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile
+COPY scripts/check-native-dependencies.mjs ./scripts/
+# Public site/docs have separate images; retain the root validation tooling.
+RUN --mount=type=cache,target=/usr/local/pnpm/store \
+    pnpm --filter maister --filter maister-web... --filter @maister/supervisor... --filter @maister/mcp... install --frozen-lockfile \
+ && node scripts/check-native-dependencies.mjs
 COPY web/ ./web/
 COPY supervisor/ ./supervisor/
-# `next build` type-checks web's whole tsconfig program, which includes tests
-# that import mcp/src (the librarian toolset contract).
+# The MCP facade is part of the runtime image.
 COPY mcp/ ./mcp/
 COPY runtime/ ./runtime/
 COPY scripts/ ./scripts/
+ARG MAISTER_BUILD_MAX_WORKERS
 RUN NODE_OPTIONS=--max-old-space-size=4096 pnpm --filter maister-web build
 
 # ---------- development: hot reload via pnpm dev / supervisor dev ----------
 FROM base AS development
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches/ ./patches/
 COPY web/package.json ./web/
 COPY supervisor/package.json ./supervisor/
 COPY mcp/package.json ./mcp/
 COPY site/package.json ./site/
 COPY site-docs/package.json ./site-docs/
-RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile
+COPY scripts/check-native-dependencies.mjs ./scripts/
+RUN --mount=type=cache,target=/usr/local/pnpm/store \
+    pnpm --filter maister --filter maister-web... --filter @maister/supervisor... --filter @maister/mcp... install --frozen-lockfile \
+ && node scripts/check-native-dependencies.mjs
 ENV NODE_ENV=development
 ENV NEXT_TELEMETRY_DISABLED=1
 WORKDIR /app
@@ -78,7 +87,7 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN groupadd --system --gid 1001 app \
- && useradd  --system --uid 1001 --gid app --home /app --shell /usr/sbin/nologin app \
+ && useradd  --uid 1001 --gid app --home /app --shell /usr/sbin/nologin app \
  && mkdir -p /app/.maister \
  && chown -R app:app /app
 

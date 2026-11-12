@@ -29,6 +29,7 @@ import {
   processIdentity,
   sameProcess,
   readLogTail,
+  preserveFixtureLog,
   logInvocation,
   signalInvocationProcess,
 } from "./process-invocation";
@@ -367,6 +368,8 @@ async function runNextBuild(logFile: string): Promise<string> {
   );
   const code = await exit;
 
+  // A suite may remove its temporary root before the outer lane reports a failure.
+  await preserveFixtureLog(invocation, logFile);
   if (code !== 0)
     throw new Error(
       `next build exited ${code}; see ${logFile}\n${await readLogTail(logFile)}`,

@@ -9,7 +9,7 @@
 #   ./scripts/quickstart.sh
 #
 # Steps, in order (every one is safe to repeat):
-#   1. preflight: git, Node >=24.15.0 <25 (the qualified runtime), pnpm >= 10,
+#   1. preflight: git, Node >=24.15.0 <25 || >=26.13.0 <27 (the qualified runtime), pnpm >= 10,
 #      Docker Compose v2
 #   2. clone https://github.com/maister-dev/maister into ./maister
 #      (skipped when the current directory already is a checkout)
@@ -48,7 +48,7 @@ MAISTER_DIR="${MAISTER_DIR:-maister}"
 PNPM_VERSION="11.3.0"
 # Mirrors SUPPORTED_NODE_RANGE in runtime/node-version.ts and the engines field
 # of the application manifests; scripts/runtime-contract.test.mjs keeps them in sync.
-NODE_RANGE=">=24.15.0 <25"
+NODE_RANGE=">=24.15.0 <25 || >=26.13.0 <27"
 POSTGRES_PORT=5432
 REPO_DIR=""
 
@@ -82,14 +82,14 @@ check_git() {
 }
 
 check_node() {
-  have node || die "Node.js ${NODE_RANGE} is required (24.19.0 is the qualified current patch): https://nodejs.org"
+  have node || die "Node.js ${NODE_RANGE} is required (24.22.3 is the qualified current patch): https://nodejs.org"
   # Same predicate as assertSupportedNode() in runtime/node-version.ts: only
-  # Node 24 from 24.15.0 is qualified and the web/supervisor boot guards refuse
-  # every other major, so fail here before installing anything.
+  # Node 24 and Node 26 LTS have explicit floors; unsupported majors fail
+  # before installing anything.
   node -e '
     const [major, minor] = process.versions.node.split(".").map(Number);
-    process.exit(major === 24 && minor >= 15 ? 0 : 1);
-  ' || die "Node $(node --version) is outside the supported range ${NODE_RANGE}; install Node 24 (e.g. nvm install 24.19.0) and run this again"
+    process.exit(((major === 24 && minor >= 15) || (major === 26 && minor >= 13)) ? 0 : 1);
+  ' || die "Node $(node --version) is outside the supported range ${NODE_RANGE}; install Node 24 (e.g. nvm install 24.22.3) and run this again"
   ok "node $(node --version)"
 }
 

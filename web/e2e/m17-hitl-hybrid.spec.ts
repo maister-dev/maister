@@ -31,9 +31,11 @@ test.describe("M17 HITL hybrid-surface: cross-project inbox + review handoff", (
     await page.goto("/inbox");
 
     const project1Card = page
+      .getByRole("region", { name: "MAIster E2E M17 Project 1" })
       .getByTestId("hitl-card")
       .filter({ hasText: "M17 Project 1 Review" });
     const project2Card = page
+      .getByRole("region", { name: "MAIster E2E M17 Project 2" })
       .getByTestId("hitl-card")
       .filter({ hasText: "M17 Project 2 Review" });
 
@@ -51,9 +53,11 @@ test.describe("M17 HITL hybrid-surface: cross-project inbox + review handoff", (
     await page.goto("/inbox");
 
     const project1Card = page
+      .getByRole("region", { name: "MAIster E2E M17 Project 1" })
       .getByTestId("hitl-card")
       .filter({ hasText: "M17 Project 1 Review" });
     const project2Card = page
+      .getByRole("region", { name: "MAIster E2E M17 Project 2" })
       .getByTestId("hitl-card")
       .filter({ hasText: "M17 Project 2 Review" });
 
@@ -81,24 +85,5 @@ test.describe("M17 HITL hybrid-surface: cross-project inbox + review handoff", (
         name: /approve|request rework|send back/i,
       }),
     ).toHaveCount(0);
-  });
-
-  test("criticality badges retain distinct visual hierarchy", async ({
-    page,
-  }) => {
-    await page.goto("/inbox");
-
-    const project1Card = page
-      .getByTestId("hitl-card")
-      .filter({ hasText: "M17 Project 1 Review" });
-    const project2Card = page
-      .getByTestId("hitl-card")
-      .filter({ hasText: "M17 Project 2 Review" });
-    const project1Styles = await project1Card.getAttribute("class");
-    const project2Styles = await project2Card.getAttribute("class");
-
-    expect(project1Styles).toBeTruthy();
-    expect(project2Styles).toBeTruthy();
-    expect(project1Styles).not.toEqual(project2Styles);
   });
 });

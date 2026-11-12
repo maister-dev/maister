@@ -45,7 +45,9 @@ test.describe("PR reopen (ADR-141)", () => {
     //     Assert on the run surface, which is the durable proof of the flip.
     await page.goto(`/runs/${fx.runId}`);
     // Generous: this may be the run-detail route's COLD dev compile.
-    await expect(page.getByTestId("review-panel")).toBeVisible({
+    await expect(
+      page.getByTestId("review-panel").filter({ visible: true }),
+    ).toBeVisible({
       timeout: 60_000,
     });
 

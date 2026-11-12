@@ -14,10 +14,13 @@ test("admin scheduler exposes its recovery clock before scheduler queues", async
 
   await expect(clock).toBeVisible();
   await expect(
-    page.getByText("system_sweep.default", { exact: true }),
+    page.getByRole("cell", { name: "system_sweep.default", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByText("domain_event_dispatch.default", { exact: true }),
+    page.getByRole("cell", {
+      name: "domain_event_dispatch.default",
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(brain).toBeVisible();
 

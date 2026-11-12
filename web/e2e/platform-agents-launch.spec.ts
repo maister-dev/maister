@@ -14,6 +14,10 @@ import { withE2EDb, singleValue } from "./_seed/db";
 import { loadFixtures } from "./_seed/fixtures";
 import { STUB_SESSIONS_DIR } from "./_seed/stub-supervisor";
 import {
+  readTaskLaunchReceipt,
+  waitForTaskLaunchRun,
+} from "./_seed/task-launch";
+import {
   readStubSessionRecords,
   type StubSessionRecord,
 } from "./_seed/session-records";
@@ -58,17 +62,23 @@ test("manual agent launch: run visible with the agent chip, then finalizes Done"
 
   const launchResponse = page.waitForResponse(
     (response) =>
-      response.url().includes(`/agents/${fx.helperAgentId}/launch`) &&
+      new URL(response.url()).pathname === "/api/task-launch-intents" &&
       response.request().method() === "POST",
   );
 
   await page.getByRole("button", { name: "Run agent" }).click();
+  await page
+    .getByRole("region", {
+      name: "Launch this agent for the task",
+      exact: true,
+    })
+    .getByRole("button", { name: "Launch", exact: true })
+    .click();
 
   const response = await launchResponse;
 
-  expect(response.status()).toBe(202);
-
-  const { runId } = (await response.json()) as { runId: string };
+  const receipt = await readTaskLaunchReceipt(response);
+  const runId = await waitForTaskLaunchRun(receipt);
 
   // The stub recorded the spawn: a read-only session (workspace=none ⇒ L1)
   // whose prompt carries the agent.md body marker.

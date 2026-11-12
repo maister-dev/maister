@@ -1001,7 +1001,7 @@ function ConsensusExcerpt({
         role="region"
         // A capped-height excerpt scrolls; a keyboard user can only read the
         // overflow if the region takes focus (axe scrollable-region-focusable).
-        // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+        // eslint-disable-next-line jsx-a11y-x/no-noninteractive-tabindex
         tabIndex={0}
       >
         {text}

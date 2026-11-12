@@ -16,6 +16,7 @@ import {
   type MaisterProvenance,
   MaisterProvenanceError,
 } from "@/lib/worktree-provenance-core";
+import { runtimeFileUrl } from "@/lib/runtime-file-url";
 
 export type { MaisterProvenance } from "@/lib/worktree-provenance-core";
 
@@ -252,8 +253,8 @@ export async function assertWorktreeProvenancePristine(
     [paths.hook, hookText()],
     [paths.currentNode, ""],
   ] as const;
-  const entries = (await readdir(paths.directory)).sort();
-  const hooks = await readdir(path.dirname(paths.hook));
+  const entries = (await readdir(runtimeFileUrl(paths.directory))).sort();
+  const hooks = await readdir(runtimeFileUrl(path.dirname(paths.hook)));
 
   if (
     entries.join("\0") !==
@@ -434,7 +435,7 @@ export async function ensureWorktreeProvenance(args: {
 
     await writeManagedHookAndTemplate(paths, existing);
     try {
-      await readFile(paths.currentNode, "utf8");
+      await readFile(runtimeFileUrl(paths.currentNode), "utf8");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       await atomicWriteText(paths.currentNode, "");
@@ -565,7 +566,7 @@ export async function readWorktreeProvenanceMetadata(
   worktreePath: string,
 ): Promise<MaisterProvenance> {
   const paths = managedPaths(worktreePath);
-  const raw = await readFile(paths.metadata, "utf8");
+  const raw = await readFile(runtimeFileUrl(paths.metadata), "utf8");
   const values: Partial<Record<ProvenanceMetadataField, string>> = {};
 
   for (const line of raw.split("\n").filter(Boolean)) {

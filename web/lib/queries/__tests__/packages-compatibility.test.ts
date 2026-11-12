@@ -1,17 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MAISTER_ENGINE_VERSION } from "@/lib/flows/engine-version";
+import {
+  INVALID_PACKAGE_MANIFEST_REMEDIATION,
+  createPackageCompatibilityResolver,
+} from "@/lib/queries/packages";
 
 const loadFlowManifestMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/config", () => ({
   loadFlowManifest: loadFlowManifestMock,
 }));
-
-import {
-  INVALID_PACKAGE_MANIFEST_REMEDIATION,
-  createPackageCompatibilityResolver,
-} from "@/lib/queries/packages";
 
 const INSTALL = {
   id: "install-1",

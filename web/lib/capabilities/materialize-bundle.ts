@@ -4,6 +4,7 @@ import { execFile } from "node:child_process";
 import { cp, mkdir, readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
@@ -11,6 +12,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { atomicWriteText } from "@/lib/atomic";
 import { capabilityImports } from "@/lib/db/schema";
+import { runtimeFileUrl, runtimePathUrl } from "@/lib/runtime-file-url";
 
 const log = pino({
   name: "capabilities",
@@ -21,7 +23,7 @@ const execFileAsync = promisify(execFile);
 
 async function pathExists(p: string): Promise<boolean> {
   try {
-    await stat(p);
+    await stat(runtimeFileUrl(p));
 
     return true;
   } catch {
@@ -65,7 +67,7 @@ async function copyBundleArtifacts(
   };
 
   for (const sub of ["skills", "agents"] as const) {
-    const src = path.join(args.installedPath, sub);
+    const src = fileURLToPath(runtimePathUrl(args.installedPath, sub));
 
     if (!(await pathExists(src))) continue;
 
@@ -73,13 +75,13 @@ async function copyBundleArtifacts(
 
     await mkdir(dest, { recursive: true });
 
-    for (const entry of await readdir(src)) {
+    for (const entry of await readdir(runtimeFileUrl(src))) {
       const destEntry = path.join(dest, entry);
 
       // Repo-local entry (skill dir / agent file) wins whole — skip it.
       if (await pathExists(destEntry)) continue;
 
-      await copyEntry(path.join(src, entry), destEntry);
+      await copyEntry(fileURLToPath(runtimePathUrl(src, entry)), destEntry);
       copied.materializedPaths.push(destEntry);
     }
 
@@ -98,7 +100,7 @@ export function copyBundleArtifactsToWorktree(
   args: BundleArtifactRequest,
 ): Promise<CopiedBundleArtifacts> {
   return copyBundleArtifacts(args, (source, destination) =>
-    cp(source, destination, {
+    cp(runtimeFileUrl(source), runtimeFileUrl(destination), {
       recursive: true,
       force: false,
       errorOnExist: false,
@@ -110,7 +112,7 @@ function copyCapturedBundleArtifactsToWorktree(
   args: BundleArtifactRequest,
 ): Promise<CopiedBundleArtifacts> {
   return copyBundleArtifacts(args, (source, destination) =>
-    cp(source, destination, {
+    cp(runtimeFileUrl(source), runtimeFileUrl(destination), {
       recursive: true,
       force: false,
       errorOnExist: false,

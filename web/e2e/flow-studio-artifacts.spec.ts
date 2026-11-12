@@ -53,7 +53,9 @@ async function openEditor(
 
   // Phase B: the editor shell mounts (top bar + canvas + drawers). The package
   // files live in the [Files] drawer now (opened per file op below).
-  await expect(page.getByTestId("flow-editor-tabs")).toBeVisible();
+  await expect(
+    page.getByRole("main").getByTestId("flow-editor-tabs"),
+  ).toBeVisible();
 
   return page.url();
 }
@@ -80,10 +82,10 @@ async function saveDraft(page: Page, editorUrl: string): Promise<void> {
 // Ensure the [Files] drawer is open (the package-files tree + artifact editors
 // live there in Phase B; it is closed by default on each load).
 async function ensureFilesDrawer(page: Page): Promise<void> {
-  const drawer = page.getByTestId("flow-files-drawer");
+  const drawer = page.getByRole("main").getByTestId("flow-files-drawer");
 
   if (!(await drawer.isVisible())) {
-    await page.getByTestId("flow-tab-files").click();
+    await page.getByRole("main").getByTestId("flow-tab-files").click();
     await expect(drawer).toBeVisible();
   }
 }
@@ -98,6 +100,7 @@ async function openPackageFile(page: Page, leafName: string): Promise<void> {
 // Replace the whole flow.yaml CodeMirror buffer (the yaml tab) with `text`.
 async function replaceYamlEditor(page: Page, text: string): Promise<void> {
   const content = page
+    .getByRole("main")
     .getByTestId("flow-yaml-editor")
     .locator(".cm-content")
     .first();
@@ -121,15 +124,18 @@ async function connectNodes(
   target: string,
 ): Promise<void> {
   await page
+    .getByRole("main")
     .locator('[data-testid="flow-graph-editor"]')
     .scrollIntoViewIfNeeded();
 
-  const sourceHandle = page.locator(
-    `.react-flow__node[data-id="${source}"] .react-flow__handle-right`,
-  );
-  const targetHandle = page.locator(
-    `.react-flow__node[data-id="${target}"] .react-flow__handle-left`,
-  );
+  const sourceHandle = page
+    .getByRole("main")
+    .locator(
+      `.react-flow__node[data-id="${source}"] .react-flow__handle-right`,
+    );
+  const targetHandle = page
+    .getByRole("main")
+    .locator(`.react-flow__node[data-id="${target}"] .react-flow__handle-left`);
 
   await expect(sourceHandle).toBeVisible();
   await expect(targetHandle).toBeVisible();
@@ -178,7 +184,9 @@ test("flow studio: artifact form + save gate, form-schema preview, typed edge, l
   // ArtifactContentIssues block surfaces a `frontmatter_field_missing` BLOCK.
   await descriptionField.fill("");
   await expect(
-    page.locator('[data-testid="artifact-issue-frontmatter_field_missing"]'),
+    page
+      .getByRole("main")
+      .locator('[data-testid="artifact-issue-frontmatter_field_missing"]'),
   ).toBeVisible();
 
   // Save with the BLOCK present. The server `assertAuthoredFlowContentValid`
@@ -202,7 +210,7 @@ test("flow studio: artifact form + save gate, form-schema preview, typed edge, l
     .getByRole("textbox", { name: "Description", exact: true })
     .fill(restoredDescription);
   await expect(
-    page.locator('[data-testid="artifact-content-ok"]'),
+    page.getByRole("main").locator('[data-testid="artifact-content-ok"]'),
   ).toBeVisible();
 
   await saveDraft(page, editorUrl);
@@ -219,10 +227,12 @@ test("flow studio: artifact form + save gate, form-schema preview, typed edge, l
   await openPackageFile(page, "review.json");
 
   await expect(
-    page.locator('[data-testid="form-schema-builder"]'),
+    page.getByRole("main").locator('[data-testid="form-schema-builder"]'),
   ).toBeVisible();
 
-  const preview = page.locator('[data-testid="form-schema-preview"]');
+  const preview = page
+    .getByRole("main")
+    .locator('[data-testid="form-schema-preview"]');
 
   await expect(preview).toBeVisible();
 
@@ -230,6 +240,7 @@ test("flow studio: artifact form + save gate, form-schema preview, typed edge, l
   // live preview re-renders with the new label text (preview reads field.label).
   const newLabel = "Reviewer notes (edited)";
   const notesLabelInput = page
+    .getByRole("main")
     .locator('[data-testid="form-schema-field-1"]')
     .getByRole("textbox")
     .nth(1);
@@ -241,36 +252,52 @@ test("flow studio: artifact form + save gate, form-schema preview, typed edge, l
   // On the pristine canvas, drag a connection implement → review. The modal must
   // open; picking a NEW outcome (`failure`, not yet declared on implement) and
   // confirming routes through setTransition and adds the edge `implement:failure`.
-  await page.getByTestId("flow-tab-graph").click();
-  await expect(page.getByTestId("flow-graph-editor")).toBeVisible({
+  await page.getByRole("main").getByTestId("flow-tab-graph").click();
+  await expect(
+    page.getByRole("main").getByTestId("flow-graph-editor"),
+  ).toBeVisible({
     timeout: 15_000,
   });
   await expect(
-    page.locator(`.react-flow__node[data-id="${fx.implementNode}"]`),
+    page
+      .getByRole("main")
+      .locator(`.react-flow__node[data-id="${fx.implementNode}"]`),
   ).toBeVisible();
 
   await connectNodes(page, fx.implementNode, fx.reviewNode);
 
-  const edgeModal = page.locator('[data-testid="edge-connect-modal"]');
+  const edgeModal = page
+    .getByRole("main")
+    .locator('[data-testid="edge-connect-modal"]');
 
   await expect(edgeModal).toBeVisible();
 
   // `failure` is not yet an outcome on `implement` → no retarget warning; pick it
   // and confirm. The new edge id is `${source}:${outcome}` (upsertEdge).
-  await page.locator('[data-testid="edge-connect-suggestion-failure"]').click();
-  await page.locator('[data-testid="edge-connect-confirm"]').click();
+  await page
+    .getByRole("main")
+    .locator('[data-testid="edge-connect-suggestion-failure"]')
+    .click();
+  await page
+    .getByRole("main")
+    .locator('[data-testid="edge-connect-confirm"]')
+    .click();
 
   await expect(edgeModal).toHaveCount(0);
   await expect(
-    page.locator(`[data-testid="rf__edge-${fx.implementNode}:failure"]`),
+    page
+      .getByRole("main")
+      .locator(`[data-testid="rf__edge-${fx.implementNode}:failure"]`),
   ).toBeVisible();
 
   // ── Journey 3 (last) — live YAML→graph re-seed (§8.4.17 / 4.5) ──────────────
   // Editing the manifest on the yaml tab to ADD a node must re-seed the canvas
   // without a page reload. Switch to yaml, append a cli node, switch back to the
   // graph tab (which flushes the debounced sync) → the new node is on the canvas.
-  await page.getByTestId("flow-tab-yaml").click();
-  await expect(page.getByTestId("flow-yaml-editor")).toBeVisible();
+  await page.getByRole("main").getByTestId("flow-tab-yaml").click();
+  await expect(
+    page.getByRole("main").getByTestId("flow-yaml-editor"),
+  ).toBeVisible();
 
   const manifestWithExtraNode = [
     "schemaVersion: 1",
@@ -305,11 +332,15 @@ test("flow studio: artifact form + save gate, form-schema preview, typed edge, l
   // Switching to the graph tab flushes the pending yaml→canvas sync; the added
   // node lands on the canvas (humanizeToken("extranode") → "Extranode") with NO
   // page reload.
-  await page.getByTestId("flow-tab-graph").click();
-  await expect(page.getByTestId("flow-graph-editor")).toBeVisible({
+  await page.getByRole("main").getByTestId("flow-tab-graph").click();
+  await expect(
+    page.getByRole("main").getByTestId("flow-graph-editor"),
+  ).toBeVisible({
     timeout: 15_000,
   });
   await expect(
-    page.locator('[data-testid="flow-node"]', { hasText: /Extranode/i }),
+    page
+      .getByRole("main")
+      .locator('[data-testid="flow-node"]', { hasText: /Extranode/i }),
   ).toBeVisible({ timeout: 15_000 });
 });

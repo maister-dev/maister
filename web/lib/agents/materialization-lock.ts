@@ -3,8 +3,10 @@ import "server-only";
 import { lstat } from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath } from "node:url";
 
 import { MaisterError } from "@/lib/errors";
+import { runtimeFileUrl, runtimePathUrl } from "@/lib/runtime-file-url";
 
 const MUTEX_FILE = "mutex.sqlite";
 const SQLITE_AUXILIARY_FILES = [
@@ -48,10 +50,10 @@ async function assertSafeMutexFiles(rootPath: string): Promise<void> {
   await assertSafeDirectory(rootPath);
 
   for (const fileName of SQLITE_AUXILIARY_FILES) {
-    const filePath = path.join(rootPath, fileName);
+    const filePath = fileURLToPath(runtimePathUrl(rootPath, fileName));
 
     try {
-      if ((await lstat(filePath)).isSymbolicLink()) {
+      if ((await lstat(runtimeFileUrl(filePath))).isSymbolicLink()) {
         throw new MaisterError(
           "CONFIG",
           `agent materialization mutex is symlinked: ${filePath}`,

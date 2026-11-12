@@ -100,12 +100,9 @@ flowchart LR
   `/runs` and `/scratch-runs` still collapse onto `projects`.
 - The rail order is Home / Projects / Work / Activity / Inbox / Flow Studio /
   Observatory, then the admin tail. `Activity` moved ahead of `Inbox`.
-- `UT-NAV-05` found ONE call site beyond the seven ADR-172 D3 tabulated: the
-  proxy's `new URL("/", nextUrl)` bounce for an already-signed-in visitor to
-  `/login`. Its intent is "home" and it is unchanged, but it is now declared.
-  The gate's pattern covers `href="/"`, `redirect("/")`, `router.push("/")` and
-  `new URL("/"` — an inventory that excludes one navigation idiom is not an
-  inventory.
+- Already-signed-in visitors to `/login` return to Home. Portfolio controls
+  target `/projects`. Browser navigation checks exercise these destinations;
+  there is no source-text inventory gate.
 - The header crumb named "portfolio" unconditionally, which was simply false on
   the Desk; it now reads the same classifier
   (`web/components/chrome/nav-crumb.tsx`).
@@ -119,7 +116,7 @@ flowchart LR
 - **NAV-02:** A user whose `role !== "admin"` — `member` or `viewer` — MUST land on `/work` after sign-in.
 - **NAV-03:** `/projects` MUST render the former portfolio unchanged, including its onboarding checklist and empty state.
 - **NAV-04:** `railSectionForPathname` MUST be total over the application's route prefixes and MUST map `/` to `home`.
-- **NAV-05:** Every inbound link to `/` MUST resolve to the surface its call site intends; a call site meaning "the portfolio" MUST target `/projects`. The inventory is read from the tree and compared against a declared table (`UT-NAV-05`), so an undeclared new call site fails.
+- **NAV-05:** Every inbound link to `/` MUST resolve to the surface its call site intends; a call site meaning "the portfolio" MUST target `/projects`. Browser checks exercise Home, role-based sign-in and the portfolio destinations.
 - **NAV-06:** Rail visibility MUST NEVER be the authorization boundary — every route the rail hides MUST still be refused server-side on its own.
 - **NAV-07:** The shared `(app)` header MUST fit a 390px viewport on every route without making the page scroll horizontally, and MUST keep the mobile rail toggle and every control's accessible name while it does — below `lg` only the user's name may lose visible characters, by truncation, never by removal from the DOM. The status bar MUST keep every control inside a 390px viewport with its accessible name intact (it is `position: fixed`, so a document-width check cannot see it clip), and no route MAY scroll horizontally at 768, 1024 or 1280px in either locale — the widths where the rail, then the wide header, arrive.
 - **NAV-08:** One work item MUST appear as exactly ONE object on the Desk (ADR-174). A task that is simultaneously in flight and blocked on a human MUST be rendered by exactly one row or card naming it, never by a work row AND a decision card; its decision rides on the row. The activity feed is deliberately out of scope — it is a log of EVENTS, not a second rendering of the item, and collapsing it is refused by ADR-174 D4.

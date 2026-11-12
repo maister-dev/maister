@@ -46,7 +46,7 @@ export function ProductTour({ shots }: ProductTourProps): ReactElement {
     return () => window.clearTimeout(timer);
   }, [shots]);
 
-  const onTabKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+  const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>): void => {
     const step =
       event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
 
@@ -64,7 +64,6 @@ export function ProductTour({ shots }: ProductTourProps): ReactElement {
         aria-label="Product screens"
         className="tour-tabs"
         role="tablist"
-        onKeyDown={onTabKeyDown}
       >
         {shots.map((shot, index) => (
           <button
@@ -77,6 +76,7 @@ export function ProductTour({ shots }: ProductTourProps): ReactElement {
             tabIndex={index === activeIndex ? 0 : -1}
             type="button"
             onClick={() => setActiveIndex(index)}
+            onKeyDown={onTabKeyDown}
           >
             {shot.label}
           </button>

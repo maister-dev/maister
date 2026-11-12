@@ -12,6 +12,7 @@ import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open, readdir, readlink, realpath } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import pino from "pino";
 
@@ -21,6 +22,7 @@ import { MaisterError, isMaisterError } from "@/lib/errors";
 import { reportPreparationCleanupFailure } from "@/lib/agents/preparation-trace";
 import { operationalCauseChain } from "@/lib/agents/operational-diagnostics";
 import { executeRepositoryGit } from "@/lib/project-config-persistence/git-process";
+import { runtimeFileUrl, runtimePathUrl } from "@/lib/runtime-file-url";
 
 const MAX_ENTRIES = 100_000;
 const MAX_BYTES = 256 * 1024 * 1024;
@@ -209,8 +211,10 @@ async function captureTree(
     check();
     if (source.length >= maxEntries)
       throw limitError("entries", source.length + 1, maxEntries);
-    const absolute = path.join(root, relative);
-    const info = await probeOperation("lstat", () => lstat(absolute));
+    const absolute = fileURLToPath(runtimePathUrl(root, relative));
+    const info = await probeOperation("lstat", () =>
+      lstat(runtimeFileUrl(absolute)),
+    );
     const mode = info.mode & 0o777;
 
     if (info.isSymbolicLink()) {
@@ -225,8 +229,9 @@ async function captureTree(
       });
     } else if (info.isDirectory()) {
       if (
-        (await probeOperation("realpath", () => realpath(absolute))) !==
-        absolute
+        (await probeOperation("realpath", () =>
+          realpath(runtimeFileUrl(absolute)),
+        )) !== absolute
       )
         throw probeError("operational_integrity_symlink_race");
       source.push({
@@ -236,14 +241,17 @@ async function captureTree(
         mode,
       });
       for (const name of (
-        await probeOperation("readdir", () => readdir(absolute))
+        await probeOperation("readdir", () => readdir(runtimeFileUrl(absolute)))
       ).sort())
         await visit(`${relative}/${name}`);
     } else if (info.isFile()) {
       bytes += info.size;
       check();
       const file = await probeOperation("open", () =>
-        open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW),
+        open(
+          runtimeFileUrl(absolute),
+          constants.O_RDONLY | constants.O_NOFOLLOW,
+        ),
       );
 
       await withProbeFile(file, limits.context, async () => {
@@ -291,7 +299,7 @@ async function captureTree(
   };
 
   for (const name of (
-    await probeOperation("readdir", () => readdir(root))
+    await probeOperation("readdir", () => readdir(runtimeFileUrl(root)))
   ).sort())
     if (name !== ".git" || resourceKind === "plain_directory")
       await visit(name);

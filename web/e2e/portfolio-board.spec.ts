@@ -13,7 +13,9 @@ test("E2E-NAV-03 portfolio and project board expose seeded acceptance work", asy
 
   await page.goto("/projects");
 
-  await expect(page.getByRole("heading", { name: "Projects." })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Projects", level: 1, exact: true }),
+  ).toBeVisible();
   // exact:true targets the main-grid project link. The left rail (rendered at
   // md+) carries a "Start scratch workspace in E2E Acceptance Board" link whose
   // name contains this string, so a substring match resolves to two elements.
@@ -32,8 +34,8 @@ test("E2E-NAV-03 portfolio and project board expose seeded acceptance work", asy
   // The onboarding checklist is NOT asserted here. `OnboardingChecklist` returns
   // null once all three first-run steps are complete, and whether this shared
   // database has launched a task depends on which specs ran first — so the
-  // assertion is order-dependent, not a fact about the move. `UT-NAV-03` proves
-  // the moved page still mounts it, and `E2E-EDGE-NAV-01` renders it for a
+  // assertion is order-dependent, not a fact about the move.
+  // `E2E-EDGE-NAV-01` renders it for a
   // reader whose onboarding genuinely is incomplete.
 
   await page.goto(`/projects/${fx.projectSlug}`);
@@ -47,12 +49,16 @@ test("E2E-NAV-03 portfolio and project board expose seeded acceptance work", asy
   await expect(
     page.getByText("Acceptance review is waiting on you.").first(),
   ).toBeVisible();
-  await expect(page.getByText("Acceptance backlog launch")).toBeVisible();
-  await expect(page.locator("[data-board]")).toBeVisible();
-  await expect(page.locator('[data-stage="backlog"]')).toContainText(
+  const board = page.getByRole("region", { name: "Task board", exact: true });
+
+  await expect(board).toBeVisible();
+  await expect(
+    board.getByRole("link", { name: "Acceptance backlog launch", exact: true }),
+  ).toBeVisible();
+  await expect(board.locator('[data-stage="backlog"]')).toContainText(
     "Acceptance backlog launch",
   );
-  await expect(page.locator('[data-stage="production"]')).toContainText(
+  await expect(board.locator('[data-stage="production"]')).toContainText(
     "Acceptance review pending",
   );
 
@@ -62,7 +68,9 @@ test("E2E-NAV-03 portfolio and project board expose seeded acceptance work", asy
 
   await expect(page.getByRole("tab", { name: /PRs/i })).toHaveCount(0);
   await page.goto(`/projects/${fx.projectSlug}?tab=prs`);
-  await expect(page.locator("[data-board]")).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Task board", exact: true }),
+  ).toBeVisible();
 
   await page.getByRole("tab", { name: /MCPs/i }).click();
   await expect(page).toHaveURL(/tab=mcps/);

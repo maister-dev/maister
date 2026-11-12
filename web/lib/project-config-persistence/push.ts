@@ -37,6 +37,7 @@ import { MaisterError } from "@/lib/errors";
 import { contentDigest, sha256 } from "@/lib/evaluations/digest";
 import { isUniqueViolation } from "@/lib/db/pg-error";
 import { redactUrl, validateUrl } from "@/lib/repo-source";
+import { runtimeFileUrl, runtimePathUrl } from "@/lib/runtime-file-url";
 
 type PushIntent = typeof pushes.$inferSelect;
 type Authority = () => Promise<void>;
@@ -290,7 +291,7 @@ export async function previewConfigurationPush(
   });
   await chmod(join(directory, "push.json"), 0o600);
   for (const path of [join(directory, "push.json"), directory]) {
-    const handle = await open(path, "r");
+    const handle = await open(runtimeFileUrl(path), "r");
 
     try {
       await handle.sync();
@@ -428,7 +429,7 @@ async function cleanupPush(
     }
     for (const name of ["gate.cjs", "pre-push", "push.json"])
       if (names.includes(name))
-        await unlink(join(intent.snapshot.contentDirectory, name));
+        await unlink(runtimePathUrl(intent.snapshot.contentDirectory, name));
     try {
       await rmdir(intent.snapshot.contentDirectory);
     } catch (error) {

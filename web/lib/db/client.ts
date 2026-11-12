@@ -24,14 +24,9 @@ export function buildClient(): ReturnType<typeof drizzle<typeof schema>> {
   const pool = new Pool({
     connectionString: url,
     max: Number(process.env.MAISTER_DB_POOL_MAX ?? 10),
-  });
-
-  // S4.7: the declaration is queued on the connection before the pool hands it
-  // to any caller, so no query of this binary ever runs undeclared.
-  pool.on("connect", (client) => {
-    declareWriterCapability(client).catch((err: unknown) => {
-      log.error({ err }, "writer capability declaration failed");
-    });
+    // Complete the writer declaration before lending the connection; hook
+    // failures reject the caller instead of publishing an undeclared session.
+    onConnect: declareWriterCapability,
   });
 
   return drizzle(pool, { schema });

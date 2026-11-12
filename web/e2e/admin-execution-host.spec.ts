@@ -54,6 +54,7 @@ test("admin sees event-plane diagnostics, repair evidence, and both rail links",
   // ADR-167 amendment 2026-09-25: a stream row of the spec's own (retired)
   // host, so the stream panel renders the subscriber pause/close cells.
   const streamHostId = randomUUID();
+  const streamId = randomUUID();
 
   await withE2EDb(async (pool) => {
     const client = await pool.connect();
@@ -97,7 +98,7 @@ test("admin sees event-plane diagnostics, repair evidence, and both rail links",
       await client.query(
         `INSERT INTO execution_event_streams (id, execution_host_id, stream_id, state)
          VALUES ($1, $2, $3, 'closed')`,
-        [randomUUID(), streamHostId, randomUUID()],
+        [randomUUID(), streamHostId, streamId],
       );
       await client.query("COMMIT");
     } catch (error) {
@@ -119,13 +120,20 @@ test("admin sees event-plane diagnostics, repair evidence, and both rail links",
     await expect(
       page.getByRole("heading", { name: "Projection consumers" }),
     ).toBeVisible();
-    await expect(page.getByText("e2e_projection_failure")).toBeVisible();
+    const poisonedConsumer = page
+      .getByRole("article")
+      .filter({ hasText: consumer });
+    const stream = page.getByRole("row").filter({ hasText: streamId });
+
+    await expect(
+      poisonedConsumer.getByText("e2e_projection_failure", { exact: true }),
+    ).toBeVisible();
     // The e2e supervisor reports no stream telemetry, so the cells read as
     // missing — never as a fabricated zero.
-    await expect(page.getByText("pauses: unavailable").first()).toBeVisible();
-    await expect(page.getByText("closes: unavailable").first()).toBeVisible();
+    await expect(stream.getByText("pauses: unavailable")).toBeVisible();
+    await expect(stream.getByText("closes: unavailable")).toBeVisible();
     await expect(
-      page.getByText(
+      poisonedConsumer.getByText(
         `pnpm --filter maister-web execution:projection:rearm --consumer '${consumer}' --run '${runId}' --event '${eventId}' --cursor 'null' --error-generation '${generation}'`,
         { exact: true },
       ),
@@ -151,8 +159,8 @@ test("admin sees event-plane diagnostics, repair evidence, and both rail links",
     await expect(
       page.getByRole("heading", { name: "Хост исполнения", level: 1 }),
     ).toBeVisible();
-    await expect(page.getByText("паузы: недоступно").first()).toBeVisible();
-    await expect(page.getByText("закрытия: недоступно").first()).toBeVisible();
+    await expect(stream.getByText("паузы: недоступно")).toBeVisible();
+    await expect(stream.getByText("закрытия: недоступно")).toBeVisible();
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByTestId("mobile-rail-toggle").click();

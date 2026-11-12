@@ -106,7 +106,7 @@ test("flow-target delegation: launch → flow children in Review → the parked 
   // the button reads "Run again" — matching both keeps a retry a real retry
   // instead of a locator failure that hides the original error.
   const launchControl = page
-    .locator("[data-board]")
+    .getByRole("region", { name: "Task board", exact: true })
     .getByText("Delegate a governed flow")
     .locator("xpath=ancestor::article")
     .getByRole("button", { name: /^(Launch|Run again)$/ });

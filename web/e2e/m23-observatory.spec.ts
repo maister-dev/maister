@@ -17,18 +17,28 @@ test.describe("M23 Observatory", () => {
     await expect(
       page.getByRole("heading", { name: "Observatory" }),
     ).toBeVisible();
-    await expect(page.getByTestId("observatory-overview")).toBeVisible();
-    await expect(page.getByTestId("observatory-overview-total")).toBeVisible();
+    await expect(
+      page.getByTestId("observatory-overview").filter({ visible: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("observatory-overview-total").filter({ visible: true }),
+    ).toBeVisible();
     // The flow-ledger summary is no longer the first screen.
-    await expect(page.getByText("Correction rate")).toHaveCount(0);
+    await expect(
+      page.getByRole("main").getByText("Correction rate"),
+    ).toHaveCount(0);
 
-    const overview = page.getByTestId("observatory-overview");
+    const overview = page
+      .getByTestId("observatory-overview")
+      .filter({ visible: true });
 
     await expect(overview).toContainText("MAIster E2E M23 Observatory");
     // The authed project runs as the seeded global admin, so the project-less
     // Studio scratch run shows on its own row.
     await expect(overview).toContainText("Platform");
-    await expect(page.getByTestId("observatory-cost-strip")).toBeVisible();
+    await expect(
+      page.getByTestId("observatory-cost-strip").filter({ visible: true }),
+    ).toBeVisible();
   });
 
   test("an overview cell opens the ledger filtered to exactly that cell", async ({
@@ -43,6 +53,7 @@ test.describe("M23 Observatory", () => {
     // legitimately hold 0 and prove nothing.
     const cell = page
       .getByTestId("observatory-overview")
+      .filter({ visible: true })
       .locator("tr")
       .filter({ hasText: "MAIster E2E M23 Observatory" })
       .locator(
@@ -57,7 +68,7 @@ test.describe("M23 Observatory", () => {
     await expect(page).toHaveURL(/from=\d{4}-\d{2}-\d{2}/);
     await expect(page.getByLabel("Outcome")).toHaveValue("Delivered");
     // AC4: the cell's count IS the list it opened.
-    await expect(page.locator("tbody tr")).toHaveCount(count);
+    await expect(page.getByRole("main").locator("tbody tr")).toHaveCount(count);
   });
 
   test("quality view renders metrics, signals, filters, and node detail", async ({
@@ -70,7 +81,9 @@ test.describe("M23 Observatory", () => {
     // The Quality view renders each metric NAME twice — once on the tile/card
     // and once as a per-project column header — so a bare `getByText` is a
     // strict-mode violation. Address each surface on its own terms.
-    await expect(page.getByText("Correction rate · Flow runs")).toBeVisible();
+    await expect(
+      page.getByRole("main").getByText("Correction rate · Flow runs"),
+    ).toBeVisible();
     await expect(
       page.getByRole("columnheader", { name: "Correction rate" }),
     ).toBeVisible();
@@ -80,12 +93,16 @@ test.describe("M23 Observatory", () => {
     await expect(
       page.getByRole("columnheader", { name: "Autonomy Score" }),
     ).toBeVisible();
-    await expect(page.getByText("Repeated unit gate failed")).toBeVisible();
     await expect(
-      page.getByText("access_token=[redacted] failed"),
+      page.getByRole("main").getByText("Repeated unit gate failed"),
     ).toBeVisible();
     await expect(
-      page.getByTestId("observatory-quality-projects"),
+      page.getByRole("main").getByText("access_token=[redacted] failed"),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByTestId("observatory-quality-projects")
+        .filter({ visible: true }),
     ).toBeVisible();
 
     await page.goto(
@@ -101,14 +118,21 @@ test.describe("M23 Observatory", () => {
     await expect(page.getByRole("textbox", { name: "Node" })).toHaveValue(
       fx.nodeId,
     );
-    await expect(page.getByText("Latest attempt by run")).toBeVisible();
-    await expect(page.getByText("#2 · Succeeded").first()).toBeVisible();
+    await expect(
+      page.getByRole("main").getByText("Latest attempt by run"),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("main").getByText("#2 · Succeeded").first(),
+    ).toBeVisible();
 
     // A drill-down link that names no view still lands on Quality.
     await page.goto(`/projects/${fx.projectSlug}/observatory?nodeId=missing`);
 
     await expect(
-      page.getByText("No node attempts in this window.").first(),
+      page
+        .getByRole("main")
+        .getByText("No node attempts in this window.")
+        .first(),
     ).toBeVisible();
   });
 
@@ -123,11 +147,15 @@ test.describe("M23 Observatory", () => {
       page.getByRole("heading", { name: "Sensor firing" }),
     ).toBeVisible();
     // unit gate: 2 failed + 2 passed seeded executions
-    await expect(page.getByText("50% (n=4)")).toBeVisible();
+    await expect(page.getByRole("main").getByText("50% (n=4)")).toBeVisible();
     // lint gate: 10 passed, zero failed/stale -> silent at the default
     // threshold (rendered in both the firing and effectiveness tables)
-    await expect(page.getByText("0% (n=10)").first()).toBeVisible();
-    await expect(page.getByText("never fired", { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("main").getByText("0% (n=10)").first(),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("main").getByText("never fired", { exact: true }),
+    ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Coverage map" }),
     ).toBeVisible();
@@ -135,7 +163,9 @@ test.describe("M23 Observatory", () => {
       page.getByRole("heading", { name: "aif", exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByText("guides without sensors", { exact: true }),
+      page
+        .getByRole("main")
+        .getByText("guides without sensors", { exact: true }),
     ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Control effectiveness" }),
@@ -170,7 +200,10 @@ test.describe("M23 Observatory", () => {
     await page.getByRole("tab", { name: "Quality" }).click();
     await expect(page).toHaveURL(/view=quality/);
     await expect(
-      page.getByText("Not applicable — flow ledger only.").first(),
+      page
+        .getByRole("main")
+        .getByText("Not applicable — flow ledger only.")
+        .first(),
     ).toBeVisible();
   });
 
@@ -187,21 +220,26 @@ test.describe("M23 Observatory", () => {
     ] as const) {
       await page.setViewportSize({ width, height: 900 });
       await page.goto("/observatory");
-      await expect(page.getByTestId("observatory-overview")).toBeVisible();
+      await expect(
+        page.getByTestId("observatory-overview").filter({ visible: true }),
+      ).toBeVisible();
 
       // The STRICT check: the table's scroll container must fit inside its
       // own section. This is the containment the design turns on, it is local
       // to the component, and it carries no tolerance.
       expect(
-        await page.getByTestId("observatory-overview").evaluate((section) => {
-          const container = section.querySelector<HTMLElement>(
-            "div.overflow-x-auto",
-          );
+        await page
+          .getByTestId("observatory-overview")
+          .filter({ visible: true })
+          .evaluate((section) => {
+            const container = section.querySelector<HTMLElement>(
+              "div.overflow-x-auto",
+            );
 
-          return container === null
-            ? true
-            : container.clientWidth <= section.clientWidth + 1;
-        }),
+            return container === null
+              ? true
+              : container.clientWidth <= section.clientWidth + 1;
+          }),
         `${label}: the scroll container must fit its section`,
       ).toBe(true);
 
@@ -226,6 +264,7 @@ test.describe("M23 Observatory", () => {
       if (width < 1080) {
         const container = page
           .getByTestId("observatory-overview")
+          .filter({ visible: true })
           .locator("div.overflow-x-auto");
 
         expect(
@@ -314,7 +353,7 @@ test.describe("M23 Observatory", () => {
       page.getByRole("heading", { name: "Agentization" }),
     ).toBeVisible();
     await expect(
-      page.getByText("Insufficient delivery evidence"),
+      page.getByRole("main").getByText("Insufficient delivery evidence"),
     ).toBeVisible();
   });
 
@@ -345,18 +384,20 @@ test.describe("M23 Observatory", () => {
       "true",
     );
     // `runBucket.*` is shared with the ledger, so the columns are localized.
-    await expect(page.getByTestId("observatory-overview")).toContainText(
-      "Доставлено",
-    );
+    await expect(
+      page.getByTestId("observatory-overview").filter({ visible: true }),
+    ).toContainText("Доставлено");
 
     // View-SPECIFIC strings: the page eyebrow renders on every view and would
     // pass this assertion without the view ever changing.
     await page.goto("/observatory?view=quality");
     await expect(
-      page.getByText("Коэффициент исправлений").first(),
+      page.getByRole("main").getByText("Коэффициент исправлений").first(),
     ).toBeVisible();
     await expect(
-      page.getByTestId("observatory-quality-projects"),
+      page
+        .getByTestId("observatory-quality-projects")
+        .filter({ visible: true }),
     ).toContainText("По проектам");
 
     await page.goto("/observatory?view=harness");

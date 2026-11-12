@@ -364,8 +364,8 @@ export default function EvidenceGraph({
           edges={flowEdges}
           emptyMessage={hasFilters ? labels.noMatches : labels.empty}
           labels={labels}
-          nodeTypes={nodeTypes}
           nodes={hasEvidence ? flowNodes : []}
+          nodeTypes={nodeTypes}
           onNodeClick={onNodeClick}
         />
       </div>
@@ -441,10 +441,10 @@ function EvidenceCanvas({
       colorMode={resolvedTheme}
       edges={edges}
       minZoom={GRAPH_MIN_ZOOM}
-      nodeTypes={nodeTypes}
       nodes={displayedNodes}
       nodesConnectable={false}
       nodesDraggable={false}
+      nodeTypes={nodeTypes}
       onMoveEnd={(event, next) => {
         if (event || cameraRef.current) cameraRef.current = next;
       }}

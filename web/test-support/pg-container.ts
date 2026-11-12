@@ -10,7 +10,7 @@ import { sql } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import pino from "pino";
-import { Pool, type PoolConfig } from "pg";
+import { Pool, type ClientBase, type PoolConfig } from "pg";
 import { getContainerRuntimeClient } from "testcontainers";
 
 import { probeContainerRuntimeDaemon } from "./docker-runtime-probe";
@@ -308,6 +308,23 @@ async function allocatePostgresContainer(
       .withDatabase(options.databaseName)
       .withUsername("test")
       .withPassword("test")
+      // Templates refuse new connections after migration. Probe the server's
+      // maintenance database instead, without spawning four probes per second.
+      .withHealthCheck({
+        test: [
+          "CMD",
+          "pg_isready",
+          "--host",
+          "localhost",
+          "--username",
+          "test",
+          "--dbname",
+          "postgres",
+        ],
+        interval: 1_000,
+        timeout: 1_000,
+        retries: 250,
+      })
       .withTmpFs({ [postgresStorage.storagePath]: "rw,size=512m" })
       .withCommand([
         "postgres",
@@ -571,15 +588,7 @@ export async function startMainPostgresTestDb(
 ): Promise<StartedPostgresTestDb> {
   const database = await startBarePostgresTestDb(options);
 
-  database.pool.on("connect", (client) => {
-    void client
-      .query(
-        `SET ${TASK_QUALIFICATION_WRITER_SETTING}='${TASK_QUALIFICATION_WRITER_CAPABILITY}'; SET maister.agent_preparation_writer='v1'; SET maister.task_launch_writer='v3'`,
-      )
-      .catch((error) =>
-        logger.error({ error }, "test qualification writer declaration failed"),
-      );
-  });
+  database.pool.options.onConnect = declareFixtureWriter;
   try {
     await migrate(database.db, { migrationsFolder: "./lib/db/migrations" });
     logger.info(
@@ -596,6 +605,12 @@ export async function startMainPostgresTestDb(
   } catch (error) {
     return throwAfterCleanup(options.lane ?? "integration", error, database);
   }
+}
+
+async function declareFixtureWriter(client: ClientBase): Promise<void> {
+  await client.query(
+    `SET ${TASK_QUALIFICATION_WRITER_SETTING}='${TASK_QUALIFICATION_WRITER_CAPABILITY}'; SET maister.agent_preparation_writer='v1'; SET maister.task_launch_writer='v3'`,
+  );
 }
 
 async function readMainMigrationStatements(tag: string): Promise<string[]> {
@@ -623,12 +638,9 @@ export async function declareCurrentTestDatabaseWriter(
       "Initialize fixture writer capabilities before concurrent pool use",
     );
 
-  database.pool.on("connect", (client) => {
-    void declareWriterCapability(client).catch((error) =>
-      logger.error({ error }, "test writer declaration failed"),
-    );
-  });
-  await declareWriterCapability(database.pool);
+  database.pool.options.onConnect = declareWriterCapability;
+  if (database.pool.totalCount > 0)
+    await declareWriterCapability(database.pool);
 }
 
 // Apply a single main-lineage migration by tag, one statement at a time. Suits
@@ -796,19 +808,7 @@ export async function startMainAndBrainPostgresTestDbTemplate(
     const pool = createTestPool({
       connectionString: databaseUrl.href,
       max: options.poolMax,
-    });
-
-    pool.on("connect", (client) => {
-      void client
-        .query(
-          `SET ${TASK_QUALIFICATION_WRITER_SETTING}='${TASK_QUALIFICATION_WRITER_CAPABILITY}'; SET maister.agent_preparation_writer='v1'; SET maister.task_launch_writer='v3'`,
-        )
-        .catch((error) =>
-          logger.error(
-            { error },
-            "test qualification writer declaration failed",
-          ),
-        );
+      onConnect: declareFixtureWriter,
     });
     const db = Object.assign(
       drizzle(pool),

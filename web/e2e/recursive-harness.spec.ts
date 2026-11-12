@@ -110,7 +110,7 @@ test("recursive harness: depth-2 tree → result-only Done children → the root
   // Retry-safe: "Launch" only while the task has never run; a Playwright retry
   // re-uses the same seeded task, whose card then reads "Run again".
   const launchControl = page
-    .locator("[data-board]")
+    .getByRole("region", { name: "Task board", exact: true })
     .getByText("Research the change surface")
     .locator("xpath=ancestor::article")
     .getByRole("button", { name: /^(Launch|Run again)$/ });
@@ -363,7 +363,7 @@ test("recursive harness: depth-2 tree → result-only Done children → the root
   // ---- The run detail renders the result plane. ---------------------------
   await page.goto(`/runs/${runId}`);
 
-  const panel = page.getByTestId("run-public-result");
+  const panel = page.getByTestId("run-public-result").filter({ visible: true });
 
   await expect(panel).toBeVisible();
   await expect(panel).toHaveAttribute("data-result-status", "valid");

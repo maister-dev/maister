@@ -130,8 +130,11 @@ test.describe("Agent execution visibility and retained history", () => {
       );
       await page.goto(`/projects/${slug}`);
       const rail = page.getByTestId("left-rail");
+      const ownedActiveRows = activeIds
+        .map((id) => `[data-agent-run-id="${id}"]`)
+        .join(",");
 
-      await expect(rail.locator("[data-agent-run-id]")).toHaveCount(6);
+      await expect(rail.locator(ownedActiveRows)).toHaveCount(6);
       for (const id of activeIds)
         await expect(rail.locator(`[data-agent-run-id="${id}"]`)).toBeVisible();
       for (const id of failedIds)
@@ -141,12 +144,12 @@ test.describe("Agent execution visibility and retained history", () => {
         .locator("summary")
         .filter({ has: page.getByTestId("rail-flyout-icon-agents") })
         .click();
-      await expect(rail.locator("[data-agent-run-id]")).toHaveCount(6);
+      await expect(rail.locator(ownedActiveRows)).toHaveCount(6);
       await page.setViewportSize({ width: 390, height: 844 });
       await page.getByTestId("mobile-rail-toggle").click();
       const drawer = page.getByTestId("mobile-rail-drawer");
 
-      await expect(drawer.locator("[data-agent-run-id]")).toHaveCount(6);
+      await expect(drawer.locator(ownedActiveRows)).toHaveCount(6);
       await page.keyboard.press("Escape");
       await expect(drawer).toHaveCount(0);
       await expect(page.getByTestId("mobile-rail-toggle")).toBeFocused();
@@ -161,7 +164,7 @@ test.describe("Agent execution visibility and retained history", () => {
       await expect(
         rail.locator(`[data-agent-run-id="${activeIds[3]}"]`),
       ).toHaveCount(0, { timeout: 20_000 });
-      await expect(rail.locator("[data-agent-run-id]")).toHaveCount(5);
+      await expect(rail.locator(ownedActiveRows)).toHaveCount(5);
     });
     test(`E2E-UX-02 agent history pagination, URL state and detached read-only view (${locale})`, async ({
       page,
@@ -174,7 +177,9 @@ test.describe("Agent execution visibility and retained history", () => {
       const path = `/projects/${slug}/agents/${encodeURIComponent(agentId)}`;
 
       await page.goto(path);
-      await expect(page.getByTestId("project-agent-page")).toBeVisible();
+      await expect(
+        page.getByTestId("project-agent-page").filter({ visible: true }),
+      ).toBeVisible();
       await expect(
         page.getByTestId("agent-history-row").filter({ visible: true }),
       ).toHaveCount(25);
@@ -426,7 +431,9 @@ test.describe("Agent execution visibility and retained history", () => {
         `/projects/${slug}/agents/${encodeURIComponent(operationId)}`,
       );
       await expect(
-        page.getByTestId("agent-retry-history-toolbar"),
+        page
+          .getByRole("region", { name: "History", exact: true })
+          .getByTestId("agent-retry-history-toolbar"),
       ).toBeVisible();
       await page.goto(`/runs/${source.runId}`);
       const actions = page.getByTestId("agent-run-actions");

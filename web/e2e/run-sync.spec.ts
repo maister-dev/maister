@@ -21,18 +21,26 @@ test.describe("branch sync (ADR-141)", () => {
     await page.goto(`/runs/${fx.runId}`);
 
     // (1) The behind/ahead chip paints the real drift (behind 1, ahead 1).
-    const chip = page.getByTestId("review-ahead-behind");
+    const chip = page
+      .getByTestId("review-ahead-behind")
+      .filter({ visible: true });
 
     await expect(chip).toBeVisible();
     await expect(chip).toContainText("1 behind");
 
     // (2) ADR-181 D9: the sync entry point is a link into the run git panel's
     // Update section, seeded from the project default (rebase).
-    await page.getByTestId("review-sync-open").first().click();
-    await expect(page.getByTestId("git-panel-section-update")).toBeVisible();
-    await expect(page.getByTestId("git-panel-update-strategy")).toHaveValue(
-      "rebase",
-    );
+    await page
+      .getByTestId("review-sync-open")
+      .filter({ visible: true })
+      .first()
+      .click();
+    await expect(
+      page.getByTestId("git-panel-section-update").filter({ visible: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("git-panel-update-strategy").filter({ visible: true }),
+    ).toHaveValue("rebase");
 
     // (3) Start the update onto the target — a clean rebase resolves
     // mechanically (the resolver only acts on a conflict).
@@ -40,14 +48,19 @@ test.describe("branch sync (ADR-141)", () => {
       r.url().includes(`/api/runs/${fx.runId}/sync`),
     );
 
-    await page.getByTestId("git-panel-action-update").click();
+    await page
+      .getByTestId("git-panel-action-update")
+      .filter({ visible: true })
+      .click();
     expect((await synced).status()).toBe(200);
 
     // (4) The DRIFT clears: the run branch is rebased on top of the target, so
     // it is 0 behind. It stays 1 ahead — that is its own commit, which is the
     // whole point of promoting it — so the chip remains, now reading "0 behind".
     await expect(chip).toContainText("0 behind", { timeout: 30_000 });
-    await expect(page.getByTestId("git-panel-update-result")).toBeVisible();
+    await expect(
+      page.getByTestId("git-panel-update-result").filter({ visible: true }),
+    ).toBeVisible();
 
     // (5) The promote action is live again (no sync claim held) and succeeds —
     // the run leaves Review for a terminal Done.
@@ -62,9 +75,11 @@ test.describe("branch sync (ADR-141)", () => {
       r.url().includes(`/api/runs/${fx.runId}/promote`),
     );
 
-    await page.getByTestId("review-promote").click();
+    await page.getByTestId("review-promote").filter({ visible: true }).click();
     expect((await promoted).status()).toBe(200);
-    await expect(page.getByTestId("review-promote")).toBeHidden({
+    await expect(
+      page.getByTestId("review-promote").filter({ visible: true }),
+    ).toBeHidden({
       timeout: 30_000,
     });
   });

@@ -1185,28 +1185,35 @@ describe("scratch run placement (ADR-166 Q1–Q3)", () => {
       })
       .toBe("WaitingForUser");
     const { session: live } = await scratchAndSession(runId);
+    let turnStarted = false;
     let finishTurn: () => void = () => {};
     const turnHeld = new Promise<void>((resolve) => {
       finishTurn = resolve;
     });
 
     fake.setPromptBehavior(async () => {
+      turnStarted = true;
       await turnHeld;
 
       return { stopReason: "end_turn", meta: null };
     });
-    const longTurn = sendScratchUserMessage({
-      runId,
-      body: { content: "long task", attachments: [] },
-      executionHosts: hosts,
-    }).catch(() => undefined);
+    const longTurn = Promise.allSettled([
+      sendScratchUserMessage({
+        runId,
+        body: { content: "long task", attachments: [] },
+        executionHosts: hosts,
+      }),
+    ]);
 
     await expect
-      .poll(async () => (await scratchAndSession(runId)).scratch.dialogStatus, {
+      .poll(() => turnStarted, {
         timeout: 15_000,
         interval: 25,
       })
-      .toBe("Running");
+      .toBe(true);
+    expect((await scratchAndSession(runId)).scratch.dialogStatus).toBe(
+      "Running",
+    );
     const queued = await sendScratchUserMessage({
       runId,
       body: { content: "queued before the crash", attachments: [] },
@@ -1225,7 +1232,12 @@ describe("scratch run placement (ADR-166 Q1–Q3)", () => {
       meta: null,
     }));
     finishTurn();
-    await longTurn;
+    expect(await longTurn).toMatchObject([
+      {
+        status: "fulfilled",
+        value: { delivery: "prompted", dialogStatus: "Crashed" },
+      },
+    ]);
     const sentBefore = fake.callsOf("sendPrompt").length;
     const response = await recoverRoute(
       new NextRequest(`http://localhost/api/scratch-runs/${runId}/recover`, {

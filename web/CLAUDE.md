@@ -24,14 +24,14 @@ is template demo material to be **replaced** as we implement MAIster routes.
 
 | Layer       | Choice                                            |
 | ----------- | ------------------------------------------------- |
-| Framework   | Next.js `16.4.3` (App Router)                     |
+| Framework   | Next.js `16.4.6` (App Router)                     |
 | React       | `19.3.1`                                          |
 | Language    | TypeScript `6.0.3`, strict, `@/*` → `./*`         |
 | UI library  | `@heroui/react` `3.2.6` + `@heroui/styles`        |
 | Styling     | Tailwind CSS `4.3.3` via `@tailwindcss/postcss`   |
 | Variants    | `tailwind-variants` `3.3.1`                       |
 | Theming     | Local script-free theme provider (default `dark`) |
-| Lint        | ESLint `9` flat config + Prettier                 |
+| Lint        | ESLint `10` flat config + Prettier                 |
 | Pkg manager | pnpm                                              |
 | Node        | 24 (per root CLAUDE.md container target)          |
 

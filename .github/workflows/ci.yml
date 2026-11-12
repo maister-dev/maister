@@ -3,11 +3,22 @@ name: CI
 on:
   push:
     branches:
-      - "**"
+      - master
   pull_request:
     branches:
       - master
     types: [opened, synchronize, reopened, labeled]
+
+# PR commits run once; master pushes qualify the integrated tree.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# Opt-in shared-host profile; developer defaults remain unchanged.
+env:
+  MAISTER_TEST_MAX_WORKERS: "1"
+  MAISTER_BUILD_MAX_WORKERS: "1"
+  NODE_OPTIONS: --max-old-space-size=4096
 
 jobs:
   lint-typecheck-unit:
@@ -19,19 +30,19 @@ jobs:
       DOCKER_HOST: tcp://127.0.0.1:1
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7.1.0
         with:
-          node-version: 24.19.0
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
+          node-version: 24.22.3
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6.1.1
+        with:
+          version: 11.3.0
+          cache: true
+          cache_dependency_path: pnpm-lock.yaml
 
       - name: Install dependencies (monorepo root)
         run: pnpm install --frozen-lockfile
@@ -78,45 +89,45 @@ jobs:
         run: pnpm --filter @maister/mcp test
 
   integration:
-    name: integration tests (web testcontainers)
+    name: integration remainder (web testcontainers)
     runs-on: ubuntu-latest
     if: contains(github.event.pull_request.labels.*.name, 'integration')
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7.1.0
         with:
-          node-version: 24.19.0
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
+          node-version: 24.22.3
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6.1.1
+        with:
+          version: 11.3.0
+          cache: true
+          cache_dependency_path: pnpm-lock.yaml
 
       - name: Install dependencies (monorepo root)
         run: pnpm install --frozen-lockfile
 
-      - name: Integration tests (web)
-        run: pnpm --filter maister-web test:integration
+      - name: Integration tests outside the mandatory A/B and isolation jobs
+        run: pnpm --filter maister-web test:integration:remainder
 
   librarian-acceptance:
     name: Librarian browser acceptance
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24.22.3
+      - uses: pnpm/action-setup@v6.1.1
         with:
           version: 11.3.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24.19.0
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
+          cache: true
+          cache_dependency_path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter maister-web exec playwright install --with-deps chromium
       - run: pnpm --filter maister-web test:e2e:librarian
@@ -133,22 +144,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [24.15.0, 24.19.0]
+        node: [24.22.3]
         shard: [1, 2]
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11.3.0
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: ${{ matrix.node }}
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
+      - uses: pnpm/action-setup@v6.1.1
+        with:
+          version: 11.3.0
+          cache: true
+          cache_dependency_path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm runtime:check
       - run: pnpm --filter maister-web test:integration:ab --shard ${{ matrix.shard }}/2
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: execution-data-plane-node-${{ matrix.node }}-shard-${{ matrix.shard }}-of-2
@@ -162,31 +173,63 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [24.15.0, 24.19.0]
+        node: [24.22.3, 26.13.1]
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11.3.0
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: ${{ matrix.node }}
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
+      - uses: pnpm/action-setup@v6.1.1
+        with:
+          version: 11.3.0
+          cache: true
+          cache_dependency_path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm runtime:check
       - run: pnpm test:runtime
       - run: pnpm test:stage-ab-lane
       - run: pnpm --filter @maister/supervisor test:integration:ab
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: execution-runtime-supervisor-node-${{ matrix.node }}
           path: /tmp/maister-ab-*/vitest.json
           if-no-files-found: error
 
+  node26-compatibility:
+    name: Node 26 web compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MAISTER_TEST_MAX_WORKERS: "1"
+      MAISTER_BUILD_MAX_WORKERS: "1"
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 26.13.1
+      - uses: pnpm/action-setup@v6.1.1
+        with:
+          version: 11.3.0
+          cache: true
+          cache_dependency_path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter maister-web test:unit
+      - run: pnpm test:runtime:compatibility
+      - run: pnpm --filter maister-web exec playwright install --with-deps chromium
+      - run: pnpm --filter maister-web test:e2e:execution-ab
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: node-26-web-compatibility
+          path: |
+            /tmp/maister-ab-*/vitest.json
+            web/test-results
+          if-no-files-found: error
+
   execution-isolation:
-    name: A/B isolation (macOS Intel, Node 24.19.0, part ${{ matrix.part }}/3)
+    name: A/B isolation (macOS Intel, Node 24.22.3, part ${{ matrix.part }}/3)
     runs-on: macos-15-intel
     timeout-minutes: 60
     strategy:
@@ -194,7 +237,7 @@ jobs:
       matrix:
         part: [1, 2, 3]
     env:
-      NODE_OPTIONS: --dns-result-order=ipv4first
+      NODE_OPTIONS: --max-old-space-size=4096 --dns-result-order=ipv4first
       MAISTER_TEST_DOCKER_PROBE_TIMEOUT_MS: "30000"
     steps:
       - name: Record runner and evidence location
@@ -207,15 +250,15 @@ jobs:
           printf 'commit=%s\nimage=%s\nimage_version=%s\narchitecture=%s\nrun_url=%s\n' \
             "$GITHUB_SHA" "$ImageOS" "$ImageVersion" "$RUNNER_ARCH" \
             "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > "$evidence_dir/runner.txt"
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24.22.3
+      - uses: pnpm/action-setup@v6.1.1
         with:
           version: 11.3.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24.19.0
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
+          cache: true
+          cache_dependency_path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm runtime:check
       - name: Prepare private Node compile cache
@@ -255,14 +298,14 @@ jobs:
       - name: Upload actual isolation reports
         id: isolation_reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: execution-isolation-part-${{ matrix.part }}-of-3-reports
           path: ${{ runner.temp }}/maister-isolation-evidence/ci-reports/
           if-no-files-found: error
       - name: Preserve failed outer reports before runtime cleanup
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: execution-isolation-part-${{ matrix.part }}-of-3-raw-reports
           path: ${{ runner.temp }}/maister-isolation-evidence/maister-ab-isolation-*/vitest.json
@@ -291,7 +334,7 @@ jobs:
           fi
       - name: Preserve isolation diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: execution-isolation-part-${{ matrix.part }}-of-3-diagnostics
           path: ${{ runner.temp }}/maister-isolation-evidence/
@@ -300,38 +343,39 @@ jobs:
   execution-isolation-complete:
     name: A/B isolation complete (macOS Intel, 7 suites / 51 cases)
     needs: [execution-isolation]
-    if: always()
+    # Validate failed parts, but do not delay a newer PR run after cancellation.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
       MAISTER_ISOLATION_JOB_RESULT: ${{ needs.execution-isolation.result }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24.22.3
+      - uses: pnpm/action-setup@v6.1.1
         with:
           version: 11.3.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24.19.0
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
+          cache: true
+          cache_dependency_path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8.0.2
         with:
           name: execution-isolation-part-1-of-3-reports
           path: ${{ runner.temp }}/maister-isolation-combined/part-1
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8.0.2
         with:
           name: execution-isolation-part-2-of-3-reports
           path: ${{ runner.temp }}/maister-isolation-combined/part-2
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8.0.2
         with:
           name: execution-isolation-part-3-of-3-reports
           path: ${{ runner.temp }}/maister-isolation-combined/part-3
       - name: Validate all preflights and the complete original isolation inventory
         if: always()
         run: node scripts/isolation-ci-evidence.mjs "$RUNNER_TEMP/maister-isolation-combined"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: execution-isolation-combined
@@ -343,17 +387,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24.22.3
+      - uses: pnpm/action-setup@v6.1.1
         with:
           version: 11.3.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24.19.0
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
+          cache: true
+          cache_dependency_path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - run: docker build --target production --tag maister-ab:ci .
+      - run: docker build --target production --build-arg MAISTER_BUILD_MAX_WORKERS="$MAISTER_BUILD_MAX_WORKERS" --tag maister-ab:ci .
       - name: Binary HTTP against the real supervisor in the image
         run: docker run --rm --workdir /app/web --entrypoint node maister-ab:ci node_modules/vitest/vitest.mjs run lib/__tests__/supervisor-client-binary.integration.test.ts --project=integration
       - name: Production HTTP and SIGTERM against real PostgreSQL

@@ -3007,6 +3007,7 @@ async function provisionReviewCommentsRepo(
 async function seedReviewCommentsFixture(
   pool: Pool,
   user: UserFixture,
+  projectSlug: string,
 ): Promise<ReviewCommentsFixtureRecord> {
   const ids = {
     project: randomUUID(),
@@ -3030,7 +3031,7 @@ async function seedReviewCommentsFixture(
   const repoPath = `${RUNTIME_ROOT}/${ids.project}`;
   const worktreePath = `${repoPath}/.worktrees/e2e-review-comments`;
 
-  await pool.query(`DELETE FROM projects WHERE slug = $1`, [RC_SLUG]);
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [projectSlug]);
 
   const { baseCommit } = await provisionReviewCommentsRepo(
     repoPath,
@@ -3043,7 +3044,7 @@ async function seedReviewCommentsFixture(
      VALUES ($1, $2, $3, $4, 'main', $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
     [
       ids.project,
-      RC_SLUG,
+      projectSlug,
       "MAIster E2E Review Comments",
       repoPath,
       `${repoPath}/maister.yaml`,
@@ -3226,7 +3227,7 @@ async function seedReviewCommentsFixture(
   return {
     runId: ids.run,
     hitlRequestId: ids.hitl,
-    projectSlug: RC_SLUG,
+    projectSlug: projectSlug,
     branch: RC_BRANCH,
     worktreePath,
     filePath: RC_FILE_PATH,
@@ -8691,7 +8692,16 @@ async function main(): Promise<void> {
     const m23 = await seedM23Fixture(pool, admin.id);
     const m27Editor = await seedM27FlowEditorFixture(pool, admin.id);
     const flowsAuthoring = await seedFlowsAuthoringFixture(pool, admin.id);
-    const reviewComments = await seedReviewCommentsFixture(pool, admin);
+    const reviewComments = await seedReviewCommentsFixture(
+      pool,
+      admin,
+      RC_SLUG,
+    );
+    const reviewDiffScopes = await seedReviewCommentsFixture(
+      pool,
+      admin,
+      "e2e-review-diff-scopes",
+    );
     const flowStudioArtifacts = await seedFlowStudioArtifactsFixture(
       pool,
       admin.id,
@@ -8866,6 +8876,7 @@ You answer when summoned by an @mention.
         m27Editor,
         flowsAuthoring,
         reviewComments,
+        reviewDiffScopes,
         flowStudioArtifacts,
         flowViewer,
         platformAgents,

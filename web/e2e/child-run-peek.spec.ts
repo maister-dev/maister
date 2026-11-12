@@ -102,7 +102,9 @@ test("E2E-PKN-01 E2E-PKN-03 E2E-PKN-07: nested navigation keeps the original Run
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.goto(`/runs/${fixture.anchor}?wb=files&file=README.md#inspect`);
   await expect(page.getByTestId("orchestrator-run-subtree")).toHaveCount(0);
-  const children = page.getByTestId("run-inspector-child-runs");
+  const children = page
+    .getByTestId("run-inspector-child-runs")
+    .filter({ visible: true });
 
   await expect(children).toHaveCount(1);
   await expect(
@@ -110,6 +112,7 @@ test("E2E-PKN-01 E2E-PKN-03 E2E-PKN-07: nested navigation keeps the original Run
   ).toHaveCount(0);
   const trigger = page
     .getByTestId("run-inspector-child-runs")
+    .filter({ visible: true })
     .locator(`[data-child-run-id="${fixture.child}"] a`);
 
   await trigger.click();
@@ -166,7 +169,9 @@ test("E2E-PKD-07 E2E-PKN-06 E2E-PKN-12: selected content stays read-only and liv
   );
   await expect(peek(page)).toHaveAttribute("data-selected-run", fixture.child);
   await expect(peek(page)).toContainText("Done");
-  await expect(page.getByTestId("run-header-status")).toContainText("Running");
+  await expect(
+    page.getByRole("main").getByTestId("run-header-status"),
+  ).toContainText("Running");
 });
 
 test("E2E-PKN-04 E2E-PKN-08 E2E-PKN-10: parent file, inspector and librarian draft survive keyboard peek and resize", async ({
@@ -189,6 +194,7 @@ test("E2E-PKN-04 E2E-PKN-08 E2E-PKN-10: parent file, inspector and librarian dra
   );
   const trigger = page
     .getByTestId("run-inspector-child-runs")
+    .filter({ visible: true })
     .locator(`[data-child-run-id="${fixture.child}"] a`);
 
   await trigger.scrollIntoViewIfNeeded();
@@ -290,6 +296,7 @@ test("E2E-PKN-02 E2E-PKN-11: Russian entry labels, result availability and contr
   await page.goto(`/runs/${fixture.anchor}`);
   const trigger = page
     .getByTestId("run-inspector-child-runs")
+    .filter({ visible: true })
     .locator(`[data-child-run-id="${fixture.child}"] a`);
 
   await trigger.click();
@@ -550,7 +557,9 @@ test("E2E-PKD-07: late A responses cannot overwrite B or a newer A selection", a
   });
   try {
     await page.goto(`/runs/${fixture.anchor}`);
-    const list = page.getByTestId("run-inspector-child-runs");
+    const list = page
+      .getByTestId("run-inspector-child-runs")
+      .filter({ visible: true });
 
     await list.locator(`[data-child-run-id="${fixture.child}"] a`).click();
     await expect.poll(() => intercepted).toBe(true);
@@ -670,6 +679,7 @@ test("E2E-PKN-04 E2E-PKN-10: an unsent parent HITL draft survives child navigati
     await draft.fill("Unsent parent instruction");
     const trigger = page
       .getByTestId("run-inspector-child-runs")
+      .filter({ visible: true })
       .locator(`[data-child-run-id="${child}"] a`);
 
     await trigger.click();

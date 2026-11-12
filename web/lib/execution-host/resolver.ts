@@ -3,10 +3,13 @@ import type { ExecutionAssignment, ExecutionHost } from "@/lib/db/schema";
 import type { ExecutionHostTransport } from "./contracts";
 import type { RegistrationResult } from "./registrar";
 
+import { is } from "drizzle-orm";
+import { NodePgTransaction } from "drizzle-orm/node-postgres";
 import pino, { type Logger } from "pino";
 
 import { getHostById } from "./hosts";
 import { ensureLocalExecutionDataPlane } from "./event-plane";
+import { ensureLocalExecutionHost } from "./registrar";
 import { HOST_IDENTITY_MISMATCH_REASON } from "./types";
 
 import { MaisterError } from "@/lib/errors";
@@ -94,6 +97,16 @@ export async function localHost(
     at - state.memo.observedAt < HOST_MEMO_TTL_MS
   ) {
     return state.memo.host;
+  }
+  // A claim may resolve a host inside its own transaction. Neither a background
+  // consumer nor the shared memo may outlive that transaction's connection/data.
+  // The next pooled issuer activates ingestion after the claim commits.
+  if (is(opts.db, NodePgTransaction)) {
+    const result = await ensureLocalExecutionHost(opts);
+
+    if (result.status !== "registered") throw hostUnavailableError(result);
+
+    return result.host;
   }
   if (state.inflight) return state.inflight;
 

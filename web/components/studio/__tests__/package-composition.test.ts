@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import { packageFilesEditorLabels } from "@/lib/flows/editor/editor-labels";
+import { PackageComposition } from "@/components/studio/package-composition";
 
 const nav = vi.hoisted(() => ({ search: "" }));
 const translations = vi.hoisted(() =>
@@ -24,8 +25,6 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
   useSearchParams: () => new URLSearchParams(nav.search),
 }));
-
-import { PackageComposition } from "@/components/studio/package-composition";
 
 const stubT = Object.assign((key: string) => key, {
   raw: (key: string) => key,

@@ -1,74 +1,64 @@
 import { test, expect } from "@playwright/test";
 
 test.describe("i18n and theming", () => {
-  test("theme toggle persists across page reload", async ({ page }) => {
-    await page.goto("/login");
-
-    const htmlElement = page.locator("html");
-    const initialClass = await htmlElement.getAttribute("class");
-
-    const themeToggle = page.locator('button[aria-label*="theme" i]');
-
-    if (await themeToggle.isVisible()) {
-      await themeToggle.click();
-
-      await page.waitForTimeout(500);
-
-      const afterToggleClass = await htmlElement.getAttribute("class");
-
-      expect(afterToggleClass).not.toBe(initialClass);
-
-      await page.reload();
-
-      const afterReloadClass = await htmlElement.getAttribute("class");
-
-      expect(afterReloadClass).toBe(afterToggleClass);
-    }
-  });
-
-  test("language toggle switches visible copy", async ({ page }) => {
-    await page.goto("/login");
-
-    const localeToggle = page.locator('button[aria-label*="language" i]');
-
-    if (await localeToggle.isVisible()) {
-      const initialContent = await page.content();
-
-      await localeToggle.click();
-
-      await page.waitForTimeout(500);
-
-      const afterToggleContent = await page.content();
-
-      expect(afterToggleContent).not.toBe(initialContent);
-    }
-  });
-
-  test("locale preference persists in NEXT_LOCALE cookie", async ({
+  test("theme toggle persists across page reload", async ({
     page,
     context,
+    baseURL,
   }) => {
+    await context.addCookies([{ name: "theme", value: "dark", url: baseURL! }]);
     await page.goto("/login");
 
-    const localeToggle = page.locator('button[aria-label*="language" i]');
+    const html = page.locator("html");
 
-    if (await localeToggle.isVisible()) {
-      await localeToggle.click();
+    await expect(html).toHaveClass(/\bdark\b/);
+    await page.getByRole("button", { name: "Switch to light mode" }).click();
+    await expect(html).toHaveClass(/\blight\b/);
+    await expect
+      .poll(
+        async () =>
+          (await context.cookies()).find(({ name }) => name === "theme")?.value,
+      )
+      .toBe("light");
 
-      await page.waitForTimeout(500);
+    await page.reload();
 
-      const cookies = await context.cookies();
-      const localeCookie = cookies.find((c) => c.name === "NEXT_LOCALE");
+    await expect(html).toHaveClass(/\blight\b/);
+    await expect(
+      page.getByRole("button", { name: "Switch to dark mode" }),
+    ).toBeVisible();
+  });
 
-      expect(localeCookie).toBeDefined();
-      expect(localeCookie?.value).toBeTruthy();
+  test("language toggle changes the login copy and persists across reload", async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await context.addCookies([
+      { name: "NEXT_LOCALE", value: "en", url: baseURL! },
+    ]);
+    await page.goto("/login");
+    await expect(
+      page.getByRole("heading", { name: "Sign in.", exact: true }),
+    ).toBeVisible();
 
-      await page.reload();
+    await page.getByRole("button", { name: "Switch language to RU" }).click();
 
-      const newCookies = await context.cookies();
-      const newLocaleCookie = newCookies.find((c) => c.name === "NEXT_LOCALE");
+    await expect(
+      page.getByRole("heading", { name: "Вход.", exact: true }),
+    ).toBeVisible();
+    expect(
+      (await context.cookies()).find(({ name }) => name === "NEXT_LOCALE")
+        ?.value,
+    ).toBe("ru");
 
-      expect(newLocaleCookie?.value).toBe(localeCookie?.value);
-    }
+    await page.reload();
+
+    await expect(
+      page.getByRole("heading", { name: "Вход.", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Switch language to EN" }),
+    ).toBeVisible();
   });
 });

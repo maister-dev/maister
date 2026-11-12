@@ -42,7 +42,8 @@ async function scheduleFromLaunchDialog(input: {
   taskTitle: string;
 }): Promise<string> {
   const taskCard = input.page
-    .locator("[data-board]")
+    .getByRole("region", { name: "Task board", exact: true })
+    .filter({ visible: true })
     .getByText(input.taskTitle)
     .locator("xpath=ancestor::article");
 
@@ -216,7 +217,12 @@ test("Automations: schedule, inspect overdue recovery, cancel, and show a safe t
   );
 
   await refusedRow.getByRole("button", { name: "Run now" }).click();
-  expect((await runNowResponse).status()).toBe(200);
+  const refusedResponse = await runNowResponse;
+
+  expect(refusedResponse.status()).toBe(200);
+  expect(await refusedResponse.json()).toMatchObject({
+    intent: { state: "Failed", errorCode: "CONFLICT", resultingRun: null },
+  });
   const failedRow = page
     .getByRole("listitem")
     .filter({ hasText: scheduleName })
@@ -224,6 +230,6 @@ test("Automations: schedule, inspect overdue recovery, cancel, and show a safe t
 
   await expect(failedRow).toHaveCount(1);
   await expect(failedRow).toContainText(
-    "Action needs project or task attention",
+    "Automation changed; refresh and try again",
   );
 });

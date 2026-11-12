@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 
 import createNextIntlPlugin from "next-intl/plugin";
 
+import { buildMaxWorkers } from "../scripts/validation-resources.mjs";
+
 const withNextIntl = createNextIntlPlugin("./i18n/request.ts");
 // The pnpm workspace root is the module-resolution boundary (web imports
 // ../runtime/node-version). Left to inference, Next walks up to the nearest
@@ -12,15 +14,19 @@ const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
+const buildWorkers = buildMaxWorkers(process.env);
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  experimental: { authInterrupts: true },
-  // Test build lanes run tsc separately; existing static ext route signatures
-  // are incompatible with Next's generated build validator.
-  ...(process.env.MAISTER_TEST_WEB_BUILD === "1"
-    ? { typescript: { ignoreBuildErrors: true } }
-    : {}),
+  experimental: {
+    authInterrupts: true,
+    ...(buildWorkers === undefined ? {} : { cpus: buildWorkers }),
+  },
+  // Test fixture builds run type checking in a separate validation lane.
+  typescript: {
+    tsconfigPath: "tsconfig.build.json",
+    ignoreBuildErrors: process.env.MAISTER_TEST_WEB_BUILD === "1",
+  },
   serverExternalPackages: ["pg"],
   turbopack: {
     root: repoRoot,

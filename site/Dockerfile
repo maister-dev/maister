@@ -16,15 +16,22 @@ WORKDIR /app
 
 FROM base AS deps
 
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3 make g++ \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches/ ./patches/
 COPY mcp/package.json ./mcp/package.json
 COPY site/package.json ./site/package.json
 COPY site-docs/package.json ./site-docs/package.json
 COPY supervisor/package.json ./supervisor/package.json
 COPY web/package.json ./web/package.json
+COPY scripts/check-native-dependencies.mjs ./scripts/
 
-RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile --filter @maister/site... --filter maister-web...
+RUN --mount=type=cache,target=/usr/local/pnpm/store \
+    pnpm install --frozen-lockfile --filter @maister/site... --filter maister-web... \
+ && node scripts/check-native-dependencies.mjs
 
 FROM deps AS builder
 
@@ -59,7 +66,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3001
 
 RUN groupadd --system --gid 1001 site \
- && useradd --system --uid 1001 --gid site --home /app --shell /usr/sbin/nologin site
+ && useradd --uid 1001 --gid site --home /app --shell /usr/sbin/nologin site
 
 WORKDIR /app
 

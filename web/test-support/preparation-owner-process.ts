@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import { once } from "node:events";
 import { syncBuiltinESMExports } from "node:module";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { z } from "zod";
 
@@ -60,7 +61,10 @@ async function capture(): Promise<number> {
   let entered = false;
 
   fs.lstat = (async (...args: Parameters<typeof fs.lstat>) => {
-    if (!entered && String(args[0]) === target) {
+    const candidate =
+      args[0] instanceof URL ? fileURLToPath(args[0]) : args[0].toString();
+
+    if (!entered && candidate === target) {
       entered = true;
       const controller = new AbortController();
       const disconnect = (): void => controller.abort();

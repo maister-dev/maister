@@ -143,7 +143,9 @@ test("E2E-NAV-01 the Desk is home, and every region it promises is on it", async
   );
   await page.getByTestId("home-switch-projects").click();
   await expect(page).toHaveURL(/\/projects$/);
-  await expect(page.getByRole("heading", { name: "Projects." })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Projects", exact: true }),
+  ).toBeVisible();
 });
 
 // ── The Now strip filters the table in place (ADR-174 D1/D3) ───────────────
@@ -615,39 +617,24 @@ test("E2E-EDGE-NAV-01 the empty Desk is read where it renders while React parks 
   }
 });
 
-// ADR-171 D7: the render is the stream's first cursor. A reader with no
-// project has nothing that can move under the page, so its load must not be
-// followed by a refresh — the connect-time refresh re-rendered every page on
-// the server a second time, and it is what put the Desk in the DOM twice.
-test("E2E-ATN-17 a load nothing moved under is not refreshed", async ({
+// ADR-171 D7: verify the page supplies its baseline to the stream. The route
+// integration and AttentionLiveRefresh tests own unchanged-baseline silence.
+test("E2E-ATN-17 the attention stream starts from the rendered baseline", async ({
   browser,
 }) => {
   const fx = loadFixtures().byKey.desk;
   const { page } = await signIn(browser, fx.nobody);
-  const refreshes: string[] = [];
-
-  page.on("request", (request) => {
-    const headers = request.headers();
-
-    if (
-      headers.rsc === "1" &&
-      headers["next-router-prefetch"] === undefined &&
-      new URL(request.url()).pathname === "/"
-    ) {
-      refreshes.push(request.url());
-    }
-  });
 
   try {
     const stream = page.waitForRequest("**/api/attention/stream**");
 
     await page.goto("/");
     await expect(desk(page).getByTestId("desk-empty")).toBeVisible();
-    await stream;
-    // Past the stream's first poll and its first counter check.
-    await page.waitForTimeout(4000);
+    const baseline = new URL((await stream).url()).searchParams;
 
-    expect(refreshes).toEqual([]);
+    expect(baseline.get("lastEventId")).toMatch(/^\d+$/);
+    expect(baseline.get("decisions")).toBe("0");
+    expect(baseline.get("updates")).toBe("0");
   } finally {
     await page.context().close();
   }

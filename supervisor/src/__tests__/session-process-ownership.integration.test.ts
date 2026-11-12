@@ -375,9 +375,10 @@ it.each(["within grace", "at deadline"] as const)(
 );
 
 it("DELETE retains ownership and records the group stage when a descendant outlives the grace", async () => {
+  const killGraceMs = 2_000;
   const owner = await ownedHost({
     fixture: "retiring-descendant-acp.mjs",
-    killGraceMs: 250,
+    killGraceMs,
   });
   const runId = "stuck-descendant";
   const pidFile = join(owner.host.runtimeRoot, "descendant.pid");
@@ -396,15 +397,37 @@ it("DELETE retains ownership and records the group stage when a descendant outli
   const leader = await recordOwnedProcess(owner, entry.record.pid);
 
   await recordOwnedProcess(owner, Number(await readFile(pidFile, "utf8")));
+  const inspect = processGroups.inspectProcessGroup;
+  const now = performance.now.bind(performance);
+  let observedLiveDescendant = false;
+
+  vi.spyOn(performance, "now").mockImplementation(
+    () => now() + (observedLiveDescendant ? killGraceMs : 0),
+  );
+  vi.spyOn(processGroups, "inspectProcessGroup").mockImplementation(
+    async (...args) => {
+      const observation = await inspect(...args);
+
+      if (args[0] === leader.identity.pgid && observation.state === "active") {
+        // Exhaust the grace only after the real OS observation, retaining the
+        // live descendant. A loaded runner must not turn this into a ps timeout.
+        expect(
+          entry.child.exitCode !== null || entry.child.signalCode !== null,
+        ).toBe(true);
+        observedLiveDescendant = true;
+      }
+
+      return observation;
+    },
+  );
   const command = envelope("session.delete", fenceFor(owner.host, runId));
-  const started = performance.now();
   const response = await postJson(
     `${owner.host.url}/sessions/${sessionId}`,
     command,
     "DELETE",
   );
 
-  expect(performance.now() - started).toBeGreaterThanOrEqual(250);
+  expect(observedLiveDescendant).toBe(true);
   expect(response.status).toBe(503);
   expect(response.body).toMatchObject({
     code: "EXECUTOR_UNAVAILABLE",
@@ -413,14 +436,14 @@ it("DELETE retains ownership and records the group stage when a descendant outli
       stage: "process_group_active",
       sessionId,
       runId,
-      killGraceMs: 250,
+      killGraceMs,
     },
   });
   expect(entry.child.exitCode !== null || entry.child.signalCode !== null).toBe(
     true,
   );
   expect(entry.record.terminalPublished).toBe(true);
-  expect(await inspectProcessGroup(leader.identity.pgid)).toMatchObject({
+  expect(await inspect(leader.identity.pgid)).toMatchObject({
     state: "active",
   });
   expect(owner.host.hostState.sessionProcessesForRun(runId)[0].phase).toBe(

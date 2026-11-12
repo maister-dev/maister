@@ -34,6 +34,10 @@ import { createLocalDirectTransport } from "@/lib/execution-host/transports/loca
 import { countingTransport } from "@/test-support/counting-execution-host-transport";
 import { seedLocalHost } from "@/test-support/execution-host-seed";
 import {
+  localHost,
+  resetResolverForTests,
+} from "@/lib/execution-host/resolver";
+import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
@@ -59,6 +63,7 @@ beforeAll(async () => {
 afterEach(async () => {
   await stopRuntimeEventConsumers();
   resetRuntimeEventConsumersForTests();
+  resetResolverForTests();
   while (cleanups.length > 0) await cleanups.pop()!();
 });
 
@@ -194,6 +199,39 @@ async function startCase(name: string): Promise<Case> {
 }
 
 describe("batched runtime-event consumer on a real supervisor", () => {
+  it("cold transactional host resolution leaves ingestion usable after commit", async () => {
+    const host = await startCase("transactional-resolution");
+    const transport = createLocalDirectTransport();
+
+    resetResolverForTests();
+    await db.transaction(async (tx) => {
+      expect((await localHost({ db: tx, transport })).id).toBe(host.hostId);
+    });
+    // The next issuer uses the pooled DB after the claim transaction has ended.
+    expect((await localHost({ db, transport })).id).toBe(host.hostId);
+    await host.emit();
+    const head = (await host.head()).toString();
+
+    await expect
+      .poll(
+        async () => {
+          const result = await database.pool.query<{
+            contiguous: string | null;
+            acknowledged: string | null;
+          }>(
+            `select last_contiguous_sequence::text as contiguous,
+                  last_ack_confirmed_sequence::text as acknowledged
+             from execution_event_streams where execution_host_id = $1`,
+            [host.hostId],
+          );
+
+          return result.rows[0];
+        },
+        { timeout: 10_000 },
+      )
+      .toEqual({ contiguous: head, acknowledged: head });
+  });
+
   it("I6: a burst of 3N events commits as three batches with one ACK each", async () => {
     const saved = process.env.MAISTER_EVENT_INGEST_BATCH_ROWS;
     // A small N keeps the burst quick to produce; the bound is the ratio.

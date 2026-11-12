@@ -11,14 +11,20 @@ test("platform ACP runners drive admin settings, task launch, and scratch launch
 
   await page.goto("/settings");
 
-  const platformDefault = page.getByLabel("Platform default runner");
+  const platformDefault = page.getByRole("combobox", {
+    name: "Platform default runner",
+  });
 
   await expect(platformDefault).toHaveValue("claude-code");
-  await expect(page.getByText("Adapter support")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Adapter support" }),
+  ).toBeVisible();
   // The compact adapter cards (ADR-094) show a per-adapter setup hint for
   // adapters the stub diagnostics does not report available; the binary moved
   // into a collapsed <details>, so it is no longer asserted here.
-  await expect(page.getByText(/Install the .gemini. CLI/i)).toBeVisible();
+  await expect(
+    page.getByRole("main").getByText(/Install the .gemini. CLI/i),
+  ).toBeVisible();
   await expect(page.getByRole("cell", { name: "codex-zai-glm" })).toBeVisible();
   // codex-zai-glm is NotReady (openai_compatible) → its default-runner option is
   // disabled. Readiness now renders as a color dot, not a "NotReady" label.
@@ -30,10 +36,13 @@ test("platform ACP runners drive admin settings, task launch, and scratch launch
   // The board card surfaces the resolved MODEL, not the runner id — the id
   // survives in the launch popover, which renders `<id> · <model>`. Asserting
   // "claude-code" here matched nothing on the page at all.
-  await expect(page.getByText("claude-sonnet-4-6").first()).toBeVisible();
+  await expect(
+    page.getByRole("main").getByText("claude-sonnet-4-6").first(),
+  ).toBeVisible();
 
   const backlogCard = page
-    .locator("[data-board]")
+    .getByRole("main")
+    .getByRole("region", { name: "Task board", exact: true })
     .getByText("Acceptance backlog launch")
     .locator("xpath=ancestor::article");
 

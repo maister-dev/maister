@@ -7,6 +7,7 @@ import { atomicWriteBuffer } from "@/lib/atomic";
 import { sha256Bytes } from "@/lib/evaluations/digest";
 import { MaisterError } from "@/lib/errors";
 import { evaluationEvidenceRoot } from "@/lib/instance-config";
+import { runtimeFileUrl } from "@/lib/runtime-file-url";
 
 // Storage generation marker — a root-rotation namespace for GC. Blob keys embed
 // it so a future generation can prune an old one without touching live blobs.
@@ -91,7 +92,7 @@ export async function readEvidenceBlob(
     EVIDENCE_READ_MAX_BYTES,
   );
 
-  const handle = await open(full, "r");
+  const handle = await open(runtimeFileUrl(full), "r");
 
   try {
     // Read cap + 1 so a full window signals possible truncation.

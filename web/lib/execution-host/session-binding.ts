@@ -50,7 +50,9 @@ export async function lockCurrentSessionAssignment(
         eq(executionAssignments.runId, input.runId),
       ),
     )
-    .for("update")
+    // Command evidence rechecks this FK after repeated updates in one
+    // transaction. Serialize assignment changes without blocking KEY SHARE.
+    .for("no key update")
     .limit(1);
 
   return assignment?.state === "active" ? assignment : null;

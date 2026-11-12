@@ -738,7 +738,7 @@ test.describe("Manual task admission through the real browser and controlled pro
 
 function launchControl(page: Page, title: string): Locator {
   const card = page
-    .locator("[data-board]")
+    .getByRole("region", { name: "Task board", exact: true })
     .getByText(title, { exact: true })
     .locator("xpath=ancestor::article");
 

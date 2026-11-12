@@ -15,7 +15,9 @@ async function registerNewEmpty(page: Page, location: string): Promise<string> {
 
   await page.goto("/projects/new");
   await page.getByRole("radio", { name: "New empty project" }).click();
-  await page.locator('input[name="target"]').fill(location);
+  await page
+    .getByRole("textbox", { name: "Local path or clone folder", exact: true })
+    .fill(location);
   await page.getByRole("button", { name: "Register project" }).click();
   const href = await page
     .getByRole("link", { name: /Open project/ })
@@ -68,7 +70,9 @@ test("registers a new empty project without writing maister.yaml", async ({
   await page.getByRole("radio", { name: "New empty project" }).click();
   await expect(page.locator('input[name="repoUrl"]')).toHaveCount(0);
 
-  await page.locator('input[name="target"]').fill(location);
+  await page
+    .getByRole("textbox", { name: "Local path or clone folder", exact: true })
+    .fill(location);
 
   const registerResponse = page.waitForResponse(
     (response) =>
@@ -163,7 +167,10 @@ async function openConfigReview(page: Page): Promise<void> {
       value.request().method() === "POST",
   );
 
-  await page.getByTestId("config-persist-open").click();
+  await page
+    .getByTestId("config-persist-open")
+    .filter({ visible: true })
+    .click();
   const actual = await response;
 
   expect(actual.status(), JSON.stringify(await actual.json())).toBe(200);
@@ -201,7 +208,9 @@ test("E2E-CPC-02: review precedes first commit, cancellation is inert and the Se
   await expect(dialog).toContainText("main");
   await dialog.getByTestId("config-persist-close").click();
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByTestId("config-persist-open")).toBeFocused();
+  await expect(
+    page.getByTestId("config-persist-open").filter({ visible: true }),
+  ).toBeFocused();
   await expect(
     readFile(path.join(location, "maister.yaml"), "utf8"),
   ).rejects.toMatchObject({ code: "ENOENT" });
@@ -275,7 +284,9 @@ test("E2E-CPC-03: RU stale review, lost receipt reload, explicit push failure an
     { name: "NEXT_LOCALE", value: "ru", url: new URL(created.url()).origin },
   ]);
   await page.goto(`/projects/${slug}?tab=settings`);
-  await expect(page.getByTestId("config-persist-cached-status")).toHaveCount(0);
+  await expect(
+    page.getByRole("main").getByTestId("config-persist-cached-status"),
+  ).toHaveCount(0);
   await openConfigReview(page);
   const dialog = page.getByTestId("config-persist-dialog");
 
@@ -337,7 +348,10 @@ test("E2E-CPC-03: RU stale review, lost receipt reload, explicit push failure an
   ).toBe(operationId);
   await page.unroute(`${base}**`);
   await page.reload();
-  await page.getByTestId("config-persist-open").click();
+  await page
+    .getByTestId("config-persist-open")
+    .filter({ visible: true })
+    .click();
   await expect(dialog.getByTestId("config-commit-success")).toContainText(
     committedSha,
   );
@@ -418,13 +432,19 @@ test("E2E-CPC-03: RU stale review, lost receipt reload, explicit push failure an
   await page.goto(`/projects/${slug}`);
   await page.getByRole("button", { name: "Скрыть", exact: true }).click();
   await page.reload();
-  await expect(page.getByTestId("config-persist-open")).toHaveCount(0);
+  await expect(
+    page.getByTestId("config-persist-open").filter({ visible: true }),
+  ).toHaveCount(0);
   await page.goto(`/projects/${slug}?tab=settings`);
-  await expect(page.getByTestId("config-persist-open")).toHaveCount(1);
-  await expect(page.getByTestId("config-persist-open")).toBeVisible();
-  await expect(page.getByTestId("config-persist-status")).toContainText(
-    "отличается от Git",
-  );
+  await expect(
+    page.getByTestId("config-persist-open").filter({ visible: true }),
+  ).toHaveCount(1);
+  await expect(
+    page.getByTestId("config-persist-open").filter({ visible: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("main").getByTestId("config-persist-status"),
+  ).toContainText("отличается от Git");
   await page.unroute(`**/api/projects/${slug}/persist-config/${operationId}`);
   const pendingReview = await page.request.post(
     `/api/projects/${slug}/persist-config/${operationId}/push/preview`,
@@ -447,7 +467,10 @@ test("E2E-CPC-03: RU stale review, lost receipt reload, explicit push failure an
     );
   });
   await page.reload();
-  await page.getByTestId("config-persist-open").click();
+  await page
+    .getByTestId("config-persist-open")
+    .filter({ visible: true })
+    .click();
   await expect(dialog.getByTestId("config-push-state")).toContainText(
     "Результат push неизвестен",
   );
@@ -595,7 +618,11 @@ test("E2E-CPC-04: board save retains its receipt and push review across status r
   ).toBe(commitSha);
   await dialog.getByTestId("config-persist-close").click();
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByTestId("config-persist-open")).toBeFocused();
+  await expect(
+    page.getByTestId("config-persist-open").filter({ visible: true }),
+  ).toBeFocused();
   await page.getByRole("button", { name: "Dismiss", exact: true }).click();
-  await expect(page.getByTestId("config-persist-open")).toHaveCount(0);
+  await expect(
+    page.getByTestId("config-persist-open").filter({ visible: true }),
+  ).toHaveCount(0);
 });

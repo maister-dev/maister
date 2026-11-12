@@ -61,6 +61,7 @@ import {
   systemCachePath,
   versionTagSchema,
 } from "@/lib/flow-paths";
+import { runtimeFileUrl } from "@/lib/runtime-file-url";
 
 // FIXME(any): remove the schema-module bridge once Drizzle's generated table
 // types remain stable across service and integration-test boundaries.
@@ -668,7 +669,7 @@ export async function isLocalDirectorySource(
   if (!candidate) return { kind: "git" };
 
   try {
-    const st = await stat(candidate);
+    const st = await stat(runtimeFileUrl(candidate));
 
     if (!st.isDirectory()) return { kind: "git" };
     if (!(await pathExists(join(candidate, "flow.yaml")))) {

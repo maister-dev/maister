@@ -9,6 +9,7 @@ import {
   installedPackageSource,
   type PackageSource,
 } from "@/lib/queries/package-bom";
+import { getStudioPackageBom } from "@/lib/queries/packages";
 
 // getStudioPackageBom looks the install row up in the DB then delegates to the
 // shared builder. Mock only the DB lookup; the disk reads run for real.
@@ -21,8 +22,6 @@ vi.mock("@/lib/db/client", () => ({
     }),
   }),
 }));
-
-import { getStudioPackageBom } from "@/lib/queries/packages";
 
 const manifest = {
   spec: { flows: [{ id: "dev", path: "flows/dev" }], mcps: [{ id: "m1" }] },

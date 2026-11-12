@@ -56,6 +56,7 @@ import {
   recordDrop,
 } from "@/lib/workbench-lifecycle/service";
 import { readWorktreeProvenanceMetadata } from "@/lib/worktree-provenance";
+import { runtimeFileUrl } from "@/lib/runtime-file-url";
 
 const { projects, runs, workspaces } = schema;
 
@@ -231,7 +232,7 @@ async function listCandidates(
   let resolvedRoot: string;
 
   try {
-    resolvedRoot = await realpath(root);
+    resolvedRoot = await realpath(runtimeFileUrl(root));
   } catch (error) {
     if (isMissingPathError(error)) return [];
 
@@ -1246,7 +1247,7 @@ export async function runWorkspaceReconciliationSweep(
   let removalRoot = root;
 
   try {
-    removalRoot = await realpath(root);
+    removalRoot = await realpath(runtimeFileUrl(root));
   } catch (error) {
     if (!isMissingPathError(error)) throw error;
   }

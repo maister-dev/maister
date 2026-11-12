@@ -9,6 +9,7 @@ import { createInvocation, fixtureProcessEnvironment, FIXTURE_WATCHDOG, logInvoc
 import { retainLaneReaper } from "../web/test-support/lane-reaper.ts";
 
 import { assertSupportedNode } from "../runtime/node-version.ts";
+import { testMaxWorkers } from "./validation-resources.mjs";
 
 // Explicit owning seams make a renamed or undiscovered suite fail the lane.
 export const laneSuites = {
@@ -103,6 +104,21 @@ export function isolationFiles(platform = process.platform) {
 
   return platform === "darwin" ? laneSuites.isolation :
     [...laneSuites.isolation, "test-support/__tests__/linux-isolation-driver.integration.test.ts"];
+}
+
+/** Select ordinary integration once; production isolation and load tests own separate invocations. */
+export function webRemainderFiles(files) {
+  const separatelyOwned = new Set([
+    ...laneSuites.web,
+    ...isolationFiles("linux"),
+    "test-support/__tests__/execution-ab-preflight.integration.test.ts",
+    "lib/execution-host/__tests__/event-plane-load.integration.test.ts",
+    "lib/execution-host/__tests__/host-span-load.integration.test.ts",
+  ]);
+
+  assert.equal(new Set(files).size, files.length, "integration inventory contains duplicate suites");
+
+  return files.filter((file) => !separatelyOwned.has(file)).sort();
 }
 
 export function parseLaneInvocation(args, platform = process.platform) {
@@ -280,6 +296,8 @@ export function validateLaneReport(report, files) {
 
 export async function runStageAbLane({ slice, files = slice === "isolation" ? isolationFiles() : laneSuites[slice], workspace, evidenceDirectory = process.env.MAISTER_TEST_EVIDENCE_DIR, owningInvocation }) {
   const startedAt = Date.now();
+  const defaultConcurrency = laneConcurrency(availableParallelism(), slice);
+  const concurrency = Math.min(defaultConcurrency, testMaxWorkers(process.env) ?? defaultConcurrency);
   assertSupportedNode(process.versions.node);
   assert(Object.hasOwn(laneSuites, slice ?? ""), "usage: run-stage-ab-tests.mjs web|supervisor|isolation");
   const cwd = fileURLToPath(new URL(`../${lanePackages[slice]}/`, import.meta.url));
@@ -292,7 +310,6 @@ export async function runStageAbLane({ slice, files = slice === "isolation" ? is
   const directory = await mkdtemp(join(evidenceDirectory ?? tmpdir(), `maister-ab-${slice}-`));
   const invocation = owningInvocation ?? await createInvocation(directory);
   const reportPath = join(directory, "vitest.json");
-  const concurrency = laneConcurrency(availableParallelism(), slice);
   const env = { ...process.env, ...await fixtureProcessEnvironment(invocation), MAISTER_TEST_DOCKER_PROBE_TIMEOUT_MS: "30000" };
   const args = ["--import", FIXTURE_WATCHDOG, ...vitestArgs({ files, reportPath, concurrency })];
 

@@ -538,9 +538,12 @@ describe("IT-LCV-06: session/resume only under the same epoch and runner", () =>
       gate.release();
     }
     await settle();
-    // The after-commit successor dispatch is outside this suite's start wrapper.
+    // The successor runs after commit outside settle(); allow the same bounded
+    // integration completion budget as the host-loss queued-successor case.
     await expect
-      .poll(async () => (await turnRow(queuedTurnId!)).status)
+      .poll(async () => (await turnRow(queuedTurnId!)).status, {
+        timeout: 20_000,
+      })
       .toBe("completed");
     expect(creates()).toHaveLength(createCount + 2);
     expect(creates().at(-1)).toMatchObject({

@@ -135,7 +135,8 @@ test.describe("run & task context visibility", () => {
     await page.goto(`/projects/${fx.projectSlug}`);
 
     const card = page
-      .locator('[data-testid="flight-card"]')
+      .getByRole("region", { name: "Task board" })
+      .getByTestId("flight-card")
       .filter({ hasText: fx.title });
 
     await expect(card).toBeVisible();
@@ -164,7 +165,7 @@ test.describe("run & task context visibility", () => {
 
     await page.goto(`/runs/${fx.runId}`);
 
-    const header = page.locator('[data-testid="run-header"]');
+    const header = page.getByTestId("run-header").filter({ visible: true });
 
     await expect(header).toBeVisible();
     await expect(header.locator("h1")).toContainText(fx.title);

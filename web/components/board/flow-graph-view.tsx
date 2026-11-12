@@ -822,12 +822,12 @@ function FlowGraphCanvas({
     >
       <ReactFlow
         fitView
-        edgeTypes={edgeTypes}
         edges={positioned.edges}
-        nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         nodes={nodes}
         nodesConnectable={false}
         nodesDraggable={false}
+        nodeTypes={nodeTypes}
         onNodeClick={
           onSelectNode ? (_event, node) => onSelectNode(node.id) : undefined
         }

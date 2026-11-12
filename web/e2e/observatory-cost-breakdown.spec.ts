@@ -121,9 +121,15 @@ test.describe("Observatory cost breakdown (ADR-117)", () => {
 
     await page.goto("/observatory?view=cost");
 
-    const byRunner = page.getByTestId("observatory-cost-by-runner");
-    const byModel = page.getByTestId("observatory-cost-by-model");
-    const byFlow = page.getByTestId("observatory-cost-by-flow");
+    const byRunner = page
+      .getByRole("main")
+      .getByTestId("observatory-cost-by-runner");
+    const byModel = page
+      .getByRole("main")
+      .getByTestId("observatory-cost-by-model");
+    const byFlow = page
+      .getByRole("main")
+      .getByTestId("observatory-cost-by-flow");
 
     await expect(byRunner).toBeVisible();
     await expect(byModel).toBeVisible();
@@ -142,7 +148,7 @@ test.describe("Observatory cost breakdown (ADR-117)", () => {
     await expect(byFlow.getByText("Scratch", { exact: true })).toBeVisible();
     // The "stored lifetime" caveat is gone; the view states the period.
     await expect(
-      page.getByText(/Token totals for the selected period/i),
+      page.getByRole("main").getByText(/Token totals for the selected period/i),
     ).toBeVisible();
   });
 
@@ -153,10 +159,15 @@ test.describe("Observatory cost breakdown (ADR-117)", () => {
 
     await page.goto(`/projects/${projectSlug}/observatory?view=cost`);
 
-    await expect(page.getByTestId("observatory-cost-by-runner")).toBeVisible();
-    await expect(page.getByTestId("observatory-cost-by-flow")).toBeVisible();
+    await expect(
+      page.getByRole("main").getByTestId("observatory-cost-by-runner"),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("main").getByTestId("observatory-cost-by-flow"),
+    ).toBeVisible();
     await expect(
       page
+        .getByRole("main")
         .getByTestId("observatory-cost-by-runner")
         .getByText(RUNNER_A, { exact: true }),
     ).toBeVisible();

@@ -56,7 +56,8 @@ async function launchFromBoard(
   // retry after a prior launch flips it to "Run again" (runCount > 0) — accept
   // both so the spec is retry-safe.
   const launchControl = page
-    .locator("[data-board]")
+    .getByRole("main")
+    .getByRole("region", { name: "Task board", exact: true })
     .getByText(taskTitle)
     .locator("xpath=ancestor::article")
     .getByRole("button", { name: /^(Launch|Run again)$/, exact: true });
@@ -196,24 +197,35 @@ test("Flow Studio: selecting a node with output.result renders the decide Routin
   await page.goto(`/flows/${fx.projectSlug}/${fx.capId}`);
 
   // The 3-pane editor shell mounts (top bar + graph canvas).
-  await expect(page.getByTestId("flow-editor-tabs")).toBeVisible();
-  await expect(page.getByTestId("flow-graph-editor")).toBeVisible({
+  await expect(
+    page.getByRole("main").getByTestId("flow-editor-tabs"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("main").getByTestId("flow-graph-editor"),
+  ).toBeVisible({
     timeout: 15_000,
   });
 
   // Select the `classify` node (declares output.result + decide) → the right
   // properties panel populates with the Routing section.
   await page
+    .getByRole("main")
     .locator('[data-testid="flow-node"]')
     .filter({ hasText: fx.nodeLabel })
     .first()
     .click();
 
-  await expect(page.getByTestId("node-side-form")).toBeVisible();
+  await expect(
+    page.getByRole("main").getByTestId("node-side-form"),
+  ).toBeVisible();
 
   // The new M38 Routing panel: the section, the source select (set to
   // "output"), and the from-path field for output-driven routing.
-  await expect(page.getByTestId("node-decide")).toBeVisible();
-  await expect(page.getByTestId("node-decide-source")).toBeVisible();
-  await expect(page.getByTestId("node-decide-path")).toBeVisible();
+  await expect(page.getByRole("main").getByTestId("node-decide")).toBeVisible();
+  await expect(
+    page.getByRole("main").getByTestId("node-decide-source"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("main").getByTestId("node-decide-path"),
+  ).toBeVisible();
 });

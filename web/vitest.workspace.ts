@@ -4,7 +4,10 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 
+import { testMaxWorkers } from "../scripts/validation-resources.mjs";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const maxWorkers = testMaxWorkers(process.env);
 const testWorktreeInvocationId =
   process.env.MAISTER_TEST_WORKTREE_INVOCATION_ID ?? randomUUID();
 const testEnvironment = {
@@ -22,19 +25,15 @@ export default [
     resolve: { alias },
     test: {
       name: "unit",
+      maxWorkers,
       include: [
         "lib/**/*.test.ts",
-        "lib/**/__tests__/**/*.test.ts",
         "app/**/__tests__/**/*.test.ts",
         "components/**/*.test.ts",
-        "components/**/__tests__/**/*.test.ts",
         "styles/**/*.test.ts",
         "test-support/**/*.test.ts",
-        "test-support/**/__tests__/**/*.test.ts",
         "scripts/**/*.test.ts",
-        "scripts/**/__tests__/**/*.test.ts",
         "e2e/**/*.test.ts",
-        "e2e/**/__tests__/**/*.test.ts",
       ],
       exclude: [
         "lib/**/*.integration.test.ts",
@@ -52,6 +51,7 @@ export default [
     resolve: { alias },
     test: {
       name: "integration",
+      maxWorkers,
       exclude:
         process.platform === "linux"
           ? []

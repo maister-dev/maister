@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import ru from "@/messages/ru.json";
+import { AutoPromotionSettingsControl } from "@/components/board/panels/auto-promotion-settings-control";
 
 // RU snapshot: resolve `useTranslations(ns)` against the REAL ru.json catalog
 // (with minimal ICU {var} interpolation) so the rendered markup carries actual
@@ -44,8 +45,6 @@ vi.mock("next-intl", () => ({
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
-
-import { AutoPromotionSettingsControl } from "@/components/board/panels/auto-promotion-settings-control";
 
 describe("AutoPromotionSettingsControl — RU labels", () => {
   it("renders the Russian title, master toggle, and deny-list labels", () => {

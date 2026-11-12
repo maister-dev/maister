@@ -67,6 +67,7 @@ test("scenario A — node settings are visible on the run-detail panel", async (
 
   await inspector.getByRole("tab", { name: "Flow", exact: true }).click();
   await page
+    .getByRole("region", { name: "Run inspector" })
     .getByTestId("flow-extras")
     .locator("summary", { hasText: "Node settings" })
     .click();
@@ -101,7 +102,7 @@ test("scenario B — strict enforcement refuses the launch with CONFIG (no run c
   await page.goto(`/projects/${fx.projectSlug}`);
 
   // The launchable Backlog task card is on the board with a Launch control.
-  const board = page.locator("[data-board]");
+  const board = page.getByRole("region", { name: "Task board", exact: true });
   const card = board.locator("article", {
     hasText: "E2E strict refusal",
   });
@@ -177,13 +178,19 @@ test("scenario B — strict enforcement refuses the launch with CONFIG (no run c
   // with a /runs/<id> link instead.
   await page.goto(`/projects/${fx.projectSlug}`);
 
-  const reloadedCard = page.locator("[data-board] article", {
-    hasText: "E2E strict refusal",
-  });
+  const reloadedCard = page
+    .getByRole("region", { name: "Task board", exact: true })
+    .locator("article", {
+      hasText: "E2E strict refusal",
+    });
 
   await expect(reloadedCard).toBeVisible();
   await expect(
     reloadedCard.getByRole("button", { name: "Launch", exact: true }),
   ).toBeVisible();
-  await expect(page.locator('[data-board] a[href^="/runs/"]')).toHaveCount(0);
+  await expect(
+    page
+      .getByRole("region", { name: "Task board", exact: true })
+      .locator('a[href^="/runs/"]'),
+  ).toHaveCount(0);
 });

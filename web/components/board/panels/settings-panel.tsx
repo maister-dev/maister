@@ -212,8 +212,8 @@ export async function SettingsPanel({
           homeResolution={brainHomeResolution}
           indexingProfile={brainIndexingProfile}
           platformConfigured={brainPlatformConfigured}
-          projectSlug={project.slug}
           projectionFlowId={brainProjectionFlowId}
+          projectSlug={project.slug}
         />
       ) : null}
       <div className="flex flex-col gap-px overflow-hidden rounded-xl border border-line bg-line">

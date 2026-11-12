@@ -110,9 +110,9 @@ test("manual takeover loop: claim → board → commit → return → diff → s
   // which is one-way. Once the claim lands, a retry finds no "Take over" button
   // and dies at (a) — that error is an artifact of the first attempt, never the
   // root cause. Diagnose the FIRST attempt.
-  await expect(page.getByTestId("run-header-status")).toHaveText(
-    "HumanWorking",
-  );
+  await expect(
+    page.getByTestId("run-header-status").filter({ visible: true }),
+  ).toHaveText("Run: HumanWorking");
 
   // (c) The BOARD card surfaces owner + branch + elapsed + the pending Return
   // action and is visually distinct (humanworking variant). The card is the
@@ -124,7 +124,8 @@ test("manual takeover loop: claim → board → commit → return → diff → s
   // card no longer renders the worktree branch, so locate it by the run link
   // the stretched overlay wraps.
   const card = page
-    .locator('[data-board] [data-testid="flight-card"]')
+    .getByRole("region", { name: "Task board", exact: true })
+    .getByTestId("flight-card")
     .filter({ has: page.locator(`a[href="/runs/${fx.runId}"]`) });
 
   await expect(card).toBeVisible();

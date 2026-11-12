@@ -109,7 +109,7 @@ test("execution-host contract: board launch places the run; checkpoint + resume 
   await page.goto(`/projects/${fx.projectSlug}`);
 
   const launchControl = page
-    .locator("[data-board]")
+    .getByRole("region", { name: "Task board", exact: true })
     .getByText("Execution host contract")
     .locator("xpath=ancestor::article")
     .getByRole("button", { name: "Launch", exact: true });

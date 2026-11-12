@@ -14,6 +14,10 @@ import { singleValue } from "./_seed/db";
 import { loadFixtures } from "./_seed/fixtures";
 import { STUB_SESSIONS_DIR } from "./_seed/stub-supervisor";
 import {
+  readTaskLaunchReceipt,
+  waitForTaskLaunchRun,
+} from "./_seed/task-launch";
+import {
   readStubSessionRecords,
   type StubSessionRecord,
 } from "./_seed/session-records";
@@ -48,17 +52,23 @@ test("repo_read dirt quarantines the agent, comments the task, and refuses relau
 
   const launchResponse = page.waitForResponse(
     (response) =>
-      response.url().includes(`/agents/${fx.auditorAgentId}/launch`) &&
+      new URL(response.url()).pathname === "/api/task-launch-intents" &&
       response.request().method() === "POST",
   );
 
   await page.getByRole("button", { name: "Run agent" }).click();
+  await page
+    .getByRole("region", {
+      name: "Launch this agent for the task",
+      exact: true,
+    })
+    .getByRole("button", { name: "Launch", exact: true })
+    .click();
 
   const response = await launchResponse;
 
-  expect(response.status()).toBe(202);
-
-  const { runId } = (await response.json()) as { runId: string };
+  const receipt = await readTaskLaunchReceipt(response);
+  const runId = await waitForTaskLaunchRun(receipt);
   const session = await waitForSession(
     (record) => record.request.runId === runId,
   );
@@ -101,7 +111,10 @@ test("repo_read dirt quarantines the agent, comments the task, and refuses relau
   // until an admin un-quarantines.
   const refused = await page.request.post(
     `/api/projects/${q.projectSlug}/agents/${fx.auditorAgentId}/launch`,
-    { data: { taskId: q.taskId } },
+    {
+      headers: { Origin: new URL(page.url()).origin },
+      data: { taskId: q.taskId },
+    },
   );
 
   expect(refused.status()).toBe(409);

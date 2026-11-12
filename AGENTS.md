@@ -19,7 +19,7 @@ Full description: `.ai-factory/DESCRIPTION.md`.
 
 ## Tech Stack
 
-- **Framework:** Next.js 16.2 (App Router)
+- **Framework:** Next.js 16.4 (App Router)
 - **Language:** TypeScript 5.6 (strict)
 - **UI library:** HeroUI v3 (`@heroui/react` 3.2.6)
 - **Styling:** Tailwind CSS 4 + `tailwind-variants`
@@ -30,7 +30,7 @@ Full description: `.ai-factory/DESCRIPTION.md`.
   and `mimo acp` adapter binaries
 - **Tests:** vitest (unit + integration), Playwright (E2E)
 - **Package manager:** pnpm (monorepo workspace: `web` + `supervisor`)
-- **Node:** 24
+- **Node:** 24 deployment; 26 LTS compatibility
 
 ## Project Structure
 
@@ -96,7 +96,7 @@ mAIster/
 │   │   ├── cost.ts             # cache/input/output usage normalization
 │   │   ├── registry.ts         # In-memory SessionRecord map + per-session event ring buffer
 │   │   ├── types.ts            # Zod schemas + SessionEvent union + SupervisorError
-│   │   └── __tests__/          # 30 unit + 9 integration tests
+│   │   └── __tests__/          # Unit + integration suites
 │   ├── test/fixtures/
 │   │   └── fake-acp.mjs        # Stand-in for the real ACP binary in tests
 │   ├── package.json            # @maister/supervisor; tsx runtime
@@ -116,7 +116,7 @@ mAIster/
 │   ├── package.json            # Dependencies, scripts (dev/build/start/lint)
 │   ├── tsconfig.json           # strict, @/* path alias
 │   ├── next.config.mjs
-│   ├── eslint.config.mjs       # ESLint 9 flat config
+│   ├── eslint.config.mjs       # ESLint 10 flat config
 │   └── postcss.config.mjs      # @tailwindcss/postcss
 ├── CLAUDE.md                   # Root project instructions for AI agents
 ├── AGENTS.md                   # This file

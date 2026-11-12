@@ -12,9 +12,8 @@
 //      records the choice (POST 200) → the persistent badge replaces the
 //      actions and survives a reload.
 //
-// The spec uses only the NON-destructive choice (`proceed`) and a uniquely
-// named dirty file, so the shared fixture stays usable for the sibling
-// review-comments spec under fullyParallel.
+// This spec owns a separate review fixture: resolving a gate in another
+// browser journey must not change the available diff scopes here.
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -22,7 +21,7 @@ import { test, expect } from "@playwright/test";
 
 type Fixtures = {
   byKey: {
-    reviewComments: {
+    reviewDiffScopes: {
       runId: string;
       hitlRequestId: string;
       projectSlug: string;
@@ -43,7 +42,7 @@ test.describe.configure({ mode: "serial" });
 test("Review Workspace starts with complete current-review diff; secondary scopes degrade safely", async ({
   page,
 }) => {
-  const fx = loadFixtures().byKey.reviewComments;
+  const fx = loadFixtures().byKey.reviewDiffScopes;
 
   writeFileSync(
     path.join(fx.worktreePath, "dirty-e2e.txt"),
@@ -52,9 +51,9 @@ test("Review Workspace starts with complete current-review diff; secondary scope
 
   await page.goto(`/runs/${fx.runId}?wb=review&scope=review`);
 
-  const workspaceDiff = page.locator(
-    '[data-testid="review-workspace"] [data-testid="run-diff"]',
-  );
+  const workspaceDiff = page
+    .getByRole("region", { name: "Review workspace" })
+    .getByTestId("run-diff");
 
   await expect(workspaceDiff).toBeVisible();
   await expect(workspaceDiff.getByText("dirty-e2e.txt").first()).toBeVisible();
@@ -99,11 +98,11 @@ test("Review Workspace starts with complete current-review diff; secondary scope
 test("dirty banner: lists the file, Proceed as-is records and the badge persists", async ({
   page,
 }) => {
-  const fx = loadFixtures().byKey.reviewComments;
+  const fx = loadFixtures().byKey.reviewDiffScopes;
 
   await page.goto(`/runs/${fx.runId}`);
 
-  const banner = page.locator('[data-testid="dirty-banner"]');
+  const banner = page.getByTestId("dirty-banner").filter({ visible: true });
 
   await expect(banner).toBeVisible();
   await expect(banner.getByText("dirty-e2e.txt")).toBeVisible();
@@ -114,13 +113,13 @@ test("dirty banner: lists the file, Proceed as-is records and the badge persists
       r.request().method() === "POST",
   );
 
-  await page.locator('[data-testid="dirty-proceed"]').click();
+  await banner.getByRole("button", { name: "Proceed as-is" }).click();
 
   const res = await resolutionResponse;
 
   expect(res.status()).toBe(200);
 
-  const badge = page.locator('[data-testid="dirty-proceed-badge"]');
+  const badge = page.getByRole("main").getByTestId("dirty-proceed-badge");
 
   await expect(badge).toBeVisible();
   await expect(banner).toHaveCount(0);
@@ -128,6 +127,6 @@ test("dirty banner: lists the file, Proceed as-is records and the badge persists
   // Recorded on the hitl row — survives a full reload.
   await page.reload();
   await expect(
-    page.locator('[data-testid="dirty-proceed-badge"]'),
+    page.getByRole("main").getByTestId("dirty-proceed-badge"),
   ).toBeVisible();
 });

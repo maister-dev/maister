@@ -1,25 +1,18 @@
 import { defineConfig, globalIgnores } from "eslint/config";
-import { fixupConfigRules, fixupPluginRules } from "@eslint/compat";
-import react from "eslint-plugin-react";
 import unusedImports from "eslint-plugin-unused-imports";
-import _import from "eslint-plugin-import";
 import typescriptEslint from "@typescript-eslint/eslint-plugin";
-import jsxA11Y from "eslint-plugin-jsx-a11y";
-import prettier from "eslint-plugin-prettier";
+import prettierRecommended from "eslint-plugin-prettier/recommended";
+import stylistic from "@stylistic/eslint-plugin";
+import perfectionist from "eslint-plugin-perfectionist";
 import globals from "globals";
 import tsParser from "@typescript-eslint/parser";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import js from "@eslint/js";
-import { FlatCompat } from "@eslint/eslintrc";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const compat = new FlatCompat({
-  baseDirectory: __dirname,
-  recommendedConfig: js.configs.recommended,
-  allConfig: js.configs.all,
-});
+import next from "@next/eslint-plugin-next";
+import react from "eslint-plugin-react-x";
+import reactDom from "eslint-plugin-react-dom";
+import reactJsx from "eslint-plugin-react-jsx";
+import reactHooks from "eslint-plugin-react-hooks";
+import jsxA11y from "eslint-plugin-jsx-a11y-x";
+import { importX } from "eslint-plugin-import-x";
 
 const cronerRestriction = {
   name: "croner",
@@ -51,23 +44,20 @@ export default defineConfig([
     "!**/tsup.config.ts",
   ]),
   {
-    extends: fixupConfigRules(
-      compat.extends(
-        "plugin:react/recommended",
-        "plugin:prettier/recommended",
-        "plugin:react-hooks/recommended",
-        "plugin:jsx-a11y/recommended",
-        "plugin:@next/next/recommended-legacy",
-      ),
-    ),
+    extends: [prettierRecommended],
 
     plugins: {
-      react: fixupPluginRules(react),
+      "@next/next": next,
+      "react-x": react,
+      "react-dom": reactDom,
+      "react-jsx": reactJsx,
+      "react-hooks": reactHooks,
+      "jsx-a11y-x": jsxA11y,
+      "import-x": importX,
       "unused-imports": unusedImports,
-      import: fixupPluginRules(_import),
       "@typescript-eslint": typescriptEslint,
-      "jsx-a11y": fixupPluginRules(jsxA11Y),
-      prettier: fixupPluginRules(prettier),
+      "@stylistic": stylistic,
+      perfectionist,
     },
 
     languageOptions: {
@@ -98,13 +88,28 @@ export default defineConfig([
     files: ["**/*.ts", "**/*.tsx"],
 
     rules: {
+      ...reactHooks.configs.recommended.rules,
+      ...jsxA11y.configs.recommended.rules,
+      ...next.configs.recommended.rules,
+      "react-x/no-direct-mutation-state": "error",
+      "react-x/no-missing-key": "error",
+      "react-x/no-missing-component-display-name": "error",
+      "react-x/no-duplicate-key": "error",
+      "react-x/no-unsafe-component-will-mount": "error",
+      "react-x/no-unsafe-component-will-receive-props": "error",
+      "react-x/no-unsafe-component-will-update": "error",
+      "react-jsx/no-children-prop": "error",
+      "react-jsx/no-comment-textnodes": "error",
+      "react-dom/no-dangerously-set-innerhtml-with-children": "error",
+      "react-dom/no-find-dom-node": "error",
+      "react-dom/no-render-return-value": "error",
+      "react-dom/no-unknown-property": "error",
+      "react-dom/no-unsafe-target-blank": "error",
+      "react-dom/no-void-elements-with-children": "error",
       "no-console": "warn",
-      "react/prop-types": "off",
-      "react/jsx-uses-react": "off",
-      "react/react-in-jsx-scope": "off",
       "react-hooks/exhaustive-deps": "off",
-      "jsx-a11y/click-events-have-key-events": "warn",
-      "jsx-a11y/interactive-supports-focus": "warn",
+      "jsx-a11y-x/click-events-have-key-events": "warn",
+      "jsx-a11y-x/interactive-supports-focus": "warn",
       "prettier/prettier": "warn",
       "no-unused-vars": "off",
       "unused-imports/no-unused-vars": "off",
@@ -124,7 +129,7 @@ export default defineConfig([
         },
       ],
 
-      "import/order": [
+      "import-x/order": [
         "warn",
         {
           groups: [
@@ -150,19 +155,23 @@ export default defineConfig([
         },
       ],
 
-      "react/self-closing-comp": "warn",
+      "@stylistic/jsx-self-closing-comp": "warn",
 
-      "react/jsx-sort-props": [
+      "perfectionist/sort-jsx-props": [
         "warn",
         {
-          callbacksLast: true,
-          shorthandFirst: true,
-          noSortAlphabetically: false,
-          reservedFirst: true,
+          type: "alphabetical",
+          order: "asc",
+          ignoreCase: false,
+          groups: ["reserved", "shorthand-prop", "unknown", "callback"],
+          customGroups: [
+            { groupName: "reserved", elementNamePattern: "^(children|key|ref|dangerouslySetInnerHTML)$" },
+            { groupName: "callback", elementNamePattern: "^on[A-Z]" },
+          ],
         },
       ],
 
-      "padding-line-between-statements": [
+      "@stylistic/padding-line-between-statements": [
         "warn",
         {
           blankLine: "always",

@@ -65,7 +65,7 @@ test.describe("multi-run cost and delivery policy UI", () => {
     await expect(
       page.getByRole("button", { name: /Run again/i }),
     ).toBeVisible();
-    await expect(page.getByText("2 runs")).toBeVisible();
+    await expect(page.getByRole("main").getByText("2 runs")).toBeVisible();
     await expect(
       page.getByRole("columnheader", { name: /Flow/i }),
     ).toBeVisible();
@@ -129,7 +129,8 @@ test.describe("multi-run cost and delivery policy UI", () => {
     await page.goto(`/projects/${fx.projectSlug}`);
 
     const card = page
-      .locator("[data-board]")
+      .getByRole("region", { name: "Task board", exact: true })
+      .filter({ visible: true })
       .getByText(seeded.title)
       .locator("xpath=ancestor::article");
 
@@ -137,7 +138,9 @@ test.describe("multi-run cost and delivery policy UI", () => {
 
     await page.goto(`/projects/${fx.projectSlug}?tab=settings`);
 
-    await expect(page.getByText(/Delivery policy/i)).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Delivery policy", exact: true }),
+    ).toBeVisible();
     // Address it by ROLE: the settings tab also carries the branch-sync
     // `<select>` (role combobox) labelled "Strategy", so a bare label lookup is
     // ambiguous. The delivery control is a HeroUI Select — a button whose

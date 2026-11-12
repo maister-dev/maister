@@ -137,7 +137,7 @@ export function NewTaskModal({
                   {labels.titleLabel}
                 </span>
                 <Input
-                  // eslint-disable-next-line jsx-a11y/no-autofocus -- Focus enters the opened modal at its first field.
+                  // eslint-disable-next-line jsx-a11y-x/no-autofocus -- Focus enters the opened modal at its first field.
                   autoFocus
                   className="rounded-lg border border-line bg-paper px-3 py-2 text-[13px] text-ink outline-none focus:border-amber"
                   placeholder={labels.titlePlaceholder}

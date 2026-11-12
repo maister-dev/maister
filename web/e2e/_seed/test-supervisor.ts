@@ -54,6 +54,7 @@ import {
 import { canonicalCommandJson } from "../../../runtime/command-json";
 import { objectDigest, objectEtag } from "../../../runtime/object-integrity";
 
+import { e2eSupervisorDiagnostics } from "./supervisor-diagnostics";
 import { E2E_EXECUTION_HOST_SLUG } from "./fixtures";
 import { RECURSIVE_RESEARCH_RELEASE } from "./recursive-release";
 import {
@@ -1395,18 +1396,7 @@ export async function startTestSupervisor(
 
     if (method === "GET" && url === "/diagnostics") {
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(
-        JSON.stringify({
-          status: "ready",
-          version: "e2e-test-supervisor",
-          checkedAt: new Date().toISOString(),
-          adapters: [
-            { id: "claude", binary: "claude-agent-acp", available: true },
-            { id: "codex", binary: "codex-acp", available: true },
-          ],
-          envRefs: [{ name: "ZAI_API_KEY", present: false }],
-        }),
-      );
+      res.end(JSON.stringify(e2eSupervisorDiagnostics("e2e-test-supervisor")));
 
       return;
     }

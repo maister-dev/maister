@@ -27,6 +27,7 @@ import {
 } from "@/lib/db/schema";
 import { contentDigest, sha256 } from "@/lib/evaluations/digest";
 import { MaisterError } from "@/lib/errors";
+import { runtimePathUrl } from "@/lib/runtime-file-url";
 
 const log = pino({
   name: "project-config-persistence/cleanup",
@@ -144,7 +145,7 @@ async function removeReviewedFiles(operation: ConfigOperation): Promise<void> {
   }
   // Delete the marker last; partial cleanup only removes present, verified names.
   for (const name of ["before", "after", "operation.json"]) {
-    if (names.includes(name)) await unlink(join(directory, name));
+    if (names.includes(name)) await unlink(runtimePathUrl(directory, name));
   }
   await rmdir(directory);
 }

@@ -458,8 +458,8 @@ export async function LeftRail({
   return (
     <RailCollapse
       ariaLabel={tNav("railLabel")}
-      collapseLabel={tNav("collapseRail")}
       collapsedChildren={collapsedContent}
+      collapseLabel={tNav("collapseRail")}
       expandLabel={tNav("expandRail")}
     >
       <LeftRailNav
@@ -473,7 +473,7 @@ export async function LeftRail({
 
       {agentExecutions}
 
-      <section className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto overflow-x-hidden">
+      <section className="flex min-h-24 flex-1 flex-col gap-1.5 overflow-y-auto overflow-x-hidden">
         <div className="flex items-center justify-between px-1 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-mute">
           <span>{tPortfolio("activeWorkspaces")}</span>
           <Link

@@ -86,7 +86,9 @@ test("rework claim loop: Review → claim → commit → return → staled gate 
   // The server resolved the re-entry node and says where the run will come back
   // in, before the operator commits to anything.
   await expect(
-    page.getByText("Re-enters the flow at checks", { exact: true }),
+    page
+      .getByText("Re-enters the flow at checks", { exact: true })
+      .filter({ visible: true }),
   ).toBeVisible();
 
   // (b) Claim → Review transitions to HumanWorking and the run ACQUIRES a slot.

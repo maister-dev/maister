@@ -13,6 +13,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
@@ -127,10 +128,10 @@ vi.mock("node:fs/promises", async (original) => {
   return {
     ...actual,
     realpath: async (...args: Parameters<typeof actual.realpath>) => {
-      if (
-        !acquisitionBarrier.used &&
-        String(args[0]) === acquisitionBarrier.target
-      ) {
+      const candidate =
+        args[0] instanceof URL ? fileURLToPath(args[0]) : args[0].toString();
+
+      if (!acquisitionBarrier.used && candidate === acquisitionBarrier.target) {
         acquisitionBarrier.used = true;
         acquisitionBarrier.entered();
         await acquisitionBarrier.release;
@@ -139,7 +140,10 @@ vi.mock("node:fs/promises", async (original) => {
       return actual.realpath(...args);
     },
     lstat: async (...args: Parameters<typeof actual.lstat>) => {
-      if (!probeBarrier.used && String(args[0]) === probeBarrier.target) {
+      const candidate =
+        args[0] instanceof URL ? fileURLToPath(args[0]) : args[0].toString();
+
+      if (!probeBarrier.used && candidate === probeBarrier.target) {
         if (probeBarrier.skipCalls > 0) {
           probeBarrier.skipCalls -= 1;
 

@@ -49,6 +49,7 @@ test.describe("Inbox card redesign", () => {
 
     const card = page
       .getByTestId("hitl-card")
+      .filter({ visible: true })
       .filter({ has: page.getByText(humanAsk.question, { exact: true }) });
 
     await expect(card).toHaveCount(1);
@@ -75,7 +76,9 @@ test.describe("Inbox card redesign", () => {
 
     await expect(page).toHaveURL(/\/inbox$/);
     await expect(page.getByRole("heading", { name: "Inbox" })).toBeVisible();
-    await expect(page.getByTestId("hitl-card").first()).toBeVisible();
+    await expect(
+      page.getByTestId("hitl-card").filter({ visible: true }).first(),
+    ).toBeVisible();
   });
 
   test("a Flow review card routes to the code Review Workspace without an inline decision", async ({
@@ -85,11 +88,14 @@ test.describe("Inbox card redesign", () => {
 
     await page.goto("/inbox");
 
-    const card = page.getByTestId("hitl-card").filter({
-      has: page.locator(
-        `a[href="/runs/${review.runId}?wb=review&scope=review"]`,
-      ),
-    });
+    const card = page
+      .getByTestId("hitl-card")
+      .filter({ visible: true })
+      .filter({
+        has: page.locator(
+          `a[href="/runs/${review.runId}?wb=review&scope=review"]`,
+        ),
+      });
 
     await expect(card).toHaveCount(1);
     await expect(card.getByRole("link", { name: "Review code" })).toBeVisible();
@@ -100,7 +106,9 @@ test.describe("Inbox card redesign", () => {
     await expect(page).toHaveURL(
       new RegExp(`/runs/${review.runId}\\?wb=review&scope=review`),
     );
-    await expect(page.getByTestId("review-workspace")).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: "Review workspace" }),
+    ).toBeVisible();
   });
 
   test("expanding a card lazily fetches and renders its decision context", async ({
@@ -112,7 +120,10 @@ test.describe("Inbox card redesign", () => {
 
     await page.goto("/inbox");
 
-    const card = page.getByTestId("hitl-card").first();
+    const card = page
+      .getByTestId("hitl-card")
+      .filter({ visible: true })
+      .first();
 
     await expect(card).toBeVisible();
     // The collapsed card carries a View-run link to the run page.
@@ -159,7 +170,10 @@ test.describe("Inbox card redesign", () => {
 
     await page.goto("/inbox");
 
-    const card = page.getByTestId("hitl-card").first();
+    const card = page
+      .getByTestId("hitl-card")
+      .filter({ visible: true })
+      .first();
     const toggle = card.locator("button[aria-expanded]").first();
 
     await toggle.click();
@@ -183,7 +197,9 @@ test.describe("Inbox card redesign", () => {
     await page.goto("/projects");
 
     const railBadge = page.getByTestId("inbox-nav-badge");
-    const summaryCount = page.getByTestId("decisions-count");
+    const summaryCount = page
+      .getByTestId("decisions-count")
+      .filter({ visible: true });
 
     await expect(railBadge).toBeVisible();
     await expect(summaryCount).toBeVisible();

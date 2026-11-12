@@ -25,12 +25,12 @@ function localeForFile(filePath) {
 }
 
 function setDocumentLocale(source, locale, filePath) {
-  const htmlLanguagePattern = /<html lang="[^"]*"/;
+  const htmlLanguagePattern = /(<html\b[^>]*?\s)lang="[^"]*"/;
   if (!htmlLanguagePattern.test(source)) {
     throw new Error(`Unable to set the document language in ${filePath}`);
   }
 
-  return source.replace(htmlLanguagePattern, `<html lang="${locale}"`);
+  return source.replace(htmlLanguagePattern, `$1lang="${locale}"`);
 }
 
 function markSearchableContent(source, filePath) {

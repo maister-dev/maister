@@ -7,7 +7,8 @@ import type { RuntimeEventEnvelope } from "@/lib/execution-host/runtime-events";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 
-import { and, eq, gt, isNull, lt, or } from "drizzle-orm";
+import { and, eq, gt, is, isNull, lt, or } from "drizzle-orm";
+import { NodePgTransaction } from "drizzle-orm/node-postgres";
 import pino, { type Logger } from "pino";
 
 import { IngestBuffer, ingestBatchLimits } from "./batching";
@@ -539,6 +540,11 @@ export function startRuntimeEventConsumer(input: {
   transport: ExecutionHostTransport;
   logger?: Logger;
 }): () => void {
+  if (is(input.db, NodePgTransaction))
+    throw new MaisterError(
+      "CONFIG",
+      "Runtime event consumers require a pooled database outside the caller's transaction",
+    );
   if (isApplicationStopping())
     throw new MaisterError(
       "EXECUTOR_UNAVAILABLE",

@@ -1,3 +1,5 @@
-import { register } from "node:module";
+import { registerHooks } from "node:module";
 
-register("./_server-only-shim.mjs", import.meta.url);
+import { resolve } from "./_server-only-shim.mjs";
+
+registerHooks({ resolve });

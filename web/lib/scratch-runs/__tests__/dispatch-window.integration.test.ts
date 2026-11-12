@@ -80,10 +80,12 @@ async function restartUnadmittedTurn(
     (error: unknown) => ({ kind: "interrupted" as const, error }),
   );
   let released = false;
+  let reached = false;
   let settled = false;
 
   try {
     await barrier.awaitReached(60_000);
+    reached = true;
     const { rows } = await fixture.database.pool.query<{
       run_id: string;
       dialog_status: string;
@@ -228,7 +230,7 @@ async function restartUnadmittedTurn(
     throw error;
   } finally {
     if (!settled) await fixture.web.kill("SIGKILL");
-    if (!released) await barrier.release();
+    if (reached && !released) await barrier.release();
     await launching;
   }
 }
@@ -766,6 +768,18 @@ it("S1 package message: restart retains request-only follow-up context and its o
   fixture = await suite.startFixture();
   const pkg = await packageEditor();
   const runId = await launchPackage(pkg, outputPrompt);
+
+  await poll(
+    async () => {
+      const { rows } = await fixture!.database.pool.query<{
+        dialog_status: string;
+      }>("SELECT dialog_status FROM scratch_runs WHERE run_id=$1", [runId]);
+
+      return rows[0]?.dialog_status === "WaitingForUser" ? true : null;
+    },
+    60_000,
+    "initial package turn applied before sending its follow-up",
+  );
   const recovered = await restartUnadmittedTurn(() =>
     fixture!.api(
       `/api/studio/local-packages/${pkg.id}/assistant/${runId}/messages`,
@@ -834,8 +848,26 @@ it("S3 transport: a held parked exit is fenced before the canonical scratch cons
     .catch((error: unknown) => error);
 
   try {
+    const initialDeadline = Date.now() + 60_000;
     const initial = await initialPrompt.awaitReached(60_000);
 
+    // Start the short permission lifetime only after session creation is
+    // durably projected. This scenario tests the stale exit, not create lag.
+    await poll(
+      async () => {
+        const result = await fixture!.database.pool.query<{ active: boolean }>(
+          `SELECT i.state = 'active' AS active
+           FROM execution_commands c
+           JOIN run_session_incarnations i ON i.id = c.owner_ref->>'incarnationId'
+           WHERE c.id = $1`,
+          [initial.commandId],
+        );
+
+        return result.rows[0]?.active ? true : null;
+      },
+      initialDeadline - Date.now(),
+      "canonical session creation before the permission lifetime starts",
+    );
     // Install the terminal barrier before the host starts its permission
     // deadline. Persistence of the request can lag that deadline on CI.
     oldTerminal = fixture.proxy.arm(

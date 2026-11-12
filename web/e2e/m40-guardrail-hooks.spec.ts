@@ -26,16 +26,22 @@ test.describe("M40 guardrail hooks: hook_trip HITL surface + resume/abort", () =
 
     await page.goto(`/runs/${fx.repetitionRunId}`);
 
-    await expect(page.getByTestId("hook-trip-card")).toBeVisible();
-    await expect(page.getByTestId("hook-trip-resume")).toBeVisible();
-    await expect(page.getByTestId("hook-trip-abort")).toBeVisible();
+    await expect(
+      page.getByTestId("hook-trip-card").filter({ visible: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("hook-trip-resume").filter({ visible: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("hook-trip-abort").filter({ visible: true }),
+    ).toBeVisible();
     // The localized rule + the offending tool-call line both render.
-    await expect(page.getByTestId("hook-trip-card")).toContainText(
-      "repetition",
-    );
-    await expect(page.getByTestId("hook-trip-tool-call")).toContainText(
-      "Edit src/app.ts",
-    );
+    await expect(
+      page.getByTestId("hook-trip-card").filter({ visible: true }),
+    ).toContainText("repetition");
+    await expect(
+      page.getByTestId("hook-trip-tool-call").filter({ visible: true }),
+    ).toContainText("Edit src/app.ts");
   });
 
   test("no_progress trip renders the card without an offending tool-call line", async ({
@@ -45,12 +51,16 @@ test.describe("M40 guardrail hooks: hook_trip HITL surface + resume/abort", () =
 
     await page.goto(`/runs/${fx.noProgressRunId}`);
 
-    await expect(page.getByTestId("hook-trip-card")).toBeVisible();
-    await expect(page.getByTestId("hook-trip-card")).toContainText(
-      "no progress",
-    );
+    await expect(
+      page.getByTestId("hook-trip-card").filter({ visible: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("hook-trip-card").filter({ visible: true }),
+    ).toContainText("no progress");
     // No toolCall in the seeded schema → the tool-call line is omitted.
-    await expect(page.getByTestId("hook-trip-tool-call")).toHaveCount(0);
+    await expect(
+      page.getByTestId("hook-trip-tool-call").filter({ visible: true }),
+    ).toHaveCount(0);
   });
 
   test("resume routes a 2xx through the hook_trip respond endpoint", async ({
@@ -60,7 +70,9 @@ test.describe("M40 guardrail hooks: hook_trip HITL surface + resume/abort", () =
 
     await page.goto(`/runs/${fx.noProgressRunId}`);
 
-    const resume = page.getByTestId("hook-trip-resume");
+    const resume = page
+      .getByTestId("hook-trip-resume")
+      .filter({ visible: true });
 
     await expect(resume).toBeVisible();
 
@@ -86,7 +98,7 @@ test.describe("M40 guardrail hooks: hook_trip HITL surface + resume/abort", () =
 
     await page.goto(`/runs/${fx.repetitionRunId}`);
 
-    const abort = page.getByTestId("hook-trip-abort");
+    const abort = page.getByTestId("hook-trip-abort").filter({ visible: true });
 
     await expect(abort).toBeVisible();
 
@@ -105,6 +117,8 @@ test.describe("M40 guardrail hooks: hook_trip HITL surface + resume/abort", () =
     // Abort is a synchronous terminal transition (run → Failed) — no pending
     // hook_trip card remains after a reload.
     await page.reload();
-    await expect(page.getByTestId("hook-trip-card")).toHaveCount(0);
+    await expect(
+      page.getByTestId("hook-trip-card").filter({ visible: true }),
+    ).toHaveCount(0);
   });
 });

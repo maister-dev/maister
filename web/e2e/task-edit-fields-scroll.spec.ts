@@ -21,7 +21,7 @@ test("edit-task Properties panel scrolls and the Save button is reachable on a s
   await page.goto(`/projects/${fx.projectSlug}`);
 
   const card = page
-    .locator("[data-board]")
+    .getByRole("region", { name: "Task board", exact: true })
     .getByText("Acceptance backlog launch")
     .locator("xpath=ancestor::article");
 
@@ -90,6 +90,7 @@ test("UX-02A/B New task traps focus and retains the draft after failure", async 
         .getByRole("button", {
           name: "New task",
           exact: true,
+          expanded: true,
           includeHidden: true,
         })
         .evaluate((element) =>

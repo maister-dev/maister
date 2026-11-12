@@ -38,6 +38,10 @@ test("isolation CI uses three independent serial VM parts and a failure-closed c
   const job = workflow.jobs["execution-isolation"];
   const gate = workflow.jobs["execution-isolation-complete"];
 
+  assert.deepEqual(workflow.on.push.branches, ["master"]);
+  assert.deepEqual(workflow.on.pull_request.branches, ["master"]);
+  assert.equal(workflow.concurrency["cancel-in-progress"], true);
+  assert.match(workflow.concurrency.group, /github.event.pull_request.number/u);
   assert.equal(job["runs-on"], "macos-15-intel");
   assert.equal(job["timeout-minutes"], 60);
   assert.deepEqual(job.strategy, { "fail-fast": false, matrix: { part: [1, 2, 3] } });
@@ -73,14 +77,14 @@ test("isolation CI uses three independent serial VM parts and a failure-closed c
   assert.equal(diagnostics.with.name, "execution-isolation-part-${{ matrix.part }}-of-3-diagnostics");
   assert(job.steps.indexOf(cleanup) < job.steps.indexOf(diagnostics));
   assert.deepEqual(gate.needs, ["execution-isolation"]);
-  assert.equal(gate.if, "always()");
+  assert.equal(gate.if, "${{ !cancelled() }}");
   assert.equal(gate.env.MAISTER_ISOLATION_JOB_RESULT, "${{ needs.execution-isolation.result }}");
-  const downloads = gate.steps.filter((step) => step.uses === "actions/download-artifact@v4");
+  const downloads = gate.steps.filter((step) => step.uses?.startsWith("actions/download-artifact@"));
 
   assert.deepEqual(downloads.map((step) => step.with.name), ["execution-isolation-part-1-of-3-reports", "execution-isolation-part-2-of-3-reports", "execution-isolation-part-3-of-3-reports"]);
   assert(gate.steps.some((step) => step.run?.includes("isolation-ci-evidence.mjs")));
-  assert.deepEqual(workflow.jobs["execution-data-plane"].strategy.matrix, { node: ["24.15.0", "24.19.0"], shard: [1, 2] });
-  assert.deepEqual(workflow.jobs["execution-runtime-supervisor"].strategy.matrix, { node: ["24.15.0", "24.19.0"] });
+  assert.deepEqual(workflow.jobs["execution-data-plane"].strategy.matrix, { node: ["24.22.3"], shard: [1, 2] });
+  assert.deepEqual(workflow.jobs["execution-runtime-supervisor"].strategy.matrix, { node: ["24.22.3", "26.13.1"] });
 });
 
 test("isolation compile cache proves real inherited compilation before publishing a fresh private path and refuses disabled or missing capabilities", (context) => {

@@ -70,6 +70,17 @@ try {
     await delay(200);
   }
   assert(ready, "production web readiness timed out");
+  assert.match(
+    await docker(["exec", containerId, "python3", "--version"]),
+    /^Python 3\./,
+  );
+  assert.match(await docker(["exec", containerId, "uv", "--version"]), /^uv /);
+  await docker([
+    "exec",
+    containerId,
+    "node",
+    "/app/scripts/check-native-dependencies.mjs",
+  ]);
   await docker([
     "exec",
     containerId,

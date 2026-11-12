@@ -4,6 +4,7 @@ import { chmod, mkdir, open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { sha256 } from "@/lib/evaluations/digest";
+import { runtimeFileUrl } from "@/lib/runtime-file-url";
 
 export type PushGateInput = {
   directory: string;
@@ -73,7 +74,7 @@ if (expected.originalHook) {
   await chmod(hookPath, 0o700);
 
   for (const path of [gatePath, hookPath, input.directory]) {
-    const handle = await open(path, "r");
+    const handle = await open(runtimeFileUrl(path), "r");
 
     try {
       await handle.sync();

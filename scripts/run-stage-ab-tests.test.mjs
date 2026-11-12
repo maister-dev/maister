@@ -1,8 +1,37 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { globSync, readFileSync } from "node:fs";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
-import { laneConcurrency, lanePackages, laneSuites, vitestArgs, validateLaneReport, requiredIsolationCases, webShardFiles, parseLaneInvocation } from "./run-stage-ab-tests.mjs";
+import { laneConcurrency, lanePackages, laneSuites, vitestArgs, validateLaneReport, requiredIsolationCases, webShardFiles, webRemainderFiles, parseLaneInvocation } from "./run-stage-ab-tests.mjs";
+import { buildMaxWorkers, testMaxWorkers } from "./validation-resources.mjs";
+
+test("a host worker ceiling is opt-in and rejects ambiguous limits", () => {
+  assert.equal(testMaxWorkers({}), undefined);
+  assert.equal(testMaxWorkers({ MAISTER_TEST_MAX_WORKERS: "1" }), 1);
+  assert.equal(testMaxWorkers({ MAISTER_TEST_MAX_WORKERS: "2" }), 2);
+  assert.equal(buildMaxWorkers({}), undefined);
+  assert.equal(buildMaxWorkers({ MAISTER_BUILD_MAX_WORKERS: "2" }), 2);
+  assert.equal(testMaxWorkers({ MAISTER_BUILD_MAX_WORKERS: "2" }), undefined);
+  assert.equal(buildMaxWorkers({ MAISTER_TEST_MAX_WORKERS: "2" }), undefined);
+  for (const value of ["", "0", "-1", "1.5", "2workers", "Infinity", " 2 ", "9007199254740992"]) {
+    assert.throws(() => testMaxWorkers({ MAISTER_TEST_MAX_WORKERS: value }), RangeError);
+    assert.throws(() => buildMaxWorkers({ MAISTER_BUILD_MAX_WORKERS: value }), RangeError);
+  }
+});
+
+test("the ordinary integration remainder and dedicated lanes cover every non-load web suite exactly once", () => {
+  const root = fileURLToPath(new URL("../web/", import.meta.url));
+  const all = globSync("{lib,app,scripts,test-support,e2e}/**/*.integration.test.ts", { cwd: root });
+  const load = ["host-span-load", "event-plane-load"].map((name) => `lib/execution-host/__tests__/${name}.integration.test.ts`);
+  const dedicated = [...laneSuites.web, ...parseLaneInvocation(["isolation"], "linux").files,
+    "test-support/__tests__/execution-ab-preflight.integration.test.ts"];
+  const remainder = webRemainderFiles(all);
+
+  assert.deepEqual([...remainder, ...dedicated].sort(), all.filter((file) => !load.includes(file)).sort());
+  assert.deepEqual(webRemainderFiles(["lib/new.integration.test.ts", ...dedicated, ...load]), ["lib/new.integration.test.ts"]);
+  assert.throws(() => webRemainderFiles([all[0], all[0]]), /duplicate/u);
+});
 
 test("web shards are deterministic, disjoint, complete and retain manifest order", () => {
   const first = webShardFiles(laneSuites.web, 1, 2);

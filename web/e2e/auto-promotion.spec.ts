@@ -17,10 +17,14 @@ test.describe("auto-promotion lanes settings (ADR-126)", () => {
     await page.goto(`/projects/${fx.projectSlug}?tab=settings`);
 
     // Master toggle (ships OFF for a never-configured project).
-    await expect(page.getByTestId("auto-promotion-master")).toBeVisible();
+    await expect(
+      page.getByTestId("auto-promotion-master").filter({ visible: true }),
+    ).toBeVisible();
 
     // The lanes view-table with the four built-in classes.
-    const table = page.getByTestId("auto-promotion-lanes-table");
+    const table = page
+      .getByTestId("auto-promotion-lanes-table")
+      .filter({ visible: true });
 
     await expect(table).toBeVisible();
 

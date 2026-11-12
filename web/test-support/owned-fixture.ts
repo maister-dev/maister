@@ -111,6 +111,12 @@ export async function startOwnedFixture(
     } catch (cleanupError) {
       failures.push(cleanupError);
     }
+    // No handle reaches the caller on startup failure, so archive before it removes the root.
+    try {
+      await preserveFixtureLog(invocation, logFile);
+    } catch (archiveError) {
+      failures.push(archiveError);
+    }
     throw new Error(`${role} startup failed\n${await readLogTail(logFile)}`, {
       cause: new AggregateError(failures, `${role} startup/cleanup`),
     });

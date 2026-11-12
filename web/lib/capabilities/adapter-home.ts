@@ -12,6 +12,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import pino from "pino";
 
@@ -32,6 +33,7 @@ import {
 } from "@/lib/agents/materialization-manifest";
 import { atomicWriteText } from "@/lib/atomic";
 import { MaisterError } from "@/lib/errors";
+import { runtimeFileUrl, runtimePathUrl } from "@/lib/runtime-file-url";
 
 const log = pino({
   name: "capabilities",
@@ -57,7 +59,7 @@ type AdapterCapabilityHomeInput = Readonly<{
 
 async function pathExists(p: string): Promise<boolean> {
   try {
-    await lstat(p);
+    await lstat(runtimeFileUrl(p));
 
     return true;
   } catch (err) {
@@ -387,10 +389,10 @@ async function composeCodexHome(args: {
 }): Promise<void> {
   // 1. Symlink global auth + config so the relocated home keeps credentials.
   for (const file of ["auth.json", "config.toml"]) {
-    const src = path.join(args.codexGlobalHome, file);
+    const src = fileURLToPath(runtimePathUrl(args.codexGlobalHome, file));
 
     if (await pathExists(src)) {
-      const dest = path.join(args.homeRoot, file);
+      const dest = fileURLToPath(runtimePathUrl(args.homeRoot, file));
 
       if (await pathExists(dest)) await rm(dest, { force: true });
       await symlink(src, dest);
