@@ -80,10 +80,12 @@ async function restartUnadmittedTurn(
     (error: unknown) => ({ kind: "interrupted" as const, error }),
   );
   let released = false;
+  let reached = false;
   let settled = false;
 
   try {
     await barrier.awaitReached(60_000);
+    reached = true;
     const { rows } = await fixture.database.pool.query<{
       run_id: string;
       dialog_status: string;
@@ -228,7 +230,7 @@ async function restartUnadmittedTurn(
     throw error;
   } finally {
     if (!settled) await fixture.web.kill("SIGKILL");
-    if (!released) await barrier.release();
+    if (reached && !released) await barrier.release();
     await launching;
   }
 }
@@ -766,6 +768,18 @@ it("S1 package message: restart retains request-only follow-up context and its o
   fixture = await suite.startFixture();
   const pkg = await packageEditor();
   const runId = await launchPackage(pkg, outputPrompt);
+
+  await poll(
+    async () => {
+      const { rows } = await fixture!.database.pool.query<{
+        dialog_status: string;
+      }>("SELECT dialog_status FROM scratch_runs WHERE run_id=$1", [runId]);
+
+      return rows[0]?.dialog_status === "WaitingForUser" ? true : null;
+    },
+    60_000,
+    "initial package turn applied before sending its follow-up",
+  );
   const recovered = await restartUnadmittedTurn(() =>
     fixture!.api(
       `/api/studio/local-packages/${pkg.id}/assistant/${runId}/messages`,

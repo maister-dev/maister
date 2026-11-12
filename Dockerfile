@@ -15,7 +15,7 @@ ARG UV_VERSION
 ARG PYTHON_VERSION
 
 ENV PNPM_HOME=/usr/local/pnpm
-ENV PATH=/root/.local/bin:$PNPM_HOME:$PATH
+ENV PATH=$PNPM_HOME:$PATH
 ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python
 ENV UV_PYTHON_PREFERENCE=only-managed
 
@@ -30,8 +30,10 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && corepack enable \
  && corepack prepare pnpm@${PNPM_VERSION} --activate \
- && curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh \
- && uv python install ${PYTHON_VERSION}
+ && curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh \
+ && UV_PYTHON_BIN_DIR=/usr/local/bin uv python install ${PYTHON_VERSION} \
+ && ln -s "$(uv python find "${PYTHON_VERSION}")" /usr/local/bin/python3 \
+ && ln -s python3 /usr/local/bin/python
 
 WORKDIR /app
 
@@ -44,8 +46,11 @@ COPY supervisor/package.json ./supervisor/
 COPY mcp/package.json ./mcp/
 COPY site/package.json ./site/
 COPY site-docs/package.json ./site-docs/
-RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile
+COPY scripts/check-native-dependencies.mjs ./scripts/
+# Public site/docs have separate images; retain the root validation tooling.
+RUN --mount=type=cache,target=/usr/local/pnpm/store \
+    pnpm --filter maister --filter maister-web... --filter @maister/supervisor... --filter @maister/mcp... install --frozen-lockfile \
+ && node scripts/check-native-dependencies.mjs
 COPY web/ ./web/
 COPY supervisor/ ./supervisor/
 # The MCP facade is part of the runtime image.
@@ -64,8 +69,10 @@ COPY supervisor/package.json ./supervisor/
 COPY mcp/package.json ./mcp/
 COPY site/package.json ./site/
 COPY site-docs/package.json ./site-docs/
-RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile
+COPY scripts/check-native-dependencies.mjs ./scripts/
+RUN --mount=type=cache,target=/usr/local/pnpm/store \
+    pnpm --filter maister --filter maister-web... --filter @maister/supervisor... --filter @maister/mcp... install --frozen-lockfile \
+ && node scripts/check-native-dependencies.mjs
 ENV NODE_ENV=development
 ENV NEXT_TELEMETRY_DISABLED=1
 WORKDIR /app

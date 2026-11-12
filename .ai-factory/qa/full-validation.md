@@ -105,6 +105,16 @@ Context.GetIsolate, and give cpu-features 0.0.10 its actual Node initializer
 signature. Both addons compile and pass upstream crypto/CPU-detection checks on
 Node 24 and 26; native crypto availability is asserted before the crypto cases.
 Docker dependency stages copy the patches before frozen installation.
+The shared native check also runs during Docker installation and in the
+non-root production smoke. Python and uv live in public executable paths;
+`python3` resolves to the managed Python 3.12 installation. The application
+image excludes the separately built public site/docs packages. BuildKit mounts
+pnpm's actual `/usr/local/pnpm/store`, so installs reuse downloaded packages.
+Both application and site dependency stages compile their native addons.
+The full production image builds without compiler warnings in 61.581 s.
+The prebuild-install 7.1.3 patch uses `fs.constants` instead of removed top-level
+constants. Its local-archive, cache-hit and loopback-download paths pass with
+fatal deprecations on Node 24.22.3 and 26.13.1; the original fails with DEP0176.
 
 The hosted Intel isolation failures exposed a real admission/result deadlock:
 `issueOwnedPrompt` upgraded the owner's run lock to `FOR UPDATE`, conflicting
@@ -114,6 +124,12 @@ old query and passes with all 13 immutable-command cases after the fix
 (`admission-lock-red.log`, `admission-lock-green.log`).
 All 139 complete Flow, agent, scratch and session-binding owner cases also pass
 with zero leaks (`lock-siblings-final.log`, 2,355.759 s including cleanup).
+The next hosted run exposed the same FK conflict on the assignment itself:
+the shared session-binding helper still took `FOR UPDATE` before admission.
+It now takes `NO KEY UPDATE`, preserving serialization of assignment changes.
+The expanded existing PostgreSQL case first fails with 55P03 on that assignment
+query, then passes with all 17 immutable-command/session-binding cases in
+6.715 s (`assignment-reference-red.log`, `assignment-reference-green.log`).
 
 Consensus assertions now run the production owner/continuation workers after a
 driver yields. An existing matrix case injects one retryable PostgreSQL failure;
@@ -125,6 +141,18 @@ operation they actually interrupt instead of racing unrelated run activity.
 Both complete delegation/scratch-placement files pass 45/45 with zero leaks
 (`fixture-races-final.log`, 37.437 s). The scratch case now asserts the old turn's
 response instead of swallowing every exception.
+The delayed-synthesis case additionally injects a one-shot verifier-application
+rollback and runs the prompt owner during the barrier phase. Its focused RED
+reproduces the hosted failure; all 26 cases then pass in 302.561 s. P4 shares
+the unchanged 30-second checkpoint wire budget across its two prerequisites
+and asserts the old handler is still pending before releasing the ACK. The
+package-follow-up fixture waits for the initial turn's durable idle state.
+
+The stable `d1ee92b44c80014d2bd0a9596e980be5ada560f3` local checkpoint passes
+all 51 isolation cases in 538.008 s and all 278 ordinary E2E cases in 384.562 s,
+with no retries, skips or owned leaks. Its normal TypeScript-enabled production
+build passes in 35.709 s without Turbopack warnings. These precede the assignment
+and Docker follow-ups above; final revision qualification belongs to PR checks.
 
 The first complete hosted remainder on `4c76eb1eac8dee46a983ed65619da3e8c0793273`
 contains 600 files and 5,164 cases: 5,149 pass and 15 fail in the five owners

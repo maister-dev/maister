@@ -174,7 +174,7 @@ it("concurrent same-key admission keeps one command and the original request byt
   });
 });
 
-it("prompt admission remains compatible with an in-flight result's run reference", async () => {
+it("prompt admission remains compatible with an in-flight result's run and assignment references", async () => {
   const fixture = await admissionFixture();
   const reader = await database.pool.connect();
   const payload = {
@@ -187,6 +187,10 @@ it("prompt admission remains compatible with an in-flight result's run reference
     await reader.query("SELECT id FROM runs WHERE id = $1 FOR KEY SHARE", [
       runId,
     ]);
+    await reader.query(
+      "SELECT id FROM execution_assignments WHERE id = $1 FOR KEY SHARE",
+      [assignmentId],
+    );
     const admitted = await issueOwnedPrompt(db, {
       assignment,
       host,

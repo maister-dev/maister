@@ -28,7 +28,7 @@ COPY site-docs/package.json ./site-docs/package.json
 COPY supervisor/package.json ./supervisor/package.json
 COPY web/package.json ./web/package.json
 
-RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+RUN --mount=type=cache,target=/usr/local/pnpm/store \
     pnpm install --frozen-lockfile --filter @maister/site-docs...
 
 FROM deps AS builder

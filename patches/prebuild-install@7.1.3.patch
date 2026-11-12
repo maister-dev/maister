@@ -1,0 +1,30 @@
+diff --git a/download.js b/download.js
+--- a/download.js
++++ b/download.js
+@@ -18,7 +18,7 @@
+   if (opts.nolocal) return download()
+ 
+   log.info('looking for local prebuild @', localPrebuild)
+-  fs.access(localPrebuild, fs.R_OK | fs.W_OK, function (err) {
++  fs.access(localPrebuild, fs.constants.R_OK | fs.constants.W_OK, function (err) {
+     if (err && err.code === 'ENOENT') {
+       return download()
+     }
+@@ -33,7 +33,7 @@
+       if (err) return onerror(err)
+ 
+       log.info('looking for cached prebuild @', cachedPrebuild)
+-      fs.access(cachedPrebuild, fs.R_OK | fs.W_OK, function (err) {
++      fs.access(cachedPrebuild, fs.constants.R_OK | fs.constants.W_OK, function (err) {
+         if (!(err && err.code === 'ENOENT')) {
+           log.info('found cached prebuild')
+           return unpack()
+@@ -125,7 +125,7 @@
+ 
+   function ensureNpmCacheDir (cb) {
+     const cacheFolder = util.npmCache()
+-    fs.access(cacheFolder, fs.R_OK | fs.W_OK, function (err) {
++    fs.access(cacheFolder, fs.constants.R_OK | fs.constants.W_OK, function (err) {
+       if (err && err.code === 'ENOENT') {
+         return makeNpmCacheDir()
+       }

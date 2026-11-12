@@ -16,6 +16,7 @@ overrides:
 
 patchedDependencies:
   cpu-features@0.0.10: d6806337cd6cf8063da9f65aa6af6eb5fc291fc5161404d0ac5e027e2bcb5093
+  prebuild-install@7.1.3: d3458d63bb5cdd4111b21e064af785cd0db3f1769c474ffe56d5e6db5676d810
   ssh2@1.17.0: 86b97dc86e026ef8852b32031c7c552fc189d8e85550430ab6b129c793135f40
 
 importers:
@@ -11344,7 +11345,7 @@ snapshots:
   keytar@7.9.0:
     dependencies:
       node-addon-api: 4.3.0
-      prebuild-install: 7.1.3
+      prebuild-install: 7.1.3(patch_hash=d3458d63bb5cdd4111b21e064af785cd0db3f1769c474ffe56d5e6db5676d810)
     optional: true
 
   keyv@5.6.0:
@@ -12323,7 +12324,7 @@ snapshots:
 
   preact@10.24.3: {}
 
-  prebuild-install@7.1.3:
+  prebuild-install@7.1.3(patch_hash=d3458d63bb5cdd4111b21e064af785cd0db3f1769c474ffe56d5e6db5676d810):
     dependencies:
       detect-libc: 2.1.2
       expand-template: 2.0.3

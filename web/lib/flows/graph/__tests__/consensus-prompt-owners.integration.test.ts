@@ -1484,6 +1484,10 @@ describe("Consensus prompt owners through the production graph driver", () => {
       },
     );
 
+    const barrierOwners = startPromptOwnerWorker({
+      db: database.db as unknown as Db,
+      owners: flowPromptOwners,
+    });
     const barrierContinuation = startFlowContinuationWorker({
       db: database.db as unknown as Db,
       runtimeRoot: supervisor.runtimeRoot,
@@ -1538,6 +1542,7 @@ describe("Consensus prompt owners through the production graph driver", () => {
       throw error;
     } finally {
       await barrierContinuation.stop();
+      await barrierOwners.stop();
       await dropTrigger();
     }
 
@@ -1611,6 +1616,13 @@ describe("Consensus prompt owners through the production graph driver", () => {
 
     await drive(seeded.runId);
     await waitForDraftsDone(seeded.runId);
+    const sequence = `consensus_synthesis_retry_${seeded.runId.replaceAll("-", "")}`;
+
+    await database.pool.query(`CREATE SEQUENCE ${sequence}`);
+    const dropVerifierRetry = await installInsertTrigger(
+      "consensus_round_verdicts",
+      `IF NEW.run_id = '${seeded.runId}' AND nextval('${sequence}') = 1 THEN RAISE EXCEPTION 'retry verifier before delayed synthesis' USING ERRCODE = '40P01'; END IF; RETURN NEW;`,
+    );
     const dropTrigger = await installInsertTrigger(
       "artifact_instances",
       "IF NEW.id LIKE '%:consensus-synthesis:%' AND NEW.id NOT LIKE '%:input' THEN RAISE EXCEPTION 'held consensus synthesis application'; END IF; RETURN NEW;",
@@ -1631,6 +1643,10 @@ describe("Consensus prompt owners through the production graph driver", () => {
       },
     );
 
+    const barrierOwners = startPromptOwnerWorker({
+      db: database.db as unknown as Db,
+      owners: flowPromptOwners,
+    });
     const barrierContinuation = startFlowContinuationWorker({
       db: database.db as unknown as Db,
       runtimeRoot: supervisor.runtimeRoot,
@@ -1680,7 +1696,10 @@ describe("Consensus prompt owners through the production graph driver", () => {
       throw error;
     } finally {
       await barrierContinuation.stop();
+      await barrierOwners.stop();
       await dropTrigger();
+      await dropVerifierRetry();
+      await database.pool.query(`DROP SEQUENCE ${sequence}`);
     }
 
     const owners = startPromptOwnerWorker({
