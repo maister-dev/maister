@@ -109,6 +109,7 @@ test.describe("Manual task admission through the real browser and controlled pro
     await expect(dialog).toHaveCount(0);
 
     const closeDialog = await openLaunch(page, task.title);
+
     await expect(
       closeDialog.getByRole("button", { name: "Use configured runners" }),
     ).toHaveCount(0);
@@ -118,10 +119,13 @@ test.describe("Manual task admission through the real browser and controlled pro
       /Runner \/ Model/,
       new RegExp(fixture.failedRunnerId),
     );
-    await closeDialog.getByRole("button", { name: "Close", exact: true }).click();
+    await closeDialog
+      .getByRole("button", { name: "Close", exact: true })
+      .click();
     await expect(closeDialog).toHaveCount(0);
 
     const backdropDialog = await openLaunch(page, task.title);
+
     await expect(
       backdropDialog.getByRole("button", { name: "Use configured runners" }),
     ).toHaveCount(0);
@@ -212,7 +216,9 @@ test.describe("Manual task admission through the real browser and controlled pro
       reopened.getByRole("button", { name: "Use configured runners" }),
     ).toBeVisible();
     await mappingPicker.click();
-    await mappingOptions.getByRole("option", { name: /^Clear mapping/ }).click();
+    await mappingOptions
+      .getByRole("option", { name: /^Clear mapping/ })
+      .click();
     await mappingButton.click();
     await expect.poll(mapping).toEqual([
       {

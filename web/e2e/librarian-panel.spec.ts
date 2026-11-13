@@ -267,7 +267,9 @@ test("B3 keeps history and attention scrollable without displacing the composer"
 
     await expect(history).toBeInViewport();
     for (const status of statuses) {
-      await expect(history.getByText(status, { exact: true }).first()).toBeVisible();
+      await expect(
+        history.getByText(status, { exact: true }).first(),
+      ).toBeVisible();
     }
     expect((await history.boundingBox())?.height).toBeLessThanOrEqual(
       Math.min(height * 0.55, 440),

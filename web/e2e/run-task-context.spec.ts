@@ -235,9 +235,10 @@ test.describe("run & task context visibility", () => {
     const { viewerEmail, viewerPassword } = loadFixtures().byKey.m22;
 
     await withE2EDb((pool) =>
-      pool.query("UPDATE runs SET status='Crashed', ended_at=now() WHERE id=$1", [
-        fx.runId,
-      ]),
+      pool.query(
+        "UPDATE runs SET status='Crashed', ended_at=now() WHERE id=$1",
+        [fx.runId],
+      ),
     );
     const context = await browser.newContext({
       storageState: { cookies: [], origins: [] },
@@ -257,7 +258,9 @@ test.describe("run & task context visibility", () => {
       const outcome = page.getByTestId("run-outcome");
 
       await expect(outcome).toBeInViewport();
-      await expect(outcome).toContainText("You have read-only access to this Run.");
+      await expect(outcome).toContainText(
+        "You have read-only access to this Run.",
+      );
       await outcome.getByRole("link", { name: "This run crashed" }).click();
       const recovery = page.getByTestId("run-crashed-section");
 
