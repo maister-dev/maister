@@ -2143,6 +2143,20 @@
       "when": 1794606478012,
       "tag": "0309_stand_dispatch_permit_binding",
       "breakpoints": true
+    },
+    {
+      "idx": 310,
+      "version": "7",
+      "when": 1794606478013,
+      "tag": "0310_stand_before_observations",
+      "breakpoints": true
+    },
+    {
+      "idx": 311,
+      "version": "7",
+      "when": 1794606478014,
+      "tag": "0311_stand_before_observation_guards",
+      "breakpoints": true
     }
   ]
 }

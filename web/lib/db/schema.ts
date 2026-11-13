@@ -10915,6 +10915,12 @@ export const standOperations = pgTable(
       t.id,
       t.resourceKey,
     ),
+    observation: unique("stand_operations_observation_identity_unique").on(
+      t.id,
+      t.targetIncarnation,
+      t.resourceKey,
+      t.requestDigest,
+    ),
     successor: unique("stand_operations_predecessor_unique").on(
       t.predecessorId,
     ),
@@ -10973,6 +10979,55 @@ export const standResourceClaims = pgTable(
     epoch: check(
       "stand_resource_claims_epoch_check",
       sql`${t.ownerEpoch} BETWEEN 1 AND 9007199254740991`,
+    ),
+  }),
+);
+
+export const standOperationObservations = pgTable(
+  "stand_operation_observations",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    operationId: text("operation_id").notNull(),
+    targetIncarnation: text("target_incarnation").notNull(),
+    resourceKey: text("resource_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    targetSequence: bigint("target_sequence", { mode: "number" }).notNull(),
+    invocationId: text("invocation_id"),
+    observedState: text("observed_state", {
+      enum: ["active", "inactive", "failed", "unknown"],
+    }).notNull(),
+    capturedAt: timestamp("captured_at", { withTimezone: true }).notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    operation: foreignKey({
+      name: "stand_operation_observations_identity_fk",
+      columns: [
+        t.operationId,
+        t.targetIncarnation,
+        t.resourceKey,
+        t.requestDigest,
+      ],
+      foreignColumns: [
+        standOperations.id,
+        standOperations.targetIncarnation,
+        standOperations.resourceKey,
+        standOperations.requestDigest,
+      ],
+    }).onDelete("restrict"),
+    sequence: unique("stand_operation_observations_sequence_unique").on(
+      t.operationId,
+      t.targetSequence,
+    ),
+    shape: check(
+      "stand_operation_observations_shape_check",
+      sql`${t.targetSequence} BETWEEN 1 AND 9007199254740991
+        AND (${t.invocationId} IS NULL OR ${t.invocationId} ~ '^[A-Za-z0-9._:-]{1,128}$')
+        AND ${t.observedState} IN ('active','inactive','failed','unknown')`,
     ),
   }),
 );

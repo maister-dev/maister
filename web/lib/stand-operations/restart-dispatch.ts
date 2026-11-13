@@ -1,8 +1,9 @@
 import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
+import type { IssuedCommand } from "@/lib/execution-host/ledger";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 
 import {
   requireCompanyFlowNodeKnowledgeOwner,
@@ -11,15 +12,19 @@ import {
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import {
   executionAssignments,
+  executionHosts,
   runs,
   specialistRunLinks,
   standOperations,
+  standOperationObservations,
   standResourceClaims,
   standRestartApprovals,
   standTargets,
 } from "@/lib/db/schema";
 import { redactQueryError } from "@/lib/db/pg-error";
 import { MaisterError } from "@/lib/errors";
+import { COMMAND_POLICY } from "@/lib/execution-host/deliverer";
+import { issueCommand } from "@/lib/execution-host/ledger";
 
 type RestartDispatchIdentity = Readonly<{
   operationId: string;
@@ -71,17 +76,19 @@ export async function authorizeStandRestartProfessional(
   await authorizeCompanyUserAction(tx, userId, companyId, "targets:restart");
 }
 
-/** Resolve current dispatch ownership without initiating a command or external action. */
-export async function assertStandRestartDispatchOwner(
+/** Commit the owner, observed precondition and command before transport. */
+export async function prepareStandRestartDispatch(
   db: Db,
   identity: RestartDispatchIdentity,
-): Promise<void> {
+): Promise<IssuedCommand<RestartCommandPayload>> {
   try {
     return await db.transaction(async (tx) => {
       const [actor] = await tx
         .select({
           runId: runs.id,
           assignmentId: specialistRunLinks.assignmentId,
+          placement: executionAssignments,
+          host: executionHosts,
         })
         .from(runs)
         .innerJoin(specialistRunLinks, eq(specialistRunLinks.runId, runs.id))
@@ -92,6 +99,10 @@ export async function assertStandRestartDispatchOwner(
             eq(executionAssignments.runId, runs.id),
             eq(executionAssignments.state, "active"),
           ),
+        )
+        .innerJoin(
+          executionHosts,
+          eq(executionHosts.id, executionAssignments.executionHostId),
         )
         .where(
           and(
@@ -135,7 +146,7 @@ export async function assertStandRestartDispatchOwner(
             eq(standOperations.effectState, "not_dispatched"),
           ),
         )
-        .for("share", { of: [standOperations, standTargets] });
+        .for("no key update", { of: [standOperations, standTargets] });
 
       if (!selection)
         throw new MaisterError(
@@ -167,7 +178,7 @@ export async function assertStandRestartDispatchOwner(
             eq(standResourceClaims.unresolved, true),
           ),
         )
-        .for("share");
+        .for("no key update");
 
       if (
         typeof witness?.epoch !== "number" ||
@@ -181,8 +192,73 @@ export async function assertStandRestartDispatchOwner(
           "CONFLICT",
           "The exact stand dispatch owner or input changed",
         );
+      const [observation] = await tx
+        .select()
+        .from(standOperationObservations)
+        .where(eq(standOperationObservations.operationId, operation.id))
+        .orderBy(desc(standOperationObservations.targetSequence))
+        .limit(1);
+
+      if (!observation || observation.observedState === "unknown")
+        throw new MaisterError(
+          "PRECONDITION",
+          "A retained before-effect stand observation is required",
+          {
+            details: { reason: "stand_before_observation_required" },
+          },
+        );
+      const payload: RestartCommandPayload = {
+        operationId: operation.id,
+        targetIncarnation: operation.targetIncarnation,
+        componentId: operation.componentId,
+        action: "restart",
+        requestDigest: operation.requestDigest,
+        resourceKey: operation.resourceKey,
+        ownerEpoch: claim.ownerEpoch + 1,
+        businessOwnerEpoch: witness.epoch,
+        nodeAttemptId: identity.nodeAttemptId,
+        beforeObservationId: observation.id,
+      };
+      const issued = await issueCommand(tx, {
+        assignment: actor.placement,
+        host: actor.host,
+        kind: "stand.dispatch",
+        payload,
+        maxAttempts: COMMAND_POLICY["stand.dispatch"].maxAttempts,
+      });
+
+      await tx
+        .update(standResourceClaims)
+        .set({
+          ownerId: issued.row.id,
+          ownerEpoch: payload.ownerEpoch,
+          expiresAt: sql`clock_timestamp()+interval '120 seconds'`,
+        })
+        .where(eq(standResourceClaims.resourceKey, operation.resourceKey));
+      await tx
+        .update(standOperations)
+        .set({
+          effectState: "dispatching",
+          revision: operation.revision + 1,
+        })
+        .where(eq(standOperations.id, operation.id));
+
+      return issued;
     });
   } catch (error) {
     throw redactQueryError(error);
   }
 }
+
+type RestartCommandPayload = Readonly<{
+  operationId: string;
+  targetIncarnation: string;
+  componentId: string;
+  action: "restart";
+  requestDigest: string;
+  resourceKey: string;
+  ownerEpoch: number;
+  businessOwnerEpoch: number;
+  nodeAttemptId: string | null;
+  beforeObservationId: string;
+}>;

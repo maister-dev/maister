@@ -593,6 +593,36 @@ it("IT-CBO-02 IT-CBO-03 retains one restart intent across aliases and approves o
   }
   const winnerKey = a.status === 202 ? key : secondKey;
   const componentId = a.status === 202 ? "api" : "api-alias";
+
+  await expect(
+    database.pool.query(
+      `INSERT INTO stand_operation_observations(
+        operation_id, target_incarnation, resource_key, request_digest,
+        target_sequence, invocation_id, observed_state, captured_at
+      )
+      SELECT id, target_incarnation, repeat('f',64), request_digest,
+        1, 'fixture-invocation', 'active', now()
+      FROM stand_operations WHERE id=$1`,
+      [accepted.id],
+    ),
+  ).rejects.toMatchObject({ code: "23503" });
+  const observed = await database.pool.query<{ id: string }>(
+    `INSERT INTO stand_operation_observations(
+      operation_id, target_incarnation, resource_key, request_digest,
+      target_sequence, invocation_id, observed_state, captured_at
+    )
+    SELECT id, target_incarnation, resource_key, request_digest,
+      1, 'fixture-invocation', 'active', now()
+    FROM stand_operations WHERE id=$1 RETURNING id`,
+    [accepted.id],
+  );
+
+  await expect(
+    database.pool.query(
+      "UPDATE stand_operation_observations SET observed_state='unknown' WHERE id=$1",
+      [observed.rows[0]!.id],
+    ),
+  ).rejects.toMatchObject({ code: "23514" });
   const duplicate = await createOperation(winner, componentId, winnerKey);
 
   expect(duplicate.status).toBe(200);
@@ -680,11 +710,10 @@ it("IT-CBO-02 IT-CBO-03 retains one restart intent across aliases and approves o
 
   expect(replayedApproval.status).toBe(200);
   expect(await replayedApproval.json()).toEqual(approval);
-  const { assertStandRestartDispatchOwner } =
-    await import("../restart-dispatch");
+  const { prepareStandRestartDispatch } = await import("../restart-dispatch");
 
   await expect(
-    assertStandRestartDispatchOwner(database.db as Db, {
+    prepareStandRestartDispatch(database.db as Db, {
       operationId: accepted.id,
       runId: randomUUID(),
       nodeAttemptId: null,

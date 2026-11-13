@@ -16,6 +16,7 @@ import {
   executionCommands,
   standAuthorizationPermits,
   standComponents,
+  standOperationObservations,
   standOperations,
   standResourceClaims,
   standRestartApprovals,
@@ -131,14 +132,31 @@ export async function authorizeStandCallback(
         )
         .for("share");
       const nodeAttemptId = command?.payload.nodeAttemptId;
+      const observationId = command?.payload.beforeObservationId;
 
       if (
         !command ||
+        typeof observationId !== "string" ||
         (nodeAttemptId !== null && typeof nodeAttemptId !== "string")
       )
         throw new MaisterError(
           "CONFLICT",
           "The exact stand dispatch command owner is unavailable",
+        );
+      const [observation] = await tx
+        .select({ id: standOperationObservations.id })
+        .from(standOperationObservations)
+        .where(
+          and(
+            eq(standOperationObservations.id, observationId),
+            eq(standOperationObservations.operationId, operation.id),
+          ),
+        );
+
+      if (!observation)
+        throw new MaisterError(
+          "CONFLICT",
+          "The command has no exact before-effect stand observation",
         );
       await authorizeStandRestartProfessional(
         tx,
