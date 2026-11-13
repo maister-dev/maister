@@ -239,6 +239,66 @@ it("L2 bounds interactive preview input and requires same-origin JSON", async ()
   expect(await countIntents(input.taskId)).toBe(0);
 });
 
+it("L2 a settings writer cannot pair runner choices from one snapshot with the next token", async () => {
+  const input = await body();
+  const [runner] = await database.db
+    .select({ model: platformAcpRunners.model })
+    .from(platformAcpRunners)
+    .where(eq(platformAcpRunners.id, fixture.runnerId));
+  const writer = await database.pool.connect();
+  let open = true;
+
+  try {
+    const { rows } = await writer.query<{ pid: number }>(
+      "SELECT pg_backend_pid() AS pid",
+    );
+
+    await writer.query("BEGIN");
+    await writer.query(
+      "LOCK TABLE platform_acp_runners IN ACCESS EXCLUSIVE MODE",
+    );
+    const reader = preview(request({ taskId: input.taskId }));
+
+    await expect
+      .poll(async () => {
+        const result = await database.pool.query<{ count: number }>(
+          "SELECT count(*)::int FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)) AND query ILIKE '%platform_acp_runners%'",
+          [rows[0].pid],
+        );
+
+        return result.rows[0].count;
+      })
+      .toBe(1);
+    await writer.query(
+      "UPDATE platform_acp_runners SET model='race-after' WHERE id=$1",
+      [fixture.runnerId],
+    );
+    await writer.query("COMMIT");
+    open = false;
+
+    const during = await reader;
+    const before = await during.json();
+    const after = await (
+      await preview(request({ taskId: input.taskId }))
+    ).json();
+
+    expect(during.status).toBe(200);
+    expect(JSON.stringify(before.options)).not.toContain("race-after");
+    expect(JSON.stringify(after.options)).toContain("race-after");
+    expect(before.options.settingsToken).toBe(input.expectedSettingsToken);
+    expect(after.options.settingsToken).not.toBe(before.options.settingsToken);
+    expect(await countIntents(input.taskId)).toBe(0);
+  } finally {
+    if (open) await writer.query("ROLLBACK");
+    else
+      await writer.query(
+        "UPDATE platform_acp_runners SET model=$1 WHERE id=$2",
+        [runner.model, fixture.runnerId],
+      );
+    writer.release();
+  }
+});
+
 it("L3 refuses a mapping save that loses the enabled revision lock", async () => {
   const [oldRevision] = await database.db
     .select()
