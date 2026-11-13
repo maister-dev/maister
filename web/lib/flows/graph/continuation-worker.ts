@@ -33,6 +33,7 @@ import {
 } from "./coordinator-wake";
 import { pendingGatePermissionResumeExists } from "./gate-permission-resume";
 
+import { runWorkerLoop } from "@/lib/workers/loop";
 import {
   executionAssignments,
   executionCommands,
@@ -90,7 +91,7 @@ export function startFlowContinuationWorker(input: {
   const serve = async (slot: number): Promise<void> => {
     let cursor: string | null = null;
 
-    while (!controller.signal.aborted) {
+    await runWorkerLoop(controller.signal, async () => {
       try {
         const [candidate] = await projectionTransaction(input.db, (tx) =>
           tx
@@ -336,12 +337,13 @@ export function startFlowContinuationWorker(input: {
           failures.delete(slot);
           cursor = null;
           await runEventWakeBus.waitForProjection(1_000, controller.signal);
-          continue;
+
+          return;
         }
         cursor = candidate.id;
         if (controller.signal.aborted) return;
         // ADR-176: a committed recover intent is routed BEFORE the
-        // WaitingOnChildren arm and always `continue`s, so it can never fall
+        // WaitingOnChildren arm and always returns, so it can never fall
         // through to the ordinary `runFlow` dispatch below.
         //
         // The guard repeats arm C's ELIGIBILITY, not just its shape. A run can
@@ -365,7 +367,8 @@ export function startFlowContinuationWorker(input: {
             resumeStartedAt: candidate.resumeStartedAt,
             currentStepId: candidate.currentStepId,
           });
-          continue;
+
+          return;
         }
         if (candidate.status === "WaitingOnChildren") {
           const coordinator = await currentCoordinator(input.db, candidate.id);
@@ -384,13 +387,14 @@ export function startFlowContinuationWorker(input: {
                 }),
             });
             failures.delete(slot);
-            continue;
+
+            return;
           }
           const resumed = await markResumedFromWait(candidate.id, {
             db: input.db,
           });
 
-          if (!resumed.ok) continue;
+          if (!resumed.ok) return;
         }
         const wakeIntent =
           candidate.status === "WaitingOnChildren" ||
@@ -419,7 +423,7 @@ export function startFlowContinuationWorker(input: {
         );
         await runEventWakeBus.waitForProjection(1_000, controller.signal);
       }
-    }
+    });
   };
   // ADR-176 — the routed crash-recover re-entry.
   //

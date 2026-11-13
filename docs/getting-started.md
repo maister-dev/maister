@@ -153,6 +153,14 @@ pnpm --filter maister-web dev            # http://localhost:3000
 pnpm dev
 ```
 
+The web dev launcher budgets 1 GiB of V8 old-space by default. This is not a
+process RSS limit: Turbopack's native compiler, source maps, and the supervisor
+also consume memory. To change the heap budget while preserving other Node
+options, set `NODE_OPTIONS`, for example
+`NODE_OPTIONS="--max-old-space-size=2048" pnpm --filter maister-web dev`.
+Turbopack persists its compilation cache and evicts its in-memory copies after
+snapshots; the first request to a page still pays its compilation cost.
+
 Only Postgres is containerized; `web` and `supervisor` run on the host (they
 spawn agent CLIs and operate on host git repos — see ADR-023). Both read the
 same `MAISTER_RUNTIME_ROOT`; the supervisor additionally keeps its
