@@ -264,7 +264,9 @@ test.describe("run & task context visibility", () => {
         "You have read-only access to this Run.",
       );
       await outcome.getByRole("link", { name: "This run crashed" }).click();
-      const recovery = page.getByTestId("run-crashed-section");
+      const recovery = page
+        .getByTestId("run-crashed-section")
+        .filter({ visible: true });
 
       await expect(recovery).toBeInViewport();
       await expect(recovery.getByRole("button")).toHaveCount(0);
