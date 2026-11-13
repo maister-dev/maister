@@ -778,6 +778,8 @@ Phase exit: full owning suites green and the actual scheduler/domain-event claim
 
   T30 queued orphan checkpoint (2026-11-13). A projectless Pending child Flow remained queued after its actual parent crashed. The sweep now includes that exact child and settles it through the company finalizer with a parent-state and Pending guard. The native graph regression passes, including the second sweep producing no additional settlement. The full Web unit rerun with loopback permitted passes 9,312 tests.
 
+  T30 wake budget checkpoint (2026-11-13). A late child-failure wake could mint a new placement after the assignment had already reached its hard limit but before the sweeper retained the stop. The existing wake transaction now applies the same assignment-budget eligibility as scheduler admission. The native graph regression observes a typed refusal and no dispatch before children-first budget settlement. The focused native, scheduler and park suites pass 39 selected tests.
+
 Phase exit: full owning suites green; no new orchestration engine, attempt ledger or capacity bypass. Explicit adversarial review of authority, admission, event ordering and every resulting fix cycle.
 
 ### Phase 7 — Narrow stand connector, durable operations and deployment

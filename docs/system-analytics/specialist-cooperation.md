@@ -326,6 +326,9 @@ The wake transaction checks the immediate parent and assignment root under
 shared locks before reserving capacity. A terminal ancestor or a retained
 cancellation or budget stop blocks the wake. If an ancestor is locked by
 another transaction, the wake yields so reconciliation can reconsider it.
+Before minting a placement, the wake transaction uses the same retained
+assignment-budget eligibility check as initial scheduler admission. A late
+child outcome can leave a wake marker while the budget sweeper owns settlement.
 When the assignment budget is exhausted while the company root is parked,
 the budget sweeper can claim the retained waiting attempt. It settles children
 before closing that attempt and the root with `BUDGET_EXCEEDED` in the same

@@ -44,6 +44,7 @@ import { mintPlacement, releaseAssignmentForRun } from "@/lib/execution-host";
 import { gcAgeDays } from "@/lib/instance-config";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import { authorizeAssignmentQuestionNodeResume } from "@/lib/specialist-assignments/flow-question";
+import { assignmentBudgetAllowsDispatchSql } from "@/lib/specialist-assignments/delegated-budget";
 import {
   authorizeNodeInterruptResume,
   authorizeOrchestratorActionResume,
@@ -85,7 +86,11 @@ export type StateTransitionResult =
   | {
       ok: false;
       reason:
-        "status-guard-mismatch" | "not-found" | "capacity" | "pending-evidence";
+        | "status-guard-mismatch"
+        | "not-found"
+        | "capacity"
+        | "pending-evidence"
+        | "assignment-budget";
     };
 
 // ADR-141: a run that terminalizes MUST NOT strand a live branch-sync claim.
@@ -612,6 +617,14 @@ export async function markResumedFromWait(
         )
           return { ok: false, reason: "pending-evidence" };
       }
+      const [budget]: { allowed: boolean }[] = (
+        await tx.execute(
+          sql`SELECT ${assignmentBudgetAllowsDispatchSql(sql`${runId}`)} AS allowed`,
+        )
+      ).rows;
+
+      if (budget?.allowed !== true)
+        return { ok: false, reason: "assignment-budget" };
       if (
         (await countLiveRuns(tx, "flow")) >=
         (await effectivePoolCap(tx, "flow")).cap

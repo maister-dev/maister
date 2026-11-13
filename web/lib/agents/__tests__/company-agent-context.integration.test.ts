@@ -280,6 +280,7 @@ import { git, initRepo } from "@/test-support/git-fixture";
 import { addDetachedWorktree } from "@/lib/worktree";
 import { contentDigest } from "@/lib/evaluations/digest";
 import { claimBudgetTermination } from "@/lib/runs/budget-termination";
+import { reconcileRunCostRollups } from "@/lib/runs/cost-rollups";
 import { claimCompanyStop } from "@/lib/runs/stop";
 
 const browserSession = vi.hoisted(() => ({ user: null as SessionUser | null }));
@@ -13993,6 +13994,22 @@ async function qualifyCompanyCooperation(
             rootRunId,
             prepared.bounds.maxTokens,
           );
+          await reconcileRunCostRollups(rootRunId, { client: db });
+          await database.pool.query(
+            "UPDATE runs SET failed_child_wake_at=clock_timestamp() WHERE id=$1",
+            [rootRunId],
+          );
+          const resumeFlow = vi.fn();
+
+          expect(
+            await wakeParkedCoordinator({
+              db,
+              parentRunId: rootRunId,
+              cause: "settled_child",
+              resumeFlow,
+            }),
+          ).toMatchObject({ kind: "skipped", reason: "assignment-budget" });
+          expect(resumeFlow).not.toHaveBeenCalled();
           await runSweepTick({ db, executionHosts: hosts });
           await runSweepTick({ db, executionHosts: hosts });
           const outcomes = await database.pool.query(
