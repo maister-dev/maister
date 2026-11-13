@@ -22183,13 +22183,13 @@ paths:
   /api/stand-operations/{operationId}/recovery-decisions:
     post:
       operationId: standOperationRecovery
-      summary: Designed — Record hold or inspected successor intent
-      description: Designed; no implementation is implied. Requires current targets:recover. URL identifiers are
-        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
-        target endpoint and execution ownership are derived from authenticated context/server state. Writes
-        compare canonical payload digest and expected revision; exact replay returns the original currently
-        accessible receipt, changed payload conflicts.
-      x-implementation-status: Designed
+      summary: Record a hold on an unknown restart
+      description: A same-origin session with current targets:read, targets:recover and retained assignment source
+        access can hold an unknown restart at its exact revision. The effect and resource claim are preserved.
+        Hold currently accepts an empty inspection list. Inspected decisions and successor authorization
+        require the target inspection flow and currently return 409. Exact replay returns current operation
+        state under current authority; changed input with the same delivery key conflicts.
+      x-implementation-status: Implemented
       x-required-scope: targets:recover
       requestBody:
         required: true
@@ -22199,14 +22199,13 @@ paths:
               $ref: "#/components/schemas/CBRecoveryDecision"
       responses:
         "200":
-          description: Exact content-guarded replay returns the currently accessible prior receipt without repeating
-            work; state remains explicit.
+          description: Exact content-guarded replay returns the currently accessible operation without repeating the decision.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/CBOperation"
         "202":
-          description: Accepted durable intent or explicit pending/unknown outcome, never proof of success.
+          description: Durable hold accepted. The effect remains unknown and the resource stays excluded.
           content:
             application/json:
               schema:

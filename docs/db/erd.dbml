@@ -3501,6 +3501,26 @@ table stand_operations {
   }
 }
 
+table stand_recovery_decisions {
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  operation_id text [not null]
+  operation_revision integer [not null]
+  actor_id text [not null]
+  decision text [not null]
+  inspection_ids jsonb [not null]
+  reason text [not null]
+  authority jsonb [not null]
+  delivery_key text [not null]
+  decision_digest text [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (operation_id, actor_id, delivery_key) [name: 'stand_recovery_decisions_delivery_unique', unique]
+    (operation_id, operation_revision) [name: 'stand_recovery_decisions_revision_unique', unique]
+
+  }
+}
+
 table stand_resource_claims {
   canonical_resource_key text [pk, not null]
   operation_id text [not null]
@@ -5142,6 +5162,10 @@ ref stand_operations_predecessor_id_stand_operations_id_fk: stand_operations.pre
 ref stand_operations_input_fk: stand_operations.(assignment_id, input_revision) > specialist_input_revisions.(assignment_id, revision) [delete: restrict, update: no action]
 
 ref stand_operations_component_fk: stand_operations.(target_id, config_revision, component_id) > stand_components.(target_id, config_revision, component_id) [delete: restrict, update: no action]
+
+ref stand_recovery_decisions_operation_id_stand_operations_id_fk: stand_recovery_decisions.operation_id > stand_operations.id [delete: restrict, update: no action]
+
+ref stand_recovery_decisions_actor_id_users_id_fk: stand_recovery_decisions.actor_id > users.id [delete: restrict, update: no action]
 
 ref stand_resource_claims_exact_operation_fk: stand_resource_claims.(operation_id, canonical_resource_key) > stand_operations.(id, resource_key) [delete: restrict, update: no action]
 

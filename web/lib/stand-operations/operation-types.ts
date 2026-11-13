@@ -65,6 +65,16 @@ export const standPermitCheckSchema = z
   })
   .strict();
 
+export const standRecoveryDecisionSchema = z
+  .object({
+    expectedRevision: knowledgeRevisionSchema,
+    decision: z.enum(["hold", "authorize_successor"]),
+    inspectionIds: z.array(postgresTextSchema.min(1).max(128)).max(16),
+    reason: postgresTextSchema.min(1).max(2000).regex(/\S/),
+    idempotencyKey: knowledgeDeliveryKeySchema,
+  })
+  .strict();
+
 export type StandPermitCheck = z.infer<typeof standPermitCheckSchema>;
 
 export type StandAction = (typeof STAND_ACTIONS)[number];

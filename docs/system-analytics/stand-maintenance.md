@@ -155,6 +155,13 @@ Authority requests/permits also bind a closed purpose `dispatch|reconcile|logs|v
 
 ### Recovery and current responsibility
 
+A session operator with current target read and recovery grants and access to
+the retained assignment input can record a hold at the exact unknown restart
+revision. The transaction retains the decision and keeps the resource claim
+unresolved, including after assignment cancellation. An empty inspection list
+is valid when the helper is unavailable. Successor authorization requires
+authenticated inspections.
+
 | Window | Persisted state | Recovery and exclusion |
 | --- | --- | --- |
 | Before platform intent commit | No effect admitted | Retry intake normally; no success/operation receipt invented |

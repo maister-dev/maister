@@ -11032,6 +11032,53 @@ export const standOperationObservations = pgTable(
   }),
 );
 
+export const standRecoveryDecisions = pgTable(
+  "stand_recovery_decisions",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    operationId: text("operation_id")
+      .notNull()
+      .references(() => standOperations.id, { onDelete: "restrict" }),
+    operationRevision: integer("operation_revision").notNull(),
+    actorId: text("actor_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    decision: text("decision", {
+      enum: ["hold", "authorize_successor"],
+    }).notNull(),
+    inspectionIds: jsonb("inspection_ids").$type<readonly string[]>().notNull(),
+    reason: text("reason").notNull(),
+    authority: jsonb("authority").$type<CompanyGrantWitness>().notNull(),
+    deliveryKey: text("delivery_key").notNull(),
+    decisionDigest: text("decision_digest").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    delivery: unique("stand_recovery_decisions_delivery_unique").on(
+      t.operationId,
+      t.actorId,
+      t.deliveryKey,
+    ),
+    revision: unique("stand_recovery_decisions_revision_unique").on(
+      t.operationId,
+      t.operationRevision,
+    ),
+    shape: check(
+      "stand_recovery_decisions_shape_check",
+      sql`${t.operationRevision}>0 AND ${t.decision} IN ('hold','authorize_successor')
+        AND ${t.decisionDigest} ~ '^[a-f0-9]{64}$'
+        AND ${t.deliveryKey} ~ '^[A-Za-z0-9._:-]{8,128}$'
+        AND char_length(${t.reason})<=2000 AND ${t.reason} ~ '[^[:space:]]'
+        AND jsonb_typeof(${t.authority})='object'
+        AND jsonb_typeof(${t.inspectionIds})='array' AND jsonb_array_length(${t.inspectionIds})<=16`,
+    ),
+  }),
+);
+
 export const standAuthorizationPermits = pgTable(
   "stand_authorization_permits",
   {

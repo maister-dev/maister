@@ -825,7 +825,7 @@ it("IT-CBO-02 IT-CBO-03 retains one restart intent across aliases and approves o
       UPDATE stand_operations SET effect_state='dispatching',revision=revision+1 WHERE id=${accepted.id}
     `);
     await tx.execute(sql`
-      UPDATE stand_operations SET effect_state='unknown',disposition='unresolved_hold',
+      UPDATE stand_operations SET effect_state='unknown',
         revision=revision+1 WHERE id=${accepted.id}
     `);
   });
@@ -841,6 +841,76 @@ it("IT-CBO-02 IT-CBO-03 retains one restart intent across aliases and approves o
       [accepted.id],
     ),
   ).rejects.toMatchObject({ code: "23514" });
+  await expect(
+    database.pool.query(
+      "UPDATE stand_operations SET disposition='unresolved_hold',revision=revision+1 WHERE id=$1",
+      [accepted.id],
+    ),
+  ).rejects.toMatchObject({ code: "23514" });
+  const { POST: decideRecovery } =
+    await import("@/app/api/stand-operations/[operationId]/recovery-decisions/route");
+
+  await createCompanyGrants(database.db, administratorId, {
+    principalKind: "user",
+    principalId: userId,
+    actions: ["targets:recover"],
+    idempotencyKey: randomUUID(),
+  });
+  const holdInput = {
+    expectedRevision: accepted.revision + 2,
+    decision: "hold",
+    inspectionIds: [],
+    reason: "Keep this resource excluded until the helper can be contacted.",
+    idempotencyKey: randomUUID(),
+  };
+  const decide = (body: typeof holdInput) =>
+    decideRecovery(
+      new NextRequest(
+        `http://localhost/api/stand-operations/${accepted.id}/recovery-decisions`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Origin: "http://localhost",
+          },
+          body: JSON.stringify(body),
+        },
+      ),
+      { params: Promise.resolve({ operationId: accepted.id }) },
+    );
+  const hold = await decide(holdInput);
+
+  expect(hold.status).toBe(202);
+  const held = await hold.json();
+
+  expect(held).toMatchObject({
+    effectState: "unknown",
+    disposition: "unresolved_hold",
+  });
+  const replay = await decide(holdInput);
+
+  expect(replay.status).toBe(200);
+  expect(await replay.json()).toEqual(held);
+  expect(
+    (await decide({ ...holdInput, reason: "Different decision" })).status,
+  ).toBe(409);
+  expect(
+    (
+      await decide({
+        ...holdInput,
+        idempotencyKey: randomUUID(),
+        expectedRevision: held.revision,
+        decision: "authorize_successor",
+      })
+    ).status,
+  ).toBe(409);
+  await expect(
+    database.pool.query(
+      "DELETE FROM stand_recovery_decisions WHERE operation_id=$1",
+      [accepted.id],
+    ),
+  ).rejects.toMatchObject({ code: "23514" });
+  expect((await createOperation(loser, loserComponent)).status).toBe(409);
   await database.db.transaction(async (tx) => {
     await tx.execute(sql`
       UPDATE stand_operations SET effect_state='confirmed_not_applied',

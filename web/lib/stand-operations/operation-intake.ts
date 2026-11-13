@@ -33,7 +33,7 @@ const log = pino({
 });
 const terminalAssignments = new Set(["completed", "failed", "cancelled"]);
 
-function operationDto(
+export function operationDto(
   operation: typeof standOperations.$inferSelect,
   successorId: string | null = null,
 ): StandOperation {
