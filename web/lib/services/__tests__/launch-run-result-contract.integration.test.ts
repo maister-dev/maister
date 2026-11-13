@@ -194,6 +194,10 @@ beforeAll(async () => {
   });
   pool = testDatabase.pool;
   db = testDatabase.db;
+  await pool.query(
+    `INSERT INTO users (id, email, role, account_status)
+     VALUES ('binding-admin', 'binding-admin@example.test', 'admin', 'active')`,
+  );
   // ADR-166: launches gate on a registered local execution host.
   await fakeExecutionHosts(db);
 }, 180_000);
