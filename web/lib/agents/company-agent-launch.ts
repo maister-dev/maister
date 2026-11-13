@@ -23,6 +23,7 @@ import {
 } from "./company-trigger-reservation";
 import {
   prepareCompanyAgentContext,
+  prepareCompanyAgentReplacementContext,
   captureCompanyAgentExecution,
 } from "./company-agent-context";
 import {
@@ -34,6 +35,7 @@ import { assertReadOnlySessionEvidence } from "./runner-readonly-evidence";
 import { buildOperationalContract } from "./launch-contract";
 import { prepareCompanyDelegatedReservation } from "./company-delegated-reservation";
 import { assertStandaloneCompanyAgentDefinition } from "./company-agent-definition";
+import { retryDigest, retryRefusal } from "./retry-guards";
 
 import { capabilityAgentSchema } from "@/lib/config.schema";
 import {
@@ -55,7 +57,10 @@ import { localHost } from "@/lib/execution-host/resolver";
 import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
 import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence";
 import { bindDelegatedWorkRunInTransaction } from "@/lib/specialist-assignments/delegated-intake";
-import { activateInitialSpecialistAssignmentRunInTransaction } from "@/lib/specialist-assignments/store";
+import {
+  activateInitialSpecialistAssignmentRunInTransaction,
+  linkSpecialistAssignmentRunInTransaction,
+} from "@/lib/specialist-assignments/store";
 
 const log = pino({
   name: "agents:company-launch",
@@ -161,6 +166,55 @@ export async function reserveCompanyAgentRunInTransaction(
   };
 }
 
+/** The caller holds the locked source and has retained its immutable retry receipt. */
+export async function reserveCompanyAgentReplacement(
+  tx: Db,
+  userId: string,
+  request: CompanyAgentContextInput,
+  reservation: Readonly<{
+    runId: string;
+    sourceRunId: string;
+    runnerSha256: string;
+  }>,
+  hosts: ExecutionHosts,
+  host: ExecutionHost,
+): Promise<void> {
+  assertUpgradeMaintenanceAllows("run_admission");
+  const context = await prepareCompanyAgentReplacementContext(
+    tx,
+    userId,
+    request,
+  );
+  const { runId } = reservation;
+
+  await insertCompanyAgentRun(tx, context, hosts, host, {
+    runId,
+    triggerSource: request.triggerSource,
+    scheduledRequest: context.input.snapshot.scheduledRequest,
+    runnerSha256: reservation.runnerSha256,
+    retryOfRunId: reservation.sourceRunId,
+  });
+  await linkSpecialistAssignmentRunInTransaction(
+    tx,
+    userId,
+    request.assignmentId,
+    {
+      runId,
+      inputRevision: request.inputRevision,
+      expectedRevision: request.assignmentRevision,
+      role: "continuation",
+      work: null,
+    },
+  );
+  await assertNativeRunKnowledgeInputsInTransaction(tx, runId);
+  for (const reference of context.input.snapshot.objectiveInput.inputRefs)
+    await inspectKnowledgeEvidenceReference(
+      tx,
+      { kind: "execution", runId, nodeAttemptId: null },
+      reference,
+    );
+}
+
 /** Reserve a taskless company child under the actual professional's canonical work receipt. */
 export async function reserveCompanyDelegatedAgentRun(
   db: Db,
@@ -240,6 +294,8 @@ async function insertCompanyAgentRun(
       ReturnType<typeof assertCompanyTriggerReservation>
     > | null;
     scheduledRequest: AssignmentInputRevision["snapshot"]["scheduledRequest"];
+    runnerSha256?: string;
+    retryOfRunId?: string;
     parentRunId?: string;
     rootRunId?: string;
   }>,
@@ -266,6 +322,13 @@ async function insertCompanyAgentRun(
     runners: runners.map(runnerCatalogEntry),
   });
 
+  if (
+    execution.runnerSha256 &&
+    retryDigest(JSON.parse(JSON.stringify(resolution.runnerSnapshot))) !==
+      execution.runnerSha256
+  )
+    throw retryRefusal("retry_runner_changed");
+
   await assertReadOnlySessionEvidence({
     hosts,
     adapterId: resolution.runnerSnapshot.adapter,
@@ -282,6 +345,7 @@ async function insertCompanyAgentRun(
     agentChainDepth: execution.triggerReservation?.agentChainDepth ?? 0,
     runKind: "agent",
     companyId: context.owner.companyId,
+    retryOfRunId: execution.retryOfRunId,
     companyExecutionSnapshot: snapshot,
     agentId: definition.id,
     sourceAgentId: definition.id,

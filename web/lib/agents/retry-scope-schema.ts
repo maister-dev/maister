@@ -30,7 +30,14 @@ export function agentRetryRecipeScopeShape(
       AND ${recipe}->'version'='3'::jsonb AND ${recipe}->>'strategy'='pre_work_retry'
       AND ${recipe}->'owner'=jsonb_build_object('kind','company','companyId',${companyId})
       AND ${recipe} ?& ARRAY['version','strategy','owner','projectId','taskId','taskRevision','project','agentId','definition','configuration','trigger','runner','policy','contextDigest','specialistBinding','coordinatorFlowBinding','assignment']
-      AND ${recipe}-ARRAY['version','strategy','owner','projectId','taskId','taskRevision','project','agentId','definition','configuration','trigger','runner','policy','contextDigest','specialistBinding','coordinatorFlowBinding','assignment','scheduledRequestSnapshot']='{}'::jsonb
+      AND ${recipe}-ARRAY['version','strategy','owner','projectId','taskId','taskRevision','project','agentId','definition','configuration','trigger','runner','policy','contextDigest','specialistBinding','coordinatorFlowBinding','assignment','scheduledRequestSnapshot','replacement']='{}'::jsonb
+      AND (NOT (${recipe} ? 'replacement') OR (
+        jsonb_typeof(${recipe}->'replacement')='object'
+        AND (${recipe}->'replacement') ?& ARRAY['sourceRunId','assignmentRevision','contextRevision','ownerEpoch','resultSha256','sourceSha256']
+        AND (${recipe}->'replacement')-ARRAY['sourceRunId','assignmentRevision','contextRevision','ownerEpoch','resultSha256','sourceSha256']='{}'::jsonb
+        AND ${recipe}->'replacement'->>'resultSha256' ~ '^[a-f0-9]{64}$'
+        AND ${recipe}->'replacement'->>'sourceSha256' ~ '^[a-f0-9]{64}$'
+      ))
       AND ${recipe}->'projectId'='null'::jsonb AND ${recipe}->'project'='null'::jsonb
       AND ${recipe}->'taskId'='null'::jsonb AND ${recipe}->'taskRevision'='null'::jsonb
       AND ${recipe}->>'contextDigest' ~ '^[a-f0-9]{64}$'

@@ -118,6 +118,17 @@ const recipeSchema = z.union([
       assignment: z
         .object({ id: identity, inputRevision: revision, inputSha256: digest })
         .strict(),
+      replacement: z
+        .object({
+          sourceRunId: identity,
+          assignmentRevision: revision,
+          contextRevision: z.number().int().nonnegative().max(2147483647),
+          ownerEpoch: revision,
+          resultSha256: digest,
+          sourceSha256: digest,
+        })
+        .strict()
+        .optional(),
     })
     .strict(),
 ]);

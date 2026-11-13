@@ -185,6 +185,15 @@ export async function retrySafetyReason(
     return "retry_source_unsupported";
   if (await hasSpecialistRetrySource(db, source.id))
     return "retry_source_unsupported";
+
+  return preDispatchRetrySafetyReason(db, source);
+}
+
+/** A rejected create or durable before-dispatch failure can prove the absence of an agent turn. */
+export async function preDispatchRetrySafetyReason(
+  db: Db,
+  source: Run,
+): Promise<string | null> {
   if (source.status !== "Failed" && source.status !== "Crashed")
     return "retry_source_not_failed";
   const unsafe = await db.execute(sql`SELECT 1 WHERE

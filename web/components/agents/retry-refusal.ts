@@ -6,6 +6,8 @@ const refusalKeys: Readonly<Record<string, string>> = {
   reconciliation_required: "refusal.reconciliation",
   retry_task_changed: "refusal.taskChanged",
   retry_runner_unavailable: "refusal.runner",
+  retry_runner_changed: "refusal.runner",
+  assignment_budget_exhausted: "refusal.assignmentBudgetExhausted",
   retry_source_not_failed: "refusal.notFailed",
   retry_source_unsupported: "refusal.unsupported",
   retry_trigger_unsupported: "refusal.unsupported",

@@ -569,13 +569,16 @@ paths:
       operationId: getAgentRetryOptions
       summary: (Implemented — ADR-196–198) getAgentRetryOptions
       description:
-        launchRun required. Generic replay requires proven pre-dispatch failure.
+        Project retry requires launchRun. Generic replay requires proven pre-dispatch failure.
         A current read-only operational qualifier can instead advertise an explicit
         fresh assessment of current task inputs; this does not replay or certify old effects.
         Task-bound delivery retry additionally returns an exact canonical request and material-input preview. Missing legacy witnesses or changed source input require a fresh task Launch.
         Both require source quiescence and refuse unresolved commands/live work.
         The preview binds current recipe/task policy and reports the resolved preferred
         runner, strategy and whether accepting opts a legacy task into qualification.
+        A manually invoked company specialist with a settled pre-dispatch failure
+        requires current assignment recovery and source access. Its preview offers
+        the retained runner only.
       parameters:
         - name: runnerId
           in: query
@@ -607,6 +610,9 @@ paths:
         authenticated server state. Existing data grants apply before aggregation and nested evidence
         serialization. No secrets, host paths or session handles are returned.
         Task-bound code-delivery accepts a fresh active-session manual task-launch intent using the displayed launchRequest. It never copies old admission. Missing witnesses refuse with retry_launch_upgrade_required; stale material or preview refuses without allocating a successor. Same canonical request/key replays the original intent before checking later task drift.
+        Company specialist replacement checks the current assignment, owner epoch,
+        binding, input, source, result and runner witnesses. It reserves one
+        Pending continuation and stores its retry receipt in the same transaction.
       parameters:
         - name: runId
           in: path
@@ -620,7 +626,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/AgentRetryReceipt"
         "202":
-          description: Accepted intent; nullable runId does not claim execution
+          description: Accepted intent or atomically reserved company continuation. Run status reflects the current execution state.
           content:
             application/json:
               schema:
@@ -645,6 +651,7 @@ paths:
         Identifiers are URL parameters; actor/project/source context is derived from
         authenticated server state. Existing data grants apply before aggregation and nested evidence
         serialization. No secrets, host paths or session handles are returned.
+        Company replacement receipts require current recovery and source access.
       parameters:
         - name: runId
           in: path

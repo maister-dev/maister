@@ -77,6 +77,11 @@ import {
   reserveCompanyAgentRun,
   reserveCompanyAgentRunInTransaction,
 } from "../company-agent-launch";
+import {
+  acceptAgentRetry,
+  getAgentRetryOptions,
+  getAgentRetryReceipt,
+} from "../retry";
 import { startAgentSession } from "../launch";
 import * as agentLaunch from "../launch";
 import { startAgentContinuationWorker } from "../continuation-worker";
@@ -10740,6 +10745,190 @@ it("IT-CBO-08 refuses an otherwise valid observation when the exact company inpu
     ],
   });
   await revokeAgentRunTokensForRun(appointment.runId, database.db);
+});
+
+it("IT-CBC-03 reserves one source-bound replacement for a settled company specialist before dispatch", async () => {
+  const db: Db = database.db;
+  const { hosts } = await fakeExecutionHosts(db);
+  const runnerId = randomUUID();
+  const [previous] = await db.select().from(platformRuntimeSettings);
+
+  await db.insert(platformAcpRunners).values({
+    id: runnerId,
+    adapter: "claude",
+    capabilityAgent: "claude",
+    model: "replacement-fixture",
+    provider: { kind: "anthropic" },
+    readinessStatus: "Ready",
+  });
+  await db
+    .insert(platformRuntimeSettings)
+    .values({ id: "singleton", defaultRunnerId: runnerId })
+    .onConflictDoUpdate({
+      target: platformRuntimeSettings.id,
+      set: { defaultRunnerId: runnerId },
+    });
+  const assignment = await createSpecialistAssignment(
+    db,
+    userId,
+    assignmentInput,
+  );
+  const source = await reserveCompanyAgentRun(
+    db,
+    userId,
+    {
+      ...request,
+      assignmentId: assignment.id,
+    },
+    hosts,
+  );
+  const grants = await createCompanyGrants(db, administratorId, {
+    principalKind: "user",
+    principalId: userId,
+    actions: ["assignments:recover"],
+    idempotencyKey: randomUUID(),
+  });
+  let recoverGrant = grants.page.items.find(
+    (grant) => grant.action === "assignments:recover",
+  )!;
+
+  try {
+    expect(await tryStartRun(source.runId, { db })).toMatchObject({
+      started: true,
+    });
+    const failed = await prepareUndispatchedAgentFailure(source.runId, {
+      db,
+      reason: "agent_dispatch_failed",
+    });
+
+    await db.transaction(failed.apply);
+    const preview = await getAgentRetryOptions(db, source.runId, userId);
+
+    expect(preview).toMatchObject({ eligible: true, reason: null });
+    const retry = {
+      runnerId: preview.selectedRunnerId!,
+      requestKey: randomUUID(),
+      previewFingerprint: preview.previewFingerprint,
+    };
+
+    await expect(
+      acceptAgentRetry(db, source.runId, userId, {
+        ...retry,
+        previewFingerprint: "0".repeat(64),
+      }),
+    ).rejects.toMatchObject({ details: { reason: "retry_preview_stale" } });
+    await revokeCompanyGrant(db, administratorId, recoverGrant.id, {
+      expectedRevision: recoverGrant.revision,
+      reason: "Exercise action-time recovery authority",
+      idempotencyKey: randomUUID(),
+    });
+    await expect(
+      acceptAgentRetry(db, source.runId, userId, retry),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    const restored = await createCompanyGrants(db, administratorId, {
+      principalKind: "user",
+      principalId: userId,
+      actions: ["assignments:recover"],
+      idempotencyKey: randomUUID(),
+    });
+
+    recoverGrant = restored.page.items.find(
+      (grant) => grant.action === "assignments:recover",
+    )!;
+    const receipts = await Promise.all([
+      acceptAgentRetry(db, source.runId, userId, retry),
+      acceptAgentRetry(db, source.runId, userId, retry),
+    ]);
+
+    expect(receipts[0]).toMatchObject({
+      intentState: "launched",
+      runStatus: "Pending",
+    });
+    expect(receipts[1]).toEqual(receipts[0]);
+    await expect(
+      getAgentRetryOptions(db, source.runId, userId),
+    ).resolves.toMatchObject({
+      eligible: false,
+      reason: "retry_successor_already_owned",
+      existingIntentId: receipts[0].retryIntentId,
+    });
+    await expect(
+      getAgentRetryReceipt(db, source.runId, receipts[0].retryIntentId, userId),
+    ).resolves.toEqual(receipts[0]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT run_id,role,input_revision FROM specialist_run_links WHERE assignment_id=$1 ORDER BY root_appointment_epoch",
+          [assignment.id],
+        )
+      ).rows,
+    ).toEqual([
+      { run_id: source.runId, role: "specialist", input_revision: 1 },
+      { run_id: receipts[0].runId, role: "continuation", input_revision: 1 },
+    ]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT recipe->'replacement' AS witness FROM agent_retry_intents WHERE id=$1",
+          [receipts[0].retryIntentId],
+        )
+      ).rows[0],
+    ).toMatchObject({ witness: { sourceRunId: source.runId, ownerEpoch: 1 } });
+    const successor = receipts[0].runId!;
+
+    expect(await tryStartRun(successor, { db })).toMatchObject({
+      started: true,
+    });
+    await expect(
+      db.transaction((tx) => loadCompanyAgentSessionContext(tx, successor)),
+    ).resolves.toMatchObject({
+      input: {
+        revision: 1,
+        digest: (
+          await getSpecialistAssignmentInput(db, userId, assignment.id, 1)
+        ).digest,
+      },
+    });
+    await revokeCompanyGrant(db, administratorId, recoverGrant.id, {
+      expectedRevision: recoverGrant.revision,
+      reason: "Withdraw recovery authority before replacement dispatch",
+      idempotencyKey: randomUUID(),
+    });
+    await expect(
+      db.transaction((tx) => loadCompanyAgentSessionContext(tx, successor)),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    const renewed = await createCompanyGrants(db, administratorId, {
+      principalKind: "user",
+      principalId: userId,
+      actions: ["assignments:recover"],
+      idempotencyKey: randomUUID(),
+    });
+
+    recoverGrant = renewed.page.items.find(
+      (grant) => grant.action === "assignments:recover",
+    )!;
+    const settle = await prepareUndispatchedAgentFailure(successor, {
+      db,
+      reason: "fixture_replacement_complete",
+    });
+
+    await db.transaction(settle.apply);
+  } finally {
+    if (previous)
+      await db
+        .update(platformRuntimeSettings)
+        .set({ defaultRunnerId: previous.defaultRunnerId })
+        .where(eq(platformRuntimeSettings.id, "singleton"));
+    else
+      await db
+        .delete(platformRuntimeSettings)
+        .where(eq(platformRuntimeSettings.id, "singleton"));
+    await revokeCompanyGrant(db, administratorId, recoverGrant.id, {
+      expectedRevision: recoverGrant.revision,
+      reason: "Release replacement qualification authority",
+      idempotencyKey: randomUUID(),
+    });
+  }
 });
 
 it("IT-CBC-03 fences a company context writer at execution ownership handoff and preserves committed work", async () => {

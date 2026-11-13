@@ -75,6 +75,7 @@ export async function prepareCompanySpecialistContext(
   tx: SqlTransaction,
   userId: string,
   value: unknown,
+  lock = lockCompanyAssignmentForExecution,
 ): Promise<CompanySpecialistContext> {
   const parsed = companyAgentContextInputSchema.safeParse(value);
 
@@ -96,11 +97,7 @@ export async function prepareCompanySpecialistContext(
     },
     "company agent preflight started",
   );
-  const authority = await lockCompanyAssignmentForExecution(
-    tx,
-    userId,
-    request,
-  );
+  const authority = await lock(tx, userId, request);
   const { binding, effective } = await prepareCompanySpecialistRole(
     tx,
     request,
@@ -251,6 +248,30 @@ export async function lockCompanyAssignmentForExecution(
   userId: string,
   request: CompanyAgentContextInput,
 ): Promise<CompanyUserAuthority> {
+  return lockCompanyExecutionHead(tx, userId, request, "queued");
+}
+
+async function lockCompanyReplacementForExecution(
+  tx: SqlTransaction,
+  userId: string,
+  request: CompanyAgentContextInput,
+): Promise<CompanyUserAuthority> {
+  await authorizeCompanyUserAction(
+    tx,
+    userId,
+    request.companyId,
+    "assignments:recover",
+  );
+
+  return lockCompanyExecutionHead(tx, userId, request, "active");
+}
+
+async function lockCompanyExecutionHead(
+  tx: SqlTransaction,
+  userId: string,
+  request: CompanyAgentContextInput,
+  status: "queued" | "active",
+): Promise<CompanyUserAuthority> {
   await beginAssignmentTransaction(tx);
 
   await authorizeCompanyUserAction(
@@ -281,13 +302,13 @@ export async function lockCompanyAssignmentForExecution(
   if (head.company_id !== request.companyId || head.project_id !== null)
     throw unavailableAssignment();
   if (
-    head.status !== "queued" ||
+    head.status !== status ||
     head.input_revision !== request.inputRevision ||
     head.specialist_binding_id !== request.bindingId
   )
     throw new MaisterError(
       "CONFLICT",
-      "Company work changed or is not queued for this specialist and input; inspect the assignment before admission",
+      "Company work changed or is unavailable for this specialist and input; inspect the assignment before admission",
       { details: { reason: "company_assignment_changed" } },
     );
 
@@ -301,6 +322,28 @@ export async function prepareCompanyAgentContext(
   value: unknown,
 ): Promise<CompanyAgentContext> {
   const context = await prepareCompanySpecialistContext(tx, userId, value);
+
+  return requireStandaloneContext(context);
+}
+
+export async function prepareCompanyAgentReplacementContext(
+  tx: SqlTransaction,
+  userId: string,
+  value: CompanyAgentContextInput,
+): Promise<CompanyAgentContext> {
+  const context = await prepareCompanySpecialistContext(
+    tx,
+    userId,
+    value,
+    lockCompanyReplacementForExecution,
+  );
+
+  return requireStandaloneContext(context);
+}
+
+function requireStandaloneContext(
+  context: CompanySpecialistContext,
+): CompanyAgentContext {
   const { effective, binding, input } = context;
   const definition = effective.parsed;
 

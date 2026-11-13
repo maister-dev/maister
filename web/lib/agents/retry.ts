@@ -19,6 +19,12 @@ import {
   previewAgentTaskRetry,
   taskRetryDecisionRequired,
 } from "./task-retry-authority";
+import { assertProjectAgentRetryIntent } from "./retry-scope";
+import {
+  acceptCompanyAgentRetry,
+  authorizeCompanyRetryReceipt,
+  companyAgentRetryOptions,
+} from "./company-retry";
 
 import { manualTriageHoldPredicate } from "@/lib/tasks/triage-flag-origin";
 import {
@@ -28,7 +34,6 @@ import {
   tasks,
   taskLaunchIntents,
 } from "@/lib/db/schema";
-import { assertProjectAgentRetryIntent } from "./retry-scope";
 import {
   prepareAgentRetry,
   retryRecipeFor,
@@ -122,6 +127,10 @@ export async function getAgentRetryOptions(
   };
 
   try {
+    const [source] = await db.select().from(runs).where(eq(runs.id, runId));
+
+    if (source?.companyId)
+      return await companyAgentRetryOptions(db, source, userId);
     const prepared = await prepareAgentRetry(db, runId, userId);
     let options = prepared.options;
 
@@ -247,6 +256,11 @@ export async function getAgentRetryReceipt(
       ),
     );
 
+  if (intent?.companyId) {
+    await authorizeCompanyRetryReceipt(db, intent, userId);
+
+    return receiptFor(db, intent);
+  }
   if (intent) assertProjectAgentRetryIntent(intent);
 
   if (!intent) {
@@ -326,6 +340,13 @@ export async function acceptAgentRetry(
       ),
     );
 
+  if (replayed?.companyId) {
+    if (replayed.requestDigest !== requestDigest)
+      throw retryRefusal("retry_request_key_reused");
+    await authorizeCompanyRetryReceipt(db, replayed, userId);
+
+    return receiptFor(db, replayed);
+  }
   if (replayed) assertProjectAgentRetryIntent(replayed);
 
   if (replayed) {
@@ -336,6 +357,20 @@ export async function acceptAgentRetry(
     return receiptFor(db, replayed);
   }
   const [source] = await db.select().from(runs).where(eq(runs.id, runId));
+
+  if (source?.companyId) {
+    if (request.launchRequest || request.strategy === "fresh_qualification")
+      throw retryRefusal("retry_request_invalid");
+    const accepted = await acceptCompanyAgentRetry(
+      db,
+      source,
+      userId,
+      request,
+      requestDigest,
+    );
+
+    return receiptFor(db, accepted);
+  }
 
   if (source?.taskId && source.agentKind === "code_delivery") {
     if (

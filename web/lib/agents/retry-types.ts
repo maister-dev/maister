@@ -54,6 +54,14 @@ export type CompanyAgentRetryRecipe = Omit<
   specialistBinding: CompanyConfigurationReference;
   coordinatorFlowBinding: CompanyConfigurationReference | null;
   assignment: { id: string; inputRevision: number; inputSha256: string };
+  replacement?: {
+    sourceRunId: string;
+    assignmentRevision: number;
+    contextRevision: number;
+    ownerEpoch: number;
+    resultSha256: string;
+    sourceSha256: string;
+  };
 };
 
 export type AgentRetryRecipe =

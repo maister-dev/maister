@@ -74,6 +74,13 @@ export async function loadCompanyAgentSessionContext(
     owner.companyId,
     "assignments:update",
   );
+  if (run.retryOfRunId)
+    await authorizeCompanyUserAction(
+      tx,
+      owner.userId,
+      owner.companyId,
+      "assignments:recover",
+    );
   const row = (
     await tx.execute(
       sql`SELECT * FROM specialist_input_revisions WHERE assignment_id=${owner.snapshot.assignment.id} AND revision=${owner.snapshot.assignment.inputRevision} FOR SHARE`,

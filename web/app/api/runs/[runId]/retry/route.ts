@@ -5,6 +5,7 @@ import { interactiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
 import { assertInteractiveLaunchOrigin } from "@/lib/tasks/launch-http";
 import { wakeTaskLaunchQueue } from "@/lib/tasks/launch-wake";
 import { getDb } from "@/lib/db/client";
+import { promoteNextPending } from "@/lib/scheduler";
 import {
   acceptAgentRetry,
   runAgentRetryAdmissionSweep,
@@ -52,6 +53,18 @@ export async function POST(
         );
       });
     }
+    if (receipt.intentState === "launched" && receipt.runStatus === "Pending")
+      queueMicrotask(() => {
+        void promoteNextPending({ db, pool: "agent" }).catch((error: unknown) =>
+          log.warn(
+            {
+              retryIntentId: receipt.retryIntentId,
+              errorType: error instanceof Error ? error.name : "unknown",
+            },
+            "reserved retry dispatch deferred to the scheduler",
+          ),
+        );
+      });
 
     return NextResponse.json(receipt, {
       status: receipt.intentState === "refused" ? 200 : 202,
