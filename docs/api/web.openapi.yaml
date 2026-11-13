@@ -7986,19 +7986,22 @@ paths:
             run/workspace not found, removed workspace, non-`Review` terminal
             state, readiness not ready/stale, invalid/missing target branch,
             target advanced since review without `allowTargetDrift`, invalid
-            policy override, push rejected, or PR-mode preflight failure
+            policy override, or PR-mode preflight failure
             (provider CLI missing / `*_TOKEN` unset / remote not configured /
             `generic` provider). `CONFLICT`:
             merge/rebase textual conflict (a manual-resolution assignment is
             created and the run stays `Review`), a concurrent promotion already
-            in progress, or a promotion superseded by a stale-claim reclaim.
+            in progress, a PR branch push rejected as non-fast-forward, or a
+            promotion superseded by a stale-claim reclaim.
             (ADR-181 — Implemented) The body carries `details.reason` where a
             token exists: `target_drift` (the target advanced since review),
             `target_branch_unknown` (the target does not resolve to a commit),
             `target_locked` (a scratch run promoted onto a branch other than its
             locked target), `provider_unsupported` (PR mode with no usable
             provider), `merged_pr_behind` (the recorded PR was merged without
-            the worktree's later commits) — the only `details` field forwarded.
+            the worktree's later commits), `merge_conflict`, `rebase_conflict`,
+            or `non_fast_forward` (PR branch push rejected) — the only
+            `details` field forwarded.
             (ADR-181 — Implemented) Also `CONFLICT` `details.reason:
             publication_diverged` when a squashing `pull_request` promotion's
             forced PR-branch update would drop commits only that branch has:

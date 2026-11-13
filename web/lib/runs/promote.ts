@@ -1586,7 +1586,9 @@ async function finalizeMergedRecordedPullRequest(args: {
 // finalize. Classification mirrors the table in §3.2:
 //   - preflight / unsupported-provider → PRECONDITION: terminal-config, the
 //     claim is CAS'd to `failed` (token-scoped, reclaimable), run stays Review.
-//   - push rejected / PR-API 5xx → EXECUTOR_UNAVAILABLE: transient, the claim is
+//   - non-fast-forward push → CONFLICT: release the claim so the branch can be
+//     synchronized before retrying.
+//   - transport failure / PR-API 5xx → EXECUTOR_UNAVAILABLE: transient, the claim is
 //     LEFT `claiming` (a same-attempt retry / stale reclaim resumes), no pr_url.
 async function promotePullRequestSideEffect(args: {
   runId: string;
@@ -1620,8 +1622,7 @@ async function promotePullRequestSideEffect(args: {
       args.forcedPr?.publicBranch ??
       (await publicBranchForPromotion(db, claim, project));
 
-    // Push then open/update the PR — both are transient on failure (the helpers
-    // throw EXECUTOR_UNAVAILABLE), so the claim is intentionally LEFT claiming.
+    // Push then open/update the PR. Transport failures leave the claim retryable.
     await pushBranch({
       projectRepoPath: claim.workspace.parentRepoPath,
       remote: "origin",

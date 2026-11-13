@@ -7,7 +7,6 @@ import { promisify } from "node:util";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { MaisterError } from "@/lib/errors";
 import {
   clearWorktreeProvenanceNode,
   readWorktreeProvenanceMetadata,
@@ -436,7 +435,10 @@ describe("worktree git helpers", () => {
         worktreePath: wt,
         targetBranch: "main",
       }),
-    ).rejects.toMatchObject({ code: "CONFLICT" });
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "rebase_conflict" },
+    });
 
     const [
       { stdout: restoredHead },
@@ -544,7 +546,10 @@ describe("worktree git helpers", () => {
         sourceBranch: "scratch/conflict",
         targetBranch: "main",
       }),
-    ).rejects.toBeInstanceOf(MaisterError);
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "merge_conflict" },
+    });
 
     await expect(
       git(repo, ["rev-parse", "--verify", "MERGE_HEAD"]),

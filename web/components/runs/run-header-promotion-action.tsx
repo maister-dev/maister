@@ -13,6 +13,7 @@ import {
   buildPromotionRequestBody,
   isMergedPrBehindResponse,
   isPublicationDivergedResponse,
+  isPublicationPushRejectedResponse,
   isTargetDriftResponse,
 } from "@/lib/runs/promotion-operation";
 
@@ -41,6 +42,8 @@ export function RunHeaderPromotionAction({
   // merged without the run's later commits (Codex F4).
   function refusalMessage(data: { code?: string } | null): string {
     if (isPublicationDivergedResponse(data)) return t("publicationDiverged");
+    if (isPublicationPushRejectedResponse(data))
+      return t("publicationPushRejected");
     if (isMergedPrBehindResponse(data)) return t("mergedPrBehind");
 
     return t(resolveUiErrorMessageKey(data?.code));
@@ -107,7 +110,9 @@ export function RunHeaderPromotionAction({
       type="button"
       onClick={() => void promote()}
     >
-      {labels.promote}
+      {operation.mode === "pull_request"
+        ? t("inspectorActionPromotePullRequest")
+        : labels.promote}
     </button>
   );
 }

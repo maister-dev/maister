@@ -418,6 +418,7 @@ describe("workbench lifecycle real git integration", () => {
       }),
     ).rejects.toMatchObject({
       code: "CONFLICT",
+      details: { reason: "non_fast_forward" },
       pushRejected: "non_fast_forward",
       canForce: true,
       remoteHead: remoteSha,

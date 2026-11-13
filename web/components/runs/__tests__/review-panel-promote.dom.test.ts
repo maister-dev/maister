@@ -82,7 +82,7 @@ const UPDATE_HREF = "/runs/run-1?git=update";
 
 const roots: Root[] = [];
 
-function render(): void {
+function render(promotionMode: ReviewPanelProps["promotionMode"]): void {
   const container = document.createElement("div");
   const root = createRoot(container);
 
@@ -95,9 +95,9 @@ function render(): void {
     baseCommit: "abc1234def5678",
     runBranch: "maister/feature-x",
     targetBranch: "main",
-    promotionMode: "pull_request",
+    promotionMode,
     deliveryPolicy: {
-      strategy: "pull_request",
+      strategy: promotionMode,
       push: "on_success",
       trigger: "manual",
       targetBranch: "main",
@@ -192,7 +192,7 @@ describe("ReviewPanel — a refused Promote", () => {
       message: "server text",
       details: { reason: "publication_diverged" },
     });
-    render();
+    render("pull_request");
 
     await promote();
 
@@ -212,7 +212,7 @@ describe("ReviewPanel — a refused Promote", () => {
       message: "server text",
       details: { reason: "merged_pr_behind" },
     });
-    render();
+    render("pull_request");
 
     await promote();
 
@@ -221,13 +221,45 @@ describe("ReviewPanel — a refused Promote", () => {
     expect(byTestId("review-conflict")).toBeNull();
   });
 
-  it("still shows the merge-conflict card for any other CONFLICT", async () => {
-    refuseWith({ code: "CONFLICT", message: "merge conflict" });
-    render();
+  it("offers branch synchronization when Git rejects a PR push", async () => {
+    refuseWith({ code: "CONFLICT", details: { reason: "non_fast_forward" } });
+    render("pull_request");
 
     await promote();
 
-    expect(byTestId("review-conflict")).not.toBeNull();
-    expect(byTestId("review-publication-diverged")).toBeNull();
+    const [, request] = vi.mocked(fetch).mock.calls[0]!;
+
+    expect(JSON.parse(request?.body as string)).toMatchObject({
+      deliveryPolicyOverride: { strategy: "pull_request" },
+    });
+    expect(document.body.textContent).toContain("run.publicationPushRejected");
+    expect(byTestId("review-publication-diverged-update")).not.toBeNull();
+    expect(byTestId("review-conflict")).toBeNull();
   });
+
+  it("reports an unclassified conflict as a run-state conflict", async () => {
+    refuseWith({ code: "CONFLICT", message: "another promotion is active" });
+    render("pull_request");
+
+    await promote();
+
+    expect(document.body.textContent).toContain("run.error.CONFLICT");
+    expect(byTestId("review-conflict")).toBeNull();
+  });
+
+  it.each([
+    ["merge", "merge_conflict", "git merge --no-ff maister/feature-x"],
+    ["rebase_merge", "rebase_conflict", "git rebase main"],
+  ] as const)(
+    "shows the actual Git operation for %s conflicts",
+    async (mode, reason, command) => {
+      refuseWith({ code: "CONFLICT", details: { reason } });
+      render(mode);
+
+      await promote();
+
+      expect(byTestId("review-conflict")?.textContent).toContain(command);
+      expect(byTestId("review-publication-diverged")).toBeNull();
+    },
+  );
 });

@@ -108,6 +108,17 @@ export function isPublicationDivergedResponse(value: unknown): boolean {
   );
 }
 
+export function isPublicationPushRejectedResponse(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+
+  const response = value as { code?: unknown; details?: { reason?: unknown } };
+
+  return (
+    response.code === "CONFLICT" &&
+    response.details?.reason === "non_fast_forward"
+  );
+}
+
 // ADR-181 (Codex F4): the recorded PR was merged on the provider without the
 // run's later commits. Nothing was changed; they need a PR of their own.
 export function isMergedPrBehindResponse(value: unknown): boolean {
