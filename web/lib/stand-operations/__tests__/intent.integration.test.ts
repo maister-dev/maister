@@ -25,6 +25,7 @@ import { resolveInstalledAgentDefinition } from "@/lib/agents/effective";
 import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
 import { createCompanySpecialistBinding } from "@/lib/agents/company-bindings";
 import { claimDelivering } from "@/lib/execution-host/commands";
+import { releaseAssignmentForRun } from "@/lib/execution-host/assignments";
 import { platformAcpRunners } from "@/lib/db/schema";
 import { tryStartRun } from "@/lib/scheduler";
 import {
@@ -1150,6 +1151,72 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
       });
       await expect(
         authorize({ ...body, nonce: randomUUID() }),
+      ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+      const { claimStandReadAuthority } = await import("../read-authority");
+
+      expect(
+        await releaseAssignmentForRun(db, runId, "test_stand_recovery"),
+      ).toMatchObject({ state: "released" });
+      const readGrant = await createCompanyGrants(db, administratorId, {
+        principalKind: "user",
+        principalId: userId,
+        actions: ["targets:recover"],
+        idempotencyKey: randomUUID(),
+      });
+      const recovery = await claimStandReadAuthority(
+        db,
+        userId,
+        operation.id,
+        "reconcile",
+      );
+      const adopted = await claimStandReadAuthority(
+        db,
+        userId,
+        operation.id,
+        "reconcile",
+      );
+
+      expect(adopted.ownerEpoch).toBe(recovery.ownerEpoch + 1);
+      await expect(
+        authorize({
+          ...body,
+          ownerEpoch: recovery.ownerEpoch,
+          purpose: "reconcile",
+          nonce: randomUUID(),
+        }),
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+
+      await expect(
+        authorize({
+          ...body,
+          ownerEpoch: recovery.ownerEpoch,
+          purpose: "logs",
+          nonce: randomUUID(),
+        }),
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+      const reconciliation = {
+        ...body,
+        ownerEpoch: adopted.ownerEpoch,
+        purpose: "reconcile",
+        nonce: randomUUID(),
+      };
+
+      await expect(authorize(reconciliation)).resolves.toMatchObject({
+        operationId: operation.id,
+        purpose: "reconcile",
+        ownerEpoch: adopted.ownerEpoch,
+      });
+      const recoveryGrant = readGrant.page.items.find(
+        ({ action }) => action === "targets:recover",
+      )!;
+
+      await revokeCompanyGrant(db, administratorId, recoveryGrant.id, {
+        expectedRevision: recoveryGrant.revision,
+        reason: "Revoke fixture recovery authority.",
+        idempotencyKey: randomUUID(),
+      });
+      await expect(
+        authorize({ ...reconciliation, nonce: randomUUID() }),
       ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     } finally {
       if (previousToken === undefined)

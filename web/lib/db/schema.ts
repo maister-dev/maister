@@ -11079,6 +11079,31 @@ export const standRecoveryDecisions = pgTable(
   }),
 );
 
+export const standReadClaims = pgTable(
+  "stand_read_claims",
+  {
+    operationId: text("operation_id")
+      .notNull()
+      .references(() => standOperations.id, { onDelete: "restrict" }),
+    purpose: text("purpose", {
+      enum: ["reconcile", "logs", "verify"],
+    }).notNull(),
+    actorId: text("actor_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    ownerEpoch: bigint("owner_epoch", { mode: "number" }).notNull(),
+    authority: jsonb("authority").$type<CompanyGrantWitness>().notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (t) => ({
+    identity: primaryKey({ columns: [t.operationId, t.purpose] }),
+    shape: check(
+      "stand_read_claims_shape_check",
+      sql`${t.purpose} IN ('reconcile','logs','verify') AND ${t.ownerEpoch} BETWEEN 1 AND 9007199254740991 AND jsonb_typeof(${t.authority})='object'`,
+    ),
+  }),
+);
+
 export const standAuthorizationPermits = pgTable(
   "stand_authorization_permits",
   {

@@ -148,8 +148,11 @@ stays inspectable and needs a reviewed revision before helper authentication.
 Web starts and drains the dedicated listener with its application lifecycle
 when all `MAISTER_STAND_AUTHORITY_*` settings are supplied. Dispatch
 authorization commits the short-lived permit under the current command and
-professional grant. The reconcile, logs and verify callbacks refuse until
-their operation owners are implemented.
+professional grant. The reconcile, logs and verify callbacks require a separate
+purpose-specific owner claim and recheck the current actor, grant and retained
+input access. The read claim survives original Run placement release and
+provides no mutation authority. Verification additionally requires an applied
+restart. The transport must claim read authority before contacting the helper.
 
 Authority requests/permits also bind a closed purpose `dispatch|reconcile|logs|verify`. Dispatch validates the frozen intent action and active run/assignment owner. Read-only reconciliation/verification validates the current operation-recovery owner/grant even after original run termination; logs separately requires current log access. A read-purpose permit cannot authorize restart, and the helper compares returned purpose/nonce/digest/target to the exact call before using it. The callback resolves the principal from stored ownership/service configuration, never from its request body. A verification request preserves original operation/digest and issues a separate fresh verification nonce/receipt; changing its read-purpose action does not rewrite the original restart intent.
 

@@ -3501,6 +3501,20 @@ table stand_operations {
   }
 }
 
+table stand_read_claims {
+  operation_id text [not null]
+  purpose text [not null]
+  actor_id text [not null]
+  owner_epoch bigint [not null]
+  authority jsonb [not null]
+  expires_at "timestamp with time zone" [not null]
+
+  indexes {
+    (operation_id, purpose) [pk]
+
+  }
+}
+
 table stand_recovery_decisions {
   id text [pk, not null, default: `gen_random_uuid()::text`]
   operation_id text [not null]
@@ -5162,6 +5176,10 @@ ref stand_operations_predecessor_id_stand_operations_id_fk: stand_operations.pre
 ref stand_operations_input_fk: stand_operations.(assignment_id, input_revision) > specialist_input_revisions.(assignment_id, revision) [delete: restrict, update: no action]
 
 ref stand_operations_component_fk: stand_operations.(target_id, config_revision, component_id) > stand_components.(target_id, config_revision, component_id) [delete: restrict, update: no action]
+
+ref stand_read_claims_operation_id_stand_operations_id_fk: stand_read_claims.operation_id > stand_operations.id [delete: restrict, update: no action]
+
+ref stand_read_claims_actor_id_users_id_fk: stand_read_claims.actor_id > users.id [delete: restrict, update: no action]
 
 ref stand_recovery_decisions_operation_id_stand_operations_id_fk: stand_recovery_decisions.operation_id > stand_operations.id [delete: restrict, update: no action]
 

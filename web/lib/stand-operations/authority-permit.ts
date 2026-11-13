@@ -8,6 +8,7 @@ import pino from "pino";
 
 import { authenticateStandOperationPeer } from "./authority-peer";
 import { standPermitCheckSchema } from "./operation-types";
+import { authorizeStandReadOwner } from "./read-authority";
 import { authorizeStandRestartProfessional } from "./restart-dispatch";
 import { readStandRunbookDigest } from "./target-registry";
 
@@ -44,6 +45,35 @@ type StandPermit = StandPermitCheck &
     expiresAt: string;
     allowed: true;
   }>;
+
+async function retainPermit(
+  tx: Pick<Db, "insert">,
+  operationId: string,
+  input: StandPermitCheck,
+): Promise<StandPermit> {
+  const [issued] = await tx
+    .insert(standAuthorizationPermits)
+    .values({
+      operationId,
+      nonce: input.nonce,
+      purpose: input.purpose,
+      ownerEpoch: input.ownerEpoch,
+      issuedAt: sql`statement_timestamp()`,
+      expiresAt: sql`statement_timestamp()+interval '5 seconds'`,
+    })
+    .returning();
+
+  if (!issued)
+    throw new MaisterError("CRASH", "The stand permit was not retained");
+
+  return {
+    ...input,
+    operationId,
+    permitId: issued.id,
+    expiresAt: issued.expiresAt.toISOString(),
+    allowed: true,
+  };
+}
 
 /** Authenticate the exact TLS peer and authorize from retained state in one transaction. */
 export async function authorizeStandCallback(
@@ -88,11 +118,17 @@ export async function authorizeStandCallback(
             details: { reason: "target_identity_mismatch" },
           },
         );
-      if (input.purpose !== "dispatch")
-        throw new MaisterError(
-          "PRECONDITION",
-          "The operation has no configured observation owner",
+      if (input.purpose !== "dispatch") {
+        await authorizeStandReadOwner(
+          tx,
+          operation,
+          target.companyId,
+          input.purpose,
+          input.ownerEpoch,
         );
+
+        return retainPermit(tx, operation.id, input);
+      }
       const [claim] = await tx
         .select()
         .from(standResourceClaims)
@@ -216,28 +252,8 @@ export async function authorizeStandCallback(
             "Current restart policy and runbook evidence are required",
           );
       }
-      const [issued] = await tx
-        .insert(standAuthorizationPermits)
-        .values({
-          operationId: operation.id,
-          nonce: input.nonce,
-          purpose: input.purpose,
-          ownerEpoch: input.ownerEpoch,
-          issuedAt: sql`statement_timestamp()`,
-          expiresAt: sql`statement_timestamp()+interval '5 seconds'`,
-        })
-        .returning();
 
-      if (!issued)
-        throw new MaisterError("CRASH", "The stand permit was not retained");
-
-      return {
-        ...input,
-        operationId: operation.id,
-        permitId: issued.id,
-        expiresAt: issued.expiresAt.toISOString(),
-        allowed: true as const,
-      };
+      return retainPermit(tx, operation.id, input);
     });
 
     log.info(

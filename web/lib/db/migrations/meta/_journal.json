@@ -2171,6 +2171,20 @@
       "when": 1794606478016,
       "tag": "0313_stand_recovery_decision_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 314,
+      "version": "7",
+      "when": 1794606478017,
+      "tag": "0314_stand_read_claims",
+      "breakpoints": true
+    },
+    {
+      "idx": 315,
+      "version": "7",
+      "when": 1794606478018,
+      "tag": "0315_stand_read_permit_guards",
+      "breakpoints": true
     }
   ]
 }
