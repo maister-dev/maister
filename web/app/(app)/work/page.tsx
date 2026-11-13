@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import type { ReactElement } from "react";
 
 import { getLocale, getTranslations } from "next-intl/server";
+import Link from "next/link";
 
 import { WorkTable } from "@/components/work/work-table";
 import { buildWorkRowsLabels } from "@/lib/work/work-row-labels";
@@ -28,11 +29,12 @@ export default async function WorkPage({
   searchParams: SearchParams;
 }): Promise<ReactElement> {
   const user = await requireActiveSession();
-  const [params, t, tStage, locale] = await Promise.all([
+  const [params, t, tStage, locale, tAssignments] = await Promise.all([
     searchParams,
     getTranslations("work"),
     getTranslations("workStage"),
     getLocale(),
+    getTranslations("specialistAssignments"),
   ]);
   const filters = normalizeWorkTableFilters(params);
   const table = await getWorkTable({ id: user.id, role: user.role });
@@ -91,6 +93,12 @@ export default async function WorkPage({
           <p className="mt-2 max-w-[720px] text-[13.5px] leading-[1.55] text-mute">
             {t("sub")}
           </p>
+          <Link
+            className="mt-3 inline-block text-sm underline"
+            href="/specialist-assignments"
+          >
+            {tAssignments("title")}
+          </Link>
         </div>
       </header>
 

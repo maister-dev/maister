@@ -840,16 +840,24 @@ export default async function ProjectBoardPage({
         </AutomationsPanel>
       ) : null}
       {tab === "agents" ? (
-        <AgentsAttachPanelLoader
-          canManage={isAdmin}
-          canReadRepoFiles={canReadRepoFiles}
-          mcpRequirements={mcpHub.requirements}
-          projectId={project.id}
-          runners={pageData.runners
-            .filter((runner) => runner.enabled)
-            .map((runner) => ({ id: runner.id, label: runner.label }))}
-          slug={slug}
-        />
+        <>
+          <Link
+            className="mb-4 inline-block text-sm underline"
+            href={`/specialist-assignments?project=${encodeURIComponent(slug)}`}
+          >
+            {(await getTranslations("specialistAssignments"))("title")}
+          </Link>
+          <AgentsAttachPanelLoader
+            canManage={isAdmin}
+            canReadRepoFiles={canReadRepoFiles}
+            mcpRequirements={mcpHub.requirements}
+            projectId={project.id}
+            runners={pageData.runners
+              .filter((runner) => runner.enabled)
+              .map((runner) => ({ id: runner.id, label: runner.label }))}
+            slug={slug}
+          />
+        </>
       ) : null}
       {tab === "members" ? (
         <ProjectMembersPanel

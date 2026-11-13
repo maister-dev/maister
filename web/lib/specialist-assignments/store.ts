@@ -49,7 +49,8 @@ import { databaseTimestamp } from "@/lib/db/timestamp";
 import { redactQueryError } from "@/lib/db/pg-error";
 import { emitSpecialistAssignmentChange } from "@/lib/domain-events/outbox";
 import { contentDigest } from "@/lib/evaluations/digest";
-import { MaisterError } from "@/lib/errors";
+import { authorizeRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 import { executionPolicySchema } from "@/lib/runs/execution-policy";
 import { isTerminalRunStatus } from "@/lib/runs/run-status-sets";
 import { postgresTextSchema } from "@/lib/text-schema";
@@ -229,6 +230,34 @@ async function inspectAssignmentInTransaction(
       sql`SELECT run_id FROM specialist_run_links WHERE assignment_id=${assignmentId} ORDER BY linked_at,run_id`,
     )
   ).rows;
+  let acceptedResult: SpecialistAssignment["acceptedResult"] = null;
+
+  if (typeof head.acceptance_id === "string" && principal.kind === "user") {
+    const [accepted] = (
+      await tx.execute(sql`
+      SELECT result.id,result.revision,result.run_id
+      FROM specialist_acceptances acceptance JOIN run_results result ON result.id=acceptance.result_id
+      WHERE acceptance.id=${head.acceptance_id} AND acceptance.assignment_id=${assignmentId}
+    `)
+    ).rows;
+
+    if (
+      typeof accepted?.id === "string" &&
+      typeof accepted.revision === "number" &&
+      typeof accepted.run_id === "string"
+    ) {
+      try {
+        await authorizeRunKnowledgeDisclosure(tx, principal, accepted.run_id);
+        acceptedResult = { id: accepted.id, revision: accepted.revision };
+      } catch (error) {
+        if (
+          !isMaisterError(error) ||
+          !["UNAUTHORIZED", "PRECONDITION"].includes(error.code)
+        )
+          throw error;
+      }
+    }
+  }
   const value = specialistAssignmentSchema.safeParse({
     id: head.id,
     revision: head.revision,
@@ -250,7 +279,7 @@ async function inspectAssignmentInTransaction(
     destination: head.destination,
     runIds: links.map((row) => row.run_id),
     blockers: head.blockers,
-    acceptedResult: null,
+    acceptedResult,
     createdAt: databaseTimestamp(head.created_at),
     updatedAt: databaseTimestamp(head.updated_at),
   });

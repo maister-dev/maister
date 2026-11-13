@@ -1889,6 +1889,8 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
         await import("@/lib/specialist-assignments/final-acceptance");
       const { getSpecialistAssignment } =
         await import("@/lib/specialist-assignments/store");
+      const { readAssignmentReview } =
+        await import("@/lib/specialist-assignments/workspace-view");
       const published = await db.transaction(async (tx) => {
         const row = await publishRunResult(tx, {
           runId,
@@ -1939,6 +1941,15 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
       const ready = await getSpecialistAssignment(db, userId, assignment.id);
 
       expect(ready.status).toBe("awaiting_acceptance");
+      await expect(
+        readAssignmentReview(db, userId, assignment.id),
+      ).resolves.toEqual({
+        expectedRevision: ready.revision,
+        inputRevision: ready.inputRevision,
+        contextRevision: ready.contextRevision,
+        result: { runId, revision: published.revision },
+        verificationIds: verified.verificationIds,
+      });
       const accept = (verificationIds: readonly string[]) =>
         acceptSpecialistAssignment(db, {
           userId,
@@ -1958,6 +1969,14 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
       await expect(accept(verified.verificationIds)).resolves.toMatchObject({
         status: "completed",
       });
+      await expect(
+        getSpecialistAssignment(db, userId, assignment.id),
+      ).resolves.toMatchObject({
+        acceptedResult: { id: published.id, revision: published.revision },
+      });
+      await expect(
+        readAssignmentReview(db, userId, assignment.id),
+      ).resolves.toBeNull();
     } finally {
       setDefaultTransportForTests(null);
       if (previousToken === undefined)

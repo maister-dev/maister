@@ -3,7 +3,7 @@ import "server-only";
 import type { Db } from "@/lib/execution-host/db";
 import type { StandAction, StandOperation } from "./operation-types";
 
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -21,9 +21,12 @@ import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import { installationCompany } from "@/lib/company/grants";
 import {
   standComponents,
+  standOperationReceipts,
   standOperations,
   standResourceClaims,
+  standRestartApprovals,
   standTargets,
+  standVerifications,
 } from "@/lib/db/schema";
 import { redactQueryError } from "@/lib/db/pg-error";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -350,6 +353,34 @@ export async function getStandOperation(
   userId: string,
   operationId: string,
 ): Promise<StandOperation> {
+  return (await readStandOperation(db, userId, operationId)).operation;
+}
+
+/** An operator sees the exact evidence only after the same current target and source checks as the operation. */
+export async function readStandOperationEvidence(
+  db: Db,
+  userId: string,
+  operationId: string,
+): Promise<{
+  operation: StandOperation;
+  action: StandAction;
+  approvedAt: Date | null;
+  effect: {
+    id: string;
+    capturedAt: Date;
+    receipt: typeof standOperationReceipts.$inferSelect.receipt;
+  }[];
+  verification: {
+    id: string;
+    observedAt: Date;
+    state: typeof standVerifications.$inferSelect.state;
+    effectReceiptId: string;
+  }[];
+}> {
+  return readStandOperation(db, userId, operationId);
+}
+
+async function readStandOperation(db: Db, userId: string, operationId: string) {
   return db.transaction(async (tx) => {
     const companyId = await installationCompany(tx);
 
@@ -413,7 +444,31 @@ export async function getStandOperation(
       (entry) => entry.id !== current.predecessorId,
     );
 
-    return operationDto(
+    const [approval] = await tx
+      .select({ approvedAt: standRestartApprovals.approvedAt })
+      .from(standRestartApprovals)
+      .where(eq(standRestartApprovals.operationId, operationId));
+    const effect = await tx
+      .select({
+        id: standOperationReceipts.id,
+        capturedAt: standOperationReceipts.capturedAt,
+        receipt: standOperationReceipts.receipt,
+      })
+      .from(standOperationReceipts)
+      .where(eq(standOperationReceipts.operationId, operationId))
+      .orderBy(asc(standOperationReceipts.targetReceiptRevision));
+    const verification = await tx
+      .select({
+        id: standVerifications.id,
+        observedAt: standVerifications.observedAt,
+        state: standVerifications.state,
+        effectReceiptId: standVerifications.effectReceiptId,
+      })
+      .from(standVerifications)
+      .where(eq(standVerifications.operationId, operationId))
+      .orderBy(asc(standVerifications.targetSequence));
+
+    const view = operationDto(
       {
         ...current,
         predecessorId:
@@ -422,8 +477,16 @@ export async function getStandOperation(
             : null,
       },
       successor && visible.has(successor.id) ? successor.id : null,
-      await readStandReceiptIds(tx, operationId),
-      await readStandVerificationIds(tx, operationId),
+      effect.map(({ id }) => id),
+      verification.map(({ id }) => id),
     );
+
+    return {
+      operation: view,
+      action: current.action,
+      approvedAt: approval?.approvedAt ?? null,
+      effect,
+      verification,
+    };
   });
 }

@@ -75,6 +75,12 @@ export default async function SettingsPage(): Promise<ReactElement> {
             </span>
           </a>
           <a
+            className="mb-5 block rounded-[16px] border border-line bg-paper px-7 py-5 text-sm font-semibold hover:border-mute"
+            href="/settings/specialists"
+          >
+            {(await getTranslations("specialistAssignments"))("settingsTitle")}
+          </a>
+          <a
             className="mb-5 flex items-center justify-between gap-3 rounded-[16px] border border-line bg-paper px-7 py-5 shadow-[0_1px_0_color-mix(in_oklab,var(--paper)_60%,transparent)_inset,0_12px_32px_-16px_rgba(0,0,0,0.12)] hover:border-mute"
             href="/settings/evaluations"
           >
