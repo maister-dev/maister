@@ -465,6 +465,27 @@ it("IT-CPC-05: separate HTTP push review and confirmation project actual results
     expect(await git(project.repo, ["rev-parse", "HEAD"])).toBe(beforeHead);
     expect(await git(project.repo, ["write-tree"])).toBe(beforeIndex);
 
+    const otherActor = randomUUID();
+
+    await database.db.insert(users).values({
+      id: otherActor,
+      email: `${otherActor}@example.invalid`,
+      role: "admin",
+      accountStatus: "active",
+      mustChangePassword: false,
+    });
+    actingUserId = otherActor;
+    try {
+      const other = await statusGet(workflowRequest, params);
+      const otherBody = await other.json();
+
+      expect(other.status).toBe(200);
+      expect(otherBody.operation).toEqual({ state: "none" });
+      expect(JSON.stringify(otherBody)).not.toContain(review.previewId);
+    } finally {
+      actingUserId = actorUserId;
+    }
+
     const detachedCheckout = join(root, "unavailable-checkout", project.id);
 
     await database.db
