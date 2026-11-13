@@ -321,6 +321,11 @@ export function openRestartJournal(
 
         if (existing) {
           assertSameIntent(existing, intent);
+          if (
+            existing.before.invocationId !== before.invocationId ||
+            existing.before.state !== before.state
+          )
+            throw new RestartJournalError("operation_conflict");
 
           return { created: false, entry: existing };
         }
