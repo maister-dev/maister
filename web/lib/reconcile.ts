@@ -1321,6 +1321,14 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
       AND (link.work_witness IS NOT NULL OR (link.work_id IS NULL AND link.role IN ('specialist','continuation'))))
     AND EXISTS(SELECT 1 FROM run_session_incarnations incarnation WHERE incarnation.run_id=${runs.id}
       AND incarnation.execution_assignment_id=${runs.executionAssignmentId} AND incarnation.state IN ('created','active')))`;
+  const orphanedParent = sql<boolean>`(${runs.parentRunId} IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM runs AS parent
+    WHERE parent.id=${runs.parentRunId}
+      AND parent.status NOT IN (${sql.join(
+        TERMINAL_RUN_STATUSES.map((status) => sql`${status}`),
+        sql`, `,
+      )})
+  ))`;
   const projectRows: Array<{ id: string; repoPath: string }> = await db
     .select({ id: projects.id, repoPath: projects.repoPath })
     .from(projects);
@@ -1412,18 +1420,10 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
             "Review",
             "HumanWorking",
           ]),
-          isNotNull(runs.parentRunId),
           sql`NOT ${retainedSpecialistWait}`,
           // The SQL twin of `coordinatorGone`: derived from the same set so the
           // loader can never hide an orphan the classifier would recover.
-          sql`NOT EXISTS (
-            SELECT 1 FROM runs AS parent
-            WHERE parent.id = ${runs.parentRunId}
-              AND parent.status NOT IN (${sql.join(
-                TERMINAL_RUN_STATUSES.map((status) => sql`${status}`),
-                sql`, `,
-              )})
-          )`,
+          orphanedParent,
         ),
       )
       .orderBy(asc(runs.startedAt))
@@ -1499,6 +1499,11 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
         or(
           inArray(runs.status, ["Running", "WaitingOnChildren"]),
           retainedSpecialistWait,
+          and(
+            isNotNull(runs.companyId),
+            eq(runs.status, "Pending"),
+            orphanedParent,
+          ),
         ),
       ),
     )
@@ -2270,8 +2275,9 @@ export async function runReconcileSweep(
               requested: "Crashed",
               errorCode: "CRASH",
               reason: "orphaned_child",
-              parkedOrphan: {
+              orphan: {
                 parentRunId: cand.parentRunId,
+                status: "WaitingOnChildren",
                 nodeId: cand.currentStepId,
               },
             });
@@ -2617,10 +2623,26 @@ export async function runReconcileSweep(
             : [];
         let finalized: boolean;
 
-        if (agent?.kind === "operational") {
+        if (cand.companyId && cand.runKind === "flow" && cand.parentRunId) {
+          const { finalizeCompanyFlowRun } =
+            await import("@/lib/run-results/company-flow-terminal");
+
+          finalized = await finalizeCompanyFlowRun({
+            db,
+            rootDb: db,
+            hosts,
+            runId: cand.runId,
+            requested: "Abandoned",
+            cascadeParentRunId: cand.parentRunId,
+            orphan: { status: "Pending", nodeId: null },
+            errorCode: null,
+            reason: "orphaned_child",
+          });
+        } else if (agent?.kind === "operational") {
           const { finalizeAgentRun } = await import("@/lib/agents/launch");
           const result = await finalizeAgentRun(cand.runId, "Abandoned", {
             db,
+            executionHosts: hosts,
             reason: `reconcile: ${reason}`,
             closeOpenHitl: true,
           });

@@ -776,6 +776,8 @@ Phase exit: full owning suites green and the actual scheduler/domain-event claim
 
   T30 parked root budget checkpoint (2026-11-13). A company Flow entered `WaitingOnChildren` through native admission and real graph traversal. After the assignment hit its retained hard limit, the sweeper ignored its exact parked node attempt and neither Run emitted a terminal event. The sweeper now retains the budget stop against the parked attempt, settles the pending child first and atomically fails the coordinator and that node with `BUDGET_EXCEEDED`. A second sweep emits no duplicate outcome. The fixture settles the first assignment before exercising the independent Flow root, so normal pool promotion cannot start unrelated test work. All 182 tests in the native agent, Flow, budget watchdog and stand intent suites pass. TypeScript, changed-file lint and contract coverage pass.
 
+  T30 queued orphan checkpoint (2026-11-13). A projectless Pending child Flow remained queued after its actual parent crashed. The sweep now includes that exact child and settles it through the company finalizer with a parent-state and Pending guard. The native graph regression passes, including the second sweep producing no additional settlement. The full Web unit rerun with loopback permitted passes 9,312 tests.
+
 Phase exit: full owning suites green; no new orchestration engine, attempt ledger or capacity bypass. Explicit adversarial review of authority, admission, event ordering and every resulting fix cycle.
 
 ### Phase 7 — Narrow stand connector, durable operations and deployment

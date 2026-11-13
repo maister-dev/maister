@@ -88,12 +88,21 @@ export async function finalizeCompanyFlowRun(
     | { requested: "Done"; admissionRefusedBeforeTraversal?: never }
     | {
         requested: "Crashed";
-        parkedOrphan?: { parentRunId: string; nodeId: string | null };
+        orphan?: {
+          parentRunId: string;
+          status: "WaitingOnChildren";
+          nodeId: string | null;
+        };
         admissionRefusedBeforeTraversal?: never;
       }
     | { requested: "Failed"; admissionRefusedBeforeTraversal?: true }
     | { requested: "Abandoned"; userId: string; cascadeParentRunId?: never }
-    | { requested: "Abandoned"; userId?: never; cascadeParentRunId: string }
+    | {
+        requested: "Abandoned";
+        userId?: never;
+        cascadeParentRunId: string;
+        orphan?: { status: "Pending"; nodeId: null };
+      }
   ),
 ): Promise<boolean> {
   const [run] = await args.db
@@ -106,14 +115,21 @@ export async function finalizeCompanyFlowRun(
       "PRECONDITION",
       "Company graph finalization requires its exact retained execution owner",
     );
-  const orphan = args.requested === "Crashed" ? args.parkedOrphan : undefined;
+  const orphan =
+    args.requested === "Crashed"
+      ? args.orphan
+      : args.requested === "Abandoned" && "orphan" in args && args.orphan
+        ? { ...args.orphan, parentRunId: args.cascadeParentRunId }
+        : undefined;
   const canSettle = (current: Run): boolean => {
-    if (orphan)
-      return (
-        current.status === "WaitingOnChildren" &&
-        current.parentRunId === orphan.parentRunId &&
-        current.currentStepId === orphan.nodeId
-      );
+    if (
+      orphan &&
+      (current.parentRunId !== orphan.parentRunId ||
+        current.status !== orphan.status ||
+        current.currentStepId !== orphan.nodeId)
+    )
+      return false;
+    if (orphan?.status === "WaitingOnChildren") return true;
     if (args.requested === "Abandoned")
       return companyFlowCanAbandon(current.status);
     if (

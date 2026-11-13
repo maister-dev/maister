@@ -12742,6 +12742,7 @@ async function qualifyCompanyCooperation(
     let receipt: Awaited<ReturnType<typeof retain>>;
     let parkedGraphRunId: string | undefined;
     let pendingNestedRunId: string | undefined;
+    let pendingGraphRunId: string | undefined;
     let qualifyParkedRootBudget: (() => Promise<void>) | undefined;
 
     try {
@@ -13934,6 +13935,9 @@ async function qualifyCompanyCooperation(
         expect(parkedGraph?.status).toBe("WaitingOnChildren");
         expect(nestedChildRunId).toBeDefined();
         pendingNestedRunId = nestedChildRunId!;
+        if (stop === "parent interruption")
+          pendingGraphRunId = (await admitGraph("never-started-review"))
+            .childRunId;
 
         qualifyParkedRootBudget = async () => {
           const { expectedResult: _expectedResult, ...objective } =
@@ -14070,7 +14074,15 @@ async function qualifyCompanyCooperation(
       const repeated = await runReconcileSweep({ db, executionHosts: hosts });
 
       expect(settled.crashed).toBe(1);
+      expect(settled.abandoned).toBe(1);
       expect(repeated.crashed).toBe(0);
+      expect(repeated.abandoned).toBe(0);
+      const [queuedOrphan] = await db
+        .select({ status: runs.status })
+        .from(runs)
+        .where(eq(runs.id, pendingGraphRunId!));
+
+      expect(queuedOrphan).toEqual({ status: "Abandoned" });
       const { rows: events } = await database.pool.query(
         `SELECT event.run_id, event.company_id, run.status
        FROM domain_events event JOIN runs run ON run.id=event.run_id

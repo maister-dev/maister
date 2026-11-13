@@ -319,6 +319,9 @@ company coordinator whose own parent has terminated settles through the company
 Flow finalizer after its children. The terminal transaction checks the retained
 park and the parent's current status, records a company-scoped cause, revokes
 the Run's credentials and keeps completed results and acceptance receipts.
+The reconcile sweep also includes an unstarted company child of a terminal
+parent. A queued Flow settles through its company finalizer with the exact
+Pending guard and a current parent check before publishing the outcome.
 The wake transaction checks the immediate parent and assignment root under
 shared locks before reserving capacity. A terminal ancestor or a retained
 cancellation or budget stop blocks the wake. If an ancestor is locked by
