@@ -30,7 +30,7 @@ info:
     purge. Every conversation frame's SSE `id` is its `seq` as a canonical
     decimal string, so `id` is monotonic (non-decreasing) over the life of a stream.
 
-    `librarian.settings` and `librarian.heartbeat` carry no SSE `id` and never
+    `librarian.settings`, `librarian.work` and `librarian.heartbeat` carry no SSE `id` and never
     advance a message replay cursor. Settings notifications contain no runner
     configuration, credentials or runner identity.
   contact:
@@ -73,8 +73,7 @@ channels:
           refetches availability through `GET /api/librarian/conversation`;
         - `librarian.reset` when a reset starts (`resetting`), when it is
           acknowledged (`none` + the new `segmentId`), and after a history
-          clear (`none` without `segmentId`) — in every case the client drops
-          its cached transcript and refetches.
+          clear. The client refetches conversation and message state.
 
         Replay is exclusive of `Last-Event-ID`, with a `lastEventId` query
         fallback for clients that cannot set the header. On (re)connect the
@@ -94,6 +93,14 @@ channels:
         response keeps its runner; the next response resolves current settings
         when it starts. Refreshing availability preserves the draft and history.
 
+        Designed — Action history: `librarian.work` requests a fresh authorized
+        work read. `sync` is sent on connection, `work` on a durable work or
+        context change, and `access` on an authorization change. If work and
+        access change together, access takes precedence. The client discards
+        cached target metadata on sync or access. Reset preserves transcript
+        history. Clear replaces transcript and receipt caches with the new
+        history generation read from the conversation and message page.
+
         A quiet stream emits `librarian.heartbeat` every 15 s. A stream with no
         non-heartbeat frame for 5 minutes is closed by the server; the
         browser's `EventSource` reconnects with its last `id`. Poll interval,
@@ -106,9 +113,16 @@ channels:
           - $ref: "#/components/messages/LibrarianIndicator"
           - $ref: "#/components/messages/LibrarianReset"
           - $ref: "#/components/messages/LibrarianSettings"
+          - $ref: "#/components/messages/LibrarianWork"
           - $ref: "#/components/messages/LibrarianHeartbeat"
 components:
   messages:
+    LibrarianWork:
+      name: librarian.work
+      title: Refresh the owner's work projection
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/LibrarianWorkEvent"
     LibrarianMessage:
       name: librarian.message
       title: A conversation message was committed
@@ -146,6 +160,14 @@ components:
       payload:
         $ref: "#/components/schemas/LibrarianSettingsEvent"
   schemas:
+    LibrarianWorkEvent:
+      type: object
+      additionalProperties: false
+      required: [type, reason]
+      properties:
+        type: { type: string, enum: [librarian.work] }
+        reason: { type: string, enum: [sync, work, access] }
+      example: { type: librarian.work, reason: sync }
     LibrarianMessageEvent:
       type: object
       additionalProperties: false

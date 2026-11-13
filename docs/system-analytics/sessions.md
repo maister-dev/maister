@@ -146,6 +146,12 @@ flowchart LR
     Resume --> Run
 ```
 
+## Runner selection for one launch (Designed)
+
+- An explicit one-run slot wins for that declared logical session or consensus role. A one-run primary overrides the primary and can be preferred by other eligible same-capability slots through existing resolution rules.
+- Admission validates the pinned manifest, capability, runner configuration, permission and static enforcement. Dispatch and consensus use the stored V2 resolved runner entries and refuse unhonorable drift.
+- Changing the Flow or revision drops the local draft. The enabled revision and an eligible alternate revision are distinct preview values.
+
 ## Expectations
 
 - Every run MUST have at least one `run_sessions` row; a non-flow run

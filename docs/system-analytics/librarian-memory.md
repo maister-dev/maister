@@ -168,6 +168,11 @@ sequenceDiagram
     end
 ```
 
+## Reset and clear presentation (Designed)
+
+- Context reset changes the active segment and retires prior default receipts without deleting messages, links, memory or operations.
+- Clear increments history generation and detaches the existing cleared references. The client cannot merge any prior-generation message or attachment into the cleared transcript. Surviving operations and task links remain accessible through authorized history.
+
 ## Expectations
 
 - **LMM-01:** Direct memory writes MUST require an owner-message turn token. Instructions require an explicit owner "remember" request, but the server cannot infer the meaning of free-form text; other inferred items MUST remain visible suggestions until the owner accepts a card. The turn-kind gate on `POST /api/v1/ext/librarian/memory` and the card decide route enforce the server-observable boundary (Implemented).

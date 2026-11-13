@@ -173,3 +173,7 @@ the scenarios the live-adapter qualification repeats against real runners also c
 - [ADR-185](../decisions.md#adr-185-librarian-runtime-a-project-less-run-kind-with-per-turn-acp-sessions) · [ADR-186](../decisions.md#adr-186-librarian-delegated-authority-per-turn-owner-bound-tokens-with-live-rbac) · [ADR-187](../decisions.md#adr-187-librarian-operation-ledger-confirmation-cards-and-launch-intent) · [ADR-188](../decisions.md#adr-188-task-statements-task-revision-and-conversation-provenance) · [ADR-189](../decisions.md#adr-189-addressed-task-clarification-before-execution) · [ADR-190](../decisions.md#adr-190-librarian-memory-summaries-reset-barrier-and-history-deletion) · [ADR-191](../decisions.md#adr-191-librarian-surface-top-navigation-entry-and-right-side-panel)
 - [`librarian-conversation.md`](librarian-conversation.md) · [`librarian-authority.md`](librarian-authority.md) · [`librarian-operations.md`](librarian-operations.md) · [`task-statements.md`](task-statements.md) · [`task-clarifications.md`](task-clarifications.md) · [`librarian-memory.md`](librarian-memory.md) · [`librarian-surface.md`](librarian-surface.md)
 - [Product brief — personal librarian](../pv/personal-librarian.md)
+
+## Package 2 coverage (Designed)
+
+B1 maps to the owner history route and receipt integration suites. B2 maps to reset and clear in Librarian acceptance. B3 maps to the panel disclosure and keyboard journey.

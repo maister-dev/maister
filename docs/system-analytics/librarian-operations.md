@@ -206,6 +206,12 @@ flowchart TD
     E --> H["delivered"]
 ```
 
+## Safe receipt provenance (Designed)
+
+- Project receipt fields through a closed allowlist and current per-target authorization, including both relation endpoints.
+- Only an operation's segment and proven same-conversation turn/card linkage may attach a receipt. Unlinked records remain in Action history. Never infer provenance from timestamps or a current relation edge.
+- Legacy relation mutations use matching task activity evidence. Future verified no-ops may carry internal endpoint metadata alongside the existing replay body, committed with settlement. Replaying a request still returns its existing HTTP body.
+
 ## Expectations
 
 - **LOP-01:** Every effectful librarian request MUST carry an `Idempotency-Key`, the operation row MUST commit before the effect, and the finalize MUST ride `recordRequiredTokenAudit` inside the route's transaction so a DB-only effect and its operation result commit together, enforced by the `handleExt` option `idempotency: "required"` (Implemented).

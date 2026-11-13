@@ -255,6 +255,12 @@ flowchart TD
     Each -- done --> End
 ```
 
+## Project work summary (Designed)
+
+- The project counts distinct executing Run IDs using the actual Running status, the actor's scoped decision count, and retained workspace rows independently. These counts can overlap.
+- Closed Runs and working copies disclosure has the same header height with 0 or 50 retained items. Open disclosure is bounded. Group by real task ID and label with canonical key and title. Preserve individual links and supported actions, with standalone and scratch items separate.
+- Board tabs and filters keep their existing URLs. `workspaces=open` controls disclosure and browser history restores it.
+
 ## Expectations
 
 - `projects.slug` and `projects.repo_path` are globally UNIQUE; uniqueness is

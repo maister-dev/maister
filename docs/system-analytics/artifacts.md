@@ -391,6 +391,16 @@ sequenceDiagram
 - **Artifact body containing literal `{{ … }}`** → rendered verbatim, not
   re-resolved.
 
+## Results and checks read model (Designed)
+
+| Evidence | Presentation authority |
+| --- | --- |
+| Artifact | Pinned definition and producing attempt give label and provenance. Validity, partial content, staleness and supersession remain independent of check status. |
+| Check | Latest applicable gate and canonical readiness policy give recorded verdict, applicability and current blocking contribution. Recorded standalone CLI outcomes are separate from attempt success. |
+| Human or agent decision | Human HITL decisions, agent reports and machine-recorded verdicts have separate provenance. Missing records do not establish success. |
+| Payload | The existing scoped payload route enforces access and retention. Markdown and diffs use existing renderers. Known versioned report shapes can be structured. Mixed legacy text has a generic presentation and a link to the original. |
+| Graph | Start-time edges denote temporal order. Artifact, gate and supersession edges retain their recorded association semantics. |
+
 ## Expectations
 
 - Every `artifact_instances` row MUST belong to exactly one `run_id`; node-attempt

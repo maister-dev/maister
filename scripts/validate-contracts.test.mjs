@@ -91,6 +91,18 @@ test("librarian stream contract rejects a heartbeat that carries a frame id", as
   );
 });
 
+test("librarian work invalidation cannot carry a replay cursor", async () => {
+  await assert.rejects(
+    withBrokenLibrarianStream(
+      (schemas) => {
+        schemas.LibrarianWorkEvent.properties.seq = { type: "string" };
+      },
+      (file) => validateAsyncApi(file, { log: false }),
+    ),
+    /LibrarianWorkEvent must contain only type and reason/,
+  );
+});
+
 function schemaValidator(document, namespace, component) {
   const ajv = new Ajv({
     strict: false,
@@ -106,6 +118,29 @@ function schemaValidator(document, namespace, component) {
   assert.ok(validate, `missing schema ${component}`);
   return validate;
 }
+
+test("interactive runner drafts remain exclusive to the browser contract", () => {
+  const web = readContract("../docs/api/web.openapi.yaml");
+  const external = readContract("../docs/api/external/operations.openapi.yaml");
+  const base = {
+    taskId: "task-1",
+    expectedTaskRevision: 0,
+    expectedSettingsToken: "token-1",
+  };
+  const draft = {
+    flowRevisionId: "revision-1",
+    slots: { "session:reviewer": "runner-2" },
+  };
+  const browser = schemaValidator(web, "browser-draft", "InteractiveTaskLaunchBody");
+  const legacy = schemaValidator(web, "legacy-draft", "TaskLaunchBody");
+  const bearer = schemaValidator(external, "bearer-draft", "TaskLaunchBody");
+
+  assertValidExample(browser, { ...base, flowRunnerDraft: draft });
+  assert.equal(legacy({ ...base, flowRunnerDraft: draft }), false);
+  assert.equal(bearer({ ...base, flowRunnerDraft: draft }), false);
+  assert.equal(browser({ ...base, flowRunnerDraft: draft, runnerId: "runner-1" }), false);
+  assert.equal(browser({ ...base, flowRunnerDraft: { flowRevisionId: "revision-1" } }), false);
+});
 
 function assertValidExample(validate, body) {
   assert.equal(validate(body), true, JSON.stringify(validate.errors));

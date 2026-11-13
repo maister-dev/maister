@@ -459,6 +459,18 @@ function validateLibrarianStreamContract(doc, file) {
     throw new Error(`${file}: LibrarianHeartbeatEvent must not carry a frame id`);
   }
 
+  const work = schemaFor(doc, "LibrarianWorkEvent", file);
+  for (const key of ["type", "reason"])
+    assertRequired(work, key, `${file}: LibrarianWorkEvent`);
+  if (
+    work.additionalProperties !== false ||
+    Object.keys(work.properties ?? {}).some(
+      (key) => key !== "type" && key !== "reason",
+    )
+  ) {
+    throw new Error(`${file}: LibrarianWorkEvent must contain only type and reason`);
+  }
+
   // Frames are notifications: bodies are fetched from /api/librarian/messages,
   // so no frame reachable from the channel may carry one.
   const messages = channel.subscribe?.message?.oneOf ?? [];

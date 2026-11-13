@@ -234,3 +234,7 @@ Work-stage chips reuse `workStage`.
 ## Run peek coexistence (Implemented)
 
 The [peek navigation contract](../../system-analytics/run-peek-navigation.md) owns temporary visibility/transport suspension and state-preserving restoration.
+
+## Package 2 presentation (Designed)
+
+Action history opens beside the conversation. The default composer area keeps a compact cue for confirmations or unresolved work. Receipts with proven linkage appear on messages in the current segment.

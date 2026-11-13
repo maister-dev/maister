@@ -125,6 +125,12 @@ flowchart LR
     E --> F["that run cancelled, librarian turn untouched"]
 ```
 
+## Current work and Action history (Designed)
+
+- Default work is limited to current-segment receipts with causal message links, compact related tasks and an independent attention cue. Action history offers bounded keyboard-accessible pages and restores focus when closed.
+- Count pending authorized confirmations and unresolved effects before limiting the display. An uncertain card decision suppresses repeat controls. Old failed or refused actions appear in history unless a current canonical read supports authorized remediation.
+- Action history is available after reset and reopen. Receipts use localized action labels and canonical task keys, and show missing targets separately from historical outcomes.
+
 ## Expectations
 
 - **LUI-01:** The top-nav entry MUST render on every `(app)` route with an accessible name and an indicator of `running | unread | action_required`, and MUST NEVER show a numeric global count, enforced by `librarian-trigger.tsx` in `top-nav.tsx` (Implemented).
