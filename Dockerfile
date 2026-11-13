@@ -44,6 +44,7 @@ COPY patches/ ./patches/
 COPY web/package.json ./web/
 COPY supervisor/package.json ./supervisor/
 COPY mcp/package.json ./mcp/
+COPY stand-connector/package.json ./stand-connector/
 COPY site/package.json ./site/
 COPY site-docs/package.json ./site-docs/
 COPY scripts/check-native-dependencies.mjs ./scripts/
@@ -67,6 +68,7 @@ COPY patches/ ./patches/
 COPY web/package.json ./web/
 COPY supervisor/package.json ./supervisor/
 COPY mcp/package.json ./mcp/
+COPY stand-connector/package.json ./stand-connector/
 COPY site/package.json ./site/
 COPY site-docs/package.json ./site-docs/
 COPY scripts/check-native-dependencies.mjs ./scripts/

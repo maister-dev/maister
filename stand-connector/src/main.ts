@@ -10,6 +10,8 @@ import {
   statSync,
 } from "node:fs";
 import { isAbsolute, join } from "node:path";
+import { createServer as createPortProbe, isIP } from "node:net";
+import { once } from "node:events";
 
 import { createAuthorityClient } from "./authority-client.ts";
 import type { HealthProbe } from "./health.ts";
@@ -19,7 +21,7 @@ import {
   type HelperTarget,
 } from "./helper.ts";
 import { openRestartJournal } from "./restart-journal.ts";
-import { createSystemdDriver } from "./systemd.ts";
+import { createSystemdDriver, SystemdError } from "./systemd.ts";
 
 function setting(name: string): string {
   const value = process.env[name];
@@ -193,7 +195,7 @@ function loadTarget(): HelperTarget {
   return readTarget(parsed);
 }
 
-function startup(): void {
+async function startup(): Promise<void> {
   if (process.platform !== "linux")
     throw new Error("The stand helper requires Linux with systemd");
   const target = loadTarget();
@@ -213,11 +215,16 @@ function startup(): void {
       "The stand journal requires a private state directory owned by the helper account",
     );
   const port = Number(process.env.MAISTER_STAND_PORT ?? "7443");
+  const host = process.env.MAISTER_STAND_HOST ?? "127.0.0.1";
   const journalPages = Number(
     process.env.MAISTER_STAND_JOURNAL_PAGES ?? "65536",
   );
 
-  if (!integer(port, 1, 65_535) || !integer(journalPages, 16, 65_536))
+  if (
+    !isIP(host) ||
+    !integer(port, 1, 65_535) ||
+    !integer(journalPages, 16, 65_536)
+  )
     throw new Error("Invalid stand listener port or journal capacity");
   const helperCredential = credential("MAISTER_STAND_HELPER_CREDENTIAL_FILE");
   const platformCredential = credential(
@@ -268,6 +275,11 @@ function startup(): void {
     journalPages,
   );
 
+  const mode = process.argv.slice(2);
+  if (mode.length > 1 || (mode.length === 1 && mode[0] !== "--preflight")) {
+    journal.close();
+    throw new Error("Use --preflight to check the configured stand");
+  }
   try {
     const server = createStandHelper({
       tls: {
@@ -286,6 +298,29 @@ function startup(): void {
       manager,
     });
 
+    if (mode[0] === "--preflight") {
+      for (const component of target.components)
+        await manager.inspect(component);
+      const probe = createPortProbe((socket) => socket.destroy());
+
+      probe.listen(port, host);
+      await once(probe, "listening");
+      const closed = once(probe, "close");
+
+      probe.close();
+      await closed;
+      journal.close();
+      console.info(
+        JSON.stringify({
+          event: "stand_helper_preflight_passed",
+          port,
+          targetIncarnation: target.incarnationId,
+          checkedComponents: target.components.length,
+        }),
+      );
+
+      return;
+    }
     server.on("close", journal.close);
     server.on("error", (error: NodeJS.ErrnoException) => {
       console.error(
@@ -299,7 +334,7 @@ function startup(): void {
     });
     process.once("SIGTERM", () => server.close());
     process.once("SIGINT", () => server.close());
-    server.listen(port, process.env.MAISTER_STAND_HOST ?? "127.0.0.1", () => {
+    server.listen(port, host, () => {
       console.info(
         JSON.stringify({
           event: "stand_helper_listening",
@@ -315,17 +350,25 @@ function startup(): void {
 }
 
 try {
-  startup();
+  await startup();
 } catch (error) {
   console.error(
     JSON.stringify({
       event: "stand_helper_startup_failed",
       reason:
+        error instanceof SystemdError
+          ? error.reason
+          : error instanceof Error &&
+              error.constructor === Error &&
+              !("code" in error)
+            ? error.message
+            : "configuration_or_state_unavailable",
+      code:
         error instanceof Error &&
-        error.constructor === Error &&
-        !("code" in error)
-          ? error.message
-          : "configuration_or_state_unavailable",
+        "code" in error &&
+        typeof error.code === "string"
+          ? error.code
+          : undefined,
     }),
   );
   process.exitCode = 1;

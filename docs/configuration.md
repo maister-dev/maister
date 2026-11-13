@@ -1700,14 +1700,24 @@ Company bindings resolve installed pinned definitions/revisions without a reposi
 
 A stand target is managed through `/api/stands` with explicit incarnation, HTTPS/TLS identity, environment credential references, systemd manager/scope/user/unit, allowed actions, exact runbook revision and health probe. Read/propose grants are separate from review/confirmation and target mutation. Global administrators manage explicit company grants through `/api/company/grants`; this management authority does not implicitly disclose knowledge. Submitted source capture through `/api/knowledge/sources` records actual received bytes/version witness, not proof of assertion truth.
 
-| Environment setting | Reader and required wiring | Designed value |
-| --- | --- | --- |
-| `MAISTER_STAND_CONNECTOR_CONFIG` | Target helper systemd EnvironmentFile; absolute regular config JSON | Required target identity/component/TLS/authority policy file |
-| `MAISTER_STAND_CONNECTOR_STATE_DIR` | Target helper service state directory | `/var/lib/maister-stand`, durable 0700 and journal quota |
-| `MAISTER_STAND_CONNECTOR_HOST` | Target helper listener | `127.0.0.1`; remote bind requires explicit firewall/TLS policy |
-| `MAISTER_STAND_CONNECTOR_PORT` | Target helper listener and host firewall | `7443`, collision-checked before readiness |
-| `MAISTER_STAND_CONNECTOR_JOURNAL_BYTES` | Target helper admission/retention | `268435456`; unknown/in-flight/tombstone protection retained |
+| Environment setting | Consuming service and value |
+| --- | --- |
+| `MAISTER_STAND_AUTHORITY_HOST`, `MAISTER_STAND_AUTHORITY_PORT` | Web's dedicated mTLS listener. Bind an explicit IP. The host example uses 7444. |
+| `MAISTER_STAND_AUTHORITY_CA_FILE`, `MAISTER_STAND_AUTHORITY_CERT_FILE`, `MAISTER_STAND_AUTHORITY_KEY_FILE` | Web's helper-client CA and authority server certificate/key. |
+| Target `helperCredentialEnv` | Name of the target-specific Web environment variable with its helper→Web token. |
+| `MAISTER_STAND_TRANSPORT_TARGETS_FILE` | Supervisor-only mapping keyed by target incarnation. Each row pins the HTTPS origin, server name, certificate SHA-256, CA, platform client cert/key and platform→helper token file. |
+| `MAISTER_STAND_TARGET_CONFIG_FILE` | Helper's exact target/component JSON. |
+| `MAISTER_STAND_STATE_DIRECTORY`, `MAISTER_STAND_JOURNAL_PAGES` | Helper's private journal directory (0700) and SQLite page limit. Unit default is `/var/lib/maister-stand`; 65,536 × 4 KiB gives 256 MiB. |
+| `MAISTER_STAND_HOST`, `MAISTER_STAND_PORT` | Helper's HTTPS listener. Defaults to `127.0.0.1:7443`. Use a dedicated reachable address for a remote stand. |
+| `MAISTER_STAND_SYSTEMCTL`, `MAISTER_STAND_JOURNALCTL` | Absolute helper-side systemd executables. |
+| `MAISTER_STAND_TLS_CERT_FILE`, `MAISTER_STAND_TLS_KEY_FILE`, `MAISTER_STAND_PLATFORM_CA_FILE`, `MAISTER_STAND_PLATFORM_CERT_SHA256` | Helper's TLS identity and the CA and fingerprint of the supervisor client. The helper certificate also authenticates to Web, so issue it for both TLS server and TLS client use. |
+| `MAISTER_STAND_PLATFORM_CREDENTIAL_FILE`, `MAISTER_STAND_HELPER_CREDENTIAL_FILE` | Separate target-side token files for inbound supervisor and outbound authority authentication. |
+| `MAISTER_STAND_AUTHORITY_ORIGIN`, `MAISTER_STAND_AUTHORITY_SERVER_NAME`, `MAISTER_STAND_AUTHORITY_CA_FILE` | Helper's outbound mTLS connection to the dedicated Web authority listener. |
 
-Target config references `env:NAME` for CA/certificate/key and distinct platform→helper and helper→platform service credentials. Values/paths are supplied only to the consuming host service; not stored plaintext in DB/prompts/logs. Platform mTLS for the authority callback is terminated by a configured trusted HTTPS reverse proxy, strips inbound verification headers and verifies the target certificate before forwarding to the private web listener; dedicated target-bound credential verification is still required. No public client header alone proves mTLS. Helper→platform callback URL/server identity is pinned in target configuration. Supervisor target RPC uses frozen registry endpoints/credential refs, never a caller URL.
-
-Deployment is host-run web/supervisor plus target helper; Postgres-only Compose has no application env blocks. Target helper execution is **not yet supported in Docker**; Phase-7 deployment wiring must explicitly qualify configured systemd/TLS/state access before enabling it. See [stand maintenance](system-analytics/stand-maintenance.md) for exact caps, approval and recovery.
+The Web process terminates helper mTLS directly and compares the authenticated
+client leaf fingerprint with the reviewed target revision. The supervisor
+takes its target origin and credential paths from the operator-owned
+transport file. Keep the Web authority token out of the supervisor environment.
+Restrict host credential paths to the relevant service identities and keep
+them outside workspaces. See the [host preflight](deployment.md#stand-helper-preflight).
+Compose remains Postgres-only. The stand helper is a host systemd service.
