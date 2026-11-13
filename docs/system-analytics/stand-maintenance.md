@@ -177,6 +177,9 @@ result may cite only a proved applied effect and the latest healthy probe.
 A required effect or health reference can select a target or exact operation;
 a health reference can also select the exact verification. The validator
 refuses fabricated IDs and missing required evidence at result publication.
+Assignment acceptance checks the same frozen input against the retained
+effect and current independent probe. It stores the verification IDs from the
+exact eligible root result with the human acceptance decision.
 
 ### Recovery and current responsibility
 

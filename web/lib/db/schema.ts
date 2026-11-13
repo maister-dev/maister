@@ -11494,7 +11494,7 @@ export const specialistAcceptances = pgTable(
         AND ${t.actor}->'runId'='null'::jsonb AND ${t.actor}->'attemptId'='null'::jsonb
         AND ${t.authoritySnapshot}->'schemaVersion'='1'::jsonb AND ${t.authoritySnapshot}->'actor'=${t.actor}
         AND pg_column_size(${t.authoritySnapshot})<=32768
-        AND ${t.verificationIds}='[]'::jsonb
+        AND (CASE WHEN jsonb_typeof(${t.verificationIds})='array' THEN jsonb_array_length(${t.verificationIds})<=16 ELSE false END)
         AND ${t.requestKey} ~ '^[A-Za-z0-9._:-]{8,128}$' AND ${t.requestSha256} ~ '^[a-f0-9]{64}$'
         AND char_length(${t.reason}) BETWEEN 1 AND 2000
       ) IS TRUE`,

@@ -21732,8 +21732,10 @@ paths:
         An authenticated user needs current assignments:accept authority.
         The assignment must be awaiting acceptance of an exact valid root
         result under its current input, context and business revisions.
-        This operation accepts result-only obligations. It refuses unknown
-        verification IDs or unmet required effects. Acceptance and completion
+        Result-only assignments retain an empty verification list. Stand
+        assignments require the exact verification IDs from the eligible
+        root result and current evidence for each required effect or health
+        obligation. Acceptance and completion
         commit together and require the current root appointment. A superseded
         root result remains in history. An exact replay returns the original receipt under
         current authority.

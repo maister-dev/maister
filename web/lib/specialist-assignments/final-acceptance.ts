@@ -199,18 +199,12 @@ export async function acceptSpecialistAssignment(
           details: { reason: "assignment_acceptance_conflict" },
         },
       );
-    if (request.verificationIds.length)
-      throw new MaisterError(
-        "PRECONDITION",
-        "This acceptance requires a result-only obligation set",
-        {
-          details: { reason: "assignment_acceptance_verification_unmet" },
-        },
-      );
     await authorizeRunKnowledgeDisclosure(tx, principal, request.result.runId);
     const [witness] = (
       await tx.execute(sql`
-      SELECT result.id AS result_id FROM specialist_delivery_receipts witness
+      SELECT result.id AS result_id,
+        specialist_acceptance_verification_ids(result.value)=${JSON.stringify(request.verificationIds)}::jsonb AS verification_matches
+      FROM specialist_delivery_receipts witness
       JOIN run_results result ON result.id=specialist_final_result_id(
         witness.assignment_id,witness.input_revision,witness.run_id,witness.result_revision)
       WHERE witness.assignment_id=${assignmentId} AND witness.input_revision=${request.inputRevision}
@@ -227,13 +221,19 @@ export async function acceptSpecialistAssignment(
           details: { reason: "assignment_acceptance_result_unavailable" },
         },
       );
+    if (witness.verification_matches !== true)
+      throw new MaisterError(
+        "PRECONDITION",
+        "Acceptance requires the exact verification IDs from the published result",
+        { details: { reason: "assignment_acceptance_verification_unmet" } },
+      );
     const id = randomUUID();
 
     await tx.execute(sql`INSERT INTO specialist_acceptances
       (id,assignment_id,expected_revision,input_revision,context_revision,result_id,result_revision,run_id,actor,authority_snapshot,verification_ids,request_key,request_sha256,reason)
       VALUES(${id},${assignmentId},${request.expectedRevision},${request.inputRevision},${request.contextRevision},
         ${witness.result_id},${request.result.revision},${request.result.runId},${JSON.stringify(authority.actor)}::jsonb,${JSON.stringify(authority)}::jsonb,
-        '[]'::jsonb,${request.idempotencyKey},${requestDigest},${request.reason})`);
+        ${JSON.stringify(request.verificationIds)}::jsonb,${request.idempotencyKey},${requestDigest},${request.reason})`);
     await tx.execute(sql`UPDATE specialist_assignments SET status='completed',acceptance_id=${id},
       revision=${revision},completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=${assignmentId}`);
     await emitSpecialistAssignmentChange({

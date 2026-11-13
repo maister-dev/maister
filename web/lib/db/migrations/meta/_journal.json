@@ -2213,6 +2213,20 @@
       "when": 1794606478022,
       "tag": "0319_stand_verification_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 320,
+      "version": "7",
+      "when": 1794606478023,
+      "tag": "0320_specialist_acceptance_verifications",
+      "breakpoints": true
+    },
+    {
+      "idx": 321,
+      "version": "7",
+      "when": 1794606478024,
+      "tag": "0321_specialist_acceptance_stand_guards",
+      "breakpoints": true
     }
   ]
 }

@@ -1037,7 +1037,10 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
         targetIds: [target.id],
         inputRefs: [],
         constraints: [],
-        verification: [],
+        verification: [
+          { kind: "effect", referenceId: target.id, required: true },
+          { kind: "health", referenceId: target.id, required: true },
+        ],
         idempotencyKey: randomUUID(),
       },
       hosts,
@@ -1497,6 +1500,91 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
       await expect(
         authorize({ ...reconciliation, nonce: randomUUID() }),
       ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+      await createCompanyGrants(db, administratorId, {
+        principalKind: "user",
+        principalId: userId,
+        actions: ["assignments:accept"],
+        idempotencyKey: randomUUID(),
+      });
+      const { publishRunResult } = await import("@/lib/run-results/ledger");
+      const { emitDomainEvent } = await import("@/lib/domain-events/outbox");
+      const { dispatchDomainEvents } =
+        await import("@/lib/domain-events/dispatch");
+      const { specialistAssignmentDeliveryConsumer } =
+        await import("@/lib/specialist-assignments/delivery-capture");
+      const { acceptSpecialistAssignment } =
+        await import("@/lib/specialist-assignments/final-acceptance");
+      const { getSpecialistAssignment } =
+        await import("@/lib/specialist-assignments/store");
+      const published = await db.transaction(async (tx) => {
+        const row = await publishRunResult(tx, {
+          runId,
+          contract,
+          value: decision.value,
+          valueBytes: Buffer.byteLength(JSON.stringify(decision.value)),
+          producerKind: "agent_session",
+          producerRef: "default",
+        });
+
+        await tx
+          .update(runs)
+          .set({
+            status: "Done",
+            endedAt: new Date(),
+            operationalTerminal: {
+              version: 1,
+              status: "Done",
+              cause: "completed",
+              effectiveOutcome: "success",
+              successful: true,
+              validation: "valid",
+              integrity: "clean",
+              baselineGeneration: null,
+              resultRevision: row.revision,
+              reasonCodes: [],
+              evidenceIds: [],
+            },
+          })
+          .where(eq(runs.id, runId));
+        await emitDomainEvent({
+          db: tx,
+          kind: "run.done",
+          companyId: owner.companyId,
+          runId,
+          parentRunId: null,
+          actor: { type: "system", id: null },
+          payload: { runId, resultStatus: "valid", cause: "completed" },
+        });
+
+        return row;
+      });
+
+      await dispatchDomainEvents({
+        db,
+        consumers: [specialistAssignmentDeliveryConsumer],
+      });
+      const ready = await getSpecialistAssignment(db, userId, assignment.id);
+
+      expect(ready.status).toBe("awaiting_acceptance");
+      const accept = (verificationIds: readonly string[]) =>
+        acceptSpecialistAssignment(db, {
+          userId,
+          assignmentId: assignment.id,
+          value: {
+            expectedRevision: ready.revision,
+            inputRevision: ready.inputRevision,
+            contextRevision: ready.contextRevision,
+            result: { runId, revision: published.revision },
+            verificationIds,
+            reason: "The operation and independent health are verified.",
+            idempotencyKey: randomUUID(),
+          },
+        });
+
+      await expect(accept([])).rejects.toMatchObject({ code: "PRECONDITION" });
+      await expect(accept(verified.verificationIds)).resolves.toMatchObject({
+        status: "completed",
+      });
     } finally {
       setDefaultTransportForTests(null);
       if (previousToken === undefined)
