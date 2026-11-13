@@ -1065,13 +1065,37 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
       reason: "Approve the fixture intent.",
       idempotencyKey: randomUUID(),
     });
-    await database.pool.query(
-      `INSERT INTO stand_operation_observations(
-        operation_id,target_incarnation,resource_key,request_digest,target_sequence,invocation_id,observed_state,captured_at
-      ) SELECT id,target_incarnation,resource_key,request_digest,1,repeat('a',32),'active',now()
-        FROM stand_operations WHERE id=$1`,
-      [operation.id],
+    const { observeBeforeStandRestart } = await import("../observe");
+    const observeTarget = vi.fn(
+      async (
+        selector: Parameters<typeof fake.transport.observeStandOperation>[0],
+      ) => ({
+        operationId: selector.operationId,
+        targetIncarnation: selector.targetIncarnation,
+        resourceKey: selector.resourceKey,
+        requestDigest: selector.requestDigest,
+        sequence: 1,
+        invocationId: "a".repeat(32),
+        state: "active",
+        capturedAt: new Date().toISOString(),
+      }),
     );
+
+    setDefaultTransportForTests({
+      ...fake.transport,
+      observeStandOperation: observeTarget,
+    });
+    try {
+      await expect(
+        observeBeforeStandRestart(db, userId, operation.id, operation.revision),
+      ).resolves.toMatchObject({
+        operationId: operation.id,
+        observedState: "active",
+      });
+      expect(observeTarget).toHaveBeenCalledOnce();
+    } finally {
+      setDefaultTransportForTests(null);
+    }
     const identity = {
       operationId: operation.id,
       runId,

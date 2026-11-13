@@ -81,6 +81,32 @@ it("IT-CBO-04 sends one exact restart request, validates the pinned peer and lea
       { cert, key, ca: cert, requestCert: true, rejectUnauthorized: true },
       async (request, response) => {
         expect(request.headers["x-maister-platform-token"]).toBe(token);
+        if (request.url === `/operations/${payload.operationId}/observations`) {
+          const chunks: Buffer[] = [];
+
+          for await (const chunk of request) chunks.push(Buffer.from(chunk));
+          expect(
+            JSON.parse(Buffer.concat(chunks).toString("utf8")),
+          ).toMatchObject({
+            action: "inspect",
+            ownerEpoch: 1,
+            requestDigest: payload.requestDigest,
+          });
+          response.end(
+            JSON.stringify({
+              operationId: payload.operationId,
+              targetIncarnation: payload.targetIncarnation,
+              requestDigest: payload.requestDigest,
+              resourceKey: payload.resourceKey,
+              sequence: 1,
+              invocationId: payload.before.invocationId,
+              state: "active",
+              capturedAt: receipt.capturedAt,
+            }),
+          );
+
+          return;
+        }
         if (request.method === "GET") {
           expect(request.url).toBe(`/operations/${payload.operationId}`);
           expect(request.headers["x-maister-request-digest"]).toBe(
@@ -150,6 +176,17 @@ it("IT-CBO-04 sends one exact restart request, validates the pinned peer and lea
       await writeFile(configFile, JSON.stringify([config]));
       const transport = loadStandTransport(configFile, logger);
 
+      await expect(
+        transport.observe({
+          operationId: payload.operationId,
+          targetIncarnation: payload.targetIncarnation,
+          requestDigest: payload.requestDigest,
+          resourceKey: payload.resourceKey,
+          componentId: payload.componentId,
+          ownerEpoch: 1,
+        }),
+      ).resolves.toMatchObject({ state: "active", sequence: 1 });
+      expect(deliveries).toBe(0);
       await expect(transport.dispatch(payload)).rejects.toMatchObject({
         code: "EXECUTOR_UNAVAILABLE",
       });

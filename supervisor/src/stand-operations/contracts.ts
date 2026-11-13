@@ -43,3 +43,15 @@ export type StandReceiptSelector = z.infer<typeof StandReceiptSelectorSchema>;
 export type ReadStandReceipt = (
   selector: StandReceiptSelector,
 ) => Promise<Record<string, unknown> | null>;
+export const StandObservationSelectorSchema = StandReceiptSelectorSchema.extend(
+  {
+    componentId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/),
+    resourceKey: digest,
+  },
+).strict();
+export type StandObservationSelector = z.infer<
+  typeof StandObservationSelectorSchema
+>;
+export type ObserveStandOperation = (
+  selector: StandObservationSelector,
+) => Promise<Record<string, unknown>>;

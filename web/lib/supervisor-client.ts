@@ -1662,6 +1662,28 @@ export async function readStandReceipt(
   return response.body.receipt;
 }
 
+export async function observeStandOperation(
+  selector: Readonly<{
+    operationId: string;
+    targetIncarnation: string;
+    requestDigest: string;
+    ownerEpoch: number;
+    componentId: string;
+    resourceKey: string;
+  }>,
+): Promise<unknown> {
+  const response = await request<unknown>({
+    method: "POST",
+    path: "/stand-operations/observe",
+    body: selector,
+    ctx: "observeStandOperation",
+    fallbackCode: "EXECUTOR_UNAVAILABLE",
+    timeoutMs: 7000,
+  });
+
+  return response.body;
+}
+
 export async function adoptWorkspace(
   envelope: WireEnvelope<AdoptWorkspaceWirePayload>,
   opts: CommandWireOptions = {},

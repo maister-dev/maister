@@ -339,6 +339,16 @@ export interface ExecutionHostTransport {
       ownerEpoch: number;
     }>,
   ): Promise<unknown>;
+  observeStandOperation(
+    selector: Readonly<{
+      operationId: string;
+      targetIncarnation: string;
+      requestDigest: string;
+      ownerEpoch: number;
+      componentId: string;
+      resourceKey: string;
+    }>,
+  ): Promise<unknown>;
   releaseWorkspace(
     executionWorkspaceId: string,
     envelope: CommandEnvelope<EmptyPayload>,

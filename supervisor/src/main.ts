@@ -87,6 +87,7 @@ export function buildRegisterRoutesOptions(deps: {
   producerPauseMaxMs?: number;
   dispatchStandRestart?: RegisterRoutesOptions["dispatchStandRestart"];
   readStandReceipt?: RegisterRoutesOptions["readStandReceipt"];
+  observeStandOperation?: RegisterRoutesOptions["observeStandOperation"];
 }): RegisterRoutesOptions {
   return {
     app: deps.app,
@@ -104,6 +105,7 @@ export function buildRegisterRoutesOptions(deps: {
     workspaceRoots: deps.workspaceRoots,
     dispatchStandRestart: deps.dispatchStandRestart,
     readStandReceipt: deps.readStandReceipt,
+    observeStandOperation: deps.observeStandOperation,
   };
 }
 
@@ -250,6 +252,7 @@ export async function start(): Promise<void> {
       producerPauseMaxMs: testProducerPauseMaxMs(),
       dispatchStandRestart: standTransport?.dispatch,
       readStandReceipt: standTransport?.readReceipt,
+      observeStandOperation: standTransport?.observe,
     }),
   );
 

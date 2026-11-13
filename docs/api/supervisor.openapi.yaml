@@ -857,6 +857,56 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /stand-operations/observe:
+    post:
+      tags: [execution-host]
+      operationId: observeStandOperation
+      summary: Observe the exact configured unit before restart
+      description: Uses a current reconciliation permit and a pinned helper. It reads the
+        service state and returns a target sequence without admitting a mutation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operationId, targetIncarnation, requestDigest, ownerEpoch, componentId, resourceKey]
+              properties:
+                operationId: { type: string, format: uuid }
+                targetIncarnation: { type: string, format: uuid }
+                requestDigest: { type: string, pattern: '^[a-f0-9]{64}$' }
+                ownerEpoch: { type: integer, minimum: 1, maximum: 9007199254740991 }
+                componentId: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$' }
+                resourceKey: { type: string, pattern: '^[a-f0-9]{64}$' }
+      responses:
+        "200":
+          description: Exact authenticated helper observation.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [operationId, targetIncarnation, requestDigest, resourceKey, sequence, invocationId, state, capturedAt]
+                properties:
+                  operationId: { type: string, format: uuid }
+                  targetIncarnation: { type: string, format: uuid }
+                  requestDigest: { type: string, pattern: '^[a-f0-9]{64}$' }
+                  resourceKey: { type: string, pattern: '^[a-f0-9]{64}$' }
+                  sequence: { type: integer, minimum: 1, maximum: 9007199254740991 }
+                  invocationId: { type: string, pattern: '^[a-f0-9]{32}$', nullable: true }
+                  state: { type: string, enum: [active, inactive, failed, unknown] }
+                  capturedAt: { type: string, format: date-time }
+        "409":
+          description: Invalid selector or missing configuration.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+        "503":
+          description: Target observation unavailable or failed identity validation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
   /workspaces/adopt:
     post:
       tags: [execution-host]

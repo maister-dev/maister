@@ -518,17 +518,21 @@ export function createStandHelper(options: StandHelperOptions): Server {
         requiredIdentity(ids?.length === 1 ? ids[0] : undefined),
         "logs",
       );
-      const entry = retainedReceipt(selector[1], requestDigest);
+      const identity = {
+        operationId: selector[1],
+        targetIncarnation: target.incarnationId,
+        resourceKey: canonicalResourceKey(target, component),
+        requestDigest,
+        ownerEpoch,
+      };
 
-      if (canonicalResourceKey(target, component) !== entry.resourceKey)
-        throw new HelperError(409, "CONFLICT", "target_identity_mismatch");
-      if (!(await options.authorizeLogs({ ...entry, ownerEpoch })))
+      if (!(await options.authorizeLogs(identity)))
         throw new HelperError(403, "PERMISSION", "authority_refused");
       const logs = await options.manager.logs(component);
 
       json(response, 200, {
-        operationId: entry.operationId,
-        targetIncarnation: entry.targetIncarnation,
+        operationId: identity.operationId,
+        targetIncarnation: identity.targetIncarnation,
         ...logs,
         sanitized: true,
         capturedAt: new Date().toISOString(),

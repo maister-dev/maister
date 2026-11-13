@@ -1,7 +1,9 @@
 import type {
   DispatchStandRestart,
+  ObserveStandOperation,
   ReadStandReceipt,
   StandDispatchPayload,
+  StandObservationSelector,
   StandReceiptSelector,
 } from "./contracts";
 import type { Logger } from "pino";
@@ -69,6 +71,21 @@ type Target = Readonly<{
   key: Buffer;
   credential: string;
 }>;
+const observationSchema = z
+  .object({
+    operationId: z.uuid(),
+    targetIncarnation: z.uuid(),
+    requestDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    resourceKey: z.string().regex(/^[a-f0-9]{64}$/),
+    sequence: z.number().int().positive(),
+    invocationId: z
+      .string()
+      .regex(/^[a-f0-9]{32}$/)
+      .nullable(),
+    state: z.enum(["active", "inactive", "failed", "unknown"]),
+    capturedAt: z.iso.datetime(),
+  })
+  .strict();
 
 function invalidConfig(): SupervisorError {
   return new SupervisorError(
@@ -169,6 +186,21 @@ function requestReceipt(
   identity: StandReceiptSelector,
   spec: WireCall,
 ): Promise<Record<string, unknown> | null> {
+  return requestTarget(target, identity, spec, receiptSchema);
+}
+
+function requestTarget<
+  T extends {
+    operationId: string;
+    targetIncarnation: string;
+    requestDigest: string;
+  },
+>(
+  target: Target,
+  identity: StandReceiptSelector,
+  spec: WireCall,
+  schema: z.ZodType<T>,
+): Promise<T | null> {
   return new Promise((resolve, reject) => {
     const call = request(
       new URL(spec.path, target.origin),
@@ -236,7 +268,7 @@ function requestReceipt(
 
             return;
           }
-          const parsed = receiptSchema.safeParse(json);
+          const parsed = schema.safeParse(json);
 
           if (
             !parsed.success ||
@@ -256,6 +288,48 @@ function requestReceipt(
     call.on("error", () => reject(unavailable()));
     call.end(spec.body);
   });
+}
+
+async function observeStand(
+  target: Target,
+  selector: StandObservationSelector,
+): Promise<Record<string, unknown>> {
+  const {
+    operationId,
+    targetIncarnation,
+    componentId,
+    requestDigest,
+    ownerEpoch,
+    resourceKey,
+  } = selector;
+  const body = JSON.stringify({
+    operationId,
+    targetIncarnation,
+    componentId,
+    requestDigest,
+    ownerEpoch,
+    action: "inspect",
+  });
+  const observed = await requestTarget(
+    target,
+    selector,
+    {
+      method: "POST",
+      path: `/operations/${operationId}/observations`,
+      expectedStatus: 200,
+      timeoutMs: 5000,
+      body,
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(body),
+      },
+    },
+    observationSchema,
+  );
+
+  if (!observed || observed.resourceKey !== resourceKey) throw unavailable();
+
+  return observed;
 }
 
 async function readReceipt(
@@ -303,7 +377,11 @@ function requestOriginalReceipt(
 export function loadStandTransport(
   path: string,
   logger: Pick<Logger, "warn">,
-): { dispatch: DispatchStandRestart; readReceipt: ReadStandReceipt } {
+): {
+  dispatch: DispatchStandRestart;
+  readReceipt: ReadStandReceipt;
+  observe: ObserveStandOperation;
+} {
   if (!isAbsolute(path)) throw invalidConfig();
   let targets: z.infer<typeof targetSchema>[];
 
@@ -363,5 +441,7 @@ export function loadStandTransport(
       sendRestart(targetFor(payload.targetIncarnation), payload),
     readReceipt: (selector) =>
       readReceipt(targetFor(selector.targetIncarnation), selector, logger),
+    observe: (selector) =>
+      observeStand(targetFor(selector.targetIncarnation), selector),
   };
 }
