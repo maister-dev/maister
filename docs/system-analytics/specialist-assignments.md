@@ -850,8 +850,10 @@ raw HTTP response bodies or unrestricted error messages.
 The closed v1 view contains assignment/delivery identity, original input revision
 and SHA256, signal `result_available`, exact Run/result/schema revision and digest
 witnesses, frozen typed destination, receipt creation time, and existing transport
-state. State is `awaiting_dispatch` when no transport exists, otherwise the
-existing `pending|delivered|dead`. Transport inspection exposes only its ID,
+state. Before fanout it is `awaiting_dispatch`. A complete scheduled stand
+check with no action, findings or diagnostics can leave a retained
+`suppressed` Inbox decision without creating a transport or attempt. Other
+deliveries use the existing `pending|delivered|dead`. Transport inspection exposes only its ID,
 attempt count, append-only last attempt ordinal, last status/error class,
 next-attempt/delivered/update timestamps, and a nullable server-computed
 `stateSha256`. The hash covers the actual transport identity/state and append-only

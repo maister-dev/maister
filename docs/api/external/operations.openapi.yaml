@@ -14837,7 +14837,7 @@ components:
           nullable: true
         state:
           type: string
-          enum: [awaiting_dispatch, pending, delivered, dead]
+          enum: [awaiting_dispatch, pending, delivered, dead, suppressed]
         attemptCount:
           type: integer
           minimum: 0

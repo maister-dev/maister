@@ -59,6 +59,7 @@ async function readDelivery(
   const [row] = (
     await tx.execute(sql`
     SELECT receipt.id,receipt.snapshot,receipt.created_at,
+      event.fanout_at,
       transport.id AS transport_id,transport.status,transport.attempt_count,
       COALESCE(attempt.last_attempt_no,0) AS last_attempt_no,
       transport.last_http_status,transport.last_error_kind,transport.next_attempt_at,
@@ -70,6 +71,7 @@ async function readDelivery(
         'lastHttpStatus',transport.last_http_status,'lastErrorKind',transport.last_error_kind,
         'lastAttemptNo',COALESCE(attempt.last_attempt_no,0))::text,'UTF8')),'hex') END AS state_sha256
     FROM specialist_delivery_receipts receipt
+    LEFT JOIN webhook_events event ON event.id=receipt.outbox_event_id AND event.type='assignment.result_available'
     LEFT JOIN webhook_deliveries transport ON transport.specialist_delivery_id=receipt.id
     LEFT JOIN LATERAL (SELECT max(attempt_no) AS last_attempt_no FROM webhook_delivery_attempts WHERE delivery_id=transport.id) attempt ON true
     WHERE receipt.assignment_id=${assignmentId} AND ${selector}
@@ -92,7 +94,12 @@ async function readDelivery(
     createdAt: databaseTimestamp(row.created_at),
     transport: {
       id: row.transport_id ?? null,
-      state: row.status ?? "awaiting_dispatch",
+      // Native Inbox fanout commits without a transport only for quiet results.
+      state:
+        row.status ??
+        (snapshot.destination.kind === "inbox" && row.fanout_at != null
+          ? "suppressed"
+          : "awaiting_dispatch"),
       attemptCount: row.attempt_count ?? 0,
       lastAttemptNo: row.last_attempt_no,
       lastHttpStatus: row.last_http_status ?? null,

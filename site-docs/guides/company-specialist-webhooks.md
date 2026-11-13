@@ -157,7 +157,9 @@ retained receipt. Current assignment and source access are required, including
 for historical results.
 
 The response shows the frozen destination, exact input/result witnesses and
-transport state: `awaiting_dispatch`, `pending`, `delivered` or `dead`. It includes
+transport state: `awaiting_dispatch`, `pending`, `delivered`, `dead` or
+`suppressed`. A quiet scheduled stand check can have a retained `suppressed`
+Inbox decision with no delivery attempts. The response includes
 bounded attempt metadata and `stateSha256`; result bodies, endpoint credentials
 and raw transport responses are excluded. Cancellation or a superseded result
 does not erase delivery history that you can still access.

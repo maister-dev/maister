@@ -43,7 +43,13 @@ export const assignmentDeliveryViewSchema = assignmentResultWitnessSchema
     transport: z
       .object({
         id: identity.nullable(),
-        state: z.enum(["awaiting_dispatch", "pending", "delivered", "dead"]),
+        state: z.enum([
+          "awaiting_dispatch",
+          "pending",
+          "delivered",
+          "dead",
+          "suppressed",
+        ]),
         attemptCount: z.number().int().nonnegative().max(2147483647),
         lastAttemptNo: z.number().int().nonnegative().max(2147483647),
         lastHttpStatus: z.number().int().min(100).max(599).nullable(),

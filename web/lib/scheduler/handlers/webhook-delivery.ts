@@ -189,9 +189,9 @@ async function runSkipPass(db: Db, batch: number): Promise<number> {
 // PRUNE — outbox retention tail-pass. The outbox grows on EVERY taxonomy
 // transition; events that matched no subscription spawn zero deliveries and
 // would otherwise accumulate forever. Delete fanned-out events older than the
-// retention window that NO delivery references. The NOT EXISTS guard keeps
-// every delivery-referenced event forever (replay/audit). fanout_at IS NOT NULL
-// guards un-fanned events from being deleted out from under the fanout pass.
+// retention window that no transport or native result receipt references.
+// Quiet native Inbox decisions have no transport and rely on the outbox
+// fanout witness. Un-fanned events remain available to the fanout pass.
 // ---------------------------------------------------------------------------
 
 async function runPrunePass(db: Db): Promise<number> {
@@ -201,6 +201,10 @@ async function runPrunePass(db: Db): Promise<number> {
       AND fanout_at < now() - ${`${RETENTION_DAYS} days`}::interval
       AND NOT EXISTS (
         SELECT 1 FROM webhook_deliveries d WHERE d.event_id = webhook_events.id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM specialist_delivery_receipts receipt
+        WHERE receipt.outbox_event_id = webhook_events.id
       )
   `);
 

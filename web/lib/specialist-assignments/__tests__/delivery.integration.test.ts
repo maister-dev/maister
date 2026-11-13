@@ -8,7 +8,7 @@ import type {
 import type { RunResultContract } from "@/lib/run-results/types";
 
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import os from "node:os";
 import { join, resolve } from "node:path";
@@ -65,6 +65,7 @@ import {
 } from "@/lib/queries/inbox";
 import { buildFlowExportContract } from "@/lib/run-results/contract";
 import { publishRunResult } from "@/lib/run-results/ledger";
+import { OPERATIONAL_EVIDENCE_FORM_SCHEMA } from "@/lib/run-results/operational-schema";
 import { runWebhookDeliveryJob } from "@/lib/scheduler/handlers/webhook-delivery";
 import { markInboxItemRead } from "@/lib/social/inbox";
 import { replayDelivery } from "@/lib/webhooks/replay";
@@ -80,6 +81,11 @@ let root: string;
 let server: Server;
 let endpoint: string;
 let contract: RunResultContract;
+let scheduledStand: {
+  contract: RunResultContract;
+  standingDefinition: PreparedSpecialistAssignment["standingDefinition"];
+  value: Record<string, unknown>;
+};
 let preparedBase: Omit<
   PreparedSpecialistAssignment,
   "owner" | "destination" | "origin"
@@ -106,6 +112,17 @@ const output = {
   knowledgeProposals: [],
   selection: [],
 };
+const observerDefinition = `---
+name: Stand observation fixture
+description: Returns the recorded coverage of a scheduled stand check.
+specialist: {responsibilities: [Inspect an appointed stand], targetClasses: [stand]}
+workspace: none
+mode: session
+triggers: [cron]
+risk_tier: read_only
+---
+Report a bounded observation without changing the service.
+`;
 
 const deliveryLogObserver = vi.hoisted(() => ({
   records: [] as { fields: unknown; message: unknown }[],
@@ -176,8 +193,15 @@ beforeAll(async () => {
     defaultRunnerId: runnerId,
     webhooksEnabled: true,
   });
+  const source = join(root, "source");
+
+  await cp(resolve("test-fixtures/rah-native"), source, { recursive: true });
+  await writeFile(
+    join(source, "maister-agents/stand-observer.md"),
+    observerDefinition,
+  );
   const installed = await installPackageRevision({
-    source: resolve("test-fixtures/rah-native"),
+    source,
     version: "rah/delivery-fixture",
     db: database.db,
   });
@@ -258,6 +282,52 @@ beforeAll(async () => {
     scheduledRequest: null,
     executionPolicy: { preset: "supervised" },
   };
+  const observer = parseAgentDefinition(
+    "rah:stand-observer",
+    observerDefinition,
+  );
+  const standSchema = OPERATIONAL_EVIDENCE_FORM_SCHEMA;
+
+  scheduledStand = {
+    standingDefinition: {
+      ...preparedBase.standingDefinition,
+      agentId: "rah:stand-observer",
+      definition: observer,
+      definitionSha256: agentDefinitionSha256(observer),
+    },
+    contract: buildFlowExportContract({
+      flowRefId: "rah-control",
+      resolvedRevision: pin.resolved_revision,
+      flowRevisionId: flow.id,
+      schemaPath: "./schemas/operational-evidence.v2.json",
+      schema: standSchema,
+      sha256: createHash("sha256")
+        .update(JSON.stringify(standSchema))
+        .digest("hex"),
+      required: true,
+      producerNodeIds: ["research"],
+      nativeContract: "operational_evidence_v2",
+    }),
+    value: {
+      schemaVersion: 2,
+      outcome: "success",
+      summary: "The scheduled check found no actionable change.",
+      coverage: { state: "complete", remainingKnown: 0 },
+      counts: {
+        scanned: 1,
+        attempted: 0,
+        completed: 0,
+        failed: 0,
+        skipped: 0,
+        created: 0,
+      },
+      references: [],
+      diagnostics: [],
+      findings: output,
+      operationIds: [],
+      verificationIds: [],
+    },
+  };
   server = createServer(async (request, response) => {
     const parts: Buffer[] = [];
 
@@ -334,15 +404,45 @@ async function readyResult(
   target: Awaited<ReturnType<typeof recipient>>,
   destination: AssignmentDestination,
   verification = preparedBase.objectiveInput.verification,
+  source: {
+    contract: RunResultContract;
+    value: Record<string, unknown>;
+    standingDefinition: PreparedSpecialistAssignment["standingDefinition"];
+    scheduledRequest: PreparedSpecialistAssignment["scheduledRequest"];
+  } = {
+    contract,
+    value: output,
+    standingDefinition: preparedBase.standingDefinition,
+    scheduledRequest: null,
+  },
 ): Promise<{ assignmentId: string; runId: string; deliveryId: string }> {
+  const { contract, value, standingDefinition, scheduledRequest } = source;
   const work = await createSpecialistAssignment(database.db, target.userId, {
     ...preparedBase,
-    objectiveInput: { ...preparedBase.objectiveInput, verification },
+    responsibleAgentId: standingDefinition.agentId,
+    standingDefinition,
+    scheduledRequest,
+    objectiveInput: {
+      ...preparedBase.objectiveInput,
+      verification,
+      expectedResult: {
+        schemaRef: contract.schemaRef,
+        schemaVersion: contract.schemaVersion,
+        sha256: contract.sha256,
+        required: true,
+      },
+    },
     sourceRestrictions: [
       { kind: "project_context", projectId: target.projectId },
     ],
     owner: { kind: "project", projectId: target.projectId },
-    origin: { kind: "manual", interactionId: randomUUID() },
+    origin: scheduledRequest
+      ? {
+          kind: "schedule",
+          scheduleId: scheduledRequest.scheduleId,
+          triggerAttemptId: scheduledRequest.triggerAttemptId,
+        }
+      : { kind: "manual", interactionId: randomUUID() },
     destination,
   });
   const input = await getSpecialistAssignmentInput(
@@ -386,8 +486,8 @@ async function readyResult(
     await publishRunResult(tx, {
       runId,
       contract,
-      value: output,
-      valueBytes: Buffer.byteLength(JSON.stringify(output)),
+      value,
+      valueBytes: Buffer.byteLength(JSON.stringify(value)),
       producerKind: "flow_node",
       producerRef: "research",
     });
@@ -1057,6 +1157,54 @@ it("IT-CBA-06 inspects an actual retained result before and after transport disp
   expect(delivered).not.toHaveProperty("sourceRestrictions");
   expect(delivered).not.toHaveProperty("requesterUserId");
   expect(delivered.transport).not.toHaveProperty("lastErrorMessage");
+});
+
+it("keeps a quiet scheduled stand decision inspectable after outbox retention", async () => {
+  const target = await recipient();
+  const work = await readyResult(
+    target,
+    { kind: "inbox", userId: target.userId },
+    [],
+    {
+      ...scheduledStand,
+      scheduledRequest: {
+        version: 1,
+        scheduleId: randomUUID(),
+        triggerAttemptId: randomUUID(),
+        requestAtLaunch:
+          "Inspect the appointed service without making changes.",
+      },
+    },
+  );
+  const readDelivery = () =>
+    getSpecialistAssignmentDelivery(
+      database.db,
+      target.userId,
+      work.assignmentId,
+      {
+        runId: work.runId,
+      },
+    );
+
+  expect((await readDelivery()).transport.state).toBe("awaiting_dispatch");
+  await runWebhookDeliveryJob({ db: database.db });
+  await database.pool.query(
+    `UPDATE webhook_events event SET fanout_at=now()-interval '8 days'
+     FROM specialist_delivery_receipts receipt
+     WHERE receipt.id=$1 AND event.id=receipt.outbox_event_id AND event.fanout_at IS NOT NULL`,
+    [work.deliveryId],
+  );
+  await runWebhookDeliveryJob({ db: database.db });
+
+  expect(await getUnreadInboxCount(target.userId, "member")).toBe(0);
+  expect((await readDelivery()).transport).toMatchObject({
+    id: null,
+    state: "suppressed",
+    attemptCount: 0,
+    lastAttemptNo: 0,
+    deliveredAt: null,
+    stateSha256: null,
+  });
 });
 
 it("IT-CBA-06 replays one inspected transport cycle and rejects concurrent and delayed duplicate witnesses", async () => {
