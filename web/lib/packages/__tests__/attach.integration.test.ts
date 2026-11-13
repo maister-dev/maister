@@ -9,8 +9,9 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout } from "node:timers/promises";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -543,6 +544,536 @@ nodes:
     );
 
     await db.delete(schema.runs).where(eq(schema.runs.id, runId));
+  });
+
+  it.each([
+    {
+      name: "archived ended quiescent Crashed",
+      status: "Crashed",
+      change: "none",
+      blocked: false,
+    },
+    {
+      name: "upgrade preserves removed member history",
+      status: "Crashed",
+      change: "upgrade",
+      blocked: false,
+    },
+    {
+      name: "legacy archived evidence",
+      status: "Crashed",
+      change: "legacy",
+      blocked: false,
+    },
+    {
+      name: "snapshot missing its commit",
+      status: "Crashed",
+      change: "missing_commit",
+      blocked: true,
+    },
+    {
+      name: "shared reuser with archived allocator tree",
+      status: "Crashed",
+      change: "shared_reuser",
+      blocked: false,
+    },
+    {
+      name: "non-archived Crashed",
+      status: "Crashed",
+      change: "unarchived",
+      blocked: true,
+    },
+    {
+      name: "recoverable crash on an older package revision",
+      status: "Crashed",
+      change: "old_revision",
+      blocked: true,
+    },
+    {
+      name: "incomplete archival",
+      status: "Crashed",
+      change: "not_removed",
+      blocked: true,
+    },
+    {
+      name: "clean completed archive without Git refs",
+      status: "Crashed",
+      change: "clean",
+      blocked: false,
+    },
+    {
+      name: "legacy crash without an immutable revision",
+      status: "Crashed",
+      change: "unpinned",
+      blocked: true,
+    },
+    {
+      name: "missing run end",
+      status: "Crashed",
+      change: "not_ended",
+      blocked: true,
+    },
+    {
+      name: "another unarchived workspace",
+      status: "Crashed",
+      change: "extra_workspace",
+      blocked: true,
+    },
+    {
+      name: "archive in progress",
+      status: "Crashed",
+      change: "claiming",
+      blocked: true,
+    },
+    {
+      name: "failed archive claim",
+      status: "Crashed",
+      change: "failed",
+      blocked: true,
+    },
+    {
+      name: "concurrent recovery assignment",
+      status: "Crashed",
+      change: "assignment",
+      blocked: true,
+    },
+    {
+      name: "recovery commits while detach waits for the run lock",
+      status: "Crashed",
+      change: "concurrent",
+      blocked: true,
+    },
+    {
+      name: "live session without an active assignment",
+      status: "Crashed",
+      change: "session",
+      blocked: true,
+    },
+    {
+      name: "shared workspace has an active sibling",
+      status: "Crashed",
+      change: "shared",
+      blocked: true,
+    },
+    {
+      name: "Running with archive metadata",
+      status: "Running",
+      change: "none",
+      blocked: true,
+    },
+    {
+      name: "historical Failed",
+      status: "Failed",
+      change: "none",
+      blocked: false,
+    },
+    {
+      name: "historical Abandoned",
+      status: "Abandoned",
+      change: "none",
+      blocked: false,
+    },
+    { name: "historical Done", status: "Done", change: "none", blocked: false },
+  ])("package pins: $name", async ({ status, change, blocked }) => {
+    const historicalProjectId = randomUUID();
+    const root = await mkdtemp(join(tmpdir(), "attach-history-"));
+
+    dirsToClean.push(root);
+    const slug = `history-${historicalProjectId}`;
+
+    await db.insert(schema.projects).values({
+      id: historicalProjectId,
+      taskKey: `T${randomUUID().slice(0, 8)}`.toUpperCase(),
+      slug,
+      name: "Package archive history",
+      repoPath: root,
+      maisterYamlPath: join(root, "maister.yaml"),
+    });
+    const installed = await installPackageRevision({
+      source: pkgV1,
+      version: "attpkg/history-v1.0.0",
+      trustStatus: "trusted_by_policy",
+      db,
+    });
+    const attached = await attachPackage({
+      projectId: historicalProjectId,
+      projectSlug: slug,
+      packageInstallId: installed.id,
+      workspaceRoot: root,
+      db,
+    });
+
+    expect(attached).not.toBeNull();
+    const [flow] = await db
+      .select()
+      .from(schema.flows)
+      .where(
+        and(
+          eq(schema.flows.projectId, historicalProjectId),
+          eq(
+            schema.flows.flowRefId,
+            change === "upgrade" ? "flow-b" : "flow-a",
+          ),
+        ),
+      );
+    const runId = randomUUID();
+    const workspaceId = randomUUID();
+    const taskId = randomUUID();
+    const nodeAttemptId = randomUUID();
+    const archivedAt = new Date("2026-01-01T00:00:00Z");
+
+    await db.insert(schema.tasks).values({
+      id: taskId,
+      projectId: historicalProjectId,
+      number: 1,
+      title: "Historical package execution",
+      prompt: "Preserve execution evidence",
+      flowId: flow.id,
+    });
+    await db.insert(schema.runs).values({
+      id: runId,
+      projectId: historicalProjectId,
+      taskId,
+      flowId: flow.id,
+      flowRevisionId: change === "unpinned" ? null : flow.enabledRevisionId,
+      flowVersion: "attpkg-history-v1.0.0",
+      status,
+      endedAt: change === "not_ended" ? null : archivedAt,
+      ...(change === "shared" || change === "shared_reuser"
+        ? {
+            runKind: "agent",
+            rootRunId: runId,
+            workspaceMode: "shared",
+            agentWorkspace: "worktree",
+          }
+        : {}),
+    });
+    await db.insert(schema.nodeAttempts).values({
+      id: nodeAttemptId,
+      runId,
+      nodeId: "s1",
+      nodeType: "cli",
+      attempt: 1,
+      status: "Failed",
+      stdout: "Historical execution output",
+      checkpointRef: `refs/maister/checkpoints/${runId}/${nodeAttemptId}`,
+    });
+    if (change === "shared") {
+      await db.insert(schema.runs).values({
+        id: randomUUID(),
+        projectId: historicalProjectId,
+        runKind: "agent",
+        rootRunId: runId,
+        workspaceMode: "shared",
+        agentWorkspace: "worktree",
+        status: "Running",
+        flowVersion: "shared-sibling",
+      });
+    }
+    await db.insert(schema.workspaces).values({
+      id: workspaceId,
+      runId,
+      projectId: historicalProjectId,
+      branch: "run/history",
+      worktreePath: join(root, "archived-worktree"),
+      parentRepoPath: root,
+      removedAt:
+        change === "not_removed" || change === "unarchived" ? null : archivedAt,
+      archivedAt: change === "unarchived" ? null : archivedAt,
+      archivedBranch: change === "clean" ? null : "archive/history",
+      archivedCommit:
+        change === "missing_commit" || change === "clean"
+          ? null
+          : "a".repeat(40),
+      removalKind: change === "legacy" ? "legacy" : "archive",
+      preservationOutcome:
+        change === "legacy"
+          ? null
+          : change === "clean"
+            ? "not_needed"
+            : "snapshot_created",
+      ...(change === "claiming" || change === "failed"
+        ? {
+            lifecycleOperationState: change,
+            lifecycleOperationAttemptId: randomUUID(),
+            lifecycleOperationName: "archive",
+            lifecycleOperationExpectedRunStatus: status,
+            lifecycleOperationLeaseExpiresAt:
+              change === "claiming" ? new Date(Date.now() + 60_000) : null,
+          }
+        : {}),
+    });
+    if (change === "shared_reuser") {
+      const allocatorId = randomUUID();
+
+      await db.insert(schema.runs).values({
+        id: allocatorId,
+        projectId: historicalProjectId,
+        runKind: "agent",
+        rootRunId: runId,
+        workspaceMode: "shared",
+        agentWorkspace: "worktree",
+        status: "Done",
+        endedAt: archivedAt,
+        flowVersion: "allocator",
+      });
+      await db
+        .update(schema.workspaces)
+        .set({ runId: allocatorId })
+        .where(eq(schema.workspaces.id, workspaceId));
+    }
+    if (change === "old_revision") {
+      const replacement = await installPackageRevision({
+        source: pkgV2,
+        version: "attpkg/history-v2.0.0",
+        trustStatus: "trusted_by_policy",
+        db,
+      });
+
+      await upgradeAttachment({
+        projectId: historicalProjectId,
+        projectSlug: slug,
+        attachmentId: attached!.attachmentId,
+        packageInstallId: replacement.id,
+        workspaceRoot: root,
+        db,
+      });
+      await db
+        .update(schema.workspaces)
+        .set({ removedAt: null, archivedAt: null })
+        .where(eq(schema.workspaces.id, workspaceId));
+    }
+    if (change === "extra_workspace") {
+      await db.insert(schema.workspaces).values({
+        id: randomUUID(),
+        runId,
+        projectId: historicalProjectId,
+        branch: "run/other",
+        worktreePath: join(root, "other"),
+        parentRepoPath: root,
+      });
+    }
+    if (
+      change === "assignment" ||
+      change === "concurrent" ||
+      change === "session"
+    ) {
+      const hostId = randomUUID();
+
+      await db.insert(schema.executionHosts).values({
+        id: hostId,
+        hostKey: hostId,
+        kind: "local_direct",
+        displayName: "Recovery fixture",
+        transport: { kind: "local_direct" },
+        retiredAt: archivedAt,
+      });
+      if (change === "session") {
+        const runSessionId = randomUUID();
+
+        await db
+          .insert(schema.runSessions)
+          .values({ id: runSessionId, runId, sessionName: "default" });
+        await db.insert(schema.runSessionIncarnations).values({
+          id: randomUUID(),
+          runId,
+          runSessionId,
+          executionHostId: hostId,
+          hostSessionId: randomUUID(),
+          state: "active",
+          origin: "native",
+        });
+      }
+      const assignment = {
+        id: randomUUID(),
+        runId,
+        executionHostId: hostId,
+        epoch: 1,
+        state: "active",
+        placementReason: "recover",
+      };
+
+      if (change === "concurrent") {
+        let releaseRecovery: (() => void) | undefined;
+        let recoveryLocked: ((pid: number) => void) | undefined;
+        const locked = new Promise<number>((resolve) => {
+          recoveryLocked = resolve;
+        });
+        const release = new Promise<void>((resolve) => {
+          releaseRecovery = resolve;
+        });
+        const recovery = db.transaction(async (tx) => {
+          await tx.execute(
+            sql`SELECT id FROM runs WHERE id = ${runId} FOR UPDATE`,
+          );
+          await tx.insert(schema.executionAssignments).values(assignment);
+          const pid = await tx.execute<{ pid: number }>(
+            sql`SELECT pg_backend_pid() AS pid`,
+          );
+
+          recoveryLocked!(pid.rows[0]!.pid);
+          await release;
+        });
+        const recoveryPid = await Promise.race([
+          locked,
+          recovery.then(() => {
+            throw new Error("Recovery ended before locking the run");
+          }),
+        ]);
+
+        try {
+          let settled = false;
+          const detachment = detachPackage({
+            projectId: historicalProjectId,
+            attachmentId: attached!.attachmentId,
+            db,
+          }).then(
+            (value) => {
+              settled = true;
+
+              return { value, error: undefined };
+            },
+            (error: unknown) => {
+              settled = true;
+
+              return { value: undefined, error };
+            },
+          );
+          const deadline = Date.now() + 2_000;
+          let waiting = false;
+
+          while (!settled && Date.now() < deadline) {
+            const observation = await db.execute<{ waiting: boolean }>(sql`
+              SELECT EXISTS (
+                SELECT 1 FROM pg_stat_activity
+                WHERE ${recoveryPid} = ANY(pg_blocking_pids(pid))
+              ) AS waiting
+            `);
+
+            waiting = observation.rows[0]!.waiting;
+            if (waiting) break;
+            await setTimeout(10);
+          }
+          expect(
+            waiting,
+            "detach must wait for concurrent recovery's run lock",
+          ).toBe(true);
+          releaseRecovery!();
+          await recovery;
+          const result = await detachment;
+
+          expect(result.error).toMatchObject({ code: "PRECONDITION" });
+        } finally {
+          releaseRecovery!();
+          await recovery;
+        }
+
+        return;
+      }
+      if (change !== "session")
+        await db.insert(schema.executionAssignments).values(assignment);
+    }
+    if (blocked) {
+      await expect(
+        detachPackage({
+          projectId: historicalProjectId,
+          attachmentId: attached!.attachmentId,
+          db,
+        }),
+      ).rejects.toMatchObject({
+        code: "PRECONDITION",
+        details: {
+          reason: "package_run_pinned",
+          blockers: [
+            expect.objectContaining({
+              runId,
+              status,
+              reasons: expect.any(Array),
+            }),
+          ],
+        },
+      });
+
+      return;
+    }
+
+    if (change === "upgrade") {
+      const replacement = await installPackageRevision({
+        source: pkgV2,
+        version: "attpkg/history-v2.0.0",
+        trustStatus: "trusted_by_policy",
+        db,
+      });
+
+      await expect(
+        upgradeAttachment({
+          projectId: historicalProjectId,
+          projectSlug: slug,
+          attachmentId: attached!.attachmentId,
+          packageInstallId: replacement.id,
+          workspaceRoot: root,
+          db,
+        }),
+      ).resolves.toEqual({ upgraded: true });
+    } else {
+      await expect(
+        detachPackage({
+          projectId: historicalProjectId,
+          attachmentId: attached!.attachmentId,
+          db,
+        }),
+      ).resolves.toEqual({ detached: true });
+    }
+
+    const [run] = await db
+      .select()
+      .from(schema.runs)
+      .where(eq(schema.runs.id, runId));
+
+    expect(run).toMatchObject({
+      status,
+      taskId,
+      flowId: null,
+      endedAt: archivedAt,
+      flowRevisionId: flow.enabledRevisionId,
+    });
+    const [task] = await db
+      .select()
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, taskId));
+
+    expect(task).toMatchObject({
+      title: "Historical package execution",
+      flowId: null,
+    });
+    const [nodeAttempt] = await db
+      .select()
+      .from(schema.nodeAttempts)
+      .where(eq(schema.nodeAttempts.id, nodeAttemptId));
+
+    expect(nodeAttempt).toMatchObject({
+      runId,
+      status: "Failed",
+      stdout: "Historical execution output",
+      checkpointRef: `refs/maister/checkpoints/${runId}/${nodeAttemptId}`,
+    });
+    const [workspace] = await db
+      .select()
+      .from(schema.workspaces)
+      .where(eq(schema.workspaces.id, workspaceId));
+
+    expect(workspace).toMatchObject({
+      archivedAt,
+      removedAt: archivedAt,
+      archivedBranch: change === "clean" ? null : "archive/history",
+      archivedCommit: change === "clean" ? null : "a".repeat(40),
+    });
+    const [revision] = await db
+      .select()
+      .from(schema.flowRevisions)
+      .where(eq(schema.flowRevisions.id, flow.enabledRevisionId));
+
+    expect(revision).toBeDefined();
   });
 
   it("upgrade flips the group to v2: repoint, drop removed flow, keep pins", async () => {
