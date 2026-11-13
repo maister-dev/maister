@@ -19,7 +19,7 @@ case "$*" in
   '--system --no-pager show --property=Id --property=LoadState --property=ActiveState --property=InvocationID -- fixture.service')
     printf 'Id=fixture.service\\nLoadState=loaded\\nActiveState=active\\nInvocationID=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n' ;;
   '--system --no-pager --all show --property=Id --property=Job -- fixture.service')
-    printf 'Id=fixture.service\\nJob=0\\n' ;;
+    printf 'Id=fixture.service\\nJob=\\n' ;;
   '--system --no-pager --job-mode=fail restart -- fixture.service') exit 0 ;;
   *) exit 17 ;;
 esac

@@ -151,7 +151,7 @@ export function createSystemdDriver(
 
       if (!result.succeeded || !lines.includes(`Id=${unit.unit}`))
         throw new SystemdError("service_unavailable");
-      if (!lines.includes("Job=0"))
+      if (!lines.includes("Job=") && !lines.includes("Job=0"))
         throw new SystemdError("service_job_pending");
     },
     async inspect(unit: SystemdUnit): Promise<ServiceObservation> {
