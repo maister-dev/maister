@@ -180,6 +180,7 @@ import {
 } from "@/lib/company/types";
 import {
   STAND_ACTIONS,
+  STAND_PERMIT_PURPOSES,
   STAND_DISPOSITIONS,
   STAND_EFFECT_STATES,
   STAND_VERIFICATION_STATES,
@@ -10972,6 +10973,38 @@ export const standResourceClaims = pgTable(
     epoch: check(
       "stand_resource_claims_epoch_check",
       sql`${t.ownerEpoch} BETWEEN 1 AND 9007199254740991`,
+    ),
+  }),
+);
+
+export const standAuthorizationPermits = pgTable(
+  "stand_authorization_permits",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    operationId: text("operation_id")
+      .notNull()
+      .references(() => standOperations.id, { onDelete: "restrict" }),
+    nonce: text("nonce").notNull(),
+    purpose: text("purpose", { enum: STAND_PERMIT_PURPOSES }).notNull(),
+    ownerEpoch: bigint("owner_epoch", { mode: "number" }).notNull(),
+    issuedAt: timestamp("issued_at", { withTimezone: true }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (t) => ({
+    nonce: unique("stand_authorization_permits_operation_nonce_unique").on(
+      t.operationId,
+      t.nonce,
+    ),
+    dispatch: uniqueIndex("stand_authorization_permits_dispatch_unique")
+      .on(t.operationId)
+      .where(sql`${t.purpose}='dispatch'`),
+    shape: check(
+      "stand_authorization_permits_shape_check",
+      sql`${t.ownerEpoch} BETWEEN 1 AND 9007199254740991 AND ${t.purpose} IN ('dispatch','reconcile','logs','verify')
+        AND ${t.nonce} ~ '^[A-Za-z0-9._:-]{8,128}$'
+        AND ${t.expiresAt} > ${t.issuedAt} AND ${t.expiresAt} <= ${t.issuedAt} + interval '5 seconds'`,
     ),
   }),
 );

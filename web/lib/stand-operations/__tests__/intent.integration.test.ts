@@ -487,6 +487,20 @@ it("IT-CBO-02 IT-CBO-03 retains one restart intent across aliases and approves o
     disposition: "pending",
   });
   const { authenticateStandOperationPeer } = await import("../authority-peer");
+  await expect(
+    database.pool.query(
+      `INSERT INTO stand_authorization_permits(operation_id,nonce,purpose,owner_epoch,issued_at,expires_at)
+       VALUES($1,$2,'dispatch',1,clock_timestamp(),clock_timestamp()+interval '4 seconds')`,
+      [accepted.id, randomUUID()],
+    ),
+  ).rejects.toMatchObject({ code: "23514" });
+  await expect(
+    database.pool.query(
+      `INSERT INTO stand_authorization_permits(operation_id,nonce,purpose,owner_epoch,issued_at,expires_at)
+       VALUES($1,$2,'reconcile',1,clock_timestamp(),clock_timestamp()+interval '4 seconds')`,
+      [accepted.id, randomUUID()],
+    ),
+  ).rejects.toMatchObject({ code: "23514" });
   const peerToken = randomBytes(32).toString("base64url");
   const peerFingerprint = input.helperCertificateSha256
     .match(/../g)!

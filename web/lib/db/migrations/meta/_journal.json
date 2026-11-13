@@ -2115,6 +2115,20 @@
       "when": 1794606478008,
       "tag": "0305_stand_effect_transition_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 306,
+      "version": "7",
+      "when": 1794606478009,
+      "tag": "0306_stand_authorization_permits",
+      "breakpoints": true
+    },
+    {
+      "idx": 307,
+      "version": "7",
+      "when": 1794606478010,
+      "tag": "0307_stand_authorization_permit_guards",
+      "breakpoints": true
     }
   ]
 }

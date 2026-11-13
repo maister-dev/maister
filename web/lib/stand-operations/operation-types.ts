@@ -7,6 +7,12 @@ import {
 import { postgresTextSchema } from "@/lib/text-schema";
 
 export const STAND_OPERATION_BODY_MAX_BYTES = 65_536;
+export const STAND_PERMIT_PURPOSES = [
+  "dispatch",
+  "reconcile",
+  "logs",
+  "verify",
+] as const;
 export const STAND_ACTIONS = ["inspect", "logs", "restart", "verify"] as const;
 export const STAND_EFFECT_STATES = [
   "not_dispatched",
@@ -47,6 +53,19 @@ export const standRestartApprovalSchema = z
     idempotencyKey: knowledgeDeliveryKeySchema,
   })
   .strict();
+
+export const standPermitCheckSchema = z
+  .object({
+    targetIncarnation: z.uuid(),
+    resourceKey: z.string().regex(/^[a-f0-9]{64}$/),
+    requestDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    ownerEpoch: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+    nonce: knowledgeDeliveryKeySchema,
+    purpose: z.enum(STAND_PERMIT_PURPOSES),
+  })
+  .strict();
+
+export type StandPermitCheck = z.infer<typeof standPermitCheckSchema>;
 
 export type StandAction = (typeof STAND_ACTIONS)[number];
 export type StandOperation = Readonly<{

@@ -3414,6 +3414,22 @@ table specialist_work_decisions {
   }
 }
 
+table stand_authorization_permits {
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  operation_id text [not null]
+  nonce text [not null]
+  purpose text [not null]
+  owner_epoch bigint [not null]
+  issued_at "timestamp with time zone" [not null]
+  expires_at "timestamp with time zone" [not null]
+
+  indexes {
+    (operation_id, nonce) [name: 'stand_authorization_permits_operation_nonce_unique', unique]
+    operation_id [name: 'stand_authorization_permits_dispatch_unique', unique]
+
+  }
+}
+
 table stand_components {
   target_id text [not null]
   config_revision integer [not null]
@@ -5092,6 +5108,8 @@ ref specialist_work_input_fk: specialist_work.(assignment_id, input_revision) > 
 ref specialist_work_decisions_result_id_run_results_id_fk: specialist_work_decisions.result_id > run_results.id [delete: restrict, update: no action]
 
 ref specialist_work_decisions_work_fk: specialist_work_decisions.(work_id, work_revision) > specialist_work.(id, work_revision) [delete: restrict, update: no action]
+
+ref stand_authorization_permits_operation_id_stand_operations_id_fk: stand_authorization_permits.operation_id > stand_operations.id [delete: restrict, update: no action]
 
 ref stand_components_target_revision_fk: stand_components.(target_id, config_revision) > stand_target_revisions.(target_id, revision) [delete: restrict, update: no action]
 
