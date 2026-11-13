@@ -267,6 +267,7 @@ export interface ReconcileInput {
   // Default false — a fresh process has no observers, which is exactly the
   // state that needs recovery.
   agentObserverActive?: boolean;
+  retainedSpecialistWait?: boolean;
   // ADR-177: the classification of the current attempt's newest owned
   // `session.prompt` command. Resolved by the caller (cheap SQL, plus ONE
   // `GET /commands/{id}` receipt probe for an `accepted` row with no terminal
@@ -428,7 +429,19 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
     }
   }
 
-  // 1. allow-list: reconcile only owns `Running` rows.
+  // A retained permission wait can adopt its observer without applying the answer or issuing a prompt.
+  if (
+    input.retainedSpecialistWait &&
+    input.runStatus === "NeedsInput" &&
+    input.runKind === "agent" &&
+    input.liveSession &&
+    input.worktreeExists
+  )
+    return input.agentObserverActive
+      ? { action: "skip", reason: "agent-observer-live" }
+      : { action: "reobserve", reason: "agent-observer-gone" };
+
+  // 1. allow-list: reconcile only owns `Running` rows outside retained waits.
   if (input.runStatus !== "Running") {
     return { action: "skip", reason: "not-running" };
   }
@@ -831,6 +844,7 @@ type CandidateRow = {
   runId: string;
   runKind: RunKind;
   status: string;
+  retainedSpecialistWait?: boolean;
   assignmentId: string | null;
   acpSessionId: string | null;
   currentStepId: string | null;
@@ -1284,6 +1298,12 @@ async function crashUnownedCli(
 }
 
 async function loadCandidates(db: Db): Promise<CandidateRow[]> {
+  const retainedSpecialistWait = sql<boolean>`(${runs.status}='NeedsInput' AND ${runs.runKind}='agent'
+    AND ${runs.executionAssignmentId} IS NOT NULL
+    AND EXISTS(SELECT 1 FROM specialist_run_links link WHERE link.run_id=${runs.id}
+      AND (link.work_witness IS NOT NULL OR (link.work_id IS NULL AND link.role IN ('specialist','continuation'))))
+    AND EXISTS(SELECT 1 FROM run_session_incarnations incarnation WHERE incarnation.run_id=${runs.id}
+      AND incarnation.execution_assignment_id=${runs.executionAssignmentId} AND incarnation.state IN ('created','active')))`;
   const projectRows: Array<{ id: string; repoPath: string }> = await db
     .select({ id: projects.id, repoPath: projects.repoPath })
     .from(projects);
@@ -1295,6 +1315,7 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
       runId: string;
       runKind: RunKind;
       status: string;
+      retainedSpecialistWait: boolean;
       assignmentId: string | null;
       acpSessionId: string | null;
       currentStepId: string | null;
@@ -1310,6 +1331,7 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
         runId: runs.id,
         runKind: runs.runKind,
         status: runs.status,
+        retainedSpecialistWait,
         assignmentId: runs.executionAssignmentId,
         currentStepId: runs.currentStepId,
         resumeStartedAt: runs.resumeStartedAt,
@@ -1329,7 +1351,10 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
       .where(
         and(
           eq(runs.projectId, project.id),
-          inArray(runs.status, ["Running", "WaitingOnChildren"]),
+          or(
+            inArray(runs.status, ["Running", "WaitingOnChildren"]),
+            retainedSpecialistWait,
+          ),
         ),
       )
       .orderBy(asc(runs.startedAt))
@@ -1347,6 +1372,7 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
         runId: runs.id,
         runKind: runs.runKind,
         status: runs.status,
+        retainedSpecialistWait: sql<boolean>`false`,
         assignmentId: runs.executionAssignmentId,
         currentStepId: runs.currentStepId,
         resumeStartedAt: runs.resumeStartedAt,
@@ -1370,6 +1396,7 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
             "HumanWorking",
           ]),
           isNotNull(runs.parentRunId),
+          sql`NOT ${retainedSpecialistWait}`,
           // The SQL twin of `coordinatorGone`: derived from the same set so the
           // loader can never hide an orphan the classifier would recover.
           sql`NOT EXISTS (
@@ -1418,6 +1445,7 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
     runId: string;
     runKind: RunKind;
     status: string;
+    retainedSpecialistWait: boolean;
     assignmentId: string | null;
     acpSessionId: string | null;
     currentStepId: string | null;
@@ -1433,6 +1461,7 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
       runId: runs.id,
       runKind: runs.runKind,
       status: runs.status,
+      retainedSpecialistWait,
       assignmentId: runs.executionAssignmentId,
       currentStepId: runs.currentStepId,
       resumeStartedAt: runs.resumeStartedAt,
@@ -1448,7 +1477,10 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
     .where(
       and(
         isNull(runs.projectId),
-        inArray(runs.status, ["Running", "WaitingOnChildren"]),
+        or(
+          inArray(runs.status, ["Running", "WaitingOnChildren"]),
+          retainedSpecialistWait,
+        ),
       ),
     )
     .orderBy(asc(runs.startedAt))
@@ -2056,6 +2088,7 @@ export async function runReconcileSweep(
     const { action, reason } = classifyRunReconcile(
       {
         runStatus: cand.status,
+        retainedSpecialistWait: cand.retainedSpecialistWait,
         runKind: cand.runKind,
         acpSessionId: cand.acpSessionId,
         currentStepId: cand.currentStepId,

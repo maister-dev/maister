@@ -5932,6 +5932,35 @@ export async function reobserveAgentSession(args: {
     .where(eq(runs.id, args.runId));
 
   if (run?.runKind !== "agent" || !run.assignmentId) return false;
+  const native = run.companyId !== null || usesStructuredKnowledgeContext(run);
+
+  if (native) {
+    if (run.status !== "Running" && run.status !== "NeedsInput") return false;
+    const [current] = await args.db
+      .select({ id: runSessionIncarnations.id })
+      .from(runSessionIncarnations)
+      .innerJoin(
+        runSessions,
+        eq(runSessions.id, runSessionIncarnations.runSessionId),
+      )
+      .where(
+        and(
+          eq(runSessionIncarnations.runId, args.runId),
+          eq(runSessionIncarnations.executionAssignmentId, run.assignmentId),
+          eq(runSessionIncarnations.hostSessionId, args.sessionId),
+          inArray(runSessionIncarnations.state, [
+            ...ADMISSIBLE_PROMPT_INCARNATION_STATES,
+          ]),
+          eq(runSessions.runId, args.runId),
+          eq(runSessions.sessionName, "default"),
+          eq(runSessions.executionAssignmentId, run.assignmentId),
+          eq(runSessions.hostSessionId, args.sessionId),
+        ),
+      )
+      .limit(1);
+
+    if (!current) return false;
+  }
   const hosts = args.executionHosts ?? createExecutionHosts({ db: args.db });
   const execution = await bindAgentExecution(
     hosts,
@@ -5945,10 +5974,7 @@ export async function reobserveAgentSession(args: {
     runId: args.runId,
     sessionId: args.sessionId,
     signal: args.signal,
-    ...(["Running", "NeedsInput"].includes(run.status) &&
-    (run.companyId !== null || usesStructuredKnowledgeContext(run))
-      ? { specialistPlacementId: run.assignmentId }
-      : {}),
+    ...(native ? { specialistPlacementId: run.assignmentId } : {}),
   });
 }
 

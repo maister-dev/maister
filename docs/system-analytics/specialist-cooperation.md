@@ -293,6 +293,11 @@ Migration `0285_specialist_executor_lease` gives an appointed, placed root a 120
 
 Migration `0287_specialist_credential_epoch` records when a new executor epoch starts. Assignment mutations require a Run credential issued during that epoch. Renewal preserves the epoch start. Older leases keep an unknown start until their next epoch, and their existing placement and expiry checks still apply.
 
+The reconcile sweep can recover a native agent observer during Running or a
+live NeedsInput wait. The reported host session must match the current logical
+session and incarnation under the placed Run. Recovery retains the original
+session and pending input without delivering a prompt or an answer.
+
 Acceptance stores responsible server principal, exact input/work/result revision, original evidence refs, limitations and verification decision. Schema validity, child Done or process exit alone cannot accept work. Agent children use supported existing message/rework. Flow children do not gain an unsupported message mutation: work rework creates a linked governed continuation, preserving the previous result and effect receipts. Rework references the new expected input revision and consumes remaining assignment/ancestor budget. Completed external effects are adopted as evidence, not replayed.
 
 ### Exhaustive interruption/recovery table

@@ -90,6 +90,7 @@ import * as agentLaunch from "../launch";
 import { startAgentContinuationWorker } from "../continuation-worker";
 import { getCompanyAgentRunHistory } from "../activity-queries";
 
+import { runReconcileSweep } from "@/lib/reconcile";
 import { submitProjectManualAssignment } from "@/lib/specialist-assignments/project-manual-intake";
 import {
   mintAssignment,
@@ -496,6 +497,10 @@ beforeAll(async () => {
   );
   await writeFile(
     join(source, "maister-agents/observer-adoption.md"),
+    primarySource,
+  );
+  await writeFile(
+    join(source, "maister-agents/observer-adoption-waiting.md"),
     primarySource,
   );
   await writeFile(
@@ -12190,67 +12195,117 @@ it.each(["none", "worktree", "repo_read", "detached"] as const)(
   },
 );
 
-it("IT-CBC-03 reclaims the expired specialist epoch when reconciliation reobserves retained work", async () => {
-  const db: Db = database.db;
-  const appointment = await reserveContextFixture("rah:observer-adoption", [
-    "assignments:read",
-  ]);
-  const { hostId, hosts } = await fakeExecutionHosts(db);
-  const placement = await db.transaction((tx) =>
-    mintAssignment(tx, { runId: appointment.runId, hostId, reason: "launch" }),
-  );
-  const observed = (
-    await database.pool.query<{ epoch: number }>(
-      "UPDATE specialist_owner_claims SET renewed_at=clock_timestamp()-interval '121 seconds',expires_at=clock_timestamp()-interval '1 second' WHERE assignment_id=$1 RETURNING epoch",
-      [appointment.assignmentId],
-    )
-  ).rows[0];
-  const sessionId = randomUUID();
-  const controller = new AbortController();
+it.each(["Running", "NeedsInput"] as const)(
+  "IT-CBC-03 reclaims the expired specialist epoch when reconciliation reobserves retained work (%s)",
+  async (status) => {
+    const db: Db = database.db;
+    const appointment = await reserveContextFixture(
+      status === "Running"
+        ? "rah:observer-adoption"
+        : "rah:observer-adoption-waiting",
+      ["assignments:read"],
+    );
+    const { hostId, hosts, fake } = await fakeExecutionHosts(db);
+    const placement = await db.transaction((tx) =>
+      mintAssignment(tx, {
+        runId: appointment.runId,
+        hostId,
+        reason: "launch",
+      }),
+    );
+    const context = await operationalWorkspace(
+      db,
+      (await db.select().from(runs).where(eq(runs.id, appointment.runId)))[0],
+    );
 
-  try {
-    expect(
-      await reobserveAgentSession({
-        db,
-        runId: appointment.runId,
-        sessionId,
-        executionHosts: hosts,
-        signal: controller.signal,
-      }),
-    ).toBe(true);
-    expect(
-      await reobserveAgentSession({
-        db,
-        runId: appointment.runId,
-        sessionId,
-        executionHosts: hosts,
-      }),
-    ).toBe(false);
-    await poll(
-      async () => {
-        const [owner] = (
+    await mkdir(context.cwd, { recursive: true });
+    const execution = await hosts.forRun(appointment.runId);
+
+    await execution.adoptWorkspace({
+      runId: appointment.runId,
+      kind: "directory",
+      path: context.cwd,
+      projectSlug: "_company",
+      owner: { kind: "company", companyId: request.companyId },
+    });
+    const session = await execution.createSession({
+      stepId: "agent",
+      executor: { agent: "claude", model: "mock" },
+    });
+
+    await fake.waitForCanonicalEvents();
+    if (status === "NeedsInput")
+      await db
+        .update(runs)
+        .set({ status })
+        .where(eq(runs.id, appointment.runId));
+    const observed = (
+      await database.pool.query<{ epoch: number }>(
+        "UPDATE specialist_owner_claims SET renewed_at=clock_timestamp()-interval '121 seconds',expires_at=clock_timestamp()-interval '1 second' WHERE assignment_id=$1 RETURNING epoch",
+        [appointment.assignmentId],
+      )
+    ).rows[0];
+    const sessionId = session.sessionId;
+
+    try {
+      expect(
+        await reobserveAgentSession({
+          db,
+          runId: appointment.runId,
+          sessionId: randomUUID(),
+          executionHosts: hosts,
+        }),
+      ).toBe(false);
+      expect(
+        (
           await database.pool.query(
-            "SELECT epoch,placement_id,expires_at>clock_timestamp() AS active FROM specialist_owner_claims WHERE assignment_id=$1",
+            "SELECT epoch FROM specialist_owner_claims WHERE assignment_id=$1",
             [appointment.assignmentId],
           )
-        ).rows;
+        ).rows,
+      ).toEqual([observed]);
+      expect(
+        await runReconcileSweep({ db, executionHosts: hosts }),
+      ).toMatchObject({ reobserved: 1 });
+      expect(
+        await reobserveAgentSession({
+          db,
+          runId: appointment.runId,
+          sessionId,
+          executionHosts: hosts,
+        }),
+      ).toBe(false);
+      await poll(
+        async () => {
+          const [owner] = (
+            await database.pool.query(
+              "SELECT epoch,placement_id,expires_at>clock_timestamp() AS active FROM specialist_owner_claims WHERE assignment_id=$1",
+              [appointment.assignmentId],
+            )
+          ).rows;
 
-        return owner.epoch === observed.epoch + 1 &&
-          owner.placement_id === placement.id &&
-          owner.active
-          ? owner
-          : null;
-      },
-      1500,
-      "re-observation adopted the same placed assignment",
-      25,
-    );
-  } finally {
-    controller.abort();
-    await revokeAgentRunTokensForRun(appointment.runId, db);
-    await releaseAssignmentForRun(db, appointment.runId, "run_terminal");
-  }
-});
+          return owner.epoch === observed.epoch + 1 &&
+            owner.placement_id === placement.id &&
+            owner.active
+            ? owner
+            : null;
+        },
+        1500,
+        "re-observation adopted the same placed assignment",
+        25,
+      );
+      expect(
+        (await db.select().from(runs).where(eq(runs.id, appointment.runId)))[0],
+      ).toMatchObject({ status });
+      expect(fake.callsOf("createSession")).toHaveLength(1);
+      expect(fake.callsOf("sendPrompt")).toHaveLength(0);
+    } finally {
+      await execution.deleteSession(sessionId);
+      await revokeAgentRunTokensForRun(appointment.runId, db);
+      await releaseAssignmentForRun(db, appointment.runId, "run_terminal");
+    }
+  },
+);
 
 it("IT-CBC-03 fences a company context writer at execution ownership handoff and preserves committed work", async () => {
   const db: Db = database.db;
