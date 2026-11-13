@@ -68,7 +68,7 @@ const digest = /^[a-f0-9]{64}$/;
 const maximumRequestBytes = 65_536;
 const receiptPath = /^\/operations\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})$/;
 const operationReadPath =
-  /^\/operations\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})\/(logs|verification)$/;
+  /^\/operations\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})\/(logs|verification|observations)$/;
 const requestFields = [
   "operationId",
   "targetIncarnation",
@@ -224,6 +224,35 @@ type VerificationRequest = Omit<RestartIntent, "resourceKey"> &
     nonce: string;
     issuedAt: string;
   }>;
+
+type ObservationRequest = Omit<RestartIntent, "resourceKey"> &
+  Readonly<{ componentId: string }>;
+
+async function readObservation(
+  request: IncomingMessage,
+): Promise<ObservationRequest> {
+  const input = await readJson(request);
+  const { requestDigest, ownerEpoch } = input;
+
+  if (
+    Object.keys(input).length !== 6 ||
+    input.action !== "inspect" ||
+    typeof requestDigest !== "string" ||
+    !digest.test(requestDigest) ||
+    typeof ownerEpoch !== "number" ||
+    !Number.isSafeInteger(ownerEpoch) ||
+    ownerEpoch < 1
+  )
+    throw new HelperError(400, "CONFIG", "invalid_request");
+
+  return {
+    operationId: requiredIdentity(input.operationId),
+    targetIncarnation: requiredIdentity(input.targetIncarnation),
+    componentId: requiredIdentity(input.componentId),
+    requestDigest,
+    ownerEpoch,
+  };
+}
 
 async function readVerification(
   request: IncomingMessage,
@@ -453,6 +482,34 @@ export function createStandHelper(options: StandHelperOptions): Server {
       return;
     }
     const selector = request.url?.match(operationReadPath);
+
+    if (request.method === "POST" && selector?.[2] === "observations") {
+      const { componentId, ...input } = await readObservation(request);
+
+      if (
+        input.operationId !== selector[1] ||
+        input.targetIncarnation !== target.incarnationId
+      )
+        throw new HelperError(409, "CONFLICT", "target_identity_mismatch");
+      const component = configuredComponent(componentId, "inspect");
+      const resourceKey = canonicalResourceKey(target, component);
+
+      if (!(await options.authorizeReceipt({ ...input, resourceKey })))
+        throw new HelperError(403, "PERMISSION", "authority_refused");
+      const observation = await options.manager.inspect(component);
+      const sequence = options.journal.nextObservationSequence();
+
+      json(response, 200, {
+        operationId: input.operationId,
+        targetIncarnation: input.targetIncarnation,
+        requestDigest: input.requestDigest,
+        resourceKey,
+        sequence,
+        ...observation,
+        capturedAt: new Date().toISOString(),
+      });
+      return;
+    }
 
     if (request.method === "GET" && selector?.[2] === "logs") {
       const { requestDigest, ownerEpoch } = readReceiptSelector(request);

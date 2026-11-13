@@ -141,6 +141,51 @@ paths:
           schema:
             type: string
             pattern: ^[a-f0-9]{64}$
+  /operations/{operationId}/observations:
+    post:
+      operationId: standHelperObserve
+      summary: Inspect the configured unit before restart
+      description: A reconciliation permit binds the live read to an existing platform operation and current
+        owner. The target journal advances its observation sequence without admitting a mutation.
+      x-implementation-status: Implemented
+      x-required-scope: operation-bound reconciliation authority
+      security:
+        - platformCredential: []
+      x-mtls-required: true
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBTargetObservationRequest"
+      responses:
+        "200":
+          description: Live service state and exact operation identity.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBTargetObservation"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
   /operations/{operationId}/logs:
     get:
       operationId: standHelperLogs
@@ -359,6 +404,61 @@ components:
             state:
               type: string
               enum: [active, inactive, failed]
+    CBTargetObservationRequest:
+      type: object
+      additionalProperties: false
+      required: [operationId, targetIncarnation, componentId, action, requestDigest, ownerEpoch]
+      properties:
+        operationId:
+          type: string
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$
+        targetIncarnation:
+          type: string
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$
+        componentId:
+          type: string
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$
+        action:
+          type: string
+          enum: [inspect]
+        requestDigest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        ownerEpoch:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+    CBTargetObservation:
+      type: object
+      additionalProperties: false
+      required: [operationId, targetIncarnation, requestDigest, resourceKey, sequence, invocationId, state, capturedAt]
+      properties:
+        operationId:
+          type: string
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$
+        targetIncarnation:
+          type: string
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$
+        requestDigest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        resourceKey:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        sequence:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        invocationId:
+          type: string
+          pattern: ^[a-f0-9]{32}$
+          nullable: true
+        state:
+          type: string
+          enum: [active, inactive, failed, unknown]
+        capturedAt:
+          type: string
+          format: date-time
     CBTargetVerification:
       type: object
       additionalProperties: false

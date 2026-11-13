@@ -68,7 +68,7 @@ test("IT-CBO-02 admits the exact configured restart over mTLS and returns the or
           scope: "system",
           user: null,
           unit: "fixture.service",
-          actions: ["restart", "logs", "verify"],
+          actions: ["inspect", "restart", "logs", "verify"],
         },
       ],
     },
@@ -153,6 +153,28 @@ test("IT-CBO-02 admits the exact configured restart over mTLS and returns the or
   );
   assert.equal((await post({ ...body, componentId: "missing" })).status, 404);
   assert.equal(effects, 0);
+  const preflight = {
+    operationId: body.operationId,
+    targetIncarnation: incarnationId,
+    componentId: body.componentId,
+    action: "inspect",
+    requestDigest: body.requestDigest,
+    ownerEpoch: 2,
+  };
+  const beforeEffect = await post(
+    preflight,
+    "fixture-credential",
+    `/operations/${body.operationId}/observations`,
+  );
+
+  assert.equal(beforeEffect.status, 200);
+  const beforeObservation = JSON.parse(beforeEffect.body);
+
+  assert.equal(beforeObservation.state, "active");
+  assert.equal(beforeObservation.invocationId, "a".repeat(32));
+  assert.equal(beforeObservation.sequence, 1);
+  assert.equal(journal.read(body.operationId), null);
+  assert.equal(effects, 0);
   await post(body);
   const replay = await post(body);
 
@@ -162,7 +184,7 @@ test("IT-CBO-02 admits the exact configured restart over mTLS and returns the or
     targetIncarnation: incarnationId,
     requestDigest: body.requestDigest,
     receiptRevision: 3,
-    sequence: 3,
+    sequence: 4,
     effectState: "confirmed_applied",
     permitId: journal.read(body.operationId)?.permitId,
     beforeInvocation: "a".repeat(32),

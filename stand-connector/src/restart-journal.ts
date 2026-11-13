@@ -63,6 +63,7 @@ export type RestartJournal = Readonly<{
   ): RestartEntry;
   finish(intent: RestartIntent, result: RestartResult): RestartEntry;
   beginVerification(operationId: string, nonce: string): number;
+  nextObservationSequence(): number;
   close(): void;
 }>;
 
@@ -330,6 +331,7 @@ export function openRestartJournal(
   return {
     read,
     close: (): void => db.close(),
+    nextObservationSequence: (): number => inTransaction(db, sequence),
     beginVerification(operationId: string, nonce: string): number {
       return inTransaction(db, () => {
         const current = retained(operationId);
