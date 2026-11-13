@@ -61,6 +61,15 @@ const assignmentSchema = z.object({
   status: z.string(),
   runIds: z.array(z.string()).min(1),
 });
+const terminalSnapshot = z.object({
+  id: z.string(),
+  status: z.string(),
+  reason_codes: z.array(z.string()).nullable(),
+  validation_diagnostics: z
+    .array(z.object({ code: z.string(), path: z.string() }))
+    .nullable(),
+  result_reason: z.string().nullable(),
+});
 
 function required(name: string): string {
   const value = process.env[name];
@@ -407,16 +416,30 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
   expect(duplicate.runIds).toEqual([runId]);
   const approvedStep = async () =>
     withE2EDb(async (pool) => {
-      const terminal = await pool.query<{ id: string; status: string }>(
-        "SELECT id,status FROM runs WHERE (id=$1 OR parent_run_id=$1) AND status IN ('Failed','Crashed','Abandoned') LIMIT 1",
+      const terminal = await pool.query(
+        `SELECT execution.id,execution.status,
+          execution.operational_terminal->'reasonCodes' AS reason_codes,
+          execution.operational_terminal->'validationDiagnostics' AS validation_diagnostics,
+          result.invalid_reason AS result_reason
+        FROM runs execution
+        LEFT JOIN LATERAL (
+          SELECT invalid_reason FROM run_results WHERE run_id=execution.id ORDER BY revision DESC LIMIT 1
+        ) result ON true
+        WHERE (execution.id=$1 OR execution.parent_run_id=$1)
+          AND execution.status IN ('Failed','Crashed','Abandoned')
+        ORDER BY (execution.id=$1) LIMIT 1`,
         [runId],
       );
 
       if (terminal.rows[0]) {
-        const { id, status } = terminal.rows[0];
+        const snapshot = terminalSnapshot.parse(terminal.rows[0]);
 
+        await testInfo.attach("pilot-terminal-diagnostics", {
+          body: JSON.stringify(snapshot),
+          contentType: "application/json",
+        });
         throw new Error(
-          `Pilot execution ${id} reached ${status} before approval`,
+          `Pilot terminated before approval ${JSON.stringify(snapshot)}`,
         );
       }
       const stopped = await pool.query<{ step_id: string; kind: string }>(
