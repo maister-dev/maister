@@ -15,6 +15,7 @@ import { MaisterError } from "@/lib/errors";
 import { executionPolicySchema } from "@/lib/runs/execution-policy";
 import { postgresTextSchema } from "@/lib/text-schema";
 import {
+  projectCommentAppointmentSchema,
   projectCronAppointmentSchema,
   projectEventAppointmentSchema,
 } from "@/lib/specialist-assignments/project-source-types";
@@ -43,8 +44,13 @@ export const projectSpecialistReplacementSchema = replacementWitness
     inputSha256: digest,
     cron: projectCronAppointmentSchema.optional(),
     event: projectEventAppointmentSchema.optional(),
+    comment: projectCommentAppointmentSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    ({ cron, event, comment }) =>
+      [cron, event, comment].filter(Boolean).length <= 1,
+  );
 const common = z.object({
   scheduledRequestSnapshot: scheduledRequestSnapshotSchema.optional(),
   agentId: postgresTextSchema.min(1),

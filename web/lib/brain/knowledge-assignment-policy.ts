@@ -137,7 +137,7 @@ function projectOriginAssignmentInputReadPolicy(
     (${origin.nodeAttemptId}::text IS NULL
       AND execution.run_kind='agent' AND (appointment.role='specialist' OR (
         appointment.role='continuation' AND appointment.work_id IS NULL
-        AND requested.origin->>'kind' IN ('manual','schedule','event') AND EXISTS (
+        AND requested.origin->>'kind' IN ('manual','schedule','event','task_comment') AND EXISTS (
           SELECT 1 FROM agent_retry_intents retry
           WHERE retry.project_id=execution.project_id AND retry.source_run_id=execution.retry_of_run_id
             AND retry.successor_run_id=execution.id AND retry.actor_user_id=initiator.id
@@ -147,6 +147,7 @@ function projectOriginAssignmentInputReadPolicy(
             AND CASE requested.origin->>'kind'
               WHEN 'schedule' THEN project_cron_retry_source_matches(retry.source_run_id,initiator.id,retry.recipe->'replacement'->'cron')
               WHEN 'event' THEN project_event_retry_source_matches(retry.source_run_id,initiator.id,retry.recipe->'replacement'->'event')
+              WHEN 'task_comment' THEN project_comment_retry_source_matches(retry.source_run_id,initiator.id,retry.recipe->'replacement'->'comment')
               ELSE true END
             AND ((retry.state='accepted' AND execution.status='Pending')
               OR (retry.state='launched' AND retry.created_run_id=execution.id))

@@ -102,7 +102,8 @@ export async function resolveProjectEventChainDepth(
           AND (producing.retry_of_run_id IS NULL OR EXISTS (
             SELECT 1 FROM agent_retry_intents retry WHERE retry.created_run_id=producing.id
               AND retry.source_run_id=producing.retry_of_run_id AND retry.state='launched'
-              AND project_event_retry_source_matches(retry.source_run_id,retry.actor_user_id,retry.recipe->'replacement'->'event')))
+              AND (project_event_retry_source_matches(retry.source_run_id,retry.actor_user_id,retry.recipe->'replacement'->'event')
+                OR project_comment_retry_source_matches(retry.source_run_id,retry.actor_user_id,retry.recipe->'replacement'->'comment'))))
       )))) AS chain_classified
     FROM domain_events event LEFT JOIN runs producing ON producing.id=event.run_id
       AND producing.project_id=event.project_id AND producing.company_id IS NULL

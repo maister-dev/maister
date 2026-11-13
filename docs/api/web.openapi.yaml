@@ -627,6 +627,9 @@ paths:
         immutable request through the existing project retry sweep.
         A taskless project event replacement retains its reviewed subscription, event,
         producing evidence and original chain depth.
+        A project comment replacement keeps the original mention, author, task,
+        event and delivery destination. Current access and the original task admission
+        revision are required.
         For a project specialist, the existing retry sweep rechecks the same witnesses
         before reserving a continuation through project admission. Pending assignment
         updates defer that sweep without consuming an admission attempt.

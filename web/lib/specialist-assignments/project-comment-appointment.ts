@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { SqlTransaction } from "@/lib/db/sql-types";
+import type { SQL } from "drizzle-orm";
 import type { ProjectCommentAppointment } from "./project-source-types";
 
 import { sql } from "drizzle-orm";
@@ -49,6 +50,29 @@ export async function loadProjectCommentAppointment(
   tx: SqlTransaction,
   value: ProjectCommentAppointment,
 ): Promise<ProjectCommentSource> {
+  return loadProjectCommentSource(
+    tx,
+    value,
+    sql`(invocation.outcome IS NULL OR ${queuedProjectSourceHandoffPredicate()})`,
+  );
+}
+
+export async function loadProjectCommentReplacementSource(
+  tx: SqlTransaction,
+  value: ProjectCommentAppointment,
+): Promise<ProjectCommentSource> {
+  return loadProjectCommentSource(
+    tx,
+    value,
+    sql`invocation.run_id=invocation.reserved_run_id AND invocation.outcome IN ('queued','launched','deduplicated')`,
+  );
+}
+
+async function loadProjectCommentSource(
+  tx: SqlTransaction,
+  value: ProjectCommentAppointment,
+  outcome: SQL,
+): Promise<ProjectCommentSource> {
   const parsed = projectCommentAppointmentSchema.safeParse(value);
 
   if (!parsed.success)
@@ -75,7 +99,7 @@ export async function loadProjectCommentAppointment(
     WHERE invocation.id=${appointment.attemptId} AND invocation.schedule_id=${appointment.scheduleId}
       AND invocation.trigger_event_id=${appointment.eventId} AND invocation.reserved_run_id=${appointment.runId}
       AND invocation.company_id IS NULL AND invocation.trigger_source='domain_event' AND invocation.provenance='claim'
-      AND (invocation.outcome IS NULL OR ${queuedProjectSourceHandoffPredicate()}) AND invocation.scheduled_request_snapshot IS NULL
+      AND ${outcome} AND invocation.scheduled_request_snapshot IS NULL
     FOR SHARE OF invocation,source,binding,event,comment,task
   `)
   ).rows[0];
@@ -84,7 +108,7 @@ export async function loadProjectCommentAppointment(
   if (!actual.success)
     throw new MaisterError(
       "PRECONDITION",
-      "The native comment source, bounded input or open invocation is unavailable",
+      "The native comment source, bounded input or original invocation is unavailable",
       {
         details: { reason: "project_comment_appointment_unavailable" },
       },

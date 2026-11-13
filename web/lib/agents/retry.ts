@@ -727,6 +727,9 @@ async function deliverClaim(db: Db, claim: AgentRetryClaim): Promise<void> {
   )
     throw retryRefusal("retry_context_changed");
   await db.transaction((tx) => assertAgentRetryClaim(tx, claim));
+  const replacement =
+    intent.recipe.version === 2 ? intent.recipe.replacement : undefined;
+  const eventSource = replacement?.event ?? replacement?.comment;
   const outcome = await launchAgentRun({
     db,
     agentId: intent.sourceAgentId,
@@ -739,20 +742,14 @@ async function deliverClaim(db: Db, claim: AgentRetryClaim): Promise<void> {
         retryRecipeStrategy(intent.recipe) === "fresh_qualification"
           ? "manual"
           : intent.recipe.trigger.source,
-      ...(intent.recipe.version === 2 && intent.recipe.replacement?.event
-        ? { eventId: intent.recipe.replacement.event.eventId }
-        : {}),
+      ...(eventSource ? { eventId: eventSource.eventId } : {}),
       payload:
         retryRecipeStrategy(intent.recipe) === "fresh_qualification"
           ? null
           : intent.recipe.trigger.payload,
     },
     retryClaim: claim,
-    agentScheduleId:
-      intent.recipe.version === 2
-        ? (intent.recipe.replacement?.cron?.scheduleId ??
-          intent.recipe.replacement?.event?.scheduleId)
-        : undefined,
+    agentScheduleId: replacement?.cron?.scheduleId ?? eventSource?.scheduleId,
     scheduledRequestSnapshot: intent.recipe.scheduledRequestSnapshot ?? null,
   });
 

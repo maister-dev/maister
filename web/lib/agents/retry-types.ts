@@ -5,6 +5,7 @@ import type { AgentTriggerSource } from "@/lib/agents/launch";
 import type { CompanyConfigurationReference } from "@/lib/agents/trigger-attempt-types";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 import type {
+  ProjectCommentAppointment,
   ProjectCronAppointment,
   ProjectEventAppointment,
 } from "@/lib/specialist-assignments/project-source-types";
@@ -49,6 +50,7 @@ export type ProjectSpecialistReplacement = SpecialistReplacementWitness & {
   inputSha256: string;
   cron?: ProjectCronAppointment;
   event?: ProjectEventAppointment;
+  comment?: ProjectCommentAppointment;
 };
 
 export type ProjectAgentRetryRecipe = AgentRetryRecipeFields &

@@ -5079,6 +5079,7 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
     for (const text of [
       "@rah:wire-observer Inspect the configured component state.",
       "@rah:wire-observer Independently inspect the configured diagnostic limits.",
+      "@rah:wire-observer Retain this independent request if launch is interrupted.",
     ]) {
       const response = await taskCommentPost(
         new NextRequest(
@@ -5116,7 +5117,7 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
       )
     ).rows;
 
-    expect(commentWork).toHaveLength(2);
+    expect(commentWork).toHaveLength(3);
     for (const work of commentWork) {
       expect(work.origin).toMatchObject({
         kind: "task_comment",
@@ -5134,6 +5135,76 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
         ).rows,
       ).toEqual([{ status: "Pending", effects: 0 }]);
     }
+    const [interruptedComment, ...ordinaryComments] = commentWork;
+    const failedCommentRun = interruptedComment!.run_id;
+    const commentFailure = await prepareUndispatchedAgentFailure(
+      failedCommentRun,
+      {
+        db,
+        reason: "agent_dispatch_failed",
+      },
+    );
+
+    await db.transaction(commentFailure.apply);
+    const commentPreview = await getAgentRetryOptions(
+      db,
+      failedCommentRun,
+      userId,
+    );
+
+    expect(commentPreview).toMatchObject({
+      eligible: true,
+      selectedRunnerId: runnerId,
+    });
+    const commentRetry = await acceptAgentRetry(db, failedCommentRun, userId, {
+      requestKey: randomUUID(),
+      runnerId,
+      previewFingerprint: commentPreview.previewFingerprint,
+    });
+
+    await expect(runAgentRetryAdmissionSweep(db)).resolves.toEqual({
+      processed: 1,
+      errors: [],
+    });
+    const commentSuccessor = await getAgentRetryReceipt(
+      db,
+      failedCommentRun,
+      commentRetry.retryIntentId,
+      userId,
+    );
+
+    expect(commentSuccessor).toMatchObject({
+      intentState: "launched",
+      runStatus: "Pending",
+    });
+    expect(commentSuccessor.runId).not.toBe(failedCommentRun);
+    const [retainedCommentRun] = await db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, commentSuccessor.runId!));
+
+    expect(
+      await loadProjectAssignmentExecutionInput(db, retainedCommentRun!),
+    ).toMatchObject({
+      assignmentId: interruptedComment!.id,
+      revision: 1,
+      snapshot: { objectiveInput: { input: interruptedComment!.source_body } },
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT successor.task_id,successor.trigger_event_id=source.trigger_event_id AS original_event,successor.agent_schedule_id=source.agent_schedule_id AS original_schedule FROM runs successor JOIN runs source ON source.id=successor.retry_of_run_id WHERE successor.id=$1",
+          [commentSuccessor.runId],
+        )
+      ).rows,
+    ).toEqual([
+      { task_id: commentTaskId, original_event: true, original_schedule: true },
+    ]);
+    const dispatchedCommentRuns = [
+      ...ordinaryComments.map((work) => work.run_id),
+      commentSuccessor.runId!,
+    ];
+
     await database.pool.query(
       "DELETE FROM execution_host_pressure WHERE execution_host_id IN (SELECT id FROM execution_hosts WHERE kind='local_direct' AND retired_at IS NULL)",
     );
@@ -5144,13 +5215,13 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
       succeededCount: 1,
       failedCount: 0,
     });
-    for (const work of commentWork) {
+    for (const runId of dispatchedCommentRuns) {
       await vi.waitFor(
         async () => {
           expect(
             (
               await database.pool.query("SELECT status FROM runs WHERE id=$1", [
-                work.run_id,
+                runId,
               ])
             ).rows,
           ).toEqual([{ status: "Done" }]);
@@ -5161,7 +5232,7 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
         (
           await database.pool.query(
             "SELECT kind,count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt') GROUP BY kind ORDER BY kind",
-            [work.run_id],
+            [runId],
           )
         ).rows,
       ).toEqual([
@@ -5962,9 +6033,9 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
           [project.id],
         )
       ).rows,
-    ).toEqual([{ count: 3 }]);
+    ).toEqual([{ count: commentIds.length + 1 }]);
     for (const runId of [
-      ...commentWork.map((work) => work.run_id),
+      ...dispatchedCommentRuns,
       coordinatorCommentWork[0].run_id,
     ])
       expect(
@@ -5978,6 +6049,51 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
         { kind: "session.create", count: 1 },
         { kind: "session.prompt", count: 1 },
       ]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT id FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt')",
+          [failedCommentRun],
+        )
+      ).rows,
+    ).toEqual([]);
+    const mentionRemovalProbe = new Error("Rollback mention removal probe");
+
+    await expect(
+      database.pool.query(
+        "UPDATE runs SET agent_schedule_id=NULL WHERE id=$1",
+        [commentSuccessor.runId],
+      ),
+    ).rejects.toMatchObject({
+      constraint: "project_event_replacement_source_scope",
+    });
+    await expect(
+      db.transaction(async (tx) => {
+        await tx.execute(
+          sql`DELETE FROM agent_schedules WHERE id=${retainedCommentRun!.agentScheduleId}`,
+        );
+        const [detached] = await tx
+          .select()
+          .from(runs)
+          .where(eq(runs.id, commentSuccessor.runId!));
+
+        expect(detached).toMatchObject({
+          agentScheduleId: null,
+          triggerEventId: retainedCommentRun!.triggerEventId,
+          retryOfRunId: failedCommentRun,
+        });
+        const [receipt] = (
+          await tx.execute(
+            sql`SELECT recipe->'replacement'->'comment' AS appointment FROM agent_retry_intents WHERE id=${commentRetry.retryIntentId}`,
+          )
+        ).rows;
+
+        expect(receipt?.appointment).toMatchObject({
+          scheduleId: retainedCommentRun!.agentScheduleId,
+        });
+        throw mentionRemovalProbe;
+      }),
+    ).rejects.toBe(mentionRemovalProbe);
     const deniedCommentResponse = await taskCommentPost(
       new NextRequest(
         `http://localhost/api/projects/${project.slug}/tasks/9001/comments`,

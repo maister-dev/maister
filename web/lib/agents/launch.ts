@@ -1513,6 +1513,8 @@ async function launchAgentRunWithAdmission(
     retryIntent?.recipe.version === 2
       ? retryIntent.recipe.replacement
       : undefined;
+  const replacementEvent = replacement?.event ?? replacement?.comment;
+  const replacementSource = replacement?.cron ?? replacementEvent;
   const specialistAssignment =
     replacement && retryIntent?.actorUserId
       ? {
@@ -1520,8 +1522,7 @@ async function launchAgentRunWithAdmission(
           inputRevision: replacement.inputRevision,
           expectedRevision: replacement.assignmentRevision,
           userId: retryIntent.actorUserId,
-          ...(replacement.cron ? { source: replacement.cron } : {}),
-          ...(replacement.event ? { source: replacement.event } : {}),
+          ...(replacementSource ? { source: replacementSource } : {}),
         }
       : input.specialistAssignment;
   const ctx: LoadedAgentContext = retryIntent
@@ -1558,7 +1559,7 @@ async function launchAgentRunWithAdmission(
   // partial unique index on runs(agent_id, trigger_event_id) is the authoritative
   // race backstop; this pre-check converges an at-least-once redelivery to one
   // run without leaving an orphan task/worktree on the common sequential path.
-  if (input.trigger.eventId != null && !replacement?.event) {
+  if (input.trigger.eventId != null && !replacementEvent) {
     const existing = await _db
       .select({ id: runs.id })
       .from(runs)

@@ -22,11 +22,11 @@ import {
   lockSpecialistAssignment,
 } from "./store";
 import { authorizeAssignment } from "./access";
+import { projectSourceAppointmentSchema } from "./project-source-types";
 import {
-  projectEventAppointmentSchema,
-  projectSourceAppointmentSchema,
-} from "./project-source-types";
-import { loadProjectCommentAppointment } from "./project-comment-appointment";
+  loadProjectCommentAppointment,
+  loadProjectCommentReplacementSource,
+} from "./project-comment-appointment";
 import {
   loadProjectCronAppointment,
   loadProjectCronReplacementSource,
@@ -200,6 +200,19 @@ export async function prepareProjectAssignmentAdmission(
     "assignments:update",
     context.executionPolicy,
   );
+  const replacementSource =
+    replacement?.cron ?? replacement?.event ?? replacement?.comment;
+  const replacementOrigin =
+    replacementSource?.kind === "cron"
+      ? "schedule"
+      : (replacementSource?.kind ?? "manual");
+  const replacementTrigger =
+    replacementSource?.kind === "cron"
+      ? "cron"
+      : replacementSource
+        ? "domain_event"
+        : "manual";
+
   if (
     assignment.owner.kind !== "project" ||
     assignment.owner.projectId !== context.projectId ||
@@ -208,14 +221,8 @@ export async function prepareProjectAssignmentAdmission(
       (replacement.assignmentId !== assignment.id ||
         replacement.inputRevision !== input.revision ||
         replacement.inputSha256 !== input.digest ||
-        (replacement.cron
-          ? assignment.origin.kind !== "schedule" ||
-            context.triggerSource !== "cron"
-          : replacement.event
-            ? assignment.origin.kind !== "event" ||
-              context.triggerSource !== "domain_event"
-            : assignment.origin.kind !== "manual" ||
-              context.triggerSource !== "manual"))) ||
+        assignment.origin.kind !== replacementOrigin ||
+        context.triggerSource !== replacementTrigger)) ||
     assignment.inputRevision !== reference.inputRevision ||
     assignment.specialistBindingId !== context.bindingId ||
     assignment.requester.kind !== "user" ||
@@ -249,7 +256,8 @@ export async function prepareProjectAssignmentAdmission(
   if (assignment.origin.kind === "task_comment") {
     if (
       reference.source?.kind !== "task_comment" ||
-      reference.source.runId !== context.runId ||
+      reference.source.runId !==
+        (replacement?.comment?.runId ?? context.runId) ||
       context.triggerSource !== "domain_event" ||
       context.triggerEventId !== reference.source.eventId ||
       context.agentScheduleId !== reference.source.scheduleId
@@ -261,7 +269,11 @@ export async function prepareProjectAssignmentAdmission(
           details: { reason: "project_comment_appointment_required" },
         },
       );
-    const source = await loadProjectCommentAppointment(tx, reference.source);
+    const source = await (
+      replacement
+        ? loadProjectCommentReplacementSource
+        : loadProjectCommentAppointment
+    )(tx, reference.source);
 
     if (
       source.projectId !== context.projectId ||
@@ -565,23 +577,23 @@ export async function loadProjectAssignmentExecutionInput(
     }
     if (run.retryOfRunId && run.triggerSource === "domain_event") {
       const [retained] = (
-        await tx.execute(sql`SELECT recipe->'replacement'->'event' AS appointment
+        await tx.execute(sql`SELECT coalesce(recipe->'replacement'->'event',recipe->'replacement'->'comment') AS appointment
         FROM agent_retry_intents WHERE created_run_id=${run.id} AND source_run_id=${run.retryOfRunId} AND project_id=${projectId} AND state='launched' FOR SHARE`)
       ).rows;
-      const appointment = projectEventAppointmentSchema.safeParse(
+      const appointment = projectSourceAppointmentSchema.safeParse(
         retained?.appointment,
       );
 
-      if (!appointment.success)
+      if (!appointment.success || appointment.data.kind === "cron")
         throw new MaisterError(
           "PRECONDITION",
-          "The original project event retry appointment is unavailable",
+          "The original project event or comment retry appointment is unavailable",
           { details: { reason: "project_event_appointment_unavailable" } },
         );
-      const event = await loadProjectEventReplacementSource(
-        tx,
-        appointment.data,
-      );
+      const event =
+        appointment.data.kind === "task_comment"
+          ? await loadProjectCommentReplacementSource(tx, appointment.data)
+          : await loadProjectEventReplacementSource(tx, appointment.data);
 
       if (event.userId !== link.user_id || event.projectId !== projectId)
         throw new MaisterError(

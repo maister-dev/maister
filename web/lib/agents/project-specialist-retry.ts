@@ -26,9 +26,10 @@ import {
 import { pgErrorOf, redactQueryError } from "@/lib/db/pg-error";
 import { authorizeAssignment } from "@/lib/specialist-assignments/access";
 import { assignmentBudgetAllowsDispatchSql } from "@/lib/specialist-assignments/delegated-budget";
+import { loadProjectCommentReplacementSource } from "@/lib/specialist-assignments/project-comment-appointment";
 import { loadProjectCronReplacementSource } from "@/lib/specialist-assignments/project-cron-appointment";
 import { loadProjectEventReplacementSource } from "@/lib/specialist-assignments/project-event-appointment";
-import { projectEventAppointmentSchema } from "@/lib/specialist-assignments/project-source-types";
+import { projectSourceAppointmentSchema } from "@/lib/specialist-assignments/project-source-types";
 
 export async function authorizeProjectRetryReceipt(
   db: Db,
@@ -61,7 +62,7 @@ export async function authorizeProjectRetryReceipt(
   });
 }
 
-/** A settled, taskless operational appointment must carry positive pre-dispatch evidence. */
+/** A settled operational appointment must carry positive pre-dispatch evidence. */
 export async function prepareProjectSpecialistReplacement(
   db: Db,
   source: Run,
@@ -73,6 +74,14 @@ export async function prepareProjectSpecialistReplacement(
 }> {
   const cron = source.triggerSource === "cron";
   const event = source.triggerSource === "domain_event";
+  const comment = event && source.taskId !== null;
+  const origin = comment
+    ? "task_comment"
+    : event
+      ? "event"
+      : cron
+        ? "schedule"
+        : "manual";
 
   if (
     !source.projectId ||
@@ -80,7 +89,7 @@ export async function prepareProjectSpecialistReplacement(
     source.runKind !== "agent" ||
     source.agentKind !== "operational" ||
     source.agentWorkspace !== "none" ||
-    source.taskId ||
+    (source.taskId && !comment) ||
     source.parentRunId ||
     source.persistent ||
     (source.triggerSource !== "manual" && !cron && !event) ||
@@ -136,7 +145,7 @@ export async function prepareProjectSpecialistReplacement(
     JOIN specialist_input_revisions input ON input.assignment_id=subject.id AND input.revision=subject.input_revision
     JOIN specialist_owner_claims owner ON owner.assignment_id=subject.id AND owner.run_id=source.id AND owner.placement_id=source.execution_assignment_id
     JOIN run_sessions session ON session.run_id=source.id AND session.session_name='default'
-    WHERE source.id=${source.id} AND subject.status='active' AND subject.origin->>'kind'=${cron ? "schedule" : event ? "event" : "manual"}
+    WHERE source.id=${source.id} AND subject.status='active' AND subject.origin->>'kind'=${origin}
       AND subject.requester->>'kind'='user' AND subject.requester->>'id'=${userId}
       AND input.revision=link.input_revision AND link.role IN ('specialist','continuation')
       AND specialist_current_root_id(subject.id,subject.input_revision)=source.id
@@ -193,33 +202,55 @@ export async function prepareProjectSpecialistReplacement(
       throw retryRefusal("retry_context_changed");
   }
   let eventAppointment: ProjectSpecialistReplacement["event"];
+  let commentAppointment: ProjectSpecialistReplacement["comment"];
 
   if (event) {
     const [row] = (
       await db.execute(sql`SELECT jsonb_build_object(
-      'schemaVersion',1,'kind','event','attemptId',id,'scheduleId',schedule_id,'runId',reserved_run_id,'eventId',trigger_event_id
+      'schemaVersion',1,'kind',${origin}::text,'attemptId',id,'scheduleId',schedule_id,'runId',reserved_run_id,'eventId',trigger_event_id
     ) AS appointment FROM agent_trigger_attempts WHERE reserved_run_id=${source.id} AND run_id=${source.id}
       AND schedule_id=${source.agentScheduleId} AND project_id=${source.projectId} AND company_id IS NULL
       AND trigger_source='domain_event' AND trigger_event_id=${source.triggerEventId} FOR SHARE`)
     ).rows;
-    const parsed = projectEventAppointmentSchema.safeParse(row?.appointment);
+    const parsed = projectSourceAppointmentSchema.safeParse(row?.appointment);
 
     if (!parsed.success) throw retryRefusal("retry_context_changed");
-    eventAppointment = parsed.data;
-    const original = await loadProjectEventReplacementSource(
-      db,
-      eventAppointment,
-    );
+    if (parsed.data.kind === "task_comment") {
+      commentAppointment = parsed.data;
+      const original = await loadProjectCommentReplacementSource(
+        db,
+        commentAppointment,
+      );
 
-    if (
-      original.projectId !== source.projectId ||
-      original.agentId !== source.sourceAgentId ||
-      original.userId !== userId ||
-      original.chainDepth !== source.agentChainDepth ||
-      retryDigest(source.triggerPayload) !==
-        retryDigest({ schemaVersion: 1, event: original.event })
-    )
-      throw retryRefusal("retry_context_changed");
+      if (
+        original.projectId !== source.projectId ||
+        original.agentId !== source.sourceAgentId ||
+        original.userId !== userId ||
+        original.taskId !== source.taskId ||
+        retryDigest(source.triggerPayload) !==
+          retryDigest({
+            kind: "task.comment_added",
+            payload: { commentId: original.commentId },
+          })
+      )
+        throw retryRefusal("retry_context_changed");
+    } else if (parsed.data.kind === "event") {
+      eventAppointment = parsed.data;
+      const original = await loadProjectEventReplacementSource(
+        db,
+        eventAppointment,
+      );
+
+      if (
+        original.projectId !== source.projectId ||
+        original.agentId !== source.sourceAgentId ||
+        original.userId !== userId ||
+        original.chainDepth !== source.agentChainDepth ||
+        retryDigest(source.triggerPayload) !==
+          retryDigest({ schemaVersion: 1, event: original.event })
+      )
+        throw retryRefusal("retry_context_changed");
+    } else throw retryRefusal("retry_context_changed");
   }
 
   return {
@@ -227,6 +258,7 @@ export async function prepareProjectSpecialistReplacement(
       ...witness.data,
       ...(appointment ? { cron: appointment } : {}),
       ...(eventAppointment ? { event: eventAppointment } : {}),
+      ...(commentAppointment ? { comment: commentAppointment } : {}),
     },
     runnerId: row.runner_id,
     runner: row.runner_snapshot,
@@ -245,7 +277,7 @@ export async function assertProjectSpecialistReplacement(
     recipe.strategy !== "pre_work_retry" ||
     recipe.projectId !== source.projectId ||
     recipe.trigger.source !== source.triggerSource ||
-    recipe.taskId !== null ||
+    recipe.taskId !== source.taskId ||
     retryDigest(current.witness) !== retryDigest(recipe.replacement) ||
     retryDigest(current.runner) !== retryDigest(recipe.runner)
   )

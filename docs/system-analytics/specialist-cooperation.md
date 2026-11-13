@@ -313,6 +313,13 @@ These rows cover every current run-status value. Recovery runs through existing 
 | Abandoned | Close owned waits; retain effects/accepted findings; no blind relaunch | Same | Record cancellation, reconcile independent operations, explicit recovery only |
 | Failed | Preserve classified failure and partial results; bounded authorized rework if safe | Same | Retain responsibility and diagnostics; retry cannot reset budget or unknown effects |
 
+Project comment replacement uses the existing project retry sweep. The source
+must be the original settled mention with the same human author, task, stored
+body and source selector. The replacement uses the original assignment input
+and thread destination, and retains the task admission revision, event identity
+and chain depth. Admission requires current project and source access, current
+assignment recovery authority, available budget and positive pre-dispatch proof.
+
 ### Crash/transaction boundaries
 
 - Logical work key, child reservation/link and parent admission facts commit atomically under tree-root-then-parent delegation advisory locks; loser writes nothing.
