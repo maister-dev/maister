@@ -106,7 +106,7 @@ the command ledger and inherited ACP environment.
 | Platform/target intent body | <=65536 UTF-8 bytes, closed schema |
 | Inspect/receipt call | 5-second timeout, up to 3 read attempts with 200/500 ms backoff and structured warnings, then explicit last error |
 | Restart | <=45-second target execution, transport deadline 55 seconds; timeout creates uncertainty, never original-command automatic retry |
-| Current authority check | 3-second timeout, operation-bound single-use nonce/epoch/digest; fail closed before effect if unavailable |
+| Current authority check | 3-second timeout, operation-bound single-use nonce/epoch/digest. Web grants at most 5 seconds. The helper tolerates up to 1 second of forward authority clock skew and clips local expiry to the earlier UTC deadline or 5 seconds from the request start. |
 | Resource/owner lease | 120-second renewable claim, 40-second renewal; unknown operation is durably excluded independently of lease |
 | Logs | Last <=10 minutes, <=200 lines, <=262144 bytes, <=5-second read; sanitize while bounded streaming before leaving target |
 | Health | Explicit HTTP or service-manager identity probe, <=5 seconds/<=16384 response bytes, fresh nonce; up to 3 independent observations over <=30 seconds |

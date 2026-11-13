@@ -31,6 +31,8 @@ export class AuthorityClientError extends Error {
 
 const authorityResponseLimit = 4096;
 const authorityDeadlineMs = 3000;
+const permitLifetimeMs = 5000;
+const permitClockSkewMs = 1000;
 
 type AuthorityReply = Readonly<{ status: number; text: string }>;
 
@@ -149,6 +151,7 @@ export function createAuthorityClient(
       nonce,
       purpose,
     };
+    const started = performance.now();
     const reply = await readPermit(
       origin,
       config,
@@ -178,15 +181,21 @@ export function createAuthorityClient(
       typeof permitId !== "string" ||
       !/^[A-Za-z0-9._:-]{1,128}$/.test(permitId) ||
       typeof expiresAt !== "string" ||
-      !(expiry > now && expiry <= now + 5000)
+      !(expiry > now && expiry <= now + permitLifetimeMs + permitClockSkewMs)
     )
       throw new AuthorityClientError("invalid_permit");
+    // The authority owns the UTC expiry. Bound the local validity by elapsed
+    // monotonic request time even when the authority clock is slightly ahead.
+    const localExpiry = Math.min(
+      expiry,
+      now + permitLifetimeMs - Math.ceil(performance.now() - started),
+    );
 
     return {
       decision: "allowed",
       permit: {
         permitId,
-        expiresAt,
+        expiresAt: new Date(localExpiry).toISOString(),
         ...(predecessorId ? { predecessorId } : {}),
       },
     };

@@ -48,6 +48,7 @@ test("IT-CBO-02 exchanges the exact dispatch nonce over TLS and rejects a change
   };
   const permitId = randomUUID();
   let requests = 0;
+  let authorityExpiry = 0;
   const server = createServer(
     { cert, key, ca: cert, requestCert: true, rejectUnauthorized: true },
     async (request, response) => {
@@ -70,6 +71,7 @@ test("IT-CBO-02 exchanges the exact dispatch nonce over TLS and rejects a change
       assert.equal(body.ownerEpoch, intent.ownerEpoch);
       assert.equal(body.requestDigest, intent.requestDigest);
       requests++;
+      authorityExpiry = Date.now() + (requests === 4 ? 10_000 : 5300);
       response.setHeader("Content-Type", "application/json");
       response.end(
         JSON.stringify({
@@ -79,7 +81,7 @@ test("IT-CBO-02 exchanges the exact dispatch nonce over TLS and rejects a change
           operationId: intent.operationId,
           permitId,
           allowed: true,
-          expiresAt: new Date(Date.now() + 4900).toISOString(),
+          expiresAt: new Date(authorityExpiry).toISOString(),
         }),
       );
     },
@@ -97,12 +99,19 @@ test("IT-CBO-02 exchanges the exact dispatch nonce over TLS and rejects a change
     key,
     credential: "fixture-credential",
   });
+  const requestedAt = Date.now();
   const accepted = await client.authorize(intent);
 
   assert.equal(accepted.decision, "allowed");
-  if (accepted.decision === "allowed")
+  if (accepted.decision === "allowed") {
     assert.equal(accepted.permit.permitId, permitId);
+    const localExpiry = Date.parse(accepted.permit.expiresAt);
+
+    assert.ok(localExpiry < authorityExpiry);
+    assert.ok(localExpiry <= requestedAt + 5001);
+  }
   await assert.rejects(client.authorize(intent), { reason: "invalid_permit" });
   await assert.rejects(client.authorize(intent), { reason: "invalid_permit" });
-  assert.equal(requests, 3);
+  await assert.rejects(client.authorize(intent), { reason: "invalid_permit" });
+  assert.equal(requests, 4);
 });

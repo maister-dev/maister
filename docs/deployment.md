@@ -384,7 +384,7 @@ Start from the supplied configuration examples in `deploy/`.
 
 The MAIster application images and Postgres-only Compose setup do not
 provide a systemd environment for the helper. See
-[stand configuration](configuration.md#company-specialist-and-stand-configuration-designed)
+[stand configuration](configuration.md#company-specialist-and-stand-configuration)
 and [recovery](system-analytics/stand-maintenance.md#recovery-and-current-responsibility).
 
 ## 8. Reverse proxy + TLS
