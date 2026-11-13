@@ -70,7 +70,7 @@ export type CompanyAgentRetryRecipe = Omit<
   specialistBinding: CompanyConfigurationReference;
   coordinatorFlowBinding: CompanyConfigurationReference | null;
   assignment: { id: string; inputRevision: number; inputSha256: string };
-  replacement?: SpecialistReplacementWitness;
+  replacement?: SpecialistReplacementWitness & { sessionsSha256?: string };
 };
 
 export type AgentRetryRecipe =

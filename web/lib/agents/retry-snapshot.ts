@@ -135,7 +135,10 @@ const recipeSchema = z.union([
       assignment: z
         .object({ id: identity, inputRevision: revision, inputSha256: digest })
         .strict(),
-      replacement: replacementWitness.strict().optional(),
+      replacement: replacementWitness
+        .extend({ sessionsSha256: digest.optional() })
+        .strict()
+        .optional(),
     })
     .strict(),
 ]);

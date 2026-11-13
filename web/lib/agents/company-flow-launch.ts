@@ -28,6 +28,7 @@ import {
   captureCompanyFlowExecution,
   companyFlowContextInputSchema,
   prepareCompanyFlowContext,
+  prepareCompanyFlowReplacementContext,
   loadReviewedCompanyCoordinator,
   resolveReviewedCompanyFlowSource,
 } from "./company-flow-context";
@@ -38,6 +39,7 @@ import {
 } from "./activity-snapshot";
 import { runnerCatalogEntry } from "./runner-catalog";
 import { assertReadOnlySessionEvidence } from "./runner-readonly-evidence";
+import { retryRefusal } from "./retry-guards";
 
 import { inspectFlowRunners } from "@/lib/acp-runners/flow-preflight";
 import { resolveCompanyAgentRunner } from "@/lib/acp-runners/resolve";
@@ -55,7 +57,10 @@ import { createExecutionHosts, mintPlacement } from "@/lib/execution-host";
 import { localHost } from "@/lib/execution-host/resolver";
 import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
 import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence";
-import { activateInitialSpecialistAssignmentRunInTransaction } from "@/lib/specialist-assignments/store";
+import {
+  activateInitialSpecialistAssignmentRunInTransaction,
+  linkSpecialistAssignmentRunInTransaction,
+} from "@/lib/specialist-assignments/store";
 import { bindDelegatedWorkRunInTransaction } from "@/lib/specialist-assignments/delegated-intake";
 
 const log = pino({
@@ -169,6 +174,54 @@ export async function reserveCompanyFlowRunInTransaction(
   };
 }
 
+/** Reserve one exact company graph replacement under the same reviewed pins and original input. */
+export async function reserveCompanyFlowReplacement(
+  tx: Db,
+  userId: string,
+  request: CompanyFlowContextInput,
+  reservation: Readonly<{
+    runId: string;
+    sourceRunId: string;
+    sessionsSha256: string;
+  }>,
+  hosts: ExecutionHosts,
+  host: ExecutionHost,
+): Promise<void> {
+  assertUpgradeMaintenanceAllows("run_admission");
+  const context = await prepareCompanyFlowReplacementContext(
+    tx,
+    userId,
+    request,
+  );
+
+  await insertCompanyFlowRun(tx, context, hosts, host, {
+    runId: reservation.runId,
+    triggerSource: request.triggerSource,
+    scheduledRequest: context.input.snapshot.scheduledRequest,
+    retryOfRunId: reservation.sourceRunId,
+  });
+  const [sessions] = (
+    await tx.execute(
+      sql`SELECT company_flow_retry_sessions_digest(${reservation.runId}) AS sha`,
+    )
+  ).rows;
+
+  if (sessions?.sha !== reservation.sessionsSha256)
+    throw retryRefusal("retry_runner_unavailable");
+  await linkSpecialistAssignmentRunInTransaction(
+    tx,
+    userId,
+    request.assignmentId,
+    {
+      runId: reservation.runId,
+      inputRevision: request.inputRevision,
+      expectedRevision: request.assignmentRevision,
+      role: "coordinator",
+      work: null,
+    },
+  );
+}
+
 /** Reserve a child graph through the same session and placement writer as a company coordinator. */
 export async function reserveCompanyDelegatedFlowRun(
   db: Db,
@@ -260,6 +313,7 @@ async function insertCompanyFlowRun(
     scheduledRequest: AssignmentInputRevision["snapshot"]["scheduledRequest"];
     parentRunId?: string;
     rootRunId?: string;
+    retryOfRunId?: string;
     inheritedSources?: readonly KnowledgeAccessRestriction[];
   }>,
 ): Promise<void> {
@@ -346,6 +400,7 @@ async function insertCompanyFlowRun(
     createdByUserId: context.authority.actor.id,
     parentRunId: execution.parentRunId,
     rootRunId: execution.rootRunId,
+    retryOfRunId: execution.retryOfRunId,
     triggerSource: execution.triggerSource,
     agentConfig: context.binding.snapshot.effectiveConfiguration,
     executionPolicy: context.binding.snapshot.executionPolicy,

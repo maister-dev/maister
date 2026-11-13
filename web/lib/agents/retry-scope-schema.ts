@@ -34,9 +34,13 @@ export function agentRetryRecipeScopeShape(
       AND (NOT (${recipe} ? 'replacement') OR (
         jsonb_typeof(${recipe}->'replacement')='object'
         AND (${recipe}->'replacement') ?& ARRAY['sourceRunId','assignmentRevision','contextRevision','ownerEpoch','resultSha256','sourceSha256']
-        AND (${recipe}->'replacement')-ARRAY['sourceRunId','assignmentRevision','contextRevision','ownerEpoch','resultSha256','sourceSha256']='{}'::jsonb
+        AND (${recipe}->'replacement')-ARRAY['sourceRunId','assignmentRevision','contextRevision','ownerEpoch','resultSha256','sourceSha256','sessionsSha256']='{}'::jsonb
         AND ${recipe}->'replacement'->>'resultSha256' ~ '^[a-f0-9]{64}$'
         AND ${recipe}->'replacement'->>'sourceSha256' ~ '^[a-f0-9]{64}$'
+        AND (NOT ((${recipe}->'replacement') ? 'sessionsSha256') OR (
+          jsonb_typeof(${recipe}->'replacement'->'sessionsSha256')='string'
+          AND ${recipe}->'replacement'->>'sessionsSha256' ~ '^[a-f0-9]{64}$'
+        ))
       ))
       AND ${recipe}->'projectId'='null'::jsonb AND ${recipe}->'project'='null'::jsonb
       AND ${recipe}->'taskId'='null'::jsonb AND ${recipe}->'taskRevision'='null'::jsonb

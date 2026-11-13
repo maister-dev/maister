@@ -45,6 +45,7 @@ import {
 } from "../company-flow-context";
 import { updateCompanyFlowBinding } from "../company-flow-binding-mutations";
 import { reserveCompanyFlowRun } from "../company-flow-launch";
+import { acceptAgentRetry, getAgentRetryOptions } from "../retry";
 import { loadCompanyFlowSessionContext } from "../company-flow-session-context";
 import { resolveFlowBoundAgent } from "../flow-binding";
 import { resolveCompanyFlowNodeEnforcement } from "../company-flow-enforcement";
@@ -6783,6 +6784,75 @@ it("IT-CBC-03 retains positive retry evidence when company graph admission refus
         .update(platformAcpRunners)
         .set({ enabled: true })
         .where(eq(platformAcpRunners.id, session.runner_id));
+    }
+    const grants = await createCompanyGrants(db, administratorId, {
+      principalKind: "user",
+      principalId: requesterId,
+      actions: ["assignments:recover", "assignments:cancel"],
+      idempotencyKey: randomUUID(),
+    });
+    const granted = grants.page.items.filter(
+      (item) =>
+        item.action === "assignments:recover" ||
+        item.action === "assignments:cancel",
+    );
+    const previousBrowserUser = browserUserId;
+
+    try {
+      const preview = await getAgentRetryOptions(
+        db,
+        receipt.runId,
+        requesterId,
+      );
+
+      expect(preview).toMatchObject({
+        eligible: true,
+        selectedRunnerId: session.runner_id,
+      });
+      const retryRequest = {
+        requestKey: randomUUID(),
+        runnerId: session.runner_id,
+        previewFingerprint: preview.previewFingerprint,
+      };
+      const replacement = await acceptAgentRetry(
+        db,
+        receipt.runId,
+        requesterId,
+        retryRequest,
+      );
+
+      expect(replacement).toMatchObject({
+        intentState: "launched",
+        runStatus: "Pending",
+      });
+      expect(
+        await db.transaction((tx) =>
+          loadCompanyFlowSessionContext(tx, replacement.runId!),
+        ),
+      ).toMatchObject({
+        input: { revision: input.inputRevision },
+        run: { retryOfRunId: receipt.runId },
+      });
+      await expect(
+        acceptAgentRetry(db, receipt.runId, requesterId, retryRequest),
+      ).resolves.toEqual(replacement);
+      browserUserId = requesterId;
+      const stopped = await stopRunPost(
+        new NextRequest(`http://localhost/api/runs/${replacement.runId}/stop`, {
+          method: "POST",
+        }),
+        { params: Promise.resolve({ runId: replacement.runId! }) },
+      );
+
+      expect(stopped.status).toBe(200);
+    } finally {
+      browserUserId = previousBrowserUser;
+      for (const grant of granted)
+        await revokeCompanyGrant(db, administratorId, grant.id, {
+          expectedRevision: grant.revision,
+          reason: "Release the graph replacement test's authority",
+          idempotencyKey: randomUUID(),
+        });
     }
   } finally {
     if (previous)

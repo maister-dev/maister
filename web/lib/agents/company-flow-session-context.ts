@@ -111,6 +111,13 @@ export async function loadCompanyFlowSessionContext(
       owner.companyId,
       "assignments:update",
     );
+    if (run.retryOfRunId)
+      await authorizeCompanyUserAction(
+        tx,
+        owner.userId,
+        owner.companyId,
+        "assignments:recover",
+      );
     await assertCompanyRunReadAccessInTransaction(tx, owner.userId, runId);
     const graphRun: CompanyFlowSessionContext["run"] = {
       ...run,

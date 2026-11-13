@@ -190,7 +190,7 @@ export async function retrySafetyReason(
 }
 
 /** A rejected create or durable before-dispatch failure can prove the absence of an agent turn. */
-export async function preDispatchRetrySafetyReason(
+export async function retryQuiescenceReason(
   db: Db,
   source: Run,
 ): Promise<string | null> {
@@ -206,6 +206,17 @@ export async function preDispatchRetrySafetyReason(
           AND command.receipt_evidence->>'inflight'='false')))`);
 
   if (unsafe.rows.length) return "reconciliation_required";
+
+  return null;
+}
+
+export async function preDispatchRetrySafetyReason(
+  db: Db,
+  source: Run,
+): Promise<string | null> {
+  const unsafe = await retryQuiescenceReason(db, source);
+
+  if (unsafe) return unsafe;
   const creates = await db.execute(
     sql`SELECT 1 FROM execution_commands WHERE run_id=${source.id} AND kind='session.create' LIMIT 1`,
   );

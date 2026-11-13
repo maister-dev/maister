@@ -17,6 +17,7 @@ import {
   captureCompanySpecialistExecutionIdentity,
   companyAgentContextInputSchema,
   lockCompanyAssignmentForExecution,
+  lockCompanyReplacementForExecution,
   prepareCompanySpecialistContext,
 } from "./company-agent-context";
 import { assertCompanySessionDefinition } from "./company-agent-definition";
@@ -65,6 +66,33 @@ export async function prepareCompanyFlowContext(
   userId: string,
   value: unknown,
 ): Promise<CompanyFlowAdmissionContext> {
+  return prepareCompanyFlowAdmission(
+    tx,
+    userId,
+    value,
+    lockCompanyAssignmentForExecution,
+  );
+}
+
+export async function prepareCompanyFlowReplacementContext(
+  tx: SqlTransaction,
+  userId: string,
+  value: CompanyFlowContextInput,
+): Promise<CompanyFlowAdmissionContext> {
+  return prepareCompanyFlowAdmission(
+    tx,
+    userId,
+    value,
+    lockCompanyReplacementForExecution,
+  );
+}
+
+async function prepareCompanyFlowAdmission(
+  tx: SqlTransaction,
+  userId: string,
+  value: unknown,
+  lock: typeof lockCompanyAssignmentForExecution,
+): Promise<CompanyFlowAdmissionContext> {
   const parsed = companyFlowContextInputSchema.safeParse(value);
 
   if (!parsed.success)
@@ -78,9 +106,14 @@ export async function prepareCompanyFlowContext(
   const { coordinatorBindingId, coordinatorBindingRevision, ...request } =
     parsed.data;
 
-  await lockCompanyAssignmentForExecution(tx, userId, request);
+  await lock(tx, userId, request);
   const coordinator = await loadReviewedCompanyCoordinator(tx, parsed.data);
-  const context = await prepareCompanySpecialistContext(tx, userId, request);
+  const context = await prepareCompanySpecialistContext(
+    tx,
+    userId,
+    request,
+    lock,
+  );
   const flow = await resolveReviewedCompanyFlowSource(tx, context, coordinator);
   const { resultContract } = flow;
 

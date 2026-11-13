@@ -576,8 +576,9 @@ paths:
         Both require source quiescence and refuse unresolved commands/live work.
         The preview binds current recipe/task policy and reports the resolved preferred
         runner, strategy and whether accepting opts a legacy task into qualification.
-        A manually invoked, taskless standalone specialist with a settled pre-dispatch
-        failure requires current assignment recovery and source access. Its preview
+        A manually invoked, taskless standalone specialist or company coordinator
+        Flow with a settled pre-dispatch failure requires current assignment recovery
+        and source access. Its preview
         offers the retained runner only. Contention with an assignment update returns
         409 with reason `retry_assignment_busy`.
       parameters:
@@ -614,6 +615,8 @@ paths:
         Company specialist replacement checks the current assignment, owner epoch,
         binding, input, source, result and runner witnesses. It reserves one
         Pending continuation and stores its retry receipt in the same transaction.
+        Company coordinator Flow replacement also binds the exact pinned Flow and all
+        retained session runner snapshots.
         For a project specialist, the existing retry sweep rechecks the same witnesses
         before reserving a continuation through project admission. Pending assignment
         updates defer that sweep without consuming an admission attempt.

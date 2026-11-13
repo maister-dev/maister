@@ -5,21 +5,25 @@ import type { Run } from "@/lib/db/schema";
 import type { AgentRetryOptions } from "./retry-preparation";
 import type { CompanyAgentRetryRecipe } from "./retry-types";
 import type { CompanyAgentContextInput } from "./company-agent-context";
+import type { CompanyFlowContextInput } from "./company-flow-context";
 
 import { randomUUID } from "node:crypto";
 
 import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
-import { companyAgentExecutionSnapshotSchema } from "./company-agent-execution-types";
+import { companyExecutionSnapshotSchema } from "./company-execution-types";
 import { prepareCompanyAgentReplacementContext } from "./company-agent-context";
 import { reserveCompanyAgentReplacement } from "./company-agent-launch";
+import { prepareCompanyFlowReplacementContext } from "./company-flow-context";
+import { reserveCompanyFlowReplacement } from "./company-flow-launch";
 import { buildOperationalContract } from "./launch-contract";
 import { parseAgentRetryRecipe } from "./retry-snapshot";
 import { RETRY_PREVIEW_WINDOW_MS } from "./retry-preparation";
 import { runnerCatalogEntry } from "./runner-catalog";
 import {
   preDispatchRetrySafetyReason,
+  retryQuiescenceReason,
   retryDigest,
   retryRefusal,
 } from "./retry-guards";
@@ -39,6 +43,7 @@ import { snapshotRunner } from "@/lib/acp-runners/resolve";
 import { createExecutionHosts } from "@/lib/execution-host/client";
 import { localHost } from "@/lib/execution-host/resolver";
 import { assignmentBudgetAllowsDispatchSql } from "@/lib/specialist-assignments/delegated-budget";
+import { compileManifest } from "@/lib/flows/graph/compile";
 import {
   pgErrorOf,
   queryErrorDiagnostics,
@@ -54,6 +59,10 @@ type Intent = typeof agentRetryIntents.$inferSelect;
 type Replacement = CompanyAgentRetryRecipe & {
   replacement: NonNullable<CompanyAgentRetryRecipe["replacement"]>;
 };
+type ReplacementPreparation = { recipe: Replacement } & (
+  | { kind: "agent"; request: CompanyAgentContextInput }
+  | { kind: "flow"; request: CompanyFlowContextInput; sessionsSha256: string }
+);
 
 function companyRetryFailure(sourceRunId: string, error: unknown): never {
   const pg = pgErrorOf(error);
@@ -144,14 +153,15 @@ async function prepareReplacement(
   tx: Db,
   source: Run,
   userId: string,
-): Promise<{ request: CompanyAgentContextInput; recipe: Replacement }> {
-  const captured = companyAgentExecutionSnapshotSchema.safeParse(
+): Promise<ReplacementPreparation> {
+  const captured = companyExecutionSnapshotSchema.safeParse(
     source.companyExecutionSnapshot,
   );
 
   if (!captured.success || source.companyId !== captured.data.owner.companyId)
     throw retryRefusal("retry_source_unavailable");
   const snapshot = captured.data;
+  const graph = snapshot.schemaVersion === 2;
 
   await authorizeCompanyUserAction(
     tx,
@@ -168,8 +178,9 @@ async function prepareReplacement(
     source.id,
   );
   if (
-    source.runKind !== "agent" ||
-    source.agentKind !== "operational" ||
+    (graph
+      ? source.runKind !== "flow"
+      : source.runKind !== "agent" || source.agentKind !== "operational") ||
     source.agentWorkspace !== "none" ||
     source.parentRunId ||
     source.persistent ||
@@ -178,7 +189,9 @@ async function prepareReplacement(
     !source.endedAt
   )
     throw retryRefusal("retry_source_unsupported");
-  const reason = await preDispatchRetrySafetyReason(tx, source);
+  const reason = graph
+    ? await retryQuiescenceReason(tx, source)
+    : await preDispatchRetrySafetyReason(tx, source);
 
   if (reason) throw retryRefusal(reason);
   const [head] = (
@@ -186,7 +199,9 @@ async function prepareReplacement(
     SELECT subject.revision,subject.input_revision,subject.context_revision,owner.epoch,
       task_launch_admission_digest(source.result_contract) AS result_sha256,
       company_retry_source_digest(source) AS source_sha256,
-      company_retry_has_dispatch_witness(source.id) AS before_dispatch,
+      CASE WHEN source.run_kind='flow' THEN company_flow_retry_has_dispatch_witness(source.id)
+        ELSE company_retry_has_dispatch_witness(source.id) END AS before_dispatch,
+      CASE WHEN source.run_kind='flow' THEN company_flow_retry_sessions_digest(source.id) END AS sessions_sha256,
       specialist_current_root_id(subject.id,subject.input_revision) AS current_root,
       specialist_other_unsettled_root(subject.id, ${source.id}) AS other_branch,
       ${assignmentBudgetAllowsDispatchSql(sql`${source.id}`)} AS budget_allowed
@@ -194,17 +209,17 @@ async function prepareReplacement(
     JOIN specialist_owner_claims owner ON owner.assignment_id=subject.id AND owner.run_id=${source.id}
       AND owner.placement_id=${source.executionAssignmentId}
     WHERE subject.id=${snapshot.assignment.id} AND subject.company_id=${snapshot.owner.companyId}
+    FOR SHARE OF owner
   `)
   ).rows;
-  const [session] = await tx
-    .select({ runner: runSessions.runnerSnapshot })
+  const sessions = await tx
+    .select({
+      runner: runSessions.runnerSnapshot,
+      name: runSessions.sessionName,
+    })
     .from(runSessions)
-    .where(
-      and(
-        eq(runSessions.runId, source.id),
-        eq(runSessions.sessionName, "default"),
-      ),
-    )
+    .where(eq(runSessions.runId, source.id))
+    .orderBy(runSessions.sessionName)
     .for("share");
 
   if (
@@ -217,7 +232,7 @@ async function prepareReplacement(
     typeof head.result_sha256 !== "string" ||
     typeof head.source_sha256 !== "string" ||
     head.input_revision !== snapshot.assignment.inputRevision ||
-    !session?.runner
+    sessions.length === 0
   )
     throw retryRefusal("retry_context_changed");
   if (head.budget_allowed !== true)
@@ -233,32 +248,55 @@ async function prepareReplacement(
     bindingRevision: snapshot.specialistBinding.revision,
     triggerSource: "manual",
   };
-  const context = await prepareCompanyAgentReplacementContext(
-    tx,
-    userId,
-    request,
-  );
-  const [runner] = await tx
-    .select()
-    .from(platformAcpRunners)
-    .where(eq(platformAcpRunners.id, session.runner.id))
-    .for("share");
+  const flowRequest = graph
+    ? {
+        ...request,
+        coordinatorBindingId: snapshot.coordinatorFlowBinding.id,
+        coordinatorBindingRevision: snapshot.coordinatorFlowBinding.revision,
+      }
+    : undefined;
+  const flow = flowRequest
+    ? await prepareCompanyFlowReplacementContext(tx, userId, flowRequest)
+    : null;
+  const context =
+    flow ?? (await prepareCompanyAgentReplacementContext(tx, userId, request));
+  const declared = flow
+    ? [...compileManifest(flow.coordinator.snapshot.manifest).sessions.keys()]
+    : [];
+  const primary = declared.includes("default")
+    ? "default"
+    : (declared[0] ?? "default");
+  const session = sessions.find((item) => item.name === primary);
 
-  if (
-    !runner?.enabled ||
-    runner.readinessStatus !== "Ready" ||
-    retryDigest(
-      JSON.parse(JSON.stringify(snapshotRunner(runnerCatalogEntry(runner)))),
-    ) !== retryDigest(session.runner)
-  )
-    throw retryRefusal("retry_runner_unavailable");
+  if (!session?.runner) throw retryRefusal("retry_runner_unavailable");
+  for (const entry of sessions) {
+    if (!entry.runner) throw retryRefusal("retry_runner_unavailable");
+    const [runner] = await tx
+      .select()
+      .from(platformAcpRunners)
+      .where(eq(platformAcpRunners.id, entry.runner.id))
+      .for("share");
+
+    if (
+      !runner?.enabled ||
+      runner.readinessStatus !== "Ready" ||
+      retryDigest(
+        JSON.parse(JSON.stringify(snapshotRunner(runnerCatalogEntry(runner)))),
+      ) !== retryDigest(entry.runner)
+    )
+      throw retryRefusal("retry_runner_unavailable");
+  }
 
   if (
     context.input.digest !== snapshot.assignment.inputSha256 ||
     context.binding.snapshotDigest !==
       snapshot.specialistBinding.snapshotSha256 ||
-    retryDigest(buildOperationalContract(context.effective)) !==
-      retryDigest(source.resultContract) ||
+    (graph &&
+      flow?.coordinator.snapshotDigest !==
+        snapshot.coordinatorFlowBinding.snapshotSha256) ||
+    retryDigest(
+      flow?.resultContract ?? buildOperationalContract(context.effective),
+    ) !== retryDigest(source.resultContract) ||
     retryDigest(source.scheduledRequestSnapshot) !==
       retryDigest(context.input.snapshot.scheduledRequest)
   )
@@ -270,6 +308,9 @@ async function prepareReplacement(
     ownerEpoch: head.epoch,
     resultSha256: head.result_sha256,
     sourceSha256: head.source_sha256,
+    ...(graph && typeof head.sessions_sha256 === "string"
+      ? { sessionsSha256: head.sessions_sha256 }
+      : {}),
   };
   const recipe: Replacement = {
     version: 3,
@@ -287,7 +328,7 @@ async function prepareReplacement(
     policy: context.binding.snapshot.executionPolicy,
     contextDigest: retryDigest(replacement),
     specialistBinding: snapshot.specialistBinding,
-    coordinatorFlowBinding: null,
+    coordinatorFlowBinding: graph ? snapshot.coordinatorFlowBinding : null,
     assignment: snapshot.assignment,
     replacement,
     ...(context.input.snapshot.scheduledRequest
@@ -297,7 +338,19 @@ async function prepareReplacement(
 
   parseAgentRetryRecipe(recipe);
 
-  return { request, recipe };
+  if (flowRequest) {
+    if (!replacement.sessionsSha256)
+      throw retryRefusal("retry_runner_unavailable");
+
+    return {
+      kind: "flow",
+      request: flowRequest,
+      recipe,
+      sessionsSha256: replacement.sessionsSha256,
+    };
+  }
+
+  return { kind: "agent", request, recipe };
 }
 
 export async function companyAgentRetryOptions(
@@ -404,11 +457,8 @@ export async function acceptCompanyAgentRetry(
         return replay;
       }
       if (!current) throw retryRefusal("retry_source_unavailable");
-      const { recipe, request: admission } = await prepareReplacement(
-        tx,
-        current,
-        userId,
-      );
+      const prepared = await prepareReplacement(tx, current, userId);
+      const { recipe } = prepared;
 
       if (
         request.runnerId !== recipe.runner.id ||
@@ -436,18 +486,32 @@ export async function acceptCompanyAgentRetry(
         .returning();
 
       if (!intent) throw retryRefusal("retry_successor_already_owned");
-      await reserveCompanyAgentReplacement(
-        tx,
-        userId,
-        admission,
-        {
-          runId: successorRunId,
-          sourceRunId: source.id,
-          runnerSha256: retryDigest(recipe.runner),
-        },
-        hosts,
-        host,
-      );
+      if (prepared.kind === "flow")
+        await reserveCompanyFlowReplacement(
+          tx,
+          userId,
+          prepared.request,
+          {
+            runId: successorRunId,
+            sourceRunId: source.id,
+            sessionsSha256: prepared.sessionsSha256,
+          },
+          hosts,
+          host,
+        );
+      else
+        await reserveCompanyAgentReplacement(
+          tx,
+          userId,
+          prepared.request,
+          {
+            runId: successorRunId,
+            sourceRunId: source.id,
+            runnerSha256: retryDigest(recipe.runner),
+          },
+          hosts,
+          host,
+        );
       const [launched] = await tx
         .update(agentRetryIntents)
         .set({

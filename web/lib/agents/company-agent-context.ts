@@ -251,7 +251,7 @@ export async function lockCompanyAssignmentForExecution(
   return lockCompanyExecutionHead(tx, userId, request, "queued");
 }
 
-async function lockCompanyReplacementForExecution(
+export async function lockCompanyReplacementForExecution(
   tx: SqlTransaction,
   userId: string,
   request: CompanyAgentContextInput,
