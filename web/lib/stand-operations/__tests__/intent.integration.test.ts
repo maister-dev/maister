@@ -445,6 +445,29 @@ it("IT-CBO-02 IT-CBO-03 retains one restart intent across aliases and approves o
     );
   const key = randomUUID();
   const secondKey = randomUUID();
+  const padded = JSON.stringify({
+    expectedRevision: first.revision,
+    inputRevision: first.inputRevision,
+    componentId: "api",
+    action: "restart",
+    idempotencyKey: key,
+  }).padEnd(65_537);
+  const oversized = await POST(
+    new NextRequest(
+      `http://localhost/api/specialist-assignments/${first.id}/operations`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "http://localhost",
+        },
+        body: padded,
+      },
+    ),
+    { params: Promise.resolve({ assignmentId: first.id }) },
+  );
+
+  expect(oversized.status).toBe(413);
   const [a, b] = await Promise.all([
     createOperation(first, "api", key),
     createOperation(second, "api-alias", secondKey),

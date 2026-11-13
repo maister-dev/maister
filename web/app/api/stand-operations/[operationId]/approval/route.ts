@@ -6,9 +6,10 @@ import { requireActiveSession } from "@/lib/authz";
 import {
   knowledgeErrorResponse,
   knowledgeJson,
-  readKnowledgeJson,
 } from "@/lib/brain/knowledge-http";
 import { getDb } from "@/lib/db/client";
+import { readBoundedJson } from "@/lib/http/bounded-json";
+import { STAND_OPERATION_BODY_MAX_BYTES } from "@/lib/stand-operations/operation-types";
 import { approveStandRestart } from "@/lib/stand-operations/restart-approval";
 import { assertInteractiveLaunchOrigin } from "@/lib/tasks/launch-http";
 
@@ -25,7 +26,7 @@ export async function POST(
       getDb(),
       user.id,
       operationId,
-      await readKnowledgeJson(request),
+      await readBoundedJson(request, STAND_OPERATION_BODY_MAX_BYTES),
     );
 
     return knowledgeJson(receipt.approval, receipt.duplicate ? 200 : 201);

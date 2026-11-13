@@ -6,6 +6,7 @@ import {
 } from "@/lib/brain/knowledge-types";
 import { postgresTextSchema } from "@/lib/text-schema";
 
+export const STAND_OPERATION_BODY_MAX_BYTES = 65_536;
 export const STAND_ACTIONS = ["inspect", "logs", "restart", "verify"] as const;
 export const STAND_EFFECT_STATES = [
   "not_dispatched",
