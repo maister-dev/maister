@@ -187,10 +187,23 @@ test("P1 keeps the closed project header the same with fifty retained working co
 
   await expect(panel).toBeVisible();
   await panel.getByRole("link", { name: new RegExp(title) }).click();
-  await expect(panel.getByRole("link", { name: /copy-/ })).toHaveCount(10);
+  const runs = panel.getByRole("link", { name: /copy-/ });
+
+  await expect(runs).toHaveCount(10);
+  await expect(
+    panel.getByRole("link", { name: new RegExp(`CMPCT-1 · ${title}`) }),
+  ).toBeVisible();
   expect((await panel.boundingBox())?.height).toBeLessThan(420);
+  const individualRun = runs.first();
+  const destination = await individualRun.getAttribute("href");
+
+  expect(destination).toMatch(new RegExp(`^/runs/${projectId}-[0-9]+$`));
+  await individualRun.click();
+  await expect(page).toHaveURL((url) => url.pathname === destination);
   await page.goBack();
-  await expect(panel.getByRole("link", { name: /copy-/ })).toHaveCount(0);
+  await expect(runs).toHaveCount(10);
+  await page.goBack();
+  await expect(runs).toHaveCount(0);
   await page.goBack();
   await expect(panel).toHaveCount(0);
 });
