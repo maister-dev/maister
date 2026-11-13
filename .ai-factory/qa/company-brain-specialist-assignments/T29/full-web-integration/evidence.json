@@ -1,0 +1,32 @@
+{
+  "head": "497ed3bab",
+  "invocation": {
+    "id": "5d17c24d-dee6-4ce4-ae3f-ecafffcef892"
+  },
+  "startedAt": "2026-11-13T11:34:32.644Z",
+  "mcpSha256": "ead6343bca9a85ffdc69c5a1f21274322698e152dc3a03f75a229bcc21941c8a",
+  "finishedAt": "2026-11-13T12:42:52.733Z",
+  "maxWorkers": 2,
+  "outcome": {
+    "code": 0,
+    "signal": null
+  },
+  "build": {
+    "revision": "497ed3bab204ee054b04f6f05e96bdc45809619c",
+    "buildId": "IOWoVjhAacndOOCp4tNGf",
+    "invocationId": "5d17c24d-dee6-4ce4-ae3f-ecafffcef892"
+  },
+  "sourceHeadUnchanged": true,
+  "candidateUnchanged": true,
+  "cleanupErrors": [],
+  "numTotalTests": 6333,
+  "numPassedTests": 6331,
+  "numFailedTests": 0,
+  "numPendingTests": 2,
+  "command": "vitest run --project integration --maxWorkers=2 --reporter=default --reporter=json",
+  "files": {
+    "passed": 689,
+    "skipped": 2,
+    "total": 691
+  }
+}
