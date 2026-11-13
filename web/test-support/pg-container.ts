@@ -773,7 +773,20 @@ export type PostgresTestDbTemplate = {
 export async function startMainAndBrainPostgresTestDbTemplate(
   options: TestDatabaseOptions,
 ): Promise<PostgresTestDbTemplate> {
-  const template = await startMainAndBrainPostgresTestDb(options);
+  return startPostgresTestDbTemplate(options, startMainAndBrainPostgresTestDb);
+}
+
+export async function startMainPostgresTestDbTemplate(
+  options: TestDatabaseOptions,
+): Promise<PostgresTestDbTemplate> {
+  return startPostgresTestDbTemplate(options, startMainPostgresTestDb);
+}
+
+async function startPostgresTestDbTemplate(
+  options: TestDatabaseOptions,
+  start: (options: TestDatabaseOptions) => Promise<StartedPostgresTestDb>,
+): Promise<PostgresTestDbTemplate> {
+  const template = await start(options);
   const lane = options.lane ?? "integration";
   const templateName = quoteDatabaseIdentifier(
     template.container.getDatabase(),
