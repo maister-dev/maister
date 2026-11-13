@@ -1497,7 +1497,6 @@ it("TB03 plain preparation excludes ancestor aliases before creation across epoc
   const physicalRoot = path.join(root, `physical-${randomUUID()}`);
 
   await mkdir(physicalRoot);
-  await mkdir(process.env.MAISTER_RUNTIME_ROOT!, { recursive: true });
   await symlink(physicalRoot, alias, "dir");
   const cwd = path.join(physicalRoot, "missing-project", run.id);
   const aliasedCwd = path.join(alias, "missing-project", run.id);

@@ -401,6 +401,12 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
     ),
     ...classified(
       "lib/agents/preparation-workspace.ts",
+      "manager-flow-state",
+      "Create the operator-configured manager runtime root before its first plain workspace preparation lock",
+      [["ensurePreparationRuntimeRoot", "node:fs/promises.mkdir", "write"]],
+    ),
+    ...classified(
+      "lib/agents/preparation-workspace.ts",
       "repository-worktree",
       "Stable physical mutex outside disposable operational trees",
       [

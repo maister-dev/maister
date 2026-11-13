@@ -41,6 +41,14 @@ export type PreparationWorkspaceFence = {
   release: () => Promise<void>;
 };
 
+async function ensurePreparationRuntimeRoot(): Promise<string> {
+  const configuredRoot = runtimeRoot();
+
+  await mkdir(configuredRoot, { recursive: true });
+
+  return configuredRoot;
+}
+
 type PreparationClaim = Awaited<ReturnType<typeof claimAgentPreparation>>;
 export type AgentPreparationOwner = PreparationClaim & {
   runEffect: PreparationWorkspaceFence["run"];
@@ -105,7 +113,11 @@ export async function acquirePreparationWorkspace(input: {
 }): Promise<PreparationWorkspaceFence> {
   if (input.resourceKind !== "plain_directory") {
     if (input.repoPath === null)
-      throw new MaisterError("PRECONDITION","Repository preparation requires an actual repository owner",{details:{reason:"operational_preparation_repository_required"}});
+      throw new MaisterError(
+        "PRECONDITION",
+        "Repository preparation requires an actual repository owner",
+        { details: { reason: "operational_preparation_repository_required" } },
+      );
     const fence = await acquireRepositoryMutationFence(input.repoPath);
     let released = false;
 
@@ -127,8 +139,9 @@ export async function acquirePreparationWorkspace(input: {
     .update(await canonicalPreparationPath(input.cwd))
     .digest("hex");
   const relative = `.maister/preparation-locks/${key}`;
+  const configuredRoot = await ensurePreparationRuntimeRoot();
   const root = await assertSafeAgentMaterializationPath(
-    runtimeRoot(),
+    configuredRoot,
     relative,
   );
   const directory = path.join(root, relative);
