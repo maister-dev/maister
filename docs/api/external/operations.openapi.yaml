@@ -6974,13 +6974,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CBOperation"
+                $ref: "#/components/schemas/CBStandSpecialistOperation"
         "202":
           description: Accepted durable intent or explicit pending/unknown outcome, never proof of success.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CBOperation"
+                $ref: "#/components/schemas/CBStandSpecialistOperation"
         "401":
           $ref: "#/components/responses/CBFailure"
         "403":
@@ -7020,7 +7020,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CBOperation"
+                $ref: "#/components/schemas/CBStandSpecialistOperation"
         "401":
           $ref: "#/components/responses/CBFailure"
         "403":
@@ -7104,12 +7104,12 @@ paths:
           description: Current authorized operation.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/CBOperation" }
+              schema: { $ref: "#/components/schemas/CBStandSpecialistOperation" }
         "202":
           description: Outcome remains unknown.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/CBOperation" }
+              schema: { $ref: "#/components/schemas/CBStandSpecialistOperation" }
         "401":
           $ref: "#/components/responses/CBFailure"
         "403":
@@ -17909,6 +17909,117 @@ components:
           type: integer
           minimum: 1
           maximum: 2147483647
+    CBStandSpecialistOperation:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - assignmentId
+        - componentId
+        - targetIncarnation
+        - requestDigest
+        - effectState
+        - verificationState
+        - disposition
+        - receiptIds
+        - verificationIds
+        - predecessorId
+        - successorId
+        - revision
+        - approvalState
+        - runbook
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        assignmentId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        componentId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        targetIncarnation:
+          type: string
+          minLength: 1
+          maxLength: 128
+        requestDigest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        effectState:
+          type: string
+          enum:
+            - not_dispatched
+            - dispatching
+            - confirmed_applied
+            - confirmed_not_applied
+            - unknown
+        verificationState:
+          type: string
+          enum:
+            - not_checked
+            - healthy
+            - unhealthy
+            - inconclusive
+        disposition:
+          type: string
+          enum:
+            - pending
+            - proved_applied
+            - proved_not_applied
+            - unresolved_hold
+            - authorized_successor
+        receiptIds:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+          maxItems: 32
+        verificationIds:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+          maxItems: 32
+        predecessorId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+        successorId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+        revision:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        approvalState:
+          type: string
+          enum: [not_required, required, recorded]
+          description: A human approval is retained. Current authority is checked again at dispatch.
+        runbook:
+          type: object
+          additionalProperties: false
+          required: [recordId, revision, witnessId]
+          properties:
+            recordId: { type: string, minLength: 1, maxLength: 128 }
+            revision: { type: integer, minimum: 1, maximum: 2147483647 }
+            witnessId: { type: string, minLength: 1, maxLength: 128 }
+        observation:
+          type: object
+          additionalProperties: false
+          required: [id, invocationId, state, capturedAt]
+          properties:
+            id: { type: string, format: uuid }
+            invocationId: { type: string, nullable: true, pattern: '^[a-f0-9]{32}$' }
+            state: { type: string, enum: [active, inactive, failed, unknown] }
+            capturedAt: { type: string, format: date-time }
     CBRecoveryDecision:
       oneOf:
         -

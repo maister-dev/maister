@@ -1228,6 +1228,10 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
     const operation = await submission.json();
 
     expect(submission.status, JSON.stringify(operation)).toBe(202);
+    expect(operation).toMatchObject({
+      approvalState: "required",
+      runbook: input.components[0]!.runbook,
+    });
     expect((await submit(assignment.id)).status).toBe(200);
     expect(
       (
@@ -1289,7 +1293,17 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
       }),
     });
     try {
-      expect((await act("observe")).status).toBe(200);
+      const observation = await act("observe");
+
+      expect(observation.status).toBe(200);
+      expect(await observation.json()).toMatchObject({
+        approvalState: "recorded",
+        observation: {
+          id: expect.any(String),
+          invocationId: "a".repeat(32),
+          state: "active",
+        },
+      });
       expect(observeTarget).toHaveBeenCalledOnce();
       const logResult = await act("logs");
 
