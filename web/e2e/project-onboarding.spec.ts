@@ -192,9 +192,12 @@ test("E2E-CPC-02: review precedes first commit, cancellation is inert and the Se
   expect(created.status()).toBe(201);
   const { slug } = (await created.json()) as { slug: string };
 
+  await page.setViewportSize({ width: 390, height: 600 });
   await page.goto(`/projects/${slug}?tab=settings`);
   await openConfigReview(page);
   const dialog = page.getByTestId("config-persist-dialog");
+
+  expect((await dialog.boundingBox())?.height).toBeLessThanOrEqual(600);
 
   await dialog
     .locator("summary")
@@ -481,7 +484,11 @@ test("E2E-CPC-03: RU stale review, lost receipt reload, explicit push failure an
       [pending.pushPreviewId],
     );
   });
-  await page.reload();
+  await page.goto(`/projects/${slug}`);
+  await expect(
+    page.getByTestId("config-persist-open").filter({ visible: true }),
+  ).toHaveCount(1);
+  await page.goto(`/projects/${slug}?tab=settings`);
   await page
     .getByTestId("config-persist-open")
     .filter({ visible: true })
