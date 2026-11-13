@@ -7,6 +7,7 @@
     "node": ">=24.15.0 <25"
   },
   "scripts": {
+    "start": "node src/main.ts",
     "test:integration": "node --test test/*.integration.test.ts",
     "typecheck": "tsc --noEmit"
   },

@@ -26,7 +26,7 @@ export class SystemdError extends Error {
   }
 }
 
-function checkUnit(config: SystemdUnit): void {
+export function checkUnit(config: SystemdUnit): void {
   if (!/^[A-Za-z0-9][A-Za-z0-9_.@-]{0,239}\.service$/.test(config.unit))
     throw new SystemdError("unsupported_config");
   if (config.scope === "system" && config.user === null) return;

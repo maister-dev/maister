@@ -1,0 +1,16 @@
+{
+  "id": "replace-with-platform-target-id",
+  "companyId": "replace-with-platform-company-id",
+  "incarnationId": "replace-with-reviewed-incarnation-id",
+  "configRevision": 1,
+  "components": [
+    {
+      "id": "pilot-service",
+      "serviceManager": "systemd",
+      "scope": "system",
+      "user": null,
+      "unit": "maister-pilot-fixture.service",
+      "actions": ["inspect", "logs", "restart", "verify"]
+    }
+  ]
+}

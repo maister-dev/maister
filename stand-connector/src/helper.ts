@@ -14,11 +14,12 @@ import { RestartJournalError } from "./restart-journal.ts";
 import { createRestartService, type Authorization } from "./restart-service.ts";
 import {
   SystemdError,
+  checkUnit,
   type SystemdDriver,
   type SystemdUnit,
 } from "./systemd.ts";
 
-type Component = SystemdUnit &
+export type Component = SystemdUnit &
   Readonly<{
     id: string;
     actions: readonly ("inspect" | "logs" | "restart" | "verify")[];
@@ -296,6 +297,7 @@ export function createStandHelper(options: StandHelperOptions): Server {
   )
     throw new HelperError(400, "CONFIG", "unsupported_config");
   const credentialDigest = sha256(options.platformCredential);
+  for (const component of target.components) checkUnit(component);
 
   async function route(
     request: IncomingMessage,
