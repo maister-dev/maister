@@ -1085,7 +1085,7 @@ it("IT-CBO-02 IT-CBO-03 IT-CBO-07 retains one restart intent across aliases and 
   browser.user = null;
 });
 
-it("IT-CBO-02 issues at most one permit for a native approved restart command and refuses a revoked professional", async () => {
+it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exact authority and independent verification", async () => {
   const { administratorId, userId, owner, input, request } =
     await createRegistryFixture();
   const db = database.db as Db;
@@ -1598,15 +1598,41 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
         effectState: "unknown",
         verificationState: "not_checked",
       });
+      await database.pool.query(
+        `CREATE FUNCTION fail_fixture_stand_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
+          BEGIN
+            RAISE EXCEPTION 'Injected receipt persistence failure';
+          END;
+        $$`,
+      );
+
+      try {
+        await database.pool.query(
+          "CREATE TRIGGER fail_fixture_stand_receipt BEFORE INSERT ON stand_operation_receipts FOR EACH ROW EXECUTE FUNCTION fail_fixture_stand_receipt()",
+        );
+        expect((await recover(operation.revision + 2)).status).toBe(500);
+        await expect(
+          getStandOperation(db, userId, operation.id),
+        ).resolves.toMatchObject({
+          effectState: "unknown",
+          receiptIds: [],
+        });
+        expect(sendRestart).toHaveBeenCalledOnce();
+      } finally {
+        await database.pool.query(
+          "DROP TRIGGER IF EXISTS fail_fixture_stand_receipt ON stand_operation_receipts",
+        );
+        await database.pool.query("DROP FUNCTION fail_fixture_stand_receipt()");
+      }
       const reconciled = await recover(operation.revision + 2);
 
       expect(reconciled.status).toBe(200);
       const adoptedEffect = await reconciled.json();
 
-      expect(readTarget).toHaveBeenCalledTimes(2);
+      expect(readTarget).toHaveBeenCalledTimes(3);
       expect((await recover(operation.revision + 2)).status).toBe(409);
       expect((await recover(adoptedEffect.revision)).status).toBe(200);
-      expect(readTarget).toHaveBeenCalledTimes(2);
+      expect(readTarget).toHaveBeenCalledTimes(3);
 
       expect(adoptedEffect).toMatchObject({
         effectState: "confirmed_applied",

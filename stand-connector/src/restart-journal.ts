@@ -10,6 +10,7 @@ type RestartPhase =
 type JournalFailure =
   | "authority_expired"
   | "journal_corrupt"
+  | "journal_full"
   | "operation_conflict"
   | "resource_conflict"
   | "stale_owner"
@@ -124,6 +125,22 @@ const VERIFICATION_SCHEMA = `
   ) STRICT;
 `;
 
+function journalError(error: unknown): unknown {
+  if (
+    !(error instanceof Error) ||
+    !("errcode" in error) ||
+    typeof error.errcode !== "number"
+  )
+    return error;
+  const code = error.errcode & 0xff;
+
+  if (code === 13) return new RestartJournalError("journal_full");
+  if (code === 11 || code === 26)
+    return new RestartJournalError("journal_corrupt");
+
+  return error;
+}
+
 function inTransaction<T>(db: DatabaseSync, write: () => T): T {
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -134,7 +151,7 @@ function inTransaction<T>(db: DatabaseSync, write: () => T): T {
     return value;
   } catch (error) {
     if (db.isTransaction) db.exec("ROLLBACK");
-    throw error;
+    throw journalError(error);
   }
 }
 
@@ -267,7 +284,7 @@ export function openRestartJournal(
     initialize(db, targetIncarnation, pageLimit);
   } catch (error) {
     db.close();
-    throw error;
+    throw journalError(error);
   }
 
   const readStatement = db.prepare(

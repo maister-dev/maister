@@ -353,7 +353,8 @@ function handleFailure(response: ServerResponse, error: unknown): void {
   }
   if (
     error instanceof RestartJournalError &&
-    error.reason !== "journal_corrupt"
+    error.reason !== "journal_corrupt" &&
+    error.reason !== "journal_full"
   ) {
     json(response, 409, { code: "CONFLICT", message: error.reason });
     return;

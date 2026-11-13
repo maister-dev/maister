@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { DatabaseSync } from "node:sqlite";
 
-import { openRestartJournal } from "../src/restart-journal.ts";
+import { openRestartJournal, RestartJournalError } from "../src/restart-journal.ts";
+import { createRestartService } from "../src/restart-service.ts";
 
 const resourceKey = "a".repeat(64);
 const targetIncarnation = randomUUID();
@@ -17,6 +19,77 @@ const first = {
   ownerEpoch: 1,
 };
 const before = { invocationId: "before", state: "active" } as const;
+
+test("IT-CBO-03 refuses effects when the real journal is corrupt or full", async (context) => {
+  const directory = mkdtempSync(join(tmpdir(), "maister-stand-capacity-"));
+  const corruptPath = join(directory, "corrupt.sqlite");
+  const path = join(directory, "full.sqlite");
+
+  context.after(() => rmSync(directory, { recursive: true, force: true }));
+  writeFileSync(corruptPath, "invalid SQLite content");
+  assert.throws(() => openRestartJournal(corruptPath, targetIncarnation, 16), {
+    reason: "journal_corrupt",
+  });
+
+  const fresh = openRestartJournal(path, targetIncarnation, 16);
+  fresh.close();
+  const filler = new DatabaseSync(path);
+
+  filler.exec("CREATE TABLE test_filler (padding BLOB)");
+  filler.exec("PRAGMA max_page_count=16");
+  const insert = filler.prepare(
+    "INSERT INTO test_filler VALUES (zeroblob(4050))",
+  );
+  assert.throws(
+    () => {
+      for (let page = 0; page < 16; page++) insert.run();
+    },
+    { errcode: 13 },
+  );
+  filler.close();
+  const journal = openRestartJournal(path, targetIncarnation, 16);
+  context.after(() => journal.close());
+  let effects = 0;
+  const service = createRestartService(journal, {
+    inspect: async () => before,
+    authorize: async () => ({
+      decision: "allowed",
+      permit: {
+        permitId: randomUUID(),
+        expiresAt: new Date(Date.now() + 4900).toISOString(),
+      },
+    }),
+    restart: async () => {
+      effects++;
+      return "received";
+    },
+  });
+  let exhausted = false;
+
+  for (let epoch = 1; epoch <= 128; epoch++) {
+    const intent = { ...first, operationId: randomUUID(), ownerEpoch: epoch };
+
+    try {
+      journal.admit(intent, before);
+      journal.refuse(intent, "authority_refused");
+    } catch (error) {
+      assert.ok(error instanceof RestartJournalError);
+      assert.equal(error.reason, "journal_full");
+      exhausted = true;
+      break;
+    }
+  }
+  assert.equal(exhausted, true);
+  await assert.rejects(
+    () =>
+      service.execute(
+        { ...first, operationId: randomUUID(), ownerEpoch: 129 },
+        before,
+      ),
+    { reason: "journal_full" },
+  );
+  assert.equal(effects, 0);
+});
 
 test("IT-CBO-03 retains a permit and resource exclusion across journal connections and restart", (context) => {
   const directory = mkdtempSync(join(tmpdir(), "maister-stand-journal-"));
