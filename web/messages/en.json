@@ -1612,6 +1612,21 @@
       "error": "Request failed. Please try again."
     },
     "configPersistence": {
+      "workflow": {
+        "published": "Published reviewed commit",
+        "localCommit": "Committed locally",
+        "lastChecked": "Last checked status",
+        "unavailable": "Status unavailable",
+        "changes": "Configuration changes to review",
+        "blocked": "Action required",
+        "inProgress": "Operation in progress",
+        "checking": "Checking status…",
+        "operationUnavailable": "Operation status unavailable",
+        "resolve": "Resolve",
+        "viewOperation": "View operation",
+        "dismiss": "Dismiss",
+        "details": "Status details"
+      },
       "title": "Configuration in Git",
       "open": "Review configuration save",
       "reviewTitle": "Review maister.yaml commit",

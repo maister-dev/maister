@@ -90,6 +90,23 @@ export type ConfigReceipt = {
   cleanupReason?: ConfigCleanupReason;
 };
 
+export type ConfigWorkflow = Readonly<{
+  checkout:
+    { state: "observed"; status: ConfigStatus } | { state: "unavailable" };
+  operation:
+    | {
+        state: "available";
+        operationId: string;
+        localState: ConfigPersistState;
+        pushState: ConfigReceipt["pushState"];
+        cleanupState: ConfigCleanupState;
+        commitSha: string | null;
+        reason?: ConfigPersistReason;
+        cleanupReason?: ConfigCleanupReason;
+      }
+    | { state: "none" | "unavailable" };
+}>;
+
 export type ConfigPushReview = {
   pushPreviewId: string;
   digest: string;

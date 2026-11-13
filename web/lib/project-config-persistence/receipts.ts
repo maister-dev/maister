@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { ConfigReceipt } from "./contracts";
+import type { ConfigReceipt, ConfigWorkflow } from "./contracts";
 import type { ConfigOperation, PersistenceDb } from "./store";
 
 import { and, desc, eq, isNotNull, or, sql } from "drizzle-orm";
@@ -60,6 +60,7 @@ export async function latestActorConfigOperation(
   db: PersistenceDb,
   projectId: string,
   actorUserId: string,
+  preferRetainedCleanup = false,
 ): Promise<string | undefined> {
   const [operation] = await db
     .select({ id: projectConfigPersistOperations.id })
@@ -82,13 +83,44 @@ export async function latestActorConfigOperation(
           WHERE ${projectConfigPushIntents.operationId} = ${projectConfigPersistOperations.id}
             AND ${projectConfigPushIntents.actorUserId} = ${projectConfigPersistOperations.actorUserId}
             AND ${projectConfigPushIntents.state} IN ('pending','unknown')
-        ) THEN 1 ELSE 2 END`,
+        ) THEN 1
+        WHEN ${preferRetainedCleanup} AND ${projectConfigPersistOperations.cleanupState} = 'retained' THEN 2
+        ELSE 3 END`,
       desc(projectConfigPersistOperations.updatedAt),
       desc(projectConfigPersistOperations.id),
     )
     .limit(1);
 
   return operation?.id;
+}
+
+export async function actorConfigWorkflowOperation(
+  db: PersistenceDb,
+  projectId: string,
+  actorUserId: string,
+): Promise<ConfigWorkflow["operation"]> {
+  const id = await latestActorConfigOperation(db, projectId, actorUserId, true);
+
+  if (!id) return { state: "none" };
+  const operation = await findConfigOperation(db, {
+    id,
+    projectId,
+    actorUserId,
+  });
+
+  if (!operation) return { state: "unavailable" };
+  const receipt = await configReceipt(db, operation);
+
+  return {
+    state: "available",
+    operationId: receipt.operationId,
+    localState: receipt.state,
+    pushState: receipt.pushState,
+    cleanupState: receipt.cleanupState,
+    commitSha: receipt.commitSha,
+    ...(receipt.reason ? { reason: receipt.reason } : {}),
+    ...(receipt.cleanupReason ? { cleanupReason: receipt.cleanupReason } : {}),
+  };
 }
 
 /** Only explicit mutations retry cleanup; GET receipts remain observational. */

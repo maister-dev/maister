@@ -1,9 +1,9 @@
 "use client";
 
 import type { ReactElement } from "react";
-import type { ConfigStatus } from "@/lib/project-config-persistence/contracts";
-import type { ConfigPersistenceController } from "./use-config-persistence";
+import type { ConfigWorkflow } from "@/lib/project-config-persistence/contracts";
 
+import { useEffect, useState } from "react";
 import { Button } from "@heroui/react";
 import { useTranslations } from "next-intl";
 
@@ -13,96 +13,174 @@ import {
   useConfigStatus,
 } from "./use-config-persistence";
 
-export function ConfigPersistControl({
-  slug,
-  exportRevision,
-}: {
-  slug: string;
-  exportRevision: string;
-}): ReactElement {
-  const { status, refresh, error } = useConfigStatus(slug, exportRevision);
-  const controller = useConfigPersistence(slug, refresh);
+type AvailableOperation = Extract<
+  ConfigWorkflow["operation"],
+  { state: "available" }
+>;
 
+function requiresResolution(operation: AvailableOperation): boolean {
   return (
-    <>
-      <ConfigPersistContent
-        controller={controller}
-        error={error}
-        refresh={refresh}
-        status={status}
-      />
-      <ConfigPersistDialog controller={controller} />
-    </>
+    operation.localState === "recovery_required" ||
+    operation.pushState === "unknown" ||
+    operation.cleanupState === "retained"
   );
 }
 
-export function ConfigPersistContent({
-  status,
-  refresh,
-  error,
-  controller,
+function inProgress(operation: AvailableOperation): boolean {
+  return (
+    ["preparing", "prepared", "publishing"].includes(operation.localState) ||
+    operation.pushState === "pending"
+  );
+}
+
+export function ConfigPersistControl({
+  slug,
+  actorUserId,
+  exportRevision,
+  dismissible = false,
 }: {
-  status: ConfigStatus | null;
-  refresh: () => Promise<void>;
-  error: boolean;
-  controller: ConfigPersistenceController;
+  slug: string;
+  actorUserId: string;
+  exportRevision: string;
+  dismissible?: boolean;
 }): ReactElement {
   const t = useTranslations("projects.configPersistence");
+  const { status, workflow, refresh, error } = useConfigStatus(
+    slug,
+    exportRevision,
+  );
+  const controller = useConfigPersistence(slug, actorUserId, refresh);
+  const operation =
+    workflow?.operation.state === "available" ? workflow.operation : null;
+  const unresolved =
+    operation && (requiresResolution(operation) || inProgress(operation));
+  const checkoutActionable =
+    status &&
+    (status.exportState !== "in_sync" || status.repositoryState !== "ready");
+  const observationUnavailable =
+    error || workflow?.checkout.state === "unavailable";
+  const operationUnavailable = workflow?.operation.state === "unavailable";
+  const settledLocal =
+    operation?.localState === "committed" && Boolean(operation.commitSha);
+  const settledLabel =
+    settledLocal && operation?.pushState === "succeeded"
+      ? t("workflow.published")
+      : settledLocal
+        ? t("workflow.localCommit")
+        : null;
+  const summary = observationUnavailable
+    ? t(
+        error && status?.observedAt
+          ? "workflow.lastChecked"
+          : "workflow.unavailable",
+      )
+    : unresolved
+      ? t(
+          requiresResolution(operation)
+            ? "workflow.blocked"
+            : "workflow.inProgress",
+        )
+      : checkoutActionable
+        ? t(
+            status.repositoryState === "ready" &&
+              ["missing", "pending"].includes(status.exportState)
+              ? "workflow.changes"
+              : "workflow.blocked",
+          )
+        : (settledLabel ??
+          (status
+            ? t(`exportStates.${status.exportState}`)
+            : t("workflow.checking")));
+  const key = `maister.config-status-dismissed.${actorUserId}.${slug}`;
+  const condition = JSON.stringify([
+    status?.exportRevision ?? exportRevision,
+    status?.exportState,
+    status?.repositoryState,
+    status?.reason,
+    operation?.operationId,
+    operation?.localState,
+    operation?.reason,
+    operation?.pushState,
+    operation?.cleanupState,
+    operation?.cleanupReason,
+    observationUnavailable,
+    operationUnavailable,
+  ]);
+  const [dismissed, setDismissed] = useState<string | null>(null);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem(key);
+
+    void Promise.resolve().then(() => setDismissed(saved));
+  }, [key]);
+
+  const isVisible =
+    !dismissible ||
+    ((checkoutActionable ||
+      unresolved ||
+      observationUnavailable ||
+      operationUnavailable ||
+      settledLocal ||
+      controller.open) &&
+      (dismissed !== condition || controller.open));
+  const inspectFirst = operation && (unresolved || !checkoutActionable);
+  const label =
+    unresolved && requiresResolution(operation)
+      ? t("workflow.resolve")
+      : inspectFirst
+        ? t("workflow.viewOperation")
+        : t("open");
 
   return (
-    <section
-      aria-label={t("title")}
-      className="mb-3 space-y-3 rounded-lg border border-line bg-paper p-3"
-    >
-      <h3 className="font-semibold">{t("title")}</h3>
-      <div
-        aria-live="polite"
-        className="text-sm"
-        data-testid="config-persist-status"
-      >
-        <p>{t(`exportStates.${status?.exportState ?? "unverified"}`)}</p>
-        <p>
-          {t(`repositoryStates.${status?.repositoryState ?? "unavailable"}`)}
-        </p>
-        {status?.observedAt ? (
-          <p className="text-xs text-mute">
-            {t("observedAt")}:{" "}
-            <time dateTime={status.observedAt}>
-              {new Date(status.observedAt).toLocaleString()}
-            </time>
+    <>
+      {isVisible ? (
+        <section
+          aria-label={t("title")}
+          className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-line bg-paper px-3 py-2"
+          data-testid="config-persist-status"
+        >
+          <p aria-live="polite" className="min-w-0 flex-1 text-xs">
+            <strong>{t("title")}</strong>
+            {" · "}
+            {summary}
+            {operationUnavailable
+              ? ` · ${t("workflow.operationUnavailable")}`
+              : ""}
           </p>
-        ) : null}
-        {status?.reason ? <p>{t(`reasons.${status.reason}`)}</p> : null}
-        {error ? <p>{t("statusUnavailable")}</p> : null}
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <Button
-          className="rounded-lg bg-amber px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
-          data-testid="config-persist-open"
-          type="button"
-          onPress={() => void controller.show()}
-        >
-          {t("open")}
-        </Button>
-        <Button
-          className="rounded-lg border border-line px-3 py-2 text-sm"
-          isDisabled={controller.busy}
-          type="button"
-          onPress={() => void refresh()}
-        >
-          {t("refreshStatus")}
-        </Button>
-        {status?.operationId ? (
           <Button
-            className="rounded-lg border border-line px-3 py-2 text-sm"
-            isDisabled={controller.busy}
+            className="rounded border border-line px-2.5 py-1 text-xs font-semibold"
+            data-testid="config-persist-open"
             type="button"
-            onPress={() => void controller.readReceipt(status.operationId!)}
+            onPress={() =>
+              void controller.show(
+                inspectFirst ? operation.operationId : undefined,
+              )
+            }
           >
-            {t("previousReceipt")}
+            {label}
           </Button>
-        ) : null}
-      </div>
-    </section>
+          {dismissible ? (
+            <Button
+              aria-label={t("workflow.dismiss")}
+              className="rounded border border-line px-2 py-1 text-xs"
+              type="button"
+              onPress={() => {
+                window.localStorage.setItem(key, condition);
+                setDismissed(condition);
+              }}
+            >
+              {t("workflow.dismiss")}
+            </Button>
+          ) : null}
+        </section>
+      ) : null}
+      <ConfigPersistDialog
+        controller={controller}
+        error={observationUnavailable}
+        operation={operation}
+        refreshStatus={refresh}
+        status={status}
+      />
+    </>
   );
 }

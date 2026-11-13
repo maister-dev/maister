@@ -329,16 +329,6 @@ export default async function ProjectBoardPage({
 
   return (
     <>
-      {tab !== "settings" && isAdmin ? (
-        <ConfigPersistBanner
-          key={slug}
-          canEdit={isAdmin}
-          exportRevision={project.configExportRevision.toString()}
-          projectName={project.name}
-          settingsHref={`/projects/${slug}?tab=settings`}
-          slug={slug}
-        />
-      ) : null}
       <header
         className="mb-3 flex flex-wrap items-start justify-between gap-3 border-b border-line pb-3"
         data-testid="project-board-header"
@@ -432,6 +422,16 @@ export default async function ProjectBoardPage({
       </header>
 
       <div className="mb-3">
+        {tab !== "settings" && isAdmin ? (
+          <div className="mb-2">
+            <ConfigPersistBanner
+              key={slug}
+              actorUserId={user.id}
+              exportRevision={project.configExportRevision.toString()}
+              slug={slug}
+            />
+          </div>
+        ) : null}
         <ProjectWorkspaces
           active={pageData.activeExecutions}
           attemptLimit={workspacePageLimit(one(search.workspaceAttempts))}
@@ -836,7 +836,11 @@ export default async function ProjectBoardPage({
         <WebhooksPanel canWrite={canAct} slug={slug} />
       ) : null}
       {tab === "settings" ? (
-        <SettingsPanel data={pageData} isAdmin={isAdmin} />
+        <SettingsPanel
+          actorUserId={user.id}
+          data={pageData}
+          isAdmin={isAdmin}
+        />
       ) : null}
     </>
   );
