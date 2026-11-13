@@ -11,8 +11,10 @@ import { useFeedback } from "@/components/feedback/feedback-provider";
 import { resolveUiErrorMessageKey } from "@/lib/ui-error-message";
 import {
   buildPromotionRequestBody,
+  githubPrErrorText,
   isMergedPrBehindResponse,
   isPublicationDivergedResponse,
+  isPublicationPushRejectedResponse,
   isTargetDriftResponse,
 } from "@/lib/runs/promotion-operation";
 
@@ -34,16 +36,26 @@ export function RunHeaderPromotionAction({
   const feedback = useFeedback();
   const router = useRouter();
   const t = useTranslations("run");
+  const tGit = useTranslations("workbenchGit.errors");
   const [busy, setBusy] = useState(false);
 
   // ADR-181: a refusal with a way out of its own reads as that, not as its
   // code's copy — the PR branch keeps commits the run lacks (C), or the PR was
   // merged without the run's later commits (Codex F4).
-  function refusalMessage(data: { code?: string } | null): string {
+  function refusalMessage(
+    data: Parameters<typeof githubPrErrorText>[0],
+  ): string {
     if (isPublicationDivergedResponse(data)) return t("publicationDiverged");
+    if (isPublicationPushRejectedResponse(data))
+      return t("publicationPushRejected");
     if (isMergedPrBehindResponse(data)) return t("mergedPrBehind");
 
-    return t(resolveUiErrorMessageKey(data?.code));
+    return (
+      githubPrErrorText(data, {
+        authRequired: tGit("github_auth_required"),
+        cliFailed: tGit("github_cli_failed"),
+      }) ?? t(resolveUiErrorMessageKey(data?.code))
+    );
   }
 
   async function promote(): Promise<void> {
@@ -107,7 +119,9 @@ export function RunHeaderPromotionAction({
       type="button"
       onClick={() => void promote()}
     >
-      {labels.promote}
+      {operation.mode === "pull_request"
+        ? t("inspectorActionPromotePullRequest")
+        : labels.promote}
     </button>
   );
 }

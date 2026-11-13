@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
 import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
+import { githubPrErrorText } from "@/lib/runs/promotion-operation";
 import { errorText } from "@/lib/scratch-runs/dialog";
 
 export interface ScratchInspectorActionsProps {
@@ -28,6 +29,7 @@ export function ScratchInspectorActions({
   promoteTargetBranch,
 }: ScratchInspectorActionsProps): ReactElement {
   const t = useTranslations("scratch");
+  const tGit = useTranslations("workbenchGit.errors");
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -50,7 +52,14 @@ export function ScratchInspectorActions({
       });
 
       if (!response.ok) {
-        setError(t(errorText(await response.json().catch(() => null))));
+        const failure = await response.json().catch(() => null);
+
+        setError(
+          githubPrErrorText(failure, {
+            authRequired: tGit("github_auth_required"),
+            cliFailed: tGit("github_cli_failed"),
+          }) ?? t(errorText(failure)),
+        );
 
         return;
       }

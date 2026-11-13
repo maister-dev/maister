@@ -56,6 +56,8 @@ export async function preflightedPrAdapter(args: {
     return adapter;
   } catch (err) {
     if (isMaisterError(err) && err.code === "PRECONDITION") {
+      if (err.details?.reason === "github_auth_required") throw err;
+
       log.info(
         { provider, parentRepoPath: args.parentRepoPath, err: err.message },
         "pull request provider refused at preflight",

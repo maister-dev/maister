@@ -7986,19 +7986,23 @@ paths:
             run/workspace not found, removed workspace, non-`Review` terminal
             state, readiness not ready/stale, invalid/missing target branch,
             target advanced since review without `allowTargetDrift`, invalid
-            policy override, push rejected, or PR-mode preflight failure
+            policy override, or PR-mode preflight failure
             (provider CLI missing / `*_TOKEN` unset / remote not configured /
             `generic` provider). `CONFLICT`:
             merge/rebase textual conflict (a manual-resolution assignment is
             created and the run stays `Review`), a concurrent promotion already
-            in progress, or a promotion superseded by a stale-claim reclaim.
+            in progress, a PR branch push rejected as non-fast-forward, or a
+            promotion superseded by a stale-claim reclaim.
             (ADR-181 — Implemented) The body carries `details.reason` where a
             token exists: `target_drift` (the target advanced since review),
             `target_branch_unknown` (the target does not resolve to a commit),
             `target_locked` (a scratch run promoted onto a branch other than its
             locked target), `provider_unsupported` (PR mode with no usable
             provider), `merged_pr_behind` (the recorded PR was merged without
-            the worktree's later commits) — the only `details` field forwarded.
+            the worktree's later commits), `merge_conflict`, `rebase_conflict`,
+            `github_auth_required` (GitHub CLI credentials are missing or invalid),
+            or `non_fast_forward` (PR branch push rejected) — the only
+            `details` field forwarded.
             (ADR-181 — Implemented) Also `CONFLICT` `details.reason:
             publication_diverged` when a squashing `pull_request` promotion's
             forced PR-branch update would drop commits only that branch has:
@@ -8013,6 +8017,8 @@ paths:
             rejection or a provider PR-API 5xx during `pull_request` promotion,
             or (ADR-181) an unreadable provider for a recorded PR the scan saw
             merged, when nothing is pushed.
+            GitHub CLI failures carry `details.reason: github_cli_failed` and
+            a scrubbed diagnostic.
             No `pullRequestUrl` is stored; the run stays `Review` and the
             promotion is idempotent on retry. Reuses the closed `MaisterError`
             union (ADR-008) — `EXECUTOR_UNAVAILABLE` is an existing member, no
@@ -11657,7 +11663,8 @@ paths:
             `target_locked` (a scratch run's PR onto a branch other than its
             locked `scratch_runs.target_branch ?? base_branch`),
             `provider_unsupported` (a `generic` provider, or the provider CLI or
-            token is missing — exactly as `pull_request` promotion refuses), or
+            token is missing — exactly as `pull_request` promotion refuses),
+            `github_auth_required` (GitHub CLI credentials are missing or invalid), or
             a workbench git policy refusal (`live_workbench`, `human_owned`,
             `missing_workspace`, `removed_workspace`, `worktree_missing`,
             `unsupported_status`, `no_remote`). `CONFLICT` with
@@ -11667,7 +11674,9 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "503":
           description: |
-            Provider API or CLI failed transiently (`EXECUTOR_UNAVAILABLE`); no
+            Provider API or CLI failed (`EXECUTOR_UNAVAILABLE`). GitHub CLI
+            failures carry `details.reason: github_cli_failed` and a scrubbed
+            diagnostic. No
             PR fields are written and the lifecycle claim stays retryable.
           content:
             application/json:

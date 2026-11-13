@@ -19,8 +19,10 @@ import {
 import { resolveUiErrorMessageKey } from "@/lib/ui-error-message";
 import {
   buildPromotionRequestBody,
+  githubPrErrorText,
   isMergedPrBehindResponse,
   isPublicationDivergedResponse,
+  isPublicationPushRejectedResponse,
   isTargetDriftResponse,
   promotionBlockReason,
   type PromotionDeliveryPolicy,
@@ -40,6 +42,7 @@ export type ReviewPanelDiff = {
 };
 
 export type ReviewPanelConflict = {
+  kind?: "merge" | "rebase";
   parentRepoPath: string;
   displayParentRepoPath?: string | null;
   targetBranch: string;
@@ -203,15 +206,16 @@ export function ReviewPanel({
 }: ReviewPanelProps): ReactElement {
   const t = useTranslations("run");
   const tWorkbench = useTranslations("workbench");
+  const tGit = useTranslations("workbenchGit.errors");
   const router = useRouter();
   const [mode, setMode] = useState<PromotionMode>(promotionMode);
   const [busy, setBusy] = useState(false);
   const [promotionSlow, setPromotionSlow] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [drift, setDrift] = useState(driftDetected);
-  // ADR-181 (C): the last Promote was refused — the PR branch holds commits
-  // the run does not.
-  const [diverged, setDiverged] = useState(false);
+  const [publicationError, setPublicationError] = useState<
+    "publicationDiverged" | "publicationPushRejected" | null
+  >(null);
   const [truncationAck, setTruncationAck] = useState(false);
   const [autoFinalize, setAutoFinalize] = useState(false);
   const syncClaimed = sync?.inProgress != null;
@@ -256,7 +260,8 @@ export function ReviewPanel({
 
     setBusy(true);
     setError(null);
-    setDiverged(false);
+    setPublicationError(null);
+    setConflictState(null);
     setPromotionSlow(false);
 
     try {
@@ -275,6 +280,7 @@ export function ReviewPanel({
       const data = (await res.json().catch(() => null)) as {
         code?: string;
         message?: string;
+        details?: { reason?: string };
       } | null;
 
       if (isTargetDriftResponse(data)) {
@@ -285,7 +291,13 @@ export function ReviewPanel({
       }
 
       if (isPublicationDivergedResponse(data)) {
-        setDiverged(true);
+        setPublicationError("publicationDiverged");
+
+        return;
+      }
+
+      if (isPublicationPushRejectedResponse(data)) {
+        setPublicationError("publicationPushRejected");
 
         return;
       }
@@ -296,19 +308,33 @@ export function ReviewPanel({
         return;
       }
 
-      if (data?.code === "CONFLICT") {
+      const reason = data?.details?.reason;
+
+      if (
+        data?.code === "CONFLICT" &&
+        (reason === "merge_conflict" || reason === "rebase_conflict")
+      ) {
         setConflictState({
+          kind: reason === "rebase_conflict" ? "rebase" : "merge",
           displayParentRepoPath,
           parentRepoPath: parentRepoPath ?? "",
           targetBranch: body.targetBranch,
           runBranch,
-          command: `git merge --no-ff ${runBranch}`,
+          command:
+            reason === "rebase_conflict"
+              ? `git rebase ${body.targetBranch}`
+              : `git merge --no-ff ${runBranch}`,
         });
 
         return;
       }
 
-      setError(t(resolveUiErrorMessageKey(data?.code)));
+      setError(
+        githubPrErrorText(data, {
+          authRequired: tGit("github_auth_required"),
+          cliFailed: tGit("github_cli_failed"),
+        }) ?? t(resolveUiErrorMessageKey(data?.code)),
+      );
     } catch {
       setError(t("error.generic"));
     } finally {
@@ -471,10 +497,14 @@ export function ReviewPanel({
           role="alert"
         >
           <p className="mb-2 font-mono text-[11px] font-bold text-[#d9534f]">
-            {t("conflictTitle")}
+            {t(
+              conflictState.kind === "rebase"
+                ? "rebaseConflictTitle"
+                : "conflictTitle",
+            )}
           </p>
           <dl className="grid gap-1.5 font-mono text-[10.5px] text-ink-2">
-            {conflictState.parentRepoPath ? (
+            {conflictState.kind !== "rebase" && conflictState.parentRepoPath ? (
               <div className="break-all">
                 <dt className="inline text-mute">{t("conflictRepo")}: </dt>
                 <dd className="inline">
@@ -541,7 +571,11 @@ export function ReviewPanel({
         <div className="flex flex-col gap-3">
           {busy ? (
             <OperationStatus
-              detail={labels.promotionInProgressHint}
+              detail={
+                mode === "pull_request"
+                  ? t("pullRequestInProgressHint")
+                  : labels.promotionInProgressHint
+              }
               slow={promotionSlow}
               slowText={labels.operationTakingLonger}
               title={labels.promotionInProgress}
@@ -677,7 +711,9 @@ export function ReviewPanel({
               ) : null}
               {busy
                 ? labels.promotionInProgress
-                : `${labels.promoteTo} ${targetBranch}`}
+                : mode === "pull_request"
+                  ? t("inspectorActionPromotePullRequest")
+                  : `${labels.promoteTo} ${targetBranch}`}
             </Button>
           )}
 
@@ -690,14 +726,14 @@ export function ReviewPanel({
             value={reviewedTargetCommit ?? ""}
           />
 
-          {diverged ? (
+          {publicationError ? (
             <div
               className="rounded-[10px] border border-amber-line bg-amber-soft p-4"
               data-testid="review-publication-diverged"
               role="alert"
             >
               <p className="mb-3 font-mono text-[11px] leading-[1.5] text-amber">
-                {t("publicationDiverged")}
+                {t(publicationError)}
               </p>
               {updateHref ? (
                 <Link

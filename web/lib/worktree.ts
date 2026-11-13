@@ -817,11 +817,17 @@ export async function promoteLocalMerge(
 
       return stdout.trim();
     } catch (err) {
-      await abortMerge(repo);
+      const conflicted = await promotionHasUnmergedFiles(repo).finally(() =>
+        abortMerge(repo),
+      );
+
       throw new MaisterError(
         "CONFLICT",
         `git merge failed: ${errorText(err) || asError(err).message}`,
-        { cause: asError(err) },
+        {
+          cause: asError(err),
+          ...(conflicted ? { details: { reason: "merge_conflict" } } : {}),
+        },
       );
     } finally {
       if (previousBranch && previousBranch !== targetBranch) {
@@ -875,11 +881,17 @@ export async function promoteRebaseMerge(
 
       return stdout.trim();
     } catch (err) {
-      await abortRebase(worktreePath);
+      const conflicted = await promotionHasUnmergedFiles(worktreePath).finally(
+        () => abortRebase(worktreePath),
+      );
+
       throw new MaisterError(
         "CONFLICT",
         `git rebase/merge failed: ${errorText(err) || asError(err).message}`,
-        { cause: asError(err) },
+        {
+          cause: asError(err),
+          ...(conflicted ? { details: { reason: "rebase_conflict" } } : {}),
+        },
       );
     } finally {
       if (previousBranch && previousBranch !== targetBranch) {
@@ -939,7 +951,10 @@ export class GitPushRejectedError extends MaisterError {
       remoteRef?: string;
     },
   ) {
-    super("CONFLICT", message, options);
+    super("CONFLICT", message, {
+      ...options,
+      details: { reason: options?.pushRejected ?? "non_fast_forward" },
+    });
     this.name = "GitPushRejectedError";
     this.pushRejected = options?.pushRejected ?? "non_fast_forward";
     this.canForce = options?.canForce ?? true;
@@ -3909,6 +3924,21 @@ async function unmergedFiles(worktree: string): Promise<string[]> {
       `git diff --diff-filter=U failed: ${errorText(err) || asError(err).message}`,
       { cause: asError(err) },
     );
+  }
+}
+
+async function promotionHasUnmergedFiles(
+  worktreePath: string,
+): Promise<boolean> {
+  try {
+    return (await unmergedFiles(worktreePath)).length > 0;
+  } catch (err) {
+    log.warn(
+      { worktreePath, err },
+      "could not classify the failed promotion Git operation",
+    );
+
+    return false;
   }
 }
 

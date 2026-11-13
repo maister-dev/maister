@@ -32,13 +32,14 @@ import {
   GitUpdateSection,
   type WorkbenchGitSyncDefaults,
 } from "@/components/workbench/git-panel-update";
+import { githubPrErrorText } from "@/lib/runs/promotion-operation";
 
 export type { WorkbenchGitSyncDefaults };
 
 // ADR-181 D16 — the run git panel. The server decides: every button is enabled
 // from `actions[]` (the ONE policy), every completed mutation re-reads
-// git-state and refreshes the route, and an error is resolved from `code` +
-// `details.reason` only — never from the server's message. Each section owns
+// git-state and refreshes the route. Errors use `code` and `details.reason`,
+// with a scrubbed diagnostic for GitHub CLI failures. Each section owns
 // its typed input (a git-state refresh re-renders it, never remounts it); this
 // component owns the read, the one mutation shape and the shared chrome.
 
@@ -221,6 +222,13 @@ export function WorkbenchGitPanel({
     if (body?.pushRejected === "non_fast_forward") {
       return t("errors.non_fast_forward");
     }
+
+    const githubError = githubPrErrorText(body, {
+      authRequired: t("errors.github_auth_required"),
+      cliFailed: t("errors.github_cli_failed"),
+    });
+
+    if (githubError) return githubError;
 
     const reason = body?.details?.reason ?? body?.reason;
 
