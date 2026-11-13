@@ -7,7 +7,7 @@ import type { MaisterErrorCode } from "@/lib/errors";
 import type { TerminalCause } from "@/lib/domain-events/taxonomy";
 import type { DomainEventActor } from "@/lib/domain-events/outbox";
 
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -76,7 +76,8 @@ export async function finalizeCompanyFlowRun(
     budgetTerminationId?: string;
     signal?: AbortSignal;
   } & (
-    | { requested: "Done" | "Failed" | "Crashed" }
+    | { requested: "Done" | "Crashed"; admissionRefusedBeforeTraversal?: never }
+    | { requested: "Failed"; admissionRefusedBeforeTraversal?: true }
     | { requested: "Abandoned"; userId: string; cascadeParentRunId?: never }
     | { requested: "Abandoned"; userId?: never; cascadeParentRunId: string }
   ),
@@ -248,6 +249,27 @@ export async function finalizeCompanyFlowRun(
       );
     if (dispatched) await assertAgentSessionBindingsQuiescent(tx, current);
     else await assertAgentCancellationBindingsQuiescent(tx, current);
+    // A resumed graph can also fail in loadRun. Only a virgin traversal can
+    // prove that the refused preflight preceded every execution boundary.
+    const beforeDispatch =
+      args.requested === "Failed" &&
+      args.admissionRefusedBeforeTraversal === true &&
+      current.status === "Running" &&
+      current.flowDriverToken === null &&
+      current.currentStepId === null &&
+      current.operationalIntegrityBaseline === null &&
+      !dispatched &&
+      (
+        await tx.execute(sql`SELECT 1 WHERE
+        NOT EXISTS (SELECT 1 FROM node_attempts WHERE run_id=${run.id})
+        AND NOT EXISTS (SELECT 1 FROM runs WHERE parent_run_id=${run.id})
+        AND NOT EXISTS (SELECT 1 FROM specialist_work WHERE parent_run_id=${run.id})
+        AND NOT EXISTS (SELECT 1 FROM execution_commands WHERE run_id=${run.id})
+        AND NOT EXISTS (SELECT 1 FROM run_session_incarnations WHERE run_id=${run.id})
+        AND NOT EXISTS (SELECT 1 FROM run_results WHERE run_id=${run.id})
+        AND NOT EXISTS (SELECT 1 FROM hitl_requests WHERE run_id=${run.id})`)
+      ).rows.length === 1;
+
     await tx
       .update(runs)
       .set({
@@ -312,6 +334,7 @@ export async function finalizeCompanyFlowRun(
         taskId: null,
         runKind: "flow",
         reason,
+        ...(beforeDispatch ? { failurePhase: "before_dispatch" } : {}),
         resultStatus,
         resultRevision: publicResult.valid?.revision ?? null,
         integrity: integrity.verdict,

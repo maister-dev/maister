@@ -61,6 +61,7 @@ export async function runFlow(
         runId,
         requested: "Failed",
         errorCode: error.code,
+        admissionRefusedBeforeTraversal: true,
         reason:
           typeof error.details?.reason === "string"
             ? error.details.reason

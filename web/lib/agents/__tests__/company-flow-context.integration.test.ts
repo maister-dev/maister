@@ -2925,6 +2925,14 @@ it("CBS-03 executes a native company graph through the existing driver, real sup
       expect(
         (
           await database.pool.query(
+            "SELECT payload->>'failurePhase' AS failure_phase FROM domain_events WHERE run_id=$1 AND kind='run.failed'",
+            [refused.runId],
+          )
+        ).rows,
+      ).toEqual([{ failure_phase: null }]);
+      expect(
+        (
+          await database.pool.query(
             "SELECT count(*)::int AS count FROM run_results WHERE run_id=$1",
             [refused.runId],
           )
@@ -6694,6 +6702,104 @@ it("requires a separate reviewed company persona and fences changed coordinator 
     ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
   } finally {
     compatibility.mockRestore();
+  }
+});
+
+it("IT-CBC-03 retains positive retry evidence when company graph admission refuses before traversal", async () => {
+  const db: Db = database.db;
+  const runnerId = randomUUID();
+  const [previous] = await db.select().from(platformRuntimeSettings);
+  const supervisor = await startRealSupervisor({
+    runtimeRoot: join(root, "reservation-host"),
+    workspaceRoots: [join(root, "worktrees")],
+    fixtureArgs: ["--hang"],
+  });
+  const restoreUrl = useRealSupervisorUrl(supervisor.url);
+
+  setDefaultTransportForTests(null);
+  resetResolverForTests();
+  resetRegistrarStateForTests();
+  try {
+    await db.insert(platformAcpRunners).values({
+      id: runnerId,
+      adapter: "claude",
+      capabilityAgent: "claude",
+      model: "company-graph-retry-preflight",
+      provider: { kind: "anthropic" },
+      readinessStatus: "Ready",
+    });
+    await db
+      .insert(platformRuntimeSettings)
+      .values({ id: "singleton", defaultRunnerId: runnerId })
+      .onConflictDoUpdate({
+        target: platformRuntimeSettings.id,
+        set: { defaultRunnerId: runnerId },
+      });
+    const hosts = createExecutionHosts({
+      db,
+      transport: createLocalDirectTransport(),
+    });
+    const input = await createFreshCompanyFlowRequest();
+    const receipt = await reserveCompanyFlowRun(db, requesterId, input, hosts);
+    const [session] = (
+      await database.pool.query<{ runner_id: string }>(
+        "SELECT runner_id FROM run_sessions WHERE run_id=$1 AND session_name='default'",
+        [receipt.runId],
+      )
+    ).rows;
+
+    expect(await tryStartRun(receipt.runId, { db })).toMatchObject({
+      started: true,
+    });
+    await db
+      .update(platformAcpRunners)
+      .set({ enabled: false })
+      .where(eq(platformAcpRunners.id, session.runner_id));
+    try {
+      await expect(
+        runFlow(receipt.runId, { db, executionHosts: hosts }),
+      ).rejects.toMatchObject({ code: "EXECUTOR_UNAVAILABLE" });
+      expect(
+        (
+          await database.pool.query(
+            `SELECT run.status,event.payload->>'failurePhase' AS failure_phase,
+          (SELECT count(*)::int FROM node_attempts WHERE run_id=run.id) AS node_attempts,
+          (SELECT count(*)::int FROM execution_commands WHERE run_id=run.id) AS commands
+          FROM runs run JOIN domain_events event ON event.run_id=run.id AND event.kind='run.failed'
+          WHERE run.id=$1`,
+            [receipt.runId],
+          )
+        ).rows,
+      ).toEqual([
+        {
+          status: "Failed",
+          failure_phase: "before_dispatch",
+          node_attempts: 0,
+          commands: 0,
+        },
+      ]);
+    } finally {
+      await db
+        .update(platformAcpRunners)
+        .set({ enabled: true })
+        .where(eq(platformAcpRunners.id, session.runner_id));
+    }
+  } finally {
+    if (previous)
+      await db
+        .update(platformRuntimeSettings)
+        .set({ defaultRunnerId: previous.defaultRunnerId })
+        .where(eq(platformRuntimeSettings.id, "singleton"));
+    else
+      await db
+        .delete(platformRuntimeSettings)
+        .where(eq(platformRuntimeSettings.id, "singleton"));
+    await stopRuntimeEventConsumers();
+    await supervisor.stop();
+    restoreUrl();
+    resetResolverForTests();
+    resetRegistrarStateForTests();
+    setDefaultTransportForTests(null);
   }
 });
 
