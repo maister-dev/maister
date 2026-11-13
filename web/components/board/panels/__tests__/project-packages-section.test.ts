@@ -16,6 +16,7 @@ const attachment = {
   id: "att-1",
   packageInstallId: "inst-1",
   packageName: "aif",
+  sourceLocalPackageName: null,
   versionLabel: "aif/v1.0.0",
   resolvedRevision: "a".repeat(40),
   trustStatus: "untrusted",
@@ -47,6 +48,7 @@ const installs = [
     compatible: true,
     incompatibilityReason: null,
     sourceLocalPackageId: null,
+    sourceLocalPackageName: null,
   },
   {
     id: "inst-2",
@@ -58,6 +60,7 @@ const installs = [
     compatible: true,
     incompatibilityReason: null,
     sourceLocalPackageId: null,
+    sourceLocalPackageName: null,
   },
   {
     id: "inst-3",
@@ -69,6 +72,7 @@ const installs = [
     compatible: true,
     incompatibilityReason: null,
     sourceLocalPackageId: null,
+    sourceLocalPackageName: null,
   },
   // ADR-132 (T15): a Studio fork's cut — shares the upstream's name "aif".
   {
@@ -81,6 +85,7 @@ const installs = [
     compatible: true,
     incompatibilityReason: null,
     sourceLocalPackageId: "lp-9",
+    sourceLocalPackageName: "MAIster AIF — Codex High",
   },
 ];
 
@@ -119,12 +124,22 @@ describe("ProjectPackagesSection", () => {
         slug: "demo",
         isAdmin: true,
         canTrust: true,
-        attachments: [attachment],
+        attachments: [
+          {
+            ...attachment,
+            sourceLocalPackageName: "Existing AIF fork",
+            versionLabel: "local-111111111111",
+          },
+        ],
         availableInstalls: installs,
       }),
     );
 
     expect(markup).toContain('value="inst-cut"');
+    expect(markup).toContain("MAIster AIF — Codex High · local-abcdef123456");
+    expect(markup).toContain("Existing AIF fork");
+    expect(markup).toContain("local-111111111111");
+    expect(markup).not.toContain("aaaaaaaaaaaa");
     expect(markup).toContain("attachLocalCutBadge");
     expect(markup).not.toContain('value="inst-2"');
   });

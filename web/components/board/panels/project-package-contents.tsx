@@ -69,7 +69,7 @@ export function ProjectPackageContents({
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <span className="truncate text-[14px] font-semibold text-ink">
-                    {pkg.packageName}
+                    {pkg.sourceLocalPackageName ?? pkg.packageName}
                   </span>
                   <span className="font-mono text-[11px] text-mute">
                     {pkg.versionLabel}

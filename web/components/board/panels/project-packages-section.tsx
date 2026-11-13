@@ -28,6 +28,12 @@ type Props = {
   availableInstalls: AvailablePackageInstallView[];
 };
 
+function installLabel(install: AvailablePackageInstallView): string {
+  return install.sourceLocalPackageName
+    ? `${install.sourceLocalPackageName} · ${install.versionLabel}`
+    : `${install.name}@${install.versionLabel}`;
+}
+
 async function call(
   url: string,
   method: "POST" | "DELETE",
@@ -202,7 +208,7 @@ export function ProjectPackagesSection({
                   disabled={!install.compatible}
                   value={install.id}
                 >
-                  {install.name}@{install.versionLabel}
+                  {installLabel(install)}
                   {install.sourceLocalPackageId
                     ? ` · ${t("attachLocalCutBadge")}`
                     : ""}
@@ -227,7 +233,7 @@ export function ProjectPackagesSection({
                 .filter((install) => !install.compatible)
                 .map(
                   (install) =>
-                    `${install.name}@${install.versionLabel}: ${install.incompatibilityReason}`,
+                    `${installLabel(install)}: ${install.incompatibilityReason}`,
                 )
                 .join("; ")}
             </span>
@@ -293,7 +299,7 @@ export function ProjectPackagesSection({
                           att.packageInstallId,
                         )}
                       >
-                        {att.packageName}
+                        {att.sourceLocalPackageName ?? att.packageName}
                       </Link>
                       {att.updateAvailable ? (
                         <span className="ml-2 rounded-full border border-amber-line bg-amber-soft px-2 py-0.5 text-[10px] font-semibold text-amber">
@@ -303,9 +309,11 @@ export function ProjectPackagesSection({
                     </td>
                     <td className="px-4 py-3 font-mono text-[12px] text-ink">
                       {att.versionLabel}
-                      <span className="block text-[10.5px] text-mute">
-                        {att.resolvedRevision.slice(0, 12)}
-                      </span>
+                      {att.sourceLocalPackageName === null ? (
+                        <span className="block text-[10.5px] text-mute">
+                          {att.resolvedRevision.slice(0, 12)}
+                        </span>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3 text-[12.5px] text-ink">
                       {att.trustStatus}

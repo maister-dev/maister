@@ -70,6 +70,7 @@ export type ProjectPackageAttachmentView = {
   id: string;
   packageInstallId: string;
   packageName: string;
+  sourceLocalPackageName: string | null;
   versionLabel: string;
   resolvedRevision: string;
   trustStatus: string;
@@ -97,6 +98,7 @@ export type AvailablePackageInstallView = {
   // package. The picker badges these and, on a name collision with an
   // existing attachment, links the rename explainer to the fork's editor.
   sourceLocalPackageId: string | null;
+  sourceLocalPackageName: string | null;
 };
 
 export type PackageCompatibility = Pick<
@@ -231,6 +233,21 @@ export function createPackageCompatibilityResolver(): PackageCompatibilityResolv
   };
 }
 
+function packageInstallsWithLocalName() {
+  const { localPackages, packageInstalls } = schemaModule;
+
+  return getDb()
+    .select({
+      install: packageInstalls,
+      sourceLocalPackageName: localPackages.name,
+    })
+    .from(packageInstalls)
+    .leftJoin(
+      localPackages,
+      eq(localPackages.id, packageInstalls.sourceLocalPackageId),
+    );
+}
+
 // DTO projections for the project packages tab (ADR-088). `installed_path`
 // never leaves the server.
 export async function getProjectPackageAttachments(
@@ -250,15 +267,12 @@ export async function getProjectPackageAttachments(
 
   if (attachments.length === 0) return [];
 
-  const installs = await db
-    .select()
-    .from(packageInstalls)
-    .where(
-      inArray(
-        packageInstalls.id,
-        attachments.map((a: any) => a.packageInstallId),
-      ),
-    );
+  const installs = await packageInstallsWithLocalName().where(
+    inArray(
+      schemaModule.packageInstalls.id,
+      attachments.map((a: any) => a.packageInstallId),
+    ),
+  );
   const attachedInstallIds = attachments.map(
     (attachment: any) => attachment.packageInstallId as string,
   );
@@ -284,7 +298,7 @@ export async function getProjectPackageAttachments(
         ]),
       )
     : null;
-  const installById = new Map<string, any>(installs.map((i: any) => [i.id, i]));
+  const installById = new Map(installs.map((row) => [row.install.id, row]));
   const sources = await db.select().from(packageSources);
   const discoveredByUrl = new Map<string, DiscoveredPackageEntry[]>(
     sources.map((s: any) => [s.url, s.discovered ?? []]),
@@ -318,7 +332,8 @@ export async function getProjectPackageAttachments(
   );
 
   return attachments.map((att: any) => {
-    const install = installById.get(att.packageInstallId);
+    const installed = installById.get(att.packageInstallId);
+    const install = installed?.install;
     const manifest = install?.manifest as PackageInstallManifest | undefined;
     const sourceKind = install ? kindByUrl.get(install.sourceUrl) : undefined;
     const discoveredEntry = install
@@ -349,6 +364,7 @@ export async function getProjectPackageAttachments(
       id: att.id,
       packageInstallId: att.packageInstallId,
       packageName: att.packageName,
+      sourceLocalPackageName: installed?.sourceLocalPackageName ?? null,
       versionLabel: install?.versionLabel ?? "",
       resolvedRevision: install?.resolvedRevision ?? "",
       trustStatus: install?.trustStatus ?? "untrusted",
@@ -390,16 +406,14 @@ export async function getProjectPackageAttachments(
 export async function getAvailablePackageInstalls(): Promise<
   AvailablePackageInstallView[]
 > {
-  const db = getDb() as any;
-  const installs = await db
-    .select()
-    .from(packageInstalls)
-    .where(eq(packageInstalls.packageStatus, "Installed"));
+  const installs = await packageInstallsWithLocalName().where(
+    eq(schemaModule.packageInstalls.packageStatus, "Installed"),
+  );
 
   const resolveCompatibility = createPackageCompatibilityResolver();
 
   return Promise.all(
-    installs.map(async (install: any) => {
+    installs.map(async ({ install, sourceLocalPackageName }) => {
       const manifest = install.manifest as PackageInstallManifest | undefined;
       const compatibility = await resolveCompatibility(install);
 
@@ -411,6 +425,7 @@ export async function getAvailablePackageInstalls(): Promise<
         trustStatus: install.trustStatus,
         flows: manifest?.spec?.flows?.map((f) => f.id) ?? [],
         sourceLocalPackageId: install.sourceLocalPackageId ?? null,
+        sourceLocalPackageName,
         ...compatibility,
       };
     }),
