@@ -20557,6 +20557,45 @@ paths:
             minLength: 1
             maxLength: 128
           description: URL selector resolved and authorized against server state; no filesystem path.
+  /api/company/flow-bindings:
+    post:
+      operationId: companyFlowBindingCreate
+      summary: Review and bind an installed company coordinator Flow
+      description: |
+        Requires current specialists:manage and specialists:read. The request binds
+        an exact trusted Flow and specialist revision. Human role recipients must
+        hold current assignments:answer. A duplicate delivery returns the same
+        binding revision. The operation does not launch a Run.
+      x-implementation-status: Implemented
+      x-required-scope: specialists:manage
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBCompanyFlowBindingInput"
+      responses:
+        "200":
+          description: Exact delivery replay.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBCompanyFlowBindingReceipt"
+        "201":
+          description: Reviewed binding created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBCompanyFlowBindingReceipt"
+        "400": { $ref: "#/components/responses/CBFailure" }
+        "401": { $ref: "#/components/responses/CBFailure" }
+        "403": { $ref: "#/components/responses/CBFailure" }
+        "404": { $ref: "#/components/responses/CBFailure" }
+        "409": { $ref: "#/components/responses/CBFailure" }
+        "413": { $ref: "#/components/responses/CBFailure" }
+        "503": { $ref: "#/components/responses/CBFailure" }
   /api/specialists:
     get:
       operationId: specialistsList
@@ -42238,6 +42277,21 @@ components:
         - status
         - duplicate
       additionalProperties: false
+    CBCompanyFlowBindingReceipt:
+      type: object
+      additionalProperties: false
+      required: [id, revision, owner, enabled]
+      properties:
+        id: { type: string }
+        revision: { type: integer, minimum: 1, maximum: 2147483647 }
+        owner:
+          type: object
+          additionalProperties: false
+          required: [kind, companyId]
+          properties:
+            kind: { type: string, enum: [company] }
+            companyId: { type: string }
+        enabled: { type: boolean }
     CBCompanyFlowBindingInput:
       type: object
       properties:

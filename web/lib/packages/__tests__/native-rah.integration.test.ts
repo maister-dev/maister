@@ -6,10 +6,12 @@ import os from "node:os";
 import { join, resolve } from "node:path";
 
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
 
 import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
 import { createCompanySpecialistBinding } from "@/lib/agents/company-bindings";
-import { createCompanyFlowBinding } from "@/lib/agents/company-flow-bindings";
+import { POST as bindCompanyFlow } from "@/app/api/company/flow-bindings/route";
+import { requireActiveUserById, type SessionUser } from "@/lib/authz";
 import {
   resolveEffectiveAgentDefinition,
   resolveInstalledAgentDefinition,
@@ -49,8 +51,13 @@ const source =
 const version = process.env.NATIVE_RAH_VERSION ?? "rah/fixture";
 const standSource = process.env.STAND_PACKAGE_CANDIDATE;
 const standRevision = process.env.STAND_PACKAGE_REVISION;
+const session = vi.hoisted(() => ({ user: null as SessionUser | null }));
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => database.db }));
+vi.mock("@/lib/authz", async (original) => ({
+  ...(await original<typeof import("@/lib/authz")>()),
+  requireActiveSession: async () => session.user,
+}));
 
 beforeAll(async () => {
   root = await mkdtemp(join(os.tmpdir(), "native-rah-install-"));
@@ -478,27 +485,43 @@ it.skipIf(!standSource || !standRevision)(
       },
     );
 
-    await expect(
-      createCompanyFlowBinding(database.db, reviewerId, {
-        owner: specialist.owner,
-        specialistBindingId: specialist.bindingId,
-        specialistRevision: specialist.configRevision,
-        flowRevisionId: flow!.id,
-        manifestSha256: flow!.manifest_digest,
-        execution: { workspace: "none", completion: "result" },
-        enabled: true,
-        roleMappings: { operator: [reviewerId] },
-        idempotencyKey: randomUUID(),
-      }),
-    ).resolves.toMatchObject({
-      binding: {
-        configuration: {
-          enabled: true,
-          roleMappings: { operator: [reviewerId] },
-          routingAuthority: [{ userId: reviewerId }],
-        },
-      },
+    const review = {
+      owner: specialist.owner,
+      specialistBindingId: specialist.bindingId,
+      specialistRevision: specialist.configRevision,
+      flowRevisionId: flow!.id,
+      manifestSha256: flow!.manifest_digest,
+      execution: { workspace: "none", completion: "result" },
+      enabled: true,
+      roleMappings: { operator: [reviewerId] },
+      idempotencyKey: randomUUID(),
+    };
+
+    session.user = await requireActiveUserById(reviewerId);
+    const bind = (origin: string) =>
+      bindCompanyFlow(
+        new NextRequest("http://localhost/api/company/flow-bindings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Origin: origin },
+          body: JSON.stringify(review),
+        }),
+      );
+
+    expect((await bind("https://different-origin.test")).status).toBe(403);
+    const bound = await bind("http://localhost");
+
+    expect(bound.status).toBe(201);
+    const receipt = await bound.json();
+    const replay = await bind("http://localhost");
+
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toEqual(receipt);
+    expect(receipt).toMatchObject({
+      owner: specialist.owner,
+      enabled: true,
+      revision: 1,
     });
+    session.user = null;
     const { hosts, fake } = await fakeExecutionHosts(database.db);
     const smoke = {
       status: "ok" as const,
