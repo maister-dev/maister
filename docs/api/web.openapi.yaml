@@ -22071,6 +22071,58 @@ paths:
             minLength: 1
             maxLength: 128
           description: URL selector resolved and authorized against server state; no filesystem path.
+  /api/stand-operations/{operationId}/approval:
+    post:
+      operationId: standOperationApproveRestart
+      summary: Approve the exact retained stand restart intent
+      description: |
+        A current authenticated human with targets:read, targets:restart and assignment source access
+        approves the exact pending restart digest and revision. The decision records the actual actor
+        and grant. Dispatch checks current authority separately. Exact replay returns the retained
+        approval. Changed payload, revision, input or configuration returns 409.
+      x-implementation-status: Implemented
+      x-required-scope: targets:restart
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBStandRestartApprovalInput"
+      responses:
+        "200":
+          description: Exact authorized replay of the retained approval.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBStandRestartApproval"
+        "201":
+          description: Approved intent recorded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBStandRestartApproval"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
   /api/stand-operations/{operationId}/reconcile:
     post:
       operationId: standOperationReconcile
@@ -40726,6 +40778,50 @@ components:
           type: integer
           minimum: 1
           maximum: 2147483647
+    CBStandRestartApprovalInput:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, requestDigest, reason, idempotencyKey]
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        requestDigest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        idempotencyKey:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+    CBStandRestartApproval:
+      type: object
+      additionalProperties: false
+      required: [operationId, requestDigest, operationRevision, approvedBy, approvedAt]
+      properties:
+        operationId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        requestDigest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        operationRevision:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        approvedBy:
+          type: string
+          minLength: 1
+          maxLength: 128
+        approvedAt:
+          type: string
+          format: date-time
     CBRecoveryDecision:
       type: object
       additionalProperties: false

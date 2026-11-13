@@ -3480,6 +3480,18 @@ table stand_resource_claims {
   }
 }
 
+table stand_restart_approvals {
+  operation_id text [pk, not null]
+  approved_by text [not null]
+  request_digest text [not null]
+  operation_revision integer [not null]
+  approval_digest text [not null]
+  delivery_key text [not null]
+  reason text [not null]
+  authority jsonb [not null]
+  approved_at "timestamp with time zone" [not null, default: `now()`]
+}
+
 table stand_target_revisions {
   target_id text [not null]
   revision integer [not null]
@@ -5092,6 +5104,10 @@ ref stand_operations_input_fk: stand_operations.(assignment_id, input_revision) 
 ref stand_operations_component_fk: stand_operations.(target_id, config_revision, component_id) > stand_components.(target_id, config_revision, component_id) [delete: restrict, update: no action]
 
 ref stand_resource_claims_exact_operation_fk: stand_resource_claims.(operation_id, canonical_resource_key) > stand_operations.(id, resource_key) [delete: restrict, update: no action]
+
+ref stand_restart_approvals_operation_id_stand_operations_id_fk: stand_restart_approvals.operation_id > stand_operations.id [delete: restrict, update: no action]
+
+ref stand_restart_approvals_approved_by_users_id_fk: stand_restart_approvals.approved_by > users.id [delete: restrict, update: no action]
 
 ref stand_target_revisions_target_id_stand_targets_id_fk: stand_target_revisions.target_id > stand_targets.id [delete: restrict, update: no action]
 

@@ -2094,6 +2094,20 @@
       "when": 1794606478005,
       "tag": "0302_stand_operation_intent_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 303,
+      "version": "7",
+      "when": 1794606478006,
+      "tag": "0303_stand_restart_approvals",
+      "breakpoints": true
+    },
+    {
+      "idx": 304,
+      "version": "7",
+      "when": 1794606478007,
+      "tag": "0304_stand_restart_approval_guards",
+      "breakpoints": true
     }
   ]
 }

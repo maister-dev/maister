@@ -127,6 +127,11 @@ Intent digest is SHA-256 of canonical owner/assignment/input/work identity, cano
 
 Default restart requires human approval linked to exact intent digest/target/action/input and current permission. An administrator may configure a bounded unattended grant explicitly; routine diagnosis needs only read/log grants. A model cannot set allowed actions, approval, confirming principal or expected verification policy.
 
+The approval API retains a human decision for the exact undispatched operation
+digest and revision under current `targets:restart` and source access. Its
+receipt is durable and independent of the transport permit. The operation still
+requires current dispatch authority and an authenticated helper decision.
+
 Authority requests/permits also bind a closed purpose `dispatch|reconcile|logs|verify`. Dispatch validates the frozen intent action and active run/assignment owner. Read-only reconciliation/verification validates the current operation-recovery owner/grant even after original run termination; logs separately requires current log access. A read-purpose permit cannot authorize restart, and the helper compares returned purpose/nonce/digest/target to the exact call before using it. The callback resolves the principal from stored ownership/service configuration, never from its request body. A verification request preserves original operation/digest and issues a separate fresh verification nonce/receipt; changing its read-purpose action does not rewrite the original restart intent.
 
 ### Recovery and current responsibility

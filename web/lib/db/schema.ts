@@ -10976,6 +10976,33 @@ export const standResourceClaims = pgTable(
   }),
 );
 
+export const standRestartApprovals = pgTable(
+  "stand_restart_approvals",
+  {
+    operationId: text("operation_id")
+      .primaryKey()
+      .references(() => standOperations.id, { onDelete: "restrict" }),
+    approvedBy: text("approved_by")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    requestDigest: text("request_digest").notNull(),
+    operationRevision: integer("operation_revision").notNull(),
+    approvalDigest: text("approval_digest").notNull(),
+    deliveryKey: text("delivery_key").notNull(),
+    reason: text("reason").notNull(),
+    authority: jsonb("authority").$type<CompanyGrantWitness>().notNull(),
+    approvedAt: timestamp("approved_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    shape: check(
+      "stand_restart_approvals_shape_check",
+      sql`${t.operationRevision}>0 AND ${t.requestDigest} ~ '^[a-f0-9]{64}$' AND ${t.approvalDigest} ~ '^[a-f0-9]{64}$' AND ${t.deliveryKey} ~ '^[A-Za-z0-9._:-]{8,128}$' AND char_length(${t.reason})<=2000 AND ${t.reason} ~ '[^[:space:]]' AND jsonb_typeof(${t.authority})='object'`,
+    ),
+  }),
+);
+
 /** Immutable working context is business evidence, never a parallel execution ledger. */
 export const specialistContextRevisions = pgTable(
   "specialist_context_revisions",

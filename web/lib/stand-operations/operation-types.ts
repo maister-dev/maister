@@ -38,6 +38,15 @@ export const standOperationInputSchema = z
   })
   .strict();
 
+export const standRestartApprovalSchema = z
+  .object({
+    expectedRevision: knowledgeRevisionSchema,
+    requestDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    reason: postgresTextSchema.min(1).max(2000).regex(/\S/),
+    idempotencyKey: knowledgeDeliveryKeySchema,
+  })
+  .strict();
+
 export type StandAction = (typeof STAND_ACTIONS)[number];
 export type StandOperation = Readonly<{
   id: string;

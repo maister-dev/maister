@@ -346,8 +346,9 @@ it("IT-CBO-01 registers a versioned company target with a runbook and canonical 
   browser.user = null;
 });
 
-it("IT-CBO-03 retains one restart intent across aliases and rejects duplicate content changes and resource contention", async () => {
-  const { userId, owner, input, request } = await createRegistryFixture();
+it("IT-CBO-02 IT-CBO-03 retains one restart intent across aliases and approves only its exact digest", async () => {
+  const { administratorId, userId, owner, authority, input, request } =
+    await createRegistryFixture();
   const { POST: createTarget } = await import("@/app/api/stands/route");
 
   browser.user = await requireActiveUserById(userId);
@@ -499,6 +500,61 @@ it("IT-CBO-03 retains one restart intent across aliases and rejects duplicate co
 
   expect(read.status).toBe(200);
   expect(await read.json()).toEqual(accepted);
+  const { POST: approve } =
+    await import("@/app/api/stand-operations/[operationId]/approval/route");
+  const approvalKey = randomUUID();
+  const approveIntent = (requestDigest: string) =>
+    approve(
+      new NextRequest(
+        `http://localhost/api/stand-operations/${accepted.id}/approval`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Origin: "http://localhost",
+          },
+          body: JSON.stringify({
+            expectedRevision: accepted.revision,
+            requestDigest,
+            reason: "The configured fixture restart is approved.",
+            idempotencyKey: approvalKey,
+          }),
+        },
+      ),
+      { params: Promise.resolve({ operationId: accepted.id }) },
+    );
+
+  expect((await approveIntent("f".repeat(64))).status).toBe(409);
+  const approved = await approveIntent(accepted.requestDigest);
+
+  expect(approved.status).toBe(201);
+  const approval = await approved.json();
+
+  expect(approval).toMatchObject({
+    operationId: accepted.id,
+    approvedBy: userId,
+    requestDigest: accepted.requestDigest,
+  });
+  const replayedApproval = await approveIntent(accepted.requestDigest);
+
+  expect(replayedApproval.status).toBe(200);
+  expect(await replayedApproval.json()).toEqual(approval);
+  await expect(
+    database.pool.query(
+      "UPDATE stand_restart_approvals SET request_digest=repeat('f',64) WHERE operation_id=$1",
+      [accepted.id],
+    ),
+  ).rejects.toMatchObject({ code: "23514" });
+  const restartGrant = authority.page.items.find(
+    (item) => item.action === "targets:restart",
+  )!;
+
+  await revokeCompanyGrant(database.db, administratorId, restartGrant.id, {
+    expectedRevision: restartGrant.revision,
+    reason: "Revoke restart authority",
+    idempotencyKey: randomUUID(),
+  });
+  expect((await approveIntent(accepted.requestDigest)).status).toBe(403);
   await cancelSpecialistAssignment(
     database.db,
     userId,
@@ -506,7 +562,7 @@ it("IT-CBO-03 retains one restart intent across aliases and rejects duplicate co
     winner.revision,
     "Retire the interrupted stand assignment",
   );
-  expect((await createOperation(loser, loserComponent)).status).toBe(409);
+  expect((await createOperation(loser, loserComponent)).status).toBe(403);
   const retained = await GET(
     new NextRequest(`http://localhost/api/stand-operations/${accepted.id}`),
     { params: Promise.resolve({ operationId: accepted.id }) },
