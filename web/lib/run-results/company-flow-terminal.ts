@@ -45,6 +45,7 @@ import { gcAgeDays } from "@/lib/instance-config";
 import { disposeOperationalRun } from "@/lib/gc/operational-disposition";
 import { MaisterError } from "@/lib/errors";
 import { currentBudgetTermination } from "@/lib/runs/budget-termination";
+import { isTerminalRunStatus } from "@/lib/runs/run-status-sets";
 
 const log = pino({
   name: "company-flow-terminal",
@@ -83,7 +84,12 @@ export async function finalizeCompanyFlowRun(
     budgetTerminationId?: string;
     signal?: AbortSignal;
   } & (
-    | { requested: "Done" | "Crashed"; admissionRefusedBeforeTraversal?: never }
+    | { requested: "Done"; admissionRefusedBeforeTraversal?: never }
+    | {
+        requested: "Crashed";
+        parkedOrphan?: { parentRunId: string; nodeId: string | null };
+        admissionRefusedBeforeTraversal?: never;
+      }
     | { requested: "Failed"; admissionRefusedBeforeTraversal?: true }
     | { requested: "Abandoned"; userId: string; cascadeParentRunId?: never }
     | { requested: "Abandoned"; userId?: never; cascadeParentRunId: string }
@@ -99,12 +105,21 @@ export async function finalizeCompanyFlowRun(
       "PRECONDITION",
       "Company graph finalization requires its exact retained execution owner",
     );
-  const canSettle = (status: Run["status"]): boolean =>
-    args.requested === "Abandoned"
-      ? companyFlowCanAbandon(status)
-      : TERMINAL_CAS_SOURCE[args.requested].includes(status);
+  const orphan = args.requested === "Crashed" ? args.parkedOrphan : undefined;
+  const canSettle = (current: Run): boolean => {
+    if (orphan)
+      return (
+        current.status === "WaitingOnChildren" &&
+        current.parentRunId === orphan.parentRunId &&
+        current.currentStepId === orphan.nodeId
+      );
+    if (args.requested === "Abandoned")
+      return companyFlowCanAbandon(current.status);
 
-  if (!canSettle(run.status)) return false;
+    return TERMINAL_CAS_SOURCE[args.requested].includes(current.status);
+  };
+
+  if (!canSettle(run)) return false;
   const operatorId = args.requested === "Abandoned" ? args.userId : undefined;
 
   if (operatorId !== undefined)
@@ -208,13 +223,22 @@ export async function finalizeCompanyFlowRun(
     ).toISOString(),
   });
   const finalized = await args.db.transaction(async (tx) => {
+    if (orphan) {
+      const [parent] = await tx
+        .select({ status: runs.status })
+        .from(runs)
+        .where(eq(runs.id, orphan.parentRunId))
+        .for("no key update");
+
+      if (parent && !isTerminalRunStatus(parent.status)) return false;
+    }
     const [current] = await tx
       .select()
       .from(runs)
       .where(eq(runs.id, run.id))
       .for("update");
 
-    if (!current || !canSettle(current.status)) return false;
+    if (!current || !canSettle(current)) return false;
     const budgetStop = await currentBudgetTermination(tx, current);
 
     if (budgetStop?.id !== args.budgetTerminationId) return false;
@@ -369,9 +393,11 @@ export async function finalizeCompanyFlowRun(
         source:
           operatorId !== undefined
             ? "operator"
-            : status === "Abandoned"
-              ? "orchestrator"
-              : "graph",
+            : orphan
+              ? "reconcile"
+              : status === "Abandoned"
+                ? "orchestrator"
+                : "graph",
       };
 
       await emitDomainEvent({

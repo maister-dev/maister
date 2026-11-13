@@ -200,6 +200,12 @@ export function assignmentBudgetAllowsDispatchSql(runId: SQL): SQL<boolean> {
       OR (appointment.work_witness IS NOT NULL AND (
         usage.active_slots>=limits."maxActiveChildren"
         OR EXISTS (
+          SELECT 1 FROM runs child JOIN runs root ON root.id=child.root_run_id
+          WHERE child.id=appointment.run_id
+            AND (root.status=ANY(${sql.param(TERMINAL_RUN_STATUSES)}::text[])
+              OR root.company_cancellation_intent IS NOT NULL)
+        )
+        OR EXISTS (
           SELECT 1 FROM specialist_work work
           JOIN runs parent ON parent.id=work.parent_run_id
           WHERE work.id=appointment.work_id AND work.work_revision=appointment.work_revision

@@ -2251,13 +2251,41 @@ export async function runReconcileSweep(
               logLabel: "[reconcile] orchestrator-stuck",
             },
           );
-          const crashResult = await crashWaitingOnChildren(
-            cand.runId,
-            mapReasonToCrashReason(reason),
-            { db },
-          );
+          let finalized: boolean;
 
-          if (!crashResult.ok) {
+          if (
+            cand.companyId &&
+            cand.runKind === "flow" &&
+            cand.parentRunId &&
+            reason === "orphaned-orchestrator"
+          ) {
+            const { finalizeCompanyFlowRun } =
+              await import("@/lib/run-results/company-flow-terminal");
+
+            finalized = await finalizeCompanyFlowRun({
+              db,
+              rootDb: db,
+              hosts,
+              runId: cand.runId,
+              requested: "Crashed",
+              errorCode: "CRASH",
+              reason: "orphaned_child",
+              parkedOrphan: {
+                parentRunId: cand.parentRunId,
+                nodeId: cand.currentStepId,
+              },
+            });
+          } else {
+            finalized = (
+              await crashWaitingOnChildren(
+                cand.runId,
+                mapReasonToCrashReason(reason),
+                { db },
+              )
+            ).ok;
+          }
+
+          if (!finalized) {
             // A concurrent wake won the CAS — the run is Running again; nothing
             // to crash. Count as skipped, not crashed.
             //

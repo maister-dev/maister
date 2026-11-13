@@ -313,6 +313,13 @@ The reconcile sweep uses the same wake claim for a parked company coordinator
 whose children have settled, even after the grace period. Capacity refusal
 keeps the Run parked with its existing durable resume request.
 
+When the assignment root has settled or owns a pending cancellation, the
+scheduler leaves its nested queued work in place for reconciliation. A parked
+company coordinator whose own parent has terminated settles through the company
+Flow finalizer after its children. The terminal transaction checks the retained
+park and the parent's current status, records a company-scoped cause, revokes
+the Run's credentials and keeps completed results and acceptance receipts.
+
 | Run status | Agent child after owner loss | Flow child after owner loss | Coordinator recovery |
 | --- | --- | --- | --- |
 | Pending | Cancel unadmitted reservation or adopt under current new owner; no duplicate launch | Same, preserving pin/work ID | New claim adopts reserved run and queue position under cap |

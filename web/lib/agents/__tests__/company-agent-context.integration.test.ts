@@ -518,11 +518,19 @@ beforeAll(async () => {
     primarySource,
   );
   await writeFile(
+    join(source, "maister-agents/interrupted-cooperation-observer.md"),
+    primarySource,
+  );
+  await writeFile(
     join(source, "maister-agents/project-dispatch-observer.md"),
     primarySource,
   );
   await writeFile(
     join(source, "maister-agents/company-dispatch-observer.md"),
+    primarySource,
+  );
+  await writeFile(
+    join(source, "maister-agents/interrupted-dispatch-observer.md"),
     primarySource,
   );
   await writeFile(
@@ -12534,10 +12542,25 @@ it("IT-CBC-03 fences a company context writer at execution ownership handoff and
   }
 });
 
-it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains exact results through Flow rework and acceptance", async () => {
+const cooperationRunnerId = randomUUID();
+
+for (const stop of ["budget", "parent interruption"] as const) {
+  it(`IT-CBC-01 IT-CBC-04 IT-CBC-05 requires current company delegation grants and retains exact results through Flow rework, acceptance and ${stop}`, () =>
+    qualifyCompanyCooperation(stop));
+}
+
+async function qualifyCompanyCooperation(
+  stop: "budget" | "parent interruption",
+): Promise<void> {
   const db: Db = database.db;
-  const roleId = "rah:delegating-observer";
-  const receivingRoleId = "rah:company-dispatch-observer";
+  const roleId =
+    stop === "budget"
+      ? "rah:delegating-observer"
+      : "rah:interrupted-cooperation-observer";
+  const receivingRoleId =
+    stop === "budget"
+      ? "rah:company-dispatch-observer"
+      : "rah:interrupted-dispatch-observer";
   const appointment = await reserveContextFixture(roleId, [
     "knowledge:read",
     "assignments:read",
@@ -12554,16 +12577,19 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
     agentId: receivingRoleId,
     packageInstallId: assignmentInput.standingDefinition.packageInstallId,
   });
-  const runnerId = randomUUID();
+  const runnerId = cooperationRunnerId;
 
-  await database.db.insert(platformAcpRunners).values({
-    id: runnerId,
-    adapter: "claude",
-    capabilityAgent: "claude",
-    model: "native-company-dispatch-fixture",
-    provider: { kind: "anthropic" },
-    readinessStatus: "Ready",
-  });
+  await database.db
+    .insert(platformAcpRunners)
+    .values({
+      id: runnerId,
+      adapter: "claude",
+      capabilityAgent: "claude",
+      model: "native-company-dispatch-fixture",
+      provider: { kind: "anthropic" },
+      readinessStatus: "Ready",
+    })
+    .onConflictDoNothing({ target: platformAcpRunners.id });
   const receiving = await createCompanySpecialistBinding(
     database.db,
     userId,
@@ -12696,7 +12722,10 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
           authoritySnapshot: {
             witnesses: [
               { authorityId: initiating.id, revision: initiating.revision },
-              { authorityId: professional.id, revision: professional.revision },
+              {
+                authorityId: professional.id,
+                revision: professional.revision,
+              },
             ],
           },
         },
@@ -12743,7 +12772,9 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
       const dispatch = () =>
         reserveCompanyDelegatedAgentRun(database.db, workRequest, hosts);
 
-      await expect(dispatch()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+      await expect(dispatch()).rejects.toMatchObject({
+        code: "UNAUTHORIZED",
+      });
       const { rows: missingChild } = await database.pool.query(
         "SELECT id FROM runs WHERE id=$1",
         [receipt.work.reservedRunId],
@@ -12823,10 +12854,10 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
       await expect(
         db.transaction((tx) =>
           tx.execute(sql`
-        INSERT INTO runs SELECT (jsonb_populate_record(NULL::runs,to_jsonb(child)
-          || jsonb_build_object('id',${randomUUID()}::text))).*
-        FROM runs child WHERE child.id=${first.childRunId}
-      `),
+      INSERT INTO runs SELECT (jsonb_populate_record(NULL::runs,to_jsonb(child)
+        || jsonb_build_object('id',${randomUUID()}::text))).*
+      FROM runs child WHERE child.id=${first.childRunId}
+    `),
         ),
       ).rejects.toMatchObject({
         cause: {
@@ -12904,8 +12935,12 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
         scopes: ["assignments:read"],
       });
       await revoke(receivingGrant);
-      await expect(loadChild()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
-      await expect(dispatch()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+      await expect(loadChild()).rejects.toMatchObject({
+        code: "UNAUTHORIZED",
+      });
+      await expect(dispatch()).rejects.toMatchObject({
+        code: "UNAUTHORIZED",
+      });
       await expect(captureChildInput()).rejects.toMatchObject({
         code: "UNAUTHORIZED",
       });
@@ -13170,7 +13205,7 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
             "assignments:update",
             "assignments:delegate",
           ],
-          idempotencyKey: randomUUID(),
+          idempotencyKey: "cooperation-graph-specialist-v1",
         },
       );
 
@@ -13183,13 +13218,13 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
         execution: { workspace: "none", completion: "result" },
         enabled: true,
         roleMappings: {},
-        idempotencyKey: randomUUID(),
+        idempotencyKey: "cooperation-graph-binding-v1",
       });
       await createCompanyGrants(db, administratorId, {
         principalKind: "agent",
         principalId: flowRoleId,
         actions: ["assignments:read", "assignments:delegate"],
-        idempotencyKey: randomUUID(),
+        idempotencyKey: "cooperation-graph-grants-v1",
       });
       const graphObjective =
         "Review the child result against the retained observation";
@@ -13260,7 +13295,9 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
             .callsOf("createSession")
             .filter((call) => call.envelope?.fence.runId === drivingGraphRunId)
             .at(-1)?.envelope?.payload as
-            | { mcpServers?: { name: string; env?: Record<string, string> }[] }
+            | {
+                mcpServers?: { name: string; env?: Record<string, string> }[];
+              }
             | undefined;
           const bearer = create?.mcpServers?.find(
             (server) => server.name === "maister",
@@ -13448,7 +13485,10 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
 
             return runFlow(runId, { ...options, db, executionHosts: hosts });
           };
-          const consumer = buildOrchestratorResumeConsumer({ db, resumeFlow });
+          const consumer = buildOrchestratorResumeConsumer({
+            db,
+            resumeFlow,
+          });
 
           await consumer.handle([
             { ...settled, companyId: randomUUID() },
@@ -13601,7 +13641,7 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
         expect(mismatched.status).toBe(409);
         const retained = await database.pool.query(
           `SELECT id, work_revision, child_run_id, decision_state
-          FROM specialist_work WHERE id=$1 ORDER BY work_revision`,
+        FROM specialist_work WHERE id=$1 ORDER BY work_revision`,
           [work.id],
         );
 
@@ -13623,9 +13663,9 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
           (
             await database.pool.query(
               `SELECT result.validity,result.run_id,result.revision
-              FROM specialist_work_decisions decision
-              JOIN run_results result ON result.id=decision.result_id
-              WHERE decision.work_id=$1 AND decision.work_revision=$2`,
+            FROM specialist_work_decisions decision
+            JOIN run_results result ON result.id=decision.result_id
+            WHERE decision.work_id=$1 AND decision.work_revision=$2`,
               [work.id, work.workRevision],
             )
           ).rows,
@@ -13681,7 +13721,10 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
           ).resolves.toEqual({
             started: true,
           });
-          await runFlow(continuation.childRunId, { db, executionHosts: hosts });
+          await runFlow(continuation.childRunId, {
+            db,
+            executionHosts: hosts,
+          });
           await fake.waitForCanonicalEvents();
         } finally {
           if (savedFlowCap === undefined)
@@ -13863,6 +13906,49 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
         )
       ).rows,
     ).toEqual([{ id: receipt.work.id }]);
+    if (stop === "parent interruption") {
+      const prepared = await prepareAgentRunFinalization(
+        appointment.runId,
+        "Crashed",
+        { db, executionHosts: hosts, reason: "agent-session-gone" },
+      );
+      const terminal = await db.transaction((tx) => prepared.apply(tx));
+
+      expect(terminal.finalized).toBe(true);
+      await expect(
+        tryStartRun(pendingNestedRunId!, { db }),
+      ).resolves.toMatchObject({
+        started: false,
+      });
+      await prepared.afterCommit(terminal);
+      const settled = await runReconcileSweep({ db, executionHosts: hosts });
+      const repeated = await runReconcileSweep({ db, executionHosts: hosts });
+
+      expect(settled.crashed).toBe(1);
+      expect(repeated.crashed).toBe(0);
+      const { rows: events } = await database.pool.query(
+        `SELECT event.run_id, event.company_id, run.status
+       FROM domain_events event JOIN runs run ON run.id=event.run_id
+       WHERE event.kind IN ('run.abandoned','run.crashed') AND event.run_id=ANY($1::text[])
+       ORDER BY event.id`,
+        [[pendingNestedRunId, parkedGraphRunId]],
+      );
+
+      expect(events).toEqual([
+        {
+          run_id: pendingNestedRunId,
+          company_id: request.companyId,
+          status: "Abandoned",
+        },
+        {
+          run_id: parkedGraphRunId,
+          company_id: request.companyId,
+          status: "Crashed",
+        },
+      ]);
+
+      return;
+    }
     await db.transaction((tx) =>
       mintAssignment(tx, {
         runId: appointment.runId,
@@ -13910,9 +13996,9 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
     expect(budgetRoot).toEqual({ status: "Failed" });
     const { rows: abandoned } = await database.pool.query(
       `SELECT event.run_id, event.company_id, run.status
-       FROM domain_events event JOIN runs run ON run.id=event.run_id
-       WHERE event.kind='run.abandoned' AND event.run_id=ANY($1::text[])
-       ORDER BY event.id`,
+     FROM domain_events event JOIN runs run ON run.id=event.run_id
+     WHERE event.kind='run.abandoned' AND event.run_id=ANY($1::text[])
+     ORDER BY event.id`,
       [[pendingNestedRunId, parkedGraphRunId]],
     );
 
@@ -13949,7 +14035,7 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
   } finally {
     await revoke(initiating);
   }
-});
+}
 
 it("IT-CBA-04 discloses only the appointed company context through a scoped actual credential without granting Brain access", async () => {
   const appointment = await reserveContextFixture("rah:context-observer", [

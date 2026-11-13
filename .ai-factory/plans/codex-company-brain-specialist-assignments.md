@@ -770,6 +770,8 @@ Phase exit: full owning suites green and the actual scheduler/domain-event claim
 
   T30 browser checkpoint (2026-11-13). The initial Playwright run reproduced transient pre-admission conflict failures in the test supervisor and a result assertion matching hidden responsive content. The fixture retries the same delivery only on the typed pre-admission conflict, and the result assertion selects the accessible region. The isolated rerun passed all eight cases, including depth-two reduction and the bilingual knowledge surfaces.
 
+  T30 parent interruption checkpoint (2026-11-13). A nested queued agent was eligible for promotion after its assignment root crashed. The scheduler now fences that retained work on the actual root as well as the immediate parent. The next RED exposed the parked Flow's ownerless project crash event. The company Flow finalizer now settles the exact orphaned park with a company event after its children, current parent status validation and credential retirement. The two composed cooperation cases cover budget teardown and a lost parent. The full native agent, Flow, budget and reconcile suites passed 250 tests on `3c933eedd`.
+
 Phase exit: full owning suites green; no new orchestration engine, attempt ledger or capacity bypass. Explicit adversarial review of authority, admission, event ordering and every resulting fix cycle.
 
 ### Phase 7 — Narrow stand connector, durable operations and deployment
