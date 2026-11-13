@@ -98,11 +98,16 @@ export const standTargetConnectionSchema = z
     keyEnv: envReference,
     platformCredentialEnv: envReference,
     helperCredentialEnv: envReference,
+    helperCertificateSha256: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
   })
   .strict();
 
 export const standTargetInputSchema = standTargetConnectionSchema
   .extend({
+    helperCertificateSha256: z.string().regex(/^[a-f0-9]{64}$/),
     owner: ownerSchema.options[0],
     incarnationId: z.uuid(),
     enabled: z.boolean(),

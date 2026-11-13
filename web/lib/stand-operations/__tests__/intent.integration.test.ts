@@ -1,6 +1,6 @@
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import { join, resolve } from "node:path";
@@ -164,6 +164,7 @@ async function createRegistryFixture() {
     keyEnv: "env:STAND_TEST_KEY",
     platformCredentialEnv: "env:STAND_TEST_PLATFORM_TOKEN",
     helperCredentialEnv: "env:STAND_TEST_HELPER_TOKEN",
+    helperCertificateSha256: randomBytes(32).toString("hex"),
     enabled: true,
     components: [component, { ...component, id: "api-alias" }],
   };
@@ -255,6 +256,7 @@ it("IT-CBO-01 registers a versioned company target with a runbook and canonical 
   ).rejects.toMatchObject({ code: "23514" });
   for (const invalid of [
     { ...input, endpoint: "https://stand.example.test:7443/extra" },
+    { ...input, helperCertificateSha256: "invalid" },
     { ...input, components: [{ ...component, scope: "user" }] },
     { ...input, components: [{ ...component, unit: "--fixture.service" }] },
     { ...input, components: [{ ...component, serviceManager: "launchd" }] },
@@ -484,6 +486,59 @@ it("IT-CBO-02 IT-CBO-03 retains one restart intent across aliases and approves o
     verificationState: "not_checked",
     disposition: "pending",
   });
+  const { authenticateStandOperationPeer } = await import("../authority-peer");
+  const peerToken = randomBytes(32).toString("base64url");
+  const peerFingerprint = input.helperCertificateSha256
+    .match(/../g)!
+    .join(":")
+    .toUpperCase();
+
+  const previousPeerToken = process.env.STAND_TEST_HELPER_TOKEN;
+
+  process.env.STAND_TEST_HELPER_TOKEN = peerToken;
+  try {
+    const authenticate = (fingerprint: string, token: string) =>
+      database.db.transaction((tx) =>
+        authenticateStandOperationPeer(tx, accepted.id, fingerprint, token),
+      );
+
+    await expect(authenticate(peerFingerprint, peerToken)).resolves.toEqual({
+      targetId: target.id,
+      companyId: owner.companyId,
+      configRevision: 1,
+      incarnationId: input.incarnationId,
+    });
+    await expect(authenticate("00:00", peerToken)).rejects.toMatchObject({
+      code: "UNAUTHENTICATED",
+    });
+    await expect(
+      authenticate(peerFingerprint, "invalid"),
+    ).rejects.toMatchObject({
+      code: "UNAUTHENTICATED",
+    });
+    const probeRollback = new Error("Discard temporary disabled target");
+
+    await expect(
+      database.db.transaction(async (tx) => {
+        await tx.execute(
+          sql`UPDATE stand_targets SET enabled=false,config_revision=config_revision+1 WHERE id=${target.id}`,
+        );
+        await expect(
+          authenticateStandOperationPeer(
+            tx,
+            accepted.id,
+            peerFingerprint,
+            peerToken,
+          ),
+        ).rejects.toMatchObject({ code: "UNAUTHENTICATED" });
+        throw probeRollback;
+      }),
+    ).rejects.toBe(probeRollback);
+  } finally {
+    if (previousPeerToken === undefined)
+      delete process.env.STAND_TEST_HELPER_TOKEN;
+    else process.env.STAND_TEST_HELPER_TOKEN = previousPeerToken;
+  }
   const winnerKey = a.status === 202 ? key : secondKey;
   const componentId = a.status === 202 ? "api" : "api-alias";
   const duplicate = await createOperation(winner, componentId, winnerKey);

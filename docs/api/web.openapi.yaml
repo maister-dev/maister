@@ -40448,6 +40448,7 @@ components:
         - keyEnv
         - platformCredentialEnv
         - helperCredentialEnv
+        - helperCertificateSha256
         - enabled
         - components
       properties:
@@ -40480,6 +40481,10 @@ components:
         helperCredentialEnv:
           type: string
           pattern: ^env:[A-Z_][A-Z0-9_]{0,127}$
+        helperCertificateSha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+          description: SHA-256 fingerprint of the helper client certificate, without separators.
         enabled:
           type: boolean
         components:
@@ -40502,6 +40507,7 @@ components:
         - keyEnv
         - platformCredentialEnv
         - helperCredentialEnv
+        - helperCertificateSha256
         - enabled
         - components
         - expectedRevision
@@ -40535,6 +40541,10 @@ components:
         helperCredentialEnv:
           type: string
           pattern: ^env:[A-Z_][A-Z0-9_]{0,127}$
+        helperCertificateSha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+          description: SHA-256 fingerprint of the helper client certificate, without separators.
         enabled:
           type: boolean
         components:
