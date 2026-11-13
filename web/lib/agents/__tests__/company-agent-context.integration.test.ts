@@ -272,6 +272,7 @@ import { enableRevision } from "@/lib/flows/lifecycle";
 import { startMainAndBrainPostgresTestDb } from "@/test-support/pg-container";
 import { seedProjectRow } from "@/test-support/execution-host-seed";
 import { git, initRepo } from "@/test-support/git-fixture";
+import { addDetachedWorktree } from "@/lib/worktree";
 import { contentDigest } from "@/lib/evaluations/digest";
 import { claimBudgetTermination } from "@/lib/runs/budget-termination";
 import { claimCompanyStop } from "@/lib/runs/stop";
@@ -437,6 +438,13 @@ beforeAll(async () => {
   await writeFile(
     join(source, "maister-agents/repo-observer.md"),
     primarySource.replace("workspace: none", "workspace: repo_read"),
+  );
+  await writeFile(
+    join(source, "maister-agents/detached-retry-observer.md"),
+    primarySource.replace(
+      "workspace: none",
+      "workspace: repo_read\nworkspace_ref: main",
+    ),
   );
   await writeFile(
     join(source, "maister-agents/worktree-retry-observer.md"),
@@ -11758,7 +11766,7 @@ it("IT-CBC-03 preserves the original company event and its producing Run evidenc
   }
 });
 
-it.each(["none", "worktree", "repo_read"] as const)(
+it.each(["none", "worktree", "repo_read", "detached"] as const)(
   "IT-CBC-03 preserves an exact native project appointment through the existing retry sweep (%s)",
   async (workspace) => {
     const db: Db = database.db;
@@ -11800,6 +11808,7 @@ it.each(["none", "worktree", "repo_read"] as const)(
           none: "rah:wire-observer",
           worktree: "rah:worktree-retry-observer",
           repo_read: "rah:repo-observer",
+          detached: "rah:detached-retry-observer",
         }[workspace],
         runnerOverrideId: runnerId,
       },
@@ -11825,7 +11834,12 @@ it.each(["none", "worktree", "repo_read"] as const)(
       const [sourceRunId] = receipt.assignment.runIds;
 
       expect(sourceRunId).toBeDefined();
-      if (workspace === "repo_read") {
+      const originalReadCommit =
+        workspace === "repo_read" || workspace === "detached"
+          ? await git(repo, "rev-parse", "HEAD")
+          : null;
+
+      if (originalReadCommit) {
         await database.pool.query(
           "DELETE FROM execution_host_pressure WHERE execution_host_id=$1",
           [host.id],
@@ -11845,6 +11859,14 @@ it.each(["none", "worktree", "repo_read"] as const)(
         });
 
         try {
+          if (workspace === "detached")
+            await preparation.runEffect(() =>
+              addDetachedWorktree({
+                projectRepoPath: repo,
+                worktreePath: context.cwd,
+                committish: originalReadCommit,
+              }),
+            );
           const baseline = await captureOperationalBaseline(
             context.cwd,
             context.resourceKind,
@@ -11932,6 +11954,14 @@ it.each(["none", "worktree", "repo_read"] as const)(
         });
         await git(repo, "reset", "--hard", "HEAD^");
       }
+      if (workspace === "detached")
+        await git(
+          repo,
+          "commit",
+          "--allow-empty",
+          "-m",
+          "Advance detached checkout source ref",
+        );
       const request = {
         runnerId,
         requestKey: randomUUID(),
@@ -12074,6 +12104,58 @@ it.each(["none", "worktree", "repo_read"] as const)(
           )[0],
         ).toMatchObject({ status: "Failed" });
       }
+      if (workspace === "detached") {
+        await database.pool.query(
+          "DELETE FROM execution_host_pressure WHERE execution_host_id=$1",
+          [host.id],
+        );
+        expect(await tryStartRun(successor.runId!, { db })).toMatchObject({
+          started: true,
+        });
+        const observedCommit: { value: string | null } = { value: null };
+        const removeHook = fake.onCall("createSession", async (call) => {
+          if (call.envelope?.fence.runId !== successor.runId) return;
+          const [current] = await db
+            .select()
+            .from(runs)
+            .where(eq(runs.id, successor.runId!));
+          const context = await operationalWorkspace(db, current);
+
+          observedCommit.value = await git(context.cwd, "rev-parse", "HEAD");
+        });
+
+        try {
+          scriptAgentTurn(fake, {
+            text:
+              "```json maister:output\n" +
+              JSON.stringify(operationalSuccessFixture()) +
+              "\n```",
+            onPrompt: ({ sessionId }) => {
+              const session = fake.sessions.get(sessionId);
+
+              if (!session)
+                throw new Error(
+                  "The detached replacement session was not created",
+                );
+              fake.sessions.set(sessionId, {
+                ...session,
+                status: "exited",
+                exitCode: 0,
+                exitedAt: new Date().toISOString(),
+              });
+
+              return { stopReason: "end_turn", meta: null };
+            },
+          });
+          await startAgentSession(successor.runId!, {
+            db,
+            executionHosts: hosts,
+          });
+          expect(observedCommit.value).toBe(originalReadCommit);
+        } finally {
+          removeHook();
+        }
+      }
       await database.pool.query(
         "DELETE FROM project_members WHERE project_id=$1 AND user_id=$2",
         [project.id, userId],
@@ -12081,7 +12163,7 @@ it.each(["none", "worktree", "repo_read"] as const)(
       await expect(
         getAgentRetryReceipt(db, sourceRunId, retry.retryIntentId, userId),
       ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
-      if (!sourceWorkspace) {
+      if (!sourceWorkspace && workspace !== "detached") {
         const settle = await prepareUndispatchedAgentFailure(successor.runId!, {
           db,
           reason: "fixture_replacement_complete",
