@@ -87,7 +87,9 @@ test("E2 opens a result payload from the list and retains the selected graph add
     "href",
     `/api/runs/${fx.runId}/artifacts/${fx.implDiffArtifactId}/payload`,
   );
-  await expect(preview.getByText(/diff --git/)).toBeVisible();
+  await expect(preview.getByTestId("result-diff")).toContainText(
+    "export const x = 1;",
+  );
   await page.getByRole("link", { name: "Provenance graph" }).click();
   await expect(page.getByTestId("evidence-graph")).toBeVisible();
   await expect(page).toHaveURL(/evidenceView=graph/);
@@ -176,7 +178,9 @@ test("UX-03C/D evidence filters fit artifacts and the board readiness badge trac
   const payload = page.locator('[data-testid="artifact-payload"]');
 
   await expect(payload).toBeVisible();
-  await expect(payload).toContainText("diff --git");
+  await expect(payload.getByTestId("result-diff")).toContainText(
+    "export const x = 1;",
+  );
 
   // Close the modal (Escape) before navigating on.
   await page.keyboard.press("Escape");

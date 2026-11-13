@@ -1,6 +1,7 @@
 "use client";
 
 import type { EvidenceGraphLabels } from "./evidence-graph";
+import type { RunResultsAndChecks } from "@/lib/queries/run-results-and-checks";
 import type { EvidenceGraph as EvidenceGraphData } from "@/lib/queries/evidence-graph";
 import type { ReactElement } from "react";
 
@@ -15,12 +16,21 @@ export interface EvidenceGraphSectionProps {
   runId: string;
   graph: EvidenceGraphData;
   labels: EvidenceGraphLabels;
+  results: RunResultsAndChecks;
 }
 
 export function EvidenceGraphSection({
   runId,
   graph,
   labels,
+  results,
 }: EvidenceGraphSectionProps): ReactElement {
-  return <EvidenceGraph graph={graph} labels={labels} runId={runId} />;
+  return (
+    <EvidenceGraph
+      graph={graph}
+      labels={labels}
+      results={results}
+      runId={runId}
+    />
+  );
 }

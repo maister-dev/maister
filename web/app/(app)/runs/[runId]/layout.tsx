@@ -123,7 +123,6 @@ import {
   type ReviewThreadCounts,
 } from "@/lib/review-comments/run-diff-source";
 import { PENDING_HITL_RUN_STATUS } from "@/lib/services/hitl";
-import { readRunEvidence } from "@/lib/queries/evidence-graph";
 import { presentationLayout } from "@/lib/flows/graph/presentation-layout";
 import { buildGraphTopology } from "@/lib/queries/flow-graph-view";
 import { getRunNodeStatuses } from "@/lib/queries/run-node-status";
@@ -160,7 +159,10 @@ import {
   computeDirtySummary,
   type DirtySummary,
 } from "@/lib/runs/dirty-resolution";
-import { buildFlowRunResultReadModel } from "@/lib/runs/flow-result-read-model";
+import {
+  buildFlowRunResultReadModel,
+  readOptionalRunEvidence,
+} from "@/lib/runs/flow-result-read-model";
 import { getRunChangeSummary } from "@/lib/runs/change-summary";
 import {
   deriveInspectorActions,
@@ -391,7 +393,7 @@ export default async function RunDetailLayout({
   const settings = await getRunSettings(runId);
   const capabilityProfiles = await getRunCapabilityProfiles(runId);
   const resolvedSet = await getRunResolvedCapabilitySet(runId);
-  const evidence = await readRunEvidence(runId);
+  const evidence = await readOptionalRunEvidence(runId, detail.projectId);
   const verification =
     detail.runKind === "flow"
       ? await getFlowRunVerification(runId, detail.projectId)
@@ -471,9 +473,6 @@ export default async function RunDetailLayout({
     noMatches: tEvidence("noMatches"),
     clearFilters: tEvidence("clearFilters"),
     openPayload: tEvidence("openPayload"),
-    payloadGone: tEvidence("payloadGone"),
-    payloadError: tEvidence("payloadError"),
-    payloadLoading: tEvidence("payloadLoading"),
     close: tEvidence("close"),
     filterNode: tEvidence("filterNode"),
     filterKind: tEvidence("filterKind"),
@@ -1007,7 +1006,7 @@ export default async function RunDetailLayout({
         }
       : null,
     timeline,
-    evidence: evidence.graph,
+    evidence: evidence?.graph ?? { nodes: [], edges: [] },
     readiness: verification?.rollup ?? null,
     cost: costSummary,
     settings,
@@ -2255,13 +2254,19 @@ export default async function RunDetailLayout({
                   />
                 }
                 evidence={
-                  <RunResultsAndChecksView
-                    graph={evidence.graph}
-                    graphLabels={evidenceLabels}
-                    outcome={outcomeSummary}
-                    results={evidence.results}
-                    runId={detail.runId}
-                  />
+                  evidence ? (
+                    <RunResultsAndChecksView
+                      graph={evidence.graph}
+                      graphLabels={evidenceLabels}
+                      outcome={outcomeSummary}
+                      results={evidence.results}
+                      runId={detail.runId}
+                    />
+                  ) : (
+                    <p className="p-3 text-sm text-mute" role="status">
+                      {tEvidence("results.unavailable")}
+                    </p>
+                  )
                 }
                 filesPane={children}
                 filesTree={

@@ -6,7 +6,7 @@ import { useRef, useSyncExternalStore } from "react";
 import { useSearchParams } from "next/navigation";
 import clsx from "clsx";
 
-import { useModalFocusTrap } from "@/components/feedback/use-modal-focus-trap";
+import { useModalA11y } from "@/components/use-modal-a11y";
 import { buildRunHref, parseRunQueryState } from "@/lib/runs/run-query-state";
 import { useRunPeek } from "@/components/runs/run-peek-controller";
 import { RunPeekPanel } from "@/components/runs/run-peek-panel";
@@ -110,7 +110,7 @@ export function RunShell({
     window.history.pushState(null, "", `${address}${hash}`);
   }
 
-  useModalFocusTrap(dialog, () => setInspectorOpen(false), overlay);
+  useModalA11y(dialog, () => setInspectorOpen(false), overlay);
 
   return (
     <section
