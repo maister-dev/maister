@@ -72,7 +72,7 @@ test.describe("Manual task admission through the real browser and controlled pro
     }
   });
 
-  test("L1 closes a one-run runner draft without writing task or project defaults", async ({
+  test("L1 keeps one-run drafts independent of project Save and Clear", async ({
     page,
   }) => {
     const task = await createTask(
@@ -136,6 +136,74 @@ test.describe("Manual task admission through the real browser and controlled pro
           ).rows,
       ),
     ).toEqual([]);
+
+    await chooseLaunchOption(
+      page,
+      reopened,
+      /Runner \/ Model/,
+      new RegExp(fixture.failedRunnerId),
+    );
+    await expect(
+      reopened.getByRole("button", { name: "Use configured runners" }),
+    ).toBeVisible();
+    const mappingButton = reopened.getByRole("button", {
+      name: /^Save project runner mapping/,
+    });
+    const mapping = () =>
+      withE2EDb(
+        async (pool) =>
+          (
+            await pool.query(
+              "SELECT flow_revision_id,slot_key,mapped_runner_id,status FROM flow_runner_remaps WHERE project_id=$1",
+              [fixture.projectId],
+            )
+          ).rows,
+      );
+
+    const mappingPicker = reopened.getByRole("button", {
+      name: /Runner for default$/,
+    });
+    const mappingOptions = page.getByRole("listbox", {
+      name: /Runner for default/,
+    });
+
+    await mappingPicker.click();
+    await mappingOptions
+      .getByRole("option", { name: new RegExp(fixture.runnerId) })
+      .click();
+    expect(await mapping()).toEqual([]);
+    await mappingButton.click();
+    await expect.poll(mapping).toEqual([
+      {
+        flow_revision_id: fixture.revisionId,
+        slot_key: "session:default",
+        mapped_runner_id: fixture.runnerId,
+        status: "Mapped",
+      },
+    ]);
+    await expect(
+      reopened.getByRole("button", { name: "Use configured runners" }),
+    ).toBeVisible();
+    await mappingPicker.click();
+    await mappingOptions.getByRole("option", { name: /^Clear mapping/ }).click();
+    await mappingButton.click();
+    await expect.poll(mapping).toEqual([
+      {
+        flow_revision_id: fixture.revisionId,
+        slot_key: "session:default",
+        mapped_runner_id: null,
+        status: "Pending",
+      },
+    ]);
+    await expect(
+      reopened.getByRole("button", { name: "Use configured runners" }),
+    ).toBeVisible();
+    expect(await launchRows(task.taskId)).toEqual([]);
+    await withE2EDb((pool) =>
+      pool.query("DELETE FROM flow_runner_remaps WHERE project_id=$1", [
+        fixture.projectId,
+      ]),
+    );
   });
 
   test("LA01/02/10/12: configured manual Launch without qualification survives a lost receipt and delivers a checked, human-reviewed PR (controlled provider)", async ({
