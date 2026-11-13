@@ -1529,6 +1529,20 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
         effectState: "unknown",
         disposition: "pending",
       });
+      readTarget.mockRejectedValueOnce(
+        new MaisterError(
+          "EXECUTOR_UNAVAILABLE",
+          "Fixture target is unavailable",
+        ),
+      );
+      expect((await recover(operation.revision + 2)).status).toBe(503);
+      await expect(
+        getStandOperation(db, userId, operation.id),
+      ).resolves.toMatchObject({
+        effectState: "unknown",
+        disposition: "pending",
+      });
+      expect(sendRestart).toHaveBeenCalledOnce();
       await expect(recoverInterruptedStandOperations(db)).resolves.toEqual({
         scanned: 0,
         settled: 0,
@@ -1629,10 +1643,10 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
       expect(reconciled.status).toBe(200);
       const adoptedEffect = await reconciled.json();
 
-      expect(readTarget).toHaveBeenCalledTimes(3);
+      expect(readTarget).toHaveBeenCalledTimes(4);
       expect((await recover(operation.revision + 2)).status).toBe(409);
       expect((await recover(adoptedEffect.revision)).status).toBe(200);
-      expect(readTarget).toHaveBeenCalledTimes(3);
+      expect(readTarget).toHaveBeenCalledTimes(4);
 
       expect(adoptedEffect).toMatchObject({
         effectState: "confirmed_applied",

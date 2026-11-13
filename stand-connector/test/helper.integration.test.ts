@@ -52,7 +52,7 @@ test("IT-CBO-02 admits the exact configured restart over mTLS and returns the or
     .replaceAll(":", "")
     .toLowerCase();
   let effects = 0;
-  let healthy = true;
+  let serviceState: "active" | "failed" | "unknown" = "active";
   const helper = createStandHelper({
     tls: { cert, key, ca: cert },
     platformCertificateSha256: fingerprint,
@@ -87,7 +87,7 @@ test("IT-CBO-02 admits the exact configured restart over mTLS and returns the or
     manager: {
       inspect: async () => ({
         invocationId: effects === 0 ? "a".repeat(32) : "b".repeat(32),
-        state: healthy ? "active" : "failed",
+        state: serviceState,
       }),
       restart: async () => {
         effects++;
@@ -270,7 +270,7 @@ test("IT-CBO-02 admits the exact configured restart over mTLS and returns the or
   assert.equal(observed.nonce, verification.verificationNonce);
   assert.ok(observed.targetSequence > JSON.parse(replay.body).sequence);
   assert.equal((await verify(verification)).status, 409);
-  healthy = false;
+  serviceState = "failed";
   const later = await verify({
     ...verification,
     verificationNonce: randomUUID(),
@@ -278,6 +278,14 @@ test("IT-CBO-02 admits the exact configured restart over mTLS and returns the or
 
   assert.equal(later.status, 200);
   assert.equal(JSON.parse(later.body).state, "unhealthy");
+  serviceState = "unknown";
+  const inconclusive = await verify({
+    ...verification,
+    verificationNonce: randomUUID(),
+  });
+
+  assert.equal(inconclusive.status, 200);
+  assert.equal(JSON.parse(inconclusive.body).state, "inconclusive");
   assert.equal(
     JSON.parse((await readReceipt(2)).body).effectState,
     "confirmed_applied",
