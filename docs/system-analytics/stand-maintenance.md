@@ -194,8 +194,11 @@ A session operator with current target read and recovery grants and access to
 the retained assignment input can record a hold at the exact unknown restart
 revision. The transaction retains the decision and keeps the resource claim
 unresolved, including after assignment cancellation. An empty inspection list
-is valid when the helper is unavailable. Successor authorization requires
-authenticated inspections.
+is valid when the helper is unavailable. The operator can request an
+authenticated inspection at the exact unknown revision. The retained
+observation records current service state, target sequence, and the
+reconciliation read epoch. It leaves the effect and verification states
+unchanged. Successor authorization requires authenticated inspections.
 
 | Window | Persisted state | Recovery and exclusion |
 | --- | --- | --- |

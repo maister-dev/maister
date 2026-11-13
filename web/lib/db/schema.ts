@@ -11002,6 +11002,8 @@ export const standOperationObservations = pgTable(
     observedState: text("observed_state", {
       enum: ["active", "inactive", "failed", "unknown"],
     }).notNull(),
+    recoveryRevision: integer("recovery_revision"),
+    recoveryReadEpoch: bigint("recovery_read_epoch", { mode: "number" }),
     capturedAt: timestamp("captured_at", { withTimezone: true }).notNull(),
     receivedAt: timestamp("received_at", { withTimezone: true })
       .notNull()
@@ -11032,6 +11034,11 @@ export const standOperationObservations = pgTable(
       sql`${t.targetSequence} BETWEEN 1 AND 9007199254740991
         AND (${t.invocationId} IS NULL OR ${t.invocationId} ~ '^[A-Za-z0-9._:-]{1,128}$')
         AND ${t.observedState} IN ('active','inactive','failed','unknown')`,
+    ),
+    recoveryWitness: check(
+      "stand_operation_observations_recovery_check",
+      sql`((${t.recoveryRevision} IS NULL AND ${t.recoveryReadEpoch} IS NULL)
+        OR (${t.recoveryRevision}>0 AND ${t.recoveryReadEpoch} BETWEEN 1 AND 9007199254740991)) IS TRUE`,
     ),
   }),
 );

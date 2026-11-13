@@ -3454,12 +3454,15 @@ table stand_operation_observations {
   target_sequence bigint [not null]
   invocation_id text
   observed_state text [not null]
+  recovery_revision integer
+  recovery_read_epoch bigint
   captured_at "timestamp with time zone" [not null]
   received_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
 
     (operation_id, target_sequence) [name: 'stand_operation_observations_sequence_unique', unique]
+
 
   }
 }

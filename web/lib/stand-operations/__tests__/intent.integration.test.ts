@@ -1399,6 +1399,70 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
         settled: 0,
         pending: 0,
       });
+      const { POST: inspectRecovery } =
+        await import("@/app/api/stand-operations/[operationId]/recovery-inspections/route");
+      const inspect = (expectedRevision: number) =>
+        inspectRecovery(
+          new NextRequest(
+            `http://localhost/api/stand-operations/${operation.id}/recovery-inspections`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Origin: "http://localhost",
+              },
+              body: JSON.stringify({ expectedRevision }),
+            },
+          ),
+          { params: Promise.resolve({ operationId: operation.id }) },
+        );
+      const inspectTarget = vi.fn(
+        async (
+          selector: Parameters<typeof fake.transport.observeStandOperation>[0],
+        ) => {
+          await authorize({
+            ...body,
+            ownerEpoch: selector.ownerEpoch,
+            purpose: "reconcile",
+            nonce: randomUUID(),
+          });
+
+          return {
+            operationId: selector.operationId,
+            targetIncarnation: selector.targetIncarnation,
+            resourceKey: selector.resourceKey,
+            requestDigest: selector.requestDigest,
+            sequence: 3,
+            invocationId: "b".repeat(32),
+            state: "active",
+            capturedAt: new Date().toISOString(),
+          };
+        },
+      );
+
+      setDefaultTransportForTests({
+        ...fake.transport,
+        readStandReceipt: readTarget,
+        observeStandOperation: inspectTarget,
+      });
+      expect((await inspect(operation.revision + 1)).status).toBe(409);
+      expect(inspectTarget).not.toHaveBeenCalled();
+      const inspection = await inspect(operation.revision + 2);
+
+      expect(inspection.status).toBe(201);
+      expect(await inspection.json()).toMatchObject({
+        id: expect.any(String),
+        operationId: operation.id,
+        operationRevision: operation.revision + 2,
+        invocationId: "b".repeat(32),
+        observedState: "active",
+      });
+      await expect(
+        getStandOperation(db, userId, operation.id),
+      ).resolves.toMatchObject({
+        effectState: "unknown",
+        verificationState: "not_checked",
+      });
       const reconciled = await recover(operation.revision + 2);
 
       expect(reconciled.status).toBe(200);

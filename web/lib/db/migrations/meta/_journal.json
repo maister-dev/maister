@@ -2255,6 +2255,20 @@
       "when": 1794606478028,
       "tag": "0325_stand_read_execution_token",
       "breakpoints": true
+    },
+    {
+      "idx": 326,
+      "version": "7",
+      "when": 1794606478029,
+      "tag": "0326_stand_recovery_inspections",
+      "breakpoints": true
+    },
+    {
+      "idx": 327,
+      "version": "7",
+      "when": 1794606478030,
+      "tag": "0327_stand_recovery_inspection_guards",
+      "breakpoints": true
     }
   ]
 }

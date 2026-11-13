@@ -22229,6 +22229,59 @@ paths:
           $ref: "#/components/responses/CBFailure"
         "503":
           $ref: "#/components/responses/CBFailure"
+  /api/stand-operations/{operationId}/recovery-inspections:
+    post:
+      operationId: standOperationRecoveryInspection
+      summary: Inspect the current service state for an unknown restart
+      description: A same-origin session with current target recovery, read and retained assignment source
+        access records the authenticated target observation at the exact unknown operation revision.
+        The observation does not change the historical effect or verify a restart.
+      x-implementation-status: Implemented
+      x-required-scope: targets:recover
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedRevision]
+              properties:
+                expectedRevision:
+                  type: integer
+                  minimum: 1
+                  maximum: 2147483647
+      responses:
+        "201":
+          description: Authenticated observation retained for the unknown operation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBRecoveryInspection"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "422":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
   /api/stand-operations/{operationId}/recovery-decisions:
     post:
       operationId: standOperationRecovery
@@ -40881,6 +40934,40 @@ components:
           minLength: 1
           maxLength: 128
         approvedAt:
+          type: string
+          format: date-time
+    CBRecoveryInspection:
+      type: object
+      additionalProperties: false
+      required: [id, operationId, operationRevision, targetIncarnation, invocationId, observedState, targetSequence, capturedAt, receivedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        operationId:
+          type: string
+          format: uuid
+        operationRevision:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        targetIncarnation:
+          type: string
+          format: uuid
+        invocationId:
+          type: string
+          nullable: true
+          pattern: "^[a-f0-9]{32}$"
+        observedState:
+          enum: [active, inactive, failed, unknown]
+        targetSequence:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        capturedAt:
+          type: string
+          format: date-time
+        receivedAt:
           type: string
           format: date-time
     CBRecoveryDecision:

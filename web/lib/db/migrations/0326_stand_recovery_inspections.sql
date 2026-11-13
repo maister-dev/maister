@@ -1,0 +1,4 @@
+ALTER TABLE "stand_operation_observations" ADD COLUMN "recovery_revision" integer;--> statement-breakpoint
+ALTER TABLE "stand_operation_observations" ADD COLUMN "recovery_read_epoch" bigint;--> statement-breakpoint
+ALTER TABLE "stand_operation_observations" ADD CONSTRAINT "stand_operation_observations_recovery_check" CHECK ((("stand_operation_observations"."recovery_revision" IS NULL AND "stand_operation_observations"."recovery_read_epoch" IS NULL)
+        OR ("stand_operation_observations"."recovery_revision">0 AND "stand_operation_observations"."recovery_read_epoch" BETWEEN 1 AND 9007199254740991)) IS TRUE);
