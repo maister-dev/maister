@@ -6050,6 +6050,7 @@
       "linked": "Связано",
       "unsupported": "Неподдерживаемое действие",
       "receipts": "Результаты действий",
+      "timestamp": "{time} UTC",
       "olderMessages": "Загрузить предыдущие сообщения",
       "kind": {
         "relation_add": "Связь добавлена",

@@ -18358,7 +18358,7 @@ paths:
     get:
       tags: [librarian]
       operationId: listLibrarianActionHistory
-      summary: (Designed) Read a page of the session owner's actions, tasks or attention
+      summary: Read a page of the session owner's actions, tasks or attention
       description: |
         No-store. The read never creates a conversation. Authorization is
         checked per target on every read. The cursor carries no authority.
@@ -18389,6 +18389,8 @@ paths:
         "409":
           description: Cursor belongs to an earlier history generation.
         "422": { $ref: "#/components/responses/Config" }
+        "500":
+          description: Unexpected read failure.
         "503":
           description: History could not be read.
 
@@ -31924,7 +31926,35 @@ components:
           type: array
           maxItems: 2
           items: { $ref: "#/components/schemas/LibrarianHistoryTarget" }
-        confirmation: { $ref: "#/components/schemas/LibrarianCard" }
+        confirmation: { $ref: "#/components/schemas/LibrarianHistoryConfirmation" }
+    LibrarianHistoryConfirmation:
+      type: object
+      additionalProperties: false
+      description: An authorized pending decision projected for the owner. Other history entries omit this field.
+      required: [id, kind, status, action, available, target, targetRevision, payload, currentPrompt, proposedPrompt, hitlPrompt, runBranch, expiresAt]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [statement_proposal, confirmation, memory_suggestion] }
+        status: { type: string, enum: [pending] }
+        action: { type: string, enum: [statement_accept, memory_suggest, hitl_respond, run_promote, run_discard] }
+        available: { type: boolean, enum: [true] }
+        target:
+          type: object
+          additionalProperties: false
+          properties:
+            runId: { type: string }
+        targetRevision: { type: string, nullable: true }
+        payload:
+          type: object
+          description: The validated action-specific proposal for the authorized target.
+          required: [action]
+          properties:
+            action: { type: string, enum: [statement_accept, memory_suggest, hitl_respond, run_promote, run_discard] }
+        currentPrompt: { type: string, nullable: true }
+        proposedPrompt: { type: string, nullable: true }
+        hitlPrompt: { type: string, nullable: true }
+        runBranch: { type: string, nullable: true }
+        expiresAt: { type: string, format: date-time }
     LibrarianActionHistoryPage:
       type: object
       additionalProperties: false

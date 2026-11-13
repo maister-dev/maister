@@ -1324,18 +1324,15 @@ test("E2E-L-10 E2E-TST-06: forget removes a memory and clear deletes private his
     await second.goto("/");
     await second.getByTestId("librarian-trigger").click();
     const otherPanel = second.getByTestId("librarian-panel");
+    const cachedReply = otherPanel.getByText(/^Task before clear /);
 
-    await expect(
-      otherPanel.getByText("Task before clear", { exact: true }),
-    ).toBeVisible();
+    await expect(cachedReply).toBeVisible();
     const cleared = await page.request.post("/api/librarian/history/clear", {
       data: { previewDigest: preview.previewDigest },
     });
 
     expect(cleared.ok()).toBe(true);
-    await expect(
-      otherPanel.getByText("Task before clear", { exact: true }),
-    ).toHaveCount(0);
+    await expect(cachedReply).toHaveCount(0);
     await otherPanel.getByRole("button", { name: "Action history" }).click();
     await otherPanel
       .getByRole("button", { name: "Related tasks", exact: true })

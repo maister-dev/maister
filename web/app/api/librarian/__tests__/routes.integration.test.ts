@@ -2,10 +2,13 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { Db } from "@/lib/execution-host/db";
 
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 
+import Ajv from "ajv";
 import { sql } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { parse } from "yaml";
 
 import { MaisterError } from "@/lib/errors";
 import { submitOwnerMessage } from "@/lib/librarian/admission";
@@ -231,6 +234,65 @@ it("B1 counts unresolved work past the page cap and removes revoked target ident
   expect(JSON.stringify(second)).not.toContain(taskId);
   expect(JSON.stringify(second)).not.toContain(project.slug);
   expect(JSON.stringify(second)).not.toContain("Private target");
+});
+
+it("B1 returns the documented confirmation shape for an eligible pending card", async () => {
+  const owner = await seedActiveUser(db);
+
+  session = { id: owner, role: "member" };
+  const conversation = await routes.conversation.GET(
+    json("/api/librarian/conversation", "GET"),
+  );
+  const initial = await conversation.json();
+  const cardId = randomUUID();
+
+  await database.pool.query(
+    `INSERT INTO librarian_cards(id,conversation_id,segment_id,kind,status,target,payload,payload_digest,requires_owner,expires_at)
+     VALUES($1,$2,$3,'memory_suggestion','pending','{}',$4,'fixture',true,now() + interval '1 hour')`,
+    [
+      cardId,
+      initial.conversation.id,
+      initial.segment.id,
+      {
+        action: "memory_suggest",
+        memory: {
+          kind: "preference",
+          scope: "general",
+          content: "Keep replies brief",
+        },
+      },
+    ],
+  );
+  const { GET } = await import("@/app/api/librarian/history/actions/route");
+  const response = await GET(
+    json("/api/librarian/history/actions?collection=attention", "GET"),
+  );
+  const result = await response.json();
+  const spec = parse(await readFile("../docs/api/web.openapi.yaml", "utf8"));
+  const ajv = new Ajv({ strict: false, validateFormats: false });
+
+  ajv.addSchema(spec, "maister-openapi");
+  const validate = ajv.compile({
+    $ref: "maister-openapi#/components/schemas/LibrarianActionHistoryPage",
+  });
+
+  expect(response.status).toBe(200);
+  expect(result.items[0]).toMatchObject({
+    id: cardId,
+    confirmation: { action: "memory_suggest", available: true },
+  });
+  expect(validate(result), JSON.stringify(validate.errors)).toBe(true);
+  await database.pool.query(
+    "UPDATE librarian_cards SET expires_at=now() - interval '1 second' WHERE id=$1",
+    [cardId],
+  );
+  expect(
+    await (
+      await GET(
+        json("/api/librarian/history/actions?collection=attention", "GET"),
+      )
+    ).json(),
+  ).toMatchObject({ items: [] });
 });
 
 describe("IT-LAU-01: the owner comes from the session, never the request", () => {

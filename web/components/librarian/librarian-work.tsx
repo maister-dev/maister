@@ -183,11 +183,18 @@ export function LibrarianReceipt({
   item: HistoryItem;
 }): ReactElement {
   const t = useTranslations("librarian");
+  const locale = useLocale();
   const operationKey = `operationKind_${item.kind}`;
   const cardKey = `cardAction_${item.kind}`;
   const relationKey = `history.kind.${item.kind}`;
   const statusKey = `operationStatus_${item.outcome}`;
   const cardStatusKey = `cardStatus_${item.outcome}`;
+  const timestamp = item.settledAt ?? item.createdAt;
+  const time = new Intl.DateTimeFormat(locale, {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "UTC",
+  }).format(new Date(timestamp));
 
   return (
     <li
@@ -212,6 +219,9 @@ export function LibrarianReceipt({
               : t("history.linked")}
         </span>
       </div>
+      <time className="text-mute" dateTime={timestamp}>
+        {t("history.timestamp", { time })}
+      </time>
       <ul className="flex flex-wrap gap-x-2 text-mute">
         {item.targets.map((target, index) => (
           <li key={index} className="min-w-0 break-words">

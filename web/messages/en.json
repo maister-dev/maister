@@ -6050,6 +6050,7 @@
       "linked": "Linked",
       "unsupported": "Unsupported action",
       "receipts": "Action receipts",
+      "timestamp": "{time} UTC",
       "olderMessages": "Load earlier messages",
       "kind": {
         "relation_add": "Relation added",
