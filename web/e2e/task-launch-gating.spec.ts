@@ -99,6 +99,9 @@ test.describe("Manual task admission through the real browser and controlled pro
     await expect(
       dialog.getByRole("button", { name: "Use configured runners" }),
     ).toBeVisible();
+    await expect(
+      dialog.getByRole("button", { name: "Schedule run" }),
+    ).toBeDisabled();
     await dialog
       .getByRole("button", { name: "Use configured runners" })
       .focus();
@@ -109,6 +112,8 @@ test.describe("Manual task admission through the real browser and controlled pro
     await expect(
       reopened.getByRole("button", { name: "Use configured runners" }),
     ).toHaveCount(0);
+    await reopened.getByRole("button", { name: "Schedule run" }).click();
+    await expect(reopened.getByLabel("Local date and time")).toBeVisible();
     expect(await launchRows(task.taskId)).toEqual([]);
     expect(
       await withE2EDb(
