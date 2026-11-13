@@ -319,6 +319,10 @@ company coordinator whose own parent has terminated settles through the company
 Flow finalizer after its children. The terminal transaction checks the retained
 park and the parent's current status, records a company-scoped cause, revokes
 the Run's credentials and keeps completed results and acceptance receipts.
+The wake transaction checks the immediate parent and assignment root under
+shared locks before reserving capacity. A terminal ancestor or a retained
+cancellation or budget stop blocks the wake. If an ancestor is locked by
+another transaction, the wake yields so reconciliation can reconsider it.
 
 | Run status | Agent child after owner loss | Flow child after owner loss | Coordinator recovery |
 | --- | --- | --- | --- |

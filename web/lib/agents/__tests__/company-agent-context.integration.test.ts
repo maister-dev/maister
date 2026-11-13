@@ -91,6 +91,7 @@ import { startAgentContinuationWorker } from "../continuation-worker";
 import { getCompanyAgentRunHistory } from "../activity-queries";
 
 import { runReconcileSweep } from "@/lib/reconcile";
+import { wakeParkedCoordinator } from "@/lib/flows/graph/coordinator-wake";
 import { buildOrchestratorResumeConsumer } from "@/lib/domain-events/orchestrator-resume";
 import { submitProjectManualAssignment } from "@/lib/specialist-assignments/project-manual-intake";
 import {
@@ -13920,6 +13921,22 @@ async function qualifyCompanyCooperation(
       ).resolves.toMatchObject({
         started: false,
       });
+      await db.transaction(async (tx) => {
+        await tx.execute(
+          sql`UPDATE runs SET failed_child_wake_at=clock_timestamp() WHERE id=${parkedGraphRunId}`,
+        );
+      });
+      const resumeFlow = vi.fn();
+      const wake = await wakeParkedCoordinator({
+        db,
+        parentRunId: parkedGraphRunId!,
+        cause: "settled_child",
+        allowFailedOrchestratorChild: true,
+        resumeFlow,
+      });
+
+      expect(wake.kind).toBe("skipped");
+      expect(resumeFlow).not.toHaveBeenCalled();
       await prepared.afterCommit(terminal);
       const settled = await runReconcileSweep({ db, executionHosts: hosts });
       const repeated = await runReconcileSweep({ db, executionHosts: hosts });

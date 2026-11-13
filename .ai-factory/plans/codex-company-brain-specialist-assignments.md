@@ -772,6 +772,8 @@ Phase exit: full owning suites green and the actual scheduler/domain-event claim
 
   T30 parent interruption checkpoint (2026-11-13). A nested queued agent was eligible for promotion after its assignment root crashed. The scheduler now fences that retained work on the actual root as well as the immediate parent. The next RED exposed the parked Flow's ownerless project crash event. The company Flow finalizer now settles the exact orphaned park with a company event after its children, current parent status validation and credential retirement. The two composed cooperation cases cover budget teardown and a lost parent. The full native agent, Flow, budget and reconcile suites passed 250 tests on `3c933eedd`.
 
+  T30 late wake checkpoint (2026-11-13). A failed-child wake recorded after the assignment root had already terminated could still acquire a placement for the parked nested coordinator. The wake transaction now checks the retained parent and root before reserving capacity. It yields while an ancestor is locked and refuses a terminal ancestor, pending cancellation or budget stop. The two composed PostgreSQL regressions pass on the final change. The three owning suites passed 50 tests before the final lock adjustment, and TypeScript and changed-file lint pass.
+
 Phase exit: full owning suites green; no new orchestration engine, attempt ledger or capacity bypass. Explicit adversarial review of authority, admission, event ordering and every resulting fix cycle.
 
 ### Phase 7 — Narrow stand connector, durable operations and deployment

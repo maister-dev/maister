@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { ExecutionAssignment, ExecutionHost } from "@/lib/db/schema";
+import type { ExecutionAssignment, ExecutionHost, Run } from "@/lib/db/schema";
 import type {
   PreparedPermissionHandoff,
   PreparedUndeliveredPermission,
@@ -26,6 +26,7 @@ import {
 } from "@/lib/flows/graph/gate-permission-resume";
 import { RELEASED_LIFECYCLE_CLAIM } from "@/lib/runs/lifecycle-claim";
 import { currentBudgetTermination } from "@/lib/runs/budget-termination";
+import { isTerminalRunStatus } from "@/lib/runs/run-status-sets";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { closedAnswerResponse } from "@/lib/hitl-closed-answer";
@@ -508,11 +509,69 @@ export async function markResumedFromWait(
     async (tx: Db): Promise<StateTransitionResult> => {
       await takeSchedulerLock(tx);
       if (opts.expectedCoordinator) {
+        const [owner]: Pick<Run, "companyId" | "parentRunId" | "rootRunId">[] =
+          await tx
+            .select({
+              companyId: runs.companyId,
+              parentRunId: runs.parentRunId,
+              rootRunId: runs.rootRunId,
+            })
+            .from(runs)
+            .where(eq(runs.id, runId));
+
+        if (owner?.companyId && owner.parentRunId) {
+          const ancestorIds = [
+            ...new Set<string>([
+              owner.parentRunId,
+              ...(owner.rootRunId ? [owner.rootRunId] : []),
+            ]),
+          ];
+          const ancestors: Array<
+            Parameters<typeof currentBudgetTermination>[1] & {
+              status: string;
+              stop: Run["companyCancellationIntent"];
+            }
+          > = await tx
+            .select({
+              id: runs.id,
+              status: runs.status,
+              stop: runs.companyCancellationIntent,
+              budgetState: runs.budgetState,
+              executionAssignmentId: runs.executionAssignmentId,
+              currentStepId: runs.currentStepId,
+              flowDriverToken: runs.flowDriverToken,
+            })
+            .from(runs)
+            .where(inArray(runs.id, ancestorIds))
+            .orderBy(
+              sql`CASE WHEN ${runs.id}=${owner.rootRunId} THEN 0 ELSE 1 END`,
+            )
+            // A terminal writer may hold an ancestor while settling a child.
+            // Yield the wake instead of waiting while holding the scheduler lock.
+            .for("share", { skipLocked: true });
+
+          if (
+            ancestors.length !== ancestorIds.length ||
+            ancestors.some(
+              ({ status, stop }) =>
+                isTerminalRunStatus(status) || stop !== null,
+            )
+          )
+            return { ok: false, reason: "status-guard-mismatch" };
+          for (const ancestor of ancestors)
+            if (await currentBudgetTermination(tx, ancestor))
+              return { ok: false, reason: "status-guard-mismatch" };
+        }
         const [current] = await tx
           .select({
+            id: runs.id,
             status: runs.status,
             currentStepId: runs.currentStepId,
             failedChildWakeAt: runs.failedChildWakeAt,
+            companyCancellationIntent: runs.companyCancellationIntent,
+            executionAssignmentId: runs.executionAssignmentId,
+            budgetState: runs.budgetState,
+            flowDriverToken: runs.flowDriverToken,
           })
           .from(runs)
           .where(eq(runs.id, runId))
@@ -536,6 +595,8 @@ export async function markResumedFromWait(
         if (
           current?.status !== "WaitingOnChildren" ||
           current.currentStepId !== opts.expectedCoordinator.nodeId ||
+          current.companyCancellationIntent ||
+          (await currentBudgetTermination(tx, current)) ||
           attempt?.id !== opts.expectedCoordinator.nodeAttemptId ||
           attempt.status !== "NeedsInput"
         )
