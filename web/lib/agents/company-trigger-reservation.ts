@@ -6,6 +6,7 @@ import type {
   CompanySpecialistContext,
 } from "./company-agent-context";
 import type { CompanyFlowBindingRevision } from "./company-flow-binding-types";
+import type { Run } from "@/lib/db/schema";
 
 import { sql } from "drizzle-orm";
 import { z } from "zod";
@@ -17,6 +18,7 @@ import { resolveCompanyEventChainDepth } from "./chain-depth";
 import { retryRefusal } from "./retry-guards";
 import { assertCompanyRunReadAccessInTransaction } from "./company-run-read-access";
 
+import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import { MaisterError } from "@/lib/errors";
 import { contentDigest } from "@/lib/evaluations/digest";
 
@@ -88,7 +90,7 @@ export async function companyReplacementTriggerSource(
   tx: SqlTransaction,
   sourceRunId: string,
   userId: string,
-  triggerSource: CompanyAgentContextInput["triggerSource"],
+  triggerSource: Run["triggerSource"],
 ): Promise<Omit<
   Awaited<ReturnType<typeof assertCompanyTriggerReservation>>,
   "runId"
@@ -97,6 +99,26 @@ export async function companyReplacementTriggerSource(
     return authorizeCompanyCronReplacementSource(tx, sourceRunId, userId);
   if (triggerSource === "domain_event")
     return authorizeCompanyEventReplacementSource(tx, sourceRunId, userId);
+  if (triggerSource === "webhook") {
+    const [witness] = (
+      await tx.execute(
+        sql`SELECT company_webhook_retry_source_owner(${sourceRunId},${userId}) AS company_id`,
+      )
+    ).rows;
+
+    if (typeof witness?.company_id !== "string")
+      throw retryRefusal("retry_context_changed");
+    await authorizeCompanyUserAction(
+      tx,
+      userId,
+      witness.company_id,
+      "assignments:submit",
+    );
+
+    return null;
+  }
+  if (triggerSource !== "manual")
+    throw retryRefusal("retry_source_unsupported");
 
   return null;
 }

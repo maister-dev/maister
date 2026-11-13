@@ -82,10 +82,7 @@ export async function loadCompanyAgentSessionContext(
       owner.companyId,
       "assignments:recover",
     );
-  if (
-    run.retryOfRunId &&
-    (run.triggerSource === "cron" || run.triggerSource === "domain_event")
-  )
+  if (run.retryOfRunId)
     await companyReplacementTriggerSource(
       tx,
       run.retryOfRunId,

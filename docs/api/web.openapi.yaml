@@ -621,6 +621,8 @@ paths:
         request snapshot. The schedule must still be enabled at the captured revision.
         A company event replacement keeps the original event, subscription, and chain
         depth. It requires current source sharing and producing-Run access.
+        A company webhook replacement uses the original authenticated delivery receipt
+        and requires current submission and recovery authority for its initiating user.
         For a project specialist, the existing retry sweep rechecks the same witnesses
         before reserving a continuation through project admission. Pending assignment
         updates defer that sweep without consuming an admission attempt.

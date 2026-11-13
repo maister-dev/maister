@@ -188,7 +188,8 @@ async function prepareReplacement(
     source.persistent ||
     (triggerSource !== "manual" &&
       triggerSource !== "cron" &&
-      triggerSource !== "domain_event") ||
+      triggerSource !== "domain_event" &&
+      triggerSource !== "webhook") ||
     (triggerSource !== "manual" && source.retryOfRunId !== null) ||
     !source.resultContract ||
     !source.endedAt

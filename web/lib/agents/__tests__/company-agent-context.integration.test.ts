@@ -486,6 +486,10 @@ beforeAll(async () => {
     primarySource,
   );
   await writeFile(
+    join(source, "maister-agents/cron-retry-observer.md"),
+    primarySource,
+  );
+  await writeFile(
     join(source, "maister-agents/delegating-observer.md"),
     primarySource,
   );
@@ -2310,6 +2314,81 @@ it("IT-CBS-04 admits company webhook deliveries through the actual authenticated
       );
 
     expect((await submit(null)).status).toBe(401);
+    const recoveryKey = randomUUID();
+
+    await localHost({ db, transport: createLocalDirectTransport() });
+    await database.pool.query(
+      "INSERT INTO execution_host_pressure(execution_host_id,pressured_since) SELECT id,now() FROM execution_hosts WHERE kind='local_direct' AND retired_at IS NULL ON CONFLICT DO NOTHING",
+    );
+    const recovery = await createCompanyGrants(db, administratorId, {
+      principalKind: "user",
+      principalId: userId,
+      actions: ["assignments:recover"],
+      idempotencyKey: randomUUID(),
+    });
+    const recoveryGrant = recovery.page.items[0];
+
+    try {
+      const accepted = await submit(token.secret, body, recoveryKey);
+
+      expect(accepted.status).toBe(201);
+      const original = specialistAssignmentSchema.parse(await accepted.json());
+      const [sourceRunId] = original.runIds;
+      const failure = await prepareUndispatchedAgentFailure(sourceRunId, {
+        db,
+        reason: "agent_dispatch_failed",
+      });
+
+      await db.transaction(failure.apply);
+      const preview = await getAgentRetryOptions(db, sourceRunId, userId);
+
+      expect(preview).toMatchObject({
+        eligible: true,
+        selectedRunnerId: runnerId,
+      });
+      const replacement = await acceptAgentRetry(db, sourceRunId, userId, {
+        requestKey: randomUUID(),
+        runnerId,
+        previewFingerprint: preview.previewFingerprint,
+      });
+
+      expect(replacement).toMatchObject({
+        intentState: "launched",
+        runStatus: "Pending",
+      });
+      expect(
+        await db.transaction((tx) =>
+          loadCompanyAgentSessionContext(tx, replacement.runId!),
+        ),
+      ).toMatchObject({
+        run: { triggerSource: "webhook", retryOfRunId: sourceRunId },
+        input: {
+          snapshot: { objectiveInput: { input: body.assignment.input } },
+        },
+      });
+      const replay = await submit(rotated.secret, body, recoveryKey);
+
+      expect(replay.status).toBe(200);
+      expect(
+        specialistAssignmentSchema.parse(await replay.json()),
+      ).toMatchObject({
+        id: original.id,
+        runIds: expect.arrayContaining([sourceRunId, replacement.runId]),
+      });
+      const settle = await prepareUndispatchedAgentFailure(replacement.runId!, {
+        db,
+        reason: "fixture_replacement_complete",
+      });
+
+      await db.transaction(settle.apply);
+    } finally {
+      await database.pool.query("DELETE FROM execution_host_pressure");
+      await revokeCompanyGrant(db, administratorId, recoveryGrant.id, {
+        expectedRevision: recoveryGrant.revision,
+        reason: "Release webhook recovery qualification authority",
+        idempotencyKey: randomUUID(),
+      });
+    }
     const responses = await Promise.all([
       submit(token.secret),
       submit(rotated.secret),
@@ -10993,7 +11072,7 @@ it("IT-CBC-03 reserves one source-bound replacement for a settled company specia
 it("IT-CBC-03 preserves the settled company cron invocation and frozen request across replacement", async () => {
   const db: Db = database.db;
   const { hosts } = await fakeExecutionHosts(db);
-  const roleId = "rah:wire-observer";
+  const roleId = "rah:cron-retry-observer";
   const effective = await resolveInstalledAgentDefinition(db, {
     agentId: roleId,
     packageInstallId: assignmentInput.standingDefinition.packageInstallId,
