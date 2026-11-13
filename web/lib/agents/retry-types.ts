@@ -51,6 +51,7 @@ export type ProjectSpecialistReplacement = SpecialistReplacementWitness & {
   cron?: ProjectCronAppointment;
   event?: ProjectEventAppointment;
   comment?: ProjectCommentAppointment;
+  webhook?: string;
   worktree?: Readonly<{
     workspaceId: string;
     baseCommit: string;

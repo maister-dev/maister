@@ -74,6 +74,7 @@ export async function prepareProjectSpecialistReplacement(
 }> {
   const cron = source.triggerSource === "cron";
   const event = source.triggerSource === "domain_event";
+  const webhook = source.triggerSource === "webhook";
   const comment = event && source.taskId !== null;
   const origin = comment
     ? "task_comment"
@@ -81,7 +82,9 @@ export async function prepareProjectSpecialistReplacement(
       ? "event"
       : cron
         ? "schedule"
-        : "manual";
+        : webhook
+          ? "webhook"
+          : "manual";
 
   if (
     !source.projectId ||
@@ -94,7 +97,7 @@ export async function prepareProjectSpecialistReplacement(
     (source.taskId && !comment) ||
     source.parentRunId ||
     source.persistent ||
-    (source.triggerSource !== "manual" && !cron && !event) ||
+    (source.triggerSource !== "manual" && !cron && !event && !webhook) ||
     (event
       ? source.triggerEventId === null ||
         !source.agentScheduleId ||
@@ -142,6 +145,7 @@ export async function prepareProjectSpecialistReplacement(
     ) || CASE WHEN source.agent_workspace='worktree'
       THEN jsonb_build_object('worktree',project_worktree_retry_source(source.id)) ELSE '{}'::jsonb END AS witness,
     session.runner_id, session.runner_snapshot,
+    CASE WHEN source.trigger_source='webhook' THEN project_webhook_retry_receipt(source.id,${userId}) END AS webhook_receipt,
     company_retry_has_dispatch_witness(source.id) AS before_dispatch,
     ${assignmentBudgetAllowsDispatchSql(sql`${source.id}`)} AS budget_allowed
     FROM runs source JOIN specialist_run_links link ON link.run_id=source.id AND link.work_id IS NULL
@@ -181,6 +185,19 @@ export async function prepareProjectSpecialistReplacement(
     throw retryRefusal("reconciliation_required");
   if (row.budget_allowed !== true)
     throw retryRefusal("assignment_budget_exhausted");
+  const webhookReceipt = row.webhook_receipt;
+
+  if (webhook) {
+    if (typeof webhookReceipt !== "string")
+      throw retryRefusal("retry_context_changed");
+    await authorizeAssignment(
+      db,
+      userId,
+      { kind: "project", projectId: source.projectId },
+      "assignments:submit",
+      source.executionPolicy,
+    );
+  }
   const scheduled = parseScheduledRequestSnapshot(
     source.scheduledRequestSnapshot,
   );
@@ -264,6 +281,9 @@ export async function prepareProjectSpecialistReplacement(
       ...(appointment ? { cron: appointment } : {}),
       ...(eventAppointment ? { event: eventAppointment } : {}),
       ...(commentAppointment ? { comment: commentAppointment } : {}),
+      ...(typeof webhookReceipt === "string"
+        ? { webhook: webhookReceipt }
+        : {}),
     },
     runnerId: row.runner_id,
     runner: row.runner_snapshot,

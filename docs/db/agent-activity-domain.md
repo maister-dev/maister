@@ -58,6 +58,12 @@ path digest. The successor must record the same base and repository before its
 retry receipt can settle. Workspace allocation and cleanup use the existing
 retry intent resource claim. A missing source witness keeps retry ineligible.
 
+Main `0297_project_webhook_replacement_retry` ties the v2 replacement to the
+original immutable project intake receipt. The source check matches the
+canonical delivery key and endpoint identity, project, original input,
+trigger payload and submitting user. The original receipt remains the deduplication
+record across token rotation and Run replacement.
+
 Index all hot project/agent/task/due/status and keyset paths; bounded scans use dueAt/id or timestamp/id. All current pointers, receipt uniqueness, payload comparison, state CHECKs and same-project relationships are database/service invariants with direct-write negative tests. Source run precedes task and agent-advisory/episode locks; task-only human writes do not lock a run later. No Git/host/network effect inside PostgreSQL transactions.
 
 ## Migration and recovery

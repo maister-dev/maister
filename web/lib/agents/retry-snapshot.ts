@@ -45,6 +45,7 @@ export const projectSpecialistReplacementSchema = replacementWitness
     cron: projectCronAppointmentSchema.optional(),
     event: projectEventAppointmentSchema.optional(),
     comment: projectCommentAppointmentSchema.optional(),
+    webhook: identity.optional(),
     worktree: z
       .object({
         workspaceId: identity,
@@ -57,8 +58,8 @@ export const projectSpecialistReplacementSchema = replacementWitness
   })
   .strict()
   .refine(
-    ({ cron, event, comment }) =>
-      [cron, event, comment].filter(Boolean).length <= 1,
+    ({ cron, event, comment, webhook }) =>
+      [cron, event, comment, webhook].filter(Boolean).length <= 1,
   );
 const common = z.object({
   scheduledRequestSnapshot: scheduledRequestSnapshotSchema.optional(),

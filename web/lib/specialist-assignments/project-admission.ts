@@ -205,13 +205,16 @@ export async function prepareProjectAssignmentAdmission(
   const replacementOrigin =
     replacementSource?.kind === "cron"
       ? "schedule"
-      : (replacementSource?.kind ?? "manual");
+      : (replacementSource?.kind ??
+        (replacement?.webhook ? "webhook" : "manual"));
   const replacementTrigger =
     replacementSource?.kind === "cron"
       ? "cron"
       : replacementSource
         ? "domain_event"
-        : "manual";
+        : replacement?.webhook
+          ? "webhook"
+          : "manual";
 
   if (
     assignment.owner.kind !== "project" ||
@@ -573,6 +576,27 @@ export async function loadProjectAssignmentExecutionInput(
           "CONFLICT",
           "The project schedule changed after replacement admission",
           { details: { reason: "project_cron_source_changed" } },
+        );
+    }
+    if (run.retryOfRunId && run.triggerSource === "webhook") {
+      await authorizeAssignment(
+        tx,
+        link.user_id,
+        { kind: "project", projectId },
+        "assignments:submit",
+        input.snapshot.authoritySnapshot.executionPolicy,
+      );
+      const [retained] = (
+        await tx.execute(sql`SELECT 1 FROM agent_retry_intents
+        WHERE created_run_id=${run.id} AND source_run_id=${run.retryOfRunId} AND project_id=${projectId} AND state='launched'
+          AND recipe->'replacement'->>'webhook'=project_webhook_retry_receipt(source_run_id,${link.user_id}) FOR SHARE`)
+      ).rows;
+
+      if (!retained)
+        throw new MaisterError(
+          "CONFLICT",
+          "The original project webhook delivery is unavailable",
+          { details: { reason: "retry_context_changed" } },
         );
     }
     if (run.retryOfRunId && run.triggerSource === "domain_event") {

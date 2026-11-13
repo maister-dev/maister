@@ -8,7 +8,7 @@ import { sql } from "drizzle-orm";
 import { MaisterError } from "@/lib/errors";
 import { promoteNextPending } from "@/lib/scheduler";
 
-/** Re-signal existing admission after a durable reservation; never allocate or replay an execution. */
+/** Re-signal the current root after intake replay, including a retained replacement. */
 export async function wakePendingSpecialistAssignment(
   db: Db,
   receipt: SpecialistIntakeReceipt,
@@ -17,17 +17,17 @@ export async function wakePendingSpecialistAssignment(
   const row = (
     await db.execute(sql`
       SELECT execution.run_kind,execution.status
-      FROM specialist_run_links link JOIN runs execution ON execution.id=link.run_id
-      WHERE link.assignment_id=${receipt.assignment.id} AND link.input_revision=${receipt.inputRevision}
-        AND link.role IN ('coordinator','specialist')
-      ORDER BY link.linked_at,link.run_id LIMIT 1
+      FROM specialist_assignments subject
+      JOIN runs execution ON execution.id=specialist_current_root_id(subject.id,subject.input_revision)
+      WHERE subject.id=${receipt.assignment.id} AND subject.status='active'
     `)
   ).rows[0];
 
-  if (!row || (row.run_kind !== "agent" && row.run_kind !== "flow"))
+  if (!row) return;
+  if (row.run_kind !== "agent" && row.run_kind !== "flow")
     throw new MaisterError(
       "CONFIG",
-      "The reserved specialist assignment has no valid initial execution",
+      "The reserved specialist assignment has no valid current execution",
     );
   if (row.status === "Pending")
     await promoteNextPending({

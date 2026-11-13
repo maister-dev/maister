@@ -7959,6 +7959,7 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
       "INSERT INTO execution_host_pressure(execution_host_id,pressured_since) SELECT id,now() FROM execution_hosts WHERE kind='local_direct' AND retired_at IS NULL ON CONFLICT DO NOTHING",
     );
     let webhookRunId: string;
+    let webhookReplacementRunId: string;
     let independentWebhookRunId: string;
 
     try {
@@ -8031,6 +8032,47 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
 
       expect(independentWork.id).not.toBe(work[0].id);
       independentWebhookRunId = independentWork.runIds[0]!;
+      const webhookFailure = await prepareUndispatchedAgentFailure(
+        webhookRunId,
+        {
+          db,
+          reason: "agent_dispatch_failed",
+        },
+      );
+
+      await db.transaction(webhookFailure.apply);
+      const webhookPreview = await getAgentRetryOptions(
+        db,
+        webhookRunId,
+        userId,
+      );
+
+      expect(webhookPreview).toMatchObject({
+        eligible: true,
+        selectedRunnerId: runnerId,
+      });
+      const webhookRetry = await acceptAgentRetry(db, webhookRunId, userId, {
+        requestKey: randomUUID(),
+        runnerId,
+        previewFingerprint: webhookPreview.previewFingerprint,
+      });
+
+      await expect(runAgentRetryAdmissionSweep(db)).resolves.toEqual({
+        processed: 1,
+        errors: [],
+      });
+      const successor = await getAgentRetryReceipt(
+        db,
+        webhookRunId,
+        webhookRetry.retryIntentId,
+        userId,
+      );
+
+      expect(successor).toMatchObject({
+        intentState: "launched",
+        runStatus: "Pending",
+      });
+      webhookReplacementRunId = successor.runId!;
       await database.pool.query(
         "UPDATE project_members SET role='viewer' WHERE project_id=$1 AND user_id=$2",
         [project.id, userId],
@@ -8055,22 +8097,23 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
     } finally {
       await database.pool.query("DELETE FROM execution_host_pressure");
     }
+    const webhookReplay = await submitProjectWebhook(
+      "rah:webhook-observer",
+      webhookRequest,
+      webhookDelivery,
+      webhookTokens[1].secret,
+    );
+
+    expect(webhookReplay.status).toBe(200);
     expect(
-      (
-        await submitProjectWebhook(
-          "rah:webhook-observer",
-          webhookRequest,
-          webhookDelivery,
-          webhookTokens[1].secret,
-        )
-      ).status,
-    ).toBe(200);
+      specialistAssignmentSchema.parse(await webhookReplay.json()).runIds,
+    ).toEqual(expect.arrayContaining([webhookRunId, webhookReplacementRunId]));
     await vi.waitFor(
       async () => {
         expect(
           (
             await database.pool.query("SELECT status FROM runs WHERE id=$1", [
-              webhookRunId,
+              webhookReplacementRunId,
             ])
           ).rows,
         ).toEqual([{ status: "Done" }]);
@@ -8081,7 +8124,7 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
       (
         await database.pool.query(
           "SELECT kind,count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt') GROUP BY kind ORDER BY kind",
-          [webhookRunId],
+          [webhookReplacementRunId],
         )
       ).rows,
     ).toEqual([
@@ -8311,7 +8354,7 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
       (
         await database.pool.query(
           "SELECT kind,count(*)::int AS count FROM execution_commands WHERE run_id=$1 AND kind IN ('session.create','session.prompt') GROUP BY kind ORDER BY kind",
-          [webhookRunId],
+          [webhookReplacementRunId],
         )
       ).rows,
     ).toEqual([

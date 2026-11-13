@@ -2052,6 +2052,13 @@
       "when": 1794606477999,
       "tag": "0296_project_worktree_replacement_retry",
       "breakpoints": true
+    },
+    {
+      "idx": 297,
+      "version": "7",
+      "when": 1794606478000,
+      "tag": "0297_project_webhook_replacement_retry",
+      "breakpoints": true
     }
   ]
 }
