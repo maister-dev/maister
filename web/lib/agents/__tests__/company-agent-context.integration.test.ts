@@ -437,6 +437,10 @@ beforeAll(async () => {
     primarySource.replace("workspace: none", "workspace: repo_read"),
   );
   await writeFile(
+    join(source, "maister-agents/worktree-retry-observer.md"),
+    primarySource.replace("workspace: none", "workspace: worktree"),
+  );
+  await writeFile(
     join(source, "maister-agents/flow-coordinator.md"),
     primarySource
       .replace(
@@ -11709,201 +11713,286 @@ it("IT-CBC-03 preserves the original company event and its producing Run evidenc
   }
 });
 
-it("IT-CBC-03 preserves an exact native project appointment through the existing retry sweep", async () => {
-  const db: Db = database.db;
-  const { host } = await fakeExecutionHosts(db);
-  const repo = await initRepo(join(root, "project-replacement-repo"));
-  const project = await seedProjectRow(database.db, { repoPath: repo });
-  const runnerId = randomUUID();
-  const [previous] = await db.select().from(platformRuntimeSettings);
+it.each(["none", "worktree"] as const)(
+  "IT-CBC-03 preserves an exact native project appointment through the existing retry sweep (%s)",
+  async (workspace) => {
+    const db: Db = database.db;
+    const { host, hosts, fake } = await fakeExecutionHosts(db);
+    const repo = await initRepo(join(root, `project-replacement-${workspace}`));
+    const project = await seedProjectRow(database.db, { repoPath: repo });
+    const runnerId = randomUUID();
+    const [previous] = await db.select().from(platformRuntimeSettings);
 
-  await db.insert(platformAcpRunners).values({
-    id: runnerId,
-    adapter: "claude",
-    capabilityAgent: "claude",
-    model: "project-replacement-fixture",
-    provider: { kind: "anthropic" },
-    readinessStatus: "Ready",
-  });
-  await db
-    .insert(platformRuntimeSettings)
-    .values({ id: "singleton", defaultRunnerId: runnerId })
-    .onConflictDoUpdate({
-      target: platformRuntimeSettings.id,
-      set: { defaultRunnerId: runnerId },
+    await db.insert(platformAcpRunners).values({
+      id: runnerId,
+      adapter: "claude",
+      capabilityAgent: "claude",
+      model: "project-replacement-fixture",
+      provider: { kind: "anthropic" },
+      readinessStatus: "Ready",
     });
-  await database.pool.query(
-    "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'member')",
-    [randomUUID(), project.id, userId],
-  );
-  await attachPackage({
-    projectId: project.id,
-    projectSlug: project.slug,
-    packageInstallId: assignmentInput.standingDefinition.packageInstallId,
-    db,
-  });
-  const link = await attachAgent(
-    {
+    await db
+      .insert(platformRuntimeSettings)
+      .values({ id: "singleton", defaultRunnerId: runnerId })
+      .onConflictDoUpdate({
+        target: platformRuntimeSettings.id,
+        set: { defaultRunnerId: runnerId },
+      });
+    await database.pool.query(
+      "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'member')",
+      [randomUUID(), project.id, userId],
+    );
+    await attachPackage({
       projectId: project.id,
-      agentId: "rah:wire-observer",
-      runnerOverrideId: runnerId,
-    },
-    db,
-  );
-  const pressure = await database.pool.query<{ execution_host_id: string }>(
-    `INSERT INTO execution_host_pressure(execution_host_id,pressured_since)
-      VALUES($1,now()) ON CONFLICT DO NOTHING RETURNING execution_host_id`,
-    [host.id],
-  );
-
-  try {
-    const { expectedResult: _expectedResult, ...objective } =
-      assignmentInput.objectiveInput;
-    const receipt = await submitProjectManualAssignment(db, userId, {
-      ...objective,
-      owner: { kind: "project", projectId: project.id },
-      specialistBindingId: link.linkId,
-      input:
-        "Preserve this exact project assignment input through replacement.",
-      idempotencyKey: randomUUID(),
-    });
-    const [sourceRunId] = receipt.assignment.runIds;
-
-    expect(sourceRunId).toBeDefined();
-    const failure = await prepareUndispatchedAgentFailure(sourceRunId, {
+      projectSlug: project.slug,
+      packageInstallId: assignmentInput.standingDefinition.packageInstallId,
       db,
-      reason: "agent_dispatch_failed",
     });
-
-    await db.transaction(failure.apply);
-    const options = await getAgentRetryOptions(db, sourceRunId, userId);
-
-    expect(options).toMatchObject({
-      eligible: true,
-      reason: null,
-      selectedRunnerId: runnerId,
-    });
-    const request = {
-      runnerId,
-      requestKey: randomUUID(),
-      previewFingerprint: options.previewFingerprint,
-    };
-    const retry = await acceptAgentRetry(db, sourceRunId, userId, request);
-
-    expect(retry).toMatchObject({ intentState: "accepted", runId: null });
-    await expect(
-      database.pool.query(
-        "UPDATE agent_retry_intents SET state='launched',created_run_id=source_run_id WHERE id=$1",
-        [retry.retryIntentId],
-      ),
-    ).rejects.toMatchObject({
-      constraint: "project_specialist_replacement_successor",
-    });
-    const editing = await database.pool.connect();
-    const startedAt = new Date();
-    let nextSweepAt: Date;
+    const link = await attachAgent(
+      {
+        projectId: project.id,
+        agentId:
+          workspace === "worktree"
+            ? "rah:worktree-retry-observer"
+            : "rah:wire-observer",
+        runnerOverrideId: runnerId,
+      },
+      db,
+    );
+    const pressure = await database.pool.query<{ execution_host_id: string }>(
+      `INSERT INTO execution_host_pressure(execution_host_id,pressured_since)
+      VALUES($1,now()) ON CONFLICT DO NOTHING RETURNING execution_host_id`,
+      [host.id],
+    );
 
     try {
-      await editing.query("BEGIN");
-      await editing.query(
-        "SELECT id FROM specialist_assignments WHERE id=$1 FOR UPDATE",
-        [receipt.assignment.id],
-      );
-      await expect(runAgentRetryAdmissionSweep(db, startedAt)).resolves.toEqual(
-        {
+      const { expectedResult: _expectedResult, ...objective } =
+        assignmentInput.objectiveInput;
+      const receipt = await submitProjectManualAssignment(db, userId, {
+        ...objective,
+        owner: { kind: "project", projectId: project.id },
+        specialistBindingId: link.linkId,
+        input:
+          "Preserve this exact project assignment input through replacement.",
+        idempotencyKey: randomUUID(),
+      });
+      const [sourceRunId] = receipt.assignment.runIds;
+
+      expect(sourceRunId).toBeDefined();
+      const failure = await prepareUndispatchedAgentFailure(sourceRunId, {
+        db,
+        reason: "agent_dispatch_failed",
+      });
+
+      await db.transaction(failure.apply);
+      const sourceWorkspace =
+        workspace === "worktree"
+          ? (
+              await database.pool.query<{
+                base_commit: string;
+                base_branch: string;
+              }>(
+                "SELECT base_commit,base_branch FROM workspaces WHERE run_id=$1",
+                [sourceRunId],
+              )
+            ).rows[0]!
+          : null;
+
+      if (sourceWorkspace) {
+        await git(
+          repo,
+          "commit",
+          "--allow-empty",
+          "-m",
+          "Advance branch before replacement",
+        );
+
+        expect((await git(repo, "rev-parse", "HEAD")).trim()).not.toBe(
+          sourceWorkspace.base_commit,
+        );
+      }
+      const options = await getAgentRetryOptions(db, sourceRunId, userId);
+
+      expect(options).toMatchObject({
+        eligible: true,
+        reason: null,
+        selectedRunnerId: runnerId,
+      });
+      const request = {
+        runnerId,
+        requestKey: randomUUID(),
+        previewFingerprint: options.previewFingerprint,
+      };
+      const retry = await acceptAgentRetry(db, sourceRunId, userId, request);
+
+      expect(retry).toMatchObject({ intentState: "accepted", runId: null });
+      await expect(
+        database.pool.query(
+          "UPDATE agent_retry_intents SET state='launched',created_run_id=source_run_id WHERE id=$1",
+          [retry.retryIntentId],
+        ),
+      ).rejects.toMatchObject({
+        constraint: "project_specialist_replacement_successor",
+      });
+      const editing = await database.pool.connect();
+      const startedAt = new Date();
+      let nextSweepAt: Date;
+
+      try {
+        await editing.query("BEGIN");
+        await editing.query(
+          "SELECT id FROM specialist_assignments WHERE id=$1 FOR UPDATE",
+          [receipt.assignment.id],
+        );
+        await expect(
+          runAgentRetryAdmissionSweep(db, startedAt),
+        ).resolves.toEqual({
           processed: 1,
           errors: [`retry ${retry.retryIntentId}: retry_assignment_busy`],
-        },
-      );
-      const [deferred] = (
-        await database.pool.query<{
-          attempts: number;
-          state: string;
-          due_at: Date;
-        }>(
-          "SELECT attempts,state,due_at FROM agent_retry_intents WHERE id=$1",
-          [retry.retryIntentId],
-        )
-      ).rows;
+        });
+        const [deferred] = (
+          await database.pool.query<{
+            attempts: number;
+            state: string;
+            due_at: Date;
+          }>(
+            "SELECT attempts,state,due_at FROM agent_retry_intents WHERE id=$1",
+            [retry.retryIntentId],
+          )
+        ).rows;
 
-      expect(deferred).toMatchObject({ attempts: 0, state: "accepted" });
-      expect(deferred.due_at.getTime()).toBeGreaterThan(startedAt.getTime());
-      nextSweepAt = deferred.due_at;
-    } finally {
-      await editing.query("ROLLBACK");
-      editing.release();
-    }
-    await expect(runAgentRetryAdmissionSweep(db, nextSweepAt)).resolves.toEqual(
-      {
+        expect(deferred).toMatchObject({ attempts: 0, state: "accepted" });
+        expect(deferred.due_at.getTime()).toBeGreaterThan(startedAt.getTime());
+        nextSweepAt = deferred.due_at;
+      } finally {
+        await editing.query("ROLLBACK");
+        editing.release();
+      }
+      await expect(
+        runAgentRetryAdmissionSweep(db, nextSweepAt),
+      ).resolves.toEqual({
         processed: 1,
         errors: [],
-      },
-    );
-    const successor = await getAgentRetryReceipt(
-      db,
-      sourceRunId,
-      retry.retryIntentId,
-      userId,
-    );
+      });
+      const successor = await getAgentRetryReceipt(
+        db,
+        sourceRunId,
+        retry.retryIntentId,
+        userId,
+      );
 
-    expect(successor).toMatchObject({
-      intentState: "launched",
-      runStatus: "Pending",
-    });
-    await expect(
-      acceptAgentRetry(db, sourceRunId, userId, request),
-    ).resolves.toEqual(successor);
-    const retained = await database.pool.query(
-      `SELECT link.run_id,link.role,link.input_revision,run.retry_of_run_id
+      expect(successor).toMatchObject({
+        intentState: "launched",
+        runStatus: "Pending",
+      });
+      if (sourceWorkspace) {
+        const [retainedWorkspace] = (
+          await database.pool.query<{
+            base_commit: string;
+            base_branch: string;
+            worktree_path: string;
+          }>(
+            "SELECT base_commit,base_branch,worktree_path FROM workspaces WHERE run_id=$1",
+            [successor.runId],
+          )
+        ).rows;
+
+        expect(retainedWorkspace).toMatchObject(sourceWorkspace);
+        expect(
+          (
+            await git(retainedWorkspace!.worktree_path, "rev-parse", "HEAD")
+          ).trim(),
+        ).toBe(sourceWorkspace.base_commit);
+      }
+      await expect(
+        acceptAgentRetry(db, sourceRunId, userId, request),
+      ).resolves.toEqual(successor);
+      const retained = await database.pool.query(
+        `SELECT link.run_id,link.role,link.input_revision,run.retry_of_run_id
         FROM specialist_run_links link JOIN runs run ON run.id=link.run_id
         WHERE link.assignment_id=$1 ORDER BY link.root_appointment_epoch`,
-      [receipt.assignment.id],
-    );
-
-    expect(retained.rows).toEqual([
-      {
-        run_id: sourceRunId,
-        role: "specialist",
-        input_revision: receipt.inputRevision,
-        retry_of_run_id: null,
-      },
-      {
-        run_id: successor.runId,
-        role: "continuation",
-        input_revision: receipt.inputRevision,
-        retry_of_run_id: sourceRunId,
-      },
-    ]);
-    await database.pool.query(
-      "DELETE FROM project_members WHERE project_id=$1 AND user_id=$2",
-      [project.id, userId],
-    );
-    await expect(
-      getAgentRetryReceipt(db, sourceRunId, retry.retryIntentId, userId),
-    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
-    const settle = await prepareUndispatchedAgentFailure(successor.runId!, {
-      db,
-      reason: "fixture_replacement_complete",
-    });
-
-    await db.transaction(settle.apply);
-  } finally {
-    if (pressure.rowCount)
-      await database.pool.query(
-        "DELETE FROM execution_host_pressure WHERE execution_host_id=$1",
-        [host.id],
+        [receipt.assignment.id],
       );
-    if (previous)
-      await db
-        .update(platformRuntimeSettings)
-        .set({ defaultRunnerId: previous.defaultRunnerId })
-        .where(eq(platformRuntimeSettings.id, "singleton"));
-    else
-      await db
-        .delete(platformRuntimeSettings)
-        .where(eq(platformRuntimeSettings.id, "singleton"));
-  }
-});
+
+      expect(retained.rows).toEqual([
+        {
+          run_id: sourceRunId,
+          role: "specialist",
+          input_revision: receipt.inputRevision,
+          retry_of_run_id: null,
+        },
+        {
+          run_id: successor.runId,
+          role: "continuation",
+          input_revision: receipt.inputRevision,
+          retry_of_run_id: sourceRunId,
+        },
+      ]);
+      if (sourceWorkspace) {
+        const [retainedWorkspace] = (
+          await database.pool.query<{ worktree_path: string }>(
+            "SELECT worktree_path FROM workspaces WHERE run_id=$1",
+            [successor.runId],
+          )
+        ).rows;
+
+        await writeFile(
+          join(retainedWorkspace!.worktree_path, "unexpected.txt"),
+          "Changed after admission\n",
+        );
+        await database.pool.query(
+          "DELETE FROM execution_host_pressure WHERE execution_host_id=$1",
+          [host.id],
+        );
+        expect(await tryStartRun(successor.runId!, { db })).toMatchObject({
+          started: true,
+        });
+        const createCalls = fake.callsOf("createSession").length;
+
+        await startAgentSession(successor.runId!, {
+          db,
+          executionHosts: hosts,
+        });
+        expect(fake.callsOf("createSession")).toHaveLength(createCalls);
+        expect(
+          (
+            await db.select().from(runs).where(eq(runs.id, successor.runId!))
+          )[0],
+        ).toMatchObject({ status: "Failed" });
+      }
+      await database.pool.query(
+        "DELETE FROM project_members WHERE project_id=$1 AND user_id=$2",
+        [project.id, userId],
+      );
+      await expect(
+        getAgentRetryReceipt(db, sourceRunId, retry.retryIntentId, userId),
+      ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+      if (!sourceWorkspace) {
+        const settle = await prepareUndispatchedAgentFailure(successor.runId!, {
+          db,
+          reason: "fixture_replacement_complete",
+        });
+
+        await db.transaction(settle.apply);
+      }
+    } finally {
+      if (pressure.rowCount)
+        await database.pool.query(
+          "DELETE FROM execution_host_pressure WHERE execution_host_id=$1",
+          [host.id],
+        );
+      if (previous)
+        await db
+          .update(platformRuntimeSettings)
+          .set({ defaultRunnerId: previous.defaultRunnerId })
+          .where(eq(platformRuntimeSettings.id, "singleton"));
+      else
+        await db
+          .delete(platformRuntimeSettings)
+          .where(eq(platformRuntimeSettings.id, "singleton"));
+    }
+  },
+);
 
 it("IT-CBC-03 reclaims the expired specialist epoch when reconciliation reobserves retained work", async () => {
   const db: Db = database.db;

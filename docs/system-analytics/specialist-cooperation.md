@@ -320,6 +320,11 @@ and thread destination, and retains the task admission revision, event identity
 and chain depth. Admission requires current project and source access, current
 assignment recovery authority, available budget and positive pre-dispatch proof.
 
+An owned worktree replacement allocates a new checkout from the source Run's
+retained base commit. The current project repository must match the recorded
+repository. Dispatch checks the admitted workspace identity and pristine checkout
+before preparing the agent. A moved branch does not change the retained commit.
+
 ### Crash/transaction boundaries
 
 - Logical work key, child reservation/link and parent admission facts commit atomically under tree-root-then-parent delegation advisory locks; loser writes nothing.

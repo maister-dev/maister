@@ -52,6 +52,12 @@ and binds the original task, input, selector and event to the successor.
 Removing a schedule clears the live foreign key while the retry recipe retains
 its original appointment. Existing recipes require no rewrite or backfill.
 
+Main `0296_project_worktree_replacement_retry` binds an owned project worktree
+replacement to the existing source workspace, base branch, commit and repository
+path digest. The successor must record the same base and repository before its
+retry receipt can settle. Workspace allocation and cleanup use the existing
+retry intent resource claim. A missing source witness keeps retry ineligible.
+
 Index all hot project/agent/task/due/status and keyset paths; bounded scans use dueAt/id or timestamp/id. All current pointers, receipt uniqueness, payload comparison, state CHECKs and same-project relationships are database/service invariants with direct-write negative tests. Source run precedes task and agent-advisory/episode locks; task-only human writes do not lock a run later. No Git/host/network effect inside PostgreSQL transactions.
 
 ## Migration and recovery

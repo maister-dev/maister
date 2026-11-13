@@ -630,6 +630,9 @@ paths:
         A project comment replacement keeps the original mention, author, task,
         event and delivery destination. Current access and the original task admission
         revision are required.
+        A project specialist's owned worktree replacement uses the source worktree's
+        recorded base commit and repository identity, including when the base branch
+        has advanced.
         For a project specialist, the existing retry sweep rechecks the same witnesses
         before reserving a continuation through project admission. Pending assignment
         updates defer that sweep without consuming an admission attempt.

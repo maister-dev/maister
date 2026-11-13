@@ -124,7 +124,7 @@ import {
 import {
   assertAgentRetryClaim,
   recordAgentRetrySuccessor,
-  frozenRetryDefinition,
+  frozenRetryRecipe,
 } from "@/lib/agents/retry-ownership";
 import { allocateAgentRetryWorktree } from "@/lib/agents/retry-allocation";
 import { retryRecipeStrategy } from "@/lib/agents/retry-types";
@@ -1882,8 +1882,10 @@ async function launchAgentRunWithAdmission(
         null;
 
       resolvedBranchBase = declaredBranchBase ?? ctx.project.mainBranch;
+      if (replacement?.worktree)
+        resolvedBranchBase = replacement.worktree.baseBranch;
 
-      if (declaredBranchBase && !acceptedExecution) {
+      if (declaredBranchBase && !acceptedExecution && !replacement?.worktree) {
         const knownBranches = new Set(await listBranches(ctx.project.repoPath));
 
         if (!knownBranches.has(declaredBranchBase)) {
@@ -2064,10 +2066,14 @@ async function launchAgentRunWithAdmission(
           runId,
         });
         worktreePath = agentWorkdirPath(ctx.project.slug, runId);
-        baseCommit = await resolveBaseCommit({
-          projectRepoPath: ctx.project.repoPath,
-          baseRef: resolvedBranchBase,
-        });
+        const pinnedBaseCommit: string =
+          replacement?.worktree?.baseCommit ??
+          (await resolveBaseCommit({
+            projectRepoPath: ctx.project.repoPath,
+            baseRef: resolvedBranchBase,
+          }));
+
+        baseCommit = pinnedBaseCommit;
         if (input.retryClaim) {
           await allocateAgentRetryWorktree(_db, input.retryClaim, {
             runId,
@@ -2075,7 +2081,7 @@ async function launchAgentRunWithAdmission(
             repositoryPath: ctx.project.repoPath,
             path: worktreePath,
             branch,
-            baseCommit,
+            baseCommit: pinnedBaseCommit,
           });
         } else
           await addWorktree({
@@ -4638,11 +4644,14 @@ async function driveAgentSession(
   // RD4: the effective definition resolves AGAIN at spawn — the project's
   // pin is the source of truth for the prompt body and the workspace axis.
   let effective: EffectiveAgentDefinition;
+  let retryRecipe: Awaited<ReturnType<typeof frozenRetryRecipe>> = null;
 
   try {
+    if (!companyContext && run.retryOfRunId)
+      retryRecipe = await frozenRetryRecipe(_db, run.id);
     effective =
       companyContext?.effective ??
-      (run.retryOfRunId ? await frozenRetryDefinition(_db, run.id) : null) ??
+      retryRecipe?.definition ??
       (await frozenTaskAgentDefinition(_db, run)) ??
       frozenOperationalDefinition(run) ??
       (await resolveEffectiveAgentDefinition(
@@ -4962,7 +4971,15 @@ async function driveAgentSession(
       await mkdir(cwd, { recursive: true });
     }
 
-    if (run.taskLaunchIntentId && workspace === "worktree") {
+    const replacementWorktree =
+      retryRecipe?.version === 2
+        ? retryRecipe.replacement?.worktree
+        : undefined;
+
+    if (
+      (run.taskLaunchIntentId || replacementWorktree) &&
+      workspace === "worktree"
+    ) {
       const sharedOwner =
         run.workspaceMode === "shared" && run.rootRunId
           ? await findSharedTreeWorkspace(_db, run.rootRunId)
@@ -4987,6 +5004,27 @@ async function driveAgentSession(
           "Accepted agent workspace identity is incomplete",
           { details: { reason: "launch_workspace_changed" } },
         );
+      if (replacementWorktree) {
+        const [sameRepository] = (
+          await _db.execute(sql`
+          SELECT task_launch_admission_digest(to_jsonb(${project.repoPath}::text))=${replacementWorktree.repositorySha256} AS matches
+        `)
+        ).rows;
+
+        if (
+          sameRepository?.matches !== true ||
+          ownedWorkspace.parentRepoPath !== project.repoPath ||
+          ownedWorkspace.baseCommit !== replacementWorktree.baseCommit ||
+          ownedWorkspace.baseBranch !== replacementWorktree.baseBranch
+        )
+          throw new MaisterError(
+            "PRECONDITION",
+            "The replacement worktree no longer matches its admitted source",
+            {
+              details: { reason: "launch_workspace_changed" },
+            },
+          );
+      }
       const existing = (
         await listWorktrees(ownedWorkspace.parentRepoPath)
       ).find((tree) => tree.path === cwd);

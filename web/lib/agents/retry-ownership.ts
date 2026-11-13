@@ -331,10 +331,10 @@ export async function recordAgentRetrySuccessor(
   if (updated.length !== 1) throw retryRefusal("retry_owner_stale");
 }
 
-export async function frozenRetryDefinition(
+export async function frozenRetryRecipe(
   db: Db,
   runId: string,
-): Promise<AgentRetryRecipe["definition"] | null> {
+): Promise<AgentRetryRecipe | null> {
   const [intent] = await db
     .select({ recipe: agentRetryIntents.recipe })
     .from(agentRetryIntents)
@@ -345,5 +345,5 @@ export async function frozenRetryDefinition(
       ),
     );
 
-  return intent ? parseAgentRetryRecipe(intent.recipe).definition : null;
+  return intent ? parseAgentRetryRecipe(intent.recipe) : null;
 }

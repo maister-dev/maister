@@ -88,7 +88,9 @@ export async function prepareProjectSpecialistReplacement(
     source.companyId ||
     source.runKind !== "agent" ||
     source.agentKind !== "operational" ||
-    source.agentWorkspace !== "none" ||
+    (source.agentWorkspace !== "none" &&
+      source.agentWorkspace !== "worktree") ||
+    source.workspaceMode === "shared" ||
     (source.taskId && !comment) ||
     source.parentRunId ||
     source.persistent ||
@@ -137,7 +139,9 @@ export async function prepareProjectSpecialistReplacement(
       'sourceRunId',source.id,'assignmentId',subject.id,'inputRevision',input.revision,'inputSha256',input.digest,
       'assignmentRevision',subject.revision,'contextRevision',subject.context_revision,'ownerEpoch',owner.epoch,
       'resultSha256',task_launch_admission_digest(source.result_contract),'sourceSha256',company_retry_source_digest(source)
-    ) AS witness, session.runner_id, session.runner_snapshot,
+    ) || CASE WHEN source.agent_workspace='worktree'
+      THEN jsonb_build_object('worktree',project_worktree_retry_source(source.id)) ELSE '{}'::jsonb END AS witness,
+    session.runner_id, session.runner_snapshot,
     company_retry_has_dispatch_witness(source.id) AS before_dispatch,
     ${assignmentBudgetAllowsDispatchSql(sql`${source.id}`)} AS budget_allowed
     FROM runs source JOIN specialist_run_links link ON link.run_id=source.id AND link.work_id IS NULL
@@ -160,6 +164,7 @@ export async function prepareProjectSpecialistReplacement(
 
   if (
     !witness.success ||
+    (source.agentWorkspace === "worktree" && !witness.data.worktree) ||
     typeof row?.runner_id !== "string" ||
     !row.runner_snapshot
   )

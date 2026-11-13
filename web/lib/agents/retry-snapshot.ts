@@ -45,6 +45,15 @@ export const projectSpecialistReplacementSchema = replacementWitness
     cron: projectCronAppointmentSchema.optional(),
     event: projectEventAppointmentSchema.optional(),
     comment: projectCommentAppointmentSchema.optional(),
+    worktree: z
+      .object({
+        workspaceId: identity,
+        baseCommit: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
+        baseBranch: postgresTextSchema.min(1).max(1024),
+        repositorySha256: digest,
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .refine(

@@ -51,6 +51,12 @@ export type ProjectSpecialistReplacement = SpecialistReplacementWitness & {
   cron?: ProjectCronAppointment;
   event?: ProjectEventAppointment;
   comment?: ProjectCommentAppointment;
+  worktree?: Readonly<{
+    workspaceId: string;
+    baseCommit: string;
+    baseBranch: string;
+    repositorySha256: string;
+  }>;
 };
 
 export type ProjectAgentRetryRecipe = AgentRetryRecipeFields &
