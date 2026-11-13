@@ -9195,6 +9195,11 @@ export const librarianOperations = pgTable(
       t.conversationId,
       t.idempotencyKey,
     ),
+    idxHistory: index("librarian_operations_history_idx").on(
+      t.conversationId,
+      t.createdAt.desc(),
+      t.id.desc(),
+    ),
     idxSegmentDigest: index("librarian_operations_segment_digest_idx").on(
       t.segmentId,
       t.requestDigest,
@@ -9254,6 +9259,11 @@ export const librarianCards = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    idxHistory: index("librarian_cards_history_idx").on(
+      t.conversationId,
+      t.createdAt.desc(),
+      t.id.desc(),
+    ),
     idxPending: index("librarian_cards_pending_idx")
       .on(t.conversationId)
       .where(sql`${t.status} = 'pending'`),
@@ -9321,6 +9331,11 @@ export const librarianTaskLinks = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    idxHistory: index("librarian_task_links_history_idx").on(
+      t.conversationId,
+      t.createdAt.desc(),
+      t.id.desc(),
+    ),
     idxTask: index("librarian_task_links_task_idx").on(t.taskId),
     meaningCheck: check(
       "librarian_task_links_meaning_check",

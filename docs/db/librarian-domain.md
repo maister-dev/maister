@@ -388,6 +388,9 @@ erDiagram
 | `librarian_messages_body_tsv_idx` | `librarian_messages` | GIN `(body_tsv)` | history search |
 | `librarian_operations_segment_digest_idx` | `librarian_operations` | `(segment_id, request_digest)` | the same-digest duplicate guard |
 | `librarian_cards_pending_idx` | `librarian_cards` | `(conversation_id)` WHERE `status='pending'` | pending cards, expiry and reset clearing |
+| `librarian_operations_history_idx` | `librarian_operations` | `(conversation_id, created_at DESC, id DESC)` | Owner history and work observation |
+| `librarian_cards_history_idx` | `librarian_cards` | `(conversation_id, created_at DESC, id DESC)` | Owner history and work observation |
+| `librarian_task_links_history_idx` | `librarian_task_links` | `(conversation_id, created_at DESC, id DESC)` | Owner history and work observation |
 | `librarian_task_links_task_idx` | `librarian_task_links` | `(task_id)` | the conversations a task came from |
 | `librarian_memory_items_user_active_idx` | `librarian_memory_items` | `(user_id)` WHERE `forgotten_at IS NULL` | active memory for the composer |
 
