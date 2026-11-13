@@ -86,11 +86,11 @@ export type LoadedRunSession = {
 
 export type LoadedRun = {
   // ADR-100: the graph runner only loads flow runs (loadRun requires a
-  // task + flow + project), so project_id is non-null here even though the base
-  // Run type made it nullable for the project-less local-package variant.
+  // task + project), so project_id is non-null here even though the base Run
+  // type made it nullable for the project-less local-package variant.
   run: RunRow & { projectId: string };
   task: TaskRow;
-  flow: FlowRow;
+  flow: FlowRow | null;
   executor: RunnerExecutor;
   manifest: FlowYamlV1;
   runner: RunnerSnapshot;
@@ -218,11 +218,7 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
     .select()
     .from(flows)
     .where(eq(flows.id, run.flowId));
-  const flow = flowRows[0];
-
-  if (!flow) {
-    throw new MaisterError("PRECONDITION", `flow not found for run ${runId}`);
-  }
+  const flow = flowRows[0] ?? null;
 
   // M42 (ADR-114): the run's logical sessions are the SOLE source of runner
   // truth. The run-level `runner`/`executor` (used by default-session nodes and
@@ -313,11 +309,13 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
 
   if (run.flowRevisionId) {
     const revisionRows: Array<{
+      flowRefId: string;
       manifest: unknown;
       installedPath: string;
       execTrust: FlowRevisionExecTrust;
     }> = await db
       .select({
+        flowRefId: flowRevisions.flowRefId,
         manifest: flowRevisions.manifest,
         installedPath: flowRevisions.installedPath,
         execTrust: flowRevisions.execTrust,
@@ -337,13 +335,17 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
       code: "CONFIG",
       surface: "graph-runner-revision",
       manifestLabel: `flow revision ${run.flowRevisionId}`,
-      flowRefId: flow.flowRefId,
+      flowRefId: revision.flowRefId,
       revision: run.flowRevision,
     });
     flowInstallPath =
       (await taskLaunchFlowAssetsPathForRun(db, run)) ?? revision.installedPath;
     execTrust = revision.execTrust;
   } else {
+    if (!flow) {
+      throw new MaisterError("PRECONDITION", `flow not found for run ${runId}`);
+    }
+
     manifest = parseExecutableStoredFlowManifest(flow.manifest, {
       code: "CONFIG",
       surface: "graph-runner-flow",
