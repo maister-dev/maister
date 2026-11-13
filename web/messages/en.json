@@ -6856,6 +6856,17 @@
     "noLaunch": "Launch time unavailable"
   },
   "specialistAssignments": {
+    "incidents": "Stand incidents",
+    "incidentOccurrences": "{count, plural, one {# observation} other {# observations}}",
+    "incidentRecovery": "Inspect the operation evidence and run an independent health check after recovery.",
+    "incidentReason": {
+      "verification_unhealthy": "Health check failed",
+      "verification_inconclusive": "Health check inconclusive"
+    },
+    "incidentState": {
+      "open": "Open",
+      "resolved": "Resolved"
+    },
     "writeBack": "Reusable knowledge",
     "submitDrafts": "Submit retained knowledge drafts",
     "openProposal": "Open proposal {number}",

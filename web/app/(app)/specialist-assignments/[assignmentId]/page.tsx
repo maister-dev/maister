@@ -26,6 +26,7 @@ import {
   readAssignmentStandChoices,
 } from "@/lib/specialist-assignments/workspace-view";
 import { readStandOperationEvidence } from "@/lib/stand-operations/operation-intake";
+import { readStandIncidentEpisodes } from "@/lib/stand-operations/incidents";
 
 export default async function SpecialistAssignmentPage({
   params,
@@ -49,6 +50,7 @@ export default async function SpecialistAssignmentPage({
     canChange,
     admission,
     operations,
+    incidents,
   } = await readAssignmentPage(user.id, assignmentId);
 
   return (
@@ -171,6 +173,34 @@ export default async function SpecialistAssignmentPage({
             ))}
           </ul>
         </div>
+      ) : null}
+      {incidents.length ? (
+        <section className="space-y-3 rounded-xl border border-line bg-paper p-5">
+          <h2 className="font-semibold">{t("incidents")}</h2>
+          <ul className="space-y-3 text-sm">
+            {incidents.map((incident) => (
+              <li key={incident.id}>
+                <p>
+                  {t(`incidentReason.${incident.reason}`)} ·{" "}
+                  {t(`incidentState.${incident.state}`)}
+                </p>
+                <p className="text-mute">
+                  {t("incidentOccurrences", {
+                    count: incident.occurrenceCount,
+                  })}{" "}
+                  ·{" "}
+                  {format.dateTime(new Date(incident.lastAt), {
+                    dateStyle: "medium",
+                    timeStyle: "short",
+                  })}
+                </p>
+                {incident.state === "open" ? (
+                  <p>{t("incidentRecovery")}</p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </section>
       ) : null}
       {operations.some(Boolean) ? (
         <div className="space-y-3">
@@ -344,6 +374,10 @@ async function readAssignmentPage(userId: string, assignmentId: string) {
       ),
     );
 
+    const incidents = stand.operationIds.length
+      ? await readStandIncidentEpisodes(db, userId, assignmentId)
+      : [];
+
     return {
       assignment,
       recovery,
@@ -356,6 +390,7 @@ async function readAssignmentPage(userId: string, assignmentId: string) {
       canChange,
       admission,
       operations,
+      incidents,
     };
   } catch (error) {
     if (

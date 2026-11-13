@@ -23,6 +23,35 @@ export type AuthorizedAssignmentDelivery = Readonly<{
   projectTaskId: string | null;
 }>;
 
+/** Scheduled stand observations with complete coverage and no work or findings stay in history. */
+export async function isQuietScheduledStandDelivery(
+  tx: SqlTransaction,
+  deliveryId: string,
+): Promise<boolean> {
+  const [row] = (
+    await tx.execute(sql`
+    SELECT assignment.origin->>'kind'='schedule'
+      AND (
+        EXISTS (SELECT 1 FROM stand_targets target WHERE (input.objective_input->'targetIds') ? target.id)
+        OR (input.standing_definition->'definition'->'specialist'->'targetClasses') = '["stand"]'::jsonb
+      )
+      AND result.value->'schemaVersion'='2'::jsonb AND result.value->>'outcome'='success'
+      AND result.value->'coverage'->>'state'='complete'
+      AND result.value->'counts'->'attempted'='0'::jsonb
+      AND result.value->'diagnostics'='[]'::jsonb
+      AND result.value->'operationIds'='[]'::jsonb AND result.value->'verificationIds'='[]'::jsonb
+      AND result.value->'findings'->'findings'='[]'::jsonb
+      AND result.value->'findings'->'knowledgeProposals'='[]'::jsonb AS quiet
+    FROM specialist_delivery_receipts delivery JOIN specialist_assignments assignment ON assignment.id=delivery.assignment_id
+    JOIN specialist_input_revisions input ON input.assignment_id=assignment.id AND input.revision=delivery.input_revision
+    JOIN run_results result ON result.run_id=delivery.run_id AND result.revision=delivery.result_revision
+    WHERE delivery.id=${deliveryId}
+  `)
+  ).rows;
+
+  return row?.quiet === true;
+}
+
 /** Resolve the frozen recipient under current account, owner and complete source authority. */
 export async function authorizePendingAssignmentDelivery(
   tx: SqlTransaction,

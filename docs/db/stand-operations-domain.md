@@ -87,6 +87,10 @@ precedes any confirmed effect. A confirmed outcome is immutable, and an
 unknown outcome may retain a hold or record an authorized successor. Receipt
 adoption remains responsible for proving each authorized transition.
 
+### Health incident episodes
+
+Migration `0329_stand_incident_episodes` groups unhealthy or inconclusive independent probes by canonical resource and reason. It retains a single open episode per group, the first and latest contributing operations, and the number and time range of observed failures. A later healthy probe resolves eligible episodes in the same transaction as probe persistence. The assignment view requires current target-read authority and access to every contributing input and the recovery input before showing an episode. A complete scheduled stand result with no action, diagnostics or findings remains in execution and delivery history. The delivery worker suppresses the routine Inbox item and retains delivery for explicitly selected outbound destinations.
+
 The target helper uses its own durable configured journal directory with exclusive process/resource ownership, per-operation intent/receipt/tombstone records and atomic fsynced publication. A target receipt journal is external-effect evidence, not a run-attempt or scheduler ledger. Capacity/corruption refuses new effects before invocation; unresolved records cannot be garbage-collected by age. Pruning retained payloads leaves identity/digest replay protection or an explicit expired-request refusal. Recovery reads stay possible after original run/host placement termination under a separate current operation-recovery fence.
 
 Fresh/populated migration tests cover unknown operations, two aliases/controllers, owner expiry, permit replay, result/target/run retirement, exact successor transfer and interrupted receipt adoption. No migration clears unknown resource claims or deletes receipts to satisfy constraints.

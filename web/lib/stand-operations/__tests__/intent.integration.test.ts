@@ -1672,7 +1672,7 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
       });
       const { POST: verify } =
         await import("@/app/api/stand-operations/[operationId]/verification/route");
-      const verifyHealth = () =>
+      const verifyHealth = (expectedRevision = adoptedEffect.revision) =>
         verify(
           new NextRequest(
             `http://localhost/api/stand-operations/${operation.id}/verification`,
@@ -1683,12 +1683,13 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
                 Origin: "http://localhost",
               },
               body: JSON.stringify({
-                expectedRevision: adoptedEffect.revision,
+                expectedRevision,
               }),
             },
           ),
           { params: Promise.resolve({ operationId: operation.id }) },
         );
+      let probeState: "healthy" | "unhealthy" = "unhealthy";
       const verifyTarget = vi.fn(
         async (selector: {
           operationId: string;
@@ -1709,15 +1710,16 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
             operationId: selector.operationId,
             targetIncarnation: selector.targetIncarnation,
             nonce: selector.verificationNonce,
-            state: "healthy",
+            state: probeState,
             issuedAt: selector.issuedAt,
             observedAt: new Date().toISOString(),
             targetSequence:
               verifyTarget.mock.calls.length === 1
                 ? result.sequence
-                : result.sequence + 1,
+                : result.sequence + verifyTarget.mock.calls.length - 1,
             evidenceIds: [],
-            reason: null,
+            reason:
+              probeState === "unhealthy" ? "verification_unhealthy" : null,
           };
         },
       );
@@ -1728,7 +1730,32 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
         verifyStandOperation: verifyTarget,
       });
       expect((await verifyHealth()).status).toBe(409);
-      const verifiedResponse = await verifyHealth();
+      const firstFailure = await verifyHealth();
+
+      expect(firstFailure.status).toBe(200);
+      const failedProbe = await firstFailure.json();
+      const nextFailure = await verifyHealth(failedProbe.revision);
+
+      expect(nextFailure.status).toBe(200);
+      const repeatedFailure = await nextFailure.json();
+      const { readStandIncidentEpisodes } =
+        await import("@/lib/stand-operations/incidents");
+
+      const openIncidents = await readStandIncidentEpisodes(
+        db,
+        userId,
+        assignment.id,
+      );
+
+      expect(openIncidents).toEqual([
+        expect.objectContaining({
+          reason: "verification_unhealthy",
+          state: "open",
+          occurrenceCount: 2,
+        }),
+      ]);
+      probeState = "healthy";
+      const verifiedResponse = await verifyHealth(repeatedFailure.revision);
 
       expect(verifiedResponse.status).toBe(200);
       const verified = await verifiedResponse.json();
@@ -1737,15 +1764,30 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
         effectState: "confirmed_applied",
         verificationState: "healthy",
         receiptIds: adoptedEffect.receiptIds,
-        verificationIds: [expect.any(String)],
+        verificationIds: [
+          expect.any(String),
+          expect.any(String),
+          expect.any(String),
+        ],
       });
+      const latestVerification = verified.verificationIds.slice(-1);
+
+      expect(
+        await readStandIncidentEpisodes(db, userId, assignment.id),
+      ).toEqual([
+        expect.objectContaining({
+          id: openIncidents[0]?.id,
+          state: "resolved",
+          occurrenceCount: 2,
+        }),
+      ]);
       await expect(
         database.pool.query(
           "DELETE FROM stand_verifications WHERE operation_id=$1",
           [operation.id],
         ),
       ).rejects.toMatchObject({ code: "23514" });
-      expect(verifyTarget).toHaveBeenCalledTimes(2);
+      expect(verifyTarget).toHaveBeenCalledTimes(4);
       const { validateOperationalEvidenceReferences } =
         await import("@/lib/run-results/operational-evidence");
       const [run] = await db
@@ -1797,7 +1839,7 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
             ],
           },
           operationIds: [operation.id],
-          verificationIds: verified.verificationIds,
+          verificationIds: latestVerification,
         },
       };
 
@@ -1980,7 +2022,7 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
         inputRevision: ready.inputRevision,
         contextRevision: ready.contextRevision,
         result: { runId, revision: published.revision },
-        verificationIds: verified.verificationIds,
+        verificationIds: latestVerification,
       });
       const accept = (verificationIds: readonly string[]) =>
         acceptSpecialistAssignment(db, {
@@ -1998,7 +2040,7 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
         });
 
       await expect(accept([])).rejects.toMatchObject({ code: "PRECONDITION" });
-      const accepted = await accept(verified.verificationIds);
+      const accepted = await accept(latestVerification);
 
       expect(accepted.status).toBe("completed");
       const { writeBackAcceptedAssignment } =
@@ -2052,7 +2094,7 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
         operations: expect.arrayContaining([
           expect.objectContaining({
             operationId: operation.id,
-            verificationId: verified.verificationIds[0],
+            verificationId: latestVerification[0],
           }),
         ]),
       });

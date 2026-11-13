@@ -11230,6 +11230,54 @@ export const standVerifications = pgTable(
   }),
 );
 
+export const standIncidentEpisodes = pgTable(
+  "stand_incident_episodes",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    resourceKey: text("resource_key").notNull(),
+    reason: text("reason", {
+      enum: ["verification_unhealthy", "verification_inconclusive"],
+    }).notNull(),
+    state: text("state", { enum: ["open", "resolved"] })
+      .notNull()
+      .default("open"),
+    firstOperationId: text("first_operation_id")
+      .notNull()
+      .references(() => standOperations.id, { onDelete: "restrict" }),
+    lastOperationId: text("last_operation_id")
+      .notNull()
+      .references(() => standOperations.id, { onDelete: "restrict" }),
+    occurrenceCount: integer("occurrence_count").notNull().default(1),
+    firstAt: timestamp("first_at", { withTimezone: true }).notNull(),
+    lastAt: timestamp("last_at", { withTimezone: true }).notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    recoveryVerificationId: text("recovery_verification_id").references(
+      () => standVerifications.id,
+      { onDelete: "restrict" },
+    ),
+  },
+  (t) => ({
+    active: uniqueIndex("stand_incident_open_resource_reason_uq")
+      .on(t.resourceKey, t.reason)
+      .where(sql`${t.state}='open'`),
+    timeline: index("stand_incident_resource_timeline_idx").on(
+      t.resourceKey,
+      t.lastAt,
+      t.id,
+    ),
+    shape: check(
+      "stand_incident_episode_shape_check",
+      sql`${t.resourceKey} ~ '^[a-f0-9]{64}$'
+      AND ${t.reason} IN ('verification_unhealthy','verification_inconclusive')
+      AND ${t.occurrenceCount}>0 AND ${t.lastAt}>=${t.firstAt}
+      AND ((${t.state}='open' AND ${t.resolvedAt} IS NULL AND ${t.recoveryVerificationId} IS NULL)
+        OR (${t.state}='resolved' AND ${t.resolvedAt}>=${t.lastAt} AND ${t.recoveryVerificationId} IS NOT NULL))`,
+    ),
+  }),
+);
+
 export const standRestartApprovals = pgTable(
   "stand_restart_approvals",
   {

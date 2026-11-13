@@ -6856,6 +6856,17 @@
     "noLaunch": "Время запуска неизвестно"
   },
   "specialistAssignments": {
+    "incidents": "Инциденты стенда",
+    "incidentOccurrences": "{count, plural, one {# наблюдение} few {# наблюдения} many {# наблюдений} other {# наблюдения}}",
+    "incidentRecovery": "Изучите квитанции операции и выполните независимую проверку после восстановления.",
+    "incidentReason": {
+      "verification_unhealthy": "Проверка здоровья выявила сбой",
+      "verification_inconclusive": "Проверка здоровья не дала однозначного результата"
+    },
+    "incidentState": {
+      "open": "Открыт",
+      "resolved": "Закрыт"
+    },
     "writeBack": "Знания для повторного использования",
     "submitDrafts": "Отправить сохранённые черновики знаний",
     "openProposal": "Открыть предложение {number}",

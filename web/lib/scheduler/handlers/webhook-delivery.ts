@@ -13,6 +13,7 @@ import { assignmentResultWitnessSchema } from "@/lib/specialist-assignments/deli
 import {
   authorizePendingAssignmentDelivery,
   applyInternalAssignmentDelivery,
+  isQuietScheduledStandDelivery,
 } from "@/lib/specialist-assignments/delivery";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
@@ -365,6 +366,20 @@ async function runFanoutPass(
         await tx.execute(
           sql`UPDATE webhook_events SET payload=${JSON.stringify(payload)}::jsonb,fanout_at=now() WHERE id=${event.id}`,
         );
+        if (
+          witness.destination.kind === "inbox" &&
+          (await isQuietScheduledStandDelivery(tx, String(receipt.id)))
+        ) {
+          log.info(
+            {
+              eventId: event.id,
+              deliveryId: receipt.id,
+              assignmentId: witness.assignmentId,
+            },
+            "quiet scheduled stand result retained without notification",
+          );
+          continue;
+        }
         const target =
           witness.destination.kind === "outbound_subscription"
             ? witness.destination.subscriptionId

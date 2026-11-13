@@ -859,6 +859,8 @@ Phase exit: full owning suites green; real target smoke passes; process/HTTP suc
 
 - [ ] **T39. Integrate incident grouping and quiet result delivery.** Depends on 37–38. Files: `runs/agent-incidents.ts`, `notifications/agent-incidents.ts`, agent activity queries, operation/assignment projections, automation notification policy and existing outbox. Group repeated target/component/failure episodes across attempts, notify only meaningful incident transitions/required action/completion requested by origin. Healthy unchanged routine checks stay quiet; evidence-backed recovery resolves the existing incident. Log: incident key hash/episode, delivery decision and dedup receipt.
 
+  T39 incident checkpoint. Migration `0329_stand_incident_episodes` groups repeated unhealthy or inconclusive probes by canonical resource and reason and resolves the episode only after later independent healthy evidence. Native assignment detail inspects authorized episodes in EN/RU. The existing delivery fanout recognizes scheduled complete no-change stand outcomes for quiet Inbox handling. The full incident/outbox and installed-package scenarios remain open.
+
 Phase exit: full owning suites plus targeted EN/RU browser E2E green; a single origin-to-assignment-to-result-to-proposal path is inspectable without correlating raw logs manually.
 
 ### Phase 9 — Full qualification, documentation and release integrity

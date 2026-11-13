@@ -9,6 +9,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { operationDto } from "./operation-intake";
+import { applyStandVerificationIncident } from "./incidents";
 import {
   authorizeStandReadOwner,
   claimStandReadAuthority,
@@ -157,18 +158,32 @@ export async function verifyStandRestart(
           "CONFLICT",
           "The target observation does not follow the applied effect and previous probes",
         );
-      await tx.insert(standVerifications).values({
-        operationId,
-        effectReceiptId: effect.id,
-        actorId,
-        nonce: verificationNonce,
-        ownerEpoch,
-        targetProbeId: observation.id,
-        targetSequence: observation.targetSequence,
-        state: observation.state,
-        issuedAt: new Date(issuedAt),
-        observedAt: new Date(observation.observedAt),
-      });
+      const [retained] = await tx
+        .insert(standVerifications)
+        .values({
+          operationId,
+          effectReceiptId: effect.id,
+          actorId,
+          nonce: verificationNonce,
+          ownerEpoch,
+          targetProbeId: observation.id,
+          targetSequence: observation.targetSequence,
+          state: observation.state,
+          issuedAt: new Date(issuedAt),
+          observedAt: new Date(observation.observedAt),
+        })
+        .returning({
+          id: standVerifications.id,
+          state: standVerifications.state,
+          observedAt: standVerifications.observedAt,
+        });
+
+      if (!retained)
+        throw new MaisterError(
+          "CRASH",
+          "The independent health observation was not retained",
+        );
+      await applyStandVerificationIncident(tx, stored.operation, retained);
       const [updated] = await tx
         .update(standOperations)
         .set({

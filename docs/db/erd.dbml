@@ -3445,6 +3445,26 @@ table stand_components {
   }
 }
 
+table stand_incident_episodes {
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  resource_key text [not null]
+  reason text [not null]
+  state text [not null, default: 'open']
+  first_operation_id text [not null]
+  last_operation_id text [not null]
+  occurrence_count integer [not null, default: 1]
+  first_at "timestamp with time zone" [not null]
+  last_at "timestamp with time zone" [not null]
+  resolved_at "timestamp with time zone"
+  recovery_verification_id text
+
+  indexes {
+    (resource_key, reason) [name: 'stand_incident_open_resource_reason_uq', unique]
+    (resource_key, last_at, id) [name: 'stand_incident_resource_timeline_idx']
+
+  }
+}
+
 table stand_operation_observations {
   id text [pk, not null, default: `gen_random_uuid()::text`]
   operation_id text [not null]
@@ -5209,6 +5229,12 @@ ref specialist_work_decisions_work_fk: specialist_work_decisions.(work_id, work_
 ref stand_authorization_permits_operation_id_stand_operations_id_fk: stand_authorization_permits.operation_id > stand_operations.id [delete: restrict, update: no action]
 
 ref stand_components_target_revision_fk: stand_components.(target_id, config_revision) > stand_target_revisions.(target_id, revision) [delete: restrict, update: no action]
+
+ref stand_incident_episodes_first_operation_id_stand_operations_id_fk: stand_incident_episodes.first_operation_id > stand_operations.id [delete: restrict, update: no action]
+
+ref stand_incident_episodes_last_operation_id_stand_operations_id_fk: stand_incident_episodes.last_operation_id > stand_operations.id [delete: restrict, update: no action]
+
+ref stand_incident_episodes_recovery_verification_id_stand_verifications_id_fk: stand_incident_episodes.recovery_verification_id > stand_verifications.id [delete: restrict, update: no action]
 
 ref stand_operation_observations_identity_fk: stand_operation_observations.(operation_id, target_incarnation, resource_key, request_digest) > stand_operations.(id, target_incarnation, resource_key, request_digest) [delete: restrict, update: no action]
 
