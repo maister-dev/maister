@@ -306,10 +306,18 @@ export function createLocalDirectTransport(
     dispatchStandRestart(envelope, opts) {
       return wire.dispatchStandRestart(envelope, opts);
     },
-    readStandReceipt: wire.readStandReceipt,
-    observeStandOperation: wire.observeStandOperation,
-    verifyStandOperation: wire.verifyStandOperation,
-    readStandLogs: wire.readStandLogs,
+    readStandReceipt(input) {
+      return wire.readStandReceipt(input);
+    },
+    observeStandOperation(input) {
+      return wire.observeStandOperation(input);
+    },
+    verifyStandOperation(input) {
+      return wire.verifyStandOperation(input);
+    },
+    readStandLogs(input) {
+      return wire.readStandLogs(input);
+    },
     async adoptWorkspace(
       envelope: CommandEnvelope<AdoptWorkspaceWire>,
       opts,
