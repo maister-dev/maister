@@ -33,6 +33,7 @@ export type ResolvedAssignmentContextPrincipal = Readonly<{
   identity: KnowledgePrincipalIdentity;
   source: Extract<KnowledgePrincipal, { kind: "user" | "execution" }>;
   consumer: KnowledgeReadConsumer;
+  tokenId: string | null;
 }>;
 type CurrentAssignmentAction = Readonly<{
   authority: AssignmentAuthoritySnapshot & { actor: KnowledgeAuthorityActor };
@@ -76,6 +77,7 @@ export async function resolveAssignmentContextPrincipal(
     return {
       identity,
       consumer,
+      tokenId: principal.kind === "token" ? principal.tokenId : null,
       source: { kind: "user", userId: identity.user.id },
     };
   }
@@ -88,6 +90,7 @@ export async function resolveAssignmentContextPrincipal(
   return {
     identity,
     consumer,
+    tokenId: principal.kind === "token" ? principal.tokenId : null,
     source: {
       kind: "execution",
       runId: identity.actor.runId,
@@ -170,6 +173,13 @@ async function authorizeAssignmentExecutionAction(
     principal.identity.kind === "user"
       ? null
       : await readAssignmentOwnerEpoch(tx, principal.identity.actor.runId);
+
+  if (ownerEpoch !== null)
+    await assertCurrentExecutorCredential(
+      tx,
+      principal.tokenId,
+      principal.identity.actor.runId,
+    );
   const authority = await authorizeAssignmentActionGrants(
     tx,
     principal,
@@ -179,6 +189,28 @@ async function authorizeAssignmentExecutionAction(
   );
 
   return { authority, executionEpoch, ownerEpoch };
+}
+
+async function assertCurrentExecutorCredential(
+  tx: SqlTransaction,
+  tokenId: string | null,
+  runId: string | null,
+): Promise<void> {
+  const [witness] = (
+    await tx.execute(sql`
+    SELECT owner.epoch_started_at IS NULL OR token.created_at>=owner.epoch_started_at AS current
+    FROM specialist_run_links link
+    JOIN specialist_owner_claims owner ON owner.assignment_id=link.assignment_id
+    JOIN project_tokens token ON token.id=${tokenId}
+    WHERE link.run_id=${runId}
+  `)
+  ).rows;
+
+  if (witness?.current !== true)
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "The specialist credential predates the current executor owner",
+    );
 }
 
 async function readAssignmentOwnerEpoch(

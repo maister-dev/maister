@@ -3323,6 +3323,7 @@ table specialist_owner_claims {
   run_id text [not null]
   placement_id text [not null]
   epoch integer [not null]
+  epoch_started_at "timestamp with time zone"
   renewed_at "timestamp with time zone" [not null]
   expires_at "timestamp with time zone" [not null]
 }

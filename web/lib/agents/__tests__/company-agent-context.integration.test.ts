@@ -11122,7 +11122,22 @@ it("IT-CBC-03 fences a company context writer at execution ownership handoff and
         [appointment.runId, after.id, 2],
       ),
     ).resolves.toMatchObject({ rows: [{ current: false }] });
-    const adopted = await patch(owner.secret, update(2, "adopted-observation"));
+    expect(
+      (await patch(owner.secret, update(2, "stale-after-adoption"))).status,
+    ).toBe(403);
+    await expect(
+      database.pool.query(
+        "UPDATE project_tokens SET created_at=clock_timestamp() WHERE id=$1",
+        [owner.tokenId],
+      ),
+    ).rejects.toMatchObject({
+      constraint: "project_tokens_company_binding_immutable",
+    });
+    const adoptedOwner = await mintCredential();
+    const adopted = await patch(
+      adoptedOwner.secret,
+      update(2, "adopted-observation"),
+    );
 
     expect(adopted.status).toBe(200);
     expect(await adopted.json()).toMatchObject({

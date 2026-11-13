@@ -10679,6 +10679,7 @@ export const specialistOwnerClaims = pgTable(
       .notNull()
       .references(() => executionAssignments.id, { onDelete: "restrict" }),
     epoch: integer("epoch").notNull(),
+    epochStartedAt: timestamp("epoch_started_at", { withTimezone: true }),
     renewedAt: timestamp("renewed_at", { withTimezone: true }).notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   },

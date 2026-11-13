@@ -1982,6 +1982,13 @@
       "when": 1794606477989,
       "tag": "0286_company_replacement_retry",
       "breakpoints": true
+    },
+    {
+      "idx": 287,
+      "version": "7",
+      "when": 1794606477990,
+      "tag": "0287_specialist_credential_epoch",
+      "breakpoints": true
     }
   ]
 }

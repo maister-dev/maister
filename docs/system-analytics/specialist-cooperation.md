@@ -291,6 +291,8 @@ Pending or Running through generic recovery.
 
 Migration `0285_specialist_executor_lease` gives an appointed, placed root a 120-second executor lease. Agent drivers renew every 40 seconds. The existing Flow driver renewal extends the lease when due. A placement handoff advances the business epoch, and a driver reclaiming its retained Run after lease expiry advances the epoch under the Run lock. A native child with an exact work link and active placement can adopt or renew that same branch while the coordinator is parked in `WaitingOnChildren`. Context writes record both the business and placement epochs. Delegation and work acceptance check the current lease and authorization before persisting. Lease expiry leaves the Run and its retained work available to the existing recovery paths.
 
+Migration `0287_specialist_credential_epoch` records when a new executor epoch starts. Assignment mutations require a Run credential issued during that epoch. Renewal preserves the epoch start. Older leases keep an unknown start until their next epoch, and their existing placement and expiry checks still apply.
+
 Acceptance stores responsible server principal, exact input/work/result revision, original evidence refs, limitations and verification decision. Schema validity, child Done or process exit alone cannot accept work. Agent children use supported existing message/rework. Flow children do not gain an unsupported message mutation: work rework creates a linked governed continuation, preserving the previous result and effect receipts. Rework references the new expected input revision and consumes remaining assignment/ancestor budget. Completed external effects are adopted as evidence, not replayed.
 
 ### Exhaustive interruption/recovery table

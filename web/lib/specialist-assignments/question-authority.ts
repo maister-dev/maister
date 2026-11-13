@@ -155,7 +155,7 @@ export async function assertPendingAssignmentQuestion(
         "UNAUTHORIZED",
         "The clarification source must retain its actual execution appointment",
       );
-    principal = { identity: resolved.identity, source, consumer };
+    principal = { identity: resolved.identity, source, consumer, tokenId: null };
   }
   if (contentDigest(principal.identity.actor) !== contentDigest(subject.actor))
     throw new MaisterError(
