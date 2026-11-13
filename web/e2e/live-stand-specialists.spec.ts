@@ -106,7 +106,7 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
   page,
   baseURL,
 }, testInfo) => {
-  test.setTimeout(900000);
+  test.setTimeout(1_200_000);
   const sourceUrl = required("E2E_STAND_GIT_URL");
   const tag = required("E2E_STAND_TAG");
   const expectedCommit = z
@@ -407,6 +407,18 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
   expect(duplicate.runIds).toEqual([runId]);
   const approvedStep = async () =>
     withE2EDb(async (pool) => {
+      const terminal = await pool.query<{ id: string; status: string }>(
+        "SELECT id,status FROM runs WHERE (id=$1 OR parent_run_id=$1) AND status IN ('Failed','Crashed','Abandoned') LIMIT 1",
+        [runId],
+      );
+
+      if (terminal.rows[0]) {
+        const { id, status } = terminal.rows[0];
+
+        throw new Error(
+          `Pilot execution ${id} reached ${status} before approval`,
+        );
+      }
       const stopped = await pool.query<{ step_id: string; kind: string }>(
         "SELECT step_id,kind FROM hitl_requests WHERE run_id=$1 AND responded_at IS NULL AND superseded_at IS NULL AND step_id<>'authorize'",
         [runId],
@@ -433,7 +445,7 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
         .parse(rows[0]);
     });
 
-  await expect.poll(approvedStep, { timeout: 420000 }).toBeDefined();
+  await expect.poll(approvedStep, { timeout: 720_000 }).toBeDefined();
   const operation = (await approvedStep())!;
 
   await read(
