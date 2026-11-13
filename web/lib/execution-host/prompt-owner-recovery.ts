@@ -15,6 +15,7 @@ import {
 import { projectionLimitsFromEnv } from "./events/projection-limits";
 import { runEventWakeBus } from "./events/run-wake";
 
+import { runWorkerLoop } from "@/lib/workers/loop";
 import { MaisterError } from "@/lib/errors";
 
 const log = pino({
@@ -50,18 +51,20 @@ export function startPromptOwnerWorker(input: {
   let shutdownFailure: { error: unknown } | undefined;
   let shutdown: Promise<void> | undefined;
   const serve = async (slot: number): Promise<void> => {
-    while (!controller.signal.aborted) {
+    await runWorkerLoop(controller.signal, async () => {
       try {
         const claim = await claimPromptOwner(input);
 
         if (!claim) {
           failures.delete(slot);
           await runEventWakeBus.waitForProjection(1_000, controller.signal);
-          continue;
+
+          return;
         }
         if (controller.signal.aborted) {
           await releasePromptOwnerClaim(input.db, claim);
-          break;
+
+          return;
         }
         await applyClaimedPromptOwner({
           ...input,
@@ -78,7 +81,7 @@ export function startPromptOwnerWorker(input: {
         log.error({ workerId, slot, reason }, "prompt-owner-worker-degraded");
         await runEventWakeBus.waitForProjection(1_000, controller.signal);
       }
-    }
+    });
   };
   const slots = Array.from(
     { length: projectionLimitsFromEnv().concurrency },

@@ -20,6 +20,11 @@ const buildWorkers = buildMaxWorkers(process.env);
 const nextConfig = {
   experimental: {
     authInterrupts: true,
+    // Persisted compilation data need not occupy RAM throughout an idle dev
+    // session. Keep source maps and on-demand rebuilding available.
+    turbopackMemoryEviction: "full",
+    turbopackLazyDynamicImports: true,
+    turbopackLazyDynamicImportsSSR: true,
     ...(buildWorkers === undefined ? {} : { cpus: buildWorkers }),
   },
   // Test fixture builds run type checking in a separate validation lane.
@@ -27,7 +32,9 @@ const nextConfig = {
     tsconfigPath: "tsconfig.build.json",
     ignoreBuildErrors: process.env.MAISTER_TEST_WEB_BUILD === "1",
   },
-  serverExternalPackages: ["pg"],
+  // These server dependencies already run in Node. Bundling their module graphs
+  // again for instrumentation and every route inflates dev compilation memory.
+  serverExternalPackages: ["pg", "drizzle-orm", "undici", "yaml", "zod"],
   turbopack: {
     root: repoRoot,
     resolveAlias: {

@@ -9,6 +9,7 @@ import { performance } from "node:perf_hooks";
 import { sql } from "drizzle-orm";
 import pino from "pino";
 
+import { runWorkerLoop } from "@/lib/workers/loop";
 import { taskLaunchIntents, runs } from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
@@ -101,7 +102,7 @@ export function startTaskLaunchWorker(input: { db: Db }): DurableWorkerHandle {
   const serve = async (pool: LaunchPool): Promise<void> => {
     let idleDeadline: number | null = null;
 
-    while (!controller.signal.aborted) {
+    await runWorkerLoop(controller.signal, async () => {
       try {
         let work = await readPoolWork(input.db, pool);
 
@@ -165,7 +166,7 @@ export function startTaskLaunchWorker(input: { db: Db }): DurableWorkerHandle {
         );
         await waitAfterNoProgress(MAX_RECONCILE_WAIT_MS, controller.signal);
       }
-    }
+    });
   };
   const slots = TASK_LAUNCH_POOLS.map(serve);
 

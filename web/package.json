@@ -4,8 +4,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "dev:clean": "pnpm clean && next dev",
+    "dev": "node scripts/dev.mjs",
+    "dev:clean": "pnpm run clean && node scripts/dev.mjs",
     "clean": "node scripts/clean-next-artifacts.mjs",
     "build": "pnpm clean && next build",
     "start": "node --import tsx server.ts",

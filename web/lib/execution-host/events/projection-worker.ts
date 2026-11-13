@@ -17,6 +17,7 @@ import { projectionLimitsFromEnv } from "./projection-limits";
 import { runEventWakeBus } from "./run-wake";
 import { projectionTransaction } from "./projection-transaction";
 
+import { runWorkerLoop } from "@/lib/workers/loop";
 import {
   executionEventConsumers,
   executionEvents,
@@ -152,7 +153,7 @@ export function startProjectionWorker(input: {
     }
   };
   const serve = async (slot: string): Promise<void> => {
-    while (!controller.signal.aborted) {
+    await runWorkerLoop(controller.signal, async () => {
       try {
         const claim = await claimNextExecutionProjection({
           db: input.db,
@@ -164,13 +165,15 @@ export function startProjectionWorker(input: {
         if (!claim) {
           failures.delete(slot);
           await wait();
-          continue;
+
+          return;
         }
         // Shutdown may race the short claim transaction. Release only this
         // token; never clear another process's replacement lease.
         if (controller.signal.aborted) {
           await releaseExecutionProjectionClaim(input.db, claim);
-          break;
+
+          return;
         }
         const projector = registry.get(claim.consumerName);
 
@@ -203,7 +206,7 @@ export function startProjectionWorker(input: {
         serviceFailure(slot, error);
         await wait();
       }
-    }
+    });
   };
 
   logger.info(

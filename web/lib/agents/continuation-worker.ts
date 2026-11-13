@@ -23,6 +23,7 @@ import { startAgentSession } from "./launch";
 import { GENERATION_TURN_VARIANTS, OWNED_TURN_VARIANTS } from "./turn-variants";
 import { AgentPromptContinuationPending } from "./prompt-owner";
 
+import { runWorkerLoop } from "@/lib/workers/loop";
 import {
   agentTurns,
   executionAssignments,
@@ -131,7 +132,7 @@ export function startAgentContinuationWorker(input: {
     let cursor: string | null = null;
     let tick = 0;
 
-    while (!controller.signal.aborted) {
+    await runWorkerLoop(controller.signal, async () => {
       const signal = AbortSignal.any([
         controller.signal,
         AbortSignal.timeout(5_000),
@@ -385,7 +386,8 @@ export function startAgentContinuationWorker(input: {
           cursor = null;
           reason = null;
           await runEventWakeBus.waitForProjection(1_000, controller.signal);
-          continue;
+
+          return;
         }
         cursor = candidate.id;
         if (candidate.runKind === "scratch") {
@@ -395,7 +397,8 @@ export function startAgentContinuationWorker(input: {
           );
           redriveScratchContinuation(input.db, candidate.id, hosts);
           reason = null;
-          continue;
+
+          return;
         }
         const [pause] =
           candidate.status === "NeedsInput"
@@ -422,7 +425,7 @@ export function startAgentContinuationWorker(input: {
             hosts,
           );
 
-          if (claim.outcome !== "claimed") continue;
+          if (claim.outcome !== "claimed") return;
         }
         await startAgentSession(candidate.id, {
           ...input,
@@ -431,9 +434,9 @@ export function startAgentContinuationWorker(input: {
         });
         reason = null;
       } catch (error) {
-        if (controller.signal.aborted) break;
+        if (controller.signal.aborted) return;
         if (error instanceof AgentPromptContinuationPending || signal.aborted)
-          continue;
+          return;
         reason = isMaisterError(error) ? error.code : "service_failure";
         log.error(
           { workerId, reason, runId: cursor },
@@ -441,7 +444,7 @@ export function startAgentContinuationWorker(input: {
         );
         await runEventWakeBus.waitForProjection(1_000, controller.signal);
       }
-    }
+    });
   };
   const running = serve();
   let shutdown: Promise<void> | undefined;
