@@ -151,7 +151,7 @@ type RetainCapture = Readonly<{
     attemptId: string | null;
   }>;
 }>;
-async function retainSourceCapture(
+export async function retainSourceCapture(
   tx: KnowledgeTransaction,
   input: RetainCapture,
 ): Promise<{ sourceId: string; witnessId: string; duplicate: boolean }> {

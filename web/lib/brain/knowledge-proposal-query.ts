@@ -10,6 +10,7 @@ import {
   projectContextReadPolicy,
   agentMemoryReadPolicy,
 } from "./knowledge-context-policy";
+import { standEvidenceReadPolicy } from "./knowledge-stand-policy";
 import {
   knowledgeOwnerActionPolicy,
   knowledgeReadPolicyCte,
@@ -39,6 +40,7 @@ function sourceAllows(identity: KnowledgePrincipalIdentity, ref: SQL): SQL {
     WHEN 'project' THEN ${knowledgeOwnerActionPolicy(identity, sql`${ref}->>'projectId'`, sql`NULL::text`, "knowledge:read")}
     WHEN 'project_context' THEN ${projectContextReadPolicy(identity, sql`${ref}->>'projectId'`)}
     WHEN 'assignment_input' THEN ${knowledgeSourceReadPolicy(identity, ref)}
+    WHEN 'stand_target' THEN ${standEvidenceReadPolicy(identity, sql`${ref}->>'companyId'`)}
     WHEN 'agent_memory' THEN ${agentMemoryReadPolicy(identity, sql`${ref}->>'projectId'`, sql`${ref}->>'agentId'`)}
     WHEN 'record' THEN EXISTS (${recordPolicy} SELECT 1 FROM knowledge_readable_records)
     ELSE false END`;

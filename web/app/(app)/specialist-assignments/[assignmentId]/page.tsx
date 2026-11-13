@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { getFormatter, getTranslations } from "next-intl/server";
 
 import { AssignmentAcceptanceForm } from "@/components/specialist-assignments/assignment-acceptance-form";
+import { AssignmentKnowledge } from "@/components/specialist-assignments/assignment-knowledge";
 import { AssignmentLifecycle } from "@/components/specialist-assignments/assignment-lifecycle";
 import { AssignmentLiveRefresh } from "@/components/specialist-assignments/assignment-live-refresh";
 import { StandOperationControls } from "@/components/specialist-assignments/operation-controls";
@@ -266,6 +267,9 @@ export default async function SpecialistAssignmentPage({
       ) : null}
       {review && runs.includes(review.result.runId) ? (
         <AssignmentAcceptanceForm assignmentId={assignmentId} review={review} />
+      ) : null}
+      {assignment.status === "completed" && assignment.acceptedResult ? (
+        <AssignmentKnowledge assignmentId={assignment.id} />
       ) : null}
       {!live && canChange ? (
         <AssignmentLifecycle

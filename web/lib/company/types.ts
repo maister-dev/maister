@@ -23,6 +23,12 @@ export const knowledgeAccessRestrictionSchema = z.union([
   ownerSchema,
   z
     .object({
+      kind: z.literal("stand_target"),
+      companyId: postgresTextSchema.min(1).max(128),
+    })
+    .strict(),
+  z
+    .object({
       kind: z.literal("project_context"),
       projectId: postgresTextSchema.min(1).max(128),
     })

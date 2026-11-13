@@ -1086,7 +1086,7 @@ it("IT-CBO-02 IT-CBO-03 IT-CBO-07 retains one restart intent across aliases and 
 });
 
 it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exact authority and independent verification", async () => {
-  const { administratorId, userId, owner, input, request } =
+  const { administratorId, userId, owner, authority, input, request } =
     await createRegistryFixture();
   const db = database.db as Db;
   const { approveStandRestart } = await import("../restart-approval");
@@ -1779,7 +1779,20 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
             schemaVersion: 1,
             findings: [],
             selection: [],
-            knowledgeProposals: [],
+            knowledgeProposals: [
+              {
+                change: "add" as const,
+                owner,
+                title: "Independent post-restart observation",
+                kind: "observation" as const,
+                assertion:
+                  "The configured service passed the independent probe after this restart.",
+                basis: "observed" as const,
+                evidence: [],
+                missingEvidence: [],
+                limitations: ["Applicable to this observed invocation."],
+              },
+            ],
           },
           operationIds: [operation.id],
           verificationIds: verified.verificationIds,
@@ -1966,9 +1979,81 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
         });
 
       await expect(accept([])).rejects.toMatchObject({ code: "PRECONDITION" });
-      await expect(accept(verified.verificationIds)).resolves.toMatchObject({
-        status: "completed",
+      const accepted = await accept(verified.verificationIds);
+
+      expect(accepted.status).toBe("completed");
+      const { writeBackAcceptedAssignment } =
+        await import("@/lib/specialist-assignments/write-back");
+      const firstWriteBack = await writeBackAcceptedAssignment(
+        db,
+        userId,
+        assignment.id,
+      );
+      const repeated = await writeBackAcceptedAssignment(
+        db,
+        userId,
+        assignment.id,
+      );
+
+      expect(firstWriteBack).toHaveLength(1);
+      expect(repeated).toEqual(firstWriteBack);
+      const { getKnowledgeProposal } =
+        await import("@/lib/brain/knowledge-proposal-read");
+      const proposal = await getKnowledgeProposal(
+        db,
+        { kind: "user", userId },
+        firstWriteBack[0]!,
+      );
+
+      expect(proposal).toMatchObject({
+        status: "pending",
+        attribution: { kind: "user", id: userId, runId },
+        evidence: [
+          { relation: "derived_from", witness: { availability: "available" } },
+        ],
       });
+      const linkedEvidence = proposal.evidence[0];
+
+      if (!linkedEvidence || !("witness" in linkedEvidence))
+        throw new Error(
+          "The retained proposal is missing its exact work witness",
+        );
+      const { getKnowledgeWitness } =
+        await import("@/lib/brain/knowledge-witnesses");
+      const proof = await getKnowledgeWitness(
+        db,
+        { kind: "user", userId },
+        linkedEvidence.witness.id,
+      );
+
+      expect(JSON.parse(proof.excerpt ?? "{}")).toMatchObject({
+        assignmentId: assignment.id,
+        acceptanceId: accepted.id,
+        result: { id: published.id, runId, revision: published.revision },
+        operations: expect.arrayContaining([
+          expect.objectContaining({
+            operationId: operation.id,
+            verificationId: verified.verificationIds[0],
+          }),
+        ]),
+      });
+      const targetRead = authority.page.items.find(
+        (item) => item.action === "targets:read",
+      );
+
+      if (!targetRead)
+        throw new Error("The fixture target read grant is unavailable");
+      await revokeCompanyGrant(db, administratorId, targetRead.id, {
+        expectedRevision: targetRead.revision,
+        reason: "Remove current target evidence visibility.",
+        idempotencyKey: randomUUID(),
+      });
+      await expect(
+        getKnowledgeWitness(db, { kind: "user", userId }, proof.id),
+      ).rejects.toMatchObject({ code: "PRECONDITION" });
+      await expect(
+        getKnowledgeProposal(db, { kind: "user", userId }, firstWriteBack[0]!),
+      ).rejects.toMatchObject({ code: "PRECONDITION" });
       await expect(
         getSpecialistAssignment(db, userId, assignment.id),
       ).resolves.toMatchObject({

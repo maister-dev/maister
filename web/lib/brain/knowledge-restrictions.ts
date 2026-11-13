@@ -10,6 +10,7 @@ import type { KnowledgeTransaction } from "./knowledge-access";
 import { sql } from "drizzle-orm";
 
 import { assignmentInputReadPolicy } from "./knowledge-assignment-policy";
+import { standEvidenceReadPolicy } from "./knowledge-stand-policy";
 import {
   authorizeKnowledge,
   knowledgeOwner,
@@ -184,6 +185,24 @@ export async function authorizeSourceRestrictions(
   let current = state;
 
   for (const restriction of restrictions ?? []) {
+    if (restriction.kind === "stand_target") {
+      const key = `stand_target:${restriction.companyId}`;
+
+      if (!current.visited.includes(key)) {
+        current = enterRestriction(current, key);
+        const identity = await resolveKnowledgePrincipal(
+          tx,
+          principal,
+          "knowledge:read",
+        );
+        const rows = await tx.execute(
+          sql`SELECT 1 WHERE ${standEvidenceReadPolicy(identity, sql`${restriction.companyId}`)}`,
+        );
+
+        if (!rows.rows.length) throw unavailableKnowledgeReference();
+      }
+      continue;
+    }
     if (restriction.kind === "assignment_input") {
       current = await authorizeAssignmentInputRestriction(
         tx,
@@ -306,6 +325,7 @@ export function restrictionsForKnowledgeAccess(
     if (kind === "record") return { kind, recordId: id };
     if (kind === "project") return { kind, projectId: id };
     if (kind === "company") return { kind, companyId: id };
+    if (kind === "stand_target") return { kind, companyId: id };
     if (
       kind === "agent_memory" ||
       kind === "project_context" ||

@@ -14,6 +14,7 @@ import {
   assignmentInputReadPolicy,
   assignmentInputOwnerReadPolicy,
 } from "./knowledge-assignment-policy";
+import { standEvidenceReadPolicy } from "./knowledge-stand-policy";
 
 import { projectRolesForActions } from "@/lib/authz";
 
@@ -116,6 +117,7 @@ export function knowledgeReadPolicyCte(
 function sourceIdentity(reference: SQL): SQL {
   return sql`CASE ${reference}->>'kind'
     WHEN 'company' THEN ${reference}->>'companyId'
+    WHEN 'stand_target' THEN ${reference}->>'companyId'
     WHEN 'project' THEN ${reference}->>'projectId'
     WHEN 'project_context' THEN ${reference}->>'projectId'
     WHEN 'agent_memory' THEN ${reference}::text
@@ -155,6 +157,7 @@ function sourceDependencyPolicy(identity: KnowledgePrincipalIdentity): SQL {
     WHEN 'company' THEN ${readableOwner(identity, sql`NULL::text`, sql`d.identity`)}
     WHEN 'project' THEN ${readableOwner(identity, sql`d.identity`, sql`NULL::text`)}
     WHEN 'project_context' THEN ${projectContextReadPolicy(identity, sql`d.identity`)}
+    WHEN 'stand_target' THEN ${standEvidenceReadPolicy(identity, sql`d.identity`)}
     WHEN 'agent_memory' THEN ${agentMemoryReadPolicy(identity, sql`(d.identity::jsonb)->>'projectId'`, sql`(d.identity::jsonb)->>'agentId'`)}
     WHEN 'assignment_input' THEN ${
       identity.kind === "user"

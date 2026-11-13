@@ -8,8 +8,31 @@ import {
   getSpecialistAssignment,
   recoverSpecialistAssignment,
 } from "@/lib/specialist-assignments/store";
+import { writeBackAcceptedAssignment } from "@/lib/specialist-assignments/write-back";
 
 type Receipt = Readonly<{ ok: true } | { ok: false; code: MaisterErrorCode }>;
+
+export async function proposeAssignmentKnowledge(
+  assignmentId: string,
+): Promise<
+  Readonly<
+    { ok: true; proposalIds: string[] } | { ok: false; code: MaisterErrorCode }
+  >
+> {
+  try {
+    const { id: userId } = await requireActiveSession();
+    const proposalIds = await writeBackAcceptedAssignment(
+      getDb(),
+      userId,
+      assignmentId,
+    );
+
+    return { ok: true, proposalIds };
+  } catch (error) {
+    if (isMaisterError(error)) return { ok: false, code: error.code };
+    throw error;
+  }
+}
 
 export async function cancelAssignment(
   assignmentId: string,

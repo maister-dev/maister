@@ -6856,6 +6856,10 @@
     "noLaunch": "Время запуска неизвестно"
   },
   "specialistAssignments": {
+    "writeBack": "Знания для повторного использования",
+    "submitDrafts": "Отправить сохранённые черновики знаний",
+    "openProposal": "Открыть предложение {number}",
+    "noDrafts": "В принятом результате нет черновиков знаний.",
     "progressUnavailable": "Текущий ход выполнения недоступен",
     "carrierTask": "Задача проекта",
     "packageRevision": "Ревизия пакета",

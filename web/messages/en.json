@@ -6856,6 +6856,10 @@
     "noLaunch": "Launch time unavailable"
   },
   "specialistAssignments": {
+    "writeBack": "Reusable knowledge",
+    "submitDrafts": "Submit retained knowledge drafts",
+    "openProposal": "Open proposal {number}",
+    "noDrafts": "The accepted result contains no knowledge drafts.",
     "progressUnavailable": "Live progress unavailable",
     "carrierTask": "Project task",
     "packageRevision": "Package revision",

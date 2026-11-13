@@ -332,6 +332,21 @@ export async function createKnowledgeProposal(
   db: KnowledgeDatabase,
   input: CreateKnowledgeProposalInput,
 ): Promise<KnowledgeProposalReceipt> {
+  try {
+    return await db.transaction((tx) =>
+      createKnowledgeProposalInTransaction(tx, input),
+    );
+  } catch (error) {
+    throw redactQueryError(error);
+  }
+}
+
+/** The optional origin is supplied by the server after checking the retained work result. */
+export async function createKnowledgeProposalInTransaction(
+  tx: KnowledgeTransaction,
+  input: CreateKnowledgeProposalInput,
+  origin?: Readonly<{ runId: string; attemptId: string | null }>,
+): Promise<KnowledgeProposalReceipt> {
   validKey(input.idempotencyKey);
   const owner = ownerSchema.safeParse(input.owner);
   const parsed = knowledgeDraftSchema.safeParse(input.draft);
@@ -369,157 +384,143 @@ export async function createKnowledgeProposal(
     base: input.expectedRecordRevision ?? null,
   });
 
-  try {
-    return await db.transaction(async (tx) => {
-      await tx.execute(sql`SET LOCAL statement_timeout='10s'`);
-      await tx.execute(sql`SET LOCAL lock_timeout='5s'`);
-      const consumer = await lockKnowledgeWriteConsumer(tx, input.principal);
-      const authority = await authorizeKnowledge(
-        tx,
-        input.principal,
-        owner.data,
-        "knowledge:propose",
-      );
-      const principalKey = `${authority.actor.kind}:${authority.actor.id}`;
-      const ownerId =
-        owner.data.kind === "company"
-          ? owner.data.companyId
-          : owner.data.projectId;
+  await tx.execute(sql`SET LOCAL statement_timeout='10s'`);
+  await tx.execute(sql`SET LOCAL lock_timeout='5s'`);
+  const consumer = await lockKnowledgeWriteConsumer(tx, input.principal);
+  const authority = await authorizeKnowledge(
+    tx,
+    input.principal,
+    owner.data,
+    "knowledge:propose",
+  );
+  const actor = origin ? { ...authority.actor, ...origin } : authority.actor;
+  const principalKey = `${authority.actor.kind}:${authority.actor.id}`;
+  const ownerId =
+    owner.data.kind === "company" ? owner.data.companyId : owner.data.projectId;
 
+  await tx.execute(
+    sql`SELECT pg_advisory_xact_lock(hashtextextended(${`knowledge:${owner.data.kind}:${ownerId}:${principalKey}`},0))`,
+  );
+  const prior = (
+    await tx.execute(
+      sql`SELECT p.* FROM brain_knowledge_submissions s JOIN brain_proposals p ON p.id=s.proposal_id WHERE s.project_id IS NOT DISTINCT FROM ${owner.data.kind === "project" ? owner.data.projectId : null} AND s.company_id IS NOT DISTINCT FROM ${owner.data.kind === "company" ? owner.data.companyId : null} AND s.principal_key=${principalKey} AND s.delivery_key=${input.idempotencyKey}`,
+    )
+  ).rows[0];
+
+  if (prior && prior.request_digest !== digest)
+    throw new MaisterError(
+      "CONFLICT",
+      "Knowledge delivery key already names different input",
+    );
+  const links = await evidenceLinks(
+    tx,
+    input.principal,
+    draft,
+    owner.data,
+    actor,
+  );
+  let restrictions = additionalKnowledgeRestrictions(owner.data, [
+    ...(consumer?.capture.restrictions ?? []),
+    ...links.flatMap(
+      (link) => parseKnowledgeRestrictions(link.snapshot.restrictions) ?? [],
+    ),
+  ]);
+
+  if (prior)
+    await authorizeSourceRestrictions(
+      tx,
+      input.principal,
+      prior.source_restrictions,
+    );
+  if (prior) return replayedReceipt(prior);
+  let correctionHead: number | null = null;
+
+  if (input.targetRecordId !== undefined) {
+    const target = await recordAccess(
+      tx,
+      input.principal,
+      input.targetRecordId,
+      "knowledge:propose",
+    );
+
+    await authorizeKnowledgeRevisionRead(
+      tx,
+      input.principal,
+      input.targetRecordId,
+      input.expectedRecordRevision!,
+    );
+    const base = (
       await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`knowledge:${owner.data.kind}:${ownerId}:${principalKey}`},0))`,
-      );
-      const prior = (
-        await tx.execute(
-          sql`SELECT p.* FROM brain_knowledge_submissions s JOIN brain_proposals p ON p.id=s.proposal_id WHERE s.project_id IS NOT DISTINCT FROM ${owner.data.kind === "project" ? owner.data.projectId : null} AND s.company_id IS NOT DISTINCT FROM ${owner.data.kind === "company" ? owner.data.companyId : null} AND s.principal_key=${principalKey} AND s.delivery_key=${input.idempotencyKey}`,
-        )
-      ).rows[0];
-
-      if (prior && prior.request_digest !== digest)
-        throw new MaisterError(
-          "CONFLICT",
-          "Knowledge delivery key already names different input",
-        );
-      const links = await evidenceLinks(
-        tx,
-        input.principal,
-        draft,
-        owner.data,
-        authority.actor,
-      );
-      let restrictions = additionalKnowledgeRestrictions(owner.data, [
-        ...(consumer?.capture.restrictions ?? []),
-        ...links.flatMap(
-          (link) =>
-            parseKnowledgeRestrictions(link.snapshot.restrictions) ?? [],
-        ),
-      ]);
-
-      if (prior)
-        await authorizeSourceRestrictions(
-          tx,
-          input.principal,
-          prior.source_restrictions,
-        );
-      if (prior) return replayedReceipt(prior);
-      let correctionHead: number | null = null;
-
-      if (input.targetRecordId !== undefined) {
-        const target = await recordAccess(
-          tx,
-          input.principal,
-          input.targetRecordId,
-          "knowledge:propose",
-        );
-
-        await authorizeKnowledgeRevisionRead(
-          tx,
-          input.principal,
-          input.targetRecordId,
-          input.expectedRecordRevision!,
-        );
-        const base = (
-          await tx.execute(
-            sql`SELECT source_restrictions FROM brain_record_revisions WHERE record_id=${input.targetRecordId} AND revision=${input.expectedRecordRevision!}`,
-          )
-        ).rows[0];
-
-        if (
-          contentDigest(knowledgeOwner(target.row)) !==
-          contentDigest(owner.data)
-        )
-          throw new MaisterError(
-            "CONFLICT",
-            "Knowledge correction owner does not match its record",
-          );
-        correctionHead = Number(target.row.current_revision);
-        restrictions = additionalKnowledgeRestrictions(owner.data, [
-          ...restrictions,
-          ...(parseKnowledgeRestrictions(base.source_restrictions) ?? []),
-          { kind: "record", recordId: input.targetRecordId },
-        ]);
-      }
-      await authorizeSourceRestrictions(tx, input.principal, restrictions);
-      const identical = (
-        await tx.execute(
-          sql`SELECT * FROM brain_proposals WHERE project_id IS NOT DISTINCT FROM ${owner.data.kind === "project" ? owner.data.projectId : null} AND company_id IS NOT DISTINCT FROM ${owner.data.kind === "company" ? owner.data.companyId : null} AND principal_key=${principalKey} AND request_digest=${digest} AND source_restrictions IS NOT DISTINCT FROM ${JSON.stringify(restrictions)}::jsonb`,
-        )
-      ).rows[0];
-
-      if (identical) {
-        await retainSubmission(tx, {
-          owner: owner.data,
-          proposalId: String(identical.id),
-          principalKey,
-          key: input.idempotencyKey,
-          digest,
-          actor: authority.actor,
-        });
-
-        return replayedReceipt(identical);
-      }
-      if (
-        correctionHead !== null &&
-        correctionHead !== input.expectedRecordRevision
+        sql`SELECT source_restrictions FROM brain_record_revisions WHERE record_id=${input.targetRecordId} AND revision=${input.expectedRecordRevision!}`,
       )
-        throw new MaisterError(
-          "CONFLICT",
-          "Knowledge correction base is stale",
-        );
-      const id = randomUUID();
-      const row = (
-        await tx.execute(sql`
-        INSERT INTO brain_proposals(id,project_id,company_id,kind,draft,actor,run_id,principal_key,submission_key,request_digest,knowledge_attribution,target_record_id,expected_record_revision,authority_snapshot,source_restrictions)
-        VALUES(${id},${owner.data.kind === "project" ? owner.data.projectId : null},${owner.data.kind === "company" ? owner.data.companyId : null},${input.kind},${JSON.stringify(draft)}::jsonb,${JSON.stringify({ type: authority.actor.kind, id: authority.actor.id })}::jsonb,${authority.actor.runId},${principalKey},${input.idempotencyKey},${digest},${JSON.stringify(authority.actor)}::jsonb,${input.targetRecordId ?? null},${input.expectedRecordRevision ?? null},${JSON.stringify({ submit: authority.policy })}::jsonb,${JSON.stringify(restrictions)}::jsonb)
-        RETURNING *
-      `)
-      ).rows[0];
+    ).rows[0];
 
-      if (!row)
-        throw new MaisterError("CRASH", "Knowledge proposal was not retained");
-      await retainSubmission(tx, {
-        owner: owner.data,
-        proposalId: id,
-        principalKey,
-        key: input.idempotencyKey,
-        digest,
-        actor: authority.actor,
-      });
-      log.info(
-        {
-          proposalId: id,
-          ownerKind: owner.data.kind,
-          ownerId,
-          actorId: authority.actor.id,
-        },
-        "knowledge proposed",
+    if (contentDigest(knowledgeOwner(target.row)) !== contentDigest(owner.data))
+      throw new MaisterError(
+        "CONFLICT",
+        "Knowledge correction owner does not match its record",
       );
-
-      return receipt(row);
-    });
-  } catch (error) {
-    throw redactQueryError(error);
+    correctionHead = Number(target.row.current_revision);
+    restrictions = additionalKnowledgeRestrictions(owner.data, [
+      ...restrictions,
+      ...(parseKnowledgeRestrictions(base.source_restrictions) ?? []),
+      { kind: "record", recordId: input.targetRecordId },
+    ]);
   }
+  await authorizeSourceRestrictions(tx, input.principal, restrictions);
+  const identical = (
+    await tx.execute(
+      sql`SELECT * FROM brain_proposals WHERE project_id IS NOT DISTINCT FROM ${owner.data.kind === "project" ? owner.data.projectId : null} AND company_id IS NOT DISTINCT FROM ${owner.data.kind === "company" ? owner.data.companyId : null} AND principal_key=${principalKey} AND request_digest=${digest} AND source_restrictions IS NOT DISTINCT FROM ${JSON.stringify(restrictions)}::jsonb`,
+    )
+  ).rows[0];
+
+  if (identical) {
+    await retainSubmission(tx, {
+      owner: owner.data,
+      proposalId: String(identical.id),
+      principalKey,
+      key: input.idempotencyKey,
+      digest,
+      actor: actor,
+    });
+
+    return replayedReceipt(identical);
+  }
+  if (
+    correctionHead !== null &&
+    correctionHead !== input.expectedRecordRevision
+  )
+    throw new MaisterError("CONFLICT", "Knowledge correction base is stale");
+  const id = randomUUID();
+  const row = (
+    await tx.execute(sql`
+    INSERT INTO brain_proposals(id,project_id,company_id,kind,draft,actor,run_id,principal_key,submission_key,request_digest,knowledge_attribution,target_record_id,expected_record_revision,authority_snapshot,source_restrictions)
+    VALUES(${id},${owner.data.kind === "project" ? owner.data.projectId : null},${owner.data.kind === "company" ? owner.data.companyId : null},${input.kind},${JSON.stringify(draft)}::jsonb,${JSON.stringify({ type: authority.actor.kind, id: authority.actor.id })}::jsonb,${actor.runId},${principalKey},${input.idempotencyKey},${digest},${JSON.stringify(actor)}::jsonb,${input.targetRecordId ?? null},${input.expectedRecordRevision ?? null},${JSON.stringify({ submit: authority.policy })}::jsonb,${JSON.stringify(restrictions)}::jsonb)
+    RETURNING *
+  `)
+  ).rows[0];
+
+  if (!row)
+    throw new MaisterError("CRASH", "Knowledge proposal was not retained");
+  await retainSubmission(tx, {
+    owner: owner.data,
+    proposalId: id,
+    principalKey,
+    key: input.idempotencyKey,
+    digest,
+    actor: actor,
+  });
+  log.info(
+    {
+      proposalId: id,
+      ownerKind: owner.data.kind,
+      ownerId,
+      actorId: authority.actor.id,
+    },
+    "knowledge proposed",
+  );
+
+  return receipt(row);
 }
 
 type PublishedRecord = Readonly<{ recordId: string; revision: number }>;
