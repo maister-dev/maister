@@ -8,7 +8,7 @@ import type { CompanyAgentContextInput } from "./company-agent-context";
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { companyAgentExecutionSnapshotSchema } from "./company-agent-execution-types";
@@ -25,7 +25,10 @@ import {
 } from "./retry-guards";
 
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
-import { authorizeRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
+import {
+  authorizeRunKnowledgeDisclosure,
+  authorizeRunsKnowledgeDisclosure,
+} from "@/lib/brain/knowledge-run-disclosure";
 import {
   agentRetryIntents,
   platformAcpRunners,
@@ -94,32 +97,47 @@ function replacementPreview(
   };
 }
 
-export async function authorizeCompanyRetryReceipt(
-  db: Db,
+async function authorizeRetainedCompanyRetry(
+  tx: Db,
   intent: Intent,
   userId: string,
 ): Promise<Replacement> {
   const recipe = replacementRecipe(intent);
 
   await authorizeCompanyUserAction(
-    db,
+    tx,
     userId,
     recipe.owner.companyId,
     "assignments:recover",
   );
-  await authorizeRunKnowledgeDisclosure(
-    db,
-    { kind: "user", userId },
-    intent.sourceRunId,
-  );
-  if (intent.createdRunId)
-    await authorizeRunKnowledgeDisclosure(
-      db,
-      { kind: "user", userId },
-      intent.createdRunId,
-    );
+  const runIds = intent.createdRunId
+    ? [intent.sourceRunId, intent.createdRunId]
+    : [intent.sourceRunId];
+
+  // Review and lifecycle writers may hold one of these rows before entering
+  // the assignment. Yield instead of waiting while holding the source Run.
+  await tx
+    .select({ id: runs.id })
+    .from(runs)
+    .where(inArray(runs.id, runIds))
+    .orderBy(runs.id)
+    .for("share", { noWait: true });
+  await tx.execute(sql`SELECT id FROM specialist_assignments
+    WHERE id=${recipe.assignment.id} AND company_id=${recipe.owner.companyId}
+    FOR SHARE NOWAIT`);
+  await authorizeRunsKnowledgeDisclosure(tx, { kind: "user", userId }, runIds);
 
   return recipe;
+}
+
+export async function authorizeCompanyRetryReceipt(
+  db: Db,
+  intent: Intent,
+  userId: string,
+): Promise<void> {
+  await db
+    .transaction((tx) => authorizeRetainedCompanyRetry(tx, intent, userId))
+    .catch((error: unknown) => companyRetryFailure(intent.sourceRunId, error));
 }
 
 async function prepareReplacement(
@@ -308,7 +326,7 @@ export async function companyAgentRetryOptions(
         );
 
       if (intent) {
-        const recipe = await authorizeCompanyRetryReceipt(tx, intent, userId);
+        const recipe = await authorizeRetainedCompanyRetry(tx, intent, userId);
 
         return { recipe, intent };
       }
@@ -381,7 +399,7 @@ export async function acceptCompanyAgentRetry(
           replay.requestDigest !== requestDigest
         )
           throw retryRefusal("retry_request_key_reused");
-        await authorizeCompanyRetryReceipt(tx, replay, userId);
+        await authorizeRetainedCompanyRetry(tx, replay, userId);
 
         return replay;
       }

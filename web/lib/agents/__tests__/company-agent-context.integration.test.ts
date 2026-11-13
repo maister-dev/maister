@@ -10863,6 +10863,35 @@ it("IT-CBC-03 reserves one source-bound replacement for a settled company specia
       runStatus: "Pending",
     });
     expect(receipts[1]).toEqual(receipts[0]);
+    const reviewing = await database.pool.connect();
+
+    try {
+      await reviewing.query("BEGIN");
+      await reviewing.query(
+        "SELECT id FROM specialist_assignments WHERE id=$1 FOR UPDATE",
+        [assignment.id],
+      );
+      await expect(
+        getAgentRetryOptions(db, source.runId, userId),
+      ).rejects.toMatchObject({
+        code: "CONFLICT",
+        details: { reason: "retry_assignment_busy" },
+      });
+      await expect(
+        getAgentRetryReceipt(
+          db,
+          source.runId,
+          receipts[0].retryIntentId,
+          userId,
+        ),
+      ).rejects.toMatchObject({
+        code: "CONFLICT",
+        details: { reason: "retry_assignment_busy" },
+      });
+    } finally {
+      await reviewing.query("ROLLBACK");
+      reviewing.release();
+    }
     await expect(
       getAgentRetryOptions(db, source.runId, userId),
     ).resolves.toMatchObject({
