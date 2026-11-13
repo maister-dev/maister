@@ -10980,6 +10980,158 @@ it("IT-CBC-03 reserves one source-bound replacement for a settled company specia
   }
 });
 
+it("IT-CBC-03 preserves the settled company cron invocation and frozen request across replacement", async () => {
+  const db: Db = database.db;
+  const { hosts } = await fakeExecutionHosts(db);
+  const roleId = "rah:wire-observer";
+  const effective = await resolveInstalledAgentDefinition(db, {
+    agentId: roleId,
+    packageInstallId: assignmentInput.standingDefinition.packageInstallId,
+  });
+  const runnerId = randomUUID();
+
+  await db.insert(platformAcpRunners).values({
+    id: runnerId,
+    adapter: "claude",
+    capabilityAgent: "claude",
+    model: "company-cron-retry-fixture",
+    provider: { kind: "anthropic" },
+    readinessStatus: "Ready",
+  });
+  const binding = await createCompanySpecialistBinding(db, userId, roleId, {
+    owner: { kind: "company", companyId: request.companyId },
+    packageInstallId: effective.packageInstallId,
+    packageRevision: effective.resolvedRevision!,
+    definitionSha256: agentDefinitionSha256(effective.parsed),
+    enabled: true,
+    configuration: {},
+    grantActions: ["knowledge:read", "knowledge:propose"],
+    runnerId,
+    idempotencyKey: randomUUID(),
+  });
+  const cron = await createCompanyCronSchedule(db, userId, {
+    owner: { kind: "company", companyId: request.companyId },
+    specialistBindingId: binding.specialist.bindingId,
+    cronExpr: "*/5 * * * *",
+    timezone: "UTC",
+    requestAtLaunch:
+      "Recover the original recurring request bytes, including кириллица.",
+    enabled: true,
+    idempotencyKey: randomUUID(),
+  });
+  const grants = await createCompanyGrants(db, administratorId, {
+    principalKind: "user",
+    principalId: userId,
+    actions: ["assignments:recover"],
+    idempotencyKey: randomUUID(),
+  });
+  const grant = grants.page.items.find(
+    (item) => item.action === "assignments:recover",
+  )!;
+
+  try {
+    await database.pool.query(
+      "UPDATE agent_schedules SET next_fire_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+      [cron.scheduleId],
+    );
+    const now = new Date();
+    const attempt = await claimCronAgentAttempt(
+      db,
+      cron.scheduleId,
+      now,
+      new Date(now.getTime() + 300000),
+    );
+
+    expect(attempt).not.toBeNull();
+    const receipt = await reserveCompanyCronAssignment(
+      db,
+      { attemptId: attempt!.id, runId: attempt!.reservedRunId },
+      hosts,
+    );
+
+    await database.pool.query(
+      "UPDATE agent_trigger_attempts SET due_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+      [attempt!.id],
+    );
+    await reconcileAgentTriggerAttempts(db, new Date());
+    const [sourceRunId] = receipt.assignment.runIds;
+    const failure = await prepareUndispatchedAgentFailure(sourceRunId, {
+      db,
+      reason: "agent_dispatch_failed",
+    });
+
+    await db.transaction(failure.apply);
+    const preview = await getAgentRetryOptions(db, sourceRunId, userId);
+
+    expect(preview).toMatchObject({
+      eligible: true,
+      selectedRunnerId: runnerId,
+    });
+    const replacement = await acceptAgentRetry(db, sourceRunId, userId, {
+      requestKey: randomUUID(),
+      runnerId,
+      previewFingerprint: preview.previewFingerprint,
+    });
+
+    expect(replacement).toMatchObject({
+      intentState: "launched",
+      runStatus: "Pending",
+    });
+    const [successor] = await db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, replacement.runId!));
+    const [source] = await db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, sourceRunId));
+
+    expect(successor).toMatchObject({
+      triggerSource: "cron",
+      agentScheduleId: cron.scheduleId,
+      retryOfRunId: sourceRunId,
+      scheduledRequestSnapshot: source.scheduledRequestSnapshot,
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT run_id,outcome FROM agent_trigger_attempts WHERE schedule_id=$1",
+          [cron.scheduleId],
+        )
+      ).rows,
+    ).toEqual([{ run_id: sourceRunId, outcome: "queued" }]);
+    await expect(
+      db.transaction((tx) => loadCompanyAgentSessionContext(tx, successor.id)),
+    ).resolves.toMatchObject({
+      input: {
+        snapshot: { scheduledRequest: source.scheduledRequestSnapshot },
+      },
+    });
+    await database.pool.query(
+      "UPDATE agent_schedules SET enabled=false,company_config_revision=company_config_revision+1 WHERE id=$1",
+      [cron.scheduleId],
+    );
+    await expect(
+      db.transaction((tx) => loadCompanyAgentSessionContext(tx, successor.id)),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "retry_context_changed" },
+    });
+    const settle = await prepareUndispatchedAgentFailure(successor.id, {
+      db,
+      reason: "fixture_replacement_complete",
+    });
+
+    await db.transaction(settle.apply);
+  } finally {
+    await revokeCompanyGrant(db, administratorId, grant.id, {
+      expectedRevision: grant.revision,
+      reason: "Release cron recovery qualification authority",
+      idempotencyKey: randomUUID(),
+    });
+  }
+});
+
 it("IT-CBC-03 preserves an exact native project appointment through the existing retry sweep", async () => {
   const db: Db = database.db;
   const { host } = await fakeExecutionHosts(db);

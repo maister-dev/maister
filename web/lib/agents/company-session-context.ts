@@ -18,6 +18,7 @@ import { resolveInstalledAgentDefinition } from "./effective";
 import { agentDefinitionSha256 } from "./activity-snapshot";
 import { resolveAgentConfig } from "./config";
 import { scheduledRequestBlock } from "./scheduled-request";
+import { authorizeCompanyCronReplacementSource } from "./company-trigger-reservation";
 
 import { assertNativeRunKnowledgeInputsInTransaction } from "@/lib/brain/knowledge-execution-access";
 import { inspectKnowledgeEvidenceReference } from "@/lib/brain/knowledge-reference";
@@ -80,6 +81,12 @@ export async function loadCompanyAgentSessionContext(
       owner.userId,
       owner.companyId,
       "assignments:recover",
+    );
+  if (run.retryOfRunId && run.triggerSource === "cron")
+    await authorizeCompanyCronReplacementSource(
+      tx,
+      run.retryOfRunId,
+      owner.userId,
     );
   const row = (
     await tx.execute(

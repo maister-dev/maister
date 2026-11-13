@@ -617,6 +617,8 @@ paths:
         Pending continuation and stores its retry receipt in the same transaction.
         Company coordinator Flow replacement also binds the exact pinned Flow and all
         retained session runner snapshots.
+        A company cron replacement uses the same settled invocation and original
+        request snapshot. The schedule must still be enabled at the captured revision.
         For a project specialist, the existing retry sweep rechecks the same witnesses
         before reserving a continuation through project admission. Pending assignment
         updates defer that sweep without consuming an admission attempt.

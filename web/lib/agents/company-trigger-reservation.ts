@@ -14,6 +14,7 @@ import { companyTriggerBindingSnapshotSchema } from "./trigger-attempt-types";
 import { parseScheduledRequestSnapshot } from "./scheduled-request";
 import { assertScheduledRequestMatches } from "./scheduled-request-store";
 import { resolveCompanyEventChainDepth } from "./chain-depth";
+import { retryRefusal } from "./retry-guards";
 
 import { MaisterError } from "@/lib/errors";
 import { contentDigest } from "@/lib/evaluations/digest";
@@ -22,6 +23,24 @@ export type CompanyTriggerReservation = Readonly<{
   attemptId: string;
   runId: string;
 }>;
+
+/** A cron continuation keeps the original invocation identity and freezes the original input. */
+export async function authorizeCompanyCronReplacementSource(
+  tx: SqlTransaction,
+  sourceRunId: string,
+  userId: string,
+): Promise<{ scheduleId: string; triggerEventId: null; agentChainDepth: 0 }> {
+  const [witness] = (
+    await tx.execute(sql`
+    SELECT company_cron_retry_source_schedule(${sourceRunId},${userId}) AS id
+  `)
+  ).rows;
+
+  if (typeof witness?.id !== "string")
+    throw retryRefusal("retry_context_changed");
+
+  return { scheduleId: witness.id, triggerEventId: null, agentChainDepth: 0 };
+}
 
 /** Automated source admission must retain its durable appointment before allocating execution. */
 export function assertCompanyTriggerAppointment(

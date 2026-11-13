@@ -20,6 +20,7 @@ import pino from "pino";
 import {
   assertCompanyTriggerAppointment,
   assertCompanyTriggerReservation,
+  authorizeCompanyCronReplacementSource,
 } from "./company-trigger-reservation";
 import {
   prepareCompanyAgentContext,
@@ -186,10 +187,22 @@ export async function reserveCompanyAgentReplacement(
     request,
   );
   const { runId } = reservation;
+  const triggerReservation =
+    request.triggerSource === "cron"
+      ? {
+          runId,
+          ...(await authorizeCompanyCronReplacementSource(
+            tx,
+            reservation.sourceRunId,
+            userId,
+          )),
+        }
+      : null;
 
   await insertCompanyAgentRun(tx, context, hosts, host, {
     runId,
     triggerSource: request.triggerSource,
+    triggerReservation,
     scheduledRequest: context.input.snapshot.scheduledRequest,
     runnerSha256: reservation.runnerSha256,
     retryOfRunId: reservation.sourceRunId,
