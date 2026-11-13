@@ -181,10 +181,26 @@ test.describe("run & task context visibility", () => {
     await expect(taskBlock.locator("strong")).toContainText("timeout");
   });
 
-  test("R1/R2 keeps the outcome first and preserves the mobile inspector link", async ({
+  test("R1/R2 keeps the outcome first and preserves inspector and Librarian navigation", async ({
     page,
   }) => {
     const fx = await seedContextRun();
+
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await page.goto(`/runs/${fx.runId}`);
+    const title = page.getByRole("heading", { name: fx.title, exact: true });
+
+    await expect(title).toBeInViewport();
+    await expect(
+      page.getByTestId("run-outcome").filter({ visible: true }),
+    ).toBeInViewport();
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    const librarian = page.getByTestId("librarian-trigger");
+
+    await librarian.click();
+    await expect(page.getByTestId("librarian-composer")).toBeInViewport();
+    await page.keyboard.press("Escape");
+    await expect(librarian).toBeFocused();
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`/runs/${fx.runId}?wb=timeline&node=implement#run-outcome`);
