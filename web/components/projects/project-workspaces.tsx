@@ -111,6 +111,8 @@ export async function ProjectWorkspaces({
           className="mt-2 grid max-h-[min(52vh,420px)] gap-4 overflow-auto overscroll-contain rounded-xl border border-line bg-paper p-3"
           data-testid="project-workspaces"
           id="project-workspaces"
+          // Allow keyboard users to scroll the capped workspaces region directly.
+          // eslint-disable-next-line jsx-a11y-x/no-noninteractive-tabindex
           tabIndex={0}
         >
           <ActiveAgentExecutions

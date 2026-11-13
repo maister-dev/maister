@@ -135,7 +135,9 @@ test("P1 keeps the closed project header the same with fifty retained working co
   });
   await page.setViewportSize({ width: 1366, height: 768 });
   await page.goto(`/projects/${slug}`);
-  const header = page.getByTestId("project-board-header");
+  const header = page
+    .getByTestId("project-board-header")
+    .filter({ visible: true });
   const board = page.getByRole("region", { name: "Task board", exact: true });
   const closed = async () => ({
     header: await header.boundingBox(),
@@ -144,6 +146,9 @@ test("P1 keeps the closed project header the same with fifty retained working co
 
   await expect(header).toBeVisible();
   await expect(board).toBeVisible();
+  await expect(
+    page.getByTestId("config-persist-status").filter({ visible: true }),
+  ).toBeVisible();
   const before = await closed();
 
   expect(before.header?.height).toBeLessThan(180);
@@ -168,12 +173,17 @@ test("P1 keeps the closed project header the same with fifty retained working co
 
   await expect(header).toContainText("50");
   await expect(header).toContainText("1Executing");
+  await expect(
+    page.getByTestId("config-persist-status").filter({ visible: true }),
+  ).toBeVisible();
   const after = await closed();
 
   expect(after.header?.height).toBe(before.header?.height);
   expect(after.board?.y).toBe(before.board?.y);
   await page.getByRole("link", { name: "Runs and working copies" }).click();
-  const panel = page.getByTestId("project-workspaces");
+  const panel = page
+    .getByTestId("project-workspaces")
+    .filter({ visible: true });
 
   await expect(panel).toBeVisible();
   await panel.getByRole("link", { name: new RegExp(title) }).click();
