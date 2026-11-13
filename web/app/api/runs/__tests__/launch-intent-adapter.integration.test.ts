@@ -145,9 +145,28 @@ it("L2 previews and freezes a one-run primary without saving it on the task", as
   };
 
   expect((await POST(request(payload))).status).toBe(400);
-  const accepted = await ACCEPT(request(payload));
+  const key = randomUUID();
+  const accepted = await ACCEPT(request(payload, key));
 
   expect(accepted.status).toBe(202);
+  const receipt = await accepted.json();
+
+  expect(await (await ACCEPT(request(payload, key))).json()).toEqual(receipt);
+  const mismatched = await ACCEPT(
+    request(
+      {
+        ...payload,
+        flowRunnerDraft: {
+          ...flowRunnerDraft,
+          primaryRunnerId: fixture.runnerId,
+        },
+      },
+      key,
+    ),
+  );
+
+  expect(mismatched.status).toBe(409);
+  expect(await countIntents(input.taskId)).toBe(1);
   const [intent] = await database.db
     .select()
     .from(taskLaunchIntents)
