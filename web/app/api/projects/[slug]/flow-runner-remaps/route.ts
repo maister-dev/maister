@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Db } from "@/lib/execution-host/db";
 import type { RunnerSlotKind } from "@/lib/acp-runners/runner-slots";
 
 import { randomUUID } from "node:crypto";
@@ -10,11 +11,16 @@ import pino from "pino";
 import { z } from "zod";
 
 import { enumerateRunnerSlots } from "@/lib/acp-runners/runner-slots";
-import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import {
+  requireActiveSession,
+  requireProjectAction,
+  requireProjectActionForUser,
+} from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 
+const { flowRevisions } = schemaModule;
 const { flowRunnerRemaps, flows, platformAcpRunners, projects } =
   schemaModule as unknown as Record<string, any>;
 
@@ -251,12 +257,12 @@ export async function PATCH(
   const { slug } = await params;
 
   try {
-    await requireActiveSession();
+    const user = await requireActiveSession();
 
     const db = getDb() as any;
     const project = await loadProject(db, slug);
 
-    await requireProjectAction(project.id, "editSettings");
+    await requireProjectActionForUser(user.id, project.id, "editSettings");
 
     let body: z.infer<typeof patchBodySchema>;
 
@@ -269,76 +275,68 @@ export async function PATCH(
       );
     }
 
-    // The revision must belong to a flow in THIS project (server-state); the
-    // slot_key must be one the revision actually declares.
-    const flowRows = await db
-      .select({
-        id: flows.id,
-        flowRefId: flows.flowRefId,
-        enabledRevisionId: flows.enabledRevisionId,
-        manifest: flows.manifest,
-      })
-      .from(flows)
-      .where(
-        and(
-          eq(flows.projectId, project.id),
-          eq(flows.enabledRevisionId, body.flowRevisionId),
-        ),
-      );
-    const flow = flowRows[0];
-
-    if (!flow || !flow.manifest) {
-      throw new MaisterError(
-        "CONFLICT",
-        `flow revision not found in project: ${body.flowRevisionId}`,
-      );
-    }
-
-    const declaredSlots = new Set(
-      enumerateRunnerSlots(flow.manifest).map((slot) => slot.slotKey),
-    );
-
-    if (!declaredSlots.has(body.slotKey)) {
-      throw new MaisterError(
-        "CONFLICT",
-        `slot_key "${body.slotKey}" is not declared by flow revision ${body.flowRevisionId}`,
-      );
-    }
-
-    await assertEnabledRunner(db, body.mappedRunnerId);
-
     const status = body.mappedRunnerId ? "Mapped" : "Pending";
-    const existingRows = await db
-      .select()
-      .from(flowRunnerRemaps)
-      .where(
-        and(
-          eq(flowRunnerRemaps.projectId, project.id),
-          eq(flowRunnerRemaps.flowRevisionId, body.flowRevisionId),
-          eq(flowRunnerRemaps.slotKey, body.slotKey),
-        ),
-      );
-    const existing = existingRows[0];
 
-    if (existing) {
-      await db
-        .update(flowRunnerRemaps)
-        .set({
-          mappedRunnerId: body.mappedRunnerId,
-          status,
-          updatedAt: new Date(),
-        })
-        .where(eq(flowRunnerRemaps.id, existing.id));
-    } else {
-      await db.insert(flowRunnerRemaps).values({
-        id: randomUUID(),
+    await (db as Db).transaction(async (tx) => {
+      // Hold the enabled pointer through the write. Enable/rollback updates
+      // this row; PostgreSQL rechecks the predicate after waiting on a writer.
+      const [flow] = await tx
+        .select({ revisionId: schemaModule.flows.enabledRevisionId })
+        .from(schemaModule.flows)
+        .where(
+          and(
+            eq(schemaModule.flows.projectId, project.id),
+            eq(schemaModule.flows.enabledRevisionId, body.flowRevisionId),
+          ),
+        )
+        .for("update");
+
+      if (!flow)
+        throw new MaisterError(
+          "CONFLICT",
+          "Flow revision is no longer enabled in this project",
+        );
+      const [revision] = await tx
+        .select({ manifest: flowRevisions.manifest })
+        .from(flowRevisions)
+        .where(eq(flowRevisions.id, body.flowRevisionId));
+
+      if (
+        !revision ||
+        !enumerateRunnerSlots(revision.manifest).some(
+          (slot) => slot.slotKey === body.slotKey,
+        )
+      )
+        throw new MaisterError(
+          "CONFLICT",
+          `Slot ${body.slotKey} is not declared by the enabled revision`,
+        );
+
+      await assertEnabledRunner(tx, body.mappedRunnerId);
+      const mapping = {
         projectId: project.id,
         flowRevisionId: body.flowRevisionId,
         slotKey: body.slotKey,
         mappedRunnerId: body.mappedRunnerId,
         status,
-      });
-    }
+      } as const;
+
+      await tx
+        .insert(schemaModule.flowRunnerRemaps)
+        .values({ id: randomUUID(), ...mapping })
+        .onConflictDoUpdate({
+          target: [
+            schemaModule.flowRunnerRemaps.projectId,
+            schemaModule.flowRunnerRemaps.flowRevisionId,
+            schemaModule.flowRunnerRemaps.slotKey,
+          ],
+          set: {
+            mappedRunnerId: mapping.mappedRunnerId,
+            status,
+            updatedAt: new Date(),
+          },
+        });
+    });
 
     log.info(
       {

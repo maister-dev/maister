@@ -2,7 +2,7 @@ import "server-only";
 
 import type { TaskLaunchServerSourceSnapshot } from "./launch-server-source";
 import type { Db } from "@/lib/execution-host/db";
-import type { TaskLaunchRequest } from "./launch-schema";
+import type { FlowRunnerDraft, TaskLaunchRequest } from "./launch-schema";
 import type { TaskLaunchSettingsV2Snapshot } from "./launch-types";
 import type { ResolvedAgentLaunchSettings } from "./launch-agent-resolution";
 import type { TaskLaunchFlowAssetsSnapshot } from "./launch-flow-assets";
@@ -30,7 +30,10 @@ import {
   loadFlowRunnerBindings,
   loadRunnerCatalog,
 } from "@/lib/acp-runners/catalog";
-import { inspectFlowRunners } from "@/lib/acp-runners/flow-preflight";
+import {
+  inspectFlowRunners,
+  type FlowRunnerInspection,
+} from "@/lib/acp-runners/flow-preflight";
 import { assertFlowStaticEnforcement } from "@/lib/acp-runners/enforcement-preflight";
 import { runnerAdmissionError } from "@/lib/flows/runner-admission-error";
 import { parseExecutableStoredFlowManifest } from "@/lib/flows/manifest-parser";
@@ -199,6 +202,28 @@ export async function taskLaunchSettingsMetadataToken(
   });
 }
 
+export function draftLaunchSettingsMetadataToken(
+  legacyToken: string,
+  draft: FlowRunnerDraft,
+  inspection: FlowRunnerInspection,
+): string {
+  return retryDigest({
+    legacyToken,
+    draft,
+    slots: [...inspection.sessions, ...inspection.consensus].map((slot) => ({
+      key: slot.slotKey,
+      runner:
+        slot.status === "resolved"
+          ? retryDigest(slot.resolution.runnerSnapshot)
+          : null,
+      tier:
+        slot.status === "resolved"
+          ? slot.resolution.runnerResolutionTier
+          : null,
+    })),
+  });
+}
+
 export function composeTaskLaunchSettingsToken(
   metadataToken: string,
   flowAssets: TaskLaunchFlowAssetsSnapshot | null,
@@ -364,7 +389,14 @@ async function resolveFlowLaunchSettingsForSource(
         eq(projectFlowRunnerDefaults.flowId, flow.id),
       ),
     );
+
+  if (
+    selection.flowRunnerDraft &&
+    selection.flowRunnerDraft.flowRevisionId !== revision.id
+  )
+    throw launchRefusal("launch_settings_changed");
   const inspection = inspectFlowRunners({
+    draft: selection.flowRunnerDraft,
     manifest,
     bindings: await loadFlowRunnerBindings(db, project.id, revision.id),
     taskRunnerId: task.runnerId,
@@ -515,6 +547,12 @@ async function resolveFlowLaunchSettingsForSource(
           baseBranch,
           targetBranch,
         })
-      : await taskLaunchSettingsMetadataToken(db, task.id, selection),
+      : selection.flowRunnerDraft
+        ? draftLaunchSettingsMetadataToken(
+            await taskLaunchSettingsMetadataToken(db, task.id, selection),
+            selection.flowRunnerDraft,
+            inspection,
+          )
+        : await taskLaunchSettingsMetadataToken(db, task.id, selection),
   };
 }

@@ -25321,6 +25321,8 @@ components:
               disabledReasonMessage: { type: string, nullable: true }
               isTaskDefault: { type: boolean }
         selectedFlowId: { type: string }
+        enabledFlowRevisionId: { type: string, nullable: true }
+        primarySessionName: { type: string }
         selectedFlowRevisionId: { type: string, nullable: true }
         canConfigureRunnerBindings:
           type: boolean

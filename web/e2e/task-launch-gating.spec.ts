@@ -72,6 +72,67 @@ test.describe("Manual task admission through the real browser and controlled pro
     }
   });
 
+  test("L1 closes a one-run runner draft without writing task or project defaults", async ({
+    page,
+  }) => {
+    const task = await createTask(
+      page,
+      "One-run runner draft",
+      "Keep the configured runner on this task",
+    );
+
+    await page.goto(`/projects/${fixture.slug}`);
+    const dialog = await openLaunch(page, task.title);
+    const preview = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/runs/launch-options" &&
+        response.request().method() === "POST",
+    );
+
+    await chooseLaunchOption(
+      page,
+      dialog,
+      /Runner \/ Model/,
+      new RegExp(fixture.failedRunnerId),
+    );
+    expect((await preview).status()).toBe(200);
+    await expect(
+      dialog.getByRole("button", { name: "Use configured runners" }),
+    ).toBeVisible();
+    await dialog
+      .getByRole("button", { name: "Use configured runners" })
+      .focus();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    const reopened = await openLaunch(page, task.title);
+
+    await expect(
+      reopened.getByRole("button", { name: "Use configured runners" }),
+    ).toHaveCount(0);
+    expect(await launchRows(task.taskId)).toEqual([]);
+    expect(
+      await withE2EDb(
+        async (pool) =>
+          (
+            await pool.query("SELECT runner_id FROM tasks WHERE id=$1", [
+              task.taskId,
+            ])
+          ).rows[0]?.runner_id,
+      ),
+    ).toBe(fixture.runnerId);
+    expect(
+      await withE2EDb(
+        async (pool) =>
+          (
+            await pool.query(
+              "SELECT id FROM flow_runner_remaps WHERE project_id=$1",
+              [fixture.projectId],
+            )
+          ).rows,
+      ),
+    ).toEqual([]);
+  });
+
   test("LA01/02/10/12: configured manual Launch without qualification survives a lost receipt and delivers a checked, human-reviewed PR (controlled provider)", async ({
     page,
     context,

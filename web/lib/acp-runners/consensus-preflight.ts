@@ -35,6 +35,7 @@ export function inspectConsensusRunners(input: {
   readonly manifest: FlowYamlV1;
   readonly bindings: readonly RunnerSlotBinding[];
   readonly runDefaultRunnerId: string | null;
+  readonly slotOverrides?: Readonly<Record<string, string>>;
   readonly project: { readonly defaultRunnerId?: string | null };
   readonly platform: { readonly defaultRunnerId?: string | null };
   readonly runners: readonly RunnerCatalogEntry[];
@@ -58,6 +59,7 @@ export function inspectConsensusRunners(input: {
         const resolution = resolveConsensusRunner({
           slotKey: slot.slotKey,
           slot: slot.runner,
+          overrideRunnerId: input.slotOverrides?.[slot.slotKey],
           runnerProfiles: input.manifest.runner_profiles,
           binding,
           runDefaultRunnerId: input.runDefaultRunnerId,

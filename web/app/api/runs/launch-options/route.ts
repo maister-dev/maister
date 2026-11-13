@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Db } from "@/lib/execution-host/db";
 import type { TaskLaunchRequest } from "@/lib/tasks/launch-schema";
 import type { NodeEnforcementRefusal } from "@/lib/flows/enforcement-refusal";
 
@@ -13,11 +14,19 @@ import {
   projectRolesForActions,
   requireActiveSession,
   requireProjectAction,
+  requireProjectActionForUser,
 } from "@/lib/authz";
-import { loadFlowRunnerBindings } from "@/lib/acp-runners/catalog";
+import {
+  loadFlowRunnerBindings,
+  loadRunnerCatalog,
+} from "@/lib/acp-runners/catalog";
 import { assertFlowStaticEnforcement } from "@/lib/acp-runners/enforcement-preflight";
 import { nodeEnforcementRefusalSchema } from "@/lib/flows/enforcement-refusal";
-import { taskLaunchErrorResponse } from "@/lib/tasks/launch-http";
+import {
+  assertInteractiveLaunchOrigin,
+  readInteractiveLaunchPreview,
+  taskLaunchErrorResponse,
+} from "@/lib/tasks/launch-http";
 import { toConsensusRunnerSlotPreview } from "@/lib/acp-runners/consensus-preflight";
 import {
   inspectFlowRunners,
@@ -54,9 +63,22 @@ import {
 import { detectAvailablePackageVersions } from "@/lib/local-packages/versions";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 import { listBranches } from "@/lib/worktree";
-import { taskLaunchPreview } from "@/lib/tasks/launch-preview";
-import { taskLaunchBodySchema } from "@/lib/tasks/launch-schema";
+import {
+  taskLaunchPreview,
+  taskLaunchPreviewState,
+} from "@/lib/tasks/launch-preview";
+import {
+  interactiveRunLaunchPreviewSchema,
+  taskLaunchBodySchema,
+} from "@/lib/tasks/launch-schema";
 import { selectedTaskLaunchRevision } from "@/lib/tasks/launch-package-selection";
+import { captureTaskLaunchFlowAssetsFromRevision } from "@/lib/tasks/launch-flow-assets";
+import {
+  composeTaskLaunchSettingsToken,
+  draftLaunchSettingsMetadataToken,
+  launchRefusal,
+  taskLaunchSettingsMetadataToken,
+} from "@/lib/tasks/launch-resolution";
 
 const {
   flowRevisions,
@@ -274,472 +296,15 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const db = getDb() as any;
-    const taskRows = await db
-      .select()
-      .from(tasks)
-      .where(eq(tasks.id, parsed.data.taskId));
-    const task = taskRows[0];
-
-    if (!task) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `task not found: ${parsed.data.taskId}`,
-      );
-    }
-
-    const projectRows = await db
-      .select()
-      .from(projects)
-      .where(eq(projects.id, task.projectId));
-    const project = projectRows[0];
-
-    if (!project || project.archivedAt) {
-      throw new MaisterError("PRECONDITION", "project not found for task");
-    }
-
-    const authorization = await requireProjectAction(project.id, "launchRun");
-    const packageVersions = packagePreviewSelection(
-      parsed.data.packageVersions,
-    );
     const selection = {
-      flowId: parsed.data.flowId,
-      runnerId: parsed.data.runnerId,
-      relaunchOfRunId: parsed.data.relaunchOfRunId,
-      packageVersions,
+      ...parsed.data,
+      packageVersions: packagePreviewSelection(parsed.data.packageVersions),
     };
-    const canConfigureRunnerBindings = projectRolesForActions([
-      "editSettings",
-    ]).includes(authorization.role);
-    const canManagePackages = projectRolesForActions([
-      "manageLocalPackages",
-    ]).includes(authorization.role);
-    const canCutPackages =
-      canManagePackages && (user.role === "member" || user.role === "admin");
+    const db = getDb() as Db;
+    const snapshot = await readLaunchOptions(db, user, selection);
+    const result = await finalizeLaunchOptions(db, snapshot);
 
-    // M34 (ADR-089): a flowless simple-intent task still gets options — the
-    // popover doubles as the "set up & launch" dialog (the flow pick PATCHes
-    // the task before the run POST). The same response shape is useful for an
-    // already-selected flow that cannot launch anymore: users can still change
-    // the saved Flow/runner defaults instead of getting a dead dialog.
-    const selectedFlowId = parsed.data.flowId ?? task.flowId;
-    const selectedRunnerId = parsed.data.runnerId ?? task.runnerId;
-    const flowRows = selectedFlowId
-      ? await db
-          .select()
-          .from(flows)
-          .where(
-            and(eq(flows.id, selectedFlowId), eq(flows.projectId, project.id)),
-          )
-      : [];
-    const flow =
-      flowRows.find((row: { id: string }) => row.id === selectedFlowId) ?? null;
-
-    let revision: Record<string, any> | null = null;
-    let flowIssue: FlowLaunchIssue | null = selectedFlowId
-      ? flow
-        ? null
-        : "flow_missing"
-      : "unconfigured";
-
-    if (flow) {
-      if (!flow.enabledRevisionId) {
-        flowIssue = "no_revision";
-      } else if (!LAUNCHABLE_FLOW_ENABLEMENT_STATES.has(flow.enablementState)) {
-        flowIssue = "not_enabled";
-      } else {
-        revision = (
-          await selectedTaskLaunchRevision(db, project.id, flow, selection)
-        ).revision;
-
-        if (!revision) {
-          flowIssue = "no_revision";
-        } else {
-          flowIssue = revisionLaunchIssue(revision);
-        }
-      }
-    }
-
-    const [
-      runtimeRows,
-      runnerRows,
-      projectFlowDefaultRows,
-      bindings,
-      flowRowsForProject,
-    ] = await Promise.all([
-      db
-        .select()
-        .from(platformRuntimeSettings)
-        .where(eq(platformRuntimeSettings.id, "singleton")),
-      db.select().from(platformAcpRunners),
-      flow
-        ? db
-            .select({ runnerId: projectFlowRunnerDefaults.runnerId })
-            .from(projectFlowRunnerDefaults)
-            .where(
-              and(
-                eq(projectFlowRunnerDefaults.projectId, project.id),
-                eq(projectFlowRunnerDefaults.flowId, flow.id),
-              ),
-            )
-        : Promise.resolve([]),
-      revision && flowIssue === null
-        ? loadFlowRunnerBindings(db, project.id, revision.id)
-        : Promise.resolve([]),
-      db.select().from(flows).where(eq(flows.projectId, project.id)),
-    ]);
-    const platformRuntime = runtimeRows[0];
-    const manifestCompatibility = revision
-      ? classifyStoredFlowManifest(revision.manifest)
-      : null;
-    const compatibleManifest = manifestCompatibility?.compatible
-      ? manifestCompatibility.manifest
-      : null;
-    const flowIssueReason =
-      manifestCompatibility && !manifestCompatibility.compatible
-        ? manifestCompatibility.reason.message
-        : null;
-
-    const projectEnabledRevisionIds = Array.from(
-      new Set(
-        flowRowsForProject
-          .map(
-            (projectFlow: Record<string, any>) => projectFlow.enabledRevisionId,
-          )
-          .filter(
-            (enabledRevisionId: unknown): enabledRevisionId is string =>
-              typeof enabledRevisionId === "string" &&
-              enabledRevisionId.length > 0,
-          ),
-      ),
-    );
-    const projectRevisionRows =
-      projectEnabledRevisionIds.length > 0
-        ? await db
-            .select()
-            .from(flowRevisions)
-            .where(inArray(flowRevisions.id, projectEnabledRevisionIds))
-        : [];
-    const projectRevisionById = new Map<string, Record<string, any>>(
-      projectRevisionRows.map((projectRevision: Record<string, any>) => [
-        projectRevision.id as string,
-        projectRevision,
-      ]),
-    );
-
-    if (!platformRuntime) {
-      throw new MaisterError(
-        "EXECUTOR_UNAVAILABLE",
-        "platform default ACP runner is not configured",
-      );
-    }
-
-    const runnerCatalog = runnerRows.map(runnerCatalogEntry);
-    const defaultChain = {
-      projectFlow: {
-        defaultRunnerId: projectFlowDefaultRows[0]?.runnerId ?? null,
-      },
-      platformFlow: { defaultRunnerId: revision?.defaultRunnerId ?? null },
-      project: { defaultRunnerId: project.defaultRunnerId },
-      platform: { defaultRunnerId: platformRuntime.defaultRunnerId },
-    } as const;
-    const runnerInspection =
-      compatibleManifest && flow && revision && flowIssue === null
-        ? inspectFlowRunners({
-            manifest: compatibleManifest,
-            bindings,
-            taskRunnerId: task.runnerId,
-            launchOverrideRunnerId: parsed.data.runnerId,
-            ...defaultChain,
-            runners: runnerCatalog,
-          })
-        : null;
-    const sessionResolutions: SessionPreviewResolution[] =
-      runnerInspection?.sessions.map((session) => {
-        if (session.status === "unresolved") {
-          log.warn(
-            {
-              err: runnerPreviewErrorFields(session.error),
-              taskId: task.id,
-              projectId: project.id,
-              flowId: flow?.id ?? null,
-              revisionId: revision?.id ?? null,
-              sessionName: session.sessionName,
-              declaresRunner: session.declaresRunner,
-            },
-            "runner session preview resolution failed",
-          );
-        }
-
-        return {
-          sessionName: session.sessionName,
-          runnerId:
-            session.status === "resolved" ? session.resolution.runnerId : null,
-          tier:
-            session.status === "resolved"
-              ? session.resolution.runnerResolutionTier
-              : null,
-          warning:
-            session.status === "resolved"
-              ? (session.resolution.resolutionWarning ?? null)
-              : null,
-          declaresRunner: session.declaresRunner,
-        };
-      }) ?? [];
-    const defaultSession = sessionResolutions.find(
-      (session) => session.sessionName === runnerInspection?.primarySessionName,
-    );
-    const defaultResolution = defaultSession
-      ? {
-          runnerId: defaultSession.runnerId,
-          runnerResolutionTier: defaultSession.tier,
-          warning: defaultSession.warning,
-        }
-      : {
-          ...resolveRunner({
-            launchOverrideRunnerId: selectedRunnerId,
-            step: { runnerId: null },
-            ...defaultChain,
-            runners: runnerCatalog,
-          }),
-          warning: null,
-        };
-    const runnerSlots = runnerInspection
-      ? toFlowRunnerSlotPreviews(runnerInspection)
-      : [];
-    const consensusRunnerSlots =
-      runnerInspection?.consensus.map(toConsensusRunnerSlotPreview) ?? [];
-    const runnerIssue =
-      runnerInspection &&
-      [...runnerInspection.sessions, ...runnerInspection.consensus].some(
-        (slot) => slot.status === "unresolved",
-      )
-        ? "runner_unresolved"
-        : null;
-    let enforcementRefusal: NodeEnforcementRefusal | null = null;
-
-    if (compatibleManifest && runnerInspection && !runnerIssue) {
-      try {
-        assertFlowStaticEnforcement(compatibleManifest, runnerInspection);
-      } catch (error) {
-        const refusal = nodeEnforcementRefusalSchema.safeParse(
-          isMaisterError(error) ? error.details : null,
-        );
-
-        if (!refusal.success) throw error;
-        enforcementRefusal = refusal.data;
-      }
-    }
-    const enforcementIssue = enforcementRefusal
-      ? "flow_settings_enforcement_refused"
-      : null;
-    const latestFlowRun = await getLatestFlowRun(task.id, db);
-    const openBlockers =
-      (await getOpenRelationBlockers([task.id], db)).get(task.id) ?? [];
-    const openBlocking = await countOpenBlockingClarifications(task.id, db);
-    const launchabilityTask = {
-      status: task.status ?? "Backlog",
-      triageStatus: (task.triageStatus as "triaged" | "flagged" | null) ?? null,
-      triageFlagOrigin: task.triageFlagOrigin,
-      queuePaused: task.queuePaused,
-    };
-    const manualLaunchability = classifyManualTaskLaunchability(
-      launchabilityTask,
-      latestFlowRun,
-      { openBlockers },
-      { openBlocking },
-    );
-    // ADR-119: the FORCE-relaunch verdict over the same in-memory data — feeds
-    // the runs-history "Run again" button. Run status is not consulted; only the
-    // task gates flagged/blocked refuse. Additive — existing callers ignore it.
-    const relaunchLaunchability = classifyForceRelaunchLaunchability(
-      launchabilityTask,
-      latestFlowRun,
-      { openBlockers },
-      { openBlocking },
-    );
-    // M34 (ADR-089): flow setup issues layer over an otherwise-launchable task.
-    // Run-state/relation blockers keep their precedence; users can still load
-    // the options response and edit away from a stale/broken flow.
-    const launchability =
-      manualLaunchability === "launchable"
-        ? (flowIssue ?? runnerIssue ?? enforcementIssue ?? "launchable")
-        : manualLaunchability;
-    // ADR-119: the force verdict layers the SAME flow-setup issues as the manual
-    // launchability (a flow disabled/dropped after the task's first run), so the
-    // runs-history button disables up-front with the flow reason instead of
-    // failing the launch after submit. Task gates (flagged/blocked) keep
-    // precedence; run status is still never consulted.
-    const relaunchReason =
-      relaunchLaunchability === "launchable"
-        ? (flowIssue ?? runnerIssue ?? enforcementIssue ?? "launchable")
-        : relaunchLaunchability;
-    const branches = await listBranches(project.repoPath, {
-      includeRemotes: true,
-    });
-    const projectPolicy = resolveDeliveryPolicy({
-      projectDefault:
-        project.deliveryPolicyDefault as StoredDeliveryPolicy | null,
-      projectPromotionMode: project.promotionMode,
-      projectMainBranch: project.mainBranch ?? "main",
-    });
-    // M34 (ADR-089): the triage verdict pre-fills the dialog — runner rides
-    // the launchOverride tier, target branch + promotion mode shape the
-    // delivery-policy default. Nothing applies without the user's confirm.
-    const defaultBaseBranch =
-      (task.baseBranch as string | null) ?? project.mainBranch ?? "main";
-    const verdictTargetBranch = (task.targetBranch as string | null) ?? null;
-    const defaultTargetBranch = verdictTargetBranch ?? defaultBaseBranch;
-    const deliveryPolicyDefault = {
-      ...projectPolicy,
-      ...(task.promotionMode
-        ? {
-            strategy:
-              task.promotionMode === "pull_request"
-                ? ("pull_request" as const)
-                : ("merge" as const),
-          }
-        : {}),
-      targetBranch: defaultTargetBranch,
-    };
-    // Resolved execution-control default for the dialog (no launch override at
-    // options time). Preset + per-axis option enums are client-side constants
-    // the launch UI imports directly from @/lib/runs/execution-policy.
-    const executionPolicyDefault = resolveExecutionPolicy({
-      taskDefault: (task.executionPolicy as ExecutionPolicy | null) ?? null,
-      projectDefault:
-        (project.executionPolicyDefault as ExecutionPolicy | null) ?? null,
-    });
-    const safeRunners = runnerRows.map((runner: Record<string, any>) => ({
-      id: runner.id,
-      label: runner.id,
-      adapter: runner.adapter,
-      capabilityAgent: runner.capabilityAgent,
-      model: runner.model,
-      providerKind: runnerProviderKind(runner.provider),
-      permissionPolicy: runner.permissionPolicy,
-      readinessStatus: runner.readinessStatus,
-      readinessReasons: runner.readinessReasons,
-      enabled: runner.enabled,
-      pinnedModel: {
-        model: runner.model,
-        source:
-          runner.id === defaultResolution.runnerId
-            ? defaultResolution.runnerResolutionTier
-            : "runner",
-      },
-    }));
-
-    // M39 Stream B (ADR-107): the project's attached centralized packages that
-    // have a newer cut and/or uncut Studio edits — the launch dialog's
-    // keep/adopt/cut_and_adopt choices. Empty for projects with no such packages
-    // (no git calls), so this is free for the common case.
-    const availablePackageVersions = await detectAvailablePackageVersions({
-      projectId: project.id,
-      db: db as never,
-    });
-    const launchPreview = await taskLaunchPreview(db, task.id, selection);
-
-    return NextResponse.json({
-      ...launchPreview,
-      enforcementRefusal,
-      runnerSlots,
-      consensusRunnerSlots,
-      selectedFlowRevisionId: revision?.id ?? null,
-      canConfigureRunnerBindings,
-      canManagePackages,
-      canCutPackages,
-      runners: flowIssue === "incompatible" ? [] : safeRunners,
-      // M42 (ADR-114): one entry per logical session of the selected flow, each
-      // with its resolved runner; empty for a single-session flow (the single
-      // `selectedRunnerId` selector covers it). `overridable` advertises the
-      // ephemeral per-run override offered at the Launch dialog.
-      sessions:
-        sessionResolutions.length > 1
-          ? sessionResolutions.map((session) => ({
-              sessionName: session.sessionName,
-              runnerId: session.runnerId,
-              label: session.sessionName,
-              overridable: true,
-              warning: session.warning,
-            }))
-          : [],
-      task: {
-        id: task.id,
-        projectId: project.id,
-        projectSlug: project.slug,
-        number: task.number,
-        status: task.status ?? "Backlog",
-        flowId: task.flowId,
-        revision: task.revision,
-      },
-      launchability: {
-        launchable: launchability === "launchable" && flowIssue === null,
-        reason: launchability,
-        incompatibilityReason: flowIssueReason,
-        blockers: openBlockers.map(
-          (blocker: { key: string; number: number }) => ({
-            kind: "relation",
-            label: `${blocker.key}-${blocker.number}`,
-          }),
-        ),
-      },
-      // ADR-119: additive force-relaunch verdict. Run status is never consulted
-      // (a busy run stays launchable); the TASK gates flagged/blocked AND the
-      // flow-setup issues (layered like `launchability`) are the only refusals.
-      // The runs-history button reads this; the header button keeps
-      // `launchability`.
-      relaunch: {
-        launchable: relaunchReason === "launchable" && flowIssue === null,
-        reason: relaunchReason,
-        incompatibilityReason: flowIssueReason,
-      },
-      flows: flowRowsForProject.map((projectFlow: Record<string, any>) => {
-        const disabledReason = projectFlowLaunchIssue({
-          projectFlow,
-          revisionById: projectRevisionById,
-        });
-
-        return {
-          id: projectFlow.id,
-          refId: projectFlow.flowRefId,
-          name: projectFlow.flowRefId,
-          version: projectFlow.version ?? null,
-          enabled: disabledReason === null,
-          disabledReason,
-          disabledReasonMessage:
-            disabledReason === "incompatible"
-              ? (() => {
-                  const projectRevision = projectFlow.enabledRevisionId
-                    ? projectRevisionById.get(projectFlow.enabledRevisionId)
-                    : null;
-                  const compatibility = projectRevision
-                    ? classifyStoredFlowManifest(projectRevision.manifest)
-                    : null;
-
-                  return compatibility && !compatibility.compatible
-                    ? compatibility.reason.message
-                    : null;
-                })()
-              : null,
-          isTaskDefault: projectFlow.id === task.flowId,
-        };
-      }),
-      selectedFlowId: flow?.id ?? "",
-      selectedRunnerId:
-        flowIssue === "incompatible"
-          ? ""
-          : ((selectedRunnerId as string | null) ?? defaultResolution.runnerId),
-      selectedRunnerWarning: selectedRunnerId
-        ? null
-        : defaultResolution.warning,
-      branches,
-      defaultBaseBranch,
-      defaultTargetBranch,
-      deliveryPolicyDefault,
-      executionPolicyDefault,
-      availablePackageVersions,
-    });
+    return NextResponse.json(result.options);
   } catch (err) {
     if (
       isMaisterError(err) &&
@@ -749,4 +314,578 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     return errorResponse(err);
   }
+}
+
+export async function POST(req: NextRequest): Promise<NextResponse> {
+  try {
+    const user = await requireActiveSession();
+
+    assertInteractiveLaunchOrigin(req);
+    const parsed = interactiveRunLaunchPreviewSchema.safeParse(
+      await readInteractiveLaunchPreview(req),
+    );
+
+    if (!parsed.success)
+      throw launchRefusal("launch_request_invalid", "CONFIG");
+    const db = getDb() as Db;
+    const snapshot = await db.transaction(
+      (tx) => readLaunchOptions(tx, user, parsed.data, "interactive"),
+      { isolationLevel: "repeatable read", accessMode: "read only" },
+    );
+
+    const result = await finalizeLaunchOptions(db, snapshot);
+
+    return NextResponse.json(result, {
+      headers: { "Cache-Control": "no-store" },
+    });
+  } catch (error) {
+    return taskLaunchErrorResponse(error);
+  }
+}
+
+async function readLaunchOptions(
+  client: Db,
+  user: Awaited<ReturnType<typeof requireActiveSession>>,
+  selection: Partial<TaskLaunchRequest> & { taskId: string },
+  surface?: "interactive",
+) {
+  const db = client as any;
+  const taskRows = await db
+    .select()
+    .from(tasks)
+    .where(eq(tasks.id, selection.taskId));
+  const task = taskRows[0];
+
+  if (!task) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `task not found: ${selection.taskId}`,
+    );
+  }
+
+  const projectRows = await db
+    .select()
+    .from(projects)
+    .where(eq(projects.id, task.projectId));
+  const project = projectRows[0];
+
+  if (!project || project.archivedAt) {
+    throw new MaisterError("PRECONDITION", "project not found for task");
+  }
+
+  const authorization =
+    surface === "interactive"
+      ? await requireProjectActionForUser(
+          user.id,
+          project.id,
+          selection.flowRunnerDraft?.slots ? "editSettings" : "launchRun",
+        )
+      : await requireProjectAction(project.id, "launchRun");
+  const canConfigureRunnerBindings = projectRolesForActions([
+    "editSettings",
+  ]).includes(authorization.role);
+  const canManagePackages = projectRolesForActions([
+    "manageLocalPackages",
+  ]).includes(authorization.role);
+  const canCutPackages =
+    canManagePackages && (user.role === "member" || user.role === "admin");
+
+  // M34 (ADR-089): a flowless simple-intent task still gets options — the
+  // popover doubles as the "set up & launch" dialog (the flow pick PATCHes
+  // the task before the run POST). The same response shape is useful for an
+  // already-selected flow that cannot launch anymore: users can still change
+  // the saved Flow/runner defaults instead of getting a dead dialog.
+  const selectedFlowId = selection.flowId ?? task.flowId;
+  const selectedRunnerId =
+    selection.flowRunnerDraft?.primaryRunnerId ??
+    selection.runnerId ??
+    task.runnerId;
+  const flowRows = selectedFlowId
+    ? await db
+        .select()
+        .from(flows)
+        .where(
+          and(eq(flows.id, selectedFlowId), eq(flows.projectId, project.id)),
+        )
+    : [];
+  const flow =
+    flowRows.find((row: { id: string }) => row.id === selectedFlowId) ?? null;
+
+  let revision: Record<string, any> | null = null;
+  let flowIssue: FlowLaunchIssue | null = selectedFlowId
+    ? flow
+      ? null
+      : "flow_missing"
+    : "unconfigured";
+
+  if (flow) {
+    if (!flow.enabledRevisionId) {
+      flowIssue = "no_revision";
+    } else if (!LAUNCHABLE_FLOW_ENABLEMENT_STATES.has(flow.enablementState)) {
+      flowIssue = "not_enabled";
+    } else {
+      revision = (
+        await selectedTaskLaunchRevision(db, project.id, flow, selection)
+      ).revision;
+
+      if (!revision) {
+        flowIssue = "no_revision";
+      } else {
+        flowIssue = revisionLaunchIssue(revision);
+      }
+    }
+  }
+
+  const [
+    runtimeRows,
+    runnerRows,
+    projectFlowDefaultRows,
+    bindings,
+    flowRowsForProject,
+  ] = await Promise.all([
+    db
+      .select()
+      .from(platformRuntimeSettings)
+      .where(eq(platformRuntimeSettings.id, "singleton")),
+    db.select().from(platformAcpRunners),
+    flow
+      ? db
+          .select({ runnerId: projectFlowRunnerDefaults.runnerId })
+          .from(projectFlowRunnerDefaults)
+          .where(
+            and(
+              eq(projectFlowRunnerDefaults.projectId, project.id),
+              eq(projectFlowRunnerDefaults.flowId, flow.id),
+            ),
+          )
+      : Promise.resolve([]),
+    revision && flowIssue === null
+      ? loadFlowRunnerBindings(db, project.id, revision.id)
+      : Promise.resolve([]),
+    db.select().from(flows).where(eq(flows.projectId, project.id)),
+  ]);
+  const platformRuntime = runtimeRows[0];
+  const manifestCompatibility = revision
+    ? classifyStoredFlowManifest(revision.manifest)
+    : null;
+  const compatibleManifest = manifestCompatibility?.compatible
+    ? manifestCompatibility.manifest
+    : null;
+  const flowIssueReason =
+    manifestCompatibility && !manifestCompatibility.compatible
+      ? manifestCompatibility.reason.message
+      : null;
+
+  const projectEnabledRevisionIds = Array.from(
+    new Set(
+      flowRowsForProject
+        .map(
+          (projectFlow: Record<string, any>) => projectFlow.enabledRevisionId,
+        )
+        .filter(
+          (enabledRevisionId: unknown): enabledRevisionId is string =>
+            typeof enabledRevisionId === "string" &&
+            enabledRevisionId.length > 0,
+        ),
+    ),
+  );
+  const projectRevisionRows =
+    projectEnabledRevisionIds.length > 0
+      ? await db
+          .select()
+          .from(flowRevisions)
+          .where(inArray(flowRevisions.id, projectEnabledRevisionIds))
+      : [];
+  const projectRevisionById = new Map<string, Record<string, any>>(
+    projectRevisionRows.map((projectRevision: Record<string, any>) => [
+      projectRevision.id as string,
+      projectRevision,
+    ]),
+  );
+
+  if (!platformRuntime) {
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      "platform default ACP runner is not configured",
+    );
+  }
+
+  const draft = selection.flowRunnerDraft;
+
+  if (draft && draft.flowRevisionId !== revision?.id)
+    throw launchRefusal("launch_settings_changed");
+  const runnerCatalog: RunnerCatalogEntry[] =
+    surface === "interactive"
+      ? await loadRunnerCatalog(client)
+      : runnerRows.map(runnerCatalogEntry);
+  const defaultChain = {
+    projectFlow: {
+      defaultRunnerId: projectFlowDefaultRows[0]?.runnerId ?? null,
+    },
+    platformFlow: { defaultRunnerId: revision?.defaultRunnerId ?? null },
+    project: { defaultRunnerId: project.defaultRunnerId },
+    platform: { defaultRunnerId: platformRuntime.defaultRunnerId },
+  } as const;
+  const runnerInspection =
+    compatibleManifest && flow && revision && flowIssue === null
+      ? inspectFlowRunners({
+          manifest: compatibleManifest,
+          draft,
+          bindings,
+          taskRunnerId: task.runnerId,
+          launchOverrideRunnerId: selection.runnerId,
+          ...defaultChain,
+          runners: runnerCatalog,
+        })
+      : null;
+  const sessionResolutions: SessionPreviewResolution[] =
+    runnerInspection?.sessions.map((session) => {
+      if (session.status === "unresolved") {
+        log.warn(
+          {
+            err: runnerPreviewErrorFields(session.error),
+            taskId: task.id,
+            projectId: project.id,
+            flowId: flow?.id ?? null,
+            revisionId: revision?.id ?? null,
+            sessionName: session.sessionName,
+            declaresRunner: session.declaresRunner,
+          },
+          "runner session preview resolution failed",
+        );
+      }
+
+      return {
+        sessionName: session.sessionName,
+        runnerId:
+          session.status === "resolved" ? session.resolution.runnerId : null,
+        tier:
+          session.status === "resolved"
+            ? session.resolution.runnerResolutionTier
+            : null,
+        warning:
+          session.status === "resolved"
+            ? (session.resolution.resolutionWarning ?? null)
+            : null,
+        declaresRunner: session.declaresRunner,
+      };
+    }) ?? [];
+  const defaultSession = sessionResolutions.find(
+    (session) => session.sessionName === runnerInspection?.primarySessionName,
+  );
+  const defaultResolution = defaultSession
+    ? {
+        runnerId: defaultSession.runnerId,
+        runnerResolutionTier: defaultSession.tier,
+        warning: defaultSession.warning,
+      }
+    : {
+        ...resolveRunner({
+          launchOverrideRunnerId: selectedRunnerId,
+          step: { runnerId: null },
+          ...defaultChain,
+          runners: runnerCatalog,
+        }),
+        warning: null,
+      };
+  const runnerSlots = runnerInspection
+    ? toFlowRunnerSlotPreviews(runnerInspection)
+    : [];
+  const consensusRunnerSlots =
+    runnerInspection?.consensus.map(toConsensusRunnerSlotPreview) ?? [];
+  const runnerIssue =
+    runnerInspection &&
+    [...runnerInspection.sessions, ...runnerInspection.consensus].some(
+      (slot) => slot.status === "unresolved",
+    )
+      ? "runner_unresolved"
+      : null;
+  let enforcementRefusal: NodeEnforcementRefusal | null = null;
+
+  if (compatibleManifest && runnerInspection && !runnerIssue) {
+    try {
+      assertFlowStaticEnforcement(compatibleManifest, runnerInspection);
+    } catch (error) {
+      const refusal = nodeEnforcementRefusalSchema.safeParse(
+        isMaisterError(error) ? error.details : null,
+      );
+
+      if (!refusal.success) throw error;
+      enforcementRefusal = refusal.data;
+    }
+  }
+  const enforcementIssue = enforcementRefusal
+    ? "flow_settings_enforcement_refused"
+    : null;
+  const latestFlowRun = await getLatestFlowRun(task.id, db);
+  const openBlockers =
+    (await getOpenRelationBlockers([task.id], db)).get(task.id) ?? [];
+  const openBlocking = await countOpenBlockingClarifications(task.id, db);
+  const launchabilityTask = {
+    status: task.status ?? "Backlog",
+    triageStatus: (task.triageStatus as "triaged" | "flagged" | null) ?? null,
+    triageFlagOrigin: task.triageFlagOrigin,
+    queuePaused: task.queuePaused,
+  };
+  const manualLaunchability = classifyManualTaskLaunchability(
+    launchabilityTask,
+    latestFlowRun,
+    { openBlockers },
+    { openBlocking },
+  );
+  // ADR-119: the FORCE-relaunch verdict over the same in-memory data — feeds
+  // the runs-history "Run again" button. Run status is not consulted; only the
+  // task gates flagged/blocked refuse. Additive — existing callers ignore it.
+  const relaunchLaunchability = classifyForceRelaunchLaunchability(
+    launchabilityTask,
+    latestFlowRun,
+    { openBlockers },
+    { openBlocking },
+  );
+  // M34 (ADR-089): flow setup issues layer over an otherwise-launchable task.
+  // Run-state/relation blockers keep their precedence; users can still load
+  // the options response and edit away from a stale/broken flow.
+  const launchability =
+    manualLaunchability === "launchable"
+      ? (flowIssue ?? runnerIssue ?? enforcementIssue ?? "launchable")
+      : manualLaunchability;
+  // ADR-119: the force verdict layers the SAME flow-setup issues as the manual
+  // launchability (a flow disabled/dropped after the task's first run), so the
+  // runs-history button disables up-front with the flow reason instead of
+  // failing the launch after submit. Task gates (flagged/blocked) keep
+  // precedence; run status is still never consulted.
+  const relaunchReason =
+    relaunchLaunchability === "launchable"
+      ? (flowIssue ?? runnerIssue ?? enforcementIssue ?? "launchable")
+      : relaunchLaunchability;
+  const projectPolicy = resolveDeliveryPolicy({
+    projectDefault:
+      project.deliveryPolicyDefault as StoredDeliveryPolicy | null,
+    projectPromotionMode: project.promotionMode,
+    projectMainBranch: project.mainBranch ?? "main",
+  });
+  // M34 (ADR-089): the triage verdict pre-fills the dialog — runner rides
+  // the launchOverride tier, target branch + promotion mode shape the
+  // delivery-policy default. Nothing applies without the user's confirm.
+  const defaultBaseBranch =
+    (task.baseBranch as string | null) ?? project.mainBranch ?? "main";
+  const verdictTargetBranch = (task.targetBranch as string | null) ?? null;
+  const defaultTargetBranch = verdictTargetBranch ?? defaultBaseBranch;
+  const deliveryPolicyDefault = {
+    ...projectPolicy,
+    ...(task.promotionMode
+      ? {
+          strategy:
+            task.promotionMode === "pull_request"
+              ? ("pull_request" as const)
+              : ("merge" as const),
+        }
+      : {}),
+    targetBranch: defaultTargetBranch,
+  };
+  // Resolved execution-control default for the dialog (no launch override at
+  // options time). Preset + per-axis option enums are client-side constants
+  // the launch UI imports directly from @/lib/runs/execution-policy.
+  const executionPolicyDefault = resolveExecutionPolicy({
+    taskDefault: (task.executionPolicy as ExecutionPolicy | null) ?? null,
+    projectDefault:
+      (project.executionPolicyDefault as ExecutionPolicy | null) ?? null,
+  });
+  const safeRunners = runnerRows.map((runner: Record<string, any>) => ({
+    id: runner.id,
+    label: runner.id,
+    adapter: runner.adapter,
+    capabilityAgent: runner.capabilityAgent,
+    model: runner.model,
+    providerKind: runnerProviderKind(runner.provider),
+    permissionPolicy: runner.permissionPolicy,
+    readinessStatus: runner.readinessStatus,
+    readinessReasons: runner.readinessReasons,
+    enabled: runner.enabled,
+    pinnedModel: {
+      model: runner.model,
+      source:
+        runner.id === defaultResolution.runnerId
+          ? defaultResolution.runnerResolutionTier
+          : "runner",
+    },
+  }));
+
+  // M39 Stream B (ADR-107): the project's attached centralized packages that
+  // have a newer cut and/or uncut Studio edits — the launch dialog's
+  // keep/adopt/cut_and_adopt choices. Empty for projects with no such packages
+  // (no git calls), so this is free for the common case.
+  const previewFence =
+    surface === "interactive"
+      ? {
+          metadataToken: await taskLaunchSettingsMetadataToken(
+            client,
+            task.id,
+            selection,
+          ),
+          revision: revision
+            ? {
+                id: revision.id,
+                manifestDigest: revision.manifestDigest,
+                installedPath: revision.installedPath,
+              }
+            : null,
+        }
+      : null;
+
+  if (previewFence && draft && runnerInspection) {
+    previewFence.metadataToken = draftLaunchSettingsMetadataToken(
+      previewFence.metadataToken,
+      draft,
+      runnerInspection,
+    );
+  }
+
+  const launchPreview = previewFence
+    ? await taskLaunchPreviewState(client, task.id)
+    : await taskLaunchPreview(db, task.id, selection);
+
+  const options = {
+    ...launchPreview,
+    enforcementRefusal,
+    runnerSlots,
+    consensusRunnerSlots,
+    selectedFlowRevisionId: revision?.id ?? null,
+    enabledFlowRevisionId: flow?.enabledRevisionId ?? null,
+    primarySessionName: runnerInspection?.primarySessionName ?? "default",
+    canConfigureRunnerBindings,
+    canManagePackages,
+    canCutPackages,
+    runners: flowIssue === "incompatible" ? [] : safeRunners,
+    // M42 (ADR-114): one entry per logical session of the selected flow, each
+    // with its resolved runner; empty for a single-session flow (the single
+    // `selectedRunnerId` selector covers it). `overridable` advertises the
+    // ephemeral per-run override offered at the Launch dialog.
+    sessions:
+      sessionResolutions.length > 1
+        ? sessionResolutions.map((session) => ({
+            sessionName: session.sessionName,
+            runnerId: session.runnerId,
+            label: session.sessionName,
+            overridable: true,
+            warning: session.warning,
+          }))
+        : [],
+    task: {
+      id: task.id,
+      projectId: project.id,
+      projectSlug: project.slug,
+      number: task.number,
+      status: task.status ?? "Backlog",
+      flowId: task.flowId,
+      revision: task.revision,
+    },
+    launchability: {
+      launchable: launchability === "launchable" && flowIssue === null,
+      reason: launchability,
+      incompatibilityReason: flowIssueReason,
+      blockers: openBlockers.map(
+        (blocker: { key: string; number: number }) => ({
+          kind: "relation",
+          label: `${blocker.key}-${blocker.number}`,
+        }),
+      ),
+    },
+    // ADR-119: additive force-relaunch verdict. Run status is never consulted
+    // (a busy run stays launchable); the TASK gates flagged/blocked AND the
+    // flow-setup issues (layered like `launchability`) are the only refusals.
+    // The runs-history button reads this; the header button keeps
+    // `launchability`.
+    relaunch: {
+      launchable: relaunchReason === "launchable" && flowIssue === null,
+      reason: relaunchReason,
+      incompatibilityReason: flowIssueReason,
+    },
+    flows: flowRowsForProject.map((projectFlow: Record<string, any>) => {
+      const disabledReason = projectFlowLaunchIssue({
+        projectFlow,
+        revisionById: projectRevisionById,
+      });
+
+      return {
+        id: projectFlow.id,
+        refId: projectFlow.flowRefId,
+        name: projectFlow.flowRefId,
+        version: projectFlow.version ?? null,
+        enabled: disabledReason === null,
+        disabledReason,
+        disabledReasonMessage:
+          disabledReason === "incompatible"
+            ? (() => {
+                const projectRevision = projectFlow.enabledRevisionId
+                  ? projectRevisionById.get(projectFlow.enabledRevisionId)
+                  : null;
+                const compatibility = projectRevision
+                  ? classifyStoredFlowManifest(projectRevision.manifest)
+                  : null;
+
+                return compatibility && !compatibility.compatible
+                  ? compatibility.reason.message
+                  : null;
+              })()
+            : null,
+        isTaskDefault: projectFlow.id === task.flowId,
+      };
+    }),
+    selectedFlowId: flow?.id ?? "",
+    selectedRunnerId:
+      flowIssue === "incompatible"
+        ? ""
+        : ((selectedRunnerId as string | null) ?? defaultResolution.runnerId),
+    selectedRunnerWarning: selectedRunnerId ? null : defaultResolution.warning,
+    defaultBaseBranch,
+    defaultTargetBranch,
+    deliveryPolicyDefault,
+    executionPolicyDefault,
+  };
+
+  return {
+    options,
+    previewFence,
+    projectId: project.id,
+    repoPath: project.repoPath,
+  };
+}
+
+async function finalizeLaunchOptions(
+  db: Db,
+  {
+    options,
+    previewFence,
+    projectId,
+    repoPath,
+  }: Awaited<ReturnType<typeof readLaunchOptions>>,
+) {
+  // Only the trusted immutable reference leaves the transaction. Git/asset
+  // reads cannot hold a database snapshot open.
+  const [branches, availablePackageVersions, assets] = await Promise.all([
+    listBranches(repoPath, { includeRemotes: true }),
+    detectAvailablePackageVersions({ projectId, db: db as never }),
+    previewFence?.revision
+      ? captureTaskLaunchFlowAssetsFromRevision(previewFence.revision)
+      : null,
+  ]);
+
+  return {
+    options: {
+      ...options,
+      ...(previewFence
+        ? {
+            settingsToken: composeTaskLaunchSettingsToken(
+              previewFence.metadataToken,
+              assets,
+            ),
+          }
+        : {}),
+      branches,
+      availablePackageVersions,
+    },
+    selectedFlowRevisionId: options.selectedFlowRevisionId,
+    enabledFlowRevisionId: options.enabledFlowRevisionId,
+  };
 }
