@@ -58,6 +58,7 @@ export type GitState = {
 
 export type ErrorBody = {
   code?: string;
+  message?: string;
   reason?: string;
   details?: { reason?: string };
   pushRejected?: string;

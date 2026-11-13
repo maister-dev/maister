@@ -70,10 +70,7 @@ import {
 } from "@/lib/workbench-git/pull-request";
 import { readWorktreeProvenanceForPromotion } from "@/lib/worktree-provenance";
 import { commitsFromSnapshot } from "@/lib/runs/execution-policy";
-import {
-  assertPushKeepsPublication,
-  PublicationDivergedError,
-} from "@/lib/runs/publication-guard";
+import { assertPushKeepsPublication } from "@/lib/runs/publication-guard";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import {
   resolveAutoPromotionConfig,
@@ -974,22 +971,6 @@ async function promoteWorkspaceRun(
     if (delivered !== null) return delivered;
   }
 
-  // ADR-181 (C): a squash PR promotion force-updates the PR branch, so commits
-  // only that branch has (a suggestion committed on the PR) would leave it. It
-  // is refused BEFORE the squash rewrites anything; the run's own pre-squash
-  // commits (a reclaim after a transient push failure) stay the branch's
-  // through its reflog, and the push leases exactly the head checked here.
-  const forcedPr =
-    claim.resolvedMode === "pull_request" && squashesRunHistory(claim)
-      ? await guardForcedPrPush(db, claim, runId)
-      : null;
-
-  // C2 (execution-policy commits): collapse the run branch's history (base..HEAD)
-  // into one commit pre-promotion for squash_rework / squash_on_promote, BEFORE
-  // either side-effect so it applies to merge AND PR promotions. Tree-preserving
-  // + best-effort inside the helper (any drift/failure keeps the full history).
-  await squashForCommitPolicy(claim, runId);
-
   // ---- Side-effects: NO lock held (§3.2 step 2).
   if (claim.resolvedMode === "pull_request") {
     return promotePullRequestSideEffect({
@@ -997,14 +978,11 @@ async function promoteWorkspaceRun(
       ctx,
       db,
       claim,
-      // Force-push (--force-with-lease) when the commit policy squashes. Derived
-      // from the immutable policy, NOT this attempt's squash result, so a reclaim
-      // after a transient push failure still force-updates the already-rewritten
-      // branch onto a remote that may hold the old history (no non-fast-forward).
-      forcedPr,
       attribution: input.attribution ?? null,
     });
   }
+
+  await squashForCommitPolicy(claim, runId);
 
   let commit: string;
   const targetBefore = await resolveBaseCommit({
@@ -1476,8 +1454,8 @@ async function guardForcedPrPush(
   db: Db,
   claim: FlowClaim,
   runId: string,
+  project: Awaited<ReturnType<typeof loadProject>>,
 ): Promise<{ publicBranch: string; leaseSha: string | null }> {
-  const project = await loadProject(db, claim.run.projectId);
   const publicBranch = await publicBranchForPromotion(db, claim, project);
   const leaseSha = await remoteBranchHead({
     projectRepoPath: claim.workspace.parentRepoPath,
@@ -1485,26 +1463,19 @@ async function guardForcedPrPush(
     branch: publicBranch,
   });
 
-  try {
-    await assertPushKeepsPublication({
-      runId,
-      repo: claim.workspace.parentRepoPath,
-      localBranch: claim.workspace.branch,
-      remote: "origin",
-      remoteBranch: publicBranch,
-      remoteHead: leaseSha,
-      keptRefs: [
-        claim.resolvedTarget,
-        `refs/remotes/origin/${claim.resolvedTarget}`,
-      ],
-      fetchRemotes: ["origin"],
-    });
-  } catch (err) {
-    if (err instanceof PublicationDivergedError) {
-      await markPromotionFailed(db, claim.workspace.id, claim.attemptId);
-    }
-    throw err;
-  }
+  await assertPushKeepsPublication({
+    runId,
+    repo: claim.workspace.parentRepoPath,
+    localBranch: claim.workspace.branch,
+    remote: "origin",
+    remoteBranch: publicBranch,
+    remoteHead: leaseSha,
+    keptRefs: [
+      claim.resolvedTarget,
+      `refs/remotes/origin/${claim.resolvedTarget}`,
+    ],
+    fetchRemotes: ["origin"],
+  });
 
   return { publicBranch, leaseSha };
 }
@@ -1595,19 +1566,14 @@ async function promotePullRequestSideEffect(args: {
   ctx: PromoteRunContext;
   db: Db;
   claim: FlowClaim;
-  // C2: the run branch was squash-rewritten pre-push, so an existing PR branch
-  // must be force-updated (--force-with-lease) — with the public name and the
-  // lease head the publication guard checked (ADR-181 C). Null: no force.
-  forcedPr: { publicBranch: string; leaseSha: string | null } | null;
   // ADR-126 T11: threaded to finalize for the workspaces.promotion_lane write.
   attribution: PromotionAttribution | null;
 }): Promise<PromoteRunResult> {
   const { runId, ctx, db, claim } = args;
-  const project = await loadProject(db, claim.run.projectId);
 
-  // Preflight / dispatch failures are terminal-config (PRECONDITION): mark the
-  // claim failed (token-scoped) so a later attempt can reclaim, then rethrow.
   try {
+    const project = await loadProject(db, claim.run.projectId);
+
     // ADR-181 D11: the ONE provider resolution, shared with the git panel's
     // Open PR.
     const adapter = await preflightedPrAdapter({
@@ -1615,11 +1581,19 @@ async function promotePullRequestSideEffect(args: {
       parentRepoPath: claim.workspace.parentRepoPath,
     });
 
+    // Check credentials and the published history before rewriting the branch.
+    // Use the immutable policy for the lease even when a retry has no squash left.
+    const forcedPr = squashesRunHistory(claim)
+      ? await guardForcedPrPush(db, claim, runId, project)
+      : null;
+
+    await squashForCommitPolicy(claim, runId);
+
     // ADR-181 D4/D11: the PR branch is the PUBLIC name — the same core the run
     // git panel's publish uses, so a promotion and a panel publish → open PR →
     // finalize converge on identical rows.
     const publicBranch =
-      args.forcedPr?.publicBranch ??
+      forcedPr?.publicBranch ??
       (await publicBranchForPromotion(db, claim, project));
 
     // Push then open/update the PR. Transport failures leave the claim retryable.
@@ -1632,9 +1606,7 @@ async function promotePullRequestSideEffect(args: {
       // Only force when a squash rewrote base..HEAD — keeps a plain (keep_all)
       // PR push a non-forced fast-forward. The lease is the head the
       // publication guard checked BEFORE the squash (ADR-141 + ADR-181 C).
-      ...(args.forcedPr
-        ? { force: true, leaseSha: args.forcedPr.leaseSha }
-        : {}),
+      ...(forcedPr ? { force: true, leaseSha: forcedPr.leaseSha } : {}),
     });
     await recordPublished({
       database: db,
@@ -1675,7 +1647,7 @@ async function promotePullRequestSideEffect(args: {
       throw err;
     }
 
-    // Terminal-config (PRECONDITION / unsupported provider): release the claim.
+    // Actionable refusals release the claim so the operator can act and retry.
     await markPromotionFailed(db, claim.workspace.id, claim.attemptId);
     throw err;
   }
@@ -2336,7 +2308,6 @@ async function promoteScratchRun(
       ctx,
       db,
       claim: prClaim,
-      forcedPr: null,
       attribution: null,
     });
   }

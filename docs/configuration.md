@@ -370,6 +370,16 @@ streamed via SSE, never embedded in `session/update` payloads. They are document
 `.env.example`. A missing CLI / unset token / unconfigured remote surfaces as
 `PRECONDITION` (HTTP 409) at promote time; the run stays `Review`.
 
+For GitHub, configure the credential for the account that runs the **web
+service**, even if `git push` already works over SSH. Set `GH_TOKEN` in the
+service's environment (the packaged systemd unit reads
+`/etc/maister/maister.env`) or authenticate `gh` as that service user. Give the
+credential access to the target repository and permission to create pull
+requests. In the service account and environment, run
+`gh auth status --hostname github.com` and a read-only
+`gh pr list --repo OWNER/REPO --limit 1` to verify access. A missing credential
+blocks GitHub delivery before the branch is rewritten or pushed.
+
 > **Manual verification (not in CI).** The provider boundary is MOCKED in CI: the
 > `gh`/`glab` CLI exec AND the Gitea-API `fetch` are stubbed, so no real remote is
 > touched. A live `gh`/`glab` push + PR and a live Gitea/GitVerse PR MUST be exercised

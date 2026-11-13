@@ -19,6 +19,7 @@ import {
 import { resolveUiErrorMessageKey } from "@/lib/ui-error-message";
 import {
   buildPromotionRequestBody,
+  githubPrErrorText,
   isMergedPrBehindResponse,
   isPublicationDivergedResponse,
   isPublicationPushRejectedResponse,
@@ -205,6 +206,7 @@ export function ReviewPanel({
 }: ReviewPanelProps): ReactElement {
   const t = useTranslations("run");
   const tWorkbench = useTranslations("workbench");
+  const tGit = useTranslations("workbenchGit.errors");
   const router = useRouter();
   const [mode, setMode] = useState<PromotionMode>(promotionMode);
   const [busy, setBusy] = useState(false);
@@ -327,7 +329,12 @@ export function ReviewPanel({
         return;
       }
 
-      setError(t(resolveUiErrorMessageKey(data?.code)));
+      setError(
+        githubPrErrorText(data, {
+          authRequired: tGit("github_auth_required"),
+          cliFailed: tGit("github_cli_failed"),
+        }) ?? t(resolveUiErrorMessageKey(data?.code)),
+      );
     } catch {
       setError(t("error.generic"));
     } finally {

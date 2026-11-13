@@ -4515,6 +4515,8 @@
       "target_branch_unknown": "The target branch is unknown.",
       "target_locked": "A scratch run's pull request can target only its own branch.",
       "provider_unsupported": "This repository's provider cannot open pull requests.",
+      "github_auth_required": "GitHub CLI needs valid credentials. Set GH_TOKEN for the MAIster web service or sign in with gh as the service user.",
+      "github_cli_failed": "GitHub CLI could not complete the pull request operation.",
       "agent_requires_review": "The AI conflict resolver is available only in Review.",
       "base_branch_unknown": "The base branch is unknown.",
       "pr_missing": "No pull request is recorded for this run.",

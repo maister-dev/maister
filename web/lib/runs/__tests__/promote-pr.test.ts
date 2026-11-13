@@ -781,6 +781,31 @@ describe("promoteRun — crash-window (PR upstream, pr_url unset, stale claim)",
 // =============================================================================
 
 describe("promoteRun — config failures → PRECONDITION (409), no pr_url, stays Review", () => {
+  it("releases the claim before changing the branch when GitHub credentials are missing", async () => {
+    const runId = seedGithubFlowRun();
+
+    dbState.tables.runs[0].executionPolicy = { preset: "unattended" };
+    preflight.mockRejectedValueOnce(
+      new MaisterError("PRECONDITION", "GitHub CLI needs credentials", {
+        details: { reason: "github_auth_required" },
+      }),
+    );
+
+    await expect(
+      callPromote(runId, {
+        mode: "pull_request",
+        reviewedTargetCommit: "tip00000",
+      }),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "github_auth_required" },
+    });
+    expect(squashRunBranch).not.toHaveBeenCalled();
+    expect(pushBranch).not.toHaveBeenCalled();
+    expect(createOrUpdatePr).not.toHaveBeenCalled();
+    expect(dbState.tables.workspaces[0].promotionState).toBe("failed");
+  });
+
   it("remote unset → PRECONDITION (no push, no PR, no pr_url)", async () => {
     const runId = seedGithubFlowRun({ repoUrl: null });
 

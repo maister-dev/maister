@@ -1,7 +1,7 @@
 import "server-only";
 
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { promisify, stripVTControlCharacters } from "node:util";
 
 import pino from "pino";
 
@@ -109,6 +109,10 @@ abstract class CliPrAdapter implements PrAdapter {
     return process.env[this.tokenVar] || undefined;
   }
 
+  protected environment(): NodeJS.ProcessEnv {
+    return execEnv(this.token, this.tokenVar);
+  }
+
   // gh/glab infer the repository from the process CWD. A PR promotion MUST run
   // against the target project's checkout (args.repoPath), never the MAIster
   // server's own working directory — so every list/create call passes cwd. The
@@ -123,7 +127,7 @@ abstract class CliPrAdapter implements PrAdapter {
       cwd,
       signal: AbortSignal.timeout(EXEC_TIMEOUT_MS),
       maxBuffer: EXEC_MAX_BUFFER,
-      env: execEnv(this.token, this.tokenVar),
+      env: this.environment(),
     });
   }
 
@@ -170,6 +174,57 @@ export class GhCliAdapter extends CliPrAdapter {
   protected readonly tokenVar = "GH_TOKEN";
   protected readonly displayName = "gh";
 
+  protected override get token(): string | undefined {
+    return process.env.GH_TOKEN || process.env.GITHUB_TOKEN || undefined;
+  }
+
+  protected override environment(): NodeJS.ProcessEnv {
+    const { GH_DEBUG: _ghDebug, DEBUG: _debug, ...env } = super.environment();
+
+    return { ...env, GH_PROMPT_DISABLED: "1" };
+  }
+
+  override async preflight(): Promise<void> {
+    await super.preflight();
+
+    // This is a local credential lookup, including gh's stored login. Git
+    // transport credentials are independent. Never log the command's stdout.
+    try {
+      await this.exec(["auth", "token", "--hostname", "github.com"]);
+    } catch (err) {
+      const error = err as { code?: unknown; stderr?: string };
+
+      if (
+        error.code === 1 &&
+        /^no oauth token found for github\.com\s*$/i.test(error.stderr ?? "")
+      )
+        throw githubAuthRequired();
+      throw this.failed("auth token", err);
+    }
+  }
+
+  protected override failed(action: string, err: unknown): MaisterError {
+    const error = err as { code?: unknown; stderr?: string };
+    const stderr = error.stderr ?? "";
+
+    if (error.code === 4 || /\bHTTP 401\b/.test(stderr))
+      return githubAuthRequired();
+
+    // execFile's error message includes argv, including the PR title/body.
+    // Only the first diagnostic line from gh is suitable for the UI.
+    const diagnostic = scrub(stripVTControlCharacters(stderr), this.token)
+      .replace(/\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]+/g, "***")
+      .trim()
+      .split(/\r?\n/, 1)[0]
+      ?.slice(0, 400);
+
+    return new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      `gh ${action} failed${diagnostic ? `: ${diagnostic}` : ""}`,
+      { details: { reason: "github_cli_failed" } },
+    );
+  }
+
   async createOrUpdatePr(args: CreateOrUpdatePrArgs): Promise<PrResult> {
     assertSafeBranchRefs(args);
 
@@ -188,7 +243,6 @@ export class GhCliAdapter extends CliPrAdapter {
           "open",
           "--json",
           "url,number,baseRefName",
-          "--end-of-options",
         ],
         args.repoPath,
       );
@@ -211,12 +265,9 @@ export class GhCliAdapter extends CliPrAdapter {
           args.targetBranch,
           "--head",
           args.sourceBranch,
-          "--title",
-          args.title,
-          "--body",
-          args.body,
+          `--title=${args.title}`,
+          `--body=${args.body}`,
           ...(args.draft ? ["--draft"] : []),
-          "--end-of-options",
         ],
         args.repoPath,
       );
@@ -226,6 +277,14 @@ export class GhCliAdapter extends CliPrAdapter {
       throw this.failed("pr create", err);
     }
   }
+}
+
+function githubAuthRequired(): MaisterError {
+  return new MaisterError(
+    "PRECONDITION",
+    "GitHub CLI needs valid credentials. Set GH_TOKEN in the MAIster web service or sign in with gh as the service user.",
+    { details: { reason: "github_auth_required" } },
+  );
 }
 
 export class GlabCliAdapter extends CliPrAdapter {

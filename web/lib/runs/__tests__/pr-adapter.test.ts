@@ -281,11 +281,11 @@ describe("GhCliAdapter — preflight", () => {
     });
   });
 
-  it("passes preflight when `gh --version` succeeds", async () => {
+  it("passes preflight with a working CLI and a stored GitHub credential", async () => {
     const { selectPrAdapter } = await loadAdapter();
 
-    execImpls["gh"] = async () => ({
-      stdout: "gh version 2.62.0",
+    execImpls["gh"] = async (args) => ({
+      stdout: args[0] === "auth" ? "stored-token\n" : "gh version 2.62.0",
       stderr: "",
     });
     const adapter = selectPrAdapter("github", {
@@ -298,6 +298,33 @@ describe("GhCliAdapter — preflight", () => {
 
     expect(call).toBeDefined();
     expect(Array.isArray(call?.args)).toBe(true);
+    expect(execCalls[1]?.args).toEqual([
+      "auth",
+      "token",
+      "--hostname",
+      "github.com",
+    ]);
+  });
+
+  it("requires a GitHub credential even when gh is installed", async () => {
+    const { GhCliAdapter } = await loadAdapter();
+
+    execImpls["gh"] = async (args) => {
+      if (args[0] === "auth")
+        throw Object.assign(new Error("no token"), {
+          code: 1,
+          stderr: "no oauth token found for github.com\n",
+        });
+
+      return { stdout: "gh version 2.92.0", stderr: "" };
+    };
+
+    await expect(
+      new GhCliAdapter("https://github.com/org/repo.git").preflight(),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "github_auth_required" },
+    });
   });
 
   it("throws PRECONDITION when the remote is not configured", async () => {
@@ -408,7 +435,11 @@ describe("GhCliAdapter — createOrUpdatePr happy path (no existing PR)", () => 
     const adapter = selectPrAdapter("github", {
       remoteUrl: "https://github.com/org/repo.git",
     });
-    const result = await adapter.createOrUpdatePr({ ...PR_ARGS });
+    const result = await adapter.createOrUpdatePr({
+      ...PR_ARGS,
+      title: "--draft",
+      body: "--web",
+    });
 
     expect(result).toEqual({
       url: "https://github.com/org/repo/pull/42",
@@ -424,8 +455,30 @@ describe("GhCliAdapter — createOrUpdatePr happy path (no existing PR)", () => 
       (c) => c.file === "gh" && (c.args as string[]).includes("create"),
     );
 
-    expect(list).toBeDefined();
-    expect(create).toBeDefined();
+    expect(list?.args).not.toContain("--end-of-options");
+    expect(create?.args).not.toContain("--end-of-options");
+    expect(create?.args).toContain("--title=--draft");
+    expect(create?.args).toContain("--body=--web");
+    expect(create?.args).not.toContain("--draft");
+    expect(create?.args).not.toContain("--web");
+  });
+
+  it("reports gh exit code 4 as an authentication refusal", async () => {
+    const { GhCliAdapter } = await loadAdapter();
+
+    execImpls["gh"] = async () => {
+      throw Object.assign(new Error("gh failed"), { code: 4 });
+    };
+
+    await expect(
+      new GhCliAdapter("https://github.com/org/repo.git").createOrUpdatePr(
+        PR_ARGS,
+      ),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "github_auth_required" },
+    });
+    expect(execCalls).toHaveLength(1);
   });
 });
 
@@ -813,8 +866,8 @@ describe("token redaction (NEVER log/leak the token)", () => {
 
       if (argv.includes("list")) return { stdout: "[]", stderr: "" };
       // create fails at runtime.
-      throw Object.assign(new Error("gh: pr create failed"), {
-        stderr: "authentication failed",
+      throw Object.assign(new Error("Command failed with private PR body"), {
+        stderr: "\u001b[31mHTTP 403: GH-SECRET-zzz999\u001b[0m\nraw trace",
         code: 1,
       });
     };
@@ -831,8 +884,11 @@ describe("token redaction (NEVER log/leak the token)", () => {
       thrown = err;
     }
 
-    expect(thrown).toBeInstanceOf(MaisterError);
-    expect((thrown as Error).message).not.toContain("GH-SECRET-zzz999");
+    expect(thrown).toMatchObject({
+      code: "EXECUTOR_UNAVAILABLE",
+      details: { reason: "github_cli_failed" },
+      message: "gh pr create failed: HTTP 403: ***",
+    });
   });
 });
 

@@ -247,6 +247,22 @@ describe("ReviewPanel — a refused Promote", () => {
     expect(byTestId("review-conflict")).toBeNull();
   });
 
+  it("shows the sanitized GitHub CLI diagnostic for a refused PR", async () => {
+    const message = "gh pr create failed: HTTP 403: Resource not accessible";
+
+    refuseWith({
+      code: "EXECUTOR_UNAVAILABLE",
+      message,
+      details: { reason: "github_cli_failed" },
+    });
+    render("pull_request");
+
+    await promote();
+
+    expect(document.body.textContent).toContain(message);
+    expect(byTestId("review-conflict")).toBeNull();
+  });
+
   it.each([
     ["merge", "merge_conflict", "git merge --no-ff maister/feature-x"],
     ["rebase_merge", "rebase_conflict", "git rebase main"],

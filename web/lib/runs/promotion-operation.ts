@@ -119,6 +119,29 @@ export function isPublicationPushRejectedResponse(value: unknown): boolean {
   );
 }
 
+export function githubPrErrorText(
+  response: {
+    code?: string;
+    message?: string;
+    details?: { reason?: string };
+  } | null,
+  labels: { authRequired: string; cliFailed: string },
+): string | null {
+  const reason = response?.details?.reason;
+
+  if (response?.code === "PRECONDITION" && reason === "github_auth_required")
+    return labels.authRequired;
+  if (
+    response?.code === "EXECUTOR_UNAVAILABLE" &&
+    reason === "github_cli_failed"
+  )
+    return typeof response.message === "string" && response.message
+      ? response.message
+      : labels.cliFailed;
+
+  return null;
+}
+
 // ADR-181 (Codex F4): the recorded PR was merged on the provider without the
 // run's later commits. Nothing was changed; they need a PR of their own.
 export function isMergedPrBehindResponse(value: unknown): boolean {

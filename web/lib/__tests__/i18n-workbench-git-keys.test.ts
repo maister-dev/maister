@@ -56,6 +56,8 @@ const ERROR_KEYS = [
   "target_branch_unknown",
   "target_locked",
   "provider_unsupported",
+  "github_auth_required",
+  "github_cli_failed",
   "agent_requires_review",
   "base_branch_unknown",
   "pr_missing",
