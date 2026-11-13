@@ -613,6 +613,7 @@ paths:
         Company specialist replacement checks the current assignment, owner epoch,
         binding, input, source, result and runner witnesses. It reserves one
         Pending continuation and stores its retry receipt in the same transaction.
+        Concurrent assignment updates return 409 with reason `retry_assignment_busy`.
       parameters:
         - name: runId
           in: path

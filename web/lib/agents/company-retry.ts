@@ -52,6 +52,22 @@ type Replacement = CompanyAgentRetryRecipe & {
   replacement: NonNullable<CompanyAgentRetryRecipe["replacement"]>;
 };
 
+function companyRetryFailure(sourceRunId: string, error: unknown): never {
+  const pg = pgErrorOf(error);
+
+  log.warn(
+    { sourceRunId, ...queryErrorDiagnostics(error) },
+    "company specialist retry refused",
+  );
+  if (pg?.code === "55P03") throw retryRefusal("retry_assignment_busy");
+  if (
+    pg?.constraint === "company_retry_replacement_reference" ||
+    pg?.constraint === "company_retry_replacement_successor"
+  )
+    throw retryRefusal("retry_context_changed");
+  throw redactQueryError(error);
+}
+
 function replacementRecipe(intent: Intent): Replacement {
   const recipe = parseAgentRetryRecipe(intent.recipe);
 
@@ -125,6 +141,9 @@ async function prepareReplacement(
     snapshot.owner.companyId,
     "assignments:recover",
   );
+  await tx.execute(sql`SELECT id FROM specialist_assignments
+    WHERE id=${snapshot.assignment.id} AND company_id=${snapshot.owner.companyId}
+    FOR NO KEY UPDATE NOWAIT`);
   await authorizeRunKnowledgeDisclosure(
     tx,
     { kind: "user", userId },
@@ -157,7 +176,6 @@ async function prepareReplacement(
     JOIN specialist_owner_claims owner ON owner.assignment_id=subject.id AND owner.run_id=${source.id}
       AND owner.placement_id=${source.executionAssignmentId}
     WHERE subject.id=${snapshot.assignment.id} AND subject.company_id=${snapshot.owner.companyId}
-    FOR NO KEY UPDATE OF subject
   `)
   ).rows;
   const [session] = await tx
@@ -269,34 +287,36 @@ export async function companyAgentRetryOptions(
   source: Run,
   userId: string,
 ): Promise<AgentRetryOptions> {
-  const { recipe, intent } = await db.transaction(async (tx) => {
-    const [current] = await tx
-      .select()
-      .from(runs)
-      .where(eq(runs.id, source.id))
-      .for("no key update");
+  const { recipe, intent } = await db
+    .transaction(async (tx) => {
+      const [current] = await tx
+        .select()
+        .from(runs)
+        .where(eq(runs.id, source.id))
+        .for("no key update");
 
-    if (!current) throw retryRefusal("retry_source_unavailable");
-    const [intent] = await tx
-      .select()
-      .from(agentRetryIntents)
-      .where(
-        and(
-          eq(agentRetryIntents.sourceRunId, source.id),
-          eq(agentRetryIntents.state, "launched"),
-          sql`${agentRetryIntents.recipe} ? 'replacement'`,
-        ),
-      );
+      if (!current) throw retryRefusal("retry_source_unavailable");
+      const [intent] = await tx
+        .select()
+        .from(agentRetryIntents)
+        .where(
+          and(
+            eq(agentRetryIntents.sourceRunId, source.id),
+            eq(agentRetryIntents.state, "launched"),
+            sql`${agentRetryIntents.recipe} ? 'replacement'`,
+          ),
+        );
 
-    if (intent) {
-      const recipe = await authorizeCompanyRetryReceipt(tx, intent, userId);
+      if (intent) {
+        const recipe = await authorizeCompanyRetryReceipt(tx, intent, userId);
 
-      return { recipe, intent };
-    }
-    const { recipe } = await prepareReplacement(tx, current, userId);
+        return { recipe, intent };
+      }
+      const { recipe } = await prepareReplacement(tx, current, userId);
 
-    return { recipe, intent: null };
-  });
+      return { recipe, intent: null };
+    })
+    .catch((error: unknown) => companyRetryFailure(source.id, error));
   const runnerId = recipe.runner.id;
 
   return {
@@ -333,11 +353,6 @@ export async function acceptCompanyAgentRetry(
     userId,
     source.companyId,
     "assignments:recover",
-  );
-  await authorizeRunKnowledgeDisclosure(
-    db,
-    { kind: "user", userId },
-    source.id,
   );
   const hosts = createExecutionHosts({ db });
   const host = await localHost({ db, transport: hosts.transport });
@@ -439,18 +454,5 @@ export async function acceptCompanyAgentRetry(
 
       return launched;
     })
-    .catch((error: unknown) => {
-      const { constraint } = pgErrorOf(error) ?? {};
-
-      log.warn(
-        { sourceRunId: source.id, ...queryErrorDiagnostics(error) },
-        "company specialist replacement refused",
-      );
-      if (
-        constraint === "company_retry_replacement_reference" ||
-        constraint === "company_retry_replacement_successor"
-      )
-        throw retryRefusal("retry_context_changed");
-      throw redactQueryError(error);
-    });
+    .catch((error: unknown) => companyRetryFailure(source.id, error));
 }

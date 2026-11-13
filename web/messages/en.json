@@ -6591,6 +6591,7 @@
       "runner": "No compatible ready runner is available. Configure one, then refresh this preview.",
       "notFailed": "This run is no longer in a retryable failed state.",
       "assignmentBudgetExhausted": "The assignment has reached its execution budget.",
+      "assignmentBusy": "Another action is updating this assignment. Try again after it finishes.",
       "unsupported": "This execution type cannot use this retry action. Open the task or its original workflow to continue.",
       "sourceUnavailable": "The source execution or retry receipt is no longer available. Refresh the history.",
       "agentUnavailable": "The agent attachment or its pinned package is unavailable. Restore the attachment and refresh this preview.",

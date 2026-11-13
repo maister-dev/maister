@@ -31,6 +31,7 @@ const refusalKeys: Readonly<Record<string, string>> = {
   qualification_not_required: "refusal.qualificationRequired",
   retry_request_key_reused: "refusal.previewStale",
   retry_owner_stale: "refusal.contextChanged",
+  retry_assignment_busy: "refusal.assignmentBusy",
   retry_intent_unavailable: "refusal.sourceUnavailable",
 };
 

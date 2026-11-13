@@ -10810,6 +10810,24 @@ it("IT-CBC-03 reserves one source-bound replacement for a settled company specia
       requestKey: randomUUID(),
       previewFingerprint: preview.previewFingerprint,
     };
+    const cancelling = await database.pool.connect();
+
+    try {
+      await cancelling.query("BEGIN");
+      await cancelling.query(
+        "SELECT id FROM specialist_assignments WHERE id=$1 FOR UPDATE",
+        [assignment.id],
+      );
+      await expect(
+        acceptAgentRetry(db, source.runId, userId, retry),
+      ).rejects.toMatchObject({
+        code: "CONFLICT",
+        details: { reason: "retry_assignment_busy" },
+      });
+    } finally {
+      await cancelling.query("ROLLBACK");
+      cancelling.release();
+    }
 
     await expect(
       acceptAgentRetry(db, source.runId, userId, {
