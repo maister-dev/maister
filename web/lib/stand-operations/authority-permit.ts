@@ -8,10 +8,12 @@ import pino from "pino";
 
 import { authenticateStandOperationPeer } from "./authority-peer";
 import { standPermitCheckSchema } from "./operation-types";
+import { authorizeStandRestartProfessional } from "./restart-dispatch";
 import { readStandRunbookDigest } from "./target-registry";
 
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import {
+  executionCommands,
   standAuthorizationPermits,
   standComponents,
   standOperations,
@@ -118,6 +120,33 @@ export async function authorizeStandCallback(
             details: { reason: "assignment_fenced" },
           },
         );
+      const [command] = await tx
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.id, claim.ownerId),
+            eq(executionCommands.kind, "stand.dispatch"),
+          ),
+        )
+        .for("share");
+      const nodeAttemptId = command?.payload.nodeAttemptId;
+
+      if (
+        !command ||
+        (nodeAttemptId !== null && typeof nodeAttemptId !== "string")
+      )
+        throw new MaisterError(
+          "CONFLICT",
+          "The exact stand dispatch command owner is unavailable",
+        );
+      await authorizeStandRestartProfessional(
+        tx,
+        command.runId,
+        nodeAttemptId,
+        target.companyId,
+        operation.initiatingUserId,
+      );
       const [component] = await tx
         .select()
         .from(standComponents)

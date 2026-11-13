@@ -680,6 +680,16 @@ it("IT-CBO-02 IT-CBO-03 retains one restart intent across aliases and approves o
 
   expect(replayedApproval.status).toBe(200);
   expect(await replayedApproval.json()).toEqual(approval);
+  const { assertStandRestartDispatchOwner } =
+    await import("../restart-dispatch");
+
+  await expect(
+    assertStandRestartDispatchOwner(database.db as Db, {
+      operationId: accepted.id,
+      runId: randomUUID(),
+      nodeAttemptId: null,
+    }),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
 
   const knowledgeGrant = authority.page.items.find(
     (item) => item.action === "knowledge:read",

@@ -73,6 +73,7 @@ it("IT-CBO-02 retains a stand dispatch under the active Run placement without a 
     resourceKey: "b".repeat(64),
     ownerEpoch: 1,
     businessOwnerEpoch: 2,
+    nodeAttemptId: null,
     credential: "discard-this-field",
   };
   const issued = await issueCommand(db, {
