@@ -2,14 +2,17 @@ import "server-only";
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Server, ServerOptions } from "node:https";
+import type { AddressInfo } from "node:net";
 
 import { createServer } from "node:https";
+import { once } from "node:events";
 import { TLSSocket } from "node:tls";
 
 import pino from "pino";
 
 import { STAND_OPERATION_BODY_MAX_BYTES } from "./operation-types";
 
+import { httpStatusForAuthz } from "@/lib/authz";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { readBoundedJson } from "@/lib/http/bounded-json";
 
@@ -93,16 +96,26 @@ function requestBody(request: IncomingMessage): ReadableStream<Uint8Array> {
 function ingressFailure(error: unknown): IngressResponse {
   if (isMaisterError(error)) {
     const reason = error.details?.reason;
+    const status =
+      httpStatusForAuthz(error.code) ??
+      (error.code === "CONFIG"
+        ? reason === "json_body_too_large"
+          ? 413
+          : 400
+        : error.code === "CONFLICT" || error.code === "PRECONDITION"
+          ? 409
+          : error.code === "EXECUTOR_UNAVAILABLE"
+            ? 503
+            : null);
 
-    if (error.code === "CONFIG" || error.code === "UNAUTHENTICATED")
+    if (status !== null)
       return {
-        status:
-          error.code === "UNAUTHENTICATED"
-            ? 401
-            : reason === "json_body_too_large"
-              ? 413
-              : 400,
-        body: { code: error.code, message: error.message },
+        status,
+        body: {
+          code: error.code,
+          message: error.message,
+          ...(typeof reason === "string" ? { details: { reason } } : {}),
+        },
       };
   }
   log.error(
@@ -132,7 +145,7 @@ function sendAuthorityResponse(
 }
 
 /** This listener has no browser, proxy-header or unauthenticated HTTP entry point. */
-export function createStandAuthorityIngress(
+function createStandAuthorityIngress(
   tls: Required<Pick<ServerOptions, "ca" | "cert" | "key">>,
   authorize: AuthorizePeer,
 ): Server {
@@ -153,4 +166,34 @@ export function createStandAuthorityIngress(
         .then((result) => sendAuthorityResponse(response, result));
     },
   );
+}
+
+type StandAuthorityIngress = Readonly<{
+  address: AddressInfo;
+  close: () => Promise<void>;
+}>;
+
+export async function startStandAuthorityIngress(
+  tls: Required<Pick<ServerOptions, "ca" | "cert" | "key">>,
+  binding: Readonly<{ port: number; host: string }>,
+  authorize: AuthorizePeer,
+): Promise<StandAuthorityIngress> {
+  const server = createStandAuthorityIngress(tls, authorize);
+  const ready = once(server, "listening");
+
+  server.listen(binding);
+  await ready;
+  const address = server.address();
+
+  if (!address || typeof address === "string")
+    throw new MaisterError("CONFIG", "Stand authority requires a TCP listener");
+
+  return {
+    address,
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+        server.closeAllConnections();
+      }),
+  };
 }

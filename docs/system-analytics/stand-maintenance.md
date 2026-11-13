@@ -145,8 +145,11 @@ accepts only the authorization callback and applies the operation body limit.
 New target revisions retain the helper certificate SHA-256 fingerprint and
 its credential reference. A retained configuration without the fingerprint
 stays inspectable and needs a reviewed revision before helper authentication.
-Permit persistence and service startup remain part of the authorization and
-deployment wiring.
+Web starts and drains the dedicated listener with its application lifecycle
+when all `MAISTER_STAND_AUTHORITY_*` settings are supplied. Dispatch
+authorization commits the short-lived permit under the current command and
+professional grant. The reconcile, logs and verify callbacks refuse until
+their operation owners are implemented.
 
 Authority requests/permits also bind a closed purpose `dispatch|reconcile|logs|verify`. Dispatch validates the frozen intent action and active run/assignment owner. Read-only reconciliation/verification validates the current operation-recovery owner/grant even after original run termination; logs separately requires current log access. A read-purpose permit cannot authorize restart, and the helper compares returned purpose/nonce/digest/target to the exact call before using it. The callback resolves the principal from stored ownership/service configuration, never from its request body. A verification request preserves original operation/digest and issues a separate fresh verification nonce/receipt; changing its read-purpose action does not rewrite the original restart intent.
 

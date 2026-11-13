@@ -87,11 +87,11 @@ it("IT-CBO-02 accepts only a CA-verified peer and derives callback identity from
       load("helper.pem"),
       load("helper.key"),
     ]);
-    const { createStandAuthorityIngress } =
-      await import("../authority-ingress");
+    const { startStandAuthorityIngress } = await import("../authority-ingress");
     const calls: Array<{ operationId: string; fingerprint: string }> = [];
-    const ingress = createStandAuthorityIngress(
+    const ingress = await startStandAuthorityIngress(
       { ca, cert, key },
+      { port: 0, host: "127.0.0.1" },
       async (input) => {
         calls.push({
           operationId: input.operationId,
@@ -103,11 +103,7 @@ it("IT-CBO-02 accepts only a CA-verified peer and derives callback identity from
     );
 
     try {
-      await new Promise<void>((resolve, reject) => {
-        ingress.once("error", reject);
-        ingress.listen(0, "127.0.0.1", resolve);
-      });
-      const { port } = ingress.address() as AddressInfo;
+      const { port } = ingress.address as AddressInfo;
       const send = (
         path: string,
         credentials?: { cert: Buffer; key: Buffer },
@@ -152,10 +148,7 @@ it("IT-CBO-02 accepts only a CA-verified peer and derives callback identity from
         },
       ]);
     } finally {
-      ingress.closeAllConnections();
-      await new Promise<void>((resolve, reject) =>
-        ingress.close((error) => (error ? reject(error) : resolve())),
-      );
+      await ingress.close();
     }
   } finally {
     await rm(fixture, { recursive: true, force: true });

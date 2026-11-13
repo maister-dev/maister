@@ -22239,14 +22239,14 @@ paths:
   /api/stand-operations/{operationId}/authorizations/check:
     post:
       operationId: standOperationAuthorize
-      summary: Designed — Validate current exact target-side pre-effect authority
-      description: Designed; no implementation is implied. Requires current target-helper service principal. URL
-        identifiers are untrusted selectors resolved through current server ownership/access. Actors, grants,
-        source witnesses, target endpoint and execution ownership are derived from authenticated context/server
-        state. Each nonce may issue at most one permit. Replaying a nonce or requesting a second dispatch
-        permit for the same operation returns 409. Reconcile the target journal if the original response
-        is lost.
-      x-implementation-status: Designed
+      summary: Validate current exact target-side pre-effect authority
+      description: |
+        The dedicated Web mTLS listener serves this path. Dispatch uses the target-bound certificate
+        and credential, exact retained command, current human and professional authority, and pre-effect
+        observation. Each nonce may issue at most one permit. A second dispatch permit for an operation
+        returns 409. Reconcile the target journal if the original response is lost.
+        The reconcile, logs and verify purposes refuse until their observation and recovery ownership is wired.
+      x-implementation-status: Implemented
       x-required-scope: target-helper service principal
       requestBody:
         required: true
@@ -22437,7 +22437,7 @@ components:
       type: apiKey
       in: header
       name: X-Maister-Helper-Token
-      description: "Designed: target-bound helper service credential over required
+      description: "Target-bound helper service credential over required
         mTLS; not an agent or user token."
     sessionCookie:
       type: apiKey

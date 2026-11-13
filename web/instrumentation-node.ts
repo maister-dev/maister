@@ -233,6 +233,9 @@ export async function registerNodeRuntime(): Promise<void> {
   }
 
   const { startSchedulerTimer } = await import("@/lib/scheduler/timer");
+  const { startConfiguredStandAuthority } =
+    await import("@/lib/stand-operations/authority-runtime");
+  const stopStandAuthority = await startConfiguredStandAuthority();
 
   startSchedulerTimer();
 
@@ -263,6 +266,7 @@ export async function registerNodeRuntime(): Promise<void> {
         stopCanonicalProjectionWorker(),
         stopDurableWorkers(),
         stopPromptOwnerApplications(),
+        stopStandAuthority(),
       ]);
     },
     drain: async () => {
