@@ -113,7 +113,9 @@ component revisions, runbook witness, initiating authority and intent digest.
 Restart intake acquires the canonical resource in the same transaction. Exact
 replay returns the retained operation. A conflicting payload or held resource
 returns a typed conflict. The pending intent and exclusion survive assignment
-cancellation and lease expiry. Dispatch authorization and target receipts are
+cancellation and lease expiry. Once the prior effect is proved and its claim
+is marked resolved, a new independent intent takes the resource atomically at
+the next owner epoch. Dispatch authorization and target receipts are
 subsequent stages of the contract below.
 
 1. Resolve target/runbook/policy/current authority and exact before-state under canonical resource claim. Persist operation ID/digest and original expected outcome before dispatch, atomically with assignment work reference and outbox/command ownership.

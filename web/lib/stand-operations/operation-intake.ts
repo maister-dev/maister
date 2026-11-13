@@ -17,7 +17,7 @@ import {
   standResourceClaims,
   standTargets,
 } from "@/lib/db/schema";
-import { isUniqueViolation, redactQueryError } from "@/lib/db/pg-error";
+import { redactQueryError } from "@/lib/db/pg-error";
 import { MaisterError } from "@/lib/errors";
 import { contentDigest } from "@/lib/evaluations/digest";
 import {
@@ -248,13 +248,36 @@ export async function createStandOperation(
           "CRASH",
           "Stand operation intent was not retained",
         );
-      if (input.action === "restart")
-        await tx.insert(standResourceClaims).values({
-          resourceKey: operation.resourceKey,
-          operationId: operation.id,
-          ownerId: operation.id,
-          expiresAt: sql`clock_timestamp()+interval '120 seconds'`,
-        });
+      if (input.action === "restart") {
+        const expiresAt = sql`clock_timestamp()+interval '120 seconds'`;
+        const [claim] = await tx
+          .insert(standResourceClaims)
+          .values({
+            resourceKey: operation.resourceKey,
+            operationId: operation.id,
+            ownerId: operation.id,
+            expiresAt,
+          })
+          .onConflictDoUpdate({
+            target: standResourceClaims.resourceKey,
+            set: {
+              operationId: operation.id,
+              ownerId: operation.id,
+              ownerEpoch: sql`${standResourceClaims.ownerEpoch}+1`,
+              expiresAt,
+              unresolved: true,
+            },
+            setWhere: eq(standResourceClaims.unresolved, false),
+          })
+          .returning({ operationId: standResourceClaims.operationId });
+
+        if (!claim)
+          throw new MaisterError(
+            "CONFLICT",
+            "Reconcile the retained operation before requesting another restart of this resource",
+            { details: { reason: "resource_conflict" } },
+          );
+      }
       log.info(
         {
           operationId: operation.id,
@@ -270,12 +293,6 @@ export async function createStandOperation(
       return { operation: operationDto(operation), duplicate: false };
     });
   } catch (error) {
-    if (isUniqueViolation(error, "stand_resource_claims_pkey"))
-      throw new MaisterError(
-        "CONFLICT",
-        "Reconcile the retained operation before requesting another restart of this resource",
-        { details: { reason: "resource_conflict" } },
-      );
     throw redactQueryError(error);
   }
 }

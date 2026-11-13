@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
+import { sql } from "drizzle-orm";
 
 import { captureKnowledgeSource } from "@/lib/brain/knowledge-source-capture";
 import {
@@ -606,5 +607,42 @@ it("IT-CBO-02 IT-CBO-03 retains one restart intent across aliases and approves o
   );
 
   expect(await retained.json()).toEqual(accepted);
+
+  await createCompanyGrants(database.db, administratorId, {
+    principalKind: "user",
+    principalId: userId,
+    actions: ["targets:restart"],
+    idempotencyKey: randomUUID(),
+  });
+  // The connector qualification owns creation of the actual target receipt.
+  await database.db.transaction(async (tx) => {
+    await tx.execute(sql`
+      UPDATE stand_operations SET effect_state='confirmed_not_applied',
+        disposition='proved_not_applied',revision=revision+1 WHERE id=${accepted.id}
+    `);
+    await tx.execute(sql`
+      UPDATE stand_resource_claims SET unresolved=false WHERE operation_id=${accepted.id}
+    `);
+  });
+  const next = await createOperation(loser, loserComponent);
+
+  expect(next.status).toBe(202);
+  const newOperation = await next.json();
+
+  expect(newOperation).toMatchObject({
+    assignmentId: loser.id,
+    predecessorId: null,
+    effectState: "not_dispatched",
+  });
+  expect(newOperation.id).not.toBe(accepted.id);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT operation_id,owner_epoch,unresolved FROM stand_resource_claims",
+      )
+    ).rows,
+  ).toEqual([
+    { operation_id: newOperation.id, owner_epoch: "2", unresolved: true },
+  ]);
   browser.user = null;
 });
