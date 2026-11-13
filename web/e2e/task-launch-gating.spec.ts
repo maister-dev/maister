@@ -107,6 +107,33 @@ test.describe("Manual task admission through the real browser and controlled pro
       .focus();
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
+
+    const closeDialog = await openLaunch(page, task.title);
+    await expect(
+      closeDialog.getByRole("button", { name: "Use configured runners" }),
+    ).toHaveCount(0);
+    await chooseLaunchOption(
+      page,
+      closeDialog,
+      /Runner \/ Model/,
+      new RegExp(fixture.failedRunnerId),
+    );
+    await closeDialog.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(closeDialog).toHaveCount(0);
+
+    const backdropDialog = await openLaunch(page, task.title);
+    await expect(
+      backdropDialog.getByRole("button", { name: "Use configured runners" }),
+    ).toHaveCount(0);
+    await chooseLaunchOption(
+      page,
+      backdropDialog,
+      /Runner \/ Model/,
+      new RegExp(fixture.failedRunnerId),
+    );
+    await page.mouse.click(4, 4);
+    await expect(backdropDialog).toHaveCount(0);
+
     const reopened = await openLaunch(page, task.title);
 
     await expect(
