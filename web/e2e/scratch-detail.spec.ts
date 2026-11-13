@@ -37,7 +37,11 @@ test("scratch detail lands on the conversation with an enabled composer", async 
 }) => {
   const fx = loadScratchDetailFixture();
 
+  await page.setViewportSize({ width: 1366, height: 768 });
   await page.goto(`/scratch-runs/${fx.scratchRunId}`);
+  await expect(
+    page.getByTestId("run-outcome").filter({ visible: true }),
+  ).toBeInViewport();
 
   // The conversation is the primary center; the seeded transcript renders.
   const conversation = page.locator('[data-testid="scratch-conversation"]');
