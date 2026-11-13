@@ -171,6 +171,13 @@ restart. The transport must claim read authority before contacting the helper.
 
 Authority requests/permits also bind a closed purpose `dispatch|reconcile|logs|verify`. Dispatch validates the frozen intent action and active run/assignment owner. Read-only reconciliation/verification validates the current operation-recovery owner/grant even after original run termination; logs separately requires current log access. A read-purpose permit cannot authorize restart, and the helper compares returned purpose/nonce/digest/target to the exact call before using it. The callback resolves the principal from stored ownership/service configuration, never from its request body. A verification request preserves original operation/digest and issues a separate fresh verification nonce/receipt; changing its read-purpose action does not rewrite the original restart intent.
 
+Operational evidence v2 references operation and verification IDs from the
+Run's exact frozen assignment input and appointed targets. A successful
+result may cite only a proved applied effect and the latest healthy probe.
+A required effect or health reference can select a target or exact operation;
+a health reference can also select the exact verification. The validator
+refuses fabricated IDs and missing required evidence at result publication.
+
 ### Recovery and current responsibility
 
 A session operator with current target read and recovery grants and access to

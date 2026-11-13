@@ -8,7 +8,7 @@ import { join, resolve } from "node:path";
 
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import { captureKnowledgeSource } from "@/lib/brain/knowledge-source-capture";
 import {
@@ -26,7 +26,7 @@ import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
 import { createCompanySpecialistBinding } from "@/lib/agents/company-bindings";
 import { releaseAssignmentForRun } from "@/lib/execution-host/assignments";
 import { setDefaultTransportForTests } from "@/lib/execution-host/default-transport";
-import { platformAcpRunners } from "@/lib/db/schema";
+import { platformAcpRunners, runs } from "@/lib/db/schema";
 import { tryStartRun } from "@/lib/scheduler";
 import {
   createFakeExecutionHost,
@@ -975,7 +975,7 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
     );
     await writeFile(
       join(source, "maister-agents/operator.md"),
-      "---\nname: Stand permit fixture\ndescription: Exercise scoped restart authority.\nkind: operational\ncompletion: {contract: operational_v1}\nspecialist: {responsibilities: [Verify stand operation authority], targetClasses: [stand]}\nmode: session\nworkspace: none\ntriggers: [manual]\nrisk_tier: standard\n---\nReturn the fixture observation.\n",
+      "---\nname: Stand permit fixture\ndescription: Exercise scoped restart authority.\nkind: operational\ncompletion: {contract: operational_evidence_v2}\nspecialist: {responsibilities: [Verify stand operation authority], targetClasses: [stand]}\nmode: session\nworkspace: none\ntriggers: [manual]\nrisk_tier: standard\n---\nReturn the fixture observation.\n",
     );
     const installed = await installPackageRevision({
       source,
@@ -1368,6 +1368,60 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
         ),
       ).rejects.toMatchObject({ code: "23514" });
       expect(verifyTarget).toHaveBeenCalledTimes(2);
+      const { validateOperationalEvidenceReferences } =
+        await import("@/lib/run-results/operational-evidence");
+      const [run] = await db
+        .select({ contract: runs.resultContract })
+        .from(runs)
+        .where(eq(runs.id, runId));
+      const contract = run?.contract;
+
+      expect(contract).toMatchObject({
+        contractName: "operational_evidence_v2",
+      });
+      if (!contract)
+        throw new Error("The installed evidence contract is unavailable");
+      const decision = {
+        kind: "valid" as const,
+        valueBytes: 0,
+        value: {
+          schemaVersion: 2,
+          outcome: "success",
+          summary: "The configured service is healthy.",
+          coverage: { state: "complete", remainingKnown: 0 },
+          counts: {
+            scanned: 1,
+            attempted: 1,
+            completed: 1,
+            failed: 0,
+            skipped: 0,
+            created: 0,
+          },
+          references: [],
+          diagnostics: [],
+          findings: {
+            schemaVersion: 1,
+            findings: [],
+            selection: [],
+            knowledgeProposals: [],
+          },
+          operationIds: [operation.id],
+          verificationIds: verified.verificationIds,
+        },
+      };
+
+      await expect(
+        validateOperationalEvidenceReferences(db, runId, contract, decision),
+      ).resolves.toEqual(decision);
+      await expect(
+        validateOperationalEvidenceReferences(db, runId, contract, {
+          ...decision,
+          value: { ...decision.value, verificationIds: [randomUUID()] },
+        }),
+      ).resolves.toMatchObject({
+        kind: "invalid",
+        reason: "reference_invalid",
+      });
       expect(await adoptStandTargetReceipt(db, operation.id, result)).toEqual(
         verified,
       );
