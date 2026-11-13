@@ -53,6 +53,7 @@ import { settleCrashedPermissionPark } from "./graph/permission-park-crash";
 import {
   handleFlowPermission,
   hasPendingFlowPermission,
+  parkCheckpointedGatePermission,
   replayAdmittedFlowPermissionInputs,
   type FlowPermissionOwner,
 } from "./graph/prompt-permission";
@@ -100,6 +101,7 @@ import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { escalateHookTrip } from "@/lib/runs/hook-trip";
 import { haltRuleFromEvent } from "@/lib/runs/hook-trip-rule";
 import { staleSessionBinding } from "@/lib/execution-host/session-binding";
+import { PromptOwnerDeferred } from "@/lib/execution-host/prompt-owner-errors";
 import {
   HOST_PRESSURED_REASON,
   isHostPressuredError,
@@ -1152,15 +1154,34 @@ export async function reattachGatePrompt(
   );
 
   if (!existing) return null;
-  if (
-    await db.transaction((tx: Db) =>
-      settleCrashedPermissionPark(tx, {
+  const park = await db
+    .transaction(async (tx: Db) => {
+      if (
+        existing.applicationState === "applied" &&
+        (await parkCheckpointedGatePermission(tx, existing))
+      )
+        return "checkpointed";
+
+      return (await settleCrashedPermissionPark(tx, {
         runId: ctx.runId,
         owner,
         command: existing,
-      }),
-    )
-  )
+      }))
+        ? "crashed"
+        : null;
+    })
+    .catch((cause: unknown) => {
+      if (cause instanceof PromptOwnerDeferred)
+        throw new FlowPromptContinuationPending(existing.id, cause);
+      throw cause;
+    });
+
+  if (park === "checkpointed")
+    throw new FlowPromptContinuationPending(
+      existing.id,
+      new MaisterError("CHECKPOINT", "Gate permission is parked for resume"),
+    );
+  if (park === "crashed")
     throw new FlowPromptContinuationPending(
       existing.id,
       new MaisterError(

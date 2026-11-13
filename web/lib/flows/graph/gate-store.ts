@@ -490,7 +490,7 @@ export async function getGateResultsForNodeAttempt(
     .select()
     .from(gateResults)
     .where(eq(gateResults.nodeAttemptId, nodeAttemptId))
-    .orderBy(asc(gateResults.createdAt));
+    .orderBy(asc(gateResults.createdAt), asc(gateResults.id));
 
   return rows;
 }
