@@ -228,6 +228,46 @@ test.describe("run & task context visibility", () => {
     await expect(inspector).toBeVisible();
   });
 
+  test("R1 gives viewers a first-screen recovery link without recovery actions", async ({
+    browser,
+  }) => {
+    const fx = await seedContextRun();
+    const { viewerEmail, viewerPassword } = loadFixtures().byKey.m22;
+
+    await withE2EDb((pool) =>
+      pool.query("UPDATE runs SET status='Crashed', ended_at=now() WHERE id=$1", [
+        fx.runId,
+      ]),
+    );
+    const context = await browser.newContext({
+      storageState: { cookies: [], origins: [] },
+      viewport: { width: 1366, height: 768 },
+    });
+
+    try {
+      const page = await context.newPage();
+
+      await page.goto("/login");
+      await page.locator('input[name="email"]').fill(viewerEmail);
+      await page.locator('input[name="password"]').fill(viewerPassword);
+      await page.locator('form button[type="submit"]').click();
+      await page.waitForURL((url) => !url.pathname.startsWith("/login"));
+      await page.goto(`/runs/${fx.runId}`);
+
+      const outcome = page.getByTestId("run-outcome");
+
+      await expect(outcome).toBeInViewport();
+      await expect(outcome).toContainText("You have read-only access to this Run.");
+      await outcome.getByRole("link", { name: "This run crashed" }).click();
+      const recovery = page.getByTestId("run-crashed-section");
+
+      await expect(recovery).toBeInViewport();
+      await expect(recovery.getByRole("button")).toHaveCount(0);
+    } finally {
+      await context.close();
+    }
+  });
+
   test("run timeline exposes the per-attempt resolved-prompt disclosure", async ({
     page,
   }) => {
