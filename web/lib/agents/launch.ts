@@ -4039,11 +4039,19 @@ async function dispatchStoredAgentTurn(
   turn: AgentTurn,
   sessionId: string,
   signal?: AbortSignal,
+  specialistPlacementId?: string,
 ): Promise<void> {
   signal?.throwIfAborted();
   const draft = turn.variant === "consensus_draft";
 
-  observeOwnedAgentSession(db, execution, turn, sessionId, signal);
+  observeOwnedAgentSession(
+    db,
+    execution,
+    turn,
+    sessionId,
+    signal,
+    specialistPlacementId,
+  );
   await waitForPromptIncarnation(db, execution.client, sessionId, signal);
   await assertOperationalDispatchIntegrity(db, turn.runId);
   const handle = await execution.client.prompt(
@@ -4071,6 +4079,7 @@ function observeOwnedAgentSession(
   turn: AgentTurn,
   sessionId: string,
   signal?: AbortSignal,
+  specialistPlacementId?: string,
 ): void {
   const started = observeAgentSession({
     db,
@@ -4079,6 +4088,7 @@ function observeOwnedAgentSession(
     sessionId,
     turnId: turn.id,
     ...(signal ? { signal } : {}),
+    ...(specialistPlacementId ? { specialistPlacementId } : {}),
   });
 
   log.info(
@@ -4114,6 +4124,7 @@ export async function startAgentSession(
       assignmentId: runs.executionAssignmentId,
       resultContract: runs.resultContract,
       knowledgeAccess: runs.knowledgeAccess,
+      companyId: runs.companyId,
       status: runs.status,
     })
     .from(runs)
@@ -4137,7 +4148,7 @@ export async function startAgentSession(
       source &&
       (source.status === "Running" || source.status === "NeedsInput") &&
       expectedAssignmentId &&
-      usesStructuredKnowledgeContext(source)
+      (source.companyId !== null || usesStructuredKnowledgeContext(source))
     )
       await withSpecialistExecutor(
         db,
@@ -4276,6 +4287,11 @@ async function driveAgentSession(
     opts.assignmentId === undefined
       ? (baseRun.executionAssignmentId ?? null)
       : opts.assignmentId;
+  const specialistPlacementId =
+    assignmentId &&
+    (baseRun.companyId !== null || usesStructuredKnowledgeContext(baseRun))
+      ? assignmentId
+      : undefined;
 
   if (assignmentId !== baseRun.executionAssignmentId)
     throw new MaisterError(
@@ -4408,6 +4424,7 @@ async function driveAgentSession(
           agentTurn,
           command.targetSessionId,
           opts.signal,
+          specialistPlacementId,
         );
       // A re-driven consensus draft must apply through the draft registry;
       // the ordinary agent owner refuses the variant and poisons the turn.
@@ -4456,6 +4473,7 @@ async function driveAgentSession(
           agentTurn,
           session.sessionId,
           opts.signal,
+          specialistPlacementId,
         );
       } catch (error) {
         if (error instanceof AgentPromptQuarantined) throw error;
@@ -4500,6 +4518,7 @@ async function driveAgentSession(
         agentTurn,
         live.hostSessionId,
         opts.signal,
+        specialistPlacementId,
       );
 
       return;
@@ -5459,6 +5478,7 @@ async function driveAgentSession(
           ownedTurn,
           session.sessionId,
           opts.signal,
+          specialistPlacementId,
         );
       });
     } catch (originalError) {
@@ -5650,6 +5670,7 @@ type AgentSessionObservation = {
   signal?: AbortSignal;
   turnId?: string;
   sleep?: (ms: number) => Promise<void>;
+  specialistPlacementId?: string;
 };
 
 // ADR-167: the canonical session stream is a DURABLE, replayable log, and every
@@ -5761,8 +5782,16 @@ export function observeAgentSession(args: AgentSessionObservation): boolean {
     return false;
   }
   queueMicrotask(() => {
-    void superviseAgentSession(args)
+    void superviseRetainedAgentSession(args)
       .catch((error: unknown) => {
+        if (args.signal?.aborted || isFencedError(error)) {
+          log.debug(
+            { runId: args.runId, sessionId: args.sessionId },
+            "agent session observer yielded",
+          );
+
+          return;
+        }
         log.error(
           {
             runId: args.runId,
@@ -5778,6 +5807,20 @@ export function observeAgentSession(args: AgentSessionObservation): boolean {
   return true;
 }
 
+async function superviseRetainedAgentSession(
+  args: AgentSessionObservation,
+): Promise<void> {
+  if (!args.specialistPlacementId) return superviseAgentSession(args);
+
+  await withSpecialistExecutor(
+    args.db,
+    args.runId,
+    args.specialistPlacementId,
+    (signal) => superviseAgentSession({ ...args, signal }),
+    args.signal,
+  );
+}
+
 /**
  * Puts an observer back on a live agent session that has none in this process —
  * the reconcile recovery for a web restart or an exhausted observer supervisor.
@@ -5790,11 +5833,16 @@ export async function reobserveAgentSession(args: {
   runId: string;
   sessionId: string;
   executionHosts?: ExecutionHosts;
+  signal?: AbortSignal;
 }): Promise<boolean> {
   const [run] = await args.db
     .select({
       runKind: runs.runKind,
       assignmentId: runs.executionAssignmentId,
+      companyId: runs.companyId,
+      knowledgeAccess: runs.knowledgeAccess,
+      resultContract: runs.resultContract,
+      status: runs.status,
     })
     .from(runs)
     .where(eq(runs.id, args.runId));
@@ -5812,6 +5860,11 @@ export async function reobserveAgentSession(args: {
     execution,
     runId: args.runId,
     sessionId: args.sessionId,
+    signal: args.signal,
+    ...(["Running", "NeedsInput"].includes(run.status) &&
+    (run.companyId !== null || usesStructuredKnowledgeContext(run))
+      ? { specialistPlacementId: run.assignmentId }
+      : {}),
   });
 }
 

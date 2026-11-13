@@ -83,7 +83,7 @@ import {
   getAgentRetryReceipt,
   runAgentRetryAdmissionSweep,
 } from "../retry";
-import { startAgentSession } from "../launch";
+import { reobserveAgentSession, startAgentSession } from "../launch";
 import * as agentLaunch from "../launch";
 import { startAgentContinuationWorker } from "../continuation-worker";
 import { getCompanyAgentRunHistory } from "../activity-queries";
@@ -473,6 +473,10 @@ beforeAll(async () => {
   );
   await writeFile(
     join(source, "maister-agents/owner-fence-observer.md"),
+    primarySource,
+  );
+  await writeFile(
+    join(source, "maister-agents/observer-adoption.md"),
     primarySource,
   );
   await writeFile(
@@ -11325,6 +11329,68 @@ it("IT-CBC-03 preserves an exact native project appointment through the existing
       await db
         .delete(platformRuntimeSettings)
         .where(eq(platformRuntimeSettings.id, "singleton"));
+  }
+});
+
+it("IT-CBC-03 reclaims the expired specialist epoch when reconciliation reobserves retained work", async () => {
+  const db: Db = database.db;
+  const appointment = await reserveContextFixture("rah:observer-adoption", [
+    "assignments:read",
+  ]);
+  const { hostId, hosts } = await fakeExecutionHosts(db);
+  const placement = await db.transaction((tx) =>
+    mintAssignment(tx, { runId: appointment.runId, hostId, reason: "launch" }),
+  );
+  const observed = (
+    await database.pool.query<{ epoch: number }>(
+      "UPDATE specialist_owner_claims SET renewed_at=clock_timestamp()-interval '121 seconds',expires_at=clock_timestamp()-interval '1 second' WHERE assignment_id=$1 RETURNING epoch",
+      [appointment.assignmentId],
+    )
+  ).rows[0];
+  const sessionId = randomUUID();
+  const controller = new AbortController();
+
+  try {
+    expect(
+      await reobserveAgentSession({
+        db,
+        runId: appointment.runId,
+        sessionId,
+        executionHosts: hosts,
+        signal: controller.signal,
+      }),
+    ).toBe(true);
+    expect(
+      await reobserveAgentSession({
+        db,
+        runId: appointment.runId,
+        sessionId,
+        executionHosts: hosts,
+      }),
+    ).toBe(false);
+    await poll(
+      async () => {
+        const [owner] = (
+          await database.pool.query(
+            "SELECT epoch,placement_id,expires_at>clock_timestamp() AS active FROM specialist_owner_claims WHERE assignment_id=$1",
+            [appointment.assignmentId],
+          )
+        ).rows;
+
+        return owner.epoch === observed.epoch + 1 &&
+          owner.placement_id === placement.id &&
+          owner.active
+          ? owner
+          : null;
+      },
+      1500,
+      "re-observation adopted the same placed assignment",
+      25,
+    );
+  } finally {
+    controller.abort();
+    await revokeAgentRunTokensForRun(appointment.runId, db);
+    await releaseAssignmentForRun(db, appointment.runId, "run_terminal");
   }
 });
 
