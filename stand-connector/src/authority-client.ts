@@ -15,6 +15,8 @@ export type AuthorityConfig = Readonly<{
 type AuthorityClient = Readonly<{
   authorize(intent: RestartIntent): Promise<Authorization>;
   authorizeReceipt(intent: RestartIntent): Promise<boolean>;
+  authorizeLogs(intent: RestartIntent): Promise<boolean>;
+  authorizeVerification(intent: RestartIntent): Promise<boolean>;
 }>;
 
 export class AuthorityClientError extends Error {
@@ -129,7 +131,7 @@ export function createAuthorityClient(
 
   async function authorizePurpose(
     intent: RestartIntent,
-    purpose: "dispatch" | "reconcile",
+    purpose: "dispatch" | "reconcile" | "logs" | "verify",
   ): Promise<Authorization> {
     const {
       operationId,
@@ -184,5 +186,9 @@ export function createAuthorityClient(
     authorize: (intent) => authorizePurpose(intent, "dispatch"),
     authorizeReceipt: async (intent) =>
       (await authorizePurpose(intent, "reconcile")).decision === "allowed",
+    authorizeLogs: async (intent) =>
+      (await authorizePurpose(intent, "logs")).decision === "allowed",
+    authorizeVerification: async (intent) =>
+      (await authorizePurpose(intent, "verify")).decision === "allowed",
   };
 }

@@ -239,6 +239,8 @@ function startup(): void {
       journal,
       authorize: authority.authorize,
       authorizeReceipt: authority.authorizeReceipt,
+      authorizeLogs: authority.authorizeLogs,
+      authorizeVerification: authority.authorizeVerification,
       manager,
     });
 

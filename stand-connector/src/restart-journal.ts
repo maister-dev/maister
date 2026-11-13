@@ -62,6 +62,7 @@ export type RestartJournal = Readonly<{
     reason: Exclude<ReceiptReason, "effect_unknown">,
   ): RestartEntry;
   finish(intent: RestartIntent, result: RestartResult): RestartEntry;
+  beginVerification(operationId: string, nonce: string): number;
   close(): void;
 }>;
 
@@ -105,6 +106,14 @@ const SCHEMA = `
       OR (phase='confirmed_applied' AND revision=3 AND permit_id IS NOT NULL AND after_state='active' AND after_invocation IS NOT NULL AND reason IS NULL)
       OR (phase='unknown' AND revision=3 AND permit_id IS NOT NULL AND reason='effect_unknown')
     )
+  ) STRICT;
+`;
+const VERIFICATION_SCHEMA = `
+  CREATE TABLE verification_nonces (
+    operation_id TEXT NOT NULL REFERENCES restart_operations(id) ON DELETE RESTRICT,
+    nonce TEXT NOT NULL,
+    sequence INTEGER NOT NULL UNIQUE,
+    PRIMARY KEY(operation_id,nonce)
   ) STRICT;
 `;
 
@@ -182,6 +191,7 @@ function initialize(
   if (mode?.journal_mode !== "delete")
     throw new RestartJournalError("journal_corrupt");
   db.exec("PRAGMA synchronous=FULL");
+  db.exec("PRAGMA foreign_keys=ON");
   const pageSize = db.prepare("PRAGMA page_size").get()?.page_size;
   const limit = db.prepare(`PRAGMA max_page_count=${pageLimit}`).get();
   const integrity = db.prepare("PRAGMA quick_check(1)").get();
@@ -207,7 +217,7 @@ function initialize(
         targetIncarnation,
       );
       db.exec("PRAGMA user_version=1");
-    } else if (version !== 1) {
+    } else if (version !== 1 && version !== 2) {
       throw new RestartJournalError("journal_corrupt");
     }
     const identity = db
@@ -218,6 +228,10 @@ function initialize(
 
     if (identity?.target_incarnation !== targetIncarnation)
       throw new RestartJournalError("target_identity_mismatch");
+    if (version !== 2) {
+      db.exec(VERIFICATION_SCHEMA);
+      db.exec("PRAGMA user_version=2");
+    }
   });
 }
 
@@ -267,6 +281,12 @@ export function openRestartJournal(
     UPDATE restart_operations SET phase=?,after_invocation=?,after_state=?,reason=?,revision=3,sequence=?,captured_at=?
     WHERE id=?
   `);
+  const findVerification = db.prepare(
+    "SELECT 1 FROM verification_nonces WHERE operation_id=? AND nonce=?",
+  );
+  const retainVerification = db.prepare(
+    "INSERT INTO verification_nonces VALUES (?,?,?)",
+  );
 
   function read(operationId: string): RestartEntry | null {
     const row = readStatement.get(operationId) as JournalRow | undefined;
@@ -310,6 +330,22 @@ export function openRestartJournal(
   return {
     read,
     close: (): void => db.close(),
+    beginVerification(operationId: string, nonce: string): number {
+      return inTransaction(db, () => {
+        const current = retained(operationId);
+
+        if (
+          current.phase !== "confirmed_applied" ||
+          findVerification.get(operationId, nonce)
+        )
+          throw new RestartJournalError("operation_conflict");
+        const value = sequence();
+
+        retainVerification.run(operationId, nonce, value);
+
+        return value;
+      });
+    },
     admit(
       intent: RestartIntent,
       before: ServiceObservation,

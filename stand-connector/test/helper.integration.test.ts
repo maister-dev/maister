@@ -52,6 +52,7 @@ test("IT-CBO-02 admits the exact configured restart over mTLS and returns the or
     .replaceAll(":", "")
     .toLowerCase();
   let effects = 0;
+  let healthy = true;
   const helper = createStandHelper({
     tls: { cert, key, ca: cert },
     platformCertificateSha256: fingerprint,
@@ -67,7 +68,7 @@ test("IT-CBO-02 admits the exact configured restart over mTLS and returns the or
           scope: "system",
           user: null,
           unit: "fixture.service",
-          actions: ["restart"],
+          actions: ["restart", "logs", "verify"],
         },
       ],
     },
@@ -80,15 +81,18 @@ test("IT-CBO-02 admits the exact configured restart over mTLS and returns the or
       },
     }),
     authorizeReceipt: async (intent) => intent.ownerEpoch === 2,
+    authorizeLogs: async (intent) => intent.ownerEpoch === 2,
+    authorizeVerification: async (intent) => intent.ownerEpoch === 2,
     manager: {
       inspect: async () => ({
         invocationId: effects === 0 ? "a".repeat(32) : "b".repeat(32),
-        state: "active",
+        state: healthy ? "active" : "failed",
       }),
       restart: async () => {
         effects++;
         return "received";
       },
+      logs: async () => ({ text: "fixture ready", truncated: false }),
     },
   });
 
@@ -105,11 +109,15 @@ test("IT-CBO-02 admits the exact configured restart over mTLS and returns the or
     ownerEpoch: 1,
     before: { invocationId: "a".repeat(32), state: "active" },
   };
-  const post = (payload: unknown, credential = "fixture-credential") =>
+  const post = (
+    payload: unknown,
+    credential = "fixture-credential",
+    path = "/operations",
+  ) =>
     new Promise<{ status: number; body: string }>((resolve, reject) => {
       const bytes = JSON.stringify(payload);
       const outgoing = request(
-        `https://127.0.0.1:${port}/operations`,
+        `https://127.0.0.1:${port}${path}`,
         {
           ca: cert,
           cert,
@@ -177,10 +185,10 @@ test("IT-CBO-02 admits the exact configured restart over mTLS and returns the or
     409,
   );
   assert.equal(effects, 1);
-  const readReceipt = (ownerEpoch: number) =>
+  const readReceipt = (ownerEpoch: number, suffix = "") =>
     new Promise<{ status: number; body: string }>((resolve, reject) => {
       const outgoing = request(
-        `https://127.0.0.1:${port}/operations/${body.operationId}`,
+        `https://127.0.0.1:${port}/operations/${body.operationId}${suffix}`,
         {
           ca: cert,
           cert,
@@ -190,6 +198,7 @@ test("IT-CBO-02 admits the exact configured restart over mTLS and returns the or
             "X-Maister-Platform-Token": "fixture-credential",
             "X-Maister-Owner-Epoch": ownerEpoch,
             "X-Maister-Request-Digest": body.requestDigest,
+            "X-Maister-Component-Id": body.componentId,
           },
         },
         async (incoming) => {
@@ -209,5 +218,46 @@ test("IT-CBO-02 admits the exact configured restart over mTLS and returns the or
 
   assert.equal(reconciled.status, 200);
   assert.deepEqual(JSON.parse(reconciled.body), JSON.parse(replay.body));
+  assert.equal((await readReceipt(1, "/logs")).status, 403);
+  const logs = await readReceipt(2, "/logs");
+
+  assert.equal(logs.status, 200);
+  assert.equal(JSON.parse(logs.body).text, "fixture ready");
+  const verification = {
+    operationId: body.operationId,
+    targetIncarnation: incarnationId,
+    componentId: body.componentId,
+    action: "verify",
+    requestDigest: body.requestDigest,
+    ownerEpoch: 2,
+    verificationNonce: randomUUID(),
+    issuedAt: new Date().toISOString(),
+  };
+  const verify = (input: typeof verification) =>
+    post(
+      input,
+      "fixture-credential",
+      `/operations/${body.operationId}/verification`,
+    );
+  const verified = await verify(verification);
+  const observed = JSON.parse(verified.body);
+
+  assert.equal(verified.status, 200);
+  assert.equal(observed.state, "healthy");
+  assert.equal(observed.nonce, verification.verificationNonce);
+  assert.ok(observed.targetSequence > JSON.parse(replay.body).sequence);
+  assert.equal((await verify(verification)).status, 409);
+  healthy = false;
+  const later = await verify({
+    ...verification,
+    verificationNonce: randomUUID(),
+  });
+
+  assert.equal(later.status, 200);
+  assert.equal(JSON.parse(later.body).state, "unhealthy");
+  assert.equal(
+    JSON.parse((await readReceipt(2)).body).effectState,
+    "confirmed_applied",
+  );
   assert.equal(effects, 1);
 });

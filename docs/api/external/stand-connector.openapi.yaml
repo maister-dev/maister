@@ -144,13 +144,10 @@ paths:
   /operations/{operationId}/logs:
     get:
       operationId: standHelperLogs
-      summary: Designed — Read bounded sanitized authorized logs
-      description: Designed; no implementation is implied. Requires current operation-bound targets:logs. URL
-        identifiers are untrusted selectors resolved through current server ownership/access. Actors, grants,
-        source witnesses, target endpoint and execution ownership are derived from authenticated
-        context/server state. Writes compare canonical payload digest and expected revision; exact replay
-        returns the original currently accessible receipt, changed payload conflicts.
-      x-implementation-status: Designed
+      summary: Read bounded sanitized logs
+      description: Requires an operation-bound logs permit and a configured component matching the
+        retained operation resource. Only sanitized journal text crosses the boundary.
+      x-implementation-status: Implemented
       x-required-scope: operation-bound targets:logs
       responses:
         "200":
@@ -186,23 +183,40 @@ paths:
             type: string
             minLength: 1
             maxLength: 128
+        - name: X-Maister-Owner-Epoch
+          in: header
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 9007199254740991
+        - name: X-Maister-Request-Digest
+          in: header
+          required: true
+          schema:
+            type: string
+            pattern: ^[a-f0-9]{64}$
+        - name: X-Maister-Component-Id
+          in: header
+          required: true
+          schema:
+            type: string
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$
   /operations/{operationId}/verification:
     post:
       operationId: standHelperVerify
-      summary: Designed — Perform separate configured health observation
-      description: Designed; no implementation is implied. Requires current operation-bound verification authority.
-        URL identifiers are untrusted selectors resolved through current server ownership/access. Actors,
-        grants, source witnesses, target endpoint and execution ownership are derived from authenticated
-        context/server state. Writes compare canonical payload digest and expected revision; exact replay
-        returns the original currently accessible receipt, changed payload conflicts.
-      x-implementation-status: Designed
+      summary: Perform a separate systemd health observation
+      description: Requires an operation-bound verification permit and a retained applied restart on the
+        configured resource. The target journals a fresh verification nonce and a sequence after the restart
+        receipt before probing. A used nonce conflicts; another observation requires a fresh nonce.
+      x-implementation-status: Implemented
       x-required-scope: operation-bound verification authority
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CBTargetOperation"
+              $ref: "#/components/schemas/CBTargetVerification"
       responses:
         "200":
           description: Authorized explicit DTO or idempotent safe existing receipt.
@@ -345,7 +359,7 @@ components:
             state:
               type: string
               enum: [active, inactive, failed]
-    CBTargetOperation:
+    CBTargetVerification:
       type: object
       additionalProperties: false
       required:
@@ -355,6 +369,8 @@ components:
         - action
         - requestDigest
         - ownerEpoch
+        - verificationNonce
+        - issuedAt
       properties:
         operationId:
           type: string
@@ -370,11 +386,7 @@ components:
           maxLength: 128
         action:
           type: string
-          enum:
-            - inspect
-            - logs
-            - restart
-            - verify
+          enum: [verify]
         requestDigest:
           type: string
           pattern: ^[a-f0-9]{64}$
@@ -387,6 +399,10 @@ components:
           minLength: 8
           maxLength: 128
           pattern: ^[A-Za-z0-9._:-]+$
+        issuedAt:
+          type: string
+          format: date-time
+          pattern: '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$'
     CBTargetReceipt:
       type: object
       additionalProperties: false

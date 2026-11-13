@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer, type Server, type ServerOptions } from "node:https";
 import { TLSSocket } from "node:tls";
@@ -41,7 +41,9 @@ export type StandHelperOptions = Readonly<{
   journal: RestartJournal;
   authorize(intent: RestartIntent): Promise<Authorization>;
   authorizeReceipt(intent: RestartIntent): Promise<boolean>;
-  manager: Pick<SystemdDriver, "inspect" | "restart">;
+  authorizeLogs(intent: RestartIntent): Promise<boolean>;
+  authorizeVerification(intent: RestartIntent): Promise<boolean>;
+  manager: SystemdDriver;
 }>;
 
 type RestartRequest = Omit<RestartIntent, "resourceKey"> &
@@ -65,6 +67,8 @@ const identifier = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const digest = /^[a-f0-9]{64}$/;
 const maximumRequestBytes = 65_536;
 const receiptPath = /^\/operations\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})$/;
+const operationReadPath =
+  /^\/operations\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})\/(logs|verification)$/;
 const requestFields = [
   "operationId",
   "targetIncarnation",
@@ -143,7 +147,9 @@ function readReceiptSelector(request: IncomingMessage): {
   return { requestDigest, ownerEpoch };
 }
 
-async function readRestart(request: IncomingMessage): Promise<RestartRequest> {
+async function readJson(
+  request: IncomingMessage,
+): Promise<Record<string, unknown>> {
   if (
     request.headers["content-type"]?.split(";")[0]?.trim().toLowerCase() !==
       "application/json" ||
@@ -174,7 +180,11 @@ async function readRestart(request: IncomingMessage): Promise<RestartRequest> {
       throw error;
     throw new HelperError(400, "CONFIG", "invalid_request");
   }
-  const input = objectValue(raw);
+  return objectValue(raw);
+}
+
+async function readRestart(request: IncomingMessage): Promise<RestartRequest> {
+  const input = await readJson(request);
   const before = objectValue(input.before);
   const { invocationId, state } = before;
   const { requestDigest, ownerEpoch } = input;
@@ -206,6 +216,85 @@ async function readRestart(request: IncomingMessage): Promise<RestartRequest> {
     ownerEpoch,
     before: { invocationId, state },
   };
+}
+
+type VerificationRequest = Omit<RestartIntent, "resourceKey"> &
+  Readonly<{
+    componentId: string;
+    nonce: string;
+    issuedAt: string;
+  }>;
+
+async function readVerification(
+  request: IncomingMessage,
+): Promise<VerificationRequest> {
+  const input = await readJson(request);
+  const { requestDigest, ownerEpoch, verificationNonce, issuedAt } = input;
+
+  if (
+    Object.keys(input).length !== 8 ||
+    input.action !== "verify" ||
+    typeof requestDigest !== "string" ||
+    !digest.test(requestDigest) ||
+    typeof ownerEpoch !== "number" ||
+    !Number.isSafeInteger(ownerEpoch) ||
+    ownerEpoch < 1 ||
+    typeof verificationNonce !== "string" ||
+    !/^[A-Za-z0-9_.:-]{8,128}$/.test(verificationNonce) ||
+    typeof issuedAt !== "string" ||
+    !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(issuedAt) ||
+    !Number.isFinite(Date.parse(issuedAt))
+  )
+    throw new HelperError(400, "CONFIG", "invalid_request");
+
+  return {
+    operationId: requiredIdentity(input.operationId),
+    targetIncarnation: requiredIdentity(input.targetIncarnation),
+    componentId: requiredIdentity(input.componentId),
+    requestDigest,
+    ownerEpoch,
+    nonce: verificationNonce,
+    issuedAt,
+  };
+}
+
+function canonicalResourceKey(
+  target: HelperTarget,
+  component: Component,
+): string {
+  return sha256(
+    JSON.stringify({
+      incarnationId: target.incarnationId,
+      manager: "systemd",
+      scope: component.scope,
+      unit: component.unit,
+      user: component.user,
+    }),
+  ).toString("hex");
+}
+
+async function checkHealth(
+  manager: SystemdDriver,
+  component: Component,
+): Promise<"healthy" | "unhealthy" | "inconclusive"> {
+  try {
+    const observation = await manager.inspect(component);
+
+    if (observation.state === "active" && observation.invocationId !== null)
+      return "healthy";
+    if (observation.state === "inactive" || observation.state === "failed")
+      return "unhealthy";
+
+    return "inconclusive";
+  } catch (error) {
+    if (
+      !(error instanceof SystemdError) ||
+      error.reason !== "service_unavailable"
+    )
+      throw error;
+
+    return "inconclusive";
+  }
 }
 
 function targetReceipt(entry: RestartEntry) {
@@ -299,6 +388,32 @@ export function createStandHelper(options: StandHelperOptions): Server {
   const credentialDigest = sha256(options.platformCredential);
   for (const component of target.components) checkUnit(component);
 
+  function configuredComponent(
+    componentId: string,
+    action: Component["actions"][number],
+  ): Component {
+    const component = components.get(componentId);
+
+    if (!component)
+      throw new HelperError(404, "PRECONDITION", "component_unavailable");
+    if (!component.actions.includes(action))
+      throw new HelperError(403, "PERMISSION", "unsupported_action");
+
+    return component;
+  }
+
+  function retainedReceipt(
+    operationId: string,
+    requestDigest: string,
+  ): RestartEntry {
+    const entry = options.journal.read(operationId);
+
+    if (!entry || entry.requestDigest !== requestDigest)
+      throw new HelperError(404, "PRECONDITION", "receipt_missing");
+
+    return entry;
+  }
+
   async function route(
     request: IncomingMessage,
     response: ServerResponse,
@@ -322,10 +437,7 @@ export function createStandHelper(options: StandHelperOptions): Server {
 
     if (receiptId) {
       const { requestDigest, ownerEpoch } = readReceiptSelector(request);
-      const entry = options.journal.read(receiptId);
-
-      if (!entry || entry.requestDigest !== requestDigest)
-        throw new HelperError(404, "PRECONDITION", "receipt_missing");
+      const entry = retainedReceipt(receiptId, requestDigest);
       if (
         !(await options.authorizeReceipt({
           operationId: receiptId,
@@ -340,27 +452,78 @@ export function createStandHelper(options: StandHelperOptions): Server {
       json(response, 200, targetReceipt(entry));
       return;
     }
+    const selector = request.url?.match(operationReadPath);
+
+    if (request.method === "GET" && selector?.[2] === "logs") {
+      const { requestDigest, ownerEpoch } = readReceiptSelector(request);
+      const ids = request.headersDistinct["x-maister-component-id"];
+      const component = configuredComponent(
+        requiredIdentity(ids?.length === 1 ? ids[0] : undefined),
+        "logs",
+      );
+      const entry = retainedReceipt(selector[1], requestDigest);
+
+      if (canonicalResourceKey(target, component) !== entry.resourceKey)
+        throw new HelperError(409, "CONFLICT", "target_identity_mismatch");
+      if (!(await options.authorizeLogs({ ...entry, ownerEpoch })))
+        throw new HelperError(403, "PERMISSION", "authority_refused");
+      const logs = await options.manager.logs(component);
+
+      json(response, 200, {
+        operationId: entry.operationId,
+        targetIncarnation: entry.targetIncarnation,
+        ...logs,
+        sanitized: true,
+        capturedAt: new Date().toISOString(),
+      });
+      return;
+    }
+    if (request.method === "POST" && selector?.[2] === "verification") {
+      const input = await readVerification(request);
+      const component = configuredComponent(input.componentId, "verify");
+      const entry = retainedReceipt(selector[1], input.requestDigest);
+
+      if (
+        input.operationId !== entry.operationId ||
+        input.targetIncarnation !== target.incarnationId ||
+        canonicalResourceKey(target, component) !== entry.resourceKey
+      )
+        throw new HelperError(409, "CONFLICT", "target_identity_mismatch");
+      if (
+        !(await options.authorizeVerification({
+          ...entry,
+          ownerEpoch: input.ownerEpoch,
+        }))
+      )
+        throw new HelperError(403, "PERMISSION", "authority_refused");
+      const targetSequence = options.journal.beginVerification(
+        entry.operationId,
+        input.nonce,
+      );
+      const state = await checkHealth(options.manager, component);
+
+      json(response, 200, {
+        id: randomUUID(),
+        operationId: entry.operationId,
+        targetIncarnation: entry.targetIncarnation,
+        nonce: input.nonce,
+        issuedAt: input.issuedAt,
+        observedAt: new Date().toISOString(),
+        targetSequence,
+        state,
+        evidenceIds: [],
+        reason: state === "healthy" ? null : `verification_${state}`,
+      });
+      return;
+    }
     if (request.method !== "POST" || request.url !== "/operations")
       throw new HelperError(404, "PRECONDITION", "operation_unavailable");
     const { componentId, before, ...identity } = await readRestart(request);
 
     if (identity.targetIncarnation !== target.incarnationId)
       throw new HelperError(409, "CONFLICT", "target_identity_mismatch");
-    const component = components.get(componentId);
-
-    if (!component)
-      throw new HelperError(404, "PRECONDITION", "component_unavailable");
-    if (!component.actions.includes("restart"))
-      throw new HelperError(403, "PERMISSION", "unsupported_action");
-    const resourceKey = sha256(
-      JSON.stringify({
-        incarnationId: target.incarnationId,
-        manager: "systemd",
-        scope: component.scope,
-        unit: component.unit,
-        user: component.user,
-      }),
-    ).toString("hex");
+    const component = configuredComponent(componentId, "restart");
+    const resourceKey = canonicalResourceKey(target, component);
     const service = createRestartService(options.journal, {
       inspect: () => options.manager.inspect(component),
       authorize: options.authorize,
