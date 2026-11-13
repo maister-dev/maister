@@ -22183,6 +22183,50 @@ paths:
             minLength: 1
             maxLength: 128
           description: URL selector resolved and authorized against server state; no filesystem path.
+  /api/stand-operations/{operationId}/verification:
+    post:
+      operationId: verifyStandRestart
+      summary: Retain an independent health observation
+      description: Requires current target read authority and access to the retained assignment input.
+        The operation revision must name a confirmed restart. A fresh probe nonce and a target
+        sequence after the applied effect are required.
+      x-implementation-status: Implemented
+      x-required-scope: targets:read
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedRevision]
+              properties:
+                expectedRevision: { type: integer, minimum: 1, maximum: 2147483647 }
+      responses:
+        "200":
+          description: Current operation with the retained independent verification.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CBOperation" }
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
   /api/stand-operations/{operationId}/recovery-decisions:
     post:
       operationId: standOperationRecovery

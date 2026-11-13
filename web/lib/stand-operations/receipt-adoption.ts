@@ -7,7 +7,10 @@ import { and, eq } from "drizzle-orm";
 
 import { operationDto } from "./operation-intake";
 import { standTargetReceiptSchema } from "./operation-types";
-import { readStandReceiptIds } from "./receipt-queries";
+import {
+  readStandReceiptIds,
+  readStandVerificationIds,
+} from "./receipt-queries";
 import { authorizeStandReadOwner } from "./read-authority";
 
 import { redactQueryError } from "@/lib/db/pg-error";
@@ -238,6 +241,7 @@ export async function adoptStandTargetReceipt(
           operation,
           null,
           await readStandReceiptIds(tx, operationId),
+          await readStandVerificationIds(tx, operationId),
         );
       }
       if (

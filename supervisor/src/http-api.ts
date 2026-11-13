@@ -62,9 +62,11 @@ import {
   StandDispatchPayloadSchema,
   StandObservationSelectorSchema,
   StandReceiptSelectorSchema,
+  StandVerifySelectorSchema,
   type DispatchStandRestart,
   type ObserveStandOperation,
   type ReadStandReceipt,
+  type VerifyStandOperation,
 } from "./stand-operations/contracts";
 import { attachCost } from "./cost";
 import {
@@ -250,6 +252,7 @@ export type RegisterRoutesOptions = {
   dispatchStandRestart?: DispatchStandRestart;
   readStandReceipt?: ReadStandReceipt;
   observeStandOperation?: ObserveStandOperation;
+  verifyStandOperation?: VerifyStandOperation;
 };
 
 type SessionIdParams = { Params: { id: string } };
@@ -2519,6 +2522,18 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       );
 
     reply.status(200).send(await opts.observeStandOperation(selector));
+  });
+
+  app.post("/stand-operations/verify", async (req, reply) => {
+    const selector = StandVerifySelectorSchema.parse(req.body);
+
+    if (!opts.verifyStandOperation)
+      throw new SupervisorError(
+        "PRECONDITION",
+        "No stand verification transport is configured",
+      );
+
+    reply.status(200).send(await opts.verifyStandOperation(selector));
   });
 
   // ADR-166 D7: the ONLY path-bearing route. Registers a host-local path for a

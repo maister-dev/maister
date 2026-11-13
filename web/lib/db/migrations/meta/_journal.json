@@ -2199,6 +2199,20 @@
       "when": 1794606478020,
       "tag": "0317_stand_receipt_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 318,
+      "version": "7",
+      "when": 1794606478021,
+      "tag": "0318_stand_verifications",
+      "breakpoints": true
+    },
+    {
+      "idx": 319,
+      "version": "7",
+      "when": 1794606478022,
+      "tag": "0319_stand_verification_guards",
+      "breakpoints": true
     }
   ]
 }

@@ -7,7 +7,10 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { standOperationInputSchema } from "./operation-types";
-import { readStandReceiptIds } from "./receipt-queries";
+import {
+  readStandReceiptIds,
+  readStandVerificationIds,
+} from "./receipt-queries";
 import { readStandRunbookDigest } from "./target-registry";
 
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
@@ -38,6 +41,7 @@ export function operationDto(
   operation: typeof standOperations.$inferSelect,
   successorId: string | null = null,
   receiptIds: readonly string[] = [],
+  verificationIds: readonly string[] = [],
 ): StandOperation {
   return {
     id: operation.id,
@@ -49,7 +53,7 @@ export function operationDto(
     verificationState: operation.verificationState,
     disposition: operation.disposition,
     receiptIds,
-    verificationIds: [],
+    verificationIds,
     predecessorId: operation.predecessorId,
     successorId,
     revision: operation.revision,
@@ -131,6 +135,7 @@ export async function createStandOperation(
             previous,
             null,
             await readStandReceiptIds(tx, previous.id),
+            await readStandVerificationIds(tx, previous.id),
           ),
           duplicate: true,
         };
@@ -347,6 +352,7 @@ export async function getStandOperation(
       operation.stand_operations,
       successor?.id ?? null,
       await readStandReceiptIds(tx, operationId),
+      await readStandVerificationIds(tx, operationId),
     );
   });
 }

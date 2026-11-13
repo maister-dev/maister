@@ -11176,6 +11176,47 @@ export const standOperationReceipts = pgTable(
   }),
 );
 
+export const standVerifications = pgTable(
+  "stand_verifications",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    operationId: text("operation_id")
+      .notNull()
+      .references(() => standOperations.id, { onDelete: "restrict" }),
+    effectReceiptId: text("effect_receipt_id")
+      .notNull()
+      .references(() => standOperationReceipts.id, { onDelete: "restrict" }),
+    actorId: text("actor_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    nonce: text("nonce").notNull().unique(),
+    ownerEpoch: bigint("owner_epoch", { mode: "number" }).notNull(),
+    targetProbeId: text("target_probe_id").notNull().unique(),
+    targetSequence: bigint("target_sequence", { mode: "number" }).notNull(),
+    state: text("state", {
+      enum: ["healthy", "unhealthy", "inconclusive"],
+    }).notNull(),
+    issuedAt: timestamp("issued_at", { withTimezone: true }).notNull(),
+    observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    sequence: unique("stand_verifications_operation_sequence_unique").on(
+      t.operationId,
+      t.targetSequence,
+    ),
+    shape: check(
+      "stand_verifications_shape_check",
+      sql`${t.state} IN ('healthy','unhealthy','inconclusive')
+      AND ${t.ownerEpoch} BETWEEN 1 AND 9007199254740991 AND ${t.targetSequence} BETWEEN 1 AND 9007199254740991`,
+    ),
+  }),
+);
+
 export const standRestartApprovals = pgTable(
   "stand_restart_approvals",
   {

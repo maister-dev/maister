@@ -81,6 +81,34 @@ it("IT-CBO-04 sends one exact restart request, validates the pinned peer and lea
       { cert, key, ca: cert, requestCert: true, rejectUnauthorized: true },
       async (request, response) => {
         expect(request.headers["x-maister-platform-token"]).toBe(token);
+        if (request.url === `/operations/${payload.operationId}/verification`) {
+          const chunks: Buffer[] = [];
+
+          for await (const chunk of request) chunks.push(Buffer.from(chunk));
+          const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+
+          expect(body).toMatchObject({
+            action: "verify",
+            requestDigest: payload.requestDigest,
+            ownerEpoch: 4,
+          });
+          response.end(
+            JSON.stringify({
+              id: randomUUID(),
+              operationId: payload.operationId,
+              targetIncarnation: payload.targetIncarnation,
+              nonce: body.verificationNonce,
+              state: "healthy",
+              issuedAt: body.issuedAt,
+              observedAt: new Date().toISOString(),
+              targetSequence: receipt.sequence + 1,
+              evidenceIds: [],
+              reason: null,
+            }),
+          );
+
+          return;
+        }
         if (request.url === `/operations/${payload.operationId}/observations`) {
           const chunks: Buffer[] = [];
 
@@ -202,6 +230,24 @@ it("IT-CBO-04 sends one exact restart request, validates the pinned peer and lea
       expect(deliveries).toBe(1);
       expect(reads).toBe(2);
       expect(retryWarnings).toBe(1);
+      const verificationNonce = randomUUID();
+
+      await expect(
+        transport.verify({
+          operationId: payload.operationId,
+          targetIncarnation: payload.targetIncarnation,
+          requestDigest: payload.requestDigest,
+          ownerEpoch: 4,
+          componentId: payload.componentId,
+          verificationNonce,
+          issuedAt: new Date().toISOString(),
+        }),
+      ).resolves.toMatchObject({
+        state: "healthy",
+        nonce: verificationNonce,
+        targetSequence: receipt.sequence + 1,
+      });
+      expect(deliveries).toBe(1);
     } finally {
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),

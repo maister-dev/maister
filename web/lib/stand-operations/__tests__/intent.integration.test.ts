@@ -1267,8 +1267,84 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
         disposition: "proved_applied",
         receiptIds: [expect.any(String)],
       });
+      const { POST: verify } =
+        await import("@/app/api/stand-operations/[operationId]/verification/route");
+      const verifyHealth = () =>
+        verify(
+          new NextRequest(
+            `http://localhost/api/stand-operations/${operation.id}/verification`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Origin: "http://localhost",
+              },
+              body: JSON.stringify({
+                expectedRevision: adoptedEffect.revision,
+              }),
+            },
+          ),
+          { params: Promise.resolve({ operationId: operation.id }) },
+        );
+      const verifyTarget = vi.fn(
+        async (selector: {
+          operationId: string;
+          targetIncarnation: string;
+          verificationNonce: string;
+          issuedAt: string;
+          ownerEpoch: number;
+        }) => {
+          await authorize({
+            ...body,
+            ownerEpoch: selector.ownerEpoch,
+            purpose: "verify",
+            nonce: randomUUID(),
+          });
+
+          return {
+            id: randomUUID(),
+            operationId: selector.operationId,
+            targetIncarnation: selector.targetIncarnation,
+            nonce: selector.verificationNonce,
+            state: "healthy",
+            issuedAt: selector.issuedAt,
+            observedAt: new Date().toISOString(),
+            targetSequence:
+              verifyTarget.mock.calls.length === 1
+                ? result.sequence
+                : result.sequence + 1,
+            evidenceIds: [],
+            reason: null,
+          };
+        },
+      );
+
+      setDefaultTransportForTests({
+        ...fake.transport,
+        readStandReceipt: readTarget,
+        verifyStandOperation: verifyTarget,
+      });
+      expect((await verifyHealth()).status).toBe(409);
+      const verifiedResponse = await verifyHealth();
+
+      expect(verifiedResponse.status).toBe(200);
+      const verified = await verifiedResponse.json();
+
+      expect(verified).toMatchObject({
+        effectState: "confirmed_applied",
+        verificationState: "healthy",
+        receiptIds: adoptedEffect.receiptIds,
+        verificationIds: [expect.any(String)],
+      });
+      await expect(
+        database.pool.query(
+          "DELETE FROM stand_verifications WHERE operation_id=$1",
+          [operation.id],
+        ),
+      ).rejects.toMatchObject({ code: "23514" });
+      expect(verifyTarget).toHaveBeenCalledTimes(2);
       expect(await adoptStandTargetReceipt(db, operation.id, result)).toEqual(
-        adoptedEffect,
+        verified,
       );
       await expect(
         database.pool.query(

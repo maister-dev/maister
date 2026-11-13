@@ -3615,6 +3615,26 @@ table stand_targets {
   }
 }
 
+table stand_verifications {
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  operation_id text [not null]
+  effect_receipt_id text [not null]
+  actor_id text [not null]
+  nonce text [not null, unique]
+  owner_epoch bigint [not null]
+  target_probe_id text [not null, unique]
+  target_sequence bigint [not null]
+  state text [not null]
+  issued_at "timestamp with time zone" [not null]
+  observed_at "timestamp with time zone" [not null]
+  received_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (operation_id, target_sequence) [name: 'stand_verifications_operation_sequence_unique', unique]
+
+  }
+}
+
 table task_activity {
   id text [pk, not null]
   task_id text [not null]
@@ -5218,6 +5238,12 @@ ref stand_target_revisions_target_id_stand_targets_id_fk: stand_target_revisions
 ref stand_target_revisions_actor_id_users_id_fk: stand_target_revisions.actor_id > users.id [delete: restrict, update: no action]
 
 ref stand_targets_company_id_companies_id_fk: stand_targets.company_id > companies.id [delete: restrict, update: no action]
+
+ref stand_verifications_operation_id_stand_operations_id_fk: stand_verifications.operation_id > stand_operations.id [delete: restrict, update: no action]
+
+ref stand_verifications_effect_receipt_id_stand_operation_receipts_id_fk: stand_verifications.effect_receipt_id > stand_operation_receipts.id [delete: restrict, update: no action]
+
+ref stand_verifications_actor_id_users_id_fk: stand_verifications.actor_id > users.id [delete: restrict, update: no action]
 
 ref task_activity_task_id_tasks_id_fk: task_activity.task_id > tasks.id [delete: cascade, update: no action]
 

@@ -1537,6 +1537,9 @@ export function createFakeExecutionHost(
     async observeStandOperation() {
       throw precondition("fake: no stand helper is configured", {});
     },
+    async verifyStandOperation() {
+      throw precondition("fake: no stand helper is configured", {});
+    },
     // D7: the ONLY path-bearing route. Idempotent on `(runId, path)` while the
     // handle is live; a released handle's path re-adopts as a NEW handle.
     adoptWorkspace(envelope, opts) {

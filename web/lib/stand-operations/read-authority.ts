@@ -141,7 +141,7 @@ export async function authorizeStandReadOwner(
   companyId: string,
   purpose: StandReadPurpose,
   ownerEpoch: number,
-): Promise<void> {
+): Promise<{ actorId: string }> {
   const [owner] = await tx
     .select()
     .from(standReadClaims)
@@ -190,4 +190,6 @@ export async function authorizeStandReadOwner(
     operation.assignmentId,
     operation.inputRevision,
   );
+
+  return { actorId: owner.actorId };
 }

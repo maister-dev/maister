@@ -5,6 +5,8 @@ import type {
   StandDispatchPayload,
   StandObservationSelector,
   StandReceiptSelector,
+  StandVerifySelector,
+  VerifyStandOperation,
 } from "./contracts";
 import type { Logger } from "pino";
 
@@ -84,6 +86,22 @@ const observationSchema = z
       .nullable(),
     state: z.enum(["active", "inactive", "failed", "unknown"]),
     capturedAt: z.iso.datetime(),
+  })
+  .strict();
+const verificationSchema = z
+  .object({
+    id: z.uuid(),
+    operationId: z.uuid(),
+    targetIncarnation: z.uuid(),
+    nonce: z.uuid(),
+    state: z.enum(["healthy", "unhealthy", "inconclusive"]),
+    issuedAt: z.iso.datetime(),
+    observedAt: z.iso.datetime(),
+    targetSequence: z.number().int().positive(),
+    evidenceIds: z.array(z.string()).max(16),
+    reason: z
+      .enum(["verification_unhealthy", "verification_inconclusive"])
+      .nullable(),
   })
   .strict();
 
@@ -193,7 +211,7 @@ function requestTarget<
   T extends {
     operationId: string;
     targetIncarnation: string;
-    requestDigest: string;
+    requestDigest?: string;
   },
 >(
   target: Target,
@@ -274,7 +292,8 @@ function requestTarget<
             !parsed.success ||
             parsed.data.operationId !== identity.operationId ||
             parsed.data.targetIncarnation !== identity.targetIncarnation ||
-            parsed.data.requestDigest !== identity.requestDigest
+            (parsed.data.requestDigest !== undefined &&
+              parsed.data.requestDigest !== identity.requestDigest)
           ) {
             reject(unavailable());
 
@@ -288,6 +307,38 @@ function requestTarget<
     call.on("error", () => reject(unavailable()));
     call.end(spec.body);
   });
+}
+
+async function verifyStand(
+  target: Target,
+  selector: StandVerifySelector,
+): Promise<Record<string, unknown>> {
+  const body = JSON.stringify({ ...selector, action: "verify" });
+  const result = await requestTarget(
+    target,
+    selector,
+    {
+      method: "POST",
+      path: `/operations/${selector.operationId}/verification`,
+      expectedStatus: 200,
+      timeoutMs: 5000,
+      body,
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(body),
+      },
+    },
+    verificationSchema,
+  );
+
+  if (
+    !result ||
+    result.nonce !== selector.verificationNonce ||
+    result.issuedAt !== selector.issuedAt
+  )
+    throw unavailable();
+
+  return result;
 }
 
 async function observeStand(
@@ -381,6 +432,7 @@ export function loadStandTransport(
   dispatch: DispatchStandRestart;
   readReceipt: ReadStandReceipt;
   observe: ObserveStandOperation;
+  verify: VerifyStandOperation;
 } {
   if (!isAbsolute(path)) throw invalidConfig();
   let targets: z.infer<typeof targetSchema>[];
@@ -443,5 +495,7 @@ export function loadStandTransport(
       readReceipt(targetFor(selector.targetIncarnation), selector, logger),
     observe: (selector) =>
       observeStand(targetFor(selector.targetIncarnation), selector),
+    verify: (selector) =>
+      verifyStand(targetFor(selector.targetIncarnation), selector),
   };
 }

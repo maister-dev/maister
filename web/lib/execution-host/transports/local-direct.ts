@@ -308,6 +308,7 @@ export function createLocalDirectTransport(
     },
     readStandReceipt: wire.readStandReceipt,
     observeStandOperation: wire.observeStandOperation,
+    verifyStandOperation: wire.verifyStandOperation,
     async adoptWorkspace(
       envelope: CommandEnvelope<AdoptWorkspaceWire>,
       opts,

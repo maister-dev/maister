@@ -55,3 +55,12 @@ export type StandObservationSelector = z.infer<
 export type ObserveStandOperation = (
   selector: StandObservationSelector,
 ) => Promise<Record<string, unknown>>;
+export const StandVerifySelectorSchema = StandReceiptSelectorSchema.extend({
+  componentId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/),
+  verificationNonce: z.uuid(),
+  issuedAt: z.iso.datetime(),
+}).strict();
+export type StandVerifySelector = z.infer<typeof StandVerifySelectorSchema>;
+export type VerifyStandOperation = (
+  selector: StandVerifySelector,
+) => Promise<Record<string, unknown>>;

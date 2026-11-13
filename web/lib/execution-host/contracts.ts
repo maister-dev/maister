@@ -349,6 +349,17 @@ export interface ExecutionHostTransport {
       resourceKey: string;
     }>,
   ): Promise<unknown>;
+  verifyStandOperation(
+    selector: Readonly<{
+      operationId: string;
+      targetIncarnation: string;
+      requestDigest: string;
+      ownerEpoch: number;
+      componentId: string;
+      verificationNonce: string;
+      issuedAt: string;
+    }>,
+  ): Promise<unknown>;
   releaseWorkspace(
     executionWorkspaceId: string,
     envelope: CommandEnvelope<EmptyPayload>,

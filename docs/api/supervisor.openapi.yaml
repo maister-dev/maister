@@ -907,6 +907,45 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /stand-operations/verify:
+    post:
+      tags: [execution-host]
+      operationId: verifyStandOperation
+      summary: Observe independent health on the configured target
+      description: Sends a fresh platform nonce and exact operation identity to the pinned helper
+        under a current verification permit. A mismatched identity, nonce or issue time fails.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operationId, targetIncarnation, requestDigest, ownerEpoch, componentId, verificationNonce, issuedAt]
+              properties:
+                operationId: { type: string, format: uuid }
+                targetIncarnation: { type: string, format: uuid }
+                requestDigest: { type: string, pattern: '^[a-f0-9]{64}$' }
+                ownerEpoch: { type: integer, minimum: 1, maximum: 9007199254740991 }
+                componentId: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$' }
+                verificationNonce: { type: string, format: uuid }
+                issuedAt: { type: string, format: date-time }
+      responses:
+        "200":
+          description: An exact independent target observation.
+          content:
+            application/json:
+              schema: { type: object }
+        "409":
+          description: Invalid selector or missing configuration.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+        "503":
+          description: Verification was unavailable or failed identity validation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
   /workspaces/adopt:
     post:
       tags: [execution-host]
