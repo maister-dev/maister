@@ -150,6 +150,18 @@ export async function approveStandRestart(
           "CONFLICT",
           "Restart approval requires the exact current undispatched intent and configuration",
         );
+      if (
+        (await readStandRunbookDigest(
+          tx,
+          userId,
+          companyId,
+          component.config.runbook,
+        )) !== component.runbookSha256
+      )
+        throw new MaisterError(
+          "CONFLICT",
+          "The configured runbook witness has changed",
+        );
       const [existing] = await tx
         .select()
         .from(standRestartApprovals)
@@ -167,18 +179,6 @@ export async function approveStandRestart(
 
         return { approval: approvalDto(existing), duplicate: true };
       }
-      if (
-        (await readStandRunbookDigest(
-          tx,
-          userId,
-          companyId,
-          component.config.runbook,
-        )) !== component.runbookSha256
-      )
-        throw new MaisterError(
-          "CONFLICT",
-          "The configured runbook witness has changed",
-        );
       const [approval] = await tx
         .insert(standRestartApprovals)
         .values({

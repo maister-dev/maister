@@ -546,6 +546,23 @@ it("IT-CBO-02 IT-CBO-03 retains one restart intent across aliases and approves o
 
   expect(replayedApproval.status).toBe(200);
   expect(await replayedApproval.json()).toEqual(approval);
+
+  const knowledgeGrant = authority.page.items.find(
+    (item) => item.action === "knowledge:read",
+  )!;
+
+  await revokeCompanyGrant(database.db, administratorId, knowledgeGrant.id, {
+    expectedRevision: knowledgeGrant.revision,
+    reason: "Revoke current runbook access",
+    idempotencyKey: randomUUID(),
+  });
+  expect((await approveIntent(accepted.requestDigest)).status).toBe(404);
+  await createCompanyGrants(database.db, administratorId, {
+    principalKind: "user",
+    principalId: userId,
+    actions: ["knowledge:read"],
+    idempotencyKey: randomUUID(),
+  });
   const clarified = await appendSpecialistAssignmentInput(
     database.db,
     userId,
