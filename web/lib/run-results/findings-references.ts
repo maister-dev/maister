@@ -18,6 +18,8 @@ import {
   type InheritedResultReference,
 } from "./findings-reduction";
 import { parseNativeFindings } from "./findings-projection";
+import { isOperationalEvidenceContract } from "./contract";
+import { operationalEvidenceV2Schema } from "./operational-schema";
 
 import { authorizeKnowledge } from "@/lib/brain/knowledge-access";
 import { recordKnowledgeDisclosure } from "@/lib/brain/knowledge-disclosure";
@@ -34,6 +36,7 @@ import {
 import { knowledgeAccessCaptureSchema } from "@/lib/company/types";
 import { contentDigest } from "@/lib/evaluations/digest";
 import { isMaisterError } from "@/lib/errors";
+import { installationCompany } from "@/lib/company/grants";
 
 const log = pino({
   name: "findings-references",
@@ -186,12 +189,20 @@ export async function validateFindingsReferences(
       findings === null
         ? null
         : await inspectFindingsReduction(tx, runId, findings);
+    const operational = isOperationalEvidenceContract(contract)
+      ? operationalEvidenceV2Schema.safeParse(decision.value)
+      : null;
+    const hasStandEvidence =
+      operational?.success === true &&
+      (operational.data.operationIds.length > 0 ||
+        operational.data.verificationIds.length > 0);
 
     if (
       references.length === 0 &&
       capture.data.restrictions.length === 0 &&
       (findings?.knowledgeProposals.length ?? 0) === 0 &&
-      reduction?.hasSources !== true
+      reduction?.hasSources !== true &&
+      !hasStandEvidence
     )
       return decision;
     const principal = await resolveRunKnowledgePrincipal(
@@ -199,10 +210,19 @@ export async function validateFindingsReferences(
       runId,
       nodeAttemptId,
     );
-    let access = await authorizeSourceRestrictions(tx, principal, [
+    const restrictions = [
       ...capture.data.restrictions,
       ...(reduction?.restrictions ?? []),
-    ]);
+    ];
+
+    if (hasStandEvidence) {
+      path = "operationIds";
+      restrictions.push({
+        kind: "stand_target",
+        companyId: await installationCompany(tx),
+      });
+    }
+    let access = await authorizeSourceRestrictions(tx, principal, restrictions);
     const visited = new Set<string>();
 
     for (const located of references) {

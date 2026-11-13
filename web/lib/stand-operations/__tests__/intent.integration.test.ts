@@ -1144,6 +1144,7 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
       principalId: agentId,
       actions: [
         "assignments:read",
+        "knowledge:read",
         "targets:read",
         "targets:logs",
         "targets:restart",
@@ -1159,6 +1160,7 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
       enabled: true,
       grantActions: [
         "assignments:read",
+        "knowledge:read",
         "targets:read",
         "targets:logs",
         "targets:restart",
@@ -1802,6 +1804,23 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
       await expect(
         validateOperationalEvidenceReferences(db, runId, contract, decision),
       ).resolves.toEqual(decision);
+      const { validateFindingsReferences } =
+        await import("@/lib/run-results/findings-references");
+
+      await expect(
+        db.transaction((tx) =>
+          validateFindingsReferences(tx, runId, contract, decision),
+        ),
+      ).resolves.toEqual(decision);
+      const [classified] = await db
+        .select({ knowledgeAccess: runs.knowledgeAccess })
+        .from(runs)
+        .where(eq(runs.id, runId));
+
+      expect(classified?.knowledgeAccess?.restrictions).toContainEqual({
+        kind: "stand_target",
+        companyId: owner.companyId,
+      });
       await expect(
         validateOperationalEvidenceReferences(db, runId, contract, {
           ...decision,
@@ -2037,6 +2056,11 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
           }),
         ]),
       });
+      await expect(
+        getSpecialistAssignment(db, userId, assignment.id),
+      ).resolves.toMatchObject({
+        acceptedResult: { id: published.id, revision: published.revision },
+      });
       const targetRead = authority.page.items.find(
         (item) => item.action === "targets:read",
       );
@@ -2056,9 +2080,7 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
       ).rejects.toMatchObject({ code: "PRECONDITION" });
       await expect(
         getSpecialistAssignment(db, userId, assignment.id),
-      ).resolves.toMatchObject({
-        acceptedResult: { id: published.id, revision: published.revision },
-      });
+      ).resolves.toMatchObject({ status: "completed", acceptedResult: null });
       await expect(
         readAssignmentReview(db, userId, assignment.id),
       ).resolves.toBeNull();
