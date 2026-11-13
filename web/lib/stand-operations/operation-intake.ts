@@ -6,6 +6,7 @@ import type { StandAction, StandOperation } from "./operation-types";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { resolveStandExecutionActor } from "./execution-actor";
 import { standOperationInputSchema } from "./operation-types";
 import {
   readStandReceiptIds,
@@ -72,7 +73,7 @@ function operationScope(
 /** Retain a request before any transport or approval action. No restart is authorized here. */
 export async function createStandOperation(
   db: Db,
-  userId: string,
+  principal: string | Readonly<{ tokenId: string }>,
   assignmentId: string,
   raw: unknown,
 ): Promise<{ operation: StandOperation; duplicate: boolean }> {
@@ -84,12 +85,40 @@ export async function createStandOperation(
       "Provide an exact assignment input revision and configured stand action",
     );
   const input = parsed.data;
-  const deliveryDigest = contentDigest({ assignmentId, input });
 
   try {
     return await db.transaction(async (tx) => {
       await beginAssignmentTransaction(tx);
       const companyId = await installationCompany(tx);
+      const actor =
+        typeof principal === "string"
+          ? null
+          : await resolveStandExecutionActor(
+              tx,
+              principal.tokenId,
+              assignmentId,
+              input.inputRevision,
+              operationScope(input.action),
+            );
+      const userId = typeof principal === "string" ? principal : actor?.userId;
+
+      if (!userId || (actor && actor.companyId !== companyId))
+        throw new MaisterError(
+          "UNAUTHORIZED",
+          "The stand assignment execution is unavailable",
+        );
+      const execution = actor
+        ? {
+            agentId: actor.agentId,
+            runId: actor.runId,
+            nodeAttemptId: actor.nodeAttemptId,
+          }
+        : null;
+      const deliveryDigest = contentDigest({
+        assignmentId,
+        input,
+        ...(actor ? { professional: actor.agentId } : {}),
+      });
       const read = await authorizeCompanyUserAction(
         tx,
         userId,
@@ -232,6 +261,7 @@ export async function createStandOperation(
         action: input.action,
         runbookSha256: component.runbookSha256,
         verification: capturedInput.snapshot.objectiveInput.verification,
+        ...(actor ? { professional: actor.agentId } : {}),
       });
       const [operation] = await tx
         .insert(standOperations)
@@ -247,6 +277,7 @@ export async function createStandOperation(
           targetIncarnation: target.incarnationId,
           action: input.action,
           initiatingUserId: userId,
+          initiatingExecution: execution,
           deliveryKey: input.idempotencyKey,
           deliveryDigest,
           requestDigest,

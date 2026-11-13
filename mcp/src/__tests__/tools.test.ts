@@ -127,6 +127,7 @@ describe("TOOL_SPECS registry", () => {
         "project_members_list",
         "runner_list",
         "specialist_assignment_work_decide",
+        "stand_operation_create",
         "task_complete",
         "task_create",
         "task_get",

@@ -954,7 +954,6 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
   const { administratorId, userId, owner, input, request } =
     await createRegistryFixture();
   const db = database.db as Db;
-  const { createStandOperation } = await import("../operation-intake");
   const { approveStandRestart } = await import("../restart-approval");
   const { prepareStandRestartDispatch } = await import("../restart-dispatch");
   const { authorizeStandCallback } = await import("../authority-permit");
@@ -1008,7 +1007,7 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
     const professional = await createCompanyGrants(db, administratorId, {
       principalKind: "agent",
       principalId: agentId,
-      actions: ["assignments:read", "targets:restart"],
+      actions: ["assignments:read", "targets:read", "targets:restart"],
       idempotencyKey: randomUUID(),
     });
     const binding = await createCompanySpecialistBinding(db, userId, agentId, {
@@ -1018,7 +1017,7 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
       definitionSha256: agentDefinitionSha256(role.parsed),
       configuration: {},
       enabled: true,
-      grantActions: ["assignments:read", "targets:restart"],
+      grantActions: ["assignments:read", "targets:read", "targets:restart"],
       runnerId,
       idempotencyKey: randomUUID(),
     });
@@ -1048,18 +1047,53 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
     const runId = assignment.runIds[0]!;
 
     expect(await tryStartRun(runId, { db })).toEqual({ started: true });
-    const { operation } = await createStandOperation(
-      db,
-      userId,
-      assignment.id,
-      {
-        expectedRevision: assignment.revision,
-        inputRevision: assignment.inputRevision,
-        componentId: "api",
-        action: "restart",
-        idempotencyKey: randomUUID(),
-      },
-    );
+    const { issueCompanyAgentRunToken } = await import("@/lib/agents/tokens");
+    const credential = await issueCompanyAgentRunToken({ db, runId });
+    const { POST: requestOperation } =
+      await import("@/app/api/v1/ext/specialist-assignments/[assignmentId]/operations/route");
+    const intent = {
+      expectedRevision: assignment.revision,
+      inputRevision: assignment.inputRevision,
+      componentId: "api",
+      action: "restart",
+      idempotencyKey: randomUUID(),
+    };
+    const submit = (selectedAssignmentId: string, body: unknown = intent) =>
+      requestOperation(
+        new NextRequest(
+          `http://localhost/api/v1/ext/specialist-assignments/${selectedAssignmentId}/operations`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${credential.secret}`,
+            },
+            body: JSON.stringify(body),
+          },
+        ),
+        { params: Promise.resolve({ assignmentId: selectedAssignmentId }) },
+      );
+
+    expect((await submit(randomUUID())).status).toBe(403);
+    expect(
+      (await submit(assignment.id, { ...intent, runId: randomUUID() })).status,
+    ).toBe(422);
+    const submission = await submit(assignment.id);
+
+    const operation = await submission.json();
+
+    expect(submission.status, JSON.stringify(operation)).toBe(202);
+    expect((await submit(assignment.id)).status).toBe(200);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT initiating_execution FROM stand_operations WHERE id=$1",
+          [operation.id],
+        )
+      ).rows,
+    ).toEqual([
+      { initiating_execution: { agentId, runId, nodeAttemptId: null } },
+    ]);
 
     await approveStandRestart(db, userId, operation.id, {
       expectedRevision: operation.revision,

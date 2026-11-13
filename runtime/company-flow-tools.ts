@@ -14,6 +14,11 @@ export const COMPANY_FLOW_TOOL_CONTRACT = [
   { name: "assignment_context_update", scope: "assignments:update" },
   { name: "assignment_question_ask", scope: "assignments:update" },
   {
+    name: "stand_operation_create",
+    scope: "targets:read",
+    requiredActions: ["assignments:read"],
+  },
+  {
     name: "run_delegate",
     scope: "assignments:update",
     requiredActions: ["assignments:read", "assignments:delegate"],
@@ -26,12 +31,20 @@ export const COMPANY_FLOW_TOOL_CONTRACT = [
   {
     name: "run_message",
     scope: "assignments:update",
-    requiredActions: ["assignments:read", "assignments:delegate", "knowledge:read"],
+    requiredActions: [
+      "assignments:read",
+      "assignments:delegate",
+      "knowledge:read",
+    ],
   },
   {
     name: "run_rework",
     scope: "assignments:update",
-    requiredActions: ["assignments:read", "assignments:delegate", "knowledge:read"],
+    requiredActions: [
+      "assignments:read",
+      "assignments:delegate",
+      "knowledge:read",
+    ],
   },
   {
     name: "specialist_assignment_work_decide",
@@ -58,10 +71,13 @@ export function companyFlowEnforcementProfile(
   escalationThreshold: number;
   allowedToolApproval: "execution_policy";
 } {
-  const allow = COMPANY_FLOW_TOOL_CONTRACT.filter((tool) =>
-    scopes.includes(tool.scope) && (
-      !("requiredActions" in tool) || tool.requiredActions.every((action) => reviewedActions.includes(action))
-    ),
+  const allow = COMPANY_FLOW_TOOL_CONTRACT.filter(
+    (tool) =>
+      scopes.includes(tool.scope) &&
+      (!("requiredActions" in tool) ||
+        tool.requiredActions.every((action) =>
+          reviewedActions.includes(action),
+        )),
   ).map((tool) => `mcp__${COMPANY_FLOW_MCP_SERVER}__${tool.name}`);
 
   return {

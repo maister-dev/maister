@@ -6953,17 +6953,13 @@ paths:
   /api/v1/ext/specialist-assignments/{assignmentId}/operations:
     post:
       operationId: extStandOperationCreate
-      summary: Designed — Persist exact allowed operation intent
-      description: "Designed; no implementation is implied. Requires current targets:read. URL identifiers are
-        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
-        target endpoint and execution ownership are derived from authenticated context/server state. Writes
-        compare canonical payload digest and expected revision; exact replay returns the original currently
-        accessible receipt, changed payload conflicts. Action-specific current target grants are mandatory: logs
-        requires targets:logs; restart requires targets:restart plus exact human approval or explicit bounded
-        unattended policy. targets:read alone never authorizes restart. Existing external-handler
-        CONFIG/JSON/schema failures are 422; PRECONDITION/CONFLICT remain 409. Scope authorization plus required
-        transactional token audit apply."
-      x-implementation-status: Designed
+      summary: Persist an exact configured operation intent
+      description: Requires a current execution-bound company specialist token with targets:read and an exact
+        appointed assignment input. The server checks current professional and initiating-user grants for
+        the selected action and derives the operation's attribution from the token. An exact replay returns
+        the operation; changed input conflicts. This endpoint records intent. A restart requires a separate
+        human approval and current dispatch permit.
+      x-implementation-status: Implemented
       x-required-scope: targets:read
       requestBody:
         required: true

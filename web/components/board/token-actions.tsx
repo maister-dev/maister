@@ -310,6 +310,12 @@ function scopeText(labels: TokenLabels, scope: UserTokenScope): string {
       return labels.scopeAssignmentsAnswer;
     case "assignments:recover":
       return labels.scopeAssignmentsRecover;
+    case "targets:read":
+      return labels.scopeTargetsRead;
+    case "targets:logs":
+      return labels.scopeTargetsLogs;
+    case "targets:restart":
+      return labels.scopeTargetsRestart;
     case "knowledge:read":
       return labels.scopeKnowledgeRead;
     case "knowledge:propose":

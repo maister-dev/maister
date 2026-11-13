@@ -75,6 +75,9 @@ export const TOKEN_SCOPES = [
   "assignments:answer",
   // Human delivery recovery is excluded from every machine grant set.
   "assignments:recover",
+  "targets:read",
+  "targets:logs",
+  "targets:restart",
   // ADR-152 (agent memory): the agent's OWN per-attachment memory.md. A SEPARATE
   // store from Project Brain — reusing `memory:write` would make one grant open
   // two stores, re-coupling exactly the axes ADR-152 separates. Access is
@@ -262,6 +265,9 @@ export type LibrarianOnlyTokenScope =
 // same list instead of mirroring it.
 export const EXACT_ONLY_TOKEN_SCOPES: ReadonlySet<string> = new Set([
   "hitl:respond:human",
+  "targets:read",
+  "targets:logs",
+  "targets:restart",
 ]);
 
 export const TOKEN_SCOPE_VALUES = [TOKEN_SCOPE_ALL, ...TOKEN_SCOPES] as const;

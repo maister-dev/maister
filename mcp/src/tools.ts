@@ -36,6 +36,38 @@ export type ToolSpec = {
 export const TOOL_SPECS: Record<string, ToolSpec> = {
   ...TASK_LAUNCH_TOOL_SPECS,
   ...KNOWLEDGE_TOOL_SPECS,
+  stand_operation_create: {
+    description:
+      "Retain one exact operation intent for a configured component appointed to this assignment. Reuse the same idempotency key and input on replay. A restart intent awaits exact human approval and current execution authorization.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "assignmentId",
+        "expectedRevision",
+        "inputRevision",
+        "componentId",
+        "action",
+        "idempotencyKey",
+      ],
+      properties: {
+        assignmentId: { type: "string", minLength: 1, maxLength: 128 },
+        expectedRevision: { type: "integer", minimum: 1, maximum: 2147483647 },
+        inputRevision: { type: "integer", minimum: 1, maximum: 2147483647 },
+        componentId: { type: "string", minLength: 1, maxLength: 128 },
+        action: {
+          type: "string",
+          enum: ["inspect", "logs", "restart", "verify"],
+        },
+        idempotencyKey: {
+          type: "string",
+          minLength: 8,
+          maxLength: 128,
+          pattern: "^[A-Za-z0-9._:-]+$",
+        },
+      },
+    },
+  },
   task_create: {
     description:
       "Create a new task in a project (flowId optional — a flowless task is a simple-intent task awaiting triage). `flowId` accepts either the flow's UUID or its ref (e.g. `aif-bugfix`), as returned by `flow_list` (`id` or `ref`).",
@@ -1414,7 +1446,8 @@ export async function dispatchTool(opts: {
       name === "ask_human" ||
       isLaunchAdmissionTool(name) ||
       isDelegationAdmissionTool(name) ||
-      isKnowledgeTool(name)
+      isKnowledgeTool(name) ||
+      name === "stand_operation_create"
     )
       return structuredResponseToToolError(res);
 
@@ -1485,6 +1518,17 @@ function resolveRouting(
   if (isKnowledgeTool(name)) return knowledgeToolRouting(name, args);
 
   switch (name) {
+    case "stand_operation_create": {
+      const { assignmentId, ...body } = args as {
+        assignmentId: string;
+      } & Record<string, unknown>;
+
+      return {
+        method: "POST",
+        path: `/api/v1/ext/specialist-assignments/${encodeURIComponent(assignmentId)}/operations`,
+        body,
+      };
+    }
     case "project_list":
       return { method: "GET", path: `/api/v1/ext/projects` };
     case "project_get": {

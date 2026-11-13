@@ -3495,6 +3495,7 @@ table stand_operations {
   target_incarnation text [not null]
   action text [not null]
   initiating_user_id text [not null]
+  initiating_execution jsonb
   delivery_key text [not null]
   delivery_digest text [not null]
   request_digest text [not null]

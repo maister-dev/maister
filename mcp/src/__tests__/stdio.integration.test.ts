@@ -607,6 +607,7 @@ describe("MCP stdio wire contract", () => {
         reason: "The child supplied the requested result.",
         idempotencyKey: "accept-observation",
       };
+
       expect(
         (
           await company.callTool({
@@ -829,7 +830,12 @@ describe("MCP stdio wire contract", () => {
       });
 
       expect(result.isError).not.toBe(true);
-      const { assignmentId: _assignmentId, ...body } = input;
+      const body = {
+        expectedRevision: input.expectedRevision,
+        expectedInputRevision: input.expectedInputRevision,
+        idempotencyKey: input.idempotencyKey,
+        updates: input.updates,
+      };
 
       expect(requests.at(-1)).toEqual({
         method: "PATCH",
@@ -1053,6 +1059,7 @@ describe("MCP stdio wire contract", () => {
           "assignment_context_get",
           "assignment_context_update",
           "assignment_question_ask",
+          "stand_operation_create",
           "run_delegate",
           "run_collect",
           "run_message",
@@ -1070,6 +1077,25 @@ describe("MCP stdio wire contract", () => {
         method: "GET",
         url: "/api/v1/ext/knowledge/record-1?revision=1",
         authorization: "Bearer mai_company_wire",
+      });
+      const intent = {
+        expectedRevision: 2,
+        inputRevision: 1,
+        componentId: "api",
+        action: "restart",
+        idempotencyKey: "fixture-restart",
+      };
+      const retained = await company.callTool({
+        name: "stand_operation_create",
+        arguments: { assignmentId: "assignment-1", ...intent },
+      });
+
+      expect(retained.isError).not.toBe(true);
+      expect(requests.at(-1)).toMatchObject({
+        method: "POST",
+        url: "/api/v1/ext/specialist-assignments/assignment-1/operations",
+        authorization: "Bearer mai_company_wire",
+        body: intent,
       });
       const count = requests.length;
 

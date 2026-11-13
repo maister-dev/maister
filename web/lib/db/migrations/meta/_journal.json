@@ -2227,6 +2227,27 @@
       "when": 1794606478024,
       "tag": "0321_specialist_acceptance_stand_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 322,
+      "version": "7",
+      "when": 1794606478025,
+      "tag": "0322_stand_operation_initiating_execution",
+      "breakpoints": true
+    },
+    {
+      "idx": 323,
+      "version": "7",
+      "when": 1794606478026,
+      "tag": "0323_stand_execution_token_scopes",
+      "breakpoints": true
+    },
+    {
+      "idx": 324,
+      "version": "7",
+      "when": 1794606478027,
+      "tag": "0324_stand_operation_attribution_guard",
+      "breakpoints": true
     }
   ]
 }
