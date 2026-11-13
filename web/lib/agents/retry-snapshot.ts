@@ -23,6 +23,22 @@ const log = pino({
 const identity = postgresTextSchema.min(1).max(128);
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const revision = z.number().int().positive().max(2147483647);
+const replacementWitness = z.object({
+  sourceRunId: identity,
+  assignmentRevision: revision,
+  contextRevision: z.number().int().nonnegative().max(2147483647),
+  ownerEpoch: revision,
+  resultSha256: digest,
+  sourceSha256: digest,
+});
+
+export const projectSpecialistReplacementSchema = replacementWitness
+  .extend({
+    assignmentId: identity,
+    inputRevision: revision,
+    inputSha256: digest,
+  })
+  .strict();
 const common = z.object({
   scheduledRequestSnapshot: scheduledRequestSnapshotSchema.optional(),
   agentId: postgresTextSchema.min(1),
@@ -86,6 +102,7 @@ const recipeSchema = z.union([
       version: z.literal(2),
       strategy: z.enum(["pre_work_retry", "fresh_qualification"]),
       qualificationSha: z.string().nullable(),
+      replacement: projectSpecialistReplacementSchema.optional(),
     })
     .strict(),
   common
@@ -118,17 +135,7 @@ const recipeSchema = z.union([
       assignment: z
         .object({ id: identity, inputRevision: revision, inputSha256: digest })
         .strict(),
-      replacement: z
-        .object({
-          sourceRunId: identity,
-          assignmentRevision: revision,
-          contextRevision: z.number().int().nonnegative().max(2147483647),
-          ownerEpoch: revision,
-          resultSha256: digest,
-          sourceSha256: digest,
-        })
-        .strict()
-        .optional(),
+      replacement: replacementWitness.strict().optional(),
     })
     .strict(),
 ]);

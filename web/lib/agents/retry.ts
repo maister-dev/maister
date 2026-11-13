@@ -20,6 +20,7 @@ import {
   taskRetryDecisionRequired,
 } from "./task-retry-authority";
 import { assertProjectAgentRetryIntent } from "./retry-scope";
+import { authorizeProjectRetryReceipt } from "./project-specialist-retry";
 import {
   acceptCompanyAgentRetry,
   authorizeCompanyRetryReceipt,
@@ -281,7 +282,7 @@ export async function getAgentRetryReceipt(
 
     return taskRetryReceipt(db, taskLaunchReceipt(canonical), runId);
   }
-  await assertRetryAuthority(db, intent.projectId, userId);
+  await authorizeProjectRetryReceipt(db, intent, userId);
 
   return receiptFor(db, intent);
 }
@@ -350,7 +351,7 @@ export async function acceptAgentRetry(
   if (replayed) assertProjectAgentRetryIntent(replayed);
 
   if (replayed) {
-    await assertRetryAuthority(db, replayed.projectId, userId);
+    await authorizeProjectRetryReceipt(db, replayed, userId);
     if (replayed.requestDigest !== requestDigest)
       throw retryRefusal("retry_request_key_reused");
 
@@ -461,7 +462,7 @@ export async function acceptAgentRetry(
         .select({ id: runs.id })
         .from(runs)
         .where(eq(runs.id, runId))
-        .for("update");
+        .for("no key update");
       await assertRetryAuthority(tx, prepared.source.projectId, userId);
       if (recipe.version === 2 && recipe.strategy === "fresh_qualification") {
         await assertQualificationRetryAuthority(
@@ -581,8 +582,12 @@ export async function acceptAgentRetry(
           ),
         );
 
-      if (winner?.requestDigest === requestDigest)
+      if (winner?.requestDigest === requestDigest) {
+        assertProjectAgentRetryIntent(winner);
+        await authorizeProjectRetryReceipt(db, winner, userId);
+
         return receiptFor(db, winner);
+      }
       throw retryRefusal("retry_successor_already_owned");
     }
     throw error;
@@ -791,17 +796,19 @@ export async function runAgentRetryAdmissionSweep(
             ? "retry_authority_revoked"
             : "retry_admission_failed";
       const attempts = (receipt?.attempts ?? 0) + 1;
+      const yielded = reason === "retry_assignment_busy";
       const transient =
-        isMaisterError(error) &&
-        (error.code === "EXECUTOR_UNAVAILABLE" ||
-          error.details?.reason === "agent_materialization_lock_timeout") &&
-        attempts < 3;
+        yielded ||
+        (isMaisterError(error) &&
+          (error.code === "EXECUTOR_UNAVAILABLE" ||
+            error.details?.reason === "agent_materialization_lock_timeout") &&
+          attempts < 3);
 
       if (transient)
         await db
           .update(agentRetryIntents)
           .set({
-            attempts,
+            attempts: yielded ? (receipt?.attempts ?? 0) : attempts,
             dueAt: new Date(
               now.getTime() + reconciliationRetryDelayMs(attempts),
             ),

@@ -30,6 +30,21 @@ type AgentRetryRecipeFields = {
   };
 };
 
+type SpecialistReplacementWitness = {
+  sourceRunId: string;
+  assignmentRevision: number;
+  contextRevision: number;
+  ownerEpoch: number;
+  resultSha256: string;
+  sourceSha256: string;
+};
+
+export type ProjectSpecialistReplacement = SpecialistReplacementWitness & {
+  assignmentId: string;
+  inputRevision: number;
+  inputSha256: string;
+};
+
 export type ProjectAgentRetryRecipe = AgentRetryRecipeFields &
   (
     | { version: 1 }
@@ -37,6 +52,7 @@ export type ProjectAgentRetryRecipe = AgentRetryRecipeFields &
         version: 2;
         strategy: AgentRetryStrategy;
         qualificationSha: string | null;
+        replacement?: ProjectSpecialistReplacement;
       }
   );
 
@@ -54,14 +70,7 @@ export type CompanyAgentRetryRecipe = Omit<
   specialistBinding: CompanyConfigurationReference;
   coordinatorFlowBinding: CompanyConfigurationReference | null;
   assignment: { id: string; inputRevision: number; inputSha256: string };
-  replacement?: {
-    sourceRunId: string;
-    assignmentRevision: number;
-    contextRevision: number;
-    ownerEpoch: number;
-    resultSha256: string;
-    sourceSha256: string;
-  };
+  replacement?: SpecialistReplacementWitness;
 };
 
 export type AgentRetryRecipe =

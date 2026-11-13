@@ -13,6 +13,7 @@ import { and, eq } from "drizzle-orm";
 
 import { parseAgentRetryRecipe } from "./retry-snapshot";
 import { assertProjectAgentRetryIntent } from "./retry-scope";
+import { assertProjectSpecialistReplacement } from "./project-specialist-retry";
 
 import { assertScheduledRequestMatches } from "@/lib/agents/scheduled-request-store";
 import { parseScheduledRequestSnapshot } from "@/lib/agents/scheduled-request";
@@ -58,7 +59,7 @@ export async function assertAgentRetryClaim(
     .select()
     .from(runs)
     .where(eq(runs.id, candidate.sourceRunId))
-    .for("update");
+    .for("no key update");
 
   if (!source) throw retryRefusal("retry_source_unavailable");
   if (!candidate.actorUserId) throw retryRefusal("retry_authority_revoked");
@@ -95,9 +96,19 @@ export async function assertAgentRetryClaim(
   if (!intent.actorUserId) throw retryRefusal("retry_authority_revoked");
   await assertRetryAuthority(db, intent.projectId, intent.actorUserId);
   const strategy = retryRecipeStrategy(intent.recipe);
-  const reason = await retryStrategySafetyReason(db, source, strategy);
 
-  if (reason) throw retryRefusal(reason);
+  if (intent.recipe.version === 2 && intent.recipe.replacement)
+    await assertProjectSpecialistReplacement(
+      db,
+      source,
+      intent.actorUserId,
+      intent.recipe,
+    );
+  else {
+    const reason = await retryStrategySafetyReason(db, source, strategy);
+
+    if (reason) throw retryRefusal(reason);
+  }
   if (
     intent.recipe.taskId &&
     (!task ||

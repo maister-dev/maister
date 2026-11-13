@@ -94,7 +94,10 @@ import {
   taskLaunchInputForRun,
   taskLaunchClarificationsForRun,
 } from "@/lib/tasks/launch-execution-input";
-import { activateInitialSpecialistAssignmentRunInTransaction } from "@/lib/specialist-assignments/store";
+import {
+  activateInitialSpecialistAssignmentRunInTransaction,
+  linkSpecialistAssignmentRunInTransaction,
+} from "@/lib/specialist-assignments/store";
 import {
   bindDelegatedWorkRunInTransaction,
   retainDelegatedWorkInTransaction,
@@ -1505,6 +1508,19 @@ async function launchAgentRunWithAdmission(
         assertAgentRetryClaim(tx, input.retryClaim!),
       )
     : null;
+  const replacement =
+    retryIntent?.recipe.version === 2
+      ? retryIntent.recipe.replacement
+      : undefined;
+  const specialistAssignment =
+    replacement && retryIntent?.actorUserId
+      ? {
+          assignmentId: replacement.assignmentId,
+          inputRevision: replacement.inputRevision,
+          expectedRevision: replacement.assignmentRevision,
+          userId: retryIntent.actorUserId,
+        }
+      : input.specialistAssignment;
   const ctx: LoadedAgentContext = retryIntent
     ? {
         ...currentContext,
@@ -2176,8 +2192,8 @@ async function launchAgentRunWithAdmission(
         : {}),
       taskQualificationSnapshot,
       projectId: input.projectId,
-      ...(input.specialistAssignment
-        ? { createdByUserId: input.specialistAssignment.userId }
+      ...(specialistAssignment
+        ? { createdByUserId: specialistAssignment.userId }
         : {}),
       flowId: null,
       // M42 (ADR-114): runner identity lives on `run_sessions` (inserted below).
@@ -2268,10 +2284,11 @@ async function launchAgentRunWithAdmission(
             );
           if (work.childRunId !== null) return false;
         }
-        const assignmentCapture = input.specialistAssignment
+        if (input.retryClaim) await assertAgentRetryClaim(tx, input.retryClaim);
+        const assignmentCapture = specialistAssignment
           ? await prepareProjectAssignmentAdmission(
               tx,
-              input.specialistAssignment,
+              specialistAssignment,
               {
                 projectId: input.projectId,
                 runId,
@@ -2286,10 +2303,10 @@ async function launchAgentRunWithAdmission(
                 scheduledRequestSnapshot: runRow.scheduledRequestSnapshot,
                 agentChainDepth: chain.depth,
               },
+              replacement,
             )
           : null;
 
-        if (input.retryClaim) await assertAgentRetryClaim(tx, input.retryClaim);
         if (taskQualificationSnapshot?.role === "qualifier" && input.taskId) {
           await tx
             .select({ id: tasks.id })
@@ -2415,18 +2432,27 @@ async function launchAgentRunWithAdmission(
             .onConflictDoNothing({ target: workspaces.worktreePath });
         }
 
-        if (input.specialistAssignment) {
-          await activateInitialSpecialistAssignmentRunInTransaction(
-            tx,
-            input.specialistAssignment.userId,
-            input.specialistAssignment.assignmentId,
-            {
-              runId,
-              inputRevision: input.specialistAssignment.inputRevision,
-              expectedRevision: input.specialistAssignment.expectedRevision,
-              role: "specialist",
-            },
-          );
+        if (specialistAssignment) {
+          const appointment = {
+            runId,
+            inputRevision: specialistAssignment.inputRevision,
+            expectedRevision: specialistAssignment.expectedRevision,
+          };
+
+          if (replacement)
+            await linkSpecialistAssignmentRunInTransaction(
+              tx,
+              specialistAssignment.userId,
+              specialistAssignment.assignmentId,
+              { ...appointment, role: "continuation", work: null },
+            );
+          else
+            await activateInitialSpecialistAssignmentRunInTransaction(
+              tx,
+              specialistAssignment.userId,
+              specialistAssignment.assignmentId,
+              { ...appointment, role: "specialist" },
+            );
           await assertNativeRunKnowledgeInputsInTransaction(tx, runId);
         }
         if (input.retryClaim)

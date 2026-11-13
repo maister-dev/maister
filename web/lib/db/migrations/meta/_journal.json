@@ -1989,6 +1989,13 @@
       "when": 1794606477990,
       "tag": "0287_specialist_credential_epoch",
       "breakpoints": true
+    },
+    {
+      "idx": 288,
+      "version": "7",
+      "when": 1794606477991,
+      "tag": "0288_project_specialist_replacement_retry",
+      "breakpoints": true
     }
   ]
 }

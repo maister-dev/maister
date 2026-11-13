@@ -134,7 +134,20 @@ function projectOriginAssignmentInputReadPolicy(
 ): SQL {
   const appointmentKind = sql`(
     (${origin.nodeAttemptId}::text IS NULL
-      AND execution.run_kind='agent' AND appointment.role='specialist'
+      AND execution.run_kind='agent' AND (appointment.role='specialist' OR (
+        appointment.role='continuation' AND appointment.work_id IS NULL
+        AND requested.origin->>'kind'='manual' AND EXISTS (
+          SELECT 1 FROM agent_retry_intents retry
+          WHERE retry.project_id=execution.project_id AND retry.source_run_id=execution.retry_of_run_id
+            AND retry.successor_run_id=execution.id AND retry.actor_user_id=initiator.id
+            AND retry.recipe->'replacement'->>'assignmentId'=appointment.assignment_id
+            AND retry.recipe->'replacement'->'inputRevision'=to_jsonb(appointment.input_revision)
+            AND retry.recipe->'replacement'->>'inputSha256'=original.digest
+            AND ((retry.state='accepted' AND execution.status='Pending')
+              OR (retry.state='launched' AND retry.created_run_id=execution.id))
+          FOR SHARE
+        )
+      ))
       AND binding.id=${origin.bindingId} AND role.id=${origin.actorId})
     OR (${origin.nodeAttemptId}::text IS NOT NULL
       AND execution.run_kind='flow' AND appointment.role='coordinator'
@@ -199,12 +212,19 @@ function projectOriginAssignmentInputReadPolicy(
         AND (initiator.role='admin' OR EXISTS (
           SELECT 1 FROM project_members member
           WHERE member.project_id=requested.project_id AND member.user_id=initiator.id
-            AND member.role IN (${sql.join(
+            AND ((execution.retry_of_run_id IS NULL AND member.role IN (${sql.join(
               projectRolesForActions(["readBoard", "launchRun"]).map(
                 (role) => sql`${role}`,
               ),
               sql`, `,
-            )})
+            )})) OR (execution.retry_of_run_id IS NOT NULL AND member.role IN (${sql.join(
+              projectRolesForActions([
+                "readBoard",
+                "launchRun",
+                "recoverRun",
+              ]).map((role) => sql`${role}`),
+              sql`, `,
+            )})))
           FOR SHARE
         ))
       FOR SHARE OF appointment,requested,original,execution,binding,role,attachment,pin,initiator

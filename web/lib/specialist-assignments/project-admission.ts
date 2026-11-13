@@ -11,6 +11,7 @@ import type {
 } from "./types";
 import type { AgentActivitySnapshot } from "@/lib/agents/activity-types";
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
+import type { ProjectSpecialistReplacement } from "@/lib/agents/retry-types";
 
 import { sql } from "drizzle-orm";
 import { z } from "zod";
@@ -100,6 +101,7 @@ export async function prepareProjectAssignmentAdmission(
   tx: SqlTransaction,
   value: ProjectAssignmentAdmission,
   context: ProjectAssignmentLaunchContext,
+  replacement?: ProjectSpecialistReplacement,
 ): Promise<KnowledgeAccessCapture> {
   const parsed = projectAssignmentAdmissionSchema.safeParse(value);
 
@@ -192,7 +194,13 @@ export async function prepareProjectAssignmentAdmission(
   if (
     assignment.owner.kind !== "project" ||
     assignment.owner.projectId !== context.projectId ||
-    assignment.status !== "queued" ||
+    assignment.status !== (replacement ? "active" : "queued") ||
+    (replacement !== undefined &&
+      (replacement.assignmentId !== assignment.id ||
+        replacement.inputRevision !== input.revision ||
+        replacement.inputSha256 !== input.digest ||
+        assignment.origin.kind !== "manual" ||
+        context.triggerSource !== "manual")) ||
     assignment.inputRevision !== reference.inputRevision ||
     assignment.specialistBindingId !== context.bindingId ||
     assignment.requester.kind !== "user" ||
@@ -445,6 +453,7 @@ export async function loadProjectAssignmentExecutionInput(
     flowId?: string | null;
     flowRevisionId?: string | null;
     flowRevision?: string;
+    retryOfRunId?: string | null;
   }>,
 ): Promise<AssignmentInputRevision | null> {
   const references =
@@ -500,6 +509,14 @@ export async function loadProjectAssignmentExecutionInput(
       "assignments:update",
       input.snapshot.authoritySnapshot.executionPolicy,
     );
+    if (run.retryOfRunId)
+      await authorizeAssignment(
+        tx,
+        link.user_id,
+        { kind: "project", projectId },
+        "assignments:recover",
+        input.snapshot.authoritySnapshot.executionPolicy,
+      );
     const standing = input.snapshot.standingDefinition;
 
     if (standing.schemaVersion === 2) {
