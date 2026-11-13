@@ -1,20 +1,19 @@
 "use client";
 
 import type { ReactElement } from "react";
+import type { LibrarianCardView } from "@/lib/librarian/read-models";
 import type {
-  LibrarianCardView,
-  LibrarianOperationView,
-  LibrarianRelatedTaskView,
-} from "@/lib/librarian/read-models";
+  HistoryCollection,
+  HistoryItem,
+  ActionHistoryPage,
+  WorkAttention,
+} from "@/lib/librarian/action-history";
 
 import Link from "next/link";
 import { useLocale, useTranslations } from "next-intl";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-type Props = {
-  cards: LibrarianCardView[];
-  operations: LibrarianOperationView[];
-  tasks: LibrarianRelatedTaskView[];
+type CardActions = {
   busyCardId: string | null;
   onDecide: (card: LibrarianCardView, decision: "accept" | "reject") => void;
 };
@@ -73,7 +72,7 @@ function Card({
   card,
   busyCardId,
   onDecide,
-}: Pick<Props, "busyCardId" | "onDecide"> & {
+}: CardActions & {
   card: LibrarianCardView;
 }): ReactElement {
   const t = useTranslations("librarian");
@@ -178,200 +177,303 @@ function Card({
   );
 }
 
-function Receipt({
-  operation,
+export function LibrarianReceipt({
+  item,
 }: {
-  operation: LibrarianOperationView;
+  item: HistoryItem;
 }): ReactElement {
   const t = useTranslations("librarian");
-  const runStatusT = useTranslations("run.runStatus");
-  const runId = operation.result?.runId;
-  const outcome = operation.result?.outcome ?? operation.result?.status;
-  const queuePosition = operation.result?.queuePosition;
-  const clarificationSeq = operation.result?.seq;
+  const operationKey = `operationKind_${item.kind}`;
+  const cardKey = `cardAction_${item.kind}`;
+  const relationKey = `history.kind.${item.kind}`;
+  const statusKey = `operationStatus_${item.outcome}`;
+  const cardStatusKey = `cardStatus_${item.outcome}`;
 
   return (
     <li
-      className="rounded-md border border-line px-2.5 py-2 text-[11px]"
+      className="min-w-0 rounded-md border border-line px-2 py-1.5 text-xs"
       data-testid="librarian-operation-receipt"
     >
-      <div className="flex flex-wrap justify-between gap-1">
-        <span className="font-medium">
-          {operation.kind === "clarification_request"
-            ? t("clarificationRequested")
-            : operation.kind === "clarification_cancel"
-              ? t("clarificationCancelled")
-              : t.has(`operationKind_${operation.kind}`)
-                ? t(`operationKind_${operation.kind}`)
-                : t("linkedUnavailable")}
+      <div className="flex flex-wrap justify-between gap-x-2">
+        <span className="font-semibold">
+          {t.has(operationKey)
+            ? t(operationKey)
+            : t.has(cardKey)
+              ? t(cardKey)
+              : t.has(relationKey)
+                ? t(relationKey)
+                : t("history.unsupported")}
         </span>
-        <span className="font-mono text-mute">
-          {t.has(`operationStatus_${operation.status}`)
-            ? t(`operationStatus_${operation.status}`)
-            : t("linkedUnavailable")}
+        <span className="text-mute">
+          {t.has(statusKey)
+            ? t(statusKey)
+            : t.has(cardStatusKey)
+              ? t(cardStatusKey)
+              : t("history.linked")}
         </span>
       </div>
-      {!operation.available ? (
-        <span className="text-mute">{t("linkedUnavailable")}</span>
-      ) : (
-        <div className="mt-1 flex flex-wrap gap-2 text-mute">
-          {typeof runId === "string" ? (
-            <Link href={`/runs/${runId}`}>{t("openRun")}</Link>
-          ) : null}
-          {operation.kind === "clarification_request" && operation.taskPath ? (
-            <Link href={operation.taskPath}>
-              {t("openClarificationTask", {
-                sequence:
-                  typeof clarificationSeq === "number" ? clarificationSeq : "?",
-              })}
-            </Link>
-          ) : null}
-          {operation.liveRunStatus ? (
-            <span>
-              {t("liveRunStatus", {
-                status: runStatusT.has(operation.liveRunStatus)
-                  ? runStatusT(operation.liveRunStatus)
-                  : t("linkedUnavailable"),
-              })}
-            </span>
-          ) : null}
-          {typeof outcome === "string" ? (
-            <span>
-              {t.has(`operationOutcome_${outcome}`)
-                ? t(`operationOutcome_${outcome}`)
-                : runStatusT.has(outcome)
-                  ? runStatusT(outcome)
-                  : t("linkedUnavailable")}
-            </span>
-          ) : null}
-          {typeof queuePosition === "number" ? (
-            <span>{t("queuePosition", { position: queuePosition })}</span>
-          ) : null}
-        </div>
-      )}
+      <ul className="flex flex-wrap gap-x-2 text-mute">
+        {item.targets.map((target, index) => (
+          <li key={index} className="min-w-0 break-words">
+            {target.state === "visible" ? (
+              <Link className="underline" href={target.href}>
+                {target.label}
+                {target.title ? ` · ${target.title}` : ""}
+              </Link>
+            ) : (
+              t("linkedUnavailable")
+            )}
+          </li>
+        ))}
+      </ul>
     </li>
   );
 }
 
 export function LibrarianWork({
-  cards,
-  operations,
-  tasks,
+  currentWork,
+  attention,
+  generation,
+  changeTick,
   busyCardId,
   onDecide,
-}: Props): ReactElement | null {
-  const t = useTranslations("librarian");
-  const taskStatusT = useTranslations("taskDetail.status");
-  const [showAllCards, setShowAllCards] = useState(false);
-  const [showAllOperations, setShowAllOperations] = useState(false);
-  const [showAllTasks, setShowAllTasks] = useState(false);
+}: CardActions & {
+  currentWork: HistoryItem[];
+  attention: WorkAttention;
+  generation: number;
+  changeTick: number;
+}): ReactElement {
+  const t = useTranslations("librarian.history");
+  const [collection, setCollection] = useState<HistoryCollection | null>(null);
+  const [page, setPage] = useState<ActionHistoryPage | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const opener = useRef<HTMLButtonElement | null>(null);
+  const panel = useRef<HTMLElement>(null);
+  const activeRead = useRef<AbortController | null>(null);
 
-  if (cards.length === 0 && operations.length === 0 && tasks.length === 0)
-    return null;
+  useEffect(() => {
+    if (!collection) return;
+    const request = new AbortController();
+
+    activeRead.current = request;
+    void fetch(`/api/librarian/history/actions?collection=${collection}`, {
+      signal: request.signal,
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Action history read failed");
+        const result = (await response.json()) as ActionHistoryPage;
+
+        if (request.signal.aborted) return;
+        if (result.historyGeneration === generation) {
+          setPage(result);
+          setFailed(false);
+        } else setFailed(true);
+        setLoadingMore(false);
+      })
+      .catch(() => {
+        if (!request.signal.aborted) {
+          setFailed(true);
+          setLoadingMore(false);
+        }
+      });
+
+    return () => {
+      request.abort();
+      activeRead.current?.abort();
+    };
+  }, [collection, generation, changeTick]);
+
+  useEffect(() => {
+    if (collection) panel.current?.focus();
+  }, [collection]);
+
+  function select(next: HistoryCollection): void {
+    activeRead.current?.abort();
+    setPage(null);
+    setFailed(false);
+    setLoadingMore(false);
+    setCollection(next);
+  }
+
+  function close(): void {
+    activeRead.current?.abort();
+    setCollection(null);
+    setPage(null);
+    opener.current?.focus();
+  }
+
+  async function more(): Promise<void> {
+    if (!collection || !page?.nextCursor || loadingMore) return;
+    const request = new AbortController();
+    const previous = page;
+    const cursor = page.nextCursor;
+
+    activeRead.current?.abort();
+    activeRead.current = request;
+    setLoadingMore(true);
+    try {
+      const response = await fetch(
+        `/api/librarian/history/actions?collection=${collection}&cursor=${encodeURIComponent(cursor)}`,
+        { signal: request.signal, cache: "no-store" },
+      );
+
+      if (!response.ok) throw new Error("Action history page read failed");
+      const next = (await response.json()) as ActionHistoryPage;
+
+      if (request.signal.aborted) return;
+      if (next.historyGeneration !== generation) {
+        setPage(null);
+        setFailed(true);
+
+        return;
+      }
+      setPage({ ...next, items: [...previous.items, ...next.items] });
+    } catch {
+      if (!request.signal.aborted) setFailed(true);
+    } finally {
+      if (!request.signal.aborted) setLoadingMore(false);
+    }
+  }
+
+  const rows =
+    page?.historyGeneration === generation
+      ? page.items
+      : collection === "attention"
+        ? attention.items
+        : [];
 
   return (
     <div
-      className="max-h-[35dvh] overflow-y-auto border-t border-line bg-canvas px-4 py-3"
+      className="relative shrink-0 border-t border-line px-4 py-1.5"
       data-testid="librarian-linked-work"
     >
-      {cards.length > 0 ? (
-        <section aria-label={t("needsAttention")}>
-          <h3 className="m-0 mb-2 text-[12px] font-semibold">
-            {t("needsAttention")}
-          </h3>
-          <ul className="m-0 list-none space-y-2 p-0">
-            {(showAllCards ? cards : cards.slice(0, 10)).map((card) => (
-              <Card
-                key={card.id}
-                busyCardId={busyCardId}
-                card={card}
-                onDecide={onDecide}
-              />
-            ))}
-          </ul>
-          {cards.length > 10 && !showAllCards ? (
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+        <button
+          aria-expanded={collection === "actions" || collection === "tasks"}
+          className="font-semibold underline"
+          type="button"
+          onClick={(event) => {
+            opener.current = event.currentTarget;
+            select("actions");
+          }}
+        >
+          {t("title")}
+        </button>
+        {attention.count > 0 ? (
+          <button
+            aria-expanded={collection === "attention"}
+            className="font-semibold text-amber underline"
+            type="button"
+            onClick={(event) => {
+              opener.current = event.currentTarget;
+              select("attention");
+            }}
+          >
+            {t("attention", { count: attention.count })}
+          </button>
+        ) : null}
+        {currentWork.length > 0 ? (
+          <details className="min-w-0">
+            <summary className="cursor-pointer">
+              {t("currentTasks", { count: currentWork.length })}
+            </summary>
+            <ul className="absolute inset-x-3 bottom-full z-10 max-h-[30dvh] space-y-1 overflow-auto rounded border border-line bg-paper p-2 shadow-lg">
+              {currentWork.map((item) => (
+                <LibrarianReceipt key={item.id} item={item} />
+              ))}
+            </ul>
+          </details>
+        ) : null}
+      </div>
+      {collection ? (
+        // Escape dismisses this dialog before the surrounding Librarian panel.
+        // eslint-disable-next-line jsx-a11y-x/no-noninteractive-element-interactions
+        <section
+          ref={panel}
+          aria-label={t(
+            collection === "attention" ? "attentionTab" : collection,
+          )}
+          className="absolute inset-x-2 bottom-full z-20 flex max-h-[min(55dvh,440px)] min-w-0 flex-col rounded-lg border border-line bg-paper shadow-xl"
+          data-testid="librarian-action-history"
+          role="dialog"
+          tabIndex={-1}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              close();
+            }
+          }}
+        >
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-1 border-b border-line p-2">
+            <nav aria-label={t("title")} className="flex gap-2 text-xs">
+              {(["actions", "tasks", "attention"] as const).map((option) => (
+                <button
+                  key={option}
+                  aria-pressed={collection === option}
+                  className="rounded border border-line px-1.5 py-1"
+                  type="button"
+                  onClick={() => option !== collection && select(option)}
+                >
+                  {option === "attention" ? t("attentionTab") : t(option)}
+                </button>
+              ))}
+            </nav>
             <button
-              className="mt-2 text-xs underline"
+              className="px-1 text-xs underline"
               type="button"
-              onClick={() => setShowAllCards(true)}
+              onClick={close}
             >
-              {t("showMore", { count: cards.length - 10 })}
+              {t("close")}
             </button>
-          ) : null}
-        </section>
-      ) : null}
-      {operations.length > 0 ? (
-        <section aria-label={t("operationReceipts")} className="mt-3">
-          <h3 className="m-0 mb-2 text-[12px] font-semibold">
-            {t("operationReceipts")}
-          </h3>
-          <ul className="m-0 list-none space-y-1.5 p-0">
-            {(showAllOperations ? operations : operations.slice(0, 10)).map(
-              (operation) => (
-                <Receipt key={operation.id} operation={operation} />
-              ),
-            )}
-          </ul>
-          {operations.length > 10 && !showAllOperations ? (
-            <button
-              className="mt-2 text-xs underline"
-              type="button"
-              onClick={() => setShowAllOperations(true)}
-            >
-              {t("showMore", { count: operations.length - 10 })}
-            </button>
-          ) : null}
-        </section>
-      ) : null}
-      {tasks.length > 0 ? (
-        <section aria-label={t("relatedWork")} className="mt-3">
-          <h3 className="m-0 mb-2 text-[12px] font-semibold">
-            {t("relatedWork")}
-          </h3>
-          <ul className="m-0 flex list-none flex-wrap gap-1.5 p-0">
-            {(showAllTasks ? tasks : tasks.slice(0, 20)).map((task, index) => (
-              <li key={`${task.taskId}-${index}`}>
-                {task.available && task.projectSlug && task.number !== null ? (
-                  <Link
-                    className="inline-flex max-w-full gap-1 rounded-full border border-line bg-paper px-2 py-1 text-[11px]"
-                    href={`/projects/${task.projectSlug}/tasks/${task.number}`}
-                    title={task.title ?? undefined}
-                  >
-                    <span className="font-mono">
-                      {task.projectSlug}-{task.number}
-                    </span>
-                    <span className="truncate text-mute">
-                      {task.status && taskStatusT.has(task.status)
-                        ? taskStatusT(task.status)
-                        : t("linkedUnavailable")}
-                    </span>
-                    {task.fromMessageId === null &&
-                    task.toMessageId === null ? (
-                      <span
-                        className="text-mute"
-                        data-testid="librarian-source-unavailable"
-                      >
-                        {t("linkedSourceUnavailable")}
-                      </span>
-                    ) : null}
-                  </Link>
-                ) : (
-                  <span className="rounded-full border border-line px-2 py-1 text-[11px] text-mute">
-                    {t("linkedUnavailable")}
-                  </span>
+          </div>
+          <div
+            className="min-h-0 overflow-y-auto overscroll-contain p-2"
+            // Keep an independent keyboard scroll target for receipts without links.
+            // eslint-disable-next-line jsx-a11y-x/no-noninteractive-tabindex
+            tabIndex={0}
+          >
+            {failed ? (
+              <p className="text-xs text-danger" role="alert">
+                {t("unavailable")}
+              </p>
+            ) : null}
+            {rows.length > 0 ? (
+              <ul className="grid gap-1">
+                {rows.map((item) =>
+                  item.confirmation ? (
+                    <Card
+                      key={`${item.sourceKind}:${item.id}`}
+                      busyCardId={busyCardId}
+                      card={item.confirmation}
+                      onDecide={onDecide}
+                    />
+                  ) : (
+                    <LibrarianReceipt
+                      key={`${item.sourceKind}:${item.id}`}
+                      item={item}
+                    />
+                  ),
                 )}
-              </li>
-            ))}
-          </ul>
-          {tasks.length > 20 && !showAllTasks ? (
-            <button
-              className="mt-2 text-xs underline"
-              type="button"
-              onClick={() => setShowAllTasks(true)}
-            >
-              {t("showMore", { count: tasks.length - 20 })}
-            </button>
-          ) : null}
+              </ul>
+            ) : (
+              <p className="text-xs text-mute">
+                {page ? t("empty") : failed ? null : t("loading")}
+              </p>
+            )}
+            {page?.nextCursor ? (
+              <button
+                className="mt-2 text-xs underline"
+                disabled={loadingMore}
+                type="button"
+                onClick={() => void more()}
+              >
+                {t("more")}
+              </button>
+            ) : null}
+          </div>
         </section>
       ) : null}
     </div>

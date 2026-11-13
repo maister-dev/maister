@@ -24,6 +24,7 @@ import { librarianConfig } from "@/lib/librarian/config";
 export type LibrarianOperationResult = {
   statusCode: number;
   body: Record<string, unknown>;
+  relationProvenance?: { fromTaskId: string; toTaskId: string };
 };
 
 export type AdmittedLibrarianOperation = {

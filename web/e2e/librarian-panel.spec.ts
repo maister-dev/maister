@@ -212,3 +212,27 @@ test("E2E-LUI-09: the scratch launcher's Cmd/Ctrl+K still works beside the docke
   await expect(page.getByRole("dialog")).toBeVisible();
   await expect(panel(page)).toBeVisible();
 });
+
+test("B3 opens Action history without displacing the mobile composer", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.getByTestId("librarian-trigger").click();
+  const panel = page.getByTestId("librarian-panel");
+  const composer = panel.locator("textarea");
+  const opener = panel.getByRole("button", { name: "Action history" });
+
+  await expect(opener).toBeVisible();
+  const before = await composer.boundingBox();
+
+  await opener.focus();
+  await page.keyboard.press("Enter");
+  const history = page.getByTestId("librarian-action-history");
+
+  await expect(history).toBeInViewport();
+  expect((await composer.boundingBox())?.y).toBe(before?.y);
+  await page.keyboard.press("Escape");
+  await expect(history).toHaveCount(0);
+  await expect(opener).toBeFocused();
+});

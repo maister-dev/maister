@@ -7,6 +7,12 @@ import type { LibrarianSubject } from "./types";
 import { and, asc, desc, eq, gt, inArray, or } from "drizzle-orm";
 
 import { librarianTurnRef } from "./admission";
+import {
+  readCurrentWork,
+  readHistoryOwner,
+  type HistoryItem,
+  type WorkAttention,
+} from "./action-history";
 import { lockOwnerConversation } from "./conversation";
 import {
   readLibrarianSettings,
@@ -21,6 +27,7 @@ import {
 
 import {
   librarianConversations,
+  librarianSegments,
   librarianCards,
   librarianContextSnapshots,
   librarianMemoryItems,
@@ -462,6 +469,7 @@ export type LibrarianConversationView = {
     resetState: string;
     readThroughSeq: string;
     lastSeq: string;
+    historyGeneration?: number;
     memoryEnabledNextSegment: boolean;
     createdAt: string;
   };
@@ -477,6 +485,61 @@ export type LibrarianConversationView = {
   pendingOperations: LibrarianOperationView[];
 };
 
+type ConversationCommon = Pick<
+  LibrarianConversationView,
+  | "conversation"
+  | "segment"
+  | "indicator"
+  | "availability"
+  | "queuedMessages"
+  | "activeTurn"
+>;
+export type LibrarianWorkView = ConversationCommon & {
+  currentWork: HistoryItem[];
+  attention: WorkAttention;
+};
+
+export async function getLibrarianWorkView(
+  ownerId: string,
+  db: Db,
+): Promise<LibrarianWorkView> {
+  const existing = await readHistoryOwner(db, ownerId);
+
+  if (!existing?.currentSegmentId)
+    await db.transaction((tx) => lockOwnerConversation(tx, ownerId));
+
+  return db.transaction(
+    async (tx) => {
+      const conversation = await readHistoryOwner(tx, ownerId);
+      const [segment] = conversation?.currentSegmentId
+        ? await tx
+            .select()
+            .from(librarianSegments)
+            .where(
+              and(
+                eq(librarianSegments.id, conversation.currentSegmentId),
+                eq(librarianSegments.conversationId, conversation.id),
+              ),
+            )
+        : [];
+
+      if (!conversation || !segment)
+        throw new MaisterError(
+          "EXECUTOR_UNAVAILABLE",
+          "Librarian conversation is unavailable.",
+        );
+
+      const [common, work] = await Promise.all([
+        librarianConversationCommon(tx, conversation, segment),
+        readCurrentWork(tx, ownerId, conversation),
+      ]);
+
+      return { ...common, ...work };
+    },
+    { isolationLevel: "repeatable read", accessMode: "read only" },
+  );
+}
+
 /** One read that lets the panel resume after navigation or a reload. The
  * conversation is created by the first call; the owner is the caller. */
 export async function getLibrarianConversationView(
@@ -486,6 +549,29 @@ export async function getLibrarianConversationView(
   const { conversation, segment } = await db.transaction((tx) =>
     lockOwnerConversation(tx, ownerId),
   );
+  const common = await librarianConversationCommon(db, conversation, segment);
+  const linkedWork = await getLinkedWork(
+    ownerId,
+    db as unknown as ReturnType<typeof import("@/lib/db/client").getDb>,
+  );
+
+  return {
+    ...common,
+    pendingCards: linkedWork.cards.filter((card) => card.status === "pending"),
+    cards: linkedWork.cards,
+    operationReceipts: linkedWork.operations,
+    relatedWork: linkedWork.tasks,
+    pendingOperations: linkedWork.operations.filter(
+      (operation) =>
+        operation.status === "admitted" || operation.status === "unknown",
+    ),
+  };
+}
+async function librarianConversationCommon(
+  db: Db,
+  conversation: typeof librarianConversations.$inferSelect,
+  segment: typeof librarianSegments.$inferSelect,
+): Promise<ConversationCommon> {
   const settings = await readLibrarianSettings(db);
   const queued = await db
     .select()
@@ -508,10 +594,6 @@ export async function getLibrarianConversationView(
     )
     .limit(1);
   const activeRef = active ? await librarianTurnRef(db, active) : null;
-  const linkedWork = await getLinkedWork(
-    ownerId,
-    db as unknown as ReturnType<typeof import("@/lib/db/client").getDb>,
-  );
 
   return {
     conversation: {
@@ -520,6 +602,7 @@ export async function getLibrarianConversationView(
       resetState: conversation.resetState,
       readThroughSeq: conversation.readThroughSeq.toString(),
       lastSeq: conversation.lastSeq.toString(),
+      historyGeneration: conversation.historyGeneration,
       memoryEnabledNextSegment: conversation.memoryEnabledNextSegment,
       createdAt: conversation.createdAt.toISOString(),
     },
@@ -530,18 +613,10 @@ export async function getLibrarianConversationView(
     },
     indicator: { state: await librarianIndicator(db, conversation) },
     availability: { state: settings.availability },
-    pendingCards: linkedWork.cards.filter((card) => card.status === "pending"),
-    cards: linkedWork.cards,
-    operationReceipts: linkedWork.operations,
-    relatedWork: linkedWork.tasks,
     queuedMessages: queued.map((row) => librarianMessageDto(row)),
     activeTurn: active
       ? librarianTurnDto(active, activeRef?.queuePosition ?? null)
       : null,
-    pendingOperations: linkedWork.operations.filter(
-      (operation) =>
-        operation.status === "admitted" || operation.status === "unknown",
-    ),
   };
 }
 

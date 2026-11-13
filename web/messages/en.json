@@ -6035,6 +6035,32 @@
     "Abandoned": "Abandoned"
   },
   "librarian": {
+    "history": {
+      "title": "Action history",
+      "actions": "Actions",
+      "tasks": "Related tasks",
+      "attentionTab": "Needs attention",
+      "attention": "Needs attention ({count})",
+      "currentTasks": "Related tasks ({count})",
+      "close": "Close history",
+      "loading": "Loading history…",
+      "unavailable": "Action history unavailable.",
+      "empty": "No entries.",
+      "more": "Load more",
+      "linked": "Linked",
+      "unsupported": "Unsupported action",
+      "receipts": "Action receipts",
+      "olderMessages": "Load earlier messages",
+      "kind": {
+        "relation_add": "Relation added",
+        "relation_remove": "Relation removed",
+        "task_launch_replace": "Launch replaced",
+        "task_launch_cancel": "Launch cancelled",
+        "created_from": "Task created from this conversation",
+        "refined_in": "Task refined in this conversation",
+        "mentioned": "Task mentioned"
+      }
+    },
     "entryLabel": "Librarian",
     "indicator_running": "responding",
     "indicator_unread": "unread reply",

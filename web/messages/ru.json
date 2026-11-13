@@ -6035,6 +6035,32 @@
     "Abandoned": "Отменено"
   },
   "librarian": {
+    "history": {
+      "title": "История действий",
+      "actions": "Действия",
+      "tasks": "Связанные задачи",
+      "attentionTab": "Требуют внимания",
+      "attention": "Требуют внимания ({count})",
+      "currentTasks": "Связанные задачи ({count})",
+      "close": "Закрыть историю",
+      "loading": "Загрузка истории…",
+      "unavailable": "История действий недоступна.",
+      "empty": "Записей нет.",
+      "more": "Загрузить ещё",
+      "linked": "Связано",
+      "unsupported": "Неподдерживаемое действие",
+      "receipts": "Результаты действий",
+      "olderMessages": "Загрузить предыдущие сообщения",
+      "kind": {
+        "relation_add": "Связь добавлена",
+        "relation_remove": "Связь удалена",
+        "task_launch_replace": "Запуск заменён",
+        "task_launch_cancel": "Запуск отменён",
+        "created_from": "Задача создана из диалога",
+        "refined_in": "Задача уточнена в диалоге",
+        "mentioned": "Задача упомянута"
+      }
+    },
     "entryLabel": "Библиотекарь",
     "indicator_running": "отвечает",
     "indicator_unread": "непрочитанный ответ",

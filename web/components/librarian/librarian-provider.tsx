@@ -21,6 +21,7 @@ type LibrarianContextValue = {
   indicator: LibrarianIndicatorState;
   /** Bumped on conversation or settings changes; the open panel refetches. */
   changeTick: number;
+  accessTick: number;
   hostComposerVisible: boolean;
   suspended: boolean;
   suspendForPeek: (onSwitch: () => void) => () => void;
@@ -56,6 +57,7 @@ const CHANGE_FRAMES = new Set([
   "librarian.turn",
   "librarian.reset",
   "librarian.settings",
+  "librarian.work",
 ]);
 
 function isIndicator(value: unknown): value is LibrarianIndicatorState {
@@ -83,6 +85,7 @@ export function LibrarianProvider({
   const [indicator, setIndicator] =
     useState<LibrarianIndicatorState>(initialIndicator);
   const [changeTick, setChangeTick] = useState(0);
+  const [accessTick, setAccessTick] = useState(0);
   const [hostComposers, setHostComposers] = useState(0);
   const [peekSuspensions, setPeekSuspensions] = useState(0);
   const peekSwitchRef = useRef<(() => void) | null>(null);
@@ -130,15 +133,23 @@ export function LibrarianProvider({
         url.searchParams.set("lastEventId", lastEventIdRef.current);
       source = new EventSource(url.toString());
       source.onmessage = (message) => {
-        if (/^(0|[1-9][0-9]*)$/.test(message.lastEventId))
-          lastEventIdRef.current = message.lastEventId;
-        let frame: { type?: unknown; state?: unknown };
+        let frame: { type?: unknown; state?: unknown; reason?: unknown };
 
         try {
           frame = JSON.parse(message.data) as typeof frame;
         } catch {
           return;
         }
+        if (
+          frame.type !== "librarian.work" &&
+          /^(0|[1-9][0-9]*)$/.test(message.lastEventId)
+        )
+          lastEventIdRef.current = message.lastEventId;
+        if (
+          frame.type === "librarian.work" &&
+          (frame.reason === "sync" || frame.reason === "access")
+        )
+          setAccessTick((tick) => tick + 1);
         if (frame.type === "librarian.indicator" && isIndicator(frame.state))
           setIndicator(frame.state);
         if (typeof frame.type === "string" && CHANGE_FRAMES.has(frame.type))
@@ -193,6 +204,7 @@ export function LibrarianProvider({
       open,
       indicator,
       changeTick,
+      accessTick,
       hostComposerVisible: hostComposers > 0,
       suspended: peekSuspensions > 0,
       suspendForPeek,
@@ -207,6 +219,7 @@ export function LibrarianProvider({
       open,
       indicator,
       changeTick,
+      accessTick,
       hostComposers,
       peekSuspensions,
       suspendForPeek,

@@ -11,8 +11,11 @@ import { MaisterError } from "@/lib/errors";
 import { submitOwnerMessage } from "@/lib/librarian/admission";
 import { librarianStreamFrames } from "@/lib/librarian/stream";
 import { updateLibrarianSettings } from "@/lib/librarian/settings";
+import { seedProjectRow } from "@/test-support/execution-host-seed";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
+  addProjectMember,
+  removeProjectMember,
   seedActiveUser,
   seedLibrarianPlatform,
 } from "@/test-support/librarian-seed";
@@ -88,6 +91,146 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await database?.stop();
+});
+
+it("B1 scopes earlier actions by owner and generation and preserves tied timestamp order", async () => {
+  const owner = await seedActiveUser(db);
+
+  session = { id: owner, role: "member" };
+  const conversation = await routes.conversation.GET(
+    json("/api/librarian/conversation", "GET"),
+  );
+  const initial = await conversation.json();
+  const [older, newer] = ["history-a", "history-b"];
+
+  await database.pool.query(
+    `INSERT INTO librarian_operations (id,conversation_id,segment_id,idempotency_key,kind,request_digest,target,status,result,created_at)
+      VALUES ($1,$3,$4,$1,'relation_add',$1,'{}','unknown','{"body":{"secret":"private history"}}','2026-01-01T01:00:00.123456Z'),
+             ($2,$3,$4,$2,'task_create',$2,'{}','succeeded',NULL,'2026-01-01T01:00:00.123456Z')`,
+    [older, newer, initial.conversation.id, initial.segment.id],
+  );
+  const path = "/api/librarian/history/actions";
+  const request = (query: string) => json(`${path}${query}`, "GET");
+
+  const work = await routes.conversation.GET(
+    json("/api/librarian/conversation?view=work", "GET"),
+  );
+  const workBody = await work.json();
+
+  expect(workBody).toMatchObject({
+    conversation: { historyGeneration: 0 },
+    currentWork: [],
+    attention: { count: 1, items: [{ id: older, outcome: "unknown" }] },
+  });
+  expect(JSON.stringify(workBody)).not.toContain("private history");
+
+  const { GET } = await import("@/app/api/librarian/history/actions/route");
+  const first = await GET(request("?limit=1"));
+  const firstPage = await first.json();
+
+  expect(first.headers.get("cache-control")).toBe("no-store");
+  expect(firstPage).toMatchObject({
+    historyGeneration: 0,
+    items: [{ id: newer }],
+  });
+  const cursor = "?limit=1&cursor=" + encodeURIComponent(firstPage.nextCursor);
+
+  expect(await (await GET(request(cursor))).json()).toMatchObject({
+    items: [{ id: older, targets: [{ state: "unavailable" }] }],
+    nextCursor: null,
+  });
+  const abort = new AbortController();
+  let checks = 0;
+  const workFrames: string[] = [];
+
+  for await (const frame of librarianStreamFrames({
+    db: database.db,
+    ownerId: owner,
+    cursor: 0n,
+    signal: abort.signal,
+    sleep: async () => {
+      if (++checks === 1) {
+        await database.pool.query(
+          "UPDATE librarian_operations SET status='succeeded',settled_at=now() WHERE id=$1",
+          [older],
+        );
+      } else abort.abort();
+    },
+  })) {
+    if (frame.includes("librarian.work")) workFrames.push(frame);
+  }
+
+  expect(workFrames).toEqual([
+    'data: {"type":"librarian.work","reason":"sync"}\n\n',
+    'data: {"type":"librarian.work","reason":"work"}\n\n',
+  ]);
+  session = { id: bob, role: "member" };
+  expect((await GET(request(cursor))).status).toBe(404);
+  session = { id: owner, role: "member" };
+  await database.pool.query(
+    "UPDATE librarian_conversations SET history_generation=1 WHERE user_id=$1",
+    [owner],
+  );
+  expect((await GET(request(cursor))).status).toBe(409);
+  expect((await GET(request("?limit=1&limit=2"))).status).toBe(422);
+});
+
+it("B1 counts unresolved work past the page cap and removes revoked target identities", async () => {
+  const owner = await seedActiveUser(db);
+  const project = await seedProjectRow(db);
+  const taskId = randomUUID();
+
+  session = { id: owner, role: "member" };
+  await addProjectMember(db, {
+    userId: owner,
+    projectId: project.id,
+    role: "member",
+  });
+  await database.pool.query(
+    "INSERT INTO tasks(id,project_id,number,title,prompt) VALUES($1,$2,1,'Private target','Private task prompt')",
+    [taskId, project.id],
+  );
+  const conversation = await routes.conversation.GET(
+    json("/api/librarian/conversation", "GET"),
+  );
+  const initial = await conversation.json();
+
+  await database.pool.query(
+    `INSERT INTO librarian_operations (id,conversation_id,segment_id,idempotency_key,kind,request_digest,target,status,created_at)
+     SELECT $1 || ':attention:' || n, $1,$2,n::text,'task_create',n::text,jsonb_build_object('taskId',$3::text),'unknown',now() + n * interval '1 second'
+     FROM generate_series(1, 31) n`,
+    [initial.conversation.id, initial.segment.id, taskId],
+  );
+  const work = await routes.conversation.GET(
+    json("/api/librarian/conversation?view=work", "GET"),
+  );
+  const { attention } = await work.json();
+
+  expect(attention.count).toBe(31);
+  expect(attention.items).toHaveLength(20);
+  expect(attention.items[0]).toMatchObject({
+    outcome: "unknown",
+    targets: [{ title: "Private target", state: "visible" }],
+  });
+  const path = "/api/librarian/history/actions?collection=attention&limit=20";
+  const { GET } = await import("@/app/api/librarian/history/actions/route");
+  const first = await (await GET(json(path, "GET"))).json();
+
+  await removeProjectMember(db, { userId: owner, projectId: project.id });
+  const second = await (
+    await GET(
+      json(`${path}&cursor=${encodeURIComponent(first.nextCursor)}`, "GET"),
+    )
+  ).json();
+
+  expect(second.items).toHaveLength(11);
+  expect(second.items[0]).toMatchObject({
+    outcome: "unknown",
+    targets: [{ state: "unavailable" }],
+  });
+  expect(JSON.stringify(second)).not.toContain(taskId);
+  expect(JSON.stringify(second)).not.toContain(project.slug);
+  expect(JSON.stringify(second)).not.toContain("Private target");
 });
 
 describe("IT-LAU-01: the owner comes from the session, never the request", () => {
@@ -216,8 +359,13 @@ describe("IT-LCV-12: the stream replays by seq and carries no foreign frame", ()
     }))
       frames.push(frame);
 
-    expect(frames).toHaveLength(4);
-    for (const frame of frames) {
+    expect(frames).toHaveLength(5);
+    expect(frames).toContain(
+      'data: {"type":"librarian.work","reason":"sync"}\n\n',
+    );
+    for (const frame of frames.filter(
+      (entry) => !entry.includes("librarian.work"),
+    )) {
       expect(frame).toBe('data: {"type":"librarian.settings"}\n\n');
     }
     const reconnect = librarianStreamFrames({
@@ -256,6 +404,7 @@ describe("IT-LCV-12: the stream replays by seq and carries no foreign frame", ()
       });
 
       expect((await frames.next()).value).toContain('"librarian.settings"');
+      expect((await frames.next()).value).toContain('"librarian.work"');
       expect((await frames.next()).done).toBe(true);
       expect(delays).toEqual([30_000]);
     } finally {
@@ -302,7 +451,12 @@ describe("IT-LCV-12: the stream replays by seq and carries no foreign frame", ()
       "librarian.turn",
       "librarian.indicator",
       "librarian.settings",
+      "librarian.work",
     ]);
+    expect(parsed.at(-1)).toEqual({
+      id: null,
+      data: { type: "librarian.work", reason: "sync" },
+    });
     expect(JSON.stringify(parsed)).not.toContain("other user");
   });
 

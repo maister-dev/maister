@@ -3,7 +3,7 @@ import "server-only";
 import { NextResponse } from "next/server";
 import pino from "pino";
 
-import { isMaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 
 const log = pino({
   name: "librarian.http",
@@ -64,6 +64,14 @@ export function librarianErrorResponse(
 
 export function invalidBody(message: string): NextResponse {
   return NextResponse.json({ code: "CONFIG", message }, { status: 422 });
+}
+
+export function librarianWorkRequested(params?: URLSearchParams): boolean {
+  const views = params?.getAll("view") ?? [];
+
+  if (!views.length) return false;
+  if (views.length === 1 && views[0] === "work") return true;
+  throw new MaisterError("CONFIG", "Invalid Librarian read view.");
 }
 
 const SEQ = /^(0|[1-9][0-9]{0,18})$/;

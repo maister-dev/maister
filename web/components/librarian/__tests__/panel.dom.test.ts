@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import type { HistoryItem } from "@/lib/librarian/action-history";
 import type { ComponentProps } from "react";
 import type { Root } from "react-dom/client";
 import type {
@@ -102,6 +103,60 @@ let serverTasks: LibrarianRelatedTaskView[] = [];
 let root: Root;
 let container: HTMLDivElement;
 
+function fixtureHistory(): HistoryItem[] {
+  return [
+    ...serverCards.map((card): HistoryItem => ({
+      id: card.id,
+      sourceKind: "card",
+      kind: card.action,
+      outcome: card.status,
+      createdAt: card.expiresAt,
+      settledAt: null,
+      targets: [],
+      ...(card.status === "pending" ? { confirmation: card } : {}),
+    })),
+    ...serverOperations.map((operation): HistoryItem => ({
+      id: operation.id,
+      sourceKind: "operation",
+      kind: operation.kind,
+      outcome: operation.status,
+      createdAt: operation.createdAt,
+      settledAt: null,
+      targets: operation.taskPath
+        ? [{ state: "visible", href: operation.taskPath, label: "EX-7" }]
+        : [{ state: "unavailable" }],
+    })),
+    ...serverTasks.map((task): HistoryItem => ({
+      id: task.taskId,
+      sourceKind: "task",
+      kind: task.meaning,
+      outcome: "linked",
+      createdAt: new Date().toISOString(),
+      settledAt: null,
+      targets: task.available
+        ? [
+            {
+              state: "visible",
+              href: `/projects/${task.projectSlug}/tasks/${task.number}`,
+              label: `BOARD-${task.number}`,
+              title: task.title ?? undefined,
+            },
+          ]
+        : [{ state: "unavailable" }],
+    })),
+  ];
+}
+
+async function clickHistory(label: string): Promise<void> {
+  const trigger = Array.from(container.querySelectorAll("button")).find(
+    (button) => button.textContent?.trim() === label,
+  );
+
+  if (!trigger) throw new Error(`Missing history control ${label}`);
+  await act(async () => trigger.click());
+  await flush();
+}
+
 function conversationView() {
   return {
     conversation: {
@@ -110,16 +165,18 @@ function conversationView() {
       resetState: "none",
       readThroughSeq: String(serverMessages.length),
       lastSeq: String(serverMessages.length),
+      historyGeneration: 0,
       memoryEnabledNextSegment: true,
       createdAt: new Date().toISOString(),
     },
     segment: { id: "seg", ordinal: 1, startedAt: new Date().toISOString() },
     indicator: { state: "none" },
     availability: { state: availability },
-    pendingCards: [],
-    cards: serverCards,
-    operationReceipts: serverOperations,
-    relatedWork: serverTasks,
+    currentWork: [],
+    attention: {
+      count: serverCards.filter((card) => card.status === "pending").length,
+      items: fixtureHistory().filter((item) => item.outcome === "pending"),
+    },
     queuedMessages: [],
     activeTurn,
     pendingOperations: [],
@@ -145,6 +202,23 @@ const fetchMock = vi.fn(
 
       return json({ status: "accepted" });
     }
+    if (url.startsWith("/api/librarian/history/actions")) {
+      const collection = new URL(url, "http://localhost").searchParams.get(
+        "collection",
+      );
+
+      return json({
+        historyGeneration: 0,
+        nextCursor: null,
+        items: fixtureHistory().filter((item) =>
+          collection === "tasks"
+            ? item.sourceKind === "task"
+            : collection === "attention"
+              ? item.outcome === "pending"
+              : item.sourceKind !== "task",
+        ),
+      });
+    }
     if (url.startsWith("/api/librarian/messages"))
       return json({
         messages: serverMessages.map((row) => ({
@@ -160,6 +234,9 @@ const fetchMock = vi.fn(
           createdAt: new Date().toISOString(),
         })),
         hasMore: false,
+        historyGeneration: 0,
+        currentSegmentId: "seg",
+        receiptAttachments: {},
       });
 
     return new Response(null, { status: 204 });
@@ -301,12 +378,10 @@ describe("IT-LUI-10: linked work and confirmation cards", () => {
 
     await mount();
     await openPanel();
+    await clickHistory("attention");
     expect(q("librarian-statement-diff")?.textContent).toContain("Old goal");
     expect(q("librarian-statement-diff")?.textContent).toContain("New goal");
-    expect(q("librarian-linked-work")?.textContent).toContain("Running");
-    expect(q("librarian-linked-work")?.textContent).toContain(
-      "linkedUnavailable",
-    );
+    expect(q("librarian-operation-receipt")).toBeNull();
 
     const card = q("librarian-card-pending")!;
 
@@ -322,8 +397,7 @@ describe("IT-LUI-10: linked work and confirmation cards", () => {
       method: "POST",
       body: JSON.stringify({ decision: "accept", expectedRevision: 2 }),
     });
-    expect(q("librarian-card-accepted")).not.toBeNull();
-    expect(q("librarian-card-accepted")?.querySelector("button")).toBeNull();
+    expect(q("librarian-card-pending")).toBeNull();
   });
 
   it("shows the question and proposed answer before a human-only confirmation", async () => {
@@ -351,6 +425,7 @@ describe("IT-LUI-10: linked work and confirmation cards", () => {
 
     await mount();
     await openPanel();
+    await clickHistory("attention");
     const card = q("librarian-card-pending")!;
 
     expect(card.textContent).toContain("Which target branch?");
@@ -431,10 +506,10 @@ describe("IT-LUI-10: linked work and confirmation cards", () => {
 
     await mount();
     await openPanel();
-    expect(q("librarian-linked-work")?.textContent).toContain("board-7");
-    expect(q("librarian-source-unavailable")?.textContent).toBe(
-      "linkedSourceUnavailable",
-    );
+    expect(q("librarian-operation-receipt")).toBeNull();
+    await clickHistory("title");
+    await clickHistory("tasks");
+    expect(q("librarian-action-history")?.textContent).toContain("BOARD-7");
   });
 
   it("IT-LMM-12: a reply exposes the memory snapshot marker as a chip", async () => {
@@ -466,9 +541,10 @@ describe("IT-LUI-10: linked work and confirmation cards", () => {
 
     await mount();
     await openPanel();
+    await clickHistory("title");
     const receipt = q("librarian-operation-receipt");
 
-    expect(receipt?.textContent).toContain("clarificationRequested");
+    expect(receipt?.textContent).toContain("history.unsupported");
     expect(receipt?.querySelector("a")?.getAttribute("href")).toBe(
       "/projects/example/tasks/7",
     );

@@ -5,7 +5,7 @@ import type { LibrarianSettings } from "./settings";
 
 import { isDeepStrictEqual } from "node:util";
 
-import { and, asc, eq, gt, inArray } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { librarianIndicator, loadLatestTurn } from "./view";
@@ -15,6 +15,9 @@ import {
   librarianConversations,
   librarianMessages,
   librarianTurns,
+  projectMembers,
+  projects,
+  users,
 } from "@/lib/db/schema";
 
 const log = pino({
@@ -47,11 +50,41 @@ async function readConversation(db: Db, ownerId: string) {
       readThroughSeq: librarianConversations.readThroughSeq,
       resetState: librarianConversations.resetState,
       segmentId: librarianConversations.currentSegmentId,
+      generation: librarianConversations.historyGeneration,
     })
     .from(librarianConversations)
     .where(eq(librarianConversations.userId, ownerId));
 
   return row ?? null;
+}
+
+async function workWitness(
+  db: Db,
+  ownerId: string,
+  conversation: Awaited<ReturnType<typeof readConversation>>,
+): Promise<{ access: string; work: string }> {
+  const conversationId = conversation?.id ?? null;
+  const {
+    rows: [row],
+  } = await db.execute<{ access: string; work: string }>(sql`
+    SELECT
+      md5(concat_ws('|', (SELECT role FROM ${users} WHERE id = ${ownerId}),
+        (SELECT string_agg(concat_ws(':', p.id, pm.role, p.archived_at), ',' ORDER BY p.id)
+           FROM ${projects} p
+           LEFT JOIN ${projectMembers} pm ON pm.project_id = p.id AND pm.user_id = ${ownerId}
+          WHERE pm.user_id IS NOT NULL OR EXISTS (SELECT 1 FROM ${users} WHERE id = ${ownerId} AND role = 'admin'))
+      )) AS access,
+      md5(concat_ws('|', ${conversation?.segmentId ?? null}::text, ${conversation?.generation ?? null}::integer,
+        (SELECT sum(hashtextextended(concat_ws(':', id, status, settled_at, card_id, turn_id),0))::text
+           FROM librarian_operations WHERE conversation_id = ${conversationId}),
+        (SELECT sum(hashtextextended(concat_ws(':', id, status, decided_at, message_id, expires_at > now()),0))::text
+           FROM librarian_cards WHERE conversation_id = ${conversationId}),
+        (SELECT sum(hashtextextended(concat_ws(':', id, task_id, from_message_id, to_message_id),0))::text
+           FROM librarian_task_links WHERE conversation_id = ${conversationId})
+      )) AS work
+  `);
+
+  return row;
 }
 
 /** ADR-185 (LCV-12): the owner's conversation stream. A server-side poll of
@@ -88,6 +121,7 @@ export async function* librarianStreamFrames(input: {
   let lastIndicator: string | null = null;
   let lastReset: string | null = null;
   let lastSettings: LibrarianSettings | null = null;
+  let lastWork: Awaited<ReturnType<typeof workWitness>> | null = null;
   let lastFrameAt = Date.now();
   let lastHeartbeatAt = Date.now();
 
@@ -211,6 +245,21 @@ export async function* librarianStreamFrames(input: {
           { ownerId: input.ownerId, availability: settings.availability },
           "[FIX:librarian-runner] settings change notified",
         );
+      }
+      const witness = await workWitness(input.db, input.ownerId, conversation);
+      const change =
+        lastWork === null
+          ? "sync"
+          : lastWork.access !== witness.access
+            ? "access"
+            : lastWork.work !== witness.work
+              ? "work"
+              : null;
+
+      lastWork = witness;
+      if (change) {
+        yield sse({ type: "librarian.work", reason: change }, null);
+        lastFrameAt = Date.now();
       }
       const now = Date.now();
 
