@@ -1,8 +1,10 @@
 import type {
   DispatchStandRestart,
   ObserveStandOperation,
+  ReadStandLogs,
   ReadStandReceipt,
   StandDispatchPayload,
+  StandLogsSelector,
   StandObservationSelector,
   StandReceiptSelector,
   StandVerifySelector,
@@ -104,6 +106,16 @@ const verificationSchema = z
       .nullable(),
   })
   .strict();
+const logsSchema = z
+  .object({
+    operationId: z.uuid(),
+    targetIncarnation: z.uuid(),
+    text: z.string().max(262144),
+    truncated: z.boolean(),
+    sanitized: z.literal(true),
+    capturedAt: z.iso.datetime(),
+  })
+  .strict();
 
 function invalidConfig(): SupervisorError {
   return new SupervisorError(
@@ -188,6 +200,7 @@ type WireCall = Readonly<{
   path: string;
   expectedStatus: number;
   timeoutMs: number;
+  maxResponseBytes?: number;
   body?: string;
   headers: Record<string, string | number>;
 }>;
@@ -245,7 +258,7 @@ function requestTarget<
         response.on("error", () => reject(unavailable()));
         response.on("data", (chunk: Buffer) => {
           size += chunk.length;
-          if (size > 4096) {
+          if (size > (spec.maxResponseBytes ?? 4096)) {
             reject(unavailable());
             response.destroy();
 
@@ -307,6 +320,33 @@ function requestTarget<
     call.on("error", () => reject(unavailable()));
     call.end(spec.body);
   });
+}
+
+async function logsForStand(
+  target: Target,
+  selector: StandLogsSelector,
+): Promise<Record<string, unknown>> {
+  const logs = await requestTarget(
+    target,
+    selector,
+    {
+      method: "GET",
+      path: `/operations/${selector.operationId}/logs`,
+      expectedStatus: 200,
+      timeoutMs: 5000,
+      maxResponseBytes: 524_288,
+      headers: {
+        "X-Maister-Request-Digest": selector.requestDigest,
+        "X-Maister-Owner-Epoch": selector.ownerEpoch,
+        "X-Maister-Component-Id": selector.componentId,
+      },
+    },
+    logsSchema,
+  );
+
+  if (!logs || Buffer.byteLength(logs.text) > 262_144) throw unavailable();
+
+  return logs;
 }
 
 async function verifyStand(
@@ -433,6 +473,7 @@ export function loadStandTransport(
   readReceipt: ReadStandReceipt;
   observe: ObserveStandOperation;
   verify: VerifyStandOperation;
+  logs: ReadStandLogs;
 } {
   if (!isAbsolute(path)) throw invalidConfig();
   let targets: z.infer<typeof targetSchema>[];
@@ -497,5 +538,7 @@ export function loadStandTransport(
       observeStand(targetFor(selector.targetIncarnation), selector),
     verify: (selector) =>
       verifyStand(targetFor(selector.targetIncarnation), selector),
+    logs: (selector) =>
+      logsForStand(targetFor(selector.targetIncarnation), selector),
   };
 }

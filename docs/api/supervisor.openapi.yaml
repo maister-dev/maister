@@ -946,6 +946,42 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /stand-operations/logs:
+    post:
+      tags: [execution-host]
+      operationId: readStandLogs
+      summary: Read sanitized logs from the exact configured helper
+      description: Uses the configured helper and a current operation-bound logs permit.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operationId, targetIncarnation, requestDigest, ownerEpoch, componentId]
+              properties:
+                operationId: { type: string, format: uuid }
+                targetIncarnation: { type: string, format: uuid }
+                requestDigest: { type: string, pattern: '^[a-f0-9]{64}$' }
+                ownerEpoch: { type: integer, minimum: 1, maximum: 9007199254740991 }
+                componentId: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$' }
+      responses:
+        "200":
+          description: Authorized bounded sanitized excerpt.
+          content:
+            application/json:
+              schema: { type: object }
+        "409":
+          description: Invalid selector or missing configuration.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+        "503":
+          description: The helper log read was unavailable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
   /workspaces/adopt:
     post:
       tags: [execution-host]

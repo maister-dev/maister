@@ -1007,7 +1007,12 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
     const professional = await createCompanyGrants(db, administratorId, {
       principalKind: "agent",
       principalId: agentId,
-      actions: ["assignments:read", "targets:read", "targets:restart"],
+      actions: [
+        "assignments:read",
+        "targets:read",
+        "targets:logs",
+        "targets:restart",
+      ],
       idempotencyKey: randomUUID(),
     });
     const binding = await createCompanySpecialistBinding(db, userId, agentId, {
@@ -1017,7 +1022,12 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
       definitionSha256: agentDefinitionSha256(role.parsed),
       configuration: {},
       enabled: true,
-      grantActions: ["assignments:read", "targets:read", "targets:restart"],
+      grantActions: [
+        "assignments:read",
+        "targets:read",
+        "targets:logs",
+        "targets:restart",
+      ],
       runnerId,
       idempotencyKey: randomUUID(),
     });
@@ -1134,10 +1144,35 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
     setDefaultTransportForTests({
       ...fake.transport,
       observeStandOperation: observeTarget,
+      readStandLogs: async (selector) => ({
+        operationId: selector.operationId,
+        targetIncarnation: selector.targetIncarnation,
+        text: "The fixture service is ready.",
+        truncated: false,
+        sanitized: true,
+        capturedAt: new Date().toISOString(),
+      }),
     });
     try {
       expect((await act("observe")).status).toBe(200);
       expect(observeTarget).toHaveBeenCalledOnce();
+      const logResult = await act("logs");
+
+      expect(logResult.status).toBe(200);
+      expect(await logResult.json()).toMatchObject({
+        sanitized: true,
+        text: "The fixture service is ready.",
+      });
+      const logsGrant = professional.page.items.find(
+        ({ action }) => action === "targets:logs",
+      )!;
+
+      await revokeCompanyGrant(db, administratorId, logsGrant.id, {
+        expectedRevision: logsGrant.revision,
+        reason: "Revoke fixture log authority.",
+        idempotencyKey: randomUUID(),
+      });
+      expect((await act("logs")).status).toBe(403);
     } finally {
       setDefaultTransportForTests(null);
     }

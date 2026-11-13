@@ -7046,6 +7046,45 @@ paths:
             minLength: 1
             maxLength: 128
           description: URL selector resolved and authorized against server state; no filesystem path.
+  /api/v1/ext/stand-operations/{operationId}/logs:
+    post:
+      operationId: extStandOperationLogs
+      summary: Read a bounded sanitized stand log excerpt
+      description: Requires an active specialist appointment, exact input and current professional and
+        initiating user logs grants. The reader is checked again before disclosure.
+      x-implementation-status: Implemented
+      x-required-scope: targets:read
+      security:
+        - projectToken: []
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+      responses:
+        "200":
+          description: Authorized sanitized excerpt.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [operationId, targetIncarnation, text, truncated, sanitized, capturedAt]
+                properties:
+                  operationId: { type: string, format: uuid }
+                  targetIncarnation: { type: string, format: uuid }
+                  text: { type: string, maxLength: 262144 }
+                  truncated: { type: boolean }
+                  sanitized: { type: boolean, enum: [true] }
+                  capturedAt: { type: string, format: date-time }
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
   /api/v1/ext/stand-operations/{operationId}/observe:
     post:
       operationId: extStandOperationObserve

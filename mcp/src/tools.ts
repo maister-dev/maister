@@ -49,6 +49,12 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
     inputSchema: standOperationSelector,
     annotations: { readOnlyHint: true },
   },
+  stand_operation_logs: {
+    description:
+      "Read a bounded sanitized log excerpt for the appointed stand operation under a current logs grant.",
+    inputSchema: standOperationSelector,
+    annotations: { readOnlyHint: true },
+  },
   stand_operation_observe: {
     description:
       "Observe the exact configured service before an approved restart. Retains the target observation as evidence.",
@@ -1547,6 +1553,7 @@ function resolveRouting(
 
   switch (name) {
     case "stand_operation_get":
+    case "stand_operation_logs":
     case "stand_operation_observe":
     case "stand_operation_dispatch":
     case "stand_operation_verify": {

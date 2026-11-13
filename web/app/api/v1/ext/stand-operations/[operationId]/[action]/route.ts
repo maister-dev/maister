@@ -15,6 +15,7 @@ import {
   verifySpecialistStand,
 } from "@/lib/stand-operations/agent-actions";
 import { handleOwnedExt } from "@/lib/tokens/owned-ext-handler";
+import { readSpecialistStandLogs } from "@/lib/stand-operations/logs";
 
 const actions = {
   observe: observeSpecialistStand,
@@ -37,6 +38,14 @@ export async function POST(
     request,
     { endpoint, scopeLabel: "targets:read", method: "POST" },
     async ({ actor }) => {
+      if (action === "logs")
+        return knowledgeJson(
+          await readSpecialistStandLogs(
+            getDb(),
+            actor.tokenId,
+            decodeRouteParam(operationId, "operationId"),
+          ),
+        );
       if (!isAction(action))
         throw new MaisterError(
           "PRECONDITION",

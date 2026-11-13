@@ -19,6 +19,7 @@ export const COMPANY_FLOW_TOOL_CONTRACT = [
     requiredActions: ["assignments:read"],
   },
   { name: "stand_operation_get", scope: "targets:read", requiredActions: ["assignments:read"] },
+  { name: "stand_operation_logs", scope: "targets:read", requiredActions: ["assignments:read", "targets:logs"] },
   { name: "stand_operation_observe", scope: "targets:read", requiredActions: ["assignments:read"] },
   { name: "stand_operation_dispatch", scope: "targets:read", requiredActions: ["assignments:read", "targets:restart"] },
   { name: "stand_operation_verify", scope: "targets:read", requiredActions: ["assignments:read"] },

@@ -88,6 +88,7 @@ export function buildRegisterRoutesOptions(deps: {
   dispatchStandRestart?: RegisterRoutesOptions["dispatchStandRestart"];
   readStandReceipt?: RegisterRoutesOptions["readStandReceipt"];
   observeStandOperation?: RegisterRoutesOptions["observeStandOperation"];
+  readStandLogs?: RegisterRoutesOptions["readStandLogs"];
   verifyStandOperation?: RegisterRoutesOptions["verifyStandOperation"];
 }): RegisterRoutesOptions {
   return {
@@ -107,6 +108,7 @@ export function buildRegisterRoutesOptions(deps: {
     dispatchStandRestart: deps.dispatchStandRestart,
     readStandReceipt: deps.readStandReceipt,
     observeStandOperation: deps.observeStandOperation,
+    readStandLogs: deps.readStandLogs,
     verifyStandOperation: deps.verifyStandOperation,
   };
 }
@@ -255,6 +257,7 @@ export async function start(): Promise<void> {
       dispatchStandRestart: standTransport?.dispatch,
       readStandReceipt: standTransport?.readReceipt,
       observeStandOperation: standTransport?.observe,
+      readStandLogs: standTransport?.logs,
       verifyStandOperation: standTransport?.verify,
     }),
   );

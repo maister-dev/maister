@@ -1061,6 +1061,7 @@ describe("MCP stdio wire contract", () => {
           "assignment_question_ask",
           "stand_operation_create",
           "stand_operation_get",
+          "stand_operation_logs",
           "stand_operation_observe",
           "stand_operation_dispatch",
           "stand_operation_verify",

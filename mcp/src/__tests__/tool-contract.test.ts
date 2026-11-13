@@ -212,6 +212,10 @@ const TOOL_OP: Record<string, { method: string; path: string }> = {
     method: "post",
     path: "/api/v1/ext/stand-operations/{operationId}/verification",
   },
+  stand_operation_logs: {
+    method: "post",
+    path: "/api/v1/ext/stand-operations/{operationId}/logs",
+  },
   stand_operation_create: {
     method: "post",
     path: "/api/v1/ext/specialist-assignments/{assignmentId}/operations",

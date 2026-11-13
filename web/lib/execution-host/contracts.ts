@@ -360,6 +360,15 @@ export interface ExecutionHostTransport {
       issuedAt: string;
     }>,
   ): Promise<unknown>;
+  readStandLogs(
+    selector: Readonly<{
+      operationId: string;
+      targetIncarnation: string;
+      requestDigest: string;
+      ownerEpoch: number;
+      componentId: string;
+    }>,
+  ): Promise<unknown>;
   releaseWorkspace(
     executionWorkspaceId: string,
     envelope: CommandEnvelope<EmptyPayload>,

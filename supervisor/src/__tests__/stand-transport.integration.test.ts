@@ -81,6 +81,23 @@ it("IT-CBO-04 sends one exact restart request, validates the pinned peer and lea
       { cert, key, ca: cert, requestCert: true, rejectUnauthorized: true },
       async (request, response) => {
         expect(request.headers["x-maister-platform-token"]).toBe(token);
+        if (request.url === `/operations/${payload.operationId}/logs`) {
+          expect(request.headers["x-maister-component-id"]).toBe(
+            payload.componentId,
+          );
+          response.end(
+            JSON.stringify({
+              operationId: payload.operationId,
+              targetIncarnation: payload.targetIncarnation,
+              text: "ready",
+              truncated: false,
+              sanitized: true,
+              capturedAt: receipt.capturedAt,
+            }),
+          );
+
+          return;
+        }
         if (request.url === `/operations/${payload.operationId}/verification`) {
           const chunks: Buffer[] = [];
 
@@ -215,6 +232,15 @@ it("IT-CBO-04 sends one exact restart request, validates the pinned peer and lea
         }),
       ).resolves.toMatchObject({ state: "active", sequence: 1 });
       expect(deliveries).toBe(0);
+      await expect(
+        transport.logs({
+          operationId: payload.operationId,
+          targetIncarnation: payload.targetIncarnation,
+          requestDigest: payload.requestDigest,
+          ownerEpoch: 1,
+          componentId: payload.componentId,
+        }),
+      ).resolves.toMatchObject({ sanitized: true, text: "ready" });
       await expect(transport.dispatch(payload)).rejects.toMatchObject({
         code: "EXECUTOR_UNAVAILABLE",
       });

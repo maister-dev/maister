@@ -64,3 +64,10 @@ export type StandVerifySelector = z.infer<typeof StandVerifySelectorSchema>;
 export type VerifyStandOperation = (
   selector: StandVerifySelector,
 ) => Promise<Record<string, unknown>>;
+export const StandLogsSelectorSchema = StandReceiptSelectorSchema.extend({
+  componentId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/),
+}).strict();
+export type StandLogsSelector = z.infer<typeof StandLogsSelectorSchema>;
+export type ReadStandLogs = (
+  selector: StandLogsSelector,
+) => Promise<Record<string, unknown>>;
