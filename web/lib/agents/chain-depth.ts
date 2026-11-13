@@ -95,10 +95,14 @@ export async function resolveProjectEventChainDepth(
       (producing.knowledge_access->>'state'='complete' AND EXISTS (
         SELECT 1 FROM specialist_run_links appointment WHERE appointment.run_id=producing.id
       ) AND (producing.trigger_source IN ('manual','cron','webhook') OR (producing.trigger_source='domain_event' AND EXISTS (
-        SELECT 1 FROM agent_trigger_attempts invocation WHERE invocation.reserved_run_id=producing.id
+        SELECT 1 FROM agent_trigger_attempts invocation WHERE invocation.reserved_run_id=coalesce(producing.retry_of_run_id,producing.id)
           AND invocation.project_id=producing.project_id AND invocation.company_id IS NULL
           AND invocation.trigger_source='domain_event' AND invocation.trigger_event_id=producing.trigger_event_id
           AND invocation.schedule_id=producing.agent_schedule_id
+          AND (producing.retry_of_run_id IS NULL OR EXISTS (
+            SELECT 1 FROM agent_retry_intents retry WHERE retry.created_run_id=producing.id
+              AND retry.source_run_id=producing.retry_of_run_id AND retry.state='launched'
+              AND project_event_retry_source_matches(retry.source_run_id,retry.actor_user_id,retry.recipe->'replacement'->'event')))
       )))) AS chain_classified
     FROM domain_events event LEFT JOIN runs producing ON producing.id=event.run_id
       AND producing.project_id=event.project_id AND producing.company_id IS NULL

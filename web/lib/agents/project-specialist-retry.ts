@@ -27,6 +27,8 @@ import { pgErrorOf, redactQueryError } from "@/lib/db/pg-error";
 import { authorizeAssignment } from "@/lib/specialist-assignments/access";
 import { assignmentBudgetAllowsDispatchSql } from "@/lib/specialist-assignments/delegated-budget";
 import { loadProjectCronReplacementSource } from "@/lib/specialist-assignments/project-cron-appointment";
+import { loadProjectEventReplacementSource } from "@/lib/specialist-assignments/project-event-appointment";
+import { projectEventAppointmentSchema } from "@/lib/specialist-assignments/project-source-types";
 
 export async function authorizeProjectRetryReceipt(
   db: Db,
@@ -70,6 +72,7 @@ export async function prepareProjectSpecialistReplacement(
   runner: unknown;
 }> {
   const cron = source.triggerSource === "cron";
+  const event = source.triggerSource === "domain_event";
 
   if (
     !source.projectId ||
@@ -80,13 +83,19 @@ export async function prepareProjectSpecialistReplacement(
     source.taskId ||
     source.parentRunId ||
     source.persistent ||
-    (source.triggerSource !== "manual" && !cron) ||
-    source.triggerEventId !== null ||
+    (source.triggerSource !== "manual" && !cron && !event) ||
+    (event
+      ? source.triggerEventId === null ||
+        !source.agentScheduleId ||
+        source.retryOfRunId !== null
+      : source.triggerEventId !== null) ||
     (cron
       ? !source.agentScheduleId ||
         !source.scheduledRequestSnapshot ||
         source.retryOfRunId !== null
-      : Boolean(source.agentScheduleId || source.scheduledRequestSnapshot)) ||
+      : Boolean(
+          (!event && source.agentScheduleId) || source.scheduledRequestSnapshot,
+        )) ||
     !source.resultContract ||
     !source.operationalTerminal ||
     !source.executionPolicy ||
@@ -127,7 +136,7 @@ export async function prepareProjectSpecialistReplacement(
     JOIN specialist_input_revisions input ON input.assignment_id=subject.id AND input.revision=subject.input_revision
     JOIN specialist_owner_claims owner ON owner.assignment_id=subject.id AND owner.run_id=source.id AND owner.placement_id=source.execution_assignment_id
     JOIN run_sessions session ON session.run_id=source.id AND session.session_name='default'
-    WHERE source.id=${source.id} AND subject.status='active' AND subject.origin->>'kind'=${cron ? "schedule" : "manual"}
+    WHERE source.id=${source.id} AND subject.status='active' AND subject.origin->>'kind'=${cron ? "schedule" : event ? "event" : "manual"}
       AND subject.requester->>'kind'='user' AND subject.requester->>'id'=${userId}
       AND input.revision=link.input_revision AND link.role IN ('specialist','continuation')
       AND specialist_current_root_id(subject.id,subject.input_revision)=source.id
@@ -183,9 +192,42 @@ export async function prepareProjectSpecialistReplacement(
     )
       throw retryRefusal("retry_context_changed");
   }
+  let eventAppointment: ProjectSpecialistReplacement["event"];
+
+  if (event) {
+    const [row] = (
+      await db.execute(sql`SELECT jsonb_build_object(
+      'schemaVersion',1,'kind','event','attemptId',id,'scheduleId',schedule_id,'runId',reserved_run_id,'eventId',trigger_event_id
+    ) AS appointment FROM agent_trigger_attempts WHERE reserved_run_id=${source.id} AND run_id=${source.id}
+      AND schedule_id=${source.agentScheduleId} AND project_id=${source.projectId} AND company_id IS NULL
+      AND trigger_source='domain_event' AND trigger_event_id=${source.triggerEventId} FOR SHARE`)
+    ).rows;
+    const parsed = projectEventAppointmentSchema.safeParse(row?.appointment);
+
+    if (!parsed.success) throw retryRefusal("retry_context_changed");
+    eventAppointment = parsed.data;
+    const original = await loadProjectEventReplacementSource(
+      db,
+      eventAppointment,
+    );
+
+    if (
+      original.projectId !== source.projectId ||
+      original.agentId !== source.sourceAgentId ||
+      original.userId !== userId ||
+      original.chainDepth !== source.agentChainDepth ||
+      retryDigest(source.triggerPayload) !==
+        retryDigest({ schemaVersion: 1, event: original.event })
+    )
+      throw retryRefusal("retry_context_changed");
+  }
 
   return {
-    witness: { ...witness.data, ...(appointment ? { cron: appointment } : {}) },
+    witness: {
+      ...witness.data,
+      ...(appointment ? { cron: appointment } : {}),
+      ...(eventAppointment ? { event: eventAppointment } : {}),
+    },
     runnerId: row.runner_id,
     runner: row.runner_snapshot,
   };

@@ -22,13 +22,19 @@ import {
   lockSpecialistAssignment,
 } from "./store";
 import { authorizeAssignment } from "./access";
-import { projectSourceAppointmentSchema } from "./project-source-types";
+import {
+  projectEventAppointmentSchema,
+  projectSourceAppointmentSchema,
+} from "./project-source-types";
 import { loadProjectCommentAppointment } from "./project-comment-appointment";
 import {
   loadProjectCronAppointment,
   loadProjectCronReplacementSource,
 } from "./project-cron-appointment";
-import { loadProjectEventAppointment } from "./project-event-appointment";
+import {
+  loadProjectEventAppointment,
+  loadProjectEventReplacementSource,
+} from "./project-event-appointment";
 import { assertProjectCoordinatorProvider } from "./project-flow-provider";
 
 import { resolveAgentConfig } from "@/lib/agents/config";
@@ -205,8 +211,11 @@ export async function prepareProjectAssignmentAdmission(
         (replacement.cron
           ? assignment.origin.kind !== "schedule" ||
             context.triggerSource !== "cron"
-          : assignment.origin.kind !== "manual" ||
-            context.triggerSource !== "manual"))) ||
+          : replacement.event
+            ? assignment.origin.kind !== "event" ||
+              context.triggerSource !== "domain_event"
+            : assignment.origin.kind !== "manual" ||
+              context.triggerSource !== "manual"))) ||
     assignment.inputRevision !== reference.inputRevision ||
     assignment.specialistBindingId !== context.bindingId ||
     assignment.requester.kind !== "user" ||
@@ -309,7 +318,7 @@ export async function prepareProjectAssignmentAdmission(
   } else if (assignment.origin.kind === "event") {
     if (
       reference.source?.kind !== "event" ||
-      reference.source.runId !== context.runId ||
+      reference.source.runId !== (replacement?.event?.runId ?? context.runId) ||
       context.triggerSource !== "domain_event" ||
       context.triggerEventId !== reference.source.eventId ||
       context.agentScheduleId !== reference.source.scheduleId
@@ -319,7 +328,11 @@ export async function prepareProjectAssignmentAdmission(
         "Native event admission requires its exact reserved source Run",
         { details: { reason: "project_event_appointment_required" } },
       );
-    const source = await loadProjectEventAppointment(tx, reference.source);
+    const source = await (
+      replacement
+        ? loadProjectEventReplacementSource
+        : loadProjectEventAppointment
+    )(tx, reference.source);
 
     if (
       source.projectId !== context.projectId ||
@@ -465,6 +478,7 @@ export async function loadProjectAssignmentExecutionInput(
     flowRevision?: string;
     retryOfRunId?: string | null;
     scheduledRequestSnapshot?: ScheduledAgentRequestSnapshot | null;
+    triggerSource?: string | null;
   }>,
 ): Promise<AssignmentInputRevision | null> {
   const references =
@@ -547,6 +561,33 @@ export async function loadProjectAssignmentExecutionInput(
           "CONFLICT",
           "The project schedule changed after replacement admission",
           { details: { reason: "project_cron_source_changed" } },
+        );
+    }
+    if (run.retryOfRunId && run.triggerSource === "domain_event") {
+      const [retained] = (
+        await tx.execute(sql`SELECT recipe->'replacement'->'event' AS appointment
+        FROM agent_retry_intents WHERE created_run_id=${run.id} AND source_run_id=${run.retryOfRunId} AND project_id=${projectId} AND state='launched' FOR SHARE`)
+      ).rows;
+      const appointment = projectEventAppointmentSchema.safeParse(
+        retained?.appointment,
+      );
+
+      if (!appointment.success)
+        throw new MaisterError(
+          "PRECONDITION",
+          "The original project event retry appointment is unavailable",
+          { details: { reason: "project_event_appointment_unavailable" } },
+        );
+      const event = await loadProjectEventReplacementSource(
+        tx,
+        appointment.data,
+      );
+
+      if (event.userId !== link.user_id || event.projectId !== projectId)
+        throw new MaisterError(
+          "CONFLICT",
+          "The project event changed after replacement admission",
+          { details: { reason: "project_event_source_changed" } },
         );
     }
     const standing = input.snapshot.standingDefinition;

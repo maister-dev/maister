@@ -739,6 +739,9 @@ async function deliverClaim(db: Db, claim: AgentRetryClaim): Promise<void> {
         retryRecipeStrategy(intent.recipe) === "fresh_qualification"
           ? "manual"
           : intent.recipe.trigger.source,
+      ...(intent.recipe.version === 2 && intent.recipe.replacement?.event
+        ? { eventId: intent.recipe.replacement.event.eventId }
+        : {}),
       payload:
         retryRecipeStrategy(intent.recipe) === "fresh_qualification"
           ? null
@@ -747,7 +750,8 @@ async function deliverClaim(db: Db, claim: AgentRetryClaim): Promise<void> {
     retryClaim: claim,
     agentScheduleId:
       intent.recipe.version === 2
-        ? intent.recipe.replacement?.cron?.scheduleId
+        ? (intent.recipe.replacement?.cron?.scheduleId ??
+          intent.recipe.replacement?.event?.scheduleId)
         : undefined,
     scheduledRequestSnapshot: intent.recipe.scheduledRequestSnapshot ?? null,
   });

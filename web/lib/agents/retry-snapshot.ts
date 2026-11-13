@@ -14,7 +14,10 @@ import { ownerSchema } from "@/lib/company/types";
 import { MaisterError } from "@/lib/errors";
 import { executionPolicySchema } from "@/lib/runs/execution-policy";
 import { postgresTextSchema } from "@/lib/text-schema";
-import { projectCronAppointmentSchema } from "@/lib/specialist-assignments/project-source-types";
+import {
+  projectCronAppointmentSchema,
+  projectEventAppointmentSchema,
+} from "@/lib/specialist-assignments/project-source-types";
 
 const log = pino({
   name: "retry-snapshot",
@@ -39,6 +42,7 @@ export const projectSpecialistReplacementSchema = replacementWitness
     inputRevision: revision,
     inputSha256: digest,
     cron: projectCronAppointmentSchema.optional(),
+    event: projectEventAppointmentSchema.optional(),
   })
   .strict();
 const common = z.object({

@@ -137,15 +137,17 @@ function projectOriginAssignmentInputReadPolicy(
     (${origin.nodeAttemptId}::text IS NULL
       AND execution.run_kind='agent' AND (appointment.role='specialist' OR (
         appointment.role='continuation' AND appointment.work_id IS NULL
-        AND requested.origin->>'kind' IN ('manual','schedule') AND EXISTS (
+        AND requested.origin->>'kind' IN ('manual','schedule','event') AND EXISTS (
           SELECT 1 FROM agent_retry_intents retry
           WHERE retry.project_id=execution.project_id AND retry.source_run_id=execution.retry_of_run_id
             AND retry.successor_run_id=execution.id AND retry.actor_user_id=initiator.id
             AND retry.recipe->'replacement'->>'assignmentId'=appointment.assignment_id
             AND retry.recipe->'replacement'->'inputRevision'=to_jsonb(appointment.input_revision)
             AND retry.recipe->'replacement'->>'inputSha256'=original.digest
-            AND (requested.origin->>'kind'='manual' OR project_cron_retry_source_matches(
-              retry.source_run_id,initiator.id,retry.recipe->'replacement'->'cron'))
+            AND CASE requested.origin->>'kind'
+              WHEN 'schedule' THEN project_cron_retry_source_matches(retry.source_run_id,initiator.id,retry.recipe->'replacement'->'cron')
+              WHEN 'event' THEN project_event_retry_source_matches(retry.source_run_id,initiator.id,retry.recipe->'replacement'->'event')
+              ELSE true END
             AND ((retry.state='accepted' AND execution.status='Pending')
               OR (retry.state='launched' AND retry.created_run_id=execution.id))
           FOR SHARE
@@ -178,7 +180,7 @@ function projectOriginAssignmentInputReadPolicy(
         AND (requested.origin->>'kind'<>'event' OR EXISTS (
           SELECT 1 FROM agent_schedules live_source
           JOIN agent_trigger_attempts live_claim ON live_claim.schedule_id=live_source.id
-            AND live_claim.reserved_run_id=execution.id AND live_claim.project_id=requested.project_id
+            AND live_claim.reserved_run_id=coalesce(execution.retry_of_run_id,execution.id) AND live_claim.project_id=requested.project_id
           JOIN domain_events live_event ON live_event.id=live_claim.trigger_event_id AND live_event.project_id=requested.project_id AND live_event.company_id IS NULL
           WHERE live_source.id=requested.origin->>'subscriptionId' AND live_source.project_id=requested.project_id
             AND live_source.agent_id=role.id AND live_source.company_id IS NULL AND live_source.enabled AND live_source.trigger_type='event'
@@ -324,7 +326,7 @@ function projectEventInputReadPolicy(
     JOIN specialist_run_links event_appointment ON event_appointment.run_id=event_recipient.id
     JOIN specialist_assignments event_work ON event_work.id=event_appointment.assignment_id
     JOIN specialist_input_revisions event_input ON event_input.assignment_id=event_appointment.assignment_id AND event_input.revision=event_appointment.input_revision
-    JOIN agent_trigger_attempts event_invocation ON event_invocation.reserved_run_id=event_recipient.id
+    JOIN agent_trigger_attempts event_invocation ON event_invocation.reserved_run_id=coalesce(event_recipient.retry_of_run_id,event_recipient.id)
       AND event_invocation.project_id=event_recipient.project_id AND event_invocation.company_id IS NULL
       AND event_invocation.schedule_id=event_recipient.agent_schedule_id AND event_invocation.trigger_source='domain_event'
       AND event_invocation.trigger_event_id=event_recipient.trigger_event_id

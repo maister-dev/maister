@@ -940,6 +940,7 @@ async function convergeToTriggerWinner(
           eq(runs.agentId, agentId),
           eq(runs.triggerEventId, triggerEventId),
           isNull(runs.companyId),
+          isNull(runs.retryOfRunId),
         ),
       );
 
@@ -1520,6 +1521,7 @@ async function launchAgentRunWithAdmission(
           expectedRevision: replacement.assignmentRevision,
           userId: retryIntent.actorUserId,
           ...(replacement.cron ? { source: replacement.cron } : {}),
+          ...(replacement.event ? { source: replacement.event } : {}),
         }
       : input.specialistAssignment;
   const ctx: LoadedAgentContext = retryIntent
@@ -1556,7 +1558,7 @@ async function launchAgentRunWithAdmission(
   // partial unique index on runs(agent_id, trigger_event_id) is the authoritative
   // race backstop; this pre-check converges an at-least-once redelivery to one
   // run without leaving an orphan task/worktree on the common sequential path.
-  if (input.trigger.eventId != null) {
+  if (input.trigger.eventId != null && !replacement?.event) {
     const existing = await _db
       .select({ id: runs.id })
       .from(runs)
@@ -1565,6 +1567,7 @@ async function launchAgentRunWithAdmission(
           eq(runs.agentId, input.agentId),
           eq(runs.triggerEventId, input.trigger.eventId),
           isNull(runs.companyId),
+          isNull(runs.retryOfRunId),
         ),
       );
 
@@ -1812,11 +1815,11 @@ async function launchAgentRunWithAdmission(
   // with no `runs`/`workspaces` row for GC to key on, so every repeated refusal
   // leaked disk and pre-claimed the next launch's path.
   const chain =
-    input.specialistAssignment?.source?.kind === "event"
+    specialistAssignment?.source?.kind === "event"
       ? await resolveProjectEventChainDepth(
           _db,
           input.projectId,
-          input.specialistAssignment.source.eventId,
+          specialistAssignment.source.eventId,
         )
       : await resolveAgentChainDepth({ trigger: input.trigger, db: _db });
 

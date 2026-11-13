@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { SqlTransaction } from "@/lib/db/sql-types";
+import type { SQL } from "drizzle-orm";
 import type { KnowledgeAccessRestriction } from "@/lib/company/types";
 import type { ProjectEventAppointment } from "./project-source-types";
 
@@ -62,6 +63,29 @@ export async function loadProjectEventAppointment(
   tx: SqlTransaction,
   value: ProjectEventAppointment,
 ): Promise<ProjectEventSource> {
+  return loadReviewedProjectEventSource(
+    tx,
+    value,
+    sql`(invocation.outcome IS NULL OR ${queuedProjectSourceHandoffPredicate()})`,
+  );
+}
+
+export async function loadProjectEventReplacementSource(
+  tx: SqlTransaction,
+  value: ProjectEventAppointment,
+): Promise<ProjectEventSource> {
+  return loadReviewedProjectEventSource(
+    tx,
+    value,
+    sql`invocation.run_id=invocation.reserved_run_id AND invocation.outcome IN ('queued','launched','deduplicated')`,
+  );
+}
+
+async function loadReviewedProjectEventSource(
+  tx: SqlTransaction,
+  value: ProjectEventAppointment,
+  outcome: SQL,
+): Promise<ProjectEventSource> {
   const parsedReference = projectEventAppointmentSchema.safeParse(value);
 
   if (!parsedReference.success)
@@ -88,7 +112,7 @@ export async function loadProjectEventAppointment(
     WHERE invocation.id=${reference.attemptId} AND invocation.schedule_id=${reference.scheduleId}
       AND invocation.reserved_run_id=${reference.runId} AND invocation.company_id IS NULL
       AND invocation.trigger_source='domain_event' AND invocation.trigger_event_id=${reference.eventId}
-      AND invocation.scheduled_request_snapshot IS NULL AND invocation.provenance='claim' AND (invocation.outcome IS NULL OR ${queuedProjectSourceHandoffPredicate()})
+      AND invocation.scheduled_request_snapshot IS NULL AND invocation.provenance='claim' AND ${outcome}
     FOR SHARE OF invocation,source,binding,event
   `)
     ).rows[0],

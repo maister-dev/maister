@@ -625,6 +625,8 @@ paths:
         and requires current submission and recovery authority for its initiating user.
         A reviewed project cron replacement uses the original settled appointment and
         immutable request through the existing project retry sweep.
+        A taskless project event replacement retains its reviewed subscription, event,
+        producing evidence and original chain depth.
         For a project specialist, the existing retry sweep rechecks the same witnesses
         before reserving a continuation through project admission. Pending assignment
         updates defer that sweep without consuming an admission attempt.

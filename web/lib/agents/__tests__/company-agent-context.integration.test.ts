@@ -224,12 +224,15 @@ import {
   assertProjectAgentTriggerClaim,
   reconcileAgentTriggerAttempts,
   settleCompanyAgentTriggerAttempt,
+  settleAgentTriggerAttempt,
 } from "@/lib/agents/trigger-attempts";
 import { MaisterError } from "@/lib/errors";
 import { loadProjectCommentAppointment } from "@/lib/specialist-assignments/project-comment-appointment";
 import { loadProjectCronAppointment } from "@/lib/specialist-assignments/project-cron-appointment";
+import { loadProjectAssignmentExecutionInput } from "@/lib/specialist-assignments/project-admission";
 import { submitProjectCommentAssignment } from "@/lib/specialist-assignments/project-comment-intake";
 import { submitProjectCronAssignment } from "@/lib/specialist-assignments/project-cron-intake";
+import { submitProjectEventAssignment } from "@/lib/specialist-assignments/project-event-intake";
 import { prepareCompanySpecialistAssignment } from "@/lib/specialist-assignments/company-intake";
 import { reserveCompanyCronAssignment } from "@/lib/specialist-assignments/company-cron-intake";
 import { reserveCompanyEventAssignment } from "@/lib/specialist-assignments/company-event-intake";
@@ -7355,6 +7358,110 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
           )
         ).rows,
       ).toEqual(retained);
+      const producing = eventWork[0]!.source_run_id;
+      const eventNonce = randomUUID();
+
+      await emitDomainEvent({
+        db,
+        projectId: project.id,
+        runId: producing,
+        parentRunId: null,
+        kind: "run.done",
+        actor: { type: "system", id: null },
+        payload: { runId: producing, eventNonce },
+      });
+      const [fact] = (
+        await database.pool.query<{ id: string }>(
+          "SELECT id FROM domain_events WHERE run_id=$1 AND payload->>'eventNonce'=$2",
+          [producing, eventNonce],
+        )
+      ).rows;
+      const now = new Date();
+      const invocation = await claimEventAgentAttempt(
+        db,
+        eventSource.id,
+        now,
+        Number(fact.id),
+      );
+
+      if (!invocation)
+        throw new Error(
+          "Project event replacement could not claim the exact reviewed source",
+        );
+      assertProjectAgentTriggerClaim(invocation);
+      const retrySource = await submitProjectEventAssignment(db, invocation);
+      const [sourceRunId] = retrySource.assignment.runIds;
+
+      await settleAgentTriggerAttempt(db, invocation, {
+        outcome: "queued",
+        runId: sourceRunId,
+        reasonCode: null,
+        now,
+      });
+      const failure = await prepareUndispatchedAgentFailure(sourceRunId, {
+        db,
+        reason: "agent_dispatch_failed",
+      });
+
+      await db.transaction(failure.apply);
+      const preview = await getAgentRetryOptions(
+        db,
+        sourceRunId,
+        administratorId,
+      );
+
+      expect(preview).toMatchObject({
+        eligible: true,
+        reason: null,
+        selectedRunnerId: runnerId,
+      });
+      const retry = await acceptAgentRetry(db, sourceRunId, administratorId, {
+        requestKey: randomUUID(),
+        runnerId,
+        previewFingerprint: preview.previewFingerprint,
+      });
+
+      await expect(runAgentRetryAdmissionSweep(db)).resolves.toEqual({
+        processed: 1,
+        errors: [],
+      });
+      const successor = await getAgentRetryReceipt(
+        db,
+        sourceRunId,
+        retry.retryIntentId,
+        administratorId,
+      );
+
+      expect(successor).toMatchObject({
+        intentState: "launched",
+        runStatus: "Pending",
+      });
+      const [replacement] = await db
+        .select()
+        .from(runs)
+        .where(eq(runs.id, successor.runId!));
+
+      expect(replacement).toMatchObject({
+        retryOfRunId: sourceRunId,
+        agentScheduleId: eventSource.id,
+        triggerEventId: Number(fact.id),
+        agentChainDepth: 1,
+      });
+      expect(replacement.knowledgeAccess?.restrictions).toEqual(
+        expect.arrayContaining(producer.knowledge_access.restrictions),
+      );
+      await expect(
+        loadProjectAssignmentExecutionInput(db, replacement),
+      ).resolves.toMatchObject({ revision: 1 });
+      await expect(
+        claimEventAgentAttempt(db, eventSource.id, now, Number(fact.id)),
+      ).resolves.toBeNull();
+      const settle = await prepareUndispatchedAgentFailure(replacement.id, {
+        db,
+        reason: "fixture_replacement_complete",
+      });
+
+      await db.transaction(settle.apply);
     } finally {
       await database.pool.query("DELETE FROM execution_host_pressure");
     }
