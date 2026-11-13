@@ -10,6 +10,7 @@ const { scratchCapabilityProfiles, scratchRuns } = schema;
 
 export interface ScratchSessionSummary {
   dialogStatus: string;
+  name?: string | null;
   mcpCount: number;
   skillCount: number;
   ruleCount: number;
@@ -55,6 +56,7 @@ export async function getScratchSessionSummary(
     db
       .select({
         dialogStatus: scratchRuns.dialogStatus,
+        name: scratchRuns.name,
         baseBranch: scratchRuns.baseBranch,
         targetBranch: scratchRuns.targetBranch,
       })
@@ -77,6 +79,7 @@ export async function getScratchSessionSummary(
 
   return {
     dialogStatus: scratch.dialogStatus,
+    name: scratch.name,
     mcpCount: profile?.selectedMcpIds?.length ?? 0,
     skillCount: profile?.selectedSkillIds?.length ?? 0,
     ruleCount: profile?.selectedRuleIds?.length ?? 0,

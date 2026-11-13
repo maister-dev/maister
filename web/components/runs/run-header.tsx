@@ -79,6 +79,7 @@ export interface RunHeaderProps {
   // Derived run-scope budget warn signal (null = no badge).
   budgetStatus?: { warn: boolean; pct: number } | null;
   inspectorOpen: boolean;
+  hideChangeSummary?: boolean;
   reviewHref?: string | null;
   promotionOperation?: (PromotionOperationInput & { runId: string }) | null;
   labels: RunHeaderLabels;
@@ -129,6 +130,7 @@ export function RunHeader({
   changeSummary,
   budgetStatus,
   inspectorOpen,
+  hideChangeSummary,
   reviewHref,
   promotionOperation,
   labels,
@@ -256,14 +258,16 @@ export function RunHeader({
           </details>
         ) : null}
       </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <span
-          className="rounded-[6px] border border-line bg-paper px-2.5 py-1.5 font-mono text-[11px] text-ink-2"
-          data-dirty={changeSummary?.dirty ? "true" : "false"}
-          data-testid="run-header-change-summary"
-        >
-          {labels.changes}: {changes}
-        </span>
+      <div className="flex shrink-0 flex-wrap items-center gap-2">
+        {!hideChangeSummary ? (
+          <span
+            className="rounded-[6px] border border-line bg-paper px-2.5 py-1.5 font-mono text-[11px] text-ink-2"
+            data-dirty={changeSummary?.dirty ? "true" : "false"}
+            data-testid="run-header-change-summary"
+          >
+            {labels.changes}: {changes}
+          </span>
+        ) : null}
         {reviewHref &&
         promotionOperation &&
         labels.promote &&

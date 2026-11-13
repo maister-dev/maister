@@ -181,6 +181,37 @@ test.describe("run & task context visibility", () => {
     await expect(taskBlock.locator("strong")).toContainText("timeout");
   });
 
+  test("R1/R2 keeps the outcome first and preserves the mobile inspector link", async ({
+    page,
+  }) => {
+    const fx = await seedContextRun();
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`/runs/${fx.runId}?wb=timeline&node=implement#run-outcome`);
+    const toggle = page
+      .getByTestId("run-header-inspector-toggle")
+      .filter({ visible: true });
+    const outcome = page.getByRole("region", {
+      name: "Outcome and next action",
+    });
+
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(outcome).toBeInViewport();
+    await toggle.click();
+    await expect(page).toHaveURL(/inspector=open#run-outcome$/);
+    const inspector = page.getByRole("dialog", { name: "Close inspector" });
+
+    await expect(inspector).toBeInViewport();
+    await page.keyboard.press("Escape");
+    await expect(inspector).toHaveCount(0);
+    await expect(toggle).toBeFocused();
+    await expect(page).toHaveURL(
+      /wb=timeline&node=implement&inspector=closed#run-outcome$/,
+    );
+    await page.goBack();
+    await expect(inspector).toBeVisible();
+  });
+
   test("run timeline exposes the per-attempt resolved-prompt disclosure", async ({
     page,
   }) => {

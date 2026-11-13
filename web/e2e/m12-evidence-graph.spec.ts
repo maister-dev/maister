@@ -64,6 +64,35 @@ async function withDb<T>(fn: (pool: Pool) => Promise<T>): Promise<T> {
   }
 }
 
+test("E2 opens a result payload from the list and retains the selected graph address", async ({
+  page,
+}) => {
+  const fx = loadM12Fixture();
+
+  await page.goto(`/runs/${fx.runId}?wb=evidence`);
+  const result = page
+    .getByRole("region", { name: "Results and checks" })
+    .locator(`a[href*="evidenceItem=art%3A${fx.implDiffArtifactId}"]`);
+
+  await result.focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(
+    new RegExp(`evidenceItem=art%3A${fx.implDiffArtifactId}`),
+  );
+  const preview = page.getByTestId("result-payload");
+
+  await expect(
+    preview.getByRole("link", { name: "Download original" }),
+  ).toHaveAttribute(
+    "href",
+    `/api/runs/${fx.runId}/artifacts/${fx.implDiffArtifactId}/payload`,
+  );
+  await expect(preview.getByText(/diff --git/)).toBeVisible();
+  await page.getByRole("link", { name: "Provenance graph" }).click();
+  await expect(page.getByTestId("evidence-graph")).toBeVisible();
+  await expect(page).toHaveURL(/evidenceView=graph/);
+});
+
 test("UX-03C/D evidence filters fit artifacts and the board readiness badge tracks stale/merge-blocked", async ({
   page,
 }) => {
@@ -81,8 +110,11 @@ test("UX-03C/D evidence filters fit artifacts and the board readiness badge trac
   // failing on. Clicking the tab is what a reader does; this is the URL that
   // tab links to.
   await page.goto(`/runs/${fx.runId}`);
-  await page.getByRole("tab", { name: "Evidence", exact: true }).click();
+  await page
+    .getByRole("tab", { name: "Results and checks", exact: true })
+    .click();
 
+  await page.getByRole("link", { name: "Provenance graph" }).click();
   await expect(page.locator('[data-testid="evidence-graph"]')).toBeVisible();
 
   const implDiff = page.locator(

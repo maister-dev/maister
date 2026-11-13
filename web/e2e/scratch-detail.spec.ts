@@ -127,7 +127,8 @@ test("scratch inspector toggles and surfaces change size + actions", async ({
 }) => {
   const fx = loadScratchDetailFixture();
 
-  await page.goto(`/scratch-runs/${fx.scratchRunId}`);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(`/scratch-runs/${fx.scratchRunId}?inspector=open`);
 
   await expect(
     page.getByRole("main").locator('[data-testid="run-shell"]'),

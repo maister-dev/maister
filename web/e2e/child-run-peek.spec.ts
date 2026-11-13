@@ -100,7 +100,9 @@ test("E2E-PKN-01 E2E-PKN-03 E2E-PKN-07: nested navigation keeps the original Run
   page,
 }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
-  await page.goto(`/runs/${fixture.anchor}?wb=files&file=README.md#inspect`);
+  await page.goto(
+    `/runs/${fixture.anchor}?wb=files&file=README.md&inspector=open#inspect`,
+  );
   await expect(page.getByTestId("orchestrator-run-subtree")).toHaveCount(0);
   const children = page
     .getByTestId("run-inspector-child-runs")
@@ -178,7 +180,9 @@ test("E2E-PKN-04 E2E-PKN-08 E2E-PKN-10: parent file, inspector and librarian dra
   page,
 }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
-  await page.goto(`/runs/${fixture.anchor}?wb=files&file=README.md`);
+  await page.goto(
+    `/runs/${fixture.anchor}?wb=files&file=README.md&inspector=open`,
+  );
   await page
     .getByTestId("run-inspector")
     .getByRole("tab", { name: "Flow", exact: true })
@@ -293,7 +297,7 @@ test("E2E-PKN-02 E2E-PKN-11: Russian entry labels, result availability and contr
     { name: "NEXT_LOCALE", value: "ru", domain: "localhost", path: "/" },
   ]);
   await page.setViewportSize({ width: 767, height: 900 });
-  await page.goto(`/runs/${fixture.anchor}`);
+  await page.goto(`/runs/${fixture.anchor}?inspector=open`);
   const trigger = page
     .getByTestId("run-inspector-child-runs")
     .filter({ visible: true })
@@ -556,7 +560,7 @@ test("E2E-PKD-07: late A responses cannot overwrite B or a newer A selection", a
     await route.fulfill({ response });
   });
   try {
-    await page.goto(`/runs/${fixture.anchor}`);
+    await page.goto(`/runs/${fixture.anchor}?inspector=open`);
     const list = page
       .getByTestId("run-inspector-child-runs")
       .filter({ visible: true });
@@ -669,7 +673,7 @@ test("E2E-PKN-04 E2E-PKN-10: an unsent parent HITL draft survives child navigati
   );
   try {
     await page.setViewportSize({ width: 1600, height: 1000 });
-    await page.goto(`/runs/${all.runId}`);
+    await page.goto(`/runs/${all.runId}?inspector=open`);
     const draft = page.getByRole("textbox", {
       name: "Review comments",
       exact: true,
@@ -1656,7 +1660,7 @@ test("E2E-PKN-04 E2E-PKN-10: a tall inspector cannot clamp the parent scroll whe
   page,
 }) => {
   await page.setViewportSize({ width: 1600, height: 900 });
-  await page.goto(`/runs/${fixture.anchor}`);
+  await page.goto(`/runs/${fixture.anchor}?inspector=open`);
   const shell = page.locator('[data-testid="run-shell"]:visible');
   const transcript = shell.getByTestId("run-transcript-history");
   const list = shell.getByTestId("run-inspector-child-runs");
