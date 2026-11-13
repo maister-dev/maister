@@ -255,7 +255,9 @@ test.describe("run & task context visibility", () => {
       await page.waitForURL((url) => !url.pathname.startsWith("/login"));
       await page.goto(`/runs/${fx.runId}`);
 
-      const outcome = page.getByTestId("run-outcome");
+      const outcome = page.getByRole("region", {
+        name: "Outcome and next action",
+      });
 
       await expect(outcome).toBeInViewport();
       await expect(outcome).toContainText(
