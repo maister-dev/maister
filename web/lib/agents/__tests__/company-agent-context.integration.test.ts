@@ -11084,6 +11084,7 @@ async function reserveContextFixture(
   roleId: string,
   actions: readonly CompanyAction[],
   verification = assignmentInput.objectiveInput.verification,
+  executionPolicy = assignmentInput.executionPolicy,
 ): Promise<
   Awaited<ReturnType<typeof reserveCompanyFixtureRun>> & {
     credential: Awaited<ReturnType<typeof issueCompanyAgentRunToken>>;
@@ -11104,6 +11105,7 @@ async function reserveContextFixture(
       definitionSha256: agentDefinitionSha256(effective.parsed),
       enabled: true,
       configuration: {},
+      executionPolicy,
       grantActions: [...actions],
       idempotencyKey: randomUUID(),
     },
@@ -11111,6 +11113,7 @@ async function reserveContextFixture(
   const result = buildOperationalContract(effective);
   const input: PreparedSpecialistAssignment = {
     ...assignmentInput,
+    executionPolicy,
     objectiveInput: {
       ...assignmentInput.objectiveInput,
       expectedResult: {
@@ -12594,6 +12597,11 @@ async function qualifyCompanyCooperation(
   stop: "budget" | "parent interruption",
 ): Promise<void> {
   const db: Db = database.db;
+  const reviewedTokens = 750_000;
+  const executionPolicy = {
+    preset: "supervised" as const,
+    overrides: { budget: { tree: { maxTokens: reviewedTokens } } },
+  };
   const roleId =
     stop === "budget"
       ? "rah:delegating-observer"
@@ -12602,13 +12610,18 @@ async function qualifyCompanyCooperation(
     stop === "budget"
       ? "rah:company-dispatch-observer"
       : "rah:interrupted-dispatch-observer";
-  const appointment = await reserveContextFixture(roleId, [
-    "knowledge:read",
-    "assignments:read",
-    "assignments:update",
-    "assignments:delegate",
-    "assignments:accept",
-  ]);
+  const appointment = await reserveContextFixture(
+    roleId,
+    [
+      "knowledge:read",
+      "assignments:read",
+      "assignments:update",
+      "assignments:delegate",
+      "assignments:accept",
+    ],
+    assignmentInput.objectiveInput.verification,
+    executionPolicy,
+  );
   const assignment = await getSpecialistAssignment(
     database.db,
     userId,
@@ -12643,6 +12656,7 @@ async function qualifyCompanyCooperation(
       enabled: true,
       configuration: {},
       runnerId,
+      executionPolicy,
       grantActions: ["assignments:read"],
       idempotencyKey: randomUUID(),
     },
@@ -12760,6 +12774,7 @@ async function qualifyCompanyCooperation(
       expect(receipt).toMatchObject({
         duplicate: false,
         work: {
+          bounds: { maxTokens: reviewedTokens },
           actor: { kind: "agent", id: roleId, runId: appointment.runId },
           definition: { target: prepared.target },
           authoritySnapshot: {
@@ -12934,8 +12949,8 @@ async function qualifyCompanyCooperation(
       process.env.MAISTER_MAX_CONCURRENT_AGENTS = "100";
       try {
         await database.pool.query(
-          "INSERT INTO run_cost_rollups(run_id,input_tokens) VALUES($1,100000)",
-          [appointment.runId],
+          "INSERT INTO run_cost_rollups(run_id,input_tokens) VALUES($1,$2)",
+          [appointment.runId, reviewedTokens],
         );
         await expect(
           tryStartRun(first.childRunId, { db }),
@@ -13241,6 +13256,7 @@ async function qualifyCompanyCooperation(
           coordinatorFlowRevisionId: flowPin.id,
           configuration: {},
           runnerId,
+          executionPolicy,
           enabled: true,
           grantActions: [
             "knowledge:read",
@@ -13649,8 +13665,8 @@ async function qualifyCompanyCooperation(
           details: { reason: "work_rework_result_unavailable" },
         });
         await database.pool.query(
-          "INSERT INTO run_cost_rollups(run_id,input_tokens) VALUES($1,100000)",
-          [appointment.runId],
+          "INSERT INTO run_cost_rollups(run_id,input_tokens) VALUES($1,$2)",
+          [appointment.runId, reviewedTokens],
         );
         try {
           const blocked = await sendRework(reworkBody);
@@ -13989,11 +14005,7 @@ async function qualifyCompanyCooperation(
               current_step_id: expect.any(String),
             },
           ]);
-          await recordAssignmentBudgetUsage(
-            db,
-            rootRunId,
-            prepared.bounds.maxTokens,
-          );
+          await recordAssignmentBudgetUsage(db, rootRunId, reviewedTokens);
           await reconcileRunCostRollups(rootRunId, { client: db });
           await database.pool.query(
             "UPDATE runs SET failed_child_wake_at=clock_timestamp() WHERE id=$1",
@@ -14130,11 +14142,7 @@ async function qualifyCompanyCooperation(
         reason: "launch",
       }),
     );
-    await recordAssignmentBudgetUsage(
-      db,
-      appointment.runId,
-      prepared.bounds.maxTokens,
-    );
+    await recordAssignmentBudgetUsage(db, appointment.runId, reviewedTokens);
     await runSweepTick({ db, executionHosts: hosts });
     const [budgetRoot] = await db
       .select({ status: runs.status })

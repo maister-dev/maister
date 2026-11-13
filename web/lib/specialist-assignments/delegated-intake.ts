@@ -582,6 +582,7 @@ export async function retainDelegatedWorkInTransaction(
     parentRunId,
     rootRunId,
     requested: bounds,
+    executionPolicy: selectedInput.snapshot.authoritySnapshot.executionPolicy,
   });
 
   await admitDelegatedChild(tx, {

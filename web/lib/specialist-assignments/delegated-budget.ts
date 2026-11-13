@@ -4,12 +4,16 @@ import type { SQL } from "drizzle-orm";
 import type { SqlTransaction } from "@/lib/db/sql-types";
 import type { AssignmentWorkBounds } from "./work-types";
 import type { DelegationBounds } from "@/lib/run-results/types";
+import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 
 import { sql } from "drizzle-orm";
 import pino from "pino";
 import { z } from "zod";
 
-import { assignmentWorkBoundsSchema } from "./work-types";
+import {
+  assignmentWorkBoundsSchema,
+  DEFAULT_ASSIGNMENT_WORK_BOUNDS,
+} from "./work-types";
 
 import { MaisterError } from "@/lib/errors";
 import {
@@ -44,6 +48,7 @@ type BudgetInput = Readonly<{
   rootRunId: string;
   requested: AssignmentWorkBounds;
   reservedRunId?: string;
+  executionPolicy?: ExecutionPolicy;
 }>;
 
 /** Read existing assignment work and usage while the caller holds the assignment write fence. */
@@ -51,8 +56,24 @@ export async function admitAssignmentWorkBudget(
   tx: SqlTransaction,
   input: BudgetInput,
 ): Promise<AssignmentWorkBounds> {
-  const { assignmentId, parentRunId, rootRunId, requested, reservedRunId } =
-    input;
+  const { assignmentId, parentRunId, rootRunId, reservedRunId } = input;
+  const configuredTokens = input.executionPolicy?.overrides?.budget?.tree;
+  const reviewedLimits = [
+    configuredTokens?.maxTokens,
+    configuredTokens?.hardMaxTokens,
+  ].filter((limit): limit is number => typeof limit === "number");
+  const reviewedTokenCeiling = reviewedLimits.length
+    ? Math.min(...reviewedLimits)
+    : undefined;
+  const requested = {
+    ...input.requested,
+    maxTokens:
+      reviewedTokenCeiling === undefined
+        ? input.requested.maxTokens
+        : input.requested.maxTokens === DEFAULT_ASSIGNMENT_WORK_BOUNDS.maxTokens
+          ? reviewedTokenCeiling
+          : Math.min(input.requested.maxTokens, reviewedTokenCeiling),
+  };
   const [retained] = (await tx.execute(retainedBoundsSql(sql`${assignmentId}`)))
     .rows;
   const ancestors = await readAncestorDelegationBounds(tx, parentRunId);

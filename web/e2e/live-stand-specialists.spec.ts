@@ -251,7 +251,10 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
             configuration: {},
             grantActions: actions,
             runnerId: runner.id,
-            executionPolicy: { preset: "assisted" },
+            executionPolicy: {
+              preset: "assisted",
+              overrides: { budget: { tree: { maxTokens: 1_500_000 } } },
+            },
             coordinatorFlowRevisionId:
               role === "coordinator" ? pinned.flow_id : null,
             enabled: true,

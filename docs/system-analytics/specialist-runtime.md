@@ -2,7 +2,7 @@
 
 ## Purpose
 
-**Implemented: specialist metadata, company bindings, standalone/result-only graph lifecycles and node knowledge identity; Designed: governed cooperation and stand qualification — ADR-203.** Reusable specialist roles extend existing package agents and installed Flow bindings. This domain owns company execution and invocation scope; [assignments](specialist-assignments.md) owns durable work and [cooperation](specialist-cooperation.md) owns delegation/acceptance.
+**ADR-203.** Reusable specialist roles extend package agents and installed Flow bindings. This domain owns reviewed company bindings, standalone and result-only graph lifecycles, native node identity and invocation scope. [Assignments](specialist-assignments.md) owns durable work. [Cooperation](specialist-cooperation.md) owns governed delegation and acceptance. [Stand maintenance](stand-maintenance.md) tracks the installed pilot separately.
 
 ## Domain entities
 

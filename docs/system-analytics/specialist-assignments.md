@@ -2,7 +2,7 @@
 
 ## Purpose
 
-**Implemented: persistence, input/state services and native company execution; Designed: complete invocation routing and verified assignment completion — ADR-203.** A specialist assignment preserves requested work, responsibility, input and outcome across runs. It is distinct from [human work assignments](assignments.md), execution-host placement, private memory and long-term [Company Brain](company-brain.md).
+**ADR-203.** A specialist assignment preserves requested work, responsibility, input and verified outcome across runs. It reuses the native company and project intake, execution and delivery paths. [Human work assignments](assignments.md), execution-host placement, private memory and long-term [Company Brain](company-brain.md) retain their own lifecycles. Installed stand acceptance is tracked in the [qualification contract](company-brain-specialists-qualification.md).
 
 ## Domain entities
 
@@ -648,7 +648,7 @@ company agent toolset. This checkpoint is not package or pilot readiness.
 
 ### Versioned context persistence and attribution
 
-**Implemented: retained history, session-user and scoped execution read/update, and authorized runtime projection. Governed child/result acceptance remains Designed (T27/T28).**
+**Implemented:** retained history, session-user and scoped execution read/update, authorized runtime projection, and governed child-result acceptance. Assignment completion requires its separate verified acceptance decision.
 
 Context has its own CAS revision and an exact assignment input revision. An update
 must name both the expected context revision and expected input revision; an

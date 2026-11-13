@@ -2,7 +2,7 @@
 
 ## Purpose
 
-**Designed — ADR-203.** Extend the existing RAH delegation, structured result collection and prompt-owner recovery with assignment-scoped responsibility and working context. This domain does not introduce another scheduler, run kind, execution attempt ledger or native unbounded subagent channel.
+**ADR-203.** Governed delegation, result collection, rework, assignment-wide budgets and renewable responsibility use the existing RAH, scheduler, execution ledger and prompt-owner recovery. The installed stand package and its interruption matrix have a separate [qualification gate](company-brain-specialists-qualification.md).
 
 ## Domain entities
 
@@ -85,7 +85,7 @@ budgets remain the T27/T29 contracts above.
 
 Company coordination resolves company agent/Flow children through explicit installed bindings. Project children use actual project admission. Cross-repository automatic delivery is not added. Context/evidence sharing intersects initiating principal, current child binding, source restrictions and assignment grant; the model cannot widen recipients or assert permission.
 
-Designed default maxima are depth 2 (absolute from root), fanout 4, active children 2, total child attempts 8, tokens 100000, wall-clock 30 minutes and consecutive failures 3, all min-merged with existing instance/ancestor ceilings. A declared smaller limit remains binding. Operator policy may explicitly choose another bounded value before launch; a child or retry cannot raise it. Wall-clock includes parked/HITL/resource time from first assignment admission; expiration stops new work and requests confirmed teardown, never declares external effect failure. A current authorized human can append an explicit policy/budget revision without erasing already consumed time/tokens.
+Default maxima are depth 2 (absolute from root), fanout 4, active children 2, total child attempts 8, 100,000 tokens, 30 minutes and three consecutive failures. The frozen reviewed execution policy can set a different tree token ceiling before launch. The assignment takes the lower configured token ceiling, any stricter work or ancestor limit, and any retained limit from prior work. A child or retry cannot raise it. Wall time includes time spent parked, awaiting a human or waiting for a resource. Expiration blocks new work and requests teardown while preserving the retained external effect state.
 
 Usage projects from existing run/session/turn usage with stable identity, including all coordinator replacements/rework attempts. Cumulative updates charge only the monotonic delta once; replay cannot double-charge. Assignment budget projection is not a new attempt ledger. Existing global pool locks/counters gate new and resumed work, including company rows. Parent WaitingOnChildren/Review/NeedsInputIdle release capacity as existing run predicates specify; continuation reacquires capacity rather than directly writing Running.
 
@@ -102,8 +102,8 @@ rolls back Run creation and leaves the logical work receipt available for
 inspection. Current ancestor ceilings also constrain new reservations. The
 existing scheduler checks assignment usage and open work before a direct start
 or queued promotion. A budget-blocked child stays Pending and does not take a
-slot or occupy the eligible queue window. Teardown of already-running work and
-replacement admission remain open.
+slot or occupy the eligible queue window. Running work uses the same meters
+for teardown, and replacement admission retains prior usage.
 Shared tree admission also counts open native reservations against the parent
 fanout and ancestor child-attempt ceilings. The binding transaction credits
 only its exact open reservation when it rechecks those ceilings.
