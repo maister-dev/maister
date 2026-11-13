@@ -17,6 +17,7 @@ import {
   retryRefusal,
 } from "./retry-guards";
 import { projectSpecialistReplacementSchema } from "./retry-snapshot";
+import { parseScheduledRequestSnapshot } from "./scheduled-request";
 
 import {
   authorizeRunKnowledgeDisclosure,
@@ -25,6 +26,7 @@ import {
 import { pgErrorOf, redactQueryError } from "@/lib/db/pg-error";
 import { authorizeAssignment } from "@/lib/specialist-assignments/access";
 import { assignmentBudgetAllowsDispatchSql } from "@/lib/specialist-assignments/delegated-budget";
+import { loadProjectCronReplacementSource } from "@/lib/specialist-assignments/project-cron-appointment";
 
 export async function authorizeProjectRetryReceipt(
   db: Db,
@@ -57,7 +59,7 @@ export async function authorizeProjectRetryReceipt(
   });
 }
 
-/** Only a settled, taskless manual operational appointment with positive pre-dispatch evidence qualifies. */
+/** A settled, taskless operational appointment must carry positive pre-dispatch evidence. */
 export async function prepareProjectSpecialistReplacement(
   db: Db,
   source: Run,
@@ -67,6 +69,8 @@ export async function prepareProjectSpecialistReplacement(
   runnerId: string;
   runner: unknown;
 }> {
+  const cron = source.triggerSource === "cron";
+
   if (
     !source.projectId ||
     source.companyId ||
@@ -76,10 +80,13 @@ export async function prepareProjectSpecialistReplacement(
     source.taskId ||
     source.parentRunId ||
     source.persistent ||
-    source.triggerSource !== "manual" ||
+    (source.triggerSource !== "manual" && !cron) ||
     source.triggerEventId !== null ||
-    source.agentScheduleId ||
-    source.scheduledRequestSnapshot ||
+    (cron
+      ? !source.agentScheduleId ||
+        !source.scheduledRequestSnapshot ||
+        source.retryOfRunId !== null
+      : Boolean(source.agentScheduleId || source.scheduledRequestSnapshot)) ||
     !source.resultContract ||
     !source.operationalTerminal ||
     !source.executionPolicy ||
@@ -120,7 +127,7 @@ export async function prepareProjectSpecialistReplacement(
     JOIN specialist_input_revisions input ON input.assignment_id=subject.id AND input.revision=subject.input_revision
     JOIN specialist_owner_claims owner ON owner.assignment_id=subject.id AND owner.run_id=source.id AND owner.placement_id=source.execution_assignment_id
     JOIN run_sessions session ON session.run_id=source.id AND session.session_name='default'
-    WHERE source.id=${source.id} AND subject.status='active' AND subject.origin->>'kind'='manual'
+    WHERE source.id=${source.id} AND subject.status='active' AND subject.origin->>'kind'=${cron ? "schedule" : "manual"}
       AND subject.requester->>'kind'='user' AND subject.requester->>'id'=${userId}
       AND input.revision=link.input_revision AND link.role IN ('specialist','continuation')
       AND specialist_current_root_id(subject.id,subject.input_revision)=source.id
@@ -151,9 +158,34 @@ export async function prepareProjectSpecialistReplacement(
     throw retryRefusal("reconciliation_required");
   if (row.budget_allowed !== true)
     throw retryRefusal("assignment_budget_exhausted");
+  const scheduled = parseScheduledRequestSnapshot(
+    source.scheduledRequestSnapshot,
+  );
+  const appointment = scheduled
+    ? {
+        schemaVersion: 1 as const,
+        kind: "cron" as const,
+        attemptId: scheduled.triggerAttemptId,
+        scheduleId: scheduled.scheduleId,
+        runId: source.id,
+      }
+    : undefined;
+
+  if (appointment) {
+    const original = await loadProjectCronReplacementSource(db, appointment);
+
+    if (
+      original.projectId !== source.projectId ||
+      original.agentId !== source.sourceAgentId ||
+      original.userId !== userId ||
+      original.scheduledRequest.scheduleId !== source.agentScheduleId ||
+      retryDigest(original.scheduledRequest) !== retryDigest(scheduled)
+    )
+      throw retryRefusal("retry_context_changed");
+  }
 
   return {
-    witness: witness.data,
+    witness: { ...witness.data, ...(appointment ? { cron: appointment } : {}) },
     runnerId: row.runner_id,
     runner: row.runner_snapshot,
   };
@@ -170,7 +202,7 @@ export async function assertProjectSpecialistReplacement(
   if (
     recipe.strategy !== "pre_work_retry" ||
     recipe.projectId !== source.projectId ||
-    recipe.trigger.source !== "manual" ||
+    recipe.trigger.source !== source.triggerSource ||
     recipe.taskId !== null ||
     retryDigest(current.witness) !== retryDigest(recipe.replacement) ||
     retryDigest(current.runner) !== retryDigest(recipe.runner)

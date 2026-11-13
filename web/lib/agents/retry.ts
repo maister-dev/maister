@@ -745,6 +745,10 @@ async function deliverClaim(db: Db, claim: AgentRetryClaim): Promise<void> {
           : intent.recipe.trigger.payload,
     },
     retryClaim: claim,
+    agentScheduleId:
+      intent.recipe.version === 2
+        ? intent.recipe.replacement?.cron?.scheduleId
+        : undefined,
     scheduledRequestSnapshot: intent.recipe.scheduledRequestSnapshot ?? null,
   });
 

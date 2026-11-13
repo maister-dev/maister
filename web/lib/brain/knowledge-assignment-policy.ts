@@ -137,13 +137,15 @@ function projectOriginAssignmentInputReadPolicy(
     (${origin.nodeAttemptId}::text IS NULL
       AND execution.run_kind='agent' AND (appointment.role='specialist' OR (
         appointment.role='continuation' AND appointment.work_id IS NULL
-        AND requested.origin->>'kind'='manual' AND EXISTS (
+        AND requested.origin->>'kind' IN ('manual','schedule') AND EXISTS (
           SELECT 1 FROM agent_retry_intents retry
           WHERE retry.project_id=execution.project_id AND retry.source_run_id=execution.retry_of_run_id
             AND retry.successor_run_id=execution.id AND retry.actor_user_id=initiator.id
             AND retry.recipe->'replacement'->>'assignmentId'=appointment.assignment_id
             AND retry.recipe->'replacement'->'inputRevision'=to_jsonb(appointment.input_revision)
             AND retry.recipe->'replacement'->>'inputSha256'=original.digest
+            AND (requested.origin->>'kind'='manual' OR project_cron_retry_source_matches(
+              retry.source_run_id,initiator.id,retry.recipe->'replacement'->'cron'))
             AND ((retry.state='accepted' AND execution.status='Pending')
               OR (retry.state='launched' AND retry.created_run_id=execution.id))
           FOR SHARE

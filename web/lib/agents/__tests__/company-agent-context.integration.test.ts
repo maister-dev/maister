@@ -6686,6 +6686,85 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
           )
         ).rows,
       ).toEqual([]);
+      await database.pool.query(
+        "UPDATE agent_schedules SET next_fire_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+        [cronSource.id],
+      );
+      const retryTime = new Date();
+      const failedCronClaim = await claimCronAgentAttempt(
+        db,
+        cronSource.id,
+        retryTime,
+        new Date(retryTime.getTime() + 300000),
+      );
+
+      if (!failedCronClaim)
+        throw new Error(
+          "The project cron replacement fixture could not claim its reviewed source",
+        );
+      assertProjectAgentTriggerClaim(failedCronClaim);
+      const failedCron = await submitProjectCronAssignment(db, failedCronClaim);
+      const [sourceRunId] = failedCron.assignment.runIds;
+
+      await database.pool.query(
+        "UPDATE agent_trigger_attempts SET due_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+        [failedCronClaim.id],
+      );
+      await reconcileAgentTriggerAttempts(db, new Date());
+      const failure = await prepareUndispatchedAgentFailure(sourceRunId, {
+        db,
+        reason: "agent_dispatch_failed",
+      });
+
+      await db.transaction(failure.apply);
+      const preview = await getAgentRetryOptions(
+        db,
+        sourceRunId,
+        administratorId,
+      );
+
+      expect(preview).toMatchObject({
+        eligible: true,
+        selectedRunnerId: runnerId,
+      });
+      const retry = await acceptAgentRetry(db, sourceRunId, administratorId, {
+        requestKey: randomUUID(),
+        runnerId,
+        previewFingerprint: preview.previewFingerprint,
+      });
+
+      await expect(runAgentRetryAdmissionSweep(db)).resolves.toEqual({
+        processed: 1,
+        errors: [],
+      });
+      const successor = await getAgentRetryReceipt(
+        db,
+        sourceRunId,
+        retry.retryIntentId,
+        administratorId,
+      );
+
+      expect(successor).toMatchObject({
+        intentState: "launched",
+        runStatus: "Pending",
+      });
+      const [retained] = await db
+        .select()
+        .from(runs)
+        .where(eq(runs.id, successor.runId!));
+
+      expect(retained).toMatchObject({
+        triggerSource: "cron",
+        agentScheduleId: cronSource.id,
+        retryOfRunId: sourceRunId,
+        scheduledRequestSnapshot: failedCronClaim.scheduledRequestSnapshot,
+      });
+      const settle = await prepareUndispatchedAgentFailure(successor.runId!, {
+        db,
+        reason: "fixture_replacement_complete",
+      });
+
+      await db.transaction(settle.apply);
     } finally {
       await database.pool.query("DELETE FROM execution_host_pressure");
     }

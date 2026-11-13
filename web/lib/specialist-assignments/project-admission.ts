@@ -24,7 +24,10 @@ import {
 import { authorizeAssignment } from "./access";
 import { projectSourceAppointmentSchema } from "./project-source-types";
 import { loadProjectCommentAppointment } from "./project-comment-appointment";
-import { loadProjectCronAppointment } from "./project-cron-appointment";
+import {
+  loadProjectCronAppointment,
+  loadProjectCronReplacementSource,
+} from "./project-cron-appointment";
 import { loadProjectEventAppointment } from "./project-event-appointment";
 import { assertProjectCoordinatorProvider } from "./project-flow-provider";
 
@@ -199,8 +202,11 @@ export async function prepareProjectAssignmentAdmission(
       (replacement.assignmentId !== assignment.id ||
         replacement.inputRevision !== input.revision ||
         replacement.inputSha256 !== input.digest ||
-        assignment.origin.kind !== "manual" ||
-        context.triggerSource !== "manual")) ||
+        (replacement.cron
+          ? assignment.origin.kind !== "schedule" ||
+            context.triggerSource !== "cron"
+          : assignment.origin.kind !== "manual" ||
+            context.triggerSource !== "manual"))) ||
     assignment.inputRevision !== reference.inputRevision ||
     assignment.specialistBindingId !== context.bindingId ||
     assignment.requester.kind !== "user" ||
@@ -267,7 +273,7 @@ export async function prepareProjectAssignmentAdmission(
   } else if (assignment.origin.kind === "schedule") {
     if (
       reference.source?.kind !== "cron" ||
-      reference.source.runId !== context.runId ||
+      reference.source.runId !== (replacement?.cron?.runId ?? context.runId) ||
       context.triggerSource !== "cron" ||
       context.triggerEventId != null ||
       context.agentScheduleId !== reference.source.scheduleId
@@ -277,7 +283,11 @@ export async function prepareProjectAssignmentAdmission(
         "Native project cron admission requires its exact reserved source Run",
         { details: { reason: "project_cron_appointment_required" } },
       );
-    const source = await loadProjectCronAppointment(tx, reference.source);
+    const source = await (
+      replacement
+        ? loadProjectCronReplacementSource
+        : loadProjectCronAppointment
+    )(tx, reference.source);
 
     if (
       source.projectId !== context.projectId ||
@@ -454,6 +464,7 @@ export async function loadProjectAssignmentExecutionInput(
     flowRevisionId?: string | null;
     flowRevision?: string;
     retryOfRunId?: string | null;
+    scheduledRequestSnapshot?: ScheduledAgentRequestSnapshot | null;
   }>,
 ): Promise<AssignmentInputRevision | null> {
   const references =
@@ -517,6 +528,27 @@ export async function loadProjectAssignmentExecutionInput(
         "assignments:recover",
         input.snapshot.authoritySnapshot.executionPolicy,
       );
+    if (run.retryOfRunId && run.scheduledRequestSnapshot) {
+      const cron = await loadProjectCronReplacementSource(tx, {
+        schemaVersion: 1,
+        kind: "cron",
+        runId: run.retryOfRunId,
+        attemptId: run.scheduledRequestSnapshot.triggerAttemptId,
+        scheduleId: run.scheduledRequestSnapshot.scheduleId,
+      });
+
+      if (
+        cron.userId !== link.user_id ||
+        cron.projectId !== projectId ||
+        contentDigest(cron.scheduledRequest) !==
+          contentDigest(run.scheduledRequestSnapshot)
+      )
+        throw new MaisterError(
+          "CONFLICT",
+          "The project schedule changed after replacement admission",
+          { details: { reason: "project_cron_source_changed" } },
+        );
+    }
     const standing = input.snapshot.standingDefinition;
 
     if (standing.schemaVersion === 2) {

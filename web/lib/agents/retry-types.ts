@@ -4,6 +4,7 @@ import type { EffectiveAgentDefinition } from "@/lib/agents/effective";
 import type { AgentTriggerSource } from "@/lib/agents/launch";
 import type { CompanyConfigurationReference } from "@/lib/agents/trigger-attempt-types";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
+import type { ProjectCronAppointment } from "@/lib/specialist-assignments/project-source-types";
 
 export type AgentRetryStrategy = "pre_work_retry" | "fresh_qualification";
 
@@ -43,6 +44,7 @@ export type ProjectSpecialistReplacement = SpecialistReplacementWitness & {
   assignmentId: string;
   inputRevision: number;
   inputSha256: string;
+  cron?: ProjectCronAppointment;
 };
 
 export type ProjectAgentRetryRecipe = AgentRetryRecipeFields &

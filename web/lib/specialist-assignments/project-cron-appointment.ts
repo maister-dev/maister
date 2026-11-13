@@ -3,6 +3,7 @@ import "server-only";
 import type { SqlTransaction } from "@/lib/db/sql-types";
 import type { ProjectCronAppointment } from "./project-source-types";
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
+import type { SQL } from "drizzle-orm";
 
 import { sql } from "drizzle-orm";
 import { z } from "zod";
@@ -44,6 +45,30 @@ export async function loadProjectCronAppointment(
   tx: SqlTransaction,
   value: ProjectCronAppointment,
 ): Promise<ProjectCronSource> {
+  return loadReviewedProjectCronSource(
+    tx,
+    value,
+    sql`(invocation.outcome IS NULL OR ${queuedProjectSourceHandoffPredicate()})`,
+  );
+}
+
+/** Replacement keeps the original settled source claim without reentering trigger intake. */
+export async function loadProjectCronReplacementSource(
+  tx: SqlTransaction,
+  value: ProjectCronAppointment,
+): Promise<ProjectCronSource> {
+  return loadReviewedProjectCronSource(
+    tx,
+    value,
+    sql`invocation.run_id=invocation.reserved_run_id AND invocation.outcome IN ('queued','launched','deduplicated')`,
+  );
+}
+
+async function loadReviewedProjectCronSource(
+  tx: SqlTransaction,
+  value: ProjectCronAppointment,
+  outcome: SQL,
+): Promise<ProjectCronSource> {
   const appointment = projectCronAppointmentSchema.safeParse(value);
 
   if (!appointment.success)
@@ -65,7 +90,7 @@ export async function loadProjectCronAppointment(
     WHERE invocation.id=${reference.attemptId} AND invocation.schedule_id=${reference.scheduleId}
       AND invocation.reserved_run_id=${reference.runId} AND invocation.company_id IS NULL
       AND invocation.trigger_source='cron' AND invocation.trigger_event_id IS NULL AND invocation.provenance='claim'
-      AND (invocation.outcome IS NULL OR ${queuedProjectSourceHandoffPredicate()})
+      AND ${outcome}
     FOR SHARE OF invocation,source,binding
   `)
     ).rows[0],

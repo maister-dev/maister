@@ -1519,6 +1519,7 @@ async function launchAgentRunWithAdmission(
           inputRevision: replacement.inputRevision,
           expectedRevision: replacement.assignmentRevision,
           userId: retryIntent.actorUserId,
+          ...(replacement.cron ? { source: replacement.cron } : {}),
         }
       : input.specialistAssignment;
   const ctx: LoadedAgentContext = retryIntent
