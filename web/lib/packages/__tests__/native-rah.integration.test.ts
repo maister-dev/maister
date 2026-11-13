@@ -17,6 +17,9 @@ import {
 import { attachAgent } from "@/lib/agents/project-links";
 import { loadFlowManifest, readAndValidateFormSchemaDoc } from "@/lib/config";
 import { createCompanyGrants } from "@/lib/company/grants";
+import { platformAcpRunners, platformRuntimeSettings } from "@/lib/db/schema";
+import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
+import { reserveCompanyManualAssignment } from "@/lib/specialist-assignments/company-manual-intake";
 import { assertNodeLaunchable } from "@/lib/flows/enforcement";
 import { deriveSessionEnforcementProfile } from "@/lib/flows/enforcement-profile";
 import { enableRevision } from "@/lib/flows/lifecycle";
@@ -71,124 +74,6 @@ afterAll(async () => {
     vi.restoreAllMocks();
   }
 });
-
-it.skipIf(!standSource || !standRevision)(
-  "installs the real pinned stand Flow with its required operational evidence export",
-  async () => {
-    const installed = await installPackageRevision({
-      source: standSource!,
-      version: "stand-operations/v0.1.0",
-      path: "packages/stand-operations",
-      db: database.db,
-    });
-
-    expect(installed).toMatchObject({
-      name: "stand-operations",
-      resolvedRevision: standRevision,
-    });
-    await trustPackageRevision({
-      packageInstallId: installed.id,
-      db: database.db,
-    });
-    for (const role of ["coordinator", "diagnostic"]) {
-      const definition = await resolveInstalledAgentDefinition(database.db, {
-        agentId: `stand-operations:${role}`,
-        packageInstallId: installed.id,
-      });
-
-      expect(definition.parsed.specialist?.targetClasses).toEqual(["stand"]);
-      expect(definition.parsed.workspace).toBe("none");
-      expect(definition.parsed.flow).toBe(
-        role === "coordinator" ? "stand-maintenance" : null,
-      );
-    }
-    const {
-      rows: [flow],
-    } = await database.pool.query<{
-      id: string;
-      installed_path: string;
-      resolved_revision: string;
-      manifest: unknown;
-      manifest_digest: string;
-    }>(
-      "SELECT id,installed_path,resolved_revision,manifest,manifest_digest FROM flow_revisions WHERE flow_ref_id='stand-maintenance' AND resolved_revision=$1",
-      [standRevision],
-    );
-
-    expect(flow).toBeDefined();
-    const contract = await resolveFlowExportContract({
-      flowRefId: "stand-maintenance",
-      manifest: flow!.manifest,
-      revision: {
-        id: flow!.id,
-        installedPath: flow!.installed_path,
-        resolvedRevision: flow!.resolved_revision,
-      },
-    });
-
-    expect(contract).toMatchObject({
-      kind: "flow_export",
-      nativeContract: "operational_evidence_v2",
-      schemaVersion: 2,
-      required: true,
-      producerNodeIds: ["execute", "declined"],
-    });
-    const reviewerId = randomUUID();
-
-    await database.pool.query(
-      "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'admin','active')",
-      [reviewerId, `${reviewerId}@example.test`],
-    );
-    const grant = await createCompanyGrants(database.db, reviewerId, {
-      principalKind: "user",
-      principalId: reviewerId,
-      actions: ["specialists:read", "specialists:manage", "assignments:answer"],
-      idempotencyKey: randomUUID(),
-    });
-    const definition = await resolveInstalledAgentDefinition(database.db, {
-      agentId: "stand-operations:coordinator",
-      packageInstallId: installed.id,
-    });
-    const { specialist } = await createCompanySpecialistBinding(
-      database.db,
-      reviewerId,
-      definition.parsed.id,
-      {
-        owner: { kind: "company", companyId: grant.page.companyId },
-        packageInstallId: installed.id,
-        packageRevision: installed.resolvedRevision,
-        definitionSha256: agentDefinitionSha256(definition.parsed),
-        coordinatorFlowRevisionId: flow!.id,
-        configuration: {},
-        grantActions: ["assignments:read", "targets:read"],
-        enabled: true,
-        idempotencyKey: randomUUID(),
-      },
-    );
-
-    await expect(
-      createCompanyFlowBinding(database.db, reviewerId, {
-        owner: specialist.owner,
-        specialistBindingId: specialist.bindingId,
-        specialistRevision: specialist.configRevision,
-        flowRevisionId: flow!.id,
-        manifestSha256: flow!.manifest_digest,
-        execution: { workspace: "none", completion: "result" },
-        enabled: true,
-        roleMappings: { operator: [reviewerId] },
-        idempotencyKey: randomUUID(),
-      }),
-    ).resolves.toMatchObject({
-      binding: {
-        configuration: {
-          enabled: true,
-          roleMappings: { operator: [reviewerId] },
-          routingAuthority: [{ userId: reviewerId }],
-        },
-      },
-    });
-  },
-);
 
 it("IT-CBE-04 installs exact native RAH contracts without combining install, trust, enablement or execution", async () => {
   const installed = await installPackageRevision({
@@ -472,3 +357,177 @@ it("IT-CBE-04 installs exact native RAH contracts without combining install, tru
   ).toEqual([{ enablement_state: "Installed", trust_status: "trusted" }]);
   expect((await database.pool.query("SELECT id FROM runs")).rows).toEqual([]);
 });
+
+it.skipIf(!standSource || !standRevision)(
+  "installs the real pinned stand Flow with its required operational evidence export",
+  async () => {
+    const installed = await installPackageRevision({
+      source: standSource!,
+      version: "stand-operations/v0.1.0",
+      path: "packages/stand-operations",
+      db: database.db,
+    });
+
+    expect(installed).toMatchObject({
+      name: "stand-operations",
+      resolvedRevision: standRevision,
+    });
+    await trustPackageRevision({
+      packageInstallId: installed.id,
+      db: database.db,
+    });
+    for (const role of ["coordinator", "diagnostic"]) {
+      const definition = await resolveInstalledAgentDefinition(database.db, {
+        agentId: `stand-operations:${role}`,
+        packageInstallId: installed.id,
+      });
+
+      expect(definition.parsed.specialist?.targetClasses).toEqual(["stand"]);
+      expect(definition.parsed.workspace).toBe("none");
+      expect(definition.parsed.flow).toBe(
+        role === "coordinator" ? "stand-maintenance" : null,
+      );
+    }
+    const {
+      rows: [flow],
+    } = await database.pool.query<{
+      id: string;
+      installed_path: string;
+      resolved_revision: string;
+      manifest: unknown;
+      manifest_digest: string;
+    }>(
+      "SELECT id,installed_path,resolved_revision,manifest,manifest_digest FROM flow_revisions WHERE flow_ref_id='stand-maintenance' AND resolved_revision=$1",
+      [standRevision],
+    );
+
+    expect(flow).toBeDefined();
+    const contract = await resolveFlowExportContract({
+      flowRefId: "stand-maintenance",
+      manifest: flow!.manifest,
+      revision: {
+        id: flow!.id,
+        installedPath: flow!.installed_path,
+        resolvedRevision: flow!.resolved_revision,
+      },
+    });
+
+    expect(contract).toMatchObject({
+      kind: "flow_export",
+      nativeContract: "operational_evidence_v2",
+      schemaVersion: 2,
+      required: true,
+      producerNodeIds: ["execute", "declined"],
+    });
+    const reviewerId = randomUUID();
+
+    await database.pool.query(
+      "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'admin','active')",
+      [reviewerId, `${reviewerId}@example.test`],
+    );
+    const grant = await createCompanyGrants(database.db, reviewerId, {
+      principalKind: "user",
+      principalId: reviewerId,
+      actions: [
+        "specialists:read",
+        "specialists:manage",
+        "assignments:answer",
+        "assignments:read",
+        "assignments:submit",
+        "assignments:update",
+      ],
+      idempotencyKey: randomUUID(),
+    });
+    const definition = await resolveInstalledAgentDefinition(database.db, {
+      agentId: "stand-operations:coordinator",
+      packageInstallId: installed.id,
+    });
+    const runnerId = randomUUID();
+
+    await database.db.insert(platformAcpRunners).values({
+      id: runnerId,
+      adapter: "claude",
+      capabilityAgent: "claude",
+      model: "installed-stand-contract-fixture",
+      provider: { kind: "anthropic" },
+      readinessStatus: "Ready",
+    });
+    await database.db
+      .update(platformRuntimeSettings)
+      .set({ defaultRunnerId: runnerId });
+    const { specialist } = await createCompanySpecialistBinding(
+      database.db,
+      reviewerId,
+      definition.parsed.id,
+      {
+        owner: { kind: "company", companyId: grant.page.companyId },
+        packageInstallId: installed.id,
+        packageRevision: installed.resolvedRevision,
+        definitionSha256: agentDefinitionSha256(definition.parsed),
+        coordinatorFlowRevisionId: flow!.id,
+        runnerId,
+        configuration: {},
+        grantActions: ["assignments:read", "targets:read"],
+        enabled: true,
+        idempotencyKey: randomUUID(),
+      },
+    );
+
+    await expect(
+      createCompanyFlowBinding(database.db, reviewerId, {
+        owner: specialist.owner,
+        specialistBindingId: specialist.bindingId,
+        specialistRevision: specialist.configRevision,
+        flowRevisionId: flow!.id,
+        manifestSha256: flow!.manifest_digest,
+        execution: { workspace: "none", completion: "result" },
+        enabled: true,
+        roleMappings: { operator: [reviewerId] },
+        idempotencyKey: randomUUID(),
+      }),
+    ).resolves.toMatchObject({
+      binding: {
+        configuration: {
+          enabled: true,
+          roleMappings: { operator: [reviewerId] },
+          routingAuthority: [{ userId: reviewerId }],
+        },
+      },
+    });
+    const { hosts } = await fakeExecutionHosts(database.db);
+    const { assignment } = await reserveCompanyManualAssignment(
+      database.db,
+      reviewerId,
+      {
+        owner: specialist.owner,
+        specialistBindingId: specialist.bindingId,
+        objective: "Inspect the configured component.",
+        expectedOutcome: "Evidence or a request for clarification.",
+        input: "",
+        targetIds: [],
+        inputRefs: [],
+        constraints: [],
+        verification: [{ kind: "result", required: true, referenceId: null }],
+        idempotencyKey: randomUUID(),
+      },
+      hosts,
+    );
+
+    expect(assignment.runIds).toHaveLength(1);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT project_id,task_id,company_id,result_contract->>'nativeContract' AS contract FROM runs WHERE id=$1",
+          [assignment.runIds[0]],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        project_id: null,
+        task_id: null,
+        company_id: grant.page.companyId,
+        contract: "operational_evidence_v2",
+      },
+    ]);
+  },
+);
