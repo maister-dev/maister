@@ -79,6 +79,7 @@ test("IT-CBO-02 admits the exact configured restart over mTLS and returns the or
         expiresAt: new Date(Date.now() + 5000).toISOString(),
       },
     }),
+    authorizeReceipt: async (intent) => intent.ownerEpoch === 2,
     manager: {
       inspect: async () => ({
         invocationId: effects === 0 ? "a".repeat(32) : "b".repeat(32),
@@ -175,5 +176,38 @@ test("IT-CBO-02 admits the exact configured restart over mTLS and returns the or
     ).status,
     409,
   );
+  assert.equal(effects, 1);
+  const readReceipt = (ownerEpoch: number) =>
+    new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const outgoing = request(
+        `https://127.0.0.1:${port}/operations/${body.operationId}`,
+        {
+          ca: cert,
+          cert,
+          key,
+          servername: "localhost",
+          headers: {
+            "X-Maister-Platform-Token": "fixture-credential",
+            "X-Maister-Owner-Epoch": ownerEpoch,
+            "X-Maister-Request-Digest": body.requestDigest,
+          },
+        },
+        async (incoming) => {
+          const chunks: Buffer[] = [];
+          for await (const chunk of incoming) chunks.push(Buffer.from(chunk));
+          resolve({
+            status: incoming.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString("utf8"),
+          });
+        },
+      );
+      outgoing.on("error", reject);
+      outgoing.end();
+    });
+  assert.equal((await readReceipt(1)).status, 403);
+  const reconciled = await readReceipt(2);
+
+  assert.equal(reconciled.status, 200);
+  assert.deepEqual(JSON.parse(reconciled.body), JSON.parse(replay.body));
   assert.equal(effects, 1);
 });

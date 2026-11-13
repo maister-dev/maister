@@ -39,6 +39,7 @@ export type StandHelperOptions = Readonly<{
   target: HelperTarget;
   journal: RestartJournal;
   authorize(intent: RestartIntent): Promise<Authorization>;
+  authorizeReceipt(intent: RestartIntent): Promise<boolean>;
   manager: Pick<SystemdDriver, "inspect" | "restart">;
 }>;
 
@@ -62,6 +63,7 @@ class HelperError extends Error {
 const identifier = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const digest = /^[a-f0-9]{64}$/;
 const maximumRequestBytes = 65_536;
+const receiptPath = /^\/operations\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})$/;
 const requestFields = [
   "operationId",
   "targetIncarnation",
@@ -116,6 +118,28 @@ function requiredIdentity(value: unknown): string {
     throw new HelperError(400, "CONFIG", "invalid_request");
 
   return value;
+}
+
+function readReceiptSelector(request: IncomingMessage): {
+  requestDigest: string;
+  ownerEpoch: number;
+} {
+  const digests = request.headersDistinct["x-maister-request-digest"];
+  const epochs = request.headersDistinct["x-maister-owner-epoch"];
+  const requestDigest = digests?.length === 1 ? digests[0] : undefined;
+  const epoch = epochs?.length === 1 ? epochs[0] : undefined;
+  const ownerEpoch = Number(epoch);
+
+  if (
+    !requestDigest ||
+    !digest.test(requestDigest) ||
+    !epoch ||
+    !/^[1-9][0-9]{0,15}$/.test(epoch) ||
+    !Number.isSafeInteger(ownerEpoch)
+  )
+    throw new HelperError(400, "CONFIG", "invalid_request");
+
+  return { requestDigest, ownerEpoch };
 }
 
 async function readRestart(request: IncomingMessage): Promise<RestartRequest> {
@@ -287,6 +311,31 @@ export function createStandHelper(options: StandHelperOptions): Server {
         enabled: true,
         componentIds: [...components.keys()],
       });
+      return;
+    }
+    const receiptId =
+      request.method === "GET"
+        ? request.url?.match(receiptPath)?.[1]
+        : undefined;
+
+    if (receiptId) {
+      const { requestDigest, ownerEpoch } = readReceiptSelector(request);
+      const entry = options.journal.read(receiptId);
+
+      if (!entry || entry.requestDigest !== requestDigest)
+        throw new HelperError(404, "PRECONDITION", "receipt_missing");
+      if (
+        !(await options.authorizeReceipt({
+          operationId: receiptId,
+          requestDigest,
+          ownerEpoch,
+          resourceKey: entry.resourceKey,
+          targetIncarnation: entry.targetIncarnation,
+        }))
+      )
+        throw new HelperError(403, "PERMISSION", "authority_refused");
+
+      json(response, 200, targetReceipt(entry));
       return;
     }
     if (request.method !== "POST" || request.url !== "/operations")

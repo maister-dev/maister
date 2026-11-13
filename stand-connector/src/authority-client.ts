@@ -14,6 +14,7 @@ export type AuthorityConfig = Readonly<{
 }>;
 type AuthorityClient = Readonly<{
   authorize(intent: RestartIntent): Promise<Authorization>;
+  authorizeReceipt(intent: RestartIntent): Promise<boolean>;
 }>;
 
 export class AuthorityClientError extends Error {
@@ -126,57 +127,62 @@ export function createAuthorityClient(
   )
     throw new AuthorityClientError("unsupported_config");
 
+  async function authorizePurpose(
+    intent: RestartIntent,
+    purpose: "dispatch" | "reconcile",
+  ): Promise<Authorization> {
+    const {
+      operationId,
+      ownerEpoch,
+      requestDigest,
+      resourceKey,
+      targetIncarnation,
+    } = intent;
+    const nonce = randomUUID();
+    const identity = {
+      ownerEpoch,
+      requestDigest,
+      resourceKey,
+      targetIncarnation,
+      nonce,
+      purpose,
+    };
+    const reply = await readPermit(
+      origin,
+      config,
+      operationId,
+      JSON.stringify(identity),
+    );
+
+    if (reply.status === 401 || reply.status === 403 || reply.status === 409)
+      return { decision: "refused" };
+    if (reply.status !== 200)
+      throw new AuthorityClientError("authority_unavailable");
+    const permit = decodePermit(reply.text);
+    const { permitId, expiresAt } = permit;
+    const now = Date.now();
+    const expiry = typeof expiresAt === "string" ? Date.parse(expiresAt) : NaN;
+
+    if (
+      Object.keys(permit).length !== 10 ||
+      permit.allowed !== true ||
+      permit.operationId !== operationId ||
+      Object.entries(identity).some(
+        ([field, expected]) => permit[field] !== expected,
+      ) ||
+      typeof permitId !== "string" ||
+      !/^[A-Za-z0-9._:-]{1,128}$/.test(permitId) ||
+      typeof expiresAt !== "string" ||
+      !(expiry > now && expiry <= now + 5000)
+    )
+      throw new AuthorityClientError("invalid_permit");
+
+    return { decision: "allowed", permit: { permitId, expiresAt } };
+  }
+
   return {
-    async authorize(intent: RestartIntent): Promise<Authorization> {
-      const {
-        operationId,
-        ownerEpoch,
-        requestDigest,
-        resourceKey,
-        targetIncarnation,
-      } = intent;
-      const nonce = randomUUID();
-      const purpose = "dispatch";
-      const identity = {
-        ownerEpoch,
-        requestDigest,
-        resourceKey,
-        targetIncarnation,
-        nonce,
-        purpose,
-      };
-      const reply = await readPermit(
-        origin,
-        config,
-        operationId,
-        JSON.stringify(identity),
-      );
-
-      if (reply.status === 401 || reply.status === 403 || reply.status === 409)
-        return { decision: "refused" };
-      if (reply.status !== 200)
-        throw new AuthorityClientError("authority_unavailable");
-      const permit = decodePermit(reply.text);
-      const { permitId, expiresAt } = permit;
-      const now = Date.now();
-      const expiry =
-        typeof expiresAt === "string" ? Date.parse(expiresAt) : NaN;
-
-      if (
-        Object.keys(permit).length !== 10 ||
-        permit.allowed !== true ||
-        permit.operationId !== operationId ||
-        Object.entries(identity).some(
-          ([field, expected]) => permit[field] !== expected,
-        ) ||
-        typeof permitId !== "string" ||
-        !/^[A-Za-z0-9._:-]{1,128}$/.test(permitId) ||
-        typeof expiresAt !== "string" ||
-        !(expiry > now && expiry <= now + 5000)
-      )
-        throw new AuthorityClientError("invalid_permit");
-
-      return { decision: "allowed", permit: { permitId, expiresAt } };
-    },
+    authorize: (intent) => authorizePurpose(intent, "dispatch"),
+    authorizeReceipt: async (intent) =>
+      (await authorizePurpose(intent, "reconcile")).decision === "allowed",
   };
 }

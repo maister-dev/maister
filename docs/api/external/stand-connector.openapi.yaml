@@ -88,13 +88,11 @@ paths:
   /operations/{operationId}:
     get:
       operationId: standHelperReceipt
-      summary: Designed — Inspect same original operation receipt
-      description: Designed; no implementation is implied. Requires current authenticated platform service
-        principal. URL identifiers are untrusted selectors resolved through current server ownership/access.
-        Actors, grants, source witnesses, target endpoint and execution ownership are derived from
-        authenticated context/server state. Writes compare canonical payload digest and expected revision;
-        exact replay returns the original currently accessible receipt, changed payload conflicts.
-      x-implementation-status: Designed
+      summary: Inspect the original operation receipt
+      description: The target returns the exact retained receipt after a current operation-bound
+        reconciliation permit. The selector includes the original intent digest and current recovery
+        owner epoch. This read never invokes systemd restart.
+      x-implementation-status: Implemented
       x-required-scope: authenticated platform service principal
       responses:
         "200":
@@ -130,6 +128,19 @@ paths:
             type: string
             minLength: 1
             maxLength: 128
+        - name: X-Maister-Owner-Epoch
+          in: header
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 9007199254740991
+        - name: X-Maister-Request-Digest
+          in: header
+          required: true
+          schema:
+            type: string
+            pattern: ^[a-f0-9]{64}$
   /operations/{operationId}/logs:
     get:
       operationId: standHelperLogs
