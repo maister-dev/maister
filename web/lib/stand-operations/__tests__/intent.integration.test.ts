@@ -1338,30 +1338,76 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
           ),
           { params: Promise.resolve({ operationId: operation.id }) },
         );
-      const readTarget = vi.fn(async (selector: { ownerEpoch: number }) => {
-        await authorize({
-          ...body,
-          ownerEpoch: selector.ownerEpoch,
-          purpose: "reconcile",
-          nonce: randomUUID(),
-        });
+      const readTarget = vi.fn(
+        async (selector: {
+          ownerEpoch: number;
+        }): Promise<typeof result | null> => {
+          await authorize({
+            ...body,
+            ownerEpoch: selector.ownerEpoch,
+            purpose: "reconcile",
+            nonce: randomUUID(),
+          });
 
-        return result;
-      });
+          return result;
+        },
+      );
 
       setDefaultTransportForTests({
         ...fake.transport,
         readStandReceipt: readTarget,
+      });
+      const { recoverInterruptedStandOperations } =
+        await import("../recovery-sweep");
+
+      await expect(recoverInterruptedStandOperations(db)).resolves.toEqual({
+        scanned: 0,
+        settled: 0,
+        pending: 0,
+      });
+      await database.pool.query(
+        "UPDATE stand_resource_claims SET expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",
+        [operation.id],
+      );
+      await database.pool.query(
+        "UPDATE stand_read_claims SET expires_at=clock_timestamp()-interval '31 seconds' WHERE operation_id=$1 AND purpose='reconcile'",
+        [operation.id],
+      );
+      readTarget.mockImplementationOnce(async ({ ownerEpoch }) => {
+        await authorize({
+          ...body,
+          ownerEpoch,
+          purpose: "reconcile",
+          nonce: randomUUID(),
+        });
+
+        return null;
+      });
+      await expect(recoverInterruptedStandOperations(db)).resolves.toEqual({
+        scanned: 1,
+        settled: 0,
+        pending: 1,
+      });
+      await expect(
+        getStandOperation(db, userId, operation.id),
+      ).resolves.toMatchObject({
+        effectState: "unknown",
+        disposition: "pending",
+      });
+      await expect(recoverInterruptedStandOperations(db)).resolves.toEqual({
+        scanned: 0,
+        settled: 0,
+        pending: 0,
       });
       const reconciled = await recover(operation.revision + 2);
 
       expect(reconciled.status).toBe(200);
       const adoptedEffect = await reconciled.json();
 
-      expect(readTarget).toHaveBeenCalledOnce();
+      expect(readTarget).toHaveBeenCalledTimes(2);
       expect((await recover(operation.revision + 2)).status).toBe(409);
       expect((await recover(adoptedEffect.revision)).status).toBe(200);
-      expect(readTarget).toHaveBeenCalledOnce();
+      expect(readTarget).toHaveBeenCalledTimes(2);
 
       expect(adoptedEffect).toMatchObject({
         effectState: "confirmed_applied",

@@ -27,6 +27,7 @@ export async function reconcileStandRestart(
   userId: string,
   operationId: string,
   raw: unknown,
+  context?: Readonly<{ kind: "scheduler" }>,
 ): Promise<StandOperation> {
   const parsed = reconciliationRequest.safeParse(raw);
 
@@ -41,6 +42,7 @@ export async function reconcileStandRestart(
     operationId,
     "reconcile",
     parsed.data.expectedRevision,
+    context,
   );
 
   if (

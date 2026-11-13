@@ -68,6 +68,7 @@ import { configuredEventStreamLagAgeMs } from "@/lib/instance-config";
 import { durableWorkersHealth } from "@/lib/workers/health";
 import { sweepOperationalDispositions } from "@/lib/gc/operational-disposition";
 import { sweepTaskLaunchPreparationCleanup } from "@/lib/tasks/launch-preparation-cleanup";
+import { recoverInterruptedStandOperations } from "@/lib/stand-operations/recovery-sweep";
 
 export type GcCompatibilitySummary = {
   worktreesPreserved: number;
@@ -366,6 +367,24 @@ export async function runSystemSweep(
   let digest: SystemSweepSummary["digest"] = null;
   let executionObservability: ExecutionObservabilitySummary | null = null;
   let pressure: HostPressureSweepSummary | null = null;
+
+  if (process.env.MAISTER_STAND_AUTHORITY_PORT) {
+    try {
+      const recovered = await recoverInterruptedStandOperations(getDb());
+
+      if (recovered.scanned)
+        log.info(recovered, "system_sweep stand receipt recovery");
+    } catch (error) {
+      const message = "stand receipt recovery failed";
+
+      errors.push(message);
+      bundleErrors.push(message);
+      log.error(
+        { errorType: error instanceof Error ? error.name : typeof error },
+        message,
+      );
+    }
+  }
 
   try {
     keepalive = await runSweepTick();

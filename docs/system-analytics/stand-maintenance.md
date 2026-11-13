@@ -183,6 +183,13 @@ exact eligible root result with the human acceptance decision.
 
 ### Recovery and current responsibility
 
+When the stand authority listener is configured, the existing system sweep
+reads up to three unresolved restart receipts after their dispatch claims
+expire. It uses the initiating user's current recovery and source access,
+takes a separate read claim, and backs off for at least 30 seconds after that
+claim expires. Missing or incomplete receipts preserve uncertainty and
+resource exclusion. The sweep issues only reads of the original operation.
+
 A session operator with current target read and recovery grants and access to
 the retained assignment input can record a hold at the exact unknown restart
 revision. The transaction retains the decision and keeps the resource claim

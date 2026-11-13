@@ -50,6 +50,7 @@ export async function claimStandReadAuthority(
   operationId: string,
   purpose: StandReadPurpose,
   expectedRevision?: number,
+  context?: Readonly<{ kind: "scheduler" }>,
 ): Promise<{ ownerEpoch: number; expiresAt: Date; operation: Operation }> {
   try {
     return await db.transaction(async (tx) => {
@@ -151,7 +152,10 @@ export async function claimStandReadAuthority(
             authority: authority.witness,
             expiresAt: sql`clock_timestamp()+interval '30 seconds'`,
           },
-          setWhere: sql`${standReadClaims.actorId}=${userId} OR ${standReadClaims.expiresAt}<=clock_timestamp()`,
+          setWhere:
+            context?.kind === "scheduler"
+              ? sql`${standReadClaims.expiresAt}<=clock_timestamp()`
+              : sql`${standReadClaims.actorId}=${userId} OR ${standReadClaims.expiresAt}<=clock_timestamp()`,
         })
         .returning({
           ownerEpoch: standReadClaims.ownerEpoch,
