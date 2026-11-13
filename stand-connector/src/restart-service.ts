@@ -6,7 +6,7 @@ import type {
   ServiceObservation,
 } from "./restart-journal.ts";
 
-type Authorization =
+export type Authorization =
   | Readonly<{ decision: "allowed"; permit: RestartPermit }>
   | Readonly<{ decision: "refused" }>;
 
