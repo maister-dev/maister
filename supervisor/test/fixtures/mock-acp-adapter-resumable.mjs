@@ -23,6 +23,7 @@
 //                             (per-session file `<acpSessionId>.json`).
 //                             Required for resume behaviour to work.
 //   MOCK_ACP_STOP_REASON      stopReason returned from prompt(). Default "end_turn".
+//   MOCK_ACP_INITIAL_PERMISSION_CANCEL_STOP_REASON  stopReason when the initial permission is cancelled.
 //   MOCK_ACP_REQUEST_PERMISSION  "1" → call requestPermission on first prompt.
 //   MOCK_ACP_HOLD_AFTER_PERMISSION  "1" → retain the selected turn until teardown.
 //   MOCK_ACP_FAIL_AFTER_PERMISSION  ACP request error after a selected permission.
@@ -64,6 +65,8 @@ import * as acp from "@agentclientprotocol/sdk/unstable";
 import { serveAgent } from "./acp-agent-app.mjs";
 
 const STOP_REASON = process.env.MOCK_ACP_STOP_REASON ?? "end_turn";
+const INITIAL_PERMISSION_CANCEL_STOP_REASON =
+  process.env.MOCK_ACP_INITIAL_PERMISSION_CANCEL_STOP_REASON ?? STOP_REASON;
 const REQUEST_PERMISSION = process.env.MOCK_ACP_REQUEST_PERMISSION === "1";
 const HOLD_AFTER_PERMISSION =
   process.env.MOCK_ACP_HOLD_AFTER_PERMISSION === "1";
@@ -520,6 +523,8 @@ class MockAgent {
             content: { type: "text", text: "permission outcome: cancelled" },
           },
         });
+
+        return { stopReason: INITIAL_PERMISSION_CANCEL_STOP_REASON };
       }
     }
 

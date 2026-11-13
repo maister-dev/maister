@@ -74,6 +74,9 @@ beforeAll(async () => {
     env: {
       MOCK_ACP_REQUEST_PERMISSION: "1",
       MOCK_ACP_STATE_DIR: journalPath,
+      // A cancelled permission interrupts this prompt even if the adapter
+      // responds before the checkpoint SIGTERM reaches it.
+      MOCK_ACP_INITIAL_PERMISSION_CANCEL_STOP_REASON: "cancelled",
       MAISTER_PERMISSION_MAX_HOURS: "0.0025",
     },
   });
@@ -789,14 +792,23 @@ describe("Owned Flow checkpointed gate permission resume", () => {
           .from(executionCommands)
           .where(eq(executionCommands.runId, seeded.runId));
 
+        const message = error instanceof Error ? error.message : String(error);
+        const state = JSON.stringify({
+          runId: seeded.runId,
+          runStatus: run?.status,
+          commands,
+        });
+        const driverTail = driver
+          .output()
+          .split("\n")
+          .filter((line) => !line.includes('"disposition":"duplicate"'))
+          .slice(-10)
+          .join("\n");
+
         throw new Error(
-          JSON.stringify({
-            runId: seeded.runId,
-            runStatus: run?.status,
-            commands,
-            driverOutput: driver.output(),
-            claimOutput: claimProcess?.output(),
-          }),
+          [message, state, driverTail, claimProcess?.output()]
+            .filter(Boolean)
+            .join("\n"),
           { cause: error },
         );
       } finally {
