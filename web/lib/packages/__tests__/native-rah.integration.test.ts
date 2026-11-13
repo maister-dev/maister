@@ -10,6 +10,7 @@ import { NextRequest } from "next/server";
 
 import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
 import { createCompanySpecialistBinding } from "@/lib/agents/company-bindings";
+import { buildOperationalContract } from "@/lib/agents/launch-contract";
 import { POST as bindCompanyFlow } from "@/app/api/company/flow-bindings/route";
 import { requireActiveUserById, type SessionUser } from "@/lib/authz";
 import {
@@ -399,6 +400,14 @@ it.skipIf(!standSource || !standRevision)(
       expect(definition.parsed.flow).toBe(
         role === "coordinator" ? "stand-maintenance" : null,
       );
+      if (role === "diagnostic") {
+        expect(buildOperationalContract(definition)).toMatchObject({
+          kind: "agent_operational",
+          contractName: "operational_evidence_v2",
+          semanticVersion: 2,
+          required: true,
+        });
+      }
     }
     const {
       rows: [flow],
