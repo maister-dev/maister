@@ -127,6 +127,17 @@ const PAYLOAD_PROJECTION: Readonly<Record<CommandKind, Projection>> = {
       "mimeType",
     ]),
   "runtime_object.delete": (p) => pickScalars(p, ["objectId", "generation"]),
+  "stand.dispatch": (p) =>
+    pickScalars(p, [
+      "operationId",
+      "targetIncarnation",
+      "componentId",
+      "action",
+      "requestDigest",
+      "resourceKey",
+      "ownerEpoch",
+      "businessOwnerEpoch",
+    ]),
 };
 
 export function redactPayload(kind: CommandKind, payload: unknown): Payload {

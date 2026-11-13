@@ -142,6 +142,12 @@ export const COMMAND_POLICY: Readonly<Record<CommandKind, KindPolicy>> = {
     driverless: true,
     timeoutMs: 30_000,
   },
+  "stand.dispatch": {
+    maxAttempts: 1,
+    backoffBaseMs: 500,
+    driverless: false,
+    timeoutMs: 55_000,
+  },
 };
 
 export function isUnknownOutcome(err: unknown): boolean {

@@ -314,6 +314,7 @@ function receiptAdmission(
     case "workspace.adopt":
     case "runtime_object.reserve":
     case "runtime_object.upload":
+    case "stand.dispatch":
       return { kind: "new_work" };
     case "session.input":
     case "session.steer":
