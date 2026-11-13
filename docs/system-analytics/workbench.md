@@ -221,7 +221,7 @@ arrival have distinct announcements. Inserting controls and messages keeps the
 visible anchor while the reader is above the tail. An open child peek keeps
 automatic parent transcript following from moving the page (UX-09A–B).
 
-## Results, provenance and inspector navigation (Designed)
+## Results, provenance and inspector navigation (Implemented)
 
 - `wb=evidence` opens Results and checks. `evidenceView=graph` opens provenance and existing `kind` or `state` links retain graph filtering. `evidenceItem=gate:<id>` selects the exact check and retains access to its graph context.
 - Node, file, tab, review anchor, Git panel, child peek and browser history preserve their existing selectors. An explicit inspector selector controls disclosure. Close restores focus to its trigger.

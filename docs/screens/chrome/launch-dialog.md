@@ -187,6 +187,6 @@ ADR-132). The shortcut glyph is OS-derived, not translated.
   `web/components/chrome/launch-hotkey-hint.tsx`,
   `web/components/board/launch-popover.tsx`.
 
-## Package 2 presentation (Designed)
+## Package 2 presentation (Implemented)
 
 Use “This launch” to review one-run choices. The separately labeled project mapping action saves future defaults for the enabled revision. Closing the dialog discards unsubmitted choices.

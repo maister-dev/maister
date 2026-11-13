@@ -391,7 +391,7 @@ sequenceDiagram
 - **Artifact body containing literal `{{ … }}`** → rendered verbatim, not
   re-resolved.
 
-## Results and checks read model (Designed)
+## Results and checks read model (Implemented)
 
 | Evidence | Presentation authority |
 | --- | --- |

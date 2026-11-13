@@ -206,7 +206,7 @@ flowchart TD
     E --> H["delivered"]
 ```
 
-## Safe receipt provenance (Designed)
+## Safe receipt provenance (Implemented)
 
 - Project receipt fields through a closed allowlist and current per-target authorization, including both relation endpoints.
 - Only an operation's segment and proven same-conversation turn/card linkage may attach a receipt. Unlinked records remain in Action history. Never infer provenance from timestamps or a current relation edge.

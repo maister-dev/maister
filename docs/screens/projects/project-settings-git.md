@@ -64,6 +64,6 @@ owns concurrency and crash recovery; [Git integration](../../system-analytics/gi
 owns generic remotes. EN/RU copy uses `projects.configPersistence`, remote strings
 and localized guard feedback. Raw server errors never become user feedback.
 
-## Package 2 presentation (Designed)
+## Package 2 presentation (Implemented)
 
 Configuration in Git uses a compact notice on the board and the same review workflow in Settings. An action required by a new observation can appear after dismissal.

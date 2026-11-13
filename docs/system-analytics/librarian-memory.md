@@ -168,7 +168,7 @@ sequenceDiagram
     end
 ```
 
-## Reset and clear presentation (Designed)
+## Reset and clear presentation (Implemented)
 
 - Context reset changes the active segment and retires prior default receipts without deleting messages, links, memory or operations.
 - Clear increments history generation and detaches the existing cleared references. The client cannot merge any prior-generation message or attachment into the cleared transcript. Surviving operations and task links remain accessible through authorized history.

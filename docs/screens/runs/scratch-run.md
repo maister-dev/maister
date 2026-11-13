@@ -261,6 +261,6 @@ lifecycle actions.
   `web/components/scratch/scratch-transcript.tsx`,
   `web/components/workbench/lifecycle-actions.tsx`.
 
-## Package 2 presentation (Designed)
+## Package 2 presentation (Implemented)
 
 The initial viewport distinguishes stopping the current turn from ending the Run. Files and Diff remain available when permitted.

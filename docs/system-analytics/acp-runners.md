@@ -401,7 +401,7 @@ aborted (the sleep ran to its end) and the steered instruction was honoured in
 the reply that followed it (STEERED before DONE). How long that takes depends
 on what the turn is doing when the steer lands.
 
-## Saving a revision-specific mapping (Designed)
+## Saving a revision-specific mapping (Implemented)
 
 - The project mapping action names the enabled revision and declared slot. Validate the enabled pointer and pinned manifest at the write boundary, then upsert on the existing project/revision/slot key.
 - Save a runner as `Mapped` and clear it as `Pending`. Removing a one-run override only restores configured resolution.

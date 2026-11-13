@@ -189,7 +189,7 @@ It changes no exportable/runtime setting, file, index, ref or commit. This keeps
 legacy null-path readers usable when an operator already committed matching YAML
 outside MAIster; path repair never becomes persistence-status authority.
 
-## Configuration in Git workflow observation (Designed)
+## Configuration in Git workflow observation (Implemented)
 
 | Observation | User action |
 | --- | --- |

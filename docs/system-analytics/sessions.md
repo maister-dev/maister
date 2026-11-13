@@ -146,7 +146,7 @@ flowchart LR
     Resume --> Run
 ```
 
-## Runner selection for one launch (Designed)
+## Runner selection for one launch (Implemented)
 
 - An explicit one-run slot wins for that declared logical session or consensus role. A one-run primary overrides the primary and can be preferred by other eligible same-capability slots through existing resolution rules.
 - Admission validates the pinned manifest, capability, runner configuration, permission and static enforcement. Dispatch and consensus use the stored V2 resolved runner entries and refuse unhonorable drift.

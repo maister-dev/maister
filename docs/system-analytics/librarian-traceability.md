@@ -174,6 +174,6 @@ the scenarios the live-adapter qualification repeats against real runners also c
 - [`librarian-conversation.md`](librarian-conversation.md) · [`librarian-authority.md`](librarian-authority.md) · [`librarian-operations.md`](librarian-operations.md) · [`task-statements.md`](task-statements.md) · [`task-clarifications.md`](task-clarifications.md) · [`librarian-memory.md`](librarian-memory.md) · [`librarian-surface.md`](librarian-surface.md)
 - [Product brief — personal librarian](../pv/personal-librarian.md)
 
-## Package 2 coverage (Designed)
+## Package 2 coverage (Implemented)
 
 B1 maps to the owner history route and receipt integration suites. B2 maps to reset and clear in Librarian acceptance. B3 maps to the panel disclosure and keyboard journey.

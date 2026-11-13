@@ -125,7 +125,7 @@ flowchart LR
     E --> F["that run cancelled, librarian turn untouched"]
 ```
 
-## Current work and Action history (Designed)
+## Current work and Action history (Implemented)
 
 - Default work is limited to current-segment receipts with causal message links, compact related tasks and an independent attention cue. Action history offers bounded keyboard-accessible pages and restores focus when closed.
 - Count pending authorized confirmations and unresolved effects before limiting the display. An uncertain card decision suppresses repeat controls. Old failed or refused actions appear in history unless a current canonical read supports authorized remediation.
@@ -142,7 +142,7 @@ flowchart LR
 - **LUI-07:** "Stop response" and "Stop run" MUST be distinct named controls, and every disabled control MUST state its reason, enforced by the panel composer and card controls (Implemented).
 - **LUI-08:** Every string in the `librarian` namespace MUST exist in EN and RU with distinct copy, enforced by `web/messages/en.json` and `web/messages/ru.json` (Implemented).
 - **LUI-09:** The librarian MUST bind no Cmd/Ctrl+K, and the scratch shortcut MUST still work while the panel is docked, enforced by the panel registering no key binding (Implemented).
-- **LUI-10:** The Needs attention / Related work region MUST render from live domain reads, enforced by `getLinkedWork` in `web/lib/librarian/read-models.ts` (Implemented).
+- **LUI-10:** The Needs attention / Related work region MUST render from live domain reads, enforced by `readCurrentWork` in `web/lib/librarian/action-history.ts` (Implemented).
 
 ## Edge cases
 

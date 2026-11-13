@@ -352,7 +352,7 @@ means no work was accepted. Unknown non-database effects require reconciliation.
 
 No historic assessment/run receipt is rewritten. Writer floor fences v2 and intent-owned legacy tasks. `taskAdmissionCheckedAt` alone is not evidence that execution started or inputs were frozen. Queued/checked-but-undispatched v1 requests lacking immutable evidence are held; a live session is not killed to repair metadata, but an unreconstructible later prompt/resume is refused. Explicit legacy qualification opt-in preserves old receipts and enables future automatic qualification.
 
-## Browser runner drafts (Designed)
+## Browser runner drafts (Implemented)
 
 | Input or event | Required result |
 | --- | --- |

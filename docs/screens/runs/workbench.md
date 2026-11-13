@@ -299,6 +299,6 @@ preview and an authorized **Download complete content** action.
 
 Evidence filtering follows the [Evidence viewport contract](../../system-analytics/workbench.md#evidence-viewport-implemented). Transcript controls follow the [transcript viewport contract](../../system-analytics/workbench.md#transcript-viewport-implemented).
 
-## Package 2 presentation (Designed)
+## Package 2 presentation (Implemented)
 
 Results and checks is the primary evidence view. The provenance graph remains available through the same workbench address and preserves existing filters.

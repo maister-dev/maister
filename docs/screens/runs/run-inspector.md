@@ -238,6 +238,6 @@ Descendant entries open the [read-only peek](child-run-peek.md); interactive act
 
 For a request-bearing agent or agent-driven Flow run, the inspector shows a plain-text Scheduled request disclosure to readers with readRepoFiles. It loads the immutable run envelope separately after live project authorization; the shared getRunDetail cache and public result DTO remain body-free. It shows the claimed request even after schedule edits/deletion and across authorized successors. See the [input lifecycle](../../system-analytics/scheduled-agent-requests.md).
 
-## Package 2 presentation (Designed)
+## Package 2 presentation (Implemented)
 
 In constrained space the inspector opens on demand and returns focus to its trigger on close. Explicit inspector and child-peek links retain their selection.

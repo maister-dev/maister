@@ -1135,7 +1135,7 @@ side-effect boundary: pre-commit it GCs the worktree+branch (no orphan);
 post-commit it leaves a **tracked** run row (scratch → `Crashed`, flow → the
 already-inserted run) — never an orphan worktree or live ACP session.
 
-## Run outcome and next action (Designed)
+## Run outcome and next action (Implemented)
 
 - The initial viewport at 1366×768 shows context, execution state, available outcome and the highest-priority applicable action. Blocking HITL, claim and review requests precede optional diagnostics. Existing authorization and delivery policy govern the actual controls.
 - Operational Runs take their identity from the frozen Run kind and use the canonical operational projection, including older Runs without a public result contract. Flow and code-delivery Runs surface retained changes and applicable stages. Scratch surfaces its turn and retained changes and gives interrupt and stop distinct labels.
