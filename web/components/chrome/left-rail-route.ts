@@ -52,7 +52,12 @@ export function railSectionForPathname(
     return "projects";
   }
 
-  if (isPathPrefix(path, "/work")) return "work";
+  if (
+    isPathPrefix(path, "/work") ||
+    isPathPrefix(path, "/specialist-assignments")
+  ) {
+    return "work";
+  }
   if (isPathPrefix(path, "/inbox")) return "inbox";
   if (isPathPrefix(path, "/knowledge")) return "knowledge";
   if (isPathPrefix(path, "/activity")) return "activity";

@@ -37,6 +37,8 @@ const PREFIXES: Array<[string, RailSectionId | null]> = [
   ["/scratch-runs", "projects"],
   ["/scratch-runs/new", "projects"],
   ["/work", "work"],
+  ["/specialist-assignments", "work"],
+  ["/specialist-assignments/assignment-1", "work"],
   ["/activity", "activity"],
   ["/inbox", "inbox"],
   ["/knowledge", "knowledge"],

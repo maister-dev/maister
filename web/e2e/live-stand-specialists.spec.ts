@@ -402,6 +402,16 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
   expect(duplicate.runIds).toEqual([runId]);
   const approvedStep = async () =>
     withE2EDb(async (pool) => {
+      const stopped = await pool.query<{ step_id: string; kind: string }>(
+        "SELECT step_id,kind FROM hitl_requests WHERE run_id=$1 AND responded_at IS NULL AND superseded_at IS NULL AND step_id<>'authorize'",
+        [runId],
+      );
+
+      if (stopped.rows[0]) {
+        const { step_id, kind } = stopped.rows[0];
+
+        throw new Error(`Pilot stopped at ${step_id} with ${kind}`);
+      }
       const { rows } = await pool.query(
         "SELECT operation.id,operation.revision,operation.request_digest,hitl.id AS hitl_id FROM stand_operations operation JOIN hitl_requests hitl ON hitl.run_id=$2 AND hitl.step_id='authorize' AND hitl.responded_at IS NULL WHERE operation.assignment_id=$1 AND operation.action='restart'",
         [assignment.id, runId],

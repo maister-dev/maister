@@ -92,7 +92,7 @@ export type SpawnSessionResult = {
 // the subset rather than a full StartSessionRequest.
 export type ChildEnvRequest = Pick<
   StartSessionRequest,
-  "executor" | "adapterLaunch"
+  "executor" | "adapterLaunch" | "enforcementProfile"
 >;
 
 export function buildChildEnv(
@@ -107,6 +107,12 @@ export function buildChildEnv(
   // ADR-166: mounts come from the resolved workspace (the adopted handle) —
   // the request body never carries a path.
   const contextMounts = opts.contextMounts;
+  const toolPolicy = request.enforcementProfile;
+  const directClaudeTools =
+    request.executor.agent === "claude" &&
+    toolPolicy?.enforcedClasses.includes("tools") &&
+    toolPolicy.tools &&
+    !toolPolicy.tools.allow.includes("ToolSearch");
   const modelOptions =
     request.executor.agent === "claude"
       ? claudeModelOptions(request.executor.model)
@@ -134,6 +140,8 @@ export function buildChildEnv(
       ? { MAISTER_CONTEXT_REPOS: JSON.stringify(contextMounts) }
       : {}),
     ...(opts.outputPaths ?? {}),
+    // Deferred MCP tools require ToolSearch, which the strict profile can deny.
+    ...(directClaudeTools ? { ENABLE_TOOL_SEARCH: "false" } : {}),
     // The declared model wins over inherited, runner and adapter environment.
     ...(modelOptions.model ? { ANTHROPIC_MODEL: modelOptions.model } : {}),
   };

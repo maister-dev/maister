@@ -94,6 +94,12 @@ function wrappers(
 export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   [
     ...classified(
+      "lib/stand-operations/authority-runtime.ts",
+      "manager-flow-state",
+      "Read operator-configured TLS files at manager boot for the stand authority listener; no request or supervisor path is accepted",
+      [["startConfiguredStandAuthority", "node:fs/promises.readFile", "read"]],
+    ),
+    ...classified(
       "lib/specialist-assignments/store.ts",
       "repository-worktree",
       "Assignment creation reads only the trusted immutable package pin to verify frozen standing instructions; no supervisor runtime path is accepted",
@@ -3193,6 +3199,11 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ...wrappers("lib/services/gate-chat.ts", "repository-worktree", [
     ["sendGateChatTurn", false],
   ]),
+  ...wrappers(
+    "lib/stand-operations/authority-runtime.ts",
+    "manager-flow-state",
+    [["startConfiguredStandAuthority", false]],
+  ),
   ...wrappers("lib/studio/flow-assistant/action-log.ts", "manager-flow-state", [
     ["appendFlowAssistantActionLog", false],
   ]),

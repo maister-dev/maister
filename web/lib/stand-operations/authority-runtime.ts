@@ -46,11 +46,9 @@ export async function startConfiguredStandAuthority(): Promise<
       "CONFIG",
       "Stand authority requires a bind IP, TCP port and readable CA, certificate and key files",
     );
-  const [ca, cert, key] = await Promise.all([
-    readFile(caPath),
-    readFile(certPath),
-    readFile(keyPath),
-  ]).catch((error: NodeJS.ErrnoException) => {
+  const [ca, cert, key] = await Promise.all(
+    ([caPath, certPath, keyPath] as const).map((path) => readFile(path)),
+  ).catch((error: NodeJS.ErrnoException) => {
     log.error(
       { errorCode: error.code },
       "stand authority TLS file read failed",
