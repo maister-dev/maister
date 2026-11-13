@@ -218,8 +218,27 @@ it("B1 counts unresolved work past the page cap and removes revoked target ident
   const path = "/api/librarian/history/actions?collection=attention&limit=20";
   const { GET } = await import("@/app/api/librarian/history/actions/route");
   const first = await (await GET(json(path, "GET"))).json();
+  const abort = new AbortController();
+  let ticks = 0;
+  const accessFrames: string[] = [];
 
-  await removeProjectMember(db, { userId: owner, projectId: project.id });
+  for await (const frame of librarianStreamFrames({
+    db: database.db,
+    ownerId: owner,
+    cursor: 0n,
+    signal: abort.signal,
+    sleep: async () => {
+      if (++ticks === 1)
+        await removeProjectMember(db, { userId: owner, projectId: project.id });
+      else abort.abort();
+    },
+  })) {
+    if (frame.includes("librarian.work")) accessFrames.push(frame);
+  }
+  expect(accessFrames).toEqual([
+    'data: {"type":"librarian.work","reason":"sync"}\n\n',
+    'data: {"type":"librarian.work","reason":"access"}\n\n',
+  ]);
   const second = await (
     await GET(
       json(`${path}&cursor=${encodeURIComponent(first.nextCursor)}`, "GET"),
