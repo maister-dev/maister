@@ -2080,6 +2080,20 @@
       "when": 1794606478003,
       "tag": "0300_stand_target_registry_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 301,
+      "version": "7",
+      "when": 1794606478004,
+      "tag": "0301_stand_operation_intents",
+      "breakpoints": true
+    },
+    {
+      "idx": 302,
+      "version": "7",
+      "when": 1794606478005,
+      "tag": "0302_stand_operation_intent_guards",
+      "breakpoints": true
     }
   ]
 }

@@ -108,6 +108,14 @@ Sanitize configured credentials and token/password/authorization patterns, contr
 
 ### Intent, authority and effect contract
 
+The platform intake API retains the current assignment input, target and
+component revisions, runbook witness, initiating authority and intent digest.
+Restart intake acquires the canonical resource in the same transaction. Exact
+replay returns the retained operation. A conflicting payload or held resource
+returns a typed conflict. The pending intent and exclusion survive assignment
+cancellation and lease expiry. Dispatch authorization and target receipts are
+subsequent stages of the contract below.
+
 1. Resolve target/runbook/policy/current authority and exact before-state under canonical resource claim. Persist operation ID/digest and original expected outcome before dispatch, atomically with assignment work reference and outbox/command ownership.
 2. Target durably writes the same operation ID/digest/intended action and resource exclusion before invoking the service manager. Duplicate exact operation returns its receipt/state; changed digest conflicts. Stable target state is shared across helper replicas; exclusive resource creation/locking protects the actual unit.
 3. Target calls the platform's authenticated pre-effect authority endpoint with operation ID/digest/target/resource/owner epoch/fresh nonce. Server derives initiating actor, current grants/binding, exact approved intent and active mutation owner from stored state; helper cannot nominate an actor. Authorization linearizes when that current decision/permit commits. Dispatch uses the returned short-lived (5-second) single-use permit immediately and records its ID before the fixed effect. Revocation blocks any later decision/retry; it cannot undo already authorized started work. Lost permit response leaves target before-effect unless its journal proves otherwise; never mint a second effect under an ambiguous receipt.

@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { STAND_ACTIONS } from "./operation-types";
+
 import {
   knowledgeDeliveryKeySchema,
   knowledgeRevisionSchema,
@@ -37,7 +39,6 @@ const endpoint = z
     );
   })
   .transform((value) => new URL(value).origin);
-const actions = ["inspect", "logs", "restart", "verify"] as const;
 
 export const standComponentSchema = z
   .object({
@@ -50,7 +51,7 @@ export const standComponentSchema = z
       .refine((value) => Number(value) <= 4294967294)
       .nullable(),
     unit: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.@-]{0,239}\.service$/),
-    actions: z.array(z.enum(actions)).min(1).max(4),
+    actions: z.array(z.enum(STAND_ACTIONS)).min(1).max(4),
     runbook: z
       .object({
         recordId: targetIdentity,

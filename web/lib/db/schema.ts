@@ -178,6 +178,12 @@ import {
   type CompanyAction,
   type ConfirmationClass,
 } from "@/lib/company/types";
+import {
+  STAND_ACTIONS,
+  STAND_DISPOSITIONS,
+  STAND_EFFECT_STATES,
+  STAND_VERIFICATION_STATES,
+} from "@/lib/stand-operations/operation-types";
 import { PROMPT_OWNER_SHAPES } from "@/lib/execution-host/prompt-owner-contract";
 import {
   ASSIGNMENT_STATES,
@@ -10849,6 +10855,123 @@ export const standComponents = pgTable(
     shape: check(
       "stand_components_shape_check",
       sql`(${t.componentId} ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$' AND ${t.canonicalResourceKey} ~ '^[a-f0-9]{64}$' AND ${t.runbookSha256} ~ '^[a-f0-9]{64}$' AND ${t.config}->>'id'=${t.componentId}) IS TRUE`,
+    ),
+  }),
+);
+
+export const standOperations = pgTable(
+  "stand_operations",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    assignmentId: text("assignment_id").notNull(),
+    inputRevision: integer("input_revision").notNull(),
+    inputSha256: text("input_sha256").notNull(),
+    assignmentRevision: integer("assignment_revision").notNull(),
+    targetId: text("target_id").notNull(),
+    configRevision: integer("config_revision").notNull(),
+    componentId: text("component_id").notNull(),
+    resourceKey: text("resource_key").notNull(),
+    targetIncarnation: text("target_incarnation").notNull(),
+    action: text("action", { enum: STAND_ACTIONS }).notNull(),
+    initiatingUserId: text("initiating_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    deliveryKey: text("delivery_key").notNull(),
+    deliveryDigest: text("delivery_digest").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    authority: jsonb("authority")
+      .$type<readonly CompanyGrantWitness[]>()
+      .notNull(),
+    effectState: text("effect_state", { enum: STAND_EFFECT_STATES })
+      .notNull()
+      .default("not_dispatched"),
+    verificationState: text("verification_state", {
+      enum: STAND_VERIFICATION_STATES,
+    })
+      .notNull()
+      .default("not_checked"),
+    disposition: text("disposition", { enum: STAND_DISPOSITIONS })
+      .notNull()
+      .default("pending"),
+    revision: integer("revision").notNull().default(1),
+    predecessorId: text("predecessor_id").references(
+      (): AnyPgColumn => standOperations.id,
+      { onDelete: "restrict" },
+    ),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    delivery: unique("stand_operations_assignment_delivery_unique").on(
+      t.assignmentId,
+      t.initiatingUserId,
+      t.deliveryKey,
+    ),
+    resource: unique("stand_operations_id_resource_unique").on(
+      t.id,
+      t.resourceKey,
+    ),
+    successor: unique("stand_operations_predecessor_unique").on(
+      t.predecessorId,
+    ),
+    assignmentInput: foreignKey({
+      name: "stand_operations_input_fk",
+      columns: [t.assignmentId, t.inputRevision],
+      foreignColumns: [
+        specialistInputRevisions.assignmentId,
+        specialistInputRevisions.revision,
+      ],
+    }).onDelete("restrict"),
+    component: foreignKey({
+      name: "stand_operations_component_fk",
+      columns: [t.targetId, t.configRevision, t.componentId],
+      foreignColumns: [
+        standComponents.targetId,
+        standComponents.configRevision,
+        standComponents.componentId,
+      ],
+    }).onDelete("restrict"),
+    revisions: check(
+      "stand_operations_revisions_check",
+      sql`${t.inputRevision}>0 AND ${t.assignmentRevision}>0 AND ${t.revision}>0`,
+    ),
+    digests: check(
+      "stand_operations_digests_check",
+      sql`${t.inputSha256} ~ '^[a-f0-9]{64}$' AND ${t.resourceKey} ~ '^[a-f0-9]{64}$' AND ${t.deliveryDigest} ~ '^[a-f0-9]{64}$' AND ${t.requestDigest} ~ '^[a-f0-9]{64}$' AND ${t.deliveryKey} ~ '^[A-Za-z0-9._:-]{8,128}$'`,
+    ),
+    states: check(
+      "stand_operations_states_check",
+      sql`${t.action} IN ('inspect','logs','restart','verify') AND ${t.effectState} IN ('not_dispatched','dispatching','confirmed_applied','confirmed_not_applied','unknown') AND ${t.verificationState} IN ('not_checked','healthy','unhealthy','inconclusive') AND ${t.disposition} IN ('pending','proved_applied','proved_not_applied','unresolved_hold','authorized_successor') AND jsonb_typeof(${t.authority})='array'`,
+    ),
+  }),
+);
+
+export const standResourceClaims = pgTable(
+  "stand_resource_claims",
+  {
+    resourceKey: text("canonical_resource_key").primaryKey(),
+    operationId: text("operation_id").notNull(),
+    ownerId: text("owner_id").notNull(),
+    ownerEpoch: bigint("owner_epoch", { mode: "number" }).notNull().default(1),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    unresolved: boolean("unresolved").notNull().default(true),
+  },
+  (t) => ({
+    operation: foreignKey({
+      name: "stand_resource_claims_exact_operation_fk",
+      columns: [t.operationId, t.resourceKey],
+      foreignColumns: [standOperations.id, standOperations.resourceKey],
+    }).onDelete("restrict"),
+    expiry: index("stand_resource_claims_expiry_idx").on(
+      t.unresolved,
+      t.expiresAt,
+    ),
+    epoch: check(
+      "stand_resource_claims_epoch_check",
+      sql`${t.ownerEpoch} BETWEEN 1 AND 9007199254740991`,
     ),
   }),
 );

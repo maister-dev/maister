@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
-import type { StandTarget } from "./target-types";
+import type { StandComponentConfig, StandTarget } from "./target-types";
 
 import { and, asc, eq, sql } from "drizzle-orm";
 import pino from "pino";
@@ -34,6 +34,45 @@ const log = pino({
 const cursorNamespace = "maister.stand-targets.v1";
 
 type TargetRow = typeof standTargets.$inferSelect;
+
+/** Resolve the exact accepted procedure and supporting witness under current access. */
+export async function readStandRunbookDigest(
+  db: Db,
+  userId: string,
+  companyId: string,
+  runbook: StandComponentConfig["runbook"],
+): Promise<string> {
+  const { record } = await readKnowledgeRecord(
+    db,
+    { kind: "user", userId },
+    runbook,
+  );
+  const witness = record.evidence.find(
+    (entry) =>
+      "witness" in entry &&
+      entry.witness.id === runbook.witnessId &&
+      entry.relation === "supports",
+  );
+
+  if (
+    record.owner.kind !== "company" ||
+    record.owner.companyId !== companyId ||
+    record.kind !== "procedure" ||
+    record.lifecycle !== "active" ||
+    record.freshness.state === "stale" ||
+    !witness ||
+    !("witness" in witness) ||
+    witness.witness.availability !== "available" ||
+    !witness.witness.sha256
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "The configured runbook and its exact supporting witness are unavailable",
+      { details: { reason: "knowledge_reference_unavailable" } },
+    );
+
+  return witness.witness.sha256;
+}
 
 function unavailable(): MaisterError {
   return new MaisterError(
@@ -211,35 +250,12 @@ export async function saveStandTarget(
         let runbookSha256 = runbooks.get(key);
 
         if (!runbookSha256) {
-          const { record } = await readKnowledgeRecord(
+          runbookSha256 = await readStandRunbookDigest(
             tx,
-            { kind: "user", userId },
+            userId,
+            head.companyId,
             config.runbook,
           );
-          const witness = record.evidence.find(
-            (entry) =>
-              "witness" in entry &&
-              entry.witness.id === config.runbook.witnessId &&
-              entry.relation === "supports",
-          );
-
-          if (
-            record.owner.kind !== "company" ||
-            record.owner.companyId !== head.companyId ||
-            record.kind !== "procedure" ||
-            record.lifecycle !== "active" ||
-            record.freshness.state === "stale" ||
-            !witness ||
-            !("witness" in witness) ||
-            witness.witness.availability !== "available" ||
-            !witness.witness.sha256
-          )
-            throw new MaisterError(
-              "PRECONDITION",
-              "The configured runbook and its exact supporting witness are unavailable",
-              { details: { reason: "knowledge_reference_unavailable" } },
-            );
-          runbookSha256 = witness.witness.sha256;
           runbooks.set(key, runbookSha256);
         }
         components.push({

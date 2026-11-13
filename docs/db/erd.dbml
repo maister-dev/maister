@@ -3429,6 +3429,57 @@ table stand_components {
   }
 }
 
+table stand_operations {
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  assignment_id text [not null]
+  input_revision integer [not null]
+  input_sha256 text [not null]
+  assignment_revision integer [not null]
+  target_id text [not null]
+  config_revision integer [not null]
+  component_id text [not null]
+  resource_key text [not null]
+  target_incarnation text [not null]
+  action text [not null]
+  initiating_user_id text [not null]
+  delivery_key text [not null]
+  delivery_digest text [not null]
+  request_digest text [not null]
+  authority jsonb [not null]
+  effect_state text [not null, default: 'not_dispatched']
+  verification_state text [not null, default: 'not_checked']
+  disposition text [not null, default: 'pending']
+  revision integer [not null, default: 1]
+  predecessor_id text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (assignment_id, initiating_user_id, delivery_key) [name: 'stand_operations_assignment_delivery_unique', unique]
+    (id, resource_key) [name: 'stand_operations_id_resource_unique', unique]
+    predecessor_id [name: 'stand_operations_predecessor_unique', unique]
+
+
+
+
+
+  }
+}
+
+table stand_resource_claims {
+  canonical_resource_key text [pk, not null]
+  operation_id text [not null]
+  owner_id text [not null]
+  owner_epoch bigint [not null, default: 1]
+  expires_at "timestamp with time zone" [not null]
+  unresolved boolean [not null, default: true]
+
+  indexes {
+
+    (unresolved, expires_at) [name: 'stand_resource_claims_expiry_idx']
+
+  }
+}
+
 table stand_target_revisions {
   target_id text [not null]
   revision integer [not null]
@@ -5031,6 +5082,16 @@ ref specialist_work_decisions_result_id_run_results_id_fk: specialist_work_decis
 ref specialist_work_decisions_work_fk: specialist_work_decisions.(work_id, work_revision) > specialist_work.(id, work_revision) [delete: restrict, update: no action]
 
 ref stand_components_target_revision_fk: stand_components.(target_id, config_revision) > stand_target_revisions.(target_id, revision) [delete: restrict, update: no action]
+
+ref stand_operations_initiating_user_id_users_id_fk: stand_operations.initiating_user_id > users.id [delete: restrict, update: no action]
+
+ref stand_operations_predecessor_id_stand_operations_id_fk: stand_operations.predecessor_id > stand_operations.id [delete: restrict, update: no action]
+
+ref stand_operations_input_fk: stand_operations.(assignment_id, input_revision) > specialist_input_revisions.(assignment_id, revision) [delete: restrict, update: no action]
+
+ref stand_operations_component_fk: stand_operations.(target_id, config_revision, component_id) > stand_components.(target_id, config_revision, component_id) [delete: restrict, update: no action]
+
+ref stand_resource_claims_exact_operation_fk: stand_resource_claims.(operation_id, canonical_resource_key) > stand_operations.(id, resource_key) [delete: restrict, update: no action]
 
 ref stand_target_revisions_target_id_stand_targets_id_fk: stand_target_revisions.target_id > stand_targets.id [delete: restrict, update: no action]
 
