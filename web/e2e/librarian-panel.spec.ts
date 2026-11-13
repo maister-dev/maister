@@ -233,8 +233,11 @@ test("B3 keeps history and attention scrollable without displacing the composer"
 
   for (const [width, height, locale, theme] of [
     [390, 844, "en", "light"],
+    [390, 844, "ru", "dark"],
+    [1366, 768, "en", "light"],
     [1366, 768, "ru", "dark"],
     [1440, 1000, "en", "dark"],
+    [1440, 1000, "ru", "light"],
   ] as const) {
     await context.addCookies([
       { name: "NEXT_LOCALE", value: locale, url: baseURL! },
@@ -257,21 +260,15 @@ test("B3 keeps history and attention scrollable without displacing the composer"
     await opener.focus();
     await page.keyboard.press("Enter");
     const history = page.getByTestId("librarian-action-history");
+    const statuses =
+      locale === "ru"
+        ? ["Результат неизвестен", "Готово", "Отказано", "Ошибка"]
+        : ["Outcome uncertain", "Done", "Refused", "Failed"];
 
     await expect(history).toBeInViewport();
-    await expect(
-      history
-        .getByText(
-          locale === "ru" ? "Результат неизвестен" : "Outcome uncertain",
-          { exact: true },
-        )
-        .first(),
-    ).toBeVisible();
-    await expect(
-      history
-        .getByText(locale === "ru" ? "Готово" : "Done", { exact: true })
-        .first(),
-    ).toBeVisible();
+    for (const status of statuses) {
+      await expect(history.getByText(status, { exact: true }).first()).toBeVisible();
+    }
     expect((await history.boundingBox())?.height).toBeLessThanOrEqual(
       Math.min(height * 0.55, 440),
     );
