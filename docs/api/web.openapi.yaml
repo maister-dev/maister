@@ -22127,20 +22127,23 @@ paths:
   /api/stand-operations/{operationId}/reconcile:
     post:
       operationId: standOperationReconcile
-      summary: Designed — Reconcile same operation without blind retry
-      description: Designed; no implementation is implied. Requires current targets:recover. URL identifiers are
-        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
-        target endpoint and execution ownership are derived from authenticated context/server state. Writes
-        compare canonical payload digest and expected revision; exact replay returns the original currently
-        accessible receipt, changed payload conflicts.
-      x-implementation-status: Designed
+      summary: Reconcile the original restart operation
+      description: Requires a same-origin session with current target read and recovery authority and
+        access to the retained assignment input. The operation revision fences the read.
+        The supervisor reads the original helper receipt and can retry that read.
+        Missing or incomplete evidence keeps the restart unknown. The route never sends a restart.
+      x-implementation-status: Implemented
       x-required-scope: targets:recover
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CBControlInput"
+              type: object
+              additionalProperties: false
+              required: [expectedRevision]
+              properties:
+                expectedRevision: { type: integer, minimum: 1, maximum: 2147483647 }
       responses:
         "200":
           description: Exact content-guarded replay returns the currently accessible prior receipt without repeating

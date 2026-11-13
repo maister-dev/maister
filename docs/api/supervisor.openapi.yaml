@@ -816,6 +816,47 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /stand-operations/receipt:
+    post:
+      tags: [execution-host]
+      operationId: readStandReceipt
+      summary: Read the original helper receipt under a current recovery permit
+      description: Resolves the exact configured helper from the target incarnation. This read
+        can run after original placement release and never sends a mutation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operationId, targetIncarnation, requestDigest, ownerEpoch]
+              properties:
+                operationId: { type: string, format: uuid }
+                targetIncarnation: { type: string, format: uuid }
+                requestDigest: { type: string, pattern: '^[a-f0-9]{64}$' }
+                ownerEpoch: { type: integer, minimum: 1, maximum: 9007199254740991 }
+      responses:
+        "200":
+          description: The original authenticated helper receipt or a missing receipt.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [receipt]
+                properties:
+                  receipt: { type: object, nullable: true }
+        "409":
+          description: Invalid selector, missing configuration or refused read authority.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+        "503":
+          description: The bounded receipt read failed and the effect remains uncertain.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
   /workspaces/adopt:
     post:
       tags: [execution-host]

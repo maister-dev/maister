@@ -10,7 +10,7 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
-import { loadStandDispatchTransport } from "../stand-operations/transport";
+import { loadStandTransport } from "../stand-operations/transport";
 
 it("IT-CBO-04 sends one exact restart request, validates the pinned peer and leaves a lost response uncertain", async () => {
   const directory = await mkdtemp(join(tmpdir(), "maister-stand-transport-"));
@@ -33,6 +33,22 @@ it("IT-CBO-04 sends one exact restart request, validates the pinned peer and lea
     before: { state: "active" as const, invocationId: "c".repeat(32) },
   };
   let deliveries = 0;
+  let reads = 0;
+  let retryWarnings = 0;
+  const receipt = {
+    operationId: payload.operationId,
+    targetIncarnation: payload.targetIncarnation,
+    requestDigest: payload.requestDigest,
+    receiptRevision: 3,
+    sequence: 4,
+    effectState: "confirmed_applied",
+    permitId: randomUUID(),
+    beforeInvocation: payload.before.invocationId,
+    afterInvocation: "f".repeat(32),
+    observedState: "active",
+    capturedAt: new Date().toISOString(),
+    reason: null,
+  };
 
   try {
     execFileSync(
@@ -64,8 +80,24 @@ it("IT-CBO-04 sends one exact restart request, validates the pinned peer and lea
     const server = createServer(
       { cert, key, ca: cert, requestCert: true, rejectUnauthorized: true },
       async (request, response) => {
-        expect(request.url).toBe("/operations");
         expect(request.headers["x-maister-platform-token"]).toBe(token);
+        if (request.method === "GET") {
+          expect(request.url).toBe(`/operations/${payload.operationId}`);
+          expect(request.headers["x-maister-request-digest"]).toBe(
+            payload.requestDigest,
+          );
+          expect(request.headers["x-maister-owner-epoch"]).toBe("3");
+          reads++;
+          if (reads === 1) {
+            request.socket.destroy();
+
+            return;
+          }
+          response.end(JSON.stringify(receipt));
+
+          return;
+        }
+        expect(request.url).toBe("/operations");
         const chunks: Buffer[] = [];
 
         for await (const chunk of request) chunks.push(Buffer.from(chunk));
@@ -104,19 +136,35 @@ it("IT-CBO-04 sends one exact restart request, validates the pinned peer and lea
         configFile,
         JSON.stringify([{ ...config, certificateSha256: "d".repeat(64) }]),
       );
-      const wrongPin = loadStandDispatchTransport(configFile);
+      const logger = {
+        warn: () => {
+          retryWarnings++;
+        },
+      };
+      const wrongPin = loadStandTransport(configFile, logger).dispatch;
 
       await expect(wrongPin(payload)).rejects.toMatchObject({
         code: "EXECUTOR_UNAVAILABLE",
       });
       expect(deliveries).toBe(0);
       await writeFile(configFile, JSON.stringify([config]));
-      const dispatch = loadStandDispatchTransport(configFile);
+      const transport = loadStandTransport(configFile, logger);
 
-      await expect(dispatch(payload)).rejects.toMatchObject({
+      await expect(transport.dispatch(payload)).rejects.toMatchObject({
         code: "EXECUTOR_UNAVAILABLE",
       });
       expect(deliveries).toBe(1);
+      await expect(
+        transport.readReceipt({
+          operationId: payload.operationId,
+          targetIncarnation: payload.targetIncarnation,
+          requestDigest: payload.requestDigest,
+          ownerEpoch: 3,
+        }),
+      ).resolves.toEqual(receipt);
+      expect(deliveries).toBe(1);
+      expect(reads).toBe(2);
+      expect(retryWarnings).toBe(1);
     } finally {
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),

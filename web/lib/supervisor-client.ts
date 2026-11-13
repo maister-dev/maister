@@ -1636,6 +1636,32 @@ export async function dispatchStandRestart(
   return response.body;
 }
 
+export async function readStandReceipt(
+  selector: Readonly<{
+    operationId: string;
+    targetIncarnation: string;
+    requestDigest: string;
+    ownerEpoch: number;
+  }>,
+): Promise<unknown> {
+  const response = await request<{ receipt: unknown }>({
+    method: "POST",
+    path: "/stand-operations/receipt",
+    body: selector,
+    ctx: "readStandReceipt",
+    fallbackCode: "EXECUTOR_UNAVAILABLE",
+    timeoutMs: 18_000,
+  });
+
+  if (!response.body || !Object.hasOwn(response.body, "receipt"))
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      "Stand receipt response is unavailable",
+    );
+
+  return response.body.receipt;
+}
+
 export async function adoptWorkspace(
   envelope: WireEnvelope<AdoptWorkspaceWirePayload>,
   opts: CommandWireOptions = {},

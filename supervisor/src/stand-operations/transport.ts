@@ -1,4 +1,10 @@
-import type { DispatchStandRestart, StandDispatchPayload } from "./contracts";
+import type {
+  DispatchStandRestart,
+  ReadStandReceipt,
+  StandDispatchPayload,
+  StandReceiptSelector,
+} from "./contracts";
+import type { Logger } from "pino";
 
 import { timingSafeEqual } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
@@ -124,17 +130,50 @@ function sendRestart(
     ownerEpoch,
     before,
   });
-  const uncertain = () =>
-    new SupervisorError(
-      "EXECUTOR_UNAVAILABLE",
-      "The stand dispatch outcome requires reconciliation",
-    );
 
+  return requestReceipt(target, payload, {
+    method: "POST",
+    path: "/operations",
+    expectedStatus: 202,
+    timeoutMs: 53_000,
+    body,
+    headers: {
+      "Content-Type": "application/json",
+      "Content-Length": Buffer.byteLength(body),
+    },
+  }).then((receipt) => {
+    if (!receipt) throw unavailable();
+
+    return receipt;
+  });
+}
+
+type WireCall = Readonly<{
+  method: "GET" | "POST";
+  path: string;
+  expectedStatus: number;
+  timeoutMs: number;
+  body?: string;
+  headers: Record<string, string | number>;
+}>;
+
+function unavailable(): SupervisorError {
+  return new SupervisorError(
+    "EXECUTOR_UNAVAILABLE",
+    "The stand operation outcome requires reconciliation",
+  );
+}
+
+function requestReceipt(
+  target: Target,
+  identity: StandReceiptSelector,
+  spec: WireCall,
+): Promise<Record<string, unknown> | null> {
   return new Promise((resolve, reject) => {
     const call = request(
-      new URL("/operations", target.origin),
+      new URL(spec.path, target.origin),
       {
-        method: "POST",
+        method: spec.method,
         ca: target.ca,
         cert: target.cert,
         key: target.key,
@@ -143,10 +182,9 @@ function sendRestart(
           checkTargetCertificate(target, hostname, certificate),
         minVersion: "TLSv1.2",
         agent: false,
-        signal: AbortSignal.timeout(53_000),
+        signal: AbortSignal.timeout(spec.timeoutMs),
         headers: {
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(body),
+          ...spec.headers,
           "X-Maister-Platform-Token": target.credential,
         },
       },
@@ -154,11 +192,11 @@ function sendRestart(
         const chunks: Buffer[] = [];
         let size = 0;
 
-        response.on("error", () => reject(uncertain()));
+        response.on("error", () => reject(unavailable()));
         response.on("data", (chunk: Buffer) => {
           size += chunk.length;
           if (size > 4096) {
-            reject(uncertain());
+            reject(unavailable());
             response.destroy();
 
             return;
@@ -166,8 +204,26 @@ function sendRestart(
           chunks.push(chunk);
         });
         response.on("end", () => {
-          if (response.statusCode !== 202) {
-            reject(uncertain());
+          if (spec.method === "GET" && response.statusCode === 404) {
+            resolve(null);
+
+            return;
+          }
+          if (
+            spec.method === "GET" &&
+            (response.statusCode === 401 || response.statusCode === 403)
+          ) {
+            reject(
+              new SupervisorError(
+                "PRECONDITION",
+                "The stand receipt authority was refused",
+              ),
+            );
+
+            return;
+          }
+          if (response.statusCode !== spec.expectedStatus) {
+            reject(unavailable());
 
             return;
           }
@@ -176,7 +232,7 @@ function sendRestart(
           try {
             json = JSON.parse(Buffer.concat(chunks).toString("utf8"));
           } catch (error) {
-            reject(error instanceof SyntaxError ? uncertain() : error);
+            reject(error instanceof SyntaxError ? unavailable() : error);
 
             return;
           }
@@ -184,11 +240,11 @@ function sendRestart(
 
           if (
             !parsed.success ||
-            parsed.data.operationId !== operationId ||
-            parsed.data.targetIncarnation !== targetIncarnation ||
-            parsed.data.requestDigest !== requestDigest
+            parsed.data.operationId !== identity.operationId ||
+            parsed.data.targetIncarnation !== identity.targetIncarnation ||
+            parsed.data.requestDigest !== identity.requestDigest
           ) {
-            reject(uncertain());
+            reject(unavailable());
 
             return;
           }
@@ -197,13 +253,57 @@ function sendRestart(
       },
     );
 
-    call.on("error", () => reject(uncertain()));
-    call.end(body);
+    call.on("error", () => reject(unavailable()));
+    call.end(spec.body);
+  });
+}
+
+async function readReceipt(
+  target: Target,
+  selector: StandReceiptSelector,
+  logger: Pick<Logger, "warn">,
+): Promise<Record<string, unknown> | null> {
+  for (const backoffMs of [200, 500]) {
+    try {
+      return await requestOriginalReceipt(target, selector);
+    } catch (error) {
+      if (
+        !(error instanceof SupervisorError) ||
+        error.code !== "EXECUTOR_UNAVAILABLE"
+      )
+        throw error;
+      logger.warn(
+        { operationId: selector.operationId, backoffMs, code: error.code },
+        "stand receipt read will retry",
+      );
+      await new Promise<void>((resolve) => setTimeout(resolve, backoffMs));
+    }
+  }
+
+  return requestOriginalReceipt(target, selector);
+}
+
+function requestOriginalReceipt(
+  target: Target,
+  selector: StandReceiptSelector,
+): Promise<Record<string, unknown> | null> {
+  return requestReceipt(target, selector, {
+    method: "GET",
+    path: `/operations/${selector.operationId}`,
+    expectedStatus: 200,
+    timeoutMs: 5000,
+    headers: {
+      "X-Maister-Request-Digest": selector.requestDigest,
+      "X-Maister-Owner-Epoch": selector.ownerEpoch,
+    },
   });
 }
 
 /** The supervisor reads only host-configured destinations. Command payloads carry identities. */
-export function loadStandDispatchTransport(path: string): DispatchStandRestart {
+export function loadStandTransport(
+  path: string,
+  logger: Pick<Logger, "warn">,
+): { dispatch: DispatchStandRestart; readReceipt: ReadStandReceipt } {
   if (!isAbsolute(path)) throw invalidConfig();
   let targets: z.infer<typeof targetSchema>[];
 
@@ -246,8 +346,8 @@ export function loadStandDispatchTransport(path: string): DispatchStandRestart {
     });
   }
 
-  return async (payload) => {
-    const target = peers.get(payload.targetIncarnation);
+  function targetFor(incarnationId: string): Target {
+    const target = peers.get(incarnationId);
 
     if (!target)
       throw new SupervisorError(
@@ -255,6 +355,13 @@ export function loadStandDispatchTransport(path: string): DispatchStandRestart {
         "The stand is unavailable on this execution host",
       );
 
-    return sendRestart(target, payload);
+    return target;
+  }
+
+  return {
+    dispatch: (payload) =>
+      sendRestart(targetFor(payload.targetIncarnation), payload),
+    readReceipt: (selector) =>
+      readReceipt(targetFor(selector.targetIncarnation), selector, logger),
   };
 }

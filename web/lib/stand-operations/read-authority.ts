@@ -44,7 +44,8 @@ export async function claimStandReadAuthority(
   userId: string,
   operationId: string,
   purpose: StandReadPurpose,
-): Promise<{ ownerEpoch: number; expiresAt: Date }> {
+  expectedRevision?: number,
+): Promise<{ ownerEpoch: number; expiresAt: Date; operation: Operation }> {
   try {
     return await db.transaction(async (tx) => {
       await beginAssignmentTransaction(tx);
@@ -72,6 +73,15 @@ export async function claimStandReadAuthority(
           "The retained stand operation is unavailable",
         );
       const { operation } = stored;
+
+      if (
+        expectedRevision !== undefined &&
+        expectedRevision !== operation.revision
+      )
+        throw new MaisterError(
+          "CONFLICT",
+          "The stand operation revision changed",
+        );
       const action = actionForRead(purpose, operation);
       const authority = await authorizeCompanyUserAction(
         tx,
@@ -117,7 +127,7 @@ export async function claimStandReadAuthority(
           "Another operator owns this stand read",
         );
 
-      return owner;
+      return { ...owner, operation };
     });
   } catch (error) {
     throw redactQueryError(error);

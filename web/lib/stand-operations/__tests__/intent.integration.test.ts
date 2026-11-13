@@ -26,6 +26,7 @@ import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
 import { createCompanySpecialistBinding } from "@/lib/agents/company-bindings";
 import { claimDelivering } from "@/lib/execution-host/commands";
 import { releaseAssignmentForRun } from "@/lib/execution-host/assignments";
+import { setDefaultTransportForTests } from "@/lib/execution-host/default-transport";
 import { platformAcpRunners } from "@/lib/db/schema";
 import { tryStartRun } from "@/lib/scheduler";
 import {
@@ -1022,7 +1023,7 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
       runnerId,
       idempotencyKey: randomUUID(),
     });
-    const { hosts } = await fakeExecutionHosts(db, {
+    const { hosts, fake } = await fakeExecutionHosts(db, {
       fake: createFakeExecutionHost(),
     });
     const { assignment } = await reserveCompanyManualAssignment(
@@ -1184,13 +1185,57 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
         }),
       ).rejects.toMatchObject({ code: "CONFLICT" });
       await expect(
-        retainStandUnknown(db, operation.id, body.ownerEpoch),
+        retainStandUnknown(db, operation.id, {
+          dispatchEpoch: body.ownerEpoch,
+        }),
       ).resolves.toMatchObject({ effectState: "unknown" });
-      const adoptedEffect = await adoptStandTargetReceipt(
-        db,
-        operation.id,
-        result,
-      );
+      const read = await createCompanyGrants(db, administratorId, {
+        principalKind: "user",
+        principalId: userId,
+        actions: ["targets:recover"],
+        idempotencyKey: randomUUID(),
+      });
+      const { POST: reconcile } =
+        await import("@/app/api/stand-operations/[operationId]/reconcile/route");
+      const recover = (expectedRevision: number) =>
+        reconcile(
+          new NextRequest(
+            `http://localhost/api/stand-operations/${operation.id}/reconcile`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Origin: "http://localhost",
+              },
+              body: JSON.stringify({ expectedRevision }),
+            },
+          ),
+          { params: Promise.resolve({ operationId: operation.id }) },
+        );
+      const readTarget = vi.fn(async (selector: { ownerEpoch: number }) => {
+        await authorize({
+          ...body,
+          ownerEpoch: selector.ownerEpoch,
+          purpose: "reconcile",
+          nonce: randomUUID(),
+        });
+
+        return result;
+      });
+
+      setDefaultTransportForTests({
+        ...fake.transport,
+        readStandReceipt: readTarget,
+      });
+      const reconciled = await recover(operation.revision + 2);
+
+      expect(reconciled.status).toBe(200);
+      const adoptedEffect = await reconciled.json();
+
+      expect(readTarget).toHaveBeenCalledOnce();
+      expect((await recover(operation.revision + 2)).status).toBe(409);
+      expect((await recover(adoptedEffect.revision)).status).toBe(200);
+      expect(readTarget).toHaveBeenCalledOnce();
 
       expect(adoptedEffect).toMatchObject({
         effectState: "confirmed_applied",
@@ -1218,12 +1263,6 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
       expect(
         await releaseAssignmentForRun(db, runId, "test_stand_recovery"),
       ).toMatchObject({ state: "released" });
-      const readGrant = await createCompanyGrants(db, administratorId, {
-        principalKind: "user",
-        principalId: userId,
-        actions: ["targets:recover"],
-        idempotencyKey: randomUUID(),
-      });
       const recovery = await claimStandReadAuthority(
         db,
         userId,
@@ -1267,7 +1306,7 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
         purpose: "reconcile",
         ownerEpoch: adopted.ownerEpoch,
       });
-      const recoveryGrant = readGrant.page.items.find(
+      const recoveryGrant = read.page.items.find(
         ({ action }) => action === "targets:recover",
       )!;
 
@@ -1280,6 +1319,7 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
         authorize({ ...reconciliation, nonce: randomUUID() }),
       ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     } finally {
+      setDefaultTransportForTests(null);
       if (previousToken === undefined)
         delete process.env.STAND_TEST_HELPER_TOKEN;
       else process.env.STAND_TEST_HELPER_TOKEN = previousToken;

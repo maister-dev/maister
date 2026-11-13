@@ -30,3 +30,16 @@ export type StandDispatchPayload = z.infer<typeof StandDispatchPayloadSchema>;
 export type DispatchStandRestart = (
   payload: StandDispatchPayload,
 ) => Promise<Record<string, unknown>>;
+
+export const StandReceiptSelectorSchema = z
+  .object({
+    operationId: z.uuid(),
+    targetIncarnation: z.uuid(),
+    requestDigest: digest,
+    ownerEpoch: z.number().int().min(1),
+  })
+  .strict();
+export type StandReceiptSelector = z.infer<typeof StandReceiptSelectorSchema>;
+export type ReadStandReceipt = (
+  selector: StandReceiptSelector,
+) => Promise<Record<string, unknown> | null>;

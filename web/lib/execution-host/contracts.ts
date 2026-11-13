@@ -331,6 +331,14 @@ export interface ExecutionHostTransport {
     envelope: CommandEnvelope<unknown>,
     opts?: CommandCallOptions,
   ): Promise<unknown>;
+  readStandReceipt(
+    selector: Readonly<{
+      operationId: string;
+      targetIncarnation: string;
+      requestDigest: string;
+      ownerEpoch: number;
+    }>,
+  ): Promise<unknown>;
   releaseWorkspace(
     executionWorkspaceId: string,
     envelope: CommandEnvelope<EmptyPayload>,

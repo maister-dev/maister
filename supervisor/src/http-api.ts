@@ -60,7 +60,9 @@ import {
 import { takeContextMountPreamble } from "./context-mounts";
 import {
   StandDispatchPayloadSchema,
+  StandReceiptSelectorSchema,
   type DispatchStandRestart,
+  type ReadStandReceipt,
 } from "./stand-operations/contracts";
 import { attachCost } from "./cost";
 import {
@@ -244,6 +246,7 @@ export type RegisterRoutesOptions = {
   // registry. Injected only so a suite can read what a subscriber buffers.
   runtimeEventSubscribers?: RuntimeEventSubscribers;
   dispatchStandRestart?: DispatchStandRestart;
+  readStandReceipt?: ReadStandReceipt;
 };
 
 type SessionIdParams = { Params: { id: string } };
@@ -2487,6 +2490,20 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         };
       },
     });
+  });
+
+  app.post("/stand-operations/receipt", async (req, reply) => {
+    const selector = StandReceiptSelectorSchema.parse(req.body);
+
+    if (!opts.readStandReceipt)
+      throw new SupervisorError(
+        "PRECONDITION",
+        "No stand receipt transport is configured",
+      );
+
+    const receipt = await opts.readStandReceipt(selector);
+
+    reply.status(200).send({ receipt });
   });
 
   // ADR-166 D7: the ONLY path-bearing route. Registers a host-local path for a

@@ -8,6 +8,7 @@ import { and, eq } from "drizzle-orm";
 import { operationDto } from "./operation-intake";
 import { standTargetReceiptSchema } from "./operation-types";
 import { readStandReceiptIds } from "./receipt-queries";
+import { authorizeStandReadOwner } from "./read-authority";
 
 import { redactQueryError } from "@/lib/db/pg-error";
 import {
@@ -17,6 +18,7 @@ import {
   standOperationReceipts,
   standOperations,
   standResourceClaims,
+  standTargets,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { contentDigest } from "@/lib/evaluations/digest";
@@ -29,11 +31,33 @@ function conflict(reason: string): MaisterError {
   );
 }
 
+async function requireCurrentReconciliation(
+  tx: Db,
+  operation: typeof standOperations.$inferSelect,
+  readEpoch: number,
+): Promise<void> {
+  const [target] = await tx
+    .select()
+    .from(standTargets)
+    .where(eq(standTargets.id, operation.targetId))
+    .for("share");
+
+  if (!target?.enabled || target.configRevision !== operation.configRevision)
+    throw conflict("target_identity_mismatch");
+  await authorizeStandReadOwner(
+    tx,
+    operation,
+    target.companyId,
+    "reconcile",
+    readEpoch,
+  );
+}
+
 /** An ambiguous transport outcome cannot release the resource. */
 export async function retainStandUnknown(
   db: Db,
   operationId: string,
-  ownerEpoch: number,
+  owner: Readonly<{ dispatchEpoch: number }> | Readonly<{ readEpoch: number }>,
 ): Promise<StandOperation> {
   try {
     return await db.transaction(async (tx) => {
@@ -48,7 +72,10 @@ export async function retainStandUnknown(
         .where(eq(standResourceClaims.operationId, operationId))
         .for("share");
 
-      if (!operation || !claim?.unresolved || claim.ownerEpoch !== ownerEpoch)
+      if (!operation || !claim?.unresolved) throw conflict("assignment_fenced");
+      if ("readEpoch" in owner)
+        await requireCurrentReconciliation(tx, operation, owner.readEpoch);
+      else if (claim.ownerEpoch !== owner.dispatchEpoch)
         throw conflict("assignment_fenced");
       if (operation.effectState === "unknown")
         return operationDto(
@@ -136,6 +163,7 @@ export async function adoptStandTargetReceipt(
   db: Db,
   operationId: string,
   raw: unknown,
+  readEpoch?: number,
 ): Promise<StandOperation> {
   const parsed = standTargetReceiptSchema.safeParse(raw);
 
@@ -187,6 +215,8 @@ export async function adoptStandTargetReceipt(
         operation.requestDigest !== receipt.requestDigest
       )
         throw conflict("target_identity_mismatch");
+      if (readEpoch !== undefined)
+        await requireCurrentReconciliation(tx, operation, readEpoch);
       const [previous] = await tx
         .select()
         .from(standOperationReceipts)
