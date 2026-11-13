@@ -1358,6 +1358,22 @@
     "turnQuarantined": "The last turn's result could not be stored, so it ended without one. Send a new message to continue."
   },
   "board": {
+    "workspaces": {
+      "title": "Runs and working copies",
+      "executing": "Executing",
+      "decisions": "Your pending decisions",
+      "retained": "Retained working copies",
+      "projectDetails": "Project details",
+      "repository": "Repository",
+      "copies": "{count} working copies",
+      "attempt": "Run attempt {count}",
+      "archived": "Archived",
+      "onDisk": "On disk",
+      "notOnDisk": "Unavailable on disk",
+      "moreAttempts": "Show more attempts",
+      "moreGroups": "Show more work",
+      "empty": "No retained working copies."
+    },
     "needYou": "need you",
     "inProd": "in prod",
     "backlogCount": "backlog",
