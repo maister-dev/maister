@@ -412,7 +412,10 @@ describe("E2E wrapper environment", () => {
     expect(mocks.createTestWorktreesRoot).toHaveBeenCalledWith("e2e-live");
   });
 
-  it("seeds the native corpus on disk for live qualification", async () => {
+  it.each([
+    "live-company-brain-specialists.spec.ts",
+    "live-stand-specialists.spec.ts",
+  ])("seeds an empty native execution ledger on disk for %s", async (spec) => {
     configureTestDatabase();
     const child = createChildProcess();
 
@@ -420,7 +423,7 @@ describe("E2E wrapper environment", () => {
     const invocation = runE2eInvocation([
       "--config",
       "playwright.live.config.ts",
-      "live-company-brain-specialists.spec.ts",
+      spec,
     ]);
 
     await vi.waitFor(() => expect(mocks.spawn).toHaveBeenCalledOnce());

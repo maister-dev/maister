@@ -328,7 +328,10 @@ export async function runE2eInvocation(
   const worktreesRoot = createTestWorktreesRoot(lane);
   const nativeCompanyBrain = arguments_.some(
     (argument) =>
-      path.basename(argument) === "live-company-brain-specialists.spec.ts",
+      [
+        "live-company-brain-specialists.spec.ts",
+        "live-stand-specialists.spec.ts",
+      ].includes(path.basename(argument)),
   );
   let invocationError: unknown;
   let e2eInvocation: E2eInvocation | undefined;
