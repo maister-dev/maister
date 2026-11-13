@@ -304,6 +304,12 @@ Acceptance stores responsible server principal, exact input/work/result revision
 
 These rows cover every current run-status value. Recovery runs through existing event dispatch/startup/scheduler owners and is keyed to the assignment owner epoch. Any terminal coordinator status triggers ownership review, not only Crashed.
 
+The existing child-settlement consumer handles company Runs through the
+current coordinator wake claim. A company event can wake only the actual
+parent on the same company assignment and exact delegated work revision.
+Repeated delivery converges on the same wait-resume placement. The coordinator
+resumes its retained node and can collect the settled child's result revision.
+
 | Run status | Agent child after owner loss | Flow child after owner loss | Coordinator recovery |
 | --- | --- | --- | --- |
 | Pending | Cancel unadmitted reservation or adopt under current new owner; no duplicate launch | Same, preserving pin/work ID | New claim adopts reserved run and queue position under cap |

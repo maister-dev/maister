@@ -91,6 +91,7 @@ import { startAgentContinuationWorker } from "../continuation-worker";
 import { getCompanyAgentRunHistory } from "../activity-queries";
 
 import { runReconcileSweep } from "@/lib/reconcile";
+import { buildOrchestratorResumeConsumer } from "@/lib/domain-events/orchestrator-resume";
 import { submitProjectManualAssignment } from "@/lib/specialist-assignments/project-manual-intake";
 import {
   mintAssignment,
@@ -139,6 +140,7 @@ import {
   executionCommands,
   executionEvents,
   executionHosts,
+  domainEvents,
   platformAcpRunners,
   platformRuntimeSettings,
 } from "@/lib/db/schema";
@@ -653,7 +655,7 @@ beforeAll(async () => {
     (
       await readFile(join(source, "flows/rah-control/flow.yaml"), "utf8")
     ).replace("{{ task.prompt }}", "{{ assignment.input }}"),
-  ) as Record<string, unknown>;
+  ) as Record<string, unknown> & { nodes: Record<string, unknown>[] };
 
   await mkdir(childFlowPath, { recursive: true });
   await writeFile(
@@ -662,6 +664,23 @@ beforeAll(async () => {
       ...controlFlow,
       name: "rah-company-child",
       execution: { workspace: "none", completion: "result" },
+      nodes: controlFlow.nodes.map((node) => ({
+        ...node,
+        type: "orchestrator",
+        settings: {
+          delegation: {
+            max_fanout: 2,
+            max_depth: 2,
+            max_active_children: 2,
+            budget: {
+              max_tokens: 10000,
+              wall_clock_minutes: 5,
+              max_child_runs: 8,
+              consecutive_failures: 2,
+            },
+          },
+        },
+      })),
     }),
   );
   const manifestPath = join(source, "maister-package.yaml");
@@ -13225,24 +13244,51 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
           selection: [],
         };
         let nestedChildRunId: string | undefined;
-        const { prompts: graphPrompts } = scriptAgentTurn(fake, {
-          ...scriptedTurn,
-          text: "```json maister:output\n" + JSON.stringify(findings) + "\n```",
-          onPrompt: async (prompt) => {
-            const create = fake.callsOf("createSession").at(-1)?.envelope
-              ?.payload as
-              | {
-                  mcpServers?: { name: string; env?: Record<string, string> }[];
-                }
-              | undefined;
-            const bearer = create?.mcpServers?.find(
-              (server) => server.name === "maister",
-            )?.env?.MAISTER_PROJECT_TOKEN;
+        const graphBearer = (): string => {
+          const create = fake
+            .callsOf("createSession")
+            .filter((call) => call.envelope?.fence.runId === graph.childRunId)
+            .at(-1)?.envelope?.payload as
+            | { mcpServers?: { name: string; env?: Record<string, string> }[] }
+            | undefined;
+          const bearer = create?.mcpServers?.find(
+            (server) => server.name === "maister",
+          )?.env?.MAISTER_PROJECT_TOKEN;
 
-            if (!bearer)
-              throw new Error(
-                "The company graph node has no facade credential",
+          if (!bearer)
+            throw new Error("The company graph node has no facade credential");
+
+          return bearer;
+        };
+        const graphPrompts: string[] = [];
+        const graphTurn = {
+          ...scriptedTurn,
+          prompts: graphPrompts,
+          text: "```json maister:output\n" + JSON.stringify(findings) + "\n```",
+          onPrompt: async (prompt: { sessionId: string }) => {
+            const bearer = graphBearer();
+
+            if (nestedChildRunId) {
+              const collected = await collectExternalRun(
+                new NextRequest("http://localhost/api/v1/ext/runs/collect", {
+                  method: "POST",
+                  headers: { ...headers, Authorization: `Bearer ${bearer}` },
+                  body: JSON.stringify({ childRunId: nestedChildRunId }),
+                }),
+                {},
               );
+
+              expect(collected.status).toBe(200);
+              expect(await collected.json()).toMatchObject([
+                {
+                  childRunId: nestedChildRunId,
+                  status: "Done",
+                  resultStatus: "valid",
+                },
+              ]);
+
+              return scriptedTurn.onPrompt(prompt);
+            }
             const current = await getSpecialistAssignment(
               db,
               userId,
@@ -13299,7 +13345,9 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
 
             return scriptedTurn.onPrompt(prompt);
           },
-        });
+        };
+
+        scriptAgentTurn(fake, graphTurn);
         const smoke = {
           status: "ok" as const,
           reason: null,
@@ -13345,13 +13393,63 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
           });
           await runFlow(graph.childRunId, { db, executionHosts: hosts });
           await fake.waitForCanonicalEvents();
+          expect(nestedChildRunId).toBeDefined();
+          expect(
+            (
+              await db.select().from(runs).where(eq(runs.id, graph.childRunId))
+            )[0],
+          ).toMatchObject({ status: "WaitingOnChildren" });
+          scriptAgentTurn(fake, scriptedTurn);
+          expect(await tryStartRun(nestedChildRunId!, { db })).toMatchObject({
+            started: true,
+          });
+          await startAgentSession(nestedChildRunId!, {
+            db,
+            executionHosts: hosts,
+          });
+          await fake.waitForCanonicalEvents();
+          const [settled] = await db
+            .select()
+            .from(domainEvents)
+            .where(
+              and(
+                eq(domainEvents.runId, nestedChildRunId!),
+                eq(domainEvents.kind, "run.done"),
+              ),
+            );
+
+          expect(settled).toMatchObject({
+            companyId: request.companyId,
+            projectId: null,
+            payload: { parentRunId: graph.childRunId },
+          });
+          scriptAgentTurn(fake, graphTurn);
+          const wokenRuns: string[] = [];
+          const consumer = buildOrchestratorResumeConsumer({
+            db,
+            resumeFlow: (runId, options) => {
+              wokenRuns.push(runId);
+
+              return runFlow(runId, { ...options, db, executionHosts: hosts });
+            },
+          });
+
+          await consumer.handle([
+            { ...settled, companyId: randomUUID() },
+            { ...settled, runId: first.childRunId },
+            { ...settled, kind: "run.failed" },
+          ]);
+          expect(wokenRuns).toEqual([]);
+          await consumer.handle([settled]);
+          await consumer.handle([settled]);
+          expect(wokenRuns).toEqual([graph.childRunId]);
         } finally {
           if (savedFlowCap === undefined)
             delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
           else process.env.MAISTER_MAX_CONCURRENT_RUNS = savedFlowCap;
         }
 
-        expect(graphPrompts).toHaveLength(1);
+        expect(graphPrompts).toHaveLength(2);
         expect(graphPrompts[0]).toContain(graphObjective);
         expect(graphPrompts[0]).not.toContain(
           assignmentInput.objectiveInput.input,
@@ -13747,7 +13845,7 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
         )
       ).rows,
     ).toEqual([
-      { status: "Abandoned", terminal: "Abandoned" },
+      { status: "Done", terminal: "Done" },
       { status: "Done", terminal: "Done" },
     ]);
     expect(
