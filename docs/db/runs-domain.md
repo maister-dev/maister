@@ -703,7 +703,7 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
   [agents-domain.md](agents-domain.md). Company events use
   `runs_company_trigger_event_uq` on company/professional/subscription/event;
   [native source guards](specialist-assignments-domain.md#canonical-intake-receipts)
-  bind the exact existing invocation and preserve historical null triggers (0253).
+  bind the exact existing invocation and preserve historical null triggers (0254).
 - `scratch_runs_project_status_idx` on `(project_id, dialog_status)` — active
   scratch workspace lists. **(migration 0057)** made **partial**
   (`WHERE project_id IS NOT NULL`) so the project-less local-package assistant

@@ -27,8 +27,10 @@ import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer"
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
-import { scratchPromptOwners } from "@/lib/scratch-runs/prompt-owner";
-import { isYieldedScratchTurn } from "@/lib/scratch-runs/prompt-owner";
+import {
+  scratchPromptOwners,
+  isYieldedScratchTurn,
+} from "@/lib/scratch-runs/prompt-owner";
 import { createExecutionHosts } from "@/lib/execution-host/client";
 import { readCreateIntent } from "@/lib/execution-host/create-intent";
 import { completeOwnedScratchCreate } from "@/lib/scratch-runs/create-continuation";
@@ -42,8 +44,6 @@ import { appendScratchMessage } from "@/lib/scratch-runs/messages";
 import { redriveRunningScratchPrompt } from "@/lib/scratch-runs/dispatch-recovery";
 import { sendScratchPromptAndProjectEvents } from "@/lib/scratch-runs/events";
 import { failScratchMessageTurn } from "@/lib/scratch-runs/service";
-import { completeOwnedScratchCreate } from "@/lib/scratch-runs/create-continuation";
-import { readCreateIntent } from "@/lib/execution-host/create-intent";
 import { retireEligibleCommands } from "@/lib/execution-host/retirement";
 import {
   startMainPostgresTestDb,

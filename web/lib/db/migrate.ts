@@ -247,10 +247,7 @@ async function main(): Promise<void> {
     { driver: "postgres", url: maskDbUrl(url), stage },
     "running migrations",
   );
-  const pool = new Pool({
-    connectionString: url,
-    onConnect: declareWriterCapability,
-  });
+  const pool = new Pool({ connectionString: url });
 
   let client: PoolClient | undefined;
   let preM43MigrationRoot: string | null = null;

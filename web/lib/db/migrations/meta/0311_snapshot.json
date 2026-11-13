@@ -14314,6 +14314,22 @@
         }
       },
       "indexes": {
+        "librarian_cards_pending_idx": {
+          "name": "librarian_cards_pending_idx",
+          "columns": [
+            {
+              "expression": "conversation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "where": "\"librarian_cards\".\"status\" = 'pending'",
+          "concurrently": false
+        },
         "librarian_cards_history_idx": {
           "name": "librarian_cards_history_idx",
           "columns": [
@@ -14340,63 +14356,47 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "librarian_cards_pending_idx": {
-          "name": "librarian_cards_pending_idx",
-          "columns": [
-            {
-              "expression": "conversation_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"librarian_cards\".\"status\" = 'pending'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
         "librarian_cards_conversation_id_librarian_conversations_id_fk": {
           "name": "librarian_cards_conversation_id_librarian_conversations_id_fk",
           "tableFrom": "librarian_cards",
-          "tableTo": "librarian_conversations",
           "columnsFrom": [
             "conversation_id"
           ],
+          "tableTo": "librarian_conversations",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "librarian_cards_segment_id_librarian_segments_id_fk": {
           "name": "librarian_cards_segment_id_librarian_segments_id_fk",
           "tableFrom": "librarian_cards",
-          "tableTo": "librarian_segments",
           "columnsFrom": [
             "segment_id"
           ],
+          "tableTo": "librarian_segments",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "librarian_cards_message_id_librarian_messages_id_fk": {
           "name": "librarian_cards_message_id_librarian_messages_id_fk",
           "tableFrom": "librarian_cards",
-          "tableTo": "librarian_messages",
           "columnsFrom": [
             "message_id"
           ],
+          "tableTo": "librarian_messages",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "set null"
         }
       },
       "compositePrimaryKeys": {},
@@ -15260,6 +15260,27 @@
         }
       },
       "indexes": {
+        "librarian_operations_segment_digest_idx": {
+          "name": "librarian_operations_segment_digest_idx",
+          "columns": [
+            {
+              "expression": "segment_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "request_digest",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        },
         "librarian_operations_history_idx": {
           "name": "librarian_operations_history_idx",
           "columns": [
@@ -15286,79 +15307,58 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "librarian_operations_segment_digest_idx": {
-          "name": "librarian_operations_segment_digest_idx",
-          "columns": [
-            {
-              "expression": "segment_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "request_digest",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
         "librarian_operations_conversation_id_librarian_conversations_id_fk": {
           "name": "librarian_operations_conversation_id_librarian_conversations_id_fk",
           "tableFrom": "librarian_operations",
-          "tableTo": "librarian_conversations",
           "columnsFrom": [
             "conversation_id"
           ],
+          "tableTo": "librarian_conversations",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "librarian_operations_segment_id_librarian_segments_id_fk": {
           "name": "librarian_operations_segment_id_librarian_segments_id_fk",
           "tableFrom": "librarian_operations",
-          "tableTo": "librarian_segments",
           "columnsFrom": [
             "segment_id"
           ],
+          "tableTo": "librarian_segments",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "librarian_operations_turn_id_librarian_turns_id_fk": {
           "name": "librarian_operations_turn_id_librarian_turns_id_fk",
           "tableFrom": "librarian_operations",
-          "tableTo": "librarian_turns",
           "columnsFrom": [
             "turn_id"
           ],
+          "tableTo": "librarian_turns",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "set null"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "librarian_operations_key_uq": {
           "name": "librarian_operations_key_uq",
-          "nullsNotDistinct": false,
           "columns": [
             "conversation_id",
             "idempotency_key"
-          ]
+          ],
+          "nullsNotDistinct": false
         }
       },
       "policies": {},
@@ -15604,6 +15604,21 @@
         }
       },
       "indexes": {
+        "librarian_task_links_task_idx": {
+          "name": "librarian_task_links_task_idx",
+          "columns": [
+            {
+              "expression": "task_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        },
         "librarian_task_links_history_idx": {
           "name": "librarian_task_links_history_idx",
           "columns": [
@@ -15630,75 +15645,60 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "librarian_task_links_task_idx": {
-          "name": "librarian_task_links_task_idx",
-          "columns": [
-            {
-              "expression": "task_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
         "librarian_task_links_conversation_id_librarian_conversations_id_fk": {
           "name": "librarian_task_links_conversation_id_librarian_conversations_id_fk",
           "tableFrom": "librarian_task_links",
-          "tableTo": "librarian_conversations",
           "columnsFrom": [
             "conversation_id"
           ],
+          "tableTo": "librarian_conversations",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "librarian_task_links_task_id_tasks_id_fk": {
           "name": "librarian_task_links_task_id_tasks_id_fk",
           "tableFrom": "librarian_task_links",
-          "tableTo": "tasks",
           "columnsFrom": [
             "task_id"
           ],
+          "tableTo": "tasks",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "librarian_task_links_from_message_id_librarian_messages_id_fk": {
           "name": "librarian_task_links_from_message_id_librarian_messages_id_fk",
           "tableFrom": "librarian_task_links",
-          "tableTo": "librarian_messages",
           "columnsFrom": [
             "from_message_id"
           ],
+          "tableTo": "librarian_messages",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "set null"
         },
         "librarian_task_links_to_message_id_librarian_messages_id_fk": {
           "name": "librarian_task_links_to_message_id_librarian_messages_id_fk",
           "tableFrom": "librarian_task_links",
-          "tableTo": "librarian_messages",
           "columnsFrom": [
             "to_message_id"
           ],
+          "tableTo": "librarian_messages",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "set null"
         }
       },
       "compositePrimaryKeys": {},
@@ -31390,6 +31390,12 @@
         "published_at": {
           "name": "published_at",
           "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "branch_delivery": {
+          "name": "branch_delivery",
+          "type": "jsonb",
           "primaryKey": false,
           "notNull": false
         }

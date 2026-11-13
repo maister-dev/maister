@@ -46,50 +46,50 @@ Assignment storage precedes binding storage (T18→T19). Execution resolves the 
 
 | Unit | Dependency and responsible slice | Preservation and failure oracle |
 | --- | --- | --- |
-| Main 0228 company_ownership | Existing users/agents; T05 | One installation company and explicit grants; project membership unchanged and no automatic content grants. |
-| Main 0229 company_knowledge_events | 0228; T08.1/T09 | Exclusive-owner metadata facts and nullable native capture; legacy events remain readable and metadata facts cannot trigger agents. |
-| Main 0230 company_grant_requests | 0228; T08.1 | Content-guarded grant/revocation receipts retain current principal and authority checks. |
-| Main 0231 native_knowledge_execution | 0229; T14 | Immutable executed-role/node-token attestation; legacy NULL remains unknown, without a Brain FK. |
-| Main 0232 specialist_assignments | 0228; T18 | Assignment/input/run-link history and owner/revision guards preserve existing execution ledgers; completion remains unavailable until acceptance. |
-| Main 0233 specialist_metadata | 0232; T19 | Optional role declarations preserve absent legacy definition bytes and grant no authority. |
-| Main 0234 company_specialist_bindings | 0233; T19 | Reviewed pinned configuration and immutable history retain explicit current company authority. |
-| Main 0235 company_flow_bindings | 0234; T19.1 | Exact installed result-only Flow pins require no project/Flow carrier; historical v1 snapshots stay unchanged. |
-| Main 0236 company_trigger_scope | 0235; T19.1 | Existing schedules/attempts gain exclusive owners and immutable v2 binding snapshots; v1 scheduled input stays unchanged. |
-| Main 0237 company_retry_scope | 0236; T19.1 | Company v3 retry references preserve project v1/v2 bytes; storage does not enable company replacement execution. |
-| Main 0238 company_agent_execution | 0237; T20 | Company Run ownership and exact assignment/input links require no dummy project. |
-| Main 0239 company_agent_credentials | 0238; T20 | Existing internal tokens gain exact company Run binding, current-authority and identity guards. |
-| Main 0240 company_run_terminal_events | 0239; T20 | Company terminal/cleanup facts retain same-owner Run references; metadata facts remain content-free. |
-| Main 0241 native_source_array_planning | 0240; T21 | A low planner row estimate for the existing source-restriction array function preserves every entry and changes no access policy. |
-| Main 0242 company_human_work_ownership | 0241; T20/T21 | Existing human assignment/actor/event tables gain exclusive company ownership without a second work ledger. |
-| Main 0243 human_work_owner_guards | 0242; T21 | Same-owner human-work references and current actor gates reject forged cross-owner actions. |
-| Main 0244 company_hitl_wait_events | 0243; T21 | Company wait facts require exact retained Run ownership; historical project wait facts remain readable. |
-| Main 0245 company_operational_attention | 0244; T21 | Existing attention kinds cover company work without leaking protected prompt/input bytes. |
-| Main 0246 company_flow_execution | 0245; T20.1 | Explicit v2 company graph captures retain required exports and no project/task/provider-Flow carrier. |
-| Main 0247 company_flow_node_credentials | 0246; T20.1 | Exact current node/professional credentials reuse existing rotation; v1 null-node credentials remain unchanged. |
-| Main 0248 company_flow_workspace_witness | 0247; T20.1 | Company graph plain-directory baselines preserve source-integrity and ownership witnesses. |
-| Main 0249 company_flow_runtime | 0248; T20.1 | Existing bounded disposition and lifecycle guards cover result-only graphs without synthesizing operational-agent results. |
-| Main 0250 company_run_cancellation | 0249; T20.1/T21 | Immutable stop intent fences new commands and competing completion before teardown; uncertainty remains recoverable. |
-| Main 0251 specialist_intake_receipts | 0250; T22 | Canonical source keys and exact input/actor receipts prevent duplicate assignments and changed-payload replay. |
-| Main 0252 specialist_project_flow_input | 0251; T22 | New project coordinator input v2 and same-project carrier linkage preserve company tasklessness and legacy v1 bytes. |
-| Main 0253 company_event_admission | 0252; T22.1 | Company subscription/event identity binds the original reserved invocation; project uniqueness remains unchanged. |
-| Main 0254 project_source_review | 0253; T22 | Server-recorded current project source review remains separate from recurring input and invocation authority. |
-| Main 0255 project_trigger_review | 0254; T22 | Reviewed project binding v3 refuses old-worker native-review bypass while preserving existing v1/v2 history. |
-| Main 0256 project_event_context | 0255; T22 | Explicit current source-sharing review bounds inherited producing-context disclosure. |
-| Main 0257 specialist_context_revisions | 0256; T23 | Attributed immutable working context and source closure use assignment revision CAS, separate from long-term Brain. |
-| Main 0258 specialist_context_credentials | 0257; T23 | Native context read scopes retain exact current execution/input appointment. |
-| Main 0259 specialist_context_mutation_credentials | 0258; T23 | Context mutation additionally requires current update authority; no model-authored author/epoch is accepted. |
-| Main 0260 specialist_question_subject | 0259; T24 | Existing HITL rows retain immutable native assignment/input/question correlation and legacy NULL metadata. |
-| Main 0261 specialist_question_answer | 0260; T24 | Exact native human-answer receipts gate continuation; answer intent remains distinct from delivered input. |
-| Main 0262 specialist_flow_question | 0261; T24 | Existing graph resume grammar retains exact native question/answer lineage. |
-| Main 0263 specialist_result_delivery | 0262; T25 | Result-availability capture and origin delivery bind exact retained result/input, without accepting business work. |
-| Main 0264 specialist_delivery_targets | 0263; T25 | Existing webhook/Inbox transports retain source-authorized recipients and delivery identity. |
-| Main 0265 specialist_source_handoff | 0264; T26 | Once-only source pointers bind original assignment/input and unused execution reservation. |
-| Main 0266 project_source_recovery | 0265; T26 | Interrupted unused intakes can recover exact source pointers; used/uncertain execution is never reset. |
-| Main 0267 specialist_logical_work | 0266; T27 foundation | Immutable logical work/intake/child witnesses are implemented; native dispatch, decisions and owner recovery remain their owning slices. |
-| Main 0268 specialist_work_witness_guards | 0267; T27 guard correction | Requires positive source/context/target matches, preserves immutable company source identity after optional catalog FK removal, and leaves retained rows unchanged. |
+| Main 0229 company_ownership | Existing users/agents; T05 | One installation company and explicit grants; project membership unchanged and no automatic content grants. |
+| Main 0230 company_knowledge_events | 0229; T08.1/T09 | Exclusive-owner metadata facts and nullable native capture; legacy events remain readable and metadata facts cannot trigger agents. |
+| Main 0231 company_grant_requests | 0229; T08.1 | Content-guarded grant/revocation receipts retain current principal and authority checks. |
+| Main 0232 native_knowledge_execution | 0230; T14 | Immutable executed-role/node-token attestation; legacy NULL remains unknown, without a Brain FK. |
+| Main 0233 specialist_assignments | 0229; T18 | Assignment/input/run-link history and owner/revision guards preserve existing execution ledgers; completion remains unavailable until acceptance. |
+| Main 0234 specialist_metadata | 0233; T19 | Optional role declarations preserve absent legacy definition bytes and grant no authority. |
+| Main 0235 company_specialist_bindings | 0234; T19 | Reviewed pinned configuration and immutable history retain explicit current company authority. |
+| Main 0236 company_flow_bindings | 0235; T19.1 | Exact installed result-only Flow pins require no project/Flow carrier; historical v1 snapshots stay unchanged. |
+| Main 0237 company_trigger_scope | 0236; T19.1 | Existing schedules/attempts gain exclusive owners and immutable v2 binding snapshots; v1 scheduled input stays unchanged. |
+| Main 0238 company_retry_scope | 0237; T19.1 | Company v3 retry references preserve project v1/v2 bytes; storage does not enable company replacement execution. |
+| Main 0239 company_agent_execution | 0238; T20 | Company Run ownership and exact assignment/input links require no dummy project. |
+| Main 0240 company_agent_credentials | 0239; T20 | Existing internal tokens gain exact company Run binding, current-authority and identity guards. |
+| Main 0241 company_run_terminal_events | 0240; T20 | Company terminal/cleanup facts retain same-owner Run references; metadata facts remain content-free. |
+| Main 0242 native_source_array_planning | 0241; T21 | A low planner row estimate for the existing source-restriction array function preserves every entry and changes no access policy. |
+| Main 0243 company_human_work_ownership | 0242; T20/T21 | Existing human assignment/actor/event tables gain exclusive company ownership without a second work ledger. |
+| Main 0244 human_work_owner_guards | 0243; T21 | Same-owner human-work references and current actor gates reject forged cross-owner actions. |
+| Main 0245 company_hitl_wait_events | 0244; T21 | Company wait facts require exact retained Run ownership; historical project wait facts remain readable. |
+| Main 0246 company_operational_attention | 0245; T21 | Existing attention kinds cover company work without leaking protected prompt/input bytes. |
+| Main 0247 company_flow_execution | 0246; T20.1 | Explicit v2 company graph captures retain required exports and no project/task/provider-Flow carrier. |
+| Main 0248 company_flow_node_credentials | 0247; T20.1 | Exact current node/professional credentials reuse existing rotation; v1 null-node credentials remain unchanged. |
+| Main 0249 company_flow_workspace_witness | 0248; T20.1 | Company graph plain-directory baselines preserve source-integrity and ownership witnesses. |
+| Main 0250 company_flow_runtime | 0249; T20.1 | Existing bounded disposition and lifecycle guards cover result-only graphs without synthesizing operational-agent results. |
+| Main 0251 company_run_cancellation | 0250; T20.1/T21 | Immutable stop intent fences new commands and competing completion before teardown; uncertainty remains recoverable. |
+| Main 0252 specialist_intake_receipts | 0251; T22 | Canonical source keys and exact input/actor receipts prevent duplicate assignments and changed-payload replay. |
+| Main 0253 specialist_project_flow_input | 0252; T22 | New project coordinator input v2 and same-project carrier linkage preserve company tasklessness and legacy v1 bytes. |
+| Main 0254 company_event_admission | 0253; T22.1 | Company subscription/event identity binds the original reserved invocation; project uniqueness remains unchanged. |
+| Main 0255 project_source_review | 0254; T22 | Server-recorded current project source review remains separate from recurring input and invocation authority. |
+| Main 0256 project_trigger_review | 0255; T22 | Reviewed project binding v3 refuses old-worker native-review bypass while preserving existing v1/v2 history. |
+| Main 0257 project_event_context | 0256; T22 | Explicit current source-sharing review bounds inherited producing-context disclosure. |
+| Main 0258 specialist_context_revisions | 0257; T23 | Attributed immutable working context and source closure use assignment revision CAS, separate from long-term Brain. |
+| Main 0259 specialist_context_credentials | 0258; T23 | Native context read scopes retain exact current execution/input appointment. |
+| Main 0260 specialist_context_mutation_credentials | 0259; T23 | Context mutation additionally requires current update authority; no model-authored author/epoch is accepted. |
+| Main 0261 specialist_question_subject | 0260; T24 | Existing HITL rows retain immutable native assignment/input/question correlation and legacy NULL metadata. |
+| Main 0262 specialist_question_answer | 0261; T24 | Exact native human-answer receipts gate continuation; answer intent remains distinct from delivered input. |
+| Main 0263 specialist_flow_question | 0262; T24 | Existing graph resume grammar retains exact native question/answer lineage. |
+| Main 0264 specialist_result_delivery | 0263; T25 | Result-availability capture and origin delivery bind exact retained result/input, without accepting business work. |
+| Main 0265 specialist_delivery_targets | 0264; T25 | Existing webhook/Inbox transports retain source-authorized recipients and delivery identity. |
+| Main 0266 specialist_source_handoff | 0265; T26 | Once-only source pointers bind original assignment/input and unused execution reservation. |
+| Main 0267 project_source_recovery | 0266; T26 | Interrupted unused intakes can recover exact source pointers; used/uncertain execution is never reset. |
+| Main 0268 specialist_logical_work | 0267; T27 foundation | Immutable logical work/intake/child witnesses are implemented; native dispatch, decisions and owner recovery remain their owning slices. |
+| Main 0269 specialist_work_witness_guards | 0268; T27 guard correction | Requires positive source/context/target matches, preserves immutable company source identity after optional catalog FK removal, and leaves retained rows unchanged. |
 | Main specialist_acceptance_and_ownership (Designed; next free units) | Logical work and existing results; T28–29 | Exact-result decisions and current business-owner fences must land with their real writers and recovery tests. |
 | Main stand_operations (Designed; next free units) | Governed cooperation; T31 | Target/operation/receipt/permit/probe/resource exclusion must preserve unknown effects independently of Run retirement. |
-| Brain 0007 company_records | Main 0228; T06 | Stable IDs and honest legacy provenance; unknown authorship/basis/time never becomes confirmation or a historical acceptance event. |
+| Brain 0007 company_records | Main 0229; T06 | Stable IDs and honest legacy provenance; unknown authorship/basis/time never becomes confirmation or a historical acceptance event. |
 | Brain 0008 company_evidence | Brain 0007; T07/T08 | Immutable witnesses/observation groups remain separate from mutable anchors and cannot manufacture independent support. |
 | Brain 0009 knowledge_review | Brain 0008; T08/T09 | Existing improvement drafts remain intact; native add/correct/confirm receipts are attributable, idempotent and CAS protected. |
 | Brain 0010 source_access | Brain 0009; T10 | Source-restricted capture and access-partitioned dedup preserve project-deletion-safe logical references. |

@@ -14314,6 +14314,22 @@
         }
       },
       "indexes": {
+        "librarian_cards_pending_idx": {
+          "name": "librarian_cards_pending_idx",
+          "columns": [
+            {
+              "expression": "conversation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"librarian_cards\".\"status\" = 'pending'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "librarian_cards_history_idx": {
           "name": "librarian_cards_history_idx",
           "columns": [
@@ -14337,22 +14353,6 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "librarian_cards_pending_idx": {
-          "name": "librarian_cards_pending_idx",
-          "columns": [
-            {
-              "expression": "conversation_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"librarian_cards\".\"status\" = 'pending'",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -15260,6 +15260,27 @@
         }
       },
       "indexes": {
+        "librarian_operations_segment_digest_idx": {
+          "name": "librarian_operations_segment_digest_idx",
+          "columns": [
+            {
+              "expression": "segment_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "request_digest",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "librarian_operations_history_idx": {
           "name": "librarian_operations_history_idx",
           "columns": [
@@ -15279,27 +15300,6 @@
               "expression": "id",
               "isExpression": false,
               "asc": false,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "librarian_operations_segment_digest_idx": {
-          "name": "librarian_operations_segment_digest_idx",
-          "columns": [
-            {
-              "expression": "segment_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "request_digest",
-              "isExpression": false,
-              "asc": true,
               "nulls": "last"
             }
           ],
@@ -15604,6 +15604,21 @@
         }
       },
       "indexes": {
+        "librarian_task_links_task_idx": {
+          "name": "librarian_task_links_task_idx",
+          "columns": [
+            {
+              "expression": "task_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "librarian_task_links_history_idx": {
           "name": "librarian_task_links_history_idx",
           "columns": [
@@ -15623,21 +15638,6 @@
               "expression": "id",
               "isExpression": false,
               "asc": false,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "librarian_task_links_task_idx": {
-          "name": "librarian_task_links_task_idx",
-          "columns": [
-            {
-              "expression": "task_id",
-              "isExpression": false,
-              "asc": true,
               "nulls": "last"
             }
           ],
@@ -31883,6 +31883,12 @@
         "published_at": {
           "name": "published_at",
           "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "branch_delivery": {
+          "name": "branch_delivery",
+          "type": "jsonb",
           "primaryKey": false,
           "notNull": false
         }
