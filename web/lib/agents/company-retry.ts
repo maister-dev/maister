@@ -17,7 +17,7 @@ import { prepareCompanyAgentReplacementContext } from "./company-agent-context";
 import { reserveCompanyAgentReplacement } from "./company-agent-launch";
 import { prepareCompanyFlowReplacementContext } from "./company-flow-context";
 import { reserveCompanyFlowReplacement } from "./company-flow-launch";
-import { authorizeCompanyCronReplacementSource } from "./company-trigger-reservation";
+import { companyReplacementTriggerSource } from "./company-trigger-reservation";
 import { buildOperationalContract } from "./launch-contract";
 import { parseAgentRetryRecipe } from "./retry-snapshot";
 import { RETRY_PREVIEW_WINDOW_MS } from "./retry-preparation";
@@ -163,7 +163,7 @@ async function prepareReplacement(
     throw retryRefusal("retry_source_unavailable");
   const snapshot = captured.data;
   const graph = snapshot.schemaVersion === 2;
-  const cron = source.triggerSource === "cron";
+  const triggerSource = source.triggerSource;
 
   await authorizeCompanyUserAction(
     tx,
@@ -186,13 +186,20 @@ async function prepareReplacement(
     source.agentWorkspace !== "none" ||
     source.parentRunId ||
     source.persistent ||
-    (source.triggerSource !== "manual" && !cron) ||
-    (cron && source.retryOfRunId !== null) ||
+    (triggerSource !== "manual" &&
+      triggerSource !== "cron" &&
+      triggerSource !== "domain_event") ||
+    (triggerSource !== "manual" && source.retryOfRunId !== null) ||
     !source.resultContract ||
     !source.endedAt
   )
     throw retryRefusal("retry_source_unsupported");
-  if (cron) await authorizeCompanyCronReplacementSource(tx, source.id, userId);
+  const trigger = await companyReplacementTriggerSource(
+    tx,
+    source.id,
+    userId,
+    triggerSource,
+  );
   const reason = graph
     ? await retryQuiescenceReason(tx, source)
     : await preDispatchRetrySafetyReason(tx, source);
@@ -250,7 +257,7 @@ async function prepareReplacement(
     inputRevision: snapshot.assignment.inputRevision,
     bindingId: snapshot.specialistBinding.id,
     bindingRevision: snapshot.specialistBinding.revision,
-    triggerSource: cron ? "cron" : "manual",
+    triggerSource,
   };
   const flowRequest = graph
     ? {
@@ -327,7 +334,11 @@ async function prepareReplacement(
     agentId: context.effective.parsed.id,
     definition: context.effective,
     configuration: context.binding.snapshot.effectiveConfiguration,
-    trigger: { source: request.triggerSource, eventId: null, payload: null },
+    trigger: {
+      source: request.triggerSource,
+      eventId: trigger?.triggerEventId ?? null,
+      payload: null,
+    },
     runner: session.runner,
     policy: context.binding.snapshot.executionPolicy,
     contextDigest: retryDigest(replacement),

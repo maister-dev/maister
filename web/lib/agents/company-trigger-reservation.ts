@@ -15,6 +15,7 @@ import { parseScheduledRequestSnapshot } from "./scheduled-request";
 import { assertScheduledRequestMatches } from "./scheduled-request-store";
 import { resolveCompanyEventChainDepth } from "./chain-depth";
 import { retryRefusal } from "./retry-guards";
+import { assertCompanyRunReadAccessInTransaction } from "./company-run-read-access";
 
 import { MaisterError } from "@/lib/errors";
 import { contentDigest } from "@/lib/evaluations/digest";
@@ -40,6 +41,64 @@ export async function authorizeCompanyCronReplacementSource(
     throw retryRefusal("retry_context_changed");
 
   return { scheduleId: witness.id, triggerEventId: null, agentChainDepth: 0 };
+}
+
+export async function authorizeCompanyEventReplacementSource(
+  tx: SqlTransaction,
+  sourceRunId: string,
+  userId: string,
+): Promise<{
+  scheduleId: string;
+  triggerEventId: number;
+  agentChainDepth: number;
+}> {
+  const [row] = (
+    await tx.execute(
+      sql`SELECT * FROM company_event_retry_source(${sourceRunId},${userId})`,
+    )
+  ).rows;
+  const eventId = Number(row?.event_id);
+
+  if (
+    typeof row?.schedule_id !== "string" ||
+    typeof row.producing_run_id !== "string" ||
+    !Number.isSafeInteger(eventId) ||
+    eventId < 1 ||
+    typeof row.chain_depth !== "number"
+  )
+    throw retryRefusal("retry_context_changed");
+  await assertCompanyRunReadAccessInTransaction(
+    tx,
+    userId,
+    row.producing_run_id,
+  );
+  const chain = await resolveCompanyEventChainDepth(tx, eventId);
+
+  if (chain.atCap || chain.depth !== row.chain_depth)
+    throw retryRefusal("retry_context_changed");
+
+  return {
+    scheduleId: row.schedule_id,
+    triggerEventId: eventId,
+    agentChainDepth: chain.depth,
+  };
+}
+
+export async function companyReplacementTriggerSource(
+  tx: SqlTransaction,
+  sourceRunId: string,
+  userId: string,
+  triggerSource: CompanyAgentContextInput["triggerSource"],
+): Promise<Omit<
+  Awaited<ReturnType<typeof assertCompanyTriggerReservation>>,
+  "runId"
+> | null> {
+  if (triggerSource === "cron")
+    return authorizeCompanyCronReplacementSource(tx, sourceRunId, userId);
+  if (triggerSource === "domain_event")
+    return authorizeCompanyEventReplacementSource(tx, sourceRunId, userId);
+
+  return null;
 }
 
 /** Automated source admission must retain its durable appointment before allocating execution. */

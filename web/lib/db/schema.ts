@@ -2774,7 +2774,7 @@ export const runs = pgTable(
     uniqCompanyTriggerEvent: uniqueIndex("runs_company_trigger_event_uq")
       .on(t.companyId, t.sourceAgentId, t.agentScheduleId, t.triggerEventId)
       .where(
-        sql`${t.companyId} IS NOT NULL AND ${t.triggerEventId} IS NOT NULL`,
+        sql`${t.companyId} IS NOT NULL AND ${t.triggerEventId} IS NOT NULL AND ${t.retryOfRunId} IS NULL`,
       ),
     uniqScheduledLaunch: unique("runs_scheduled_launch_id_unique").on(
       t.scheduledLaunchId,
@@ -11025,7 +11025,9 @@ export const specialistWorkDecisions = pgTable(
     authoritySnapshot: jsonb("authority_snapshot")
       .$type<AssignmentAuthoritySnapshot>()
       .notNull(),
-    decision: text("decision").$type<"rework" | "accept" | "reject">().notNull(),
+    decision: text("decision")
+      .$type<"rework" | "accept" | "reject">()
+      .notNull(),
     resultId: text("result_id")
       .notNull()
       .references(() => runResults.id, { onDelete: "restrict" }),

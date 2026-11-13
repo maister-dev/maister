@@ -619,6 +619,8 @@ paths:
         retained session runner snapshots.
         A company cron replacement uses the same settled invocation and original
         request snapshot. The schedule must still be enabled at the captured revision.
+        A company event replacement keeps the original event, subscription, and chain
+        depth. It requires current source sharing and producing-Run access.
         For a project specialist, the existing retry sweep rechecks the same witnesses
         before reserving a continuation through project admission. Pending assignment
         updates defer that sweep without consuming an admission attempt.

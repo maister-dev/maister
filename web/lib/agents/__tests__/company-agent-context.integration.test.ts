@@ -217,6 +217,7 @@ import {
   ensureConsumerRows,
 } from "@/lib/domain-events/dispatch";
 import { DOMAIN_EVENT_CONSUMERS } from "@/lib/domain-events/consumers";
+import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import {
   claimCronAgentAttempt,
   claimEventAgentAttempt,
@@ -231,6 +232,7 @@ import { submitProjectCommentAssignment } from "@/lib/specialist-assignments/pro
 import { submitProjectCronAssignment } from "@/lib/specialist-assignments/project-cron-intake";
 import { prepareCompanySpecialistAssignment } from "@/lib/specialist-assignments/company-intake";
 import { reserveCompanyCronAssignment } from "@/lib/specialist-assignments/company-cron-intake";
+import { reserveCompanyEventAssignment } from "@/lib/specialist-assignments/company-event-intake";
 import { wakePendingSpecialistAssignment } from "@/lib/specialist-assignments/admission-wake";
 import { specialistAssignmentSchema } from "@/lib/specialist-assignments/types";
 import { POST as stopRunPost } from "@/app/api/runs/[runId]/stop/route";
@@ -477,6 +479,10 @@ beforeAll(async () => {
   );
   await writeFile(
     join(source, "maister-agents/observer-adoption.md"),
+    primarySource,
+  );
+  await writeFile(
+    join(source, "maister-agents/event-retry-observer.md"),
     primarySource,
   );
   await writeFile(
@@ -11133,6 +11139,192 @@ it("IT-CBC-03 preserves the settled company cron invocation and frozen request a
       reason: "Release cron recovery qualification authority",
       idempotencyKey: randomUUID(),
     });
+  }
+});
+
+it("IT-CBC-03 preserves the original company event and its producing Run evidence on retry", async () => {
+  const db: Db = database.db;
+  const { hosts } = await fakeExecutionHosts(db);
+  const roleId = "rah:event-retry-observer";
+  const effective = await resolveInstalledAgentDefinition(db, {
+    agentId: roleId,
+    packageInstallId: assignmentInput.standingDefinition.packageInstallId,
+  });
+  const runnerId = randomUUID();
+
+  await db.insert(platformAcpRunners).values({
+    id: runnerId,
+    adapter: "claude",
+    capabilityAgent: "claude",
+    model: "company-event-retry-fixture",
+    provider: { kind: "anthropic" },
+    readinessStatus: "Ready",
+  });
+  const binding = await createCompanySpecialistBinding(db, userId, roleId, {
+    owner: { kind: "company", companyId: request.companyId },
+    packageInstallId: effective.packageInstallId,
+    packageRevision: effective.resolvedRevision!,
+    definitionSha256: agentDefinitionSha256(effective.parsed),
+    enabled: true,
+    configuration: {},
+    grantActions: ["assignments:read"],
+    runnerId,
+    idempotencyKey: randomUUID(),
+  });
+  const agentGrants = await createCompanyGrants(db, administratorId, {
+    principalKind: "agent",
+    principalId: roleId,
+    actions: ["assignments:read"],
+    idempotencyKey: randomUUID(),
+  });
+  const userGrants = await createCompanyGrants(db, administratorId, {
+    principalKind: "user",
+    principalId: userId,
+    actions: ["assignments:recover"],
+    idempotencyKey: randomUUID(),
+  });
+
+  try {
+    const subscription = await createCompanyEventSchedule(db, userId, {
+      owner: { kind: "company", companyId: request.companyId },
+      specialistBindingId: binding.specialist.bindingId,
+      eventKinds: ["run.done"],
+      enabled: true,
+      idempotencyKey: randomUUID(),
+    });
+    const producing = await reserveCompanyFixtureRun();
+
+    await db
+      .update(runs)
+      .set({
+        triggerSource: "manual",
+        knowledgeAccess: {
+          schemaVersion: 1,
+          state: "complete",
+          generation: 1,
+          restrictions: [
+            {
+              kind: "assignment_input",
+              assignmentId: producing.snapshot.assignment.id,
+              inputRevision: 1,
+              inputSha256: producing.snapshot.assignment.inputSha256,
+            },
+          ],
+        },
+      })
+      .where(eq(runs.id, producing.runId));
+
+    await emitDomainEvent({
+      db,
+      companyId: request.companyId,
+      runId: producing.runId,
+      parentRunId: null,
+      kind: "run.done",
+      actor: { type: "system", id: null },
+      payload: {
+        runId: producing.runId,
+        runKind: "agent",
+        flowId: null,
+        taskId: null,
+      },
+    });
+    const [fact] = (
+      await database.pool.query<{ id: string }>(
+        "SELECT id FROM domain_events WHERE run_id=$1 AND kind='run.done'",
+        [producing.runId],
+      )
+    ).rows;
+    const now = new Date();
+    const invocation = await claimEventAgentAttempt(
+      db,
+      subscription.scheduleId,
+      now,
+      Number(fact.id),
+    );
+
+    expect(invocation).not.toBeNull();
+    const source = await reserveCompanyEventAssignment(
+      db,
+      { attemptId: invocation!.id, runId: invocation!.reservedRunId },
+      hosts,
+    );
+    const [sourceRunId] = source.assignment.runIds;
+
+    await settleCompanyAgentTriggerAttempt(db, invocation!, {
+      outcome: "queued",
+      runId: sourceRunId,
+      reasonCode: null,
+      now,
+    });
+    const failure = await prepareUndispatchedAgentFailure(sourceRunId, {
+      db,
+      reason: "agent_dispatch_failed",
+    });
+
+    await db.transaction(failure.apply);
+    const preview = await getAgentRetryOptions(db, sourceRunId, userId);
+
+    expect(preview).toMatchObject({
+      eligible: true,
+      selectedRunnerId: runnerId,
+    });
+    const replacement = await acceptAgentRetry(db, sourceRunId, userId, {
+      requestKey: randomUUID(),
+      runnerId,
+      previewFingerprint: preview.previewFingerprint,
+    });
+
+    expect(replacement).toMatchObject({
+      intentState: "launched",
+      runStatus: "Pending",
+    });
+    const context = await db.transaction((tx) =>
+      loadCompanyAgentSessionContext(tx, replacement.runId!),
+    );
+
+    expect(context.run).toMatchObject({
+      triggerSource: "domain_event",
+      agentScheduleId: subscription.scheduleId,
+      triggerEventId: Number(fact.id),
+      retryOfRunId: sourceRunId,
+    });
+    expect(context.input.snapshot.sourceRestrictions).toContainEqual({
+      kind: "assignment_input",
+      assignmentId: producing.snapshot.assignment.id,
+      inputRevision: 1,
+      inputSha256: producing.snapshot.assignment.inputSha256,
+    });
+    await expect(
+      claimEventAgentAttempt(db, subscription.scheduleId, now, Number(fact.id)),
+    ).resolves.toBeNull();
+    const grant = agentGrants.page.items[0];
+
+    await revokeCompanyGrant(db, administratorId, grant.id, {
+      expectedRevision: grant.revision,
+      reason: "Revoke event source sharing before dispatch",
+      idempotencyKey: randomUUID(),
+    });
+    await expect(
+      db.transaction((tx) =>
+        loadCompanyAgentSessionContext(tx, replacement.runId!),
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "retry_context_changed" },
+    });
+    const settle = await prepareUndispatchedAgentFailure(replacement.runId!, {
+      db,
+      reason: "fixture_replacement_complete",
+    });
+
+    await db.transaction(settle.apply);
+  } finally {
+    for (const grant of userGrants.page.items)
+      await revokeCompanyGrant(db, administratorId, grant.id, {
+        expectedRevision: grant.revision,
+        reason: "Release event recovery qualification authority",
+        idempotencyKey: randomUUID(),
+      });
   }
 });
 

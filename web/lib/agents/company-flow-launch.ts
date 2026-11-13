@@ -23,7 +23,7 @@ import pino from "pino";
 import {
   assertCompanyTriggerAppointment,
   assertCompanyTriggerReservation,
-  authorizeCompanyCronReplacementSource,
+  companyReplacementTriggerSource,
 } from "./company-trigger-reservation";
 import {
   captureCompanyFlowExecution,
@@ -194,17 +194,15 @@ export async function reserveCompanyFlowReplacement(
     userId,
     request,
   );
-  const triggerReservation =
-    request.triggerSource === "cron"
-      ? {
-          runId: reservation.runId,
-          ...(await authorizeCompanyCronReplacementSource(
-            tx,
-            reservation.sourceRunId,
-            userId,
-          )),
-        }
-      : null;
+  const originalTrigger = await companyReplacementTriggerSource(
+    tx,
+    reservation.sourceRunId,
+    userId,
+    request.triggerSource,
+  );
+  const triggerReservation = originalTrigger
+    ? { runId: reservation.runId, ...originalTrigger }
+    : null;
 
   await insertCompanyFlowRun(tx, context, hosts, host, {
     runId: reservation.runId,

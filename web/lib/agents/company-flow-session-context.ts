@@ -23,7 +23,7 @@ import { agentDefinitionSha256 } from "./activity-snapshot";
 import { bindingConfigurationSchema } from "./company-binding-types";
 import { resolveAgentConfig } from "./config";
 import { runnerCatalogEntry } from "./runner-catalog";
-import { authorizeCompanyCronReplacementSource } from "./company-trigger-reservation";
+import { companyReplacementTriggerSource } from "./company-trigger-reservation";
 
 import { resolveCompanyAgentRunner } from "@/lib/acp-runners/resolve";
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
@@ -119,11 +119,15 @@ export async function loadCompanyFlowSessionContext(
         owner.companyId,
         "assignments:recover",
       );
-    if (run.retryOfRunId && run.triggerSource === "cron")
-      await authorizeCompanyCronReplacementSource(
+    if (
+      run.retryOfRunId &&
+      (run.triggerSource === "cron" || run.triggerSource === "domain_event")
+    )
+      await companyReplacementTriggerSource(
         tx,
         run.retryOfRunId,
         owner.userId,
+        run.triggerSource,
       );
     await assertCompanyRunReadAccessInTransaction(tx, owner.userId, runId);
     const graphRun: CompanyFlowSessionContext["run"] = {

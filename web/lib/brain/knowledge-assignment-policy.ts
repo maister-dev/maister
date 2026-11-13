@@ -74,7 +74,7 @@ function companyEventInputReadPolicy(
     SELECT 1 FROM runs recipient
     JOIN specialist_run_links appointment ON appointment.run_id=recipient.id
     JOIN specialist_assignments requested ON requested.id=appointment.assignment_id
-    JOIN agent_trigger_attempts invocation ON invocation.reserved_run_id=recipient.id
+    JOIN agent_trigger_attempts invocation ON invocation.reserved_run_id=coalesce(recipient.retry_of_run_id,recipient.id)
       AND invocation.company_id=recipient.company_id AND invocation.project_id IS NULL
       AND invocation.schedule_id=recipient.agent_schedule_id AND invocation.trigger_source='domain_event'
       AND invocation.trigger_event_id=recipient.trigger_event_id
@@ -87,6 +87,7 @@ function companyEventInputReadPolicy(
       AND sharing.principal_id=${identity.actor.id} AND sharing.action='assignments:read' AND sharing.revoked_at IS NULL
     WHERE recipient.id=${identity.actor.runId} AND recipient.company_id=${identity.companyId} AND recipient.project_id IS NULL
       AND recipient.trigger_source='domain_event' AND requested.origin->>'kind'='event'
+      AND (recipient.retry_of_run_id IS NULL OR company_event_retry_still_authorized(recipient.id))
       AND requested.origin->>'subscriptionId'=invocation.schedule_id AND requested.origin->>'eventId'=event.id::text
       AND producing.knowledge_access->>'state'='complete'
       AND producing.knowledge_access->'restrictions' @> jsonb_build_array(jsonb_build_object(

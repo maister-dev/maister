@@ -40,10 +40,11 @@ export async function resolveCompanyEventChainDepth(
     await db.execute(sql`
     SELECT event.actor_type,producing.agent_chain_depth,
       (producing.trigger_source IN ('manual','cron','webhook') OR (producing.trigger_source='domain_event' AND EXISTS (
-        SELECT 1 FROM agent_trigger_attempts invocation WHERE invocation.reserved_run_id=producing.id
+        SELECT 1 FROM agent_trigger_attempts invocation WHERE invocation.reserved_run_id=coalesce(producing.retry_of_run_id,producing.id)
           AND invocation.company_id=producing.company_id AND invocation.project_id IS NULL
           AND invocation.trigger_source='domain_event' AND invocation.trigger_event_id=producing.trigger_event_id
           AND invocation.schedule_id=producing.agent_schedule_id
+          AND (producing.retry_of_run_id IS NULL OR company_event_retry_still_authorized(producing.id))
       ))) AS chain_classified
     FROM domain_events event JOIN runs producing ON producing.id=event.run_id
       AND producing.company_id=event.company_id AND producing.project_id IS NULL
