@@ -43,6 +43,7 @@ import {
   MAX_OBJECT_RESPONSE_SPOOL_BYTES,
 } from "./runtime-object-files";
 import { runtimeRoot } from "./runtime-root";
+import { loadStandDispatchTransport } from "./stand-operations/transport";
 import { resolveWorkspaceRoots } from "./workspace-roots";
 
 const DEFAULT_PORT = 7777;
@@ -84,6 +85,7 @@ export function buildRegisterRoutesOptions(deps: {
   hostState: HostState;
   workspaceRoots: string[];
   producerPauseMaxMs?: number;
+  dispatchStandRestart?: RegisterRoutesOptions["dispatchStandRestart"];
 }): RegisterRoutesOptions {
   return {
     app: deps.app,
@@ -99,6 +101,7 @@ export function buildRegisterRoutesOptions(deps: {
     },
     hostState: deps.hostState,
     workspaceRoots: deps.workspaceRoots,
+    dispatchStandRestart: deps.dispatchStandRestart,
   };
 }
 
@@ -228,6 +231,11 @@ export async function start(): Promise<void> {
   });
   const stopRuntimeEventPruner = startRuntimeEventPruner(hostState, logger);
 
+  const standTargetsFile = process.env.MAISTER_STAND_TRANSPORT_TARGETS_FILE;
+  const dispatchStandRestart = standTargetsFile
+    ? loadStandDispatchTransport(standTargetsFile)
+    : undefined;
+
   registerRoutes(
     buildRegisterRoutesOptions({
       app,
@@ -238,6 +246,7 @@ export async function start(): Promise<void> {
       hostState,
       workspaceRoots,
       producerPauseMaxMs: testProducerPauseMaxMs(),
+      dispatchStandRestart,
     }),
   );
 

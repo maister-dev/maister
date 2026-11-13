@@ -1,0 +1,128 @@
+import type { AddressInfo } from "node:net";
+
+import { execFileSync } from "node:child_process";
+import { randomUUID, X509Certificate } from "node:crypto";
+import { once } from "node:events";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:https";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { expect, it } from "vitest";
+
+import { loadStandDispatchTransport } from "../stand-operations/transport";
+
+it("IT-CBO-04 sends one exact restart request, validates the pinned peer and leaves a lost response uncertain", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "maister-stand-transport-"));
+  const certificateFile = join(directory, "certificate.pem");
+  const keyFile = join(directory, "key.pem");
+  const credentialFile = join(directory, "credential");
+  const configFile = join(directory, "config.json");
+  const token = "stand-transport-fixture";
+  const payload = {
+    operationId: randomUUID(),
+    targetIncarnation: randomUUID(),
+    componentId: "fixture",
+    action: "restart" as const,
+    requestDigest: "a".repeat(64),
+    resourceKey: "b".repeat(64),
+    ownerEpoch: 2,
+    businessOwnerEpoch: 1,
+    nodeAttemptId: null,
+    beforeObservationId: randomUUID(),
+    before: { state: "active" as const, invocationId: "c".repeat(32) },
+  };
+  let deliveries = 0;
+
+  try {
+    execFileSync(
+      "openssl",
+      [
+        "req",
+        "-x509",
+        "-newkey",
+        "rsa:2048",
+        "-nodes",
+        "-days",
+        "1",
+        "-subj",
+        "/CN=localhost",
+        "-keyout",
+        keyFile,
+        "-out",
+        certificateFile,
+      ],
+      { stdio: "ignore" },
+    );
+    const [cert, key] = await Promise.all([
+      readFile(certificateFile),
+      readFile(keyFile),
+    ]);
+    const pin = new X509Certificate(cert).fingerprint256
+      .replaceAll(":", "")
+      .toLowerCase();
+    const server = createServer(
+      { cert, key, ca: cert, requestCert: true, rejectUnauthorized: true },
+      async (request, response) => {
+        expect(request.url).toBe("/operations");
+        expect(request.headers["x-maister-platform-token"]).toBe(token);
+        const chunks: Buffer[] = [];
+
+        for await (const chunk of request) chunks.push(Buffer.from(chunk));
+        expect(JSON.parse(Buffer.concat(chunks).toString("utf8"))).toEqual({
+          operationId: payload.operationId,
+          targetIncarnation: payload.targetIncarnation,
+          componentId: payload.componentId,
+          action: payload.action,
+          requestDigest: payload.requestDigest,
+          ownerEpoch: payload.ownerEpoch,
+          before: payload.before,
+        });
+        deliveries++;
+        request.socket.destroy();
+        response.end();
+      },
+    );
+
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const port = (server.address() as AddressInfo).port;
+      const config = {
+        incarnationId: payload.targetIncarnation,
+        origin: `https://127.0.0.1:${port}`,
+        serverName: "localhost",
+        certificateSha256: pin,
+        caFile: certificateFile,
+        certificateFile,
+        keyFile,
+        credentialFile,
+      };
+
+      await writeFile(credentialFile, token, { mode: 0o600 });
+      await writeFile(
+        configFile,
+        JSON.stringify([{ ...config, certificateSha256: "d".repeat(64) }]),
+      );
+      const wrongPin = loadStandDispatchTransport(configFile);
+
+      await expect(wrongPin(payload)).rejects.toMatchObject({
+        code: "EXECUTOR_UNAVAILABLE",
+      });
+      expect(deliveries).toBe(0);
+      await writeFile(configFile, JSON.stringify([config]));
+      const dispatch = loadStandDispatchTransport(configFile);
+
+      await expect(dispatch(payload)).rejects.toMatchObject({
+        code: "EXECUTOR_UNAVAILABLE",
+      });
+      expect(deliveries).toBe(1);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

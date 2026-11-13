@@ -303,6 +303,9 @@ export function createLocalDirectTransport(
     deleteRuntimeObject(objectId, envelope, opts) {
       return wire.deleteRuntimeObject(objectId, envelope, opts);
     },
+    dispatchStandRestart(envelope, opts) {
+      return wire.dispatchStandRestart(envelope, opts);
+    },
     async adoptWorkspace(
       envelope: CommandEnvelope<AdoptWorkspaceWire>,
       opts,

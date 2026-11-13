@@ -327,6 +327,10 @@ export interface ExecutionHostTransport {
     envelope: CommandEnvelope<AdoptWorkspaceWire>,
     opts?: CommandCallOptions,
   ): Promise<AdoptWorkspaceResult>;
+  dispatchStandRestart(
+    envelope: CommandEnvelope<unknown>,
+    opts?: CommandCallOptions,
+  ): Promise<unknown>;
   releaseWorkspace(
     executionWorkspaceId: string,
     envelope: CommandEnvelope<EmptyPayload>,

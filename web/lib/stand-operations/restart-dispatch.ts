@@ -23,7 +23,8 @@ import {
 } from "@/lib/db/schema";
 import { redactQueryError } from "@/lib/db/pg-error";
 import { MaisterError } from "@/lib/errors";
-import { COMMAND_POLICY } from "@/lib/execution-host/deliverer";
+import { COMMAND_POLICY, deliverCommand } from "@/lib/execution-host/deliverer";
+import { defaultTransport } from "@/lib/execution-host/default-transport";
 import { issueCommand } from "@/lib/execution-host/ledger";
 
 type RestartDispatchIdentity = Readonly<{
@@ -277,3 +278,24 @@ type RestartCommandPayload = Readonly<{
     state: "active" | "inactive" | "failed";
   }>;
 }>;
+
+/** Send the prepared native command once; its result still requires target-evidence validation. */
+export async function deliverStandRestartCommand(
+  db: Db,
+  command: IssuedCommand<RestartCommandPayload>,
+): Promise<unknown> {
+  const transport = defaultTransport();
+
+  return deliverCommand({
+    db,
+    command: command.row,
+    envelope: command.envelope,
+    send: (envelope) =>
+      transport.dispatchStandRestart(envelope, {
+        timeoutMs: COMMAND_POLICY["stand.dispatch"].timeoutMs,
+      }),
+    resultSummary: () => ({
+      operationId: command.envelope.payload.operationId,
+    }),
+  });
+}

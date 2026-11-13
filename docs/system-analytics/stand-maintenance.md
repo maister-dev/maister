@@ -92,6 +92,15 @@ Each target configuration is a versioned reviewed record: target incarnation ID;
 
 The helper binds configurable HTTPS address/port, default loopback:7443; remote deployment explicitly configures network reachability/firewall and mTLS. Credentials/cert/key/config/state paths are host service config, never prompts. Target process has only configured systemd privileges; no unrestricted bus/socket, arbitrary shell, package manager, upgrade or controller-self-restart capability. Target identity probes validate helper incarnation/component, not just HTTP liveness.
 
+The supervisor dispatch transport loads an operator-owned incarnation-to-peer
+mapping at startup. The command carries the operation and observed unit
+identities. The supervisor verifies CA, hostname and leaf fingerprint,
+authenticates to the helper with a separate client certificate and sends one
+restart request. The Web callback still decides whether that exact request may
+execute. A lost response requires a separate read of the original target
+receipt. Target credential values are read from host files and excluded from
+the command ledger and inherited ACP environment.
+
 | Bound | Designed limit/policy |
 | --- | --- |
 | Platform/target intent body | <=65536 UTF-8 bytes, closed schema |

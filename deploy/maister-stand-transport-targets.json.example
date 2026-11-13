@@ -1,0 +1,12 @@
+[
+  {
+    "incarnationId": "00000000-0000-4000-8000-000000000000",
+    "origin": "https://stand.example.invalid:7443",
+    "serverName": "stand.example.invalid",
+    "certificateSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "caFile": "/etc/maister/tls/stand-helper-ca.pem",
+    "certificateFile": "/etc/maister/tls/stand-platform.pem",
+    "keyFile": "/etc/maister/tls/stand-platform-key.pem",
+    "credentialFile": "/etc/maister/credentials/stand-platform-token"
+  }
+]

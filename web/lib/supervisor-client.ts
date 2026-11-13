@@ -1620,6 +1620,22 @@ export function parseRuntimeObjectWireMetadata(
   return parsed.data;
 }
 
+export async function dispatchStandRestart(
+  envelope: WireEnvelope,
+  opts: CommandWireOptions = {},
+): Promise<unknown> {
+  const response = await request<unknown>({
+    method: "POST",
+    path: "/stand-operations/dispatch",
+    body: envelope,
+    ctx: "dispatchStandRestart",
+    fallbackCode: "EXECUTOR_UNAVAILABLE",
+    timeoutMs: opts.timeoutMs,
+  });
+
+  return response.body;
+}
+
 export async function adoptWorkspace(
   envelope: WireEnvelope<AdoptWorkspaceWirePayload>,
   opts: CommandWireOptions = {},
