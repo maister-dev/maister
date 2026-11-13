@@ -1,7 +1,8 @@
 import { z } from "zod";
 
-export type DeliveryPolicyStrategy =
-  "merge" | "rebase_merge" | "pull_request" | "ai_rebase_merge";
+export type DeliveryPolicyStrategy = z.infer<
+  typeof deliveryPolicyStrategySchema
+>;
 
 export type DeliveryPolicyPush = "never" | "on_success";
 
@@ -23,14 +24,14 @@ export type DeliveryPolicyOverride = Partial<StoredDeliveryPolicy>;
 export type LegacyPromotionMode =
   "local_merge" | "rebase_merge" | "pull_request";
 
-export type EffectivePromotionMode =
-  "merge" | "rebase_merge" | "pull_request" | "ai_rebase_merge";
+export type EffectivePromotionMode = DeliveryPolicyStrategy;
 
 export const deliveryPolicyStrategySchema = z.enum([
   "merge",
   "rebase_merge",
   "pull_request",
   "ai_rebase_merge",
+  "publish_branch",
 ]);
 
 export const deliveryPolicyPushSchema = z.enum(["never", "on_success"]);
@@ -78,7 +79,7 @@ export function deliveryPolicyFromLegacyPromotionMode(args: {
 
 export function strategyFromLegacyPromotionMode(
   mode: LegacyPromotionMode,
-): Exclude<DeliveryPolicyStrategy, "ai_rebase_merge"> {
+): "merge" | "rebase_merge" | "pull_request" {
   return mode === "pull_request"
     ? "pull_request"
     : mode === "rebase_merge"
@@ -87,11 +88,11 @@ export function strategyFromLegacyPromotionMode(
 }
 
 export function legacyPromotionModeFromStrategy(
-  strategy: Exclude<DeliveryPolicyStrategy, "ai_rebase_merge">,
+  strategy: DeliveryPolicyStrategy,
 ): LegacyPromotionMode {
   return strategy === "pull_request"
     ? "pull_request"
-    : strategy === "rebase_merge"
+    : strategy === "rebase_merge" || strategy === "ai_rebase_merge"
       ? "rebase_merge"
       : "local_merge";
 }
@@ -135,4 +136,12 @@ export function switchDeliveryPolicyToManual(
   policy: DeliveryPolicy,
 ): DeliveryPolicy {
   return { ...policy, trigger: "manual" };
+}
+
+export function deliveryPolicyForLaunch(
+  policy: DeliveryPolicy,
+): DeliveryPolicy {
+  return policy.strategy === "publish_branch"
+    ? { ...policy, push: "on_success", trigger: "auto_on_ready" }
+    : policy;
 }

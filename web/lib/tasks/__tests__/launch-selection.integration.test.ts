@@ -1020,6 +1020,12 @@ it("LA01/04 binds manual delivery after negative triage through the real engine 
       expectedTaskRevision: row.revision,
       expectedSettingsToken: await taskLaunchSettingsToken(database.db, row.id),
       brainContext: false,
+      deliveryPolicy: {
+        strategy: "publish_branch",
+        push: "never",
+        trigger: "manual",
+        targetBranch: null,
+      },
       executionPolicy: {
         preset: "unattended",
         overrides: { humanGate: "stop", permissions: "ask" },
@@ -1060,6 +1066,12 @@ it("LA01/04 binds manual delivery after negative triage through the real engine 
       intentId: accepted.intentId,
     });
     expect(workspace.baseCommit).toBe(accepted.snapshot.baseCommit);
+    expect(run.deliveryPolicySnapshot).toMatchObject({
+      strategy: "publish_branch",
+      push: "on_success",
+      trigger: "auto_on_ready",
+    });
+    expect(workspace.publishedBranch).toBeNull();
     expect(sessions.map((session) => session.runnerId)).toEqual([
       fixture.runnerId,
     ]);

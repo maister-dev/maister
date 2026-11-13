@@ -236,6 +236,11 @@ export interface RunDetail {
   syncStrategyDefault: "rebase" | "merge";
   syncRunnerId: string | null;
   deliveryPolicySnapshot: DeliveryPolicy | null;
+  branchDelivery: {
+    error: string | null;
+    attempted: boolean;
+    publication: { remote: string; branch: string } | null;
+  } | null;
   executionPolicy: ExecutionPolicy | null;
   // Cost-budget governance (AC-BADGE-1): derived run-scope warn signal — the
   // live token sum vs the run-scope effective maxTokens × warnAtPct. Null when
@@ -546,6 +551,7 @@ export const getRunDetail = cache(async function getRunDetail(
       rootRunId: runs.rootRunId,
       publishedBranch: workspaces.publishedBranch,
       publishedRemote: workspaces.publishedRemote,
+      branchDelivery: workspaces.branchDelivery,
       promotionState: workspaces.promotionState,
       promotionClaimedAt: workspaces.promotionClaimedAt,
       lifecycleOperationState: workspaces.lifecycleOperationState,
@@ -928,6 +934,22 @@ export const getRunDetail = cache(async function getRunDetail(
     syncStrategyDefault: row.syncStrategyDefault ?? "rebase",
     syncRunnerId: row.syncRunnerId ?? null,
     deliveryPolicySnapshot: row.deliveryPolicySnapshot ?? null,
+    branchDelivery:
+      row.deliveryPolicySnapshot?.strategy === "publish_branch"
+        ? {
+            error: row.branchDelivery?.error ?? null,
+            attempted: row.promotionMode === "publish_branch",
+            publication:
+              row.promotionMode === "publish_branch" &&
+              row.promotionState === "done" &&
+              row.branchDelivery?.target
+                ? {
+                    remote: row.branchDelivery.target.remote,
+                    branch: row.branchDelivery.target.remoteBranch,
+                  }
+                : null,
+          }
+        : null,
     executionPolicy: row.executionPolicy ?? null,
     budgetStatus,
     cutoverFailure,

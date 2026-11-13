@@ -17,6 +17,7 @@ import {
   type RunDiffFile,
 } from "@/components/workbench/diff-view";
 import { resolveUiErrorMessageKey } from "@/lib/ui-error-message";
+import { isPhaseReady } from "@/lib/flows/graph/readiness-core";
 import {
   buildPromotionRequestBody,
   githubPrErrorText,
@@ -90,6 +91,8 @@ export type ReviewPanelSync = {
 export interface ReviewPanelProps {
   id?: string;
   runId: string;
+  branchDeliveryError?: string | null;
+  branchDeliveryAttempted?: boolean;
   baseBranch: string | null;
   baseCommit: string | null;
   runBranch: string;
@@ -182,6 +185,8 @@ function selectionKey(key: Key | null, fallback: PromotionMode): PromotionMode {
 export function ReviewPanel({
   id,
   runId,
+  branchDeliveryError,
+  branchDeliveryAttempted,
   baseBranch,
   baseCommit,
   runBranch,
@@ -209,6 +214,7 @@ export function ReviewPanel({
   const tGit = useTranslations("workbenchGit.errors");
   const router = useRouter();
   const [mode, setMode] = useState<PromotionMode>(promotionMode);
+  const publishesBranch = promotionMode === "publish_branch";
   const [busy, setBusy] = useState(false);
   const [promotionSlow, setPromotionSlow] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -230,7 +236,11 @@ export function ReviewPanel({
         : null,
     );
   const modeLabelId = useId();
-  const readinessReady = readiness?.readiness === "ready";
+  const readinessReady = readiness
+    ? publishesBranch
+      ? isPhaseReady(readiness.readiness)
+      : readiness.readiness === "ready"
+    : false;
   const promotionInput = {
     targetBranch,
     deliveryPolicy,
@@ -283,6 +293,12 @@ export function ReviewPanel({
         details?: { reason?: string };
       } | null;
 
+      if (publishesBranch) {
+        setError(data?.message ?? t(resolveUiErrorMessageKey(data?.code)));
+
+        return;
+      }
+
       if (isTargetDriftResponse(data)) {
         setDrift(true);
         router.refresh();
@@ -318,7 +334,7 @@ export function ReviewPanel({
           kind: reason === "rebase_conflict" ? "rebase" : "merge",
           displayParentRepoPath,
           parentRepoPath: parentRepoPath ?? "",
-          targetBranch: body.targetBranch,
+          targetBranch: body.targetBranch ?? "",
           runBranch,
           command:
             reason === "rebase_conflict"
@@ -353,6 +369,16 @@ export function ReviewPanel({
         {t("reviewTitle")}
       </h2>
 
+      {!busy && (error ?? branchDeliveryError) ? (
+        <p
+          aria-live="polite"
+          className="font-mono text-[10.5px] text-[#d9534f]"
+          role="alert"
+        >
+          {error ?? branchDeliveryError}
+        </p>
+      ) : null}
+
       {/* base → run → target spine */}
       <div className="mb-4 flex flex-wrap items-center gap-2 font-mono text-[11px] text-ink-2">
         {baseBranch ? (
@@ -375,16 +401,18 @@ export function ReviewPanel({
         >
           {runBranch}
         </span>
-        <span aria-hidden="true" className="text-mute">
-          →
-        </span>
-        {targetBranch ? (
-          <span
-            className="rounded-md border border-[color-mix(in_oklab,var(--accent-4)_35%,var(--line))] bg-accent-4-soft px-2 py-1 font-semibold text-accent-4"
-            data-testid="review-target-branch"
-          >
-            {targetBranch}
-          </span>
+        {!publishesBranch && targetBranch ? (
+          <>
+            <span aria-hidden="true" className="text-mute">
+              →
+            </span>
+            <span
+              className="rounded-md border border-[color-mix(in_oklab,var(--accent-4)_35%,var(--line))] bg-accent-4-soft px-2 py-1 font-semibold text-accent-4"
+              data-testid="review-target-branch"
+            >
+              {targetBranch}
+            </span>
+          </>
         ) : null}
       </div>
 
@@ -572,61 +600,69 @@ export function ReviewPanel({
           {busy ? (
             <OperationStatus
               detail={
-                mode === "pull_request"
-                  ? t("pullRequestInProgressHint")
-                  : labels.promotionInProgressHint
+                publishesBranch
+                  ? t("branchDeliveryPublishingHint")
+                  : mode === "pull_request"
+                    ? t("pullRequestInProgressHint")
+                    : labels.promotionInProgressHint
               }
               slow={promotionSlow}
               slowText={labels.operationTakingLonger}
-              title={labels.promotionInProgress}
+              title={
+                publishesBranch
+                  ? t("branchDeliveryPublishing")
+                  : labels.promotionInProgress
+              }
             />
           ) : null}
 
-          <label className="flex flex-col gap-1">
-            <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">
-              {labels.promotionMode}
-            </span>
-            <span className="sr-only" id={modeLabelId}>
-              {labels.promotionMode}
-            </span>
-            <Select
-              aria-labelledby={modeLabelId}
-              className="w-full max-w-[260px]"
-              selectedKey={mode}
-              variant="secondary"
-              onSelectionChange={(key) => setMode(selectionKey(key, mode))}
-            >
-              <Select.Trigger className="h-9 rounded-md border-line bg-paper px-2 font-mono text-[11px] text-ink">
-                <Select.Value />
-                <Select.Indicator />
-              </Select.Trigger>
-              <Select.Popover className="rounded-md border border-line bg-paper p-1 shadow-lg">
-                <ListBox aria-label={labels.promotionMode}>
-                  <ListBox.Item id="merge" textValue={labels.promotionMerge}>
-                    {labels.promotionMerge}
-                  </ListBox.Item>
-                  <ListBox.Item
-                    id="rebase_merge"
-                    textValue={labels.promotionRebaseMerge}
-                  >
-                    {labels.promotionRebaseMerge}
-                  </ListBox.Item>
-                  <ListBox.Item
-                    id="pull_request"
-                    textValue={labels.promotionPullRequest}
-                  >
-                    {labels.promotionPullRequest}
-                  </ListBox.Item>
-                  <ListBox.Item
-                    id="ai_rebase_merge"
-                    textValue={labels.promotionAiRebaseMerge}
-                  >
-                    {labels.promotionAiRebaseMerge}
-                  </ListBox.Item>
-                </ListBox>
-              </Select.Popover>
-            </Select>
-          </label>
+          {!publishesBranch ? (
+            <label className="flex flex-col gap-1">
+              <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">
+                {labels.promotionMode}
+              </span>
+              <span className="sr-only" id={modeLabelId}>
+                {labels.promotionMode}
+              </span>
+              <Select
+                aria-labelledby={modeLabelId}
+                className="w-full max-w-[260px]"
+                selectedKey={mode}
+                variant="secondary"
+                onSelectionChange={(key) => setMode(selectionKey(key, mode))}
+              >
+                <Select.Trigger className="h-9 rounded-md border-line bg-paper px-2 font-mono text-[11px] text-ink">
+                  <Select.Value />
+                  <Select.Indicator />
+                </Select.Trigger>
+                <Select.Popover className="rounded-md border border-line bg-paper p-1 shadow-lg">
+                  <ListBox aria-label={labels.promotionMode}>
+                    <ListBox.Item id="merge" textValue={labels.promotionMerge}>
+                      {labels.promotionMerge}
+                    </ListBox.Item>
+                    <ListBox.Item
+                      id="rebase_merge"
+                      textValue={labels.promotionRebaseMerge}
+                    >
+                      {labels.promotionRebaseMerge}
+                    </ListBox.Item>
+                    <ListBox.Item
+                      id="pull_request"
+                      textValue={labels.promotionPullRequest}
+                    >
+                      {labels.promotionPullRequest}
+                    </ListBox.Item>
+                    <ListBox.Item
+                      id="ai_rebase_merge"
+                      textValue={labels.promotionAiRebaseMerge}
+                    >
+                      {labels.promotionAiRebaseMerge}
+                    </ListBox.Item>
+                  </ListBox>
+                </Select.Popover>
+              </Select>
+            </label>
+          ) : null}
 
           {/* ADR-141 (decision 19): ai_rebase_merge one-click chaining — OFF by
               default (two-step: the resolver returns the run to Review). */}
@@ -697,7 +733,7 @@ export function ReviewPanel({
                 busy && "opacity-60",
               )}
               data-testid="review-promote"
-              isDisabled={busy || !targetBranch || syncClaimed}
+              isDisabled={busy || syncClaimed}
               size="sm"
               type="button"
               variant="primary"
@@ -710,10 +746,18 @@ export function ReviewPanel({
                 />
               ) : null}
               {busy
-                ? labels.promotionInProgress
-                : mode === "pull_request"
-                  ? t("inspectorActionPromotePullRequest")
-                  : `${labels.promoteTo} ${targetBranch}`}
+                ? publishesBranch
+                  ? t("branchDeliveryPublishing")
+                  : labels.promotionInProgress
+                : publishesBranch
+                  ? t(
+                      branchDeliveryAttempted || branchDeliveryError || error
+                        ? "branchDeliveryRetry"
+                        : "promotionPublishBranch",
+                    )
+                  : mode === "pull_request"
+                    ? t("inspectorActionPromotePullRequest")
+                    : `${labels.promoteTo} ${targetBranch}`}
             </Button>
           )}
 
@@ -747,16 +791,6 @@ export function ReviewPanel({
                 </Link>
               ) : null}
             </div>
-          ) : null}
-
-          {error ? (
-            <p
-              aria-live="polite"
-              className="font-mono text-[10.5px] text-[#d9534f]"
-              role="alert"
-            >
-              {error}
-            </p>
           ) : null}
         </div>
       )}

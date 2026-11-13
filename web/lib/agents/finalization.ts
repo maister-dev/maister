@@ -282,6 +282,7 @@ type FinalizationContext = Readonly<{
     | "operationalTerminal"
     | "taskQualificationSnapshot"
     | "taskLaunchIntentId"
+    | "deliveryPolicySnapshot"
   > & { projectId: string };
   workspaceRows: readonly Pick<Workspace, "id" | "worktreePath">[];
   workspaceContext: Awaited<ReturnType<typeof loadAgentWorkspaceContext>>;
@@ -332,6 +333,7 @@ async function loadFinalizationContext(
       operationalTerminal: runs.operationalTerminal,
       taskQualificationSnapshot: runs.taskQualificationSnapshot,
       taskLaunchIntentId: runs.taskLaunchIntentId,
+      deliveryPolicySnapshot: runs.deliveryPolicySnapshot,
     })
     .from(runs)
     .where(eq(runs.id, runId));
@@ -1347,6 +1349,16 @@ async function prepareAgentFinalization(
         "context mount release failed — left to the GC backstop",
       );
     });
+
+    if (
+      result.status === "Review" &&
+      original.run.deliveryPolicySnapshot?.strategy === "publish_branch"
+    ) {
+      const { deliverRunIfAutoReady } =
+        await import("@/lib/runs/auto-delivery");
+
+      await deliverRunIfAutoReady(runId, _db);
+    }
 
     await promoteNextPending({ db: _db, pool: "agent" }).catch(
       (err: unknown) => {

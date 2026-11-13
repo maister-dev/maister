@@ -64,6 +64,7 @@ const DELIVERY_STRATEGY_LABEL: Record<string, string> = {
   rebase_merge: "strategyRebaseMerge",
   pull_request: "strategyPullRequest",
   ai_rebase_merge: "strategyAiRebaseMerge",
+  publish_branch: "strategyPublishBranch",
 };
 
 const EXECUTION_PRESET_LABEL: Record<ExecutionPreset, string> = {
@@ -863,7 +864,9 @@ export default async function TaskDetailPage({
                     </td>
                     <td className="px-3 py-2 font-mono">{run.status}</td>
                     <td className="px-3 py-2 font-mono">
-                      {run.deliveryStatus ?? "—"}
+                      {run.deliveryStatus === "publish_branch"
+                        ? tLaunch("strategyPublishBranch")
+                        : (run.deliveryStatus ?? "—")}
                     </td>
                     <td className="px-3 py-2 font-mono">
                       {formatDuration(run.durationMs)}

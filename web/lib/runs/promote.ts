@@ -1,5 +1,8 @@
 import "server-only";
 
+import type { Workspace } from "@/lib/db/schema";
+import type { PublishedTarget } from "@/lib/workbench-git/publication";
+
 import { randomUUID } from "node:crypto";
 
 import { and, eq, or } from "drizzle-orm";
@@ -50,14 +53,17 @@ import {
   deliveryHistoryStats,
   findTargetMergeByRunId,
   headCommit,
+  listRemotes,
   promoteLocalMerge,
   promoteRebaseMerge,
   pushBranch,
   remoteBranchHead,
   resolveBaseCommit,
   squashRunBranch,
+  statusPorcelain,
 } from "@/lib/worktree";
 import {
+  defaultPublicationRemote,
   recordPublished,
   resolvePublishName,
 } from "@/lib/workbench-git/publication";
@@ -174,6 +180,7 @@ export type PromoteRunResult = {
   commit?: string;
   pullRequestUrl: string | null;
   prNumber?: number | null;
+  publication?: PublishedTarget;
   // ADR-141: set only for `ai_rebase_merge` when a rebase conflict was
   // delegated to the AI resolver (the promotion is deferred — the run is now
   // `Running` under the sync claim; UI surfaces "conflicts resolved — re-promote
@@ -486,6 +493,9 @@ function resolvePromotionPolicy(args: {
     args.workspace.targetBranch ??
     "main";
   const snapshot = args.run.deliveryPolicySnapshot as DeliveryPolicy | null;
+
+  if (snapshot?.strategy === "publish_branch") return snapshot;
+
   const legacyPolicy = deliveryPolicyFromLegacyPromotionMode({
     projectPromotionMode:
       args.workspace.promotionMode ?? args.project?.promotionMode ?? null,
@@ -562,14 +572,6 @@ export function scratchPromotionTarget(
 // enters `promoteRun`, so `PromoteRunInput.attribution` keeps its one value.
 type PromotionAttribution =
   NonNullable<PromoteRunInput["attribution"]> | { source: "pr_finalize" };
-
-function promotionModeForEffectiveMode(
-  mode: EffectivePromotionMode,
-): LegacyPromotionMode {
-  if (mode === "ai_rebase_merge") return "rebase_merge";
-
-  return legacyPromotionModeFromStrategy(mode);
-}
 
 async function maybePushTargetBranch(args: {
   db: Db;
@@ -841,7 +843,12 @@ async function promoteWorkspaceRun(
       project = await loadProject(tx, run.projectId);
     }
 
-    const policy = resolvePromotionPolicy({ input, run, workspace, project });
+    const policy = resolvePromotionPolicy({
+      input,
+      run: liveRun,
+      workspace,
+      project,
+    });
     const resolvedTarget = policy.targetBranch ?? null;
 
     if (!resolvedTarget) {
@@ -852,9 +859,34 @@ async function promoteWorkspaceRun(
     }
 
     const resolvedMode = effectivePromotionModeFromPolicy(policy);
-    const promotionMode = promotionModeForEffectiveMode(resolvedMode);
 
-    if (run.runKind === "flow") {
+    if (
+      resolvedMode === "publish_branch" &&
+      (run.deliveryPolicySnapshot?.strategy !== "publish_branch" || !run.taskId)
+    ) {
+      throw new MaisterError(
+        "PRECONDITION",
+        "branch delivery must be selected when launching a task run",
+      );
+    }
+    const promotionMode =
+      resolvedMode === "publish_branch"
+        ? resolvedMode
+        : legacyPromotionModeFromStrategy(resolvedMode);
+
+    if (
+      resolvedMode === "publish_branch" &&
+      input.autoOnReady &&
+      ctx.actor?.kind === "system" &&
+      policy.trigger !== "auto_on_ready"
+    ) {
+      throw new MaisterError(
+        "CONFLICT",
+        "automatic branch delivery was canceled",
+      );
+    }
+
+    if (run.runKind === "flow" || resolvedMode === "publish_branch") {
       // Readiness re-gate (T2.3) — NO claim, NO git on a not-ready verdict.
       const readiness = await assertEvidenceReady(runId, "review", tx);
 
@@ -875,43 +907,45 @@ async function promoteWorkspaceRun(
       }
     }
 
-    // Target-drift gate (Codex F6, §3.7). reviewedTargetCommit is required on
-    // EVERY flow promotion (never promote blind), and the target is ALWAYS
-    // resolved — proving it exists before a claim or any side-effect.
-    // allowTargetDrift waives ONLY the SHA-equality comparison; it never skips
-    // the reviewed-SHA input or the target-existence check.
-    if (!input.autoOnReady && !input.reviewedTargetCommit) {
-      throw new MaisterError(
-        "PRECONDITION",
-        "reviewedTargetCommit is required",
-      );
-    }
+    if (resolvedMode !== "publish_branch") {
+      // Target-drift gate (Codex F6, §3.7). reviewedTargetCommit is required on
+      // EVERY flow promotion (never promote blind), and the target is ALWAYS
+      // resolved — proving it exists before a claim or any side-effect.
+      // allowTargetDrift waives ONLY the SHA-equality comparison; it never skips
+      // the reviewed-SHA input or the target-existence check.
+      if (!input.autoOnReady && !input.reviewedTargetCommit) {
+        throw new MaisterError(
+          "PRECONDITION",
+          "reviewedTargetCommit is required",
+        );
+      }
 
-    const liveTip = await resolvePromotionTarget({
-      projectRepoPath: workspace.parentRepoPath,
-      targetBranch: resolvedTarget,
-    });
+      const liveTip = await resolvePromotionTarget({
+        projectRepoPath: workspace.parentRepoPath,
+        targetBranch: resolvedTarget,
+      });
 
-    if (
-      !input.autoOnReady &&
-      !input.allowTargetDrift &&
-      liveTip !== input.reviewedTargetCommit
-    ) {
-      log.debug(
-        {
-          runId,
-          resolvedTarget,
-          liveTip,
-          reviewedTargetCommit: input.reviewedTargetCommit,
-        },
-        "promote target-drift refusal",
-      );
-      // ADR-181: the token the git panel's "Finalize anyway" branches on.
-      throw new MaisterError(
-        "PRECONDITION",
-        "target advanced since review — re-review or override",
-        { details: { reason: "target_drift" } },
-      );
+      if (
+        !input.autoOnReady &&
+        !input.allowTargetDrift &&
+        liveTip !== input.reviewedTargetCommit
+      ) {
+        log.debug(
+          {
+            runId,
+            resolvedTarget,
+            liveTip,
+            reviewedTargetCommit: input.reviewedTargetCommit,
+          },
+          "promote target-drift refusal",
+        );
+        // ADR-181: the token the git panel's "Finalize anyway" branches on.
+        throw new MaisterError(
+          "PRECONDITION",
+          "target advanced since review — re-review or override",
+          { details: { reason: "target_drift" } },
+        );
+      }
     }
 
     const attemptId = randomUUID();
@@ -939,7 +973,10 @@ async function promoteWorkspaceRun(
       run,
       workspace,
       resolvedMode,
-      responseMode: input.mode ?? resolvedMode,
+      responseMode:
+        resolvedMode === "publish_branch"
+          ? resolvedMode
+          : (input.mode ?? resolvedMode),
       promotionMode,
       resolvedTarget,
       policy,
@@ -979,6 +1016,19 @@ async function promoteWorkspaceRun(
       db,
       claim,
       attribution: input.attribution ?? null,
+    });
+  }
+
+  if (claim.resolvedMode === "publish_branch") {
+    const delivery = await publishWorkspaceDelivery({ runId, db, claim });
+
+    return finalizeWorkspaceDelivery({
+      runId,
+      input,
+      ctx,
+      db,
+      claim,
+      delivery,
     });
   }
 
@@ -1130,6 +1180,27 @@ async function promoteWorkspaceRun(
   // merge-conflict assignment, or into an AI resolver for a conflict that does
   // not exist.
   await maybePushTargetBranch({ db, claim, commit });
+
+  return finalizeWorkspaceDelivery({
+    runId,
+    input,
+    ctx,
+    db,
+    claim,
+    delivery: { commit, diffStat },
+  });
+}
+
+async function finalizeWorkspaceDelivery(args: {
+  runId: string;
+  input: PromoteRunInput;
+  ctx: PromoteRunContext;
+  db: Db;
+  claim: FlowClaim;
+  delivery: WorkspaceDelivery;
+}): Promise<PromoteRunResult> {
+  const { runId, input, ctx, db, claim, delivery } = args;
+  const { commit, diffStat, publication } = delivery;
 
   // ---- Finalize tx: assert the attempt token still matches (§3.2 step 3).
   const result = await db.transaction(async (tx: Db) => {
@@ -1318,6 +1389,17 @@ async function promoteWorkspaceRun(
       ];
     }
 
+    if (publication) {
+      await recordPublished({
+        database: tx,
+        workspaceId: claim.workspace.id,
+        remote: publication.remote,
+        branch: publication.remoteBranch,
+        at: now,
+        fence: { kind: "promotion", attemptId: claim.attemptId },
+      });
+    }
+
     await tx
       .update(workspaces)
       .set({
@@ -1334,8 +1416,7 @@ async function promoteWorkspaceRun(
         ),
       );
 
-    // The promotion ACTION (one merge) happened once → one run.promoted, keyed on
-    // the promoting run.
+    // One delivery produces one run.promoted event, keyed on the delivering run.
     await emitWebhookEvent({
       db: tx,
       type: "run.promoted",
@@ -1343,7 +1424,8 @@ async function promoteWorkspaceRun(
       runId,
       data: {
         mode: claim.responseMode,
-        target: claim.resolvedTarget,
+        target: publication?.remoteBranch ?? claim.resolvedTarget,
+        ...(publication ? { publication } : {}),
         deliveryPolicy: claim.policy,
         pullRequestUrl: null,
       },
@@ -1404,6 +1486,7 @@ async function promoteWorkspaceRun(
       commit,
       pullRequestUrl: null,
       prNumber: null,
+      ...(publication ? { publication } : {}),
     };
   });
 
@@ -1440,11 +1523,139 @@ type FlowClaim = {
   workspace: any;
   resolvedMode: EffectivePromotionMode;
   responseMode: LegacyPromotionMode | EffectivePromotionMode;
-  promotionMode: LegacyPromotionMode;
+  promotionMode: LegacyPromotionMode | "publish_branch";
   resolvedTarget: string;
   policy: DeliveryPolicy;
   baseCommit: string | null;
 };
+
+type WorkspaceDelivery = {
+  commit: string;
+  diffStat: Awaited<ReturnType<typeof deliveryHistoryStats>>;
+  publication?: PublishedTarget;
+};
+
+async function branchDeliveryTarget(
+  db: Db,
+  claim: FlowClaim,
+): Promise<PublishedTarget> {
+  const workspace: Workspace = claim.workspace;
+  const pinned = workspace.branchDelivery?.target;
+
+  const project = await loadProject(db, claim.run.projectId);
+  const remote =
+    pinned?.remote ??
+    workspace.publishedRemote ??
+    defaultPublicationRemote(
+      await listRemotes({ projectRepoPath: workspace.parentRepoPath }),
+    );
+
+  if (!remote) {
+    throw new MaisterError(
+      "PRECONDITION",
+      "configure a Git remote to publish this run",
+    );
+  }
+
+  const remoteBranch =
+    pinned?.remoteBranch ??
+    (await publicBranchForPromotion(db, claim, project, remote));
+
+  if (
+    [project?.mainBranch, workspace.baseBranch, claim.resolvedTarget].includes(
+      remoteBranch,
+    )
+  ) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `public branch ${remote}/${remoteBranch} is a base or target branch; configure a dedicated public branch name`,
+    );
+  }
+
+  return { remote, remoteBranch };
+}
+
+async function publishWorkspaceDelivery(args: {
+  runId: string;
+  db: Db;
+  claim: FlowClaim;
+}): Promise<WorkspaceDelivery> {
+  const { db, claim, runId } = args;
+  const workspace: Workspace = claim.workspace;
+  let target = workspace.branchDelivery?.target ?? null;
+
+  try {
+    const publication = await branchDeliveryTarget(db, claim);
+    const [porcelain, commit, diffStat] = await Promise.all([
+      statusPorcelain({ worktreePath: workspace.worktreePath }),
+      resolveBaseCommit({
+        projectRepoPath: workspace.parentRepoPath,
+        baseRef: `refs/heads/${workspace.branch}`,
+      }),
+      deliveryHistoryStats({
+        worktreePath: workspace.worktreePath,
+        baseRef:
+          workspace.baseCommit ?? workspace.baseBranch ?? claim.resolvedTarget,
+        branch: workspace.branch,
+      }),
+    ]);
+
+    if (porcelain.trim()) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `run ${runId} has uncommitted changes; commit them in the Git panel before retrying delivery`,
+        { details: { reason: "dirty_worktree" } },
+      );
+    }
+
+    // Persist the destination before the external write. A crash can happen
+    // after Git updates the remote but before it records the local upstream.
+    const [saved] = await db
+      .update(workspaces)
+      .set({
+        branchDelivery: { target: publication, error: null },
+        promotionClaimedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(workspaces.id, workspace.id),
+          eq(workspaces.promotionAttemptId, claim.attemptId),
+          eq(workspaces.promotionState, "claiming"),
+        ),
+      )
+      .returning({ id: workspaces.id });
+
+    if (!saved) {
+      throw new MaisterError(
+        "CONFLICT",
+        "branch delivery claim was superseded",
+      );
+    }
+    target = publication;
+
+    // A normal push is idempotent at the same SHA and refuses to overwrite
+    // commits added to the public branch while the delivery was interrupted.
+    await pushBranch({
+      projectRepoPath: workspace.parentRepoPath,
+      remote: publication.remote,
+      branch: workspace.branch,
+      remoteBranch: publication.remoteBranch,
+      setUpstream: true,
+    });
+
+    return { commit, diffStat, publication };
+  } catch (error) {
+    const message = isMaisterError(error)
+      ? error.message
+      : "Branch delivery failed";
+
+    await markPromotionFailed(db, workspace.id, claim.attemptId, {
+      target,
+      error: message,
+    });
+    throw error;
+  }
+}
 
 // ADR-181 (C): read the PR branch's head once and ask the publication guard
 // whether a forced update would drop commits only it has. A refusal releases
@@ -1661,6 +1872,7 @@ async function publicBranchForPromotion(
   db: Db,
   claim: FlowClaim,
   project: any,
+  remote = "origin",
 ): Promise<string> {
   const ownerRunId: string = claim.workspace.runId ?? claim.run.id;
   const ownerTaskId: string | null =
@@ -1683,7 +1895,7 @@ async function publicBranchForPromotion(
   return resolvePublishName({
     runId: ownerRunId,
     internalBranch: claim.workspace.branch,
-    remote: "origin",
+    remote,
     requested: null,
     template: project?.publicBranchTemplate,
     taskKey:
@@ -2165,6 +2377,7 @@ async function markPromotionFailed(
   db: Db,
   workspaceId: string,
   attemptId: string,
+  branchDelivery?: NonNullable<Workspace["branchDelivery"]>,
 ): Promise<void> {
   await db.transaction(async (tx: Db) => {
     const rows = await tx
@@ -2177,7 +2390,10 @@ async function markPromotionFailed(
     if (!ws || ws.promotionAttemptId !== attemptId) return;
     await tx
       .update(workspaces)
-      .set({ promotionState: "failed" })
+      .set({
+        promotionState: "failed",
+        ...(branchDelivery ? { branchDelivery } : {}),
+      })
       .where(
         and(
           eq(workspaces.id, workspaceId),

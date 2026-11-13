@@ -8,6 +8,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import {
   afterAll,
@@ -21,6 +22,15 @@ import {
 } from "vitest";
 
 import { MaisterError } from "@/lib/errors";
+import {
+  artifactInstances,
+  projects,
+  runs,
+  users,
+  workspaces,
+} from "@/lib/db/schema";
+import { deliverRunIfAutoReady } from "@/lib/runs/auto-delivery";
+import { promoteRun } from "@/lib/runs/promote";
 import { operationalContractFixture } from "@/test-support/operational-agent";
 import {
   addRunWorktree,
@@ -126,6 +136,142 @@ function publish(
       : common,
   );
 }
+
+async function seedBranchDelivery() {
+  const run = await seeded({ status: "Review" });
+  const userId = `user-${run.runId}`;
+
+  await db
+    .insert(users)
+    .values({ id: userId, email: `${userId}@example.invalid` });
+  await db
+    .update(runs)
+    .set({
+      createdByUserId: userId,
+      deliveryPolicySnapshot: {
+        strategy: "publish_branch",
+        trigger: "auto_on_ready",
+        push: "on_success",
+        targetBranch: "main",
+      },
+    })
+    .where(eq(runs.id, run.runId));
+
+  return {
+    ...run,
+    retry: () =>
+      promoteRun(
+        run.runId,
+        {},
+        {
+          sessionUser: { id: userId },
+          authorize: async () => undefined,
+        },
+        db,
+      ),
+  };
+}
+
+describe("publish branch delivery", () => {
+  const branch = "feature/ABC-12-fix-login-redirect";
+
+  it("waits for review evidence and delivers to a Git-only remote", async () => {
+    const run = await seedBranchDelivery();
+    const noteId = `review-note-${run.runId}`;
+    const head = await gitIn(run.worktree, ["rev-parse", "HEAD"]);
+
+    await gitIn(repo.parent, ["remote", "rename", "origin", "delivery"]);
+    await db.insert(artifactInstances).values({
+      id: noteId,
+      runId: run.runId,
+      artifactDefId: "review-note",
+      kind: "human_note",
+      producer: "human",
+      locator: { kind: "inline", text: "Approved" },
+      requiredFor: ["review"],
+      validity: "stale",
+    });
+    await expect(run.retry()).rejects.toThrow("evidence not ready");
+    expect(await remoteHead(repo.remote, branch)).toBeNull();
+
+    await db
+      .update(artifactInstances)
+      .set({ validity: "current" })
+      .where(eq(artifactInstances.id, noteId));
+    await deliverRunIfAutoReady(run.runId, db);
+
+    expect(await remoteHead(repo.remote, branch)).toBe(head);
+    expect(await remoteHead(repo.remote, "main")).toBe(repo.baseSha);
+    expect(await remoteHead(repo.remote, run.branch)).toBeNull();
+    expect(await workspaceRow(db, run.workspaceId)).toMatchObject({
+      publishedBranch: branch,
+      publishedRemote: "delivery",
+      promotionState: "done",
+      promotionMode: "publish_branch",
+      prUrl: null,
+    });
+    const [delivered] = await db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, run.runId));
+
+    expect(delivered).toMatchObject({ status: "Done", mergeCommitSha: null });
+  });
+
+  it("reclaims an interrupted push using its saved destination and preserves later remote commits", async () => {
+    const run = await seedBranchDelivery();
+
+    // The remote write landed, but the process stopped before updating the
+    // local upstream and before recording delivery.
+    await gitIn(repo.parent, [
+      "push",
+      "origin",
+      `refs/heads/${run.branch}:refs/heads/${branch}`,
+    ]);
+    const remoteCommit = await advanceRemoteBranch(root, repo.remote, branch);
+
+    await db
+      .update(workspaces)
+      .set({
+        promotionState: "claiming",
+        promotionClaimedAt: new Date(0),
+        branchDelivery: {
+          target: { remote: "origin", remoteBranch: branch },
+          error: null,
+        },
+      })
+      .where(eq(workspaces.id, run.workspaceId));
+    await db
+      .update(projects)
+      .set({ publicBranchTemplate: "other/{task_key}" })
+      .where(eq(projects.id, run.projectId));
+
+    await expect(run.retry()).rejects.toThrow("git push");
+    expect(await remoteHead(repo.remote, branch)).toBe(remoteCommit);
+    expect(await remoteHead(repo.remote, "other/ABC-12")).toBeNull();
+    expect(await workspaceRow(db, run.workspaceId)).toMatchObject({
+      promotionState: "failed",
+      publishedBranch: null,
+      branchDelivery: {
+        target: { remote: "origin", remoteBranch: branch },
+        error: expect.stringContaining("git push"),
+      },
+    });
+
+    await gitIn(run.worktree, ["fetch", "origin"]);
+    await gitIn(run.worktree, ["merge", "--ff-only", `origin/${branch}`]);
+    await expect(run.retry()).resolves.toMatchObject({
+      mode: "publish_branch",
+      publication: { remote: "origin", remoteBranch: branch },
+    });
+    expect(await remoteHead(repo.remote, branch)).toBe(remoteCommit);
+    expect(await workspaceRow(db, run.workspaceId)).toMatchObject({
+      promotionState: "done",
+      publishedBranch: branch,
+      branchDelivery: { error: null },
+    });
+  });
+});
 
 type PushRefusal = MaisterError & {
   pushRejected?: string;
@@ -259,6 +405,13 @@ describe("publish under a public branch name", () => {
     expect(ws.publishedBranch).toBe("feature/ABC-12-fix-login-redirect");
     expect(ws.publishedRemote).toBe("origin");
     expect(ws.publishedAt).toBeInstanceOf(Date);
+    expect(ws.promotionState).toBe("none");
+    const [unchanged] = await db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, run.runId));
+
+    expect(unchanged.status).toBe("Failed");
     // The lease was captured by ls-remote BEFORE the push.
     expect(remoteBranchHead).toHaveBeenCalledWith(
       expect.objectContaining({

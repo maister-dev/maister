@@ -189,6 +189,13 @@ non-immediately-promotable run opens the existing review surface; an
 immediately-promotable run still passes the inspector's mode, reviewed commit,
 readiness, target-drift, and diff-completeness guards before submitting.
 
+A task run launched with **Publish branch** pushes its committed branch after
+delivery readiness passes. The Run shows the remote and branch on completion.
+A failed push leaves the Run in Review with the Git error and **Retry delivery**.
+Retries reuse the saved destination and only push fast-forward updates. The Git
+panel's **Publish** action remains available for a handoff without completing
+delivery.
+
 ## States
 
 **Pending HITL answer read state (P0-4 — Implemented).** `answerState` distinguishes

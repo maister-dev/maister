@@ -91,7 +91,9 @@ rail. It preloads launch options from the selected task and shows:
 - non-blocking runner-resolution warnings when a Flow slot launches on a
   same-capability runner whose model and/or provider kind differs from the
   package intent;
-- delivery-policy controls for strategy, push, and trigger;
+- delivery-policy controls for strategy, push, and trigger. **Publish branch**
+  uses the project's public branch naming rules and pushes after the Run passes
+  its required checks and review;
 - advanced checks, human-gate, and promotion selectors remain unchanged after
   their disclosure opens;
 - budget inputs for run/task/tree token, failure, warning-percent, and

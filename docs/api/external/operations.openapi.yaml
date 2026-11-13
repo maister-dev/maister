@@ -4934,6 +4934,12 @@ paths:
                 maxProperties: 64
                 x-propertyNames: { type: string, minLength: 1, maxLength: 256 }
                 additionalProperties: { type: string, enum: [keep, try_once] }
+        - in: query
+          name: deliveryPolicy
+          description: Delivery settings for an agent or agent-backed Flow preview. Include the same selection when accepting the launch.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeliveryPolicy" }
       responses:
         "200":
           description: Current source-free options; Cache-Control is no-store.
@@ -5829,7 +5835,7 @@ components:
       properties:
         strategy:
           type: string
-          enum: [merge, rebase_merge, pull_request, ai_rebase_merge]
+          enum: [merge, rebase_merge, pull_request, ai_rebase_merge, publish_branch]
         push:
           type: string
           enum: [never, on_success]
@@ -5849,7 +5855,7 @@ components:
       properties:
         strategy:
           type: string
-          enum: [merge, rebase_merge, pull_request, ai_rebase_merge]
+          enum: [merge, rebase_merge, pull_request, ai_rebase_merge, publish_branch]
         push:
           type: string
           enum: [never, on_success]

@@ -84,6 +84,7 @@ export const taskLaunchOptionsSchema = taskLaunchFieldsSchema
     relaunchOfRunId: true,
     runnerId: true,
     packageVersions: true,
+    deliveryPolicy: true,
   })
   .superRefine(validateTaskLaunchTarget)
   .meta(taskLaunchTargetContract);

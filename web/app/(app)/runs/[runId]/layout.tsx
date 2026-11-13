@@ -149,7 +149,11 @@ import {
 } from "@/lib/worktree";
 import { buildRunSyncPanelData } from "@/lib/runs/sync-panel-data";
 import { gitPanelHref } from "@/lib/workbench-git/panel-link";
-import { deliveryPolicyFromLegacyPromotionMode } from "@/lib/runs/delivery-policy";
+import {
+  deliveryPolicyFromLegacyPromotionMode,
+  type DeliveryPolicy,
+  type DeliveryPolicyStrategy,
+} from "@/lib/runs/delivery-policy";
 import {
   computeDirtySummary,
   type DirtySummary,
@@ -190,13 +194,8 @@ async function buildReviewPanelData(detail: RunDetailForReview): Promise<{
   baseCommit: string | null;
   targetBranch: string | null;
   reviewedTargetCommit: string | null;
-  promotionMode: "merge" | "rebase_merge" | "pull_request" | "ai_rebase_merge";
-  deliveryPolicy: {
-    strategy: "merge" | "rebase_merge" | "pull_request" | "ai_rebase_merge";
-    push: "never" | "on_success";
-    trigger: "manual" | "auto_on_ready";
-    targetBranch: string;
-  };
+  promotionMode: DeliveryPolicyStrategy;
+  deliveryPolicy: DeliveryPolicy;
   diff: ReviewPanelDiff;
   driftDetected: boolean;
   legacyNeedsRelaunch: boolean;
@@ -255,13 +254,15 @@ async function buildReviewPanelData(detail: RunDetailForReview): Promise<{
   // panel flips to the drift state — it is never pre-computed at render.
   let reviewedTargetCommit: string | null = null;
 
-  try {
-    reviewedTargetCommit = await resolveBaseCommit({
-      projectRepoPath: detail.projectRepoPath,
-      baseRef: targetBranch,
-    });
-  } catch {
-    reviewedTargetCommit = null;
+  if (promotionMode !== "publish_branch") {
+    try {
+      reviewedTargetCommit = await resolveBaseCommit({
+        projectRepoPath: detail.projectRepoPath,
+        baseRef: targetBranch,
+      });
+    } catch {
+      reviewedTargetCommit = null;
+    }
   }
 
   return {
@@ -804,6 +805,7 @@ export default async function RunDetailLayout({
     // real target + worktree are known (never for the legacy-relaunch fallback).
     if (
       reviewData &&
+      reviewData.promotionMode !== "publish_branch" &&
       !reviewData.legacyNeedsRelaunch &&
       reviewData.targetBranch
     ) {
@@ -1125,7 +1127,9 @@ export default async function RunDetailLayout({
     { label: t("inspectorRunKind"), value: detail.runKind },
     { label: t("headerBranch"), value: detail.branch },
     { label: t("baseBranch"), value: detail.baseBranch ?? "-" },
-    { label: t("targetBranch"), value: detail.targetBranch ?? "-" },
+    ...(policy?.strategy === "publish_branch"
+      ? []
+      : [{ label: t("targetBranch"), value: detail.targetBranch ?? "-" }]),
     {
       label: t("inspectorWorktree"),
       value: detail.pruned
@@ -1150,9 +1154,12 @@ export default async function RunDetailLayout({
     { label: wallClockLabel, value: formatDuration(wallDurationMs) },
     {
       label: t("deliveryPolicyTitle"),
-      value: policy
-        ? `${policy.strategy} / ${policy.push} / ${policy.trigger}`
-        : t("policyLegacy"),
+      value:
+        policy?.strategy === "publish_branch"
+          ? t("promotionPublishBranch")
+          : policy
+            ? `${policy.strategy} / ${policy.push} / ${policy.trigger}`
+            : t("policyLegacy"),
     },
     {
       label: t("executionPolicyTitle"),
@@ -1237,11 +1244,13 @@ export default async function RunDetailLayout({
     drop: t("inspectorActionDrop"),
   };
   const deliveryMode =
-    reviewData?.deliveryPolicy.strategy === "pull_request"
-      ? "pull_request"
-      : showReview
-        ? "local"
-        : null;
+    reviewData?.deliveryPolicy.strategy === "publish_branch"
+      ? null
+      : reviewData?.deliveryPolicy.strategy === "pull_request"
+        ? "pull_request"
+        : showReview
+          ? "local"
+          : null;
   const isCutoverHistory = detail.cutoverFailure !== null;
   // ADR-181 D2: the viewer's own set — the claim owner of an open rework claim
   // gets the git set; `detail.lifecycleActions` is the viewer-less projection.
@@ -1731,6 +1740,15 @@ export default async function RunDetailLayout({
             </section>
           ) : null}
 
+          {detail.branchDelivery?.publication ? (
+            <p
+              className="rounded-md border border-line-soft bg-paper p-3 font-mono text-sm"
+              data-testid="run-branch-delivery-published"
+            >
+              {t("branchDeliveryPublished", detail.branchDelivery.publication)}
+            </p>
+          ) : null}
+
           {!detail.pendingHitl || isCutoverHistory ? primaryResult : null}
 
           {detail.status === "Failed" || detail.status === "Abandoned" ? (
@@ -2160,6 +2178,8 @@ export default async function RunDetailLayout({
               aheadBehind={syncPanel?.aheadBehind ?? null}
               baseBranch={reviewData.baseBranch}
               baseCommit={reviewData.baseCommit}
+              branchDeliveryAttempted={detail.branchDelivery?.attempted}
+              branchDeliveryError={detail.branchDelivery?.error}
               canPromote={canAct}
               deliveryPolicy={reviewData.deliveryPolicy}
               diff={reviewData.diff}

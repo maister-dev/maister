@@ -138,4 +138,42 @@ describe("ReviewPanel promotion feedback", () => {
     await act(async () => finish(Response.json({ ok: true })));
     expect(router.refresh).toHaveBeenCalledOnce();
   });
+
+  it("shows the persisted Git error and retries the saved branch delivery", async () => {
+    const failure = "git push origin feature/task rejected";
+    const fetch = vi.fn(async () =>
+      Response.json({ code: "CONFLICT", message: failure }, { status: 409 }),
+    );
+
+    vi.stubGlobal("fetch", fetch);
+    act(() => {
+      root.render(
+        createElement(ReviewPanel, {
+          ...BASE_PROPS,
+          promotionMode: "publish_branch",
+          deliveryPolicy: {
+            ...BASE_PROPS.deliveryPolicy,
+            strategy: "publish_branch",
+          },
+          targetBranch: null,
+          reviewedTargetCommit: null,
+          branchDeliveryError: failure,
+        }),
+      );
+    });
+
+    const button = host.querySelector<HTMLButtonElement>(
+      '[data-testid="review-promote"]',
+    );
+
+    if (!button) throw new Error("missing retry button");
+    expect(button.textContent).toBe("run.branchDeliveryRetry");
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe(failure);
+    await act(async () => button.click());
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/runs/run-1/promote",
+      expect.objectContaining({ body: "{}" }),
+    );
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe(failure);
+  });
 });

@@ -117,6 +117,7 @@ import {
 } from "@/lib/runs/launchability";
 import {
   legacyPromotionModeFromStrategy,
+  deliveryPolicyForLaunch,
   resolveDeliveryPolicy,
   type StoredDeliveryPolicy,
 } from "@/lib/runs/delivery-policy";
@@ -1629,16 +1630,18 @@ async function* executeFlowLaunch(
       input.deliveryPolicy?.targetBranch ??
       (task.targetBranch as string | null) ??
       base;
-    const deliveryPolicy = resolveDeliveryPolicy({
-      projectDefault:
-        project.deliveryPolicyDefault as StoredDeliveryPolicy | null,
-      projectPromotionMode: project.promotionMode,
-      projectMainBranch: project.mainBranch,
-      launchOverride: {
-        ...input.deliveryPolicy,
-        targetBranch: target,
-      },
-    });
+    const deliveryPolicy = deliveryPolicyForLaunch(
+      resolveDeliveryPolicy({
+        projectDefault:
+          project.deliveryPolicyDefault as StoredDeliveryPolicy | null,
+        projectPromotionMode: project.promotionMode,
+        projectMainBranch: project.mainBranch,
+        launchOverride: {
+          ...input.deliveryPolicy,
+          targetBranch: target,
+        },
+      }),
+    );
 
     // Refresh origin (read-only: updates remote-tracking refs, never the working
     // tree) so the branch allow-list and the base commit reflect the freshest
@@ -1696,10 +1699,9 @@ async function* executeFlowLaunch(
             baseRef: base,
             baseCommit: requestedBaseCommit,
           });
-    const promotionMode: PromotionMode =
-      deliveryPolicy.strategy === "ai_rebase_merge"
-        ? "rebase_merge"
-        : legacyPromotionModeFromStrategy(deliveryPolicy.strategy);
+    const promotionMode: PromotionMode = legacyPromotionModeFromStrategy(
+      deliveryPolicy.strategy,
+    );
 
     // ADR-119: atomic attempt-number allocation — the SOLE writer of
     // attempt_number (the main launch tx no longer writes it; a slower concurrent

@@ -36,6 +36,7 @@ import {
 } from "@/lib/agents/config";
 import { loadProjectMcpBindings } from "@/lib/mcp/binding-service";
 import {
+  deliveryPolicyForLaunch,
   resolveDeliveryPolicy,
   legacyPromotionModeFromStrategy,
 } from "@/lib/runs/delivery-policy";
@@ -603,14 +604,19 @@ async function resolveAgentTaskLaunchSettingsForTrigger(
     selection.deliveryPolicy?.targetBranch ??
     task.targetBranch ??
     baseBranch;
-  const deliveryPolicy = resolveDeliveryPolicy({
-    projectDefault: project.deliveryPolicyDefault,
-    projectPromotionMode: project.promotionMode,
-    projectMainBranch: project.mainBranch,
-    launchOverride: { ...selection.deliveryPolicy, targetBranch },
-  });
+  const deliveryPolicy = deliveryPolicyForLaunch(
+    resolveDeliveryPolicy({
+      projectDefault: project.deliveryPolicyDefault,
+      projectPromotionMode: project.promotionMode,
+      projectMainBranch: project.mainBranch,
+      launchOverride: { ...selection.deliveryPolicy, targetBranch },
+    }),
+  );
   const executionPolicy =
     selection.executionPolicy ?? resolveAgentContextExecutionPolicy(runtime);
+
+  if (deliveryPolicy.strategy === "publish_branch" && workspace !== "worktree")
+    throw launchRefusal("launch_agent_target_unsupported", "PRECONDITION");
 
   assertNoBlindShip(executionPolicy);
   const {
@@ -669,10 +675,7 @@ async function resolveAgentTaskLaunchSettingsForTrigger(
     targetBranch,
     deliveryPolicy,
     executionPolicy,
-    promotionMode:
-      deliveryPolicy.strategy === "ai_rebase_merge"
-        ? ("rebase_merge" as const)
-        : legacyPromotionModeFromStrategy(deliveryPolicy.strategy),
+    promotionMode: legacyPromotionModeFromStrategy(deliveryPolicy.strategy),
     autoPromote: selection.autoPromote ?? true,
     brainContext: selection.brainContext ?? null,
     packageVersions: selection.packageVersions ?? {},

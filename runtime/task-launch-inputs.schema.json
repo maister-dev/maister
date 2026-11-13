@@ -35,7 +35,13 @@
         "properties": {
           "strategy": {
             "type": "string",
-            "enum": ["merge", "rebase_merge", "pull_request", "ai_rebase_merge"]
+            "enum": [
+              "merge",
+              "rebase_merge",
+              "pull_request",
+              "ai_rebase_merge",
+              "publish_branch"
+            ]
           },
           "push": { "type": "string", "enum": ["never", "on_success"] },
           "trigger": { "type": "string", "enum": ["manual", "auto_on_ready"] },
@@ -345,7 +351,13 @@
         "properties": {
           "strategy": {
             "type": "string",
-            "enum": ["merge", "rebase_merge", "pull_request", "ai_rebase_merge"]
+            "enum": [
+              "merge",
+              "rebase_merge",
+              "pull_request",
+              "ai_rebase_merge",
+              "publish_branch"
+            ]
           },
           "push": { "type": "string", "enum": ["never", "on_success"] },
           "trigger": { "type": "string", "enum": ["manual", "auto_on_ready"] },
@@ -637,6 +649,28 @@
           "enum": ["keep", "try_once"]
         },
         "maxProperties": 64
+      },
+      "deliveryPolicy": {
+        "type": "object",
+        "properties": {
+          "strategy": {
+            "type": "string",
+            "enum": [
+              "merge",
+              "rebase_merge",
+              "pull_request",
+              "ai_rebase_merge",
+              "publish_branch"
+            ]
+          },
+          "push": { "type": "string", "enum": ["never", "on_success"] },
+          "trigger": { "type": "string", "enum": ["manual", "auto_on_ready"] },
+          "targetBranch": {
+            "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+          }
+        },
+        "required": ["strategy", "push", "trigger", "targetBranch"],
+        "additionalProperties": false
       }
     },
     "required": ["taskId"],

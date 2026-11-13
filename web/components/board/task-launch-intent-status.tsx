@@ -71,14 +71,16 @@ export function TaskLaunchIntentStatus({
               : (receipt?.state ?? "accepted");
   const deliveryStrategy = receipt?.snapshot.deliveryPolicy?.strategy;
   const deliveryKey =
-    deliveryStrategy === "rebase_merge"
-      ? "strategyRebaseMerge"
-      : deliveryStrategy === "ai_rebase_merge"
-        ? "strategyAiRebaseMerge"
-        : deliveryStrategy === "pull_request" ||
-            receipt?.snapshot.promotionMode === "pull_request"
-          ? "strategyPullRequest"
-          : "strategyMerge";
+    deliveryStrategy === "publish_branch"
+      ? "strategyPublishBranch"
+      : deliveryStrategy === "rebase_merge"
+        ? "strategyRebaseMerge"
+        : deliveryStrategy === "ai_rebase_merge"
+          ? "strategyAiRebaseMerge"
+          : deliveryStrategy === "pull_request" ||
+              receipt?.snapshot.promotionMode === "pull_request"
+            ? "strategyPullRequest"
+            : "strategyMerge";
 
   return (
     <div
@@ -123,10 +125,12 @@ export function TaskLaunchIntentStatus({
                   .join(", ") ?? receipt.snapshot.runnerIds.join(", ")}
               </dd>
             </div>
-            <div>
-              <dt className="text-mute">{t("admission.target")}</dt>
-              <dd>{receipt.snapshot.targetBranch}</dd>
-            </div>
+            {deliveryStrategy !== "publish_branch" ? (
+              <div>
+                <dt className="text-mute">{t("admission.target")}</dt>
+                <dd>{receipt.snapshot.targetBranch}</dd>
+              </div>
+            ) : null}
             <div>
               <dt className="text-mute">{t("admission.delivery")}</dt>
               <dd>{t(deliveryKey)}</dd>
@@ -135,8 +139,10 @@ export function TaskLaunchIntentStatus({
               <dt className="text-mute">{t("admission.promotion")}</dt>
               <dd>
                 {t(
-                  receipt.snapshot.autoPromote &&
-                    receipt.snapshot.deliveryPolicy?.trigger === "auto_on_ready"
+                  deliveryStrategy === "publish_branch" ||
+                    (receipt.snapshot.autoPromote &&
+                      receipt.snapshot.deliveryPolicy?.trigger ===
+                        "auto_on_ready")
                     ? "triggerAutoOnReady"
                     : "triggerManual",
                 )}
