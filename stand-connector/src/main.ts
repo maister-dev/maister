@@ -12,6 +12,7 @@ import {
 import { isAbsolute, join } from "node:path";
 
 import { createAuthorityClient } from "./authority-client.ts";
+import type { HealthProbe } from "./health.ts";
 import {
   createStandHelper,
   type Component,
@@ -83,8 +84,16 @@ function objectValue(value: unknown): Record<string, unknown> {
 }
 
 function readComponent(raw: unknown): Component {
-  const { id, scope, user, unit, actions, serviceManager, ...extra } =
-    objectValue(raw);
+  const {
+    id,
+    scope,
+    user,
+    unit,
+    actions,
+    serviceManager,
+    healthProbe,
+    ...extra
+  } = objectValue(raw);
 
   if (
     Object.keys(extra).length !== 0 ||
@@ -109,7 +118,40 @@ function readComponent(raw: unknown): Component {
   )
     throw new Error("Invalid stand component configuration");
 
-  return { id, scope, user, unit, actions };
+  return {
+    id,
+    scope,
+    user,
+    unit,
+    actions,
+    healthProbe: readHealthProbe(healthProbe),
+  };
+}
+
+function readHealthProbe(raw: unknown): HealthProbe {
+  const input = objectValue(raw);
+
+  if (
+    input.kind === "systemd" &&
+    input.expectedState === "active" &&
+    Object.keys(input).length === 2
+  )
+    return { kind: "systemd", expectedState: "active" };
+  if (
+    input.kind === "http" &&
+    typeof input.url === "string" &&
+    integer(input.expectedStatus, 100, 599) &&
+    typeof input.expectedIdentity === "string" &&
+    Object.keys(input).length === 4
+  )
+    return {
+      kind: "http",
+      url: input.url,
+      expectedStatus: input.expectedStatus,
+      expectedIdentity: input.expectedIdentity,
+    };
+
+  throw new Error("Invalid stand health probe configuration");
 }
 
 function readTarget(raw: unknown): HelperTarget {

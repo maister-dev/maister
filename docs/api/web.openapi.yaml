@@ -40700,6 +40700,7 @@ components:
               type: string
               minLength: 1
               maxLength: 256
+              pattern: '^[ -~]{1,256}$'
         - type: object
           additionalProperties: false
           required:

@@ -69,6 +69,7 @@ test("IT-CBO-02 admits the exact configured restart over mTLS and returns the or
           user: null,
           unit: "fixture.service",
           actions: ["inspect", "restart", "logs", "verify"],
+          healthProbe: { kind: "systemd", expectedState: "active" },
         },
       ],
     },

@@ -250,7 +250,7 @@ paths:
   /operations/{operationId}/verification:
     post:
       operationId: standHelperVerify
-      summary: Perform a separate systemd health observation
+      summary: Perform a separate configured health observation
       description: Requires an operation-bound verification permit and a retained applied restart on the
         configured resource. The target journals a fresh verification nonce and a sequence after the restart
         receipt before probing. A used nonce conflicts; another observation requires a fresh nonce.

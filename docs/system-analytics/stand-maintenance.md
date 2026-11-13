@@ -115,6 +115,12 @@ the command ledger and inherited ACP environment.
 
 Sanitize configured credentials and token/password/authorization patterns, control sequences and private host paths before log/artifact/error publication. Raw logs remain target-private. Sanitized log text retains target-log access restrictions and is not public telemetry. Public diagnostics are allow-listed reason/status/count fields and remediation, never raw systemctl/provider stderr/body or credential values. Native error reasons distinguish unsupported_config, target_identity_mismatch, authority_revoked, resource_conflict, receipt_missing, receipt_corrupt, journal_full, effect_unknown, verification_unhealthy and verification_inconclusive, mapped to existing typed domain codes and EN/RU UI copy.
 
+The helper config explicitly selects each component's health probe. An HTTP
+probe requires the configured status and a single matching
+`X-Maister-Health-Identity` response header. It reads at most 16 KiB without
+following redirects. A systemd probe requires the exact loaded unit to be
+active with a current invocation ID.
+
 ### Intent, authority and effect contract
 
 The platform intake API retains the current assignment input, target and

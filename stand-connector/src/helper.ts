@@ -4,6 +4,11 @@ import { createServer, type Server, type ServerOptions } from "node:https";
 import { TLSSocket } from "node:tls";
 
 import { AuthorityClientError } from "./authority-client.ts";
+import {
+  checkHealth,
+  validateHealthProbe,
+  type HealthProbe,
+} from "./health.ts";
 import type {
   RestartEntry,
   RestartIntent,
@@ -23,6 +28,7 @@ export type Component = SystemdUnit &
   Readonly<{
     id: string;
     actions: readonly ("inspect" | "logs" | "restart" | "verify")[];
+    healthProbe: HealthProbe;
   }>;
 
 export type HelperTarget = Readonly<{
@@ -302,30 +308,6 @@ function canonicalResourceKey(
   ).toString("hex");
 }
 
-async function checkHealth(
-  manager: SystemdDriver,
-  component: Component,
-): Promise<"healthy" | "unhealthy" | "inconclusive"> {
-  try {
-    const observation = await manager.inspect(component);
-
-    if (observation.state === "active" && observation.invocationId !== null)
-      return "healthy";
-    if (observation.state === "inactive" || observation.state === "failed")
-      return "unhealthy";
-
-    return "inconclusive";
-  } catch (error) {
-    if (
-      !(error instanceof SystemdError) ||
-      error.reason !== "service_unavailable"
-    )
-      throw error;
-
-    return "inconclusive";
-  }
-}
-
 function targetReceipt(entry: RestartEntry) {
   const effectState =
     entry.phase === "intent_retained"
@@ -415,7 +397,10 @@ export function createStandHelper(options: StandHelperOptions): Server {
   )
     throw new HelperError(400, "CONFIG", "unsupported_config");
   const credentialDigest = sha256(options.platformCredential);
-  for (const component of target.components) checkUnit(component);
+  for (const component of target.components) {
+    checkUnit(component);
+    validateHealthProbe(component.healthProbe);
+  }
 
   function configuredComponent(
     componentId: string,
@@ -561,7 +546,11 @@ export function createStandHelper(options: StandHelperOptions): Server {
         entry.operationId,
         input.nonce,
       );
-      const state = await checkHealth(options.manager, component);
+      const state = await checkHealth(
+        options.manager,
+        component,
+        component.healthProbe,
+      );
 
       json(response, 200, {
         id: randomUUID(),

@@ -71,7 +71,7 @@ export const standComponentSchema = z
           kind: z.literal("http"),
           url: httpUrl,
           expectedStatus: z.number().int().min(100).max(599),
-          expectedIdentity: postgresTextSchema.min(1).max(256),
+          expectedIdentity: postgresTextSchema.regex(/^[ -~]{1,256}$/),
         })
         .strict(),
     ]),

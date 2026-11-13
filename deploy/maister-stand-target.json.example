@@ -10,7 +10,8 @@
       "scope": "system",
       "user": null,
       "unit": "maister-pilot-fixture.service",
-      "actions": ["inspect", "logs", "restart", "verify"]
+      "actions": ["inspect", "logs", "restart", "verify"],
+      "healthProbe": { "kind": "systemd", "expectedState": "active" }
     }
   ]
 }
