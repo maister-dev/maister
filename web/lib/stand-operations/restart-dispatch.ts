@@ -199,7 +199,14 @@ export async function prepareStandRestartDispatch(
         .orderBy(desc(standOperationObservations.targetSequence))
         .limit(1);
 
-      if (!observation || observation.observedState === "unknown")
+      if (
+        !observation ||
+        observation.observedState === "unknown" ||
+        (observation.observedState === "active" &&
+          observation.invocationId === null) ||
+        (observation.invocationId !== null &&
+          !/^[a-f0-9]{32}$/.test(observation.invocationId))
+      )
         throw new MaisterError(
           "PRECONDITION",
           "A retained before-effect stand observation is required",
@@ -218,6 +225,10 @@ export async function prepareStandRestartDispatch(
         businessOwnerEpoch: witness.epoch,
         nodeAttemptId: identity.nodeAttemptId,
         beforeObservationId: observation.id,
+        before: {
+          invocationId: observation.invocationId,
+          state: observation.observedState,
+        },
       };
       const issued = await issueCommand(tx, {
         assignment: actor.placement,
@@ -261,4 +272,8 @@ type RestartCommandPayload = Readonly<{
   businessOwnerEpoch: number;
   nodeAttemptId: string | null;
   beforeObservationId: string;
+  before: Readonly<{
+    invocationId: string | null;
+    state: "active" | "inactive" | "failed";
+  }>;
 }>;

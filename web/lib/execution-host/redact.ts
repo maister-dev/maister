@@ -127,20 +127,36 @@ const PAYLOAD_PROJECTION: Readonly<Record<CommandKind, Projection>> = {
       "mimeType",
     ]),
   "runtime_object.delete": (p) => pickScalars(p, ["objectId", "generation"]),
-  "stand.dispatch": (p) => ({
-    ...pickScalars(p, [
-      "operationId",
-      "targetIncarnation",
-      "componentId",
-      "action",
-      "requestDigest",
-      "resourceKey",
-      "ownerEpoch",
-      "businessOwnerEpoch",
-      "beforeObservationId",
-    ]),
-    nodeAttemptId: typeof p.nodeAttemptId === "string" ? p.nodeAttemptId : null,
-  }),
+  "stand.dispatch": (p) => {
+    const before = asObject(p.before);
+
+    return {
+      ...pickScalars(p, [
+        "operationId",
+        "targetIncarnation",
+        "componentId",
+        "action",
+        "requestDigest",
+        "resourceKey",
+        "ownerEpoch",
+        "businessOwnerEpoch",
+        "beforeObservationId",
+      ]),
+      nodeAttemptId:
+        typeof p.nodeAttemptId === "string" ? p.nodeAttemptId : null,
+      ...(typeof before.state === "string"
+        ? {
+            before: {
+              state: before.state,
+              invocationId:
+                typeof before.invocationId === "string"
+                  ? before.invocationId
+                  : null,
+            },
+          }
+        : {}),
+    };
+  },
 };
 
 export function redactPayload(kind: CommandKind, payload: unknown): Payload {

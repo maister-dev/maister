@@ -180,7 +180,7 @@ export async function authorizeStandCallback(
           "The exact stand dispatch command owner is unavailable",
         );
       const [observation] = await tx
-        .select({ id: standOperationObservations.id })
+        .select()
         .from(standOperationObservations)
         .where(
           and(
@@ -189,7 +189,17 @@ export async function authorizeStandCallback(
           ),
         );
 
-      if (!observation)
+      const before = command.payload.before;
+
+      if (
+        !observation ||
+        !before ||
+        typeof before !== "object" ||
+        !("state" in before) ||
+        before.state !== observation.observedState ||
+        !("invocationId" in before) ||
+        before.invocationId !== observation.invocationId
+      )
         throw new MaisterError(
           "CONFLICT",
           "The command has no exact before-effect stand observation",

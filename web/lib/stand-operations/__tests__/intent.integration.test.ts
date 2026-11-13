@@ -1067,7 +1067,7 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
     await database.pool.query(
       `INSERT INTO stand_operation_observations(
         operation_id,target_incarnation,resource_key,request_digest,target_sequence,invocation_id,observed_state,captured_at
-      ) SELECT id,target_incarnation,resource_key,request_digest,1,'fixture-invocation','active',now()
+      ) SELECT id,target_incarnation,resource_key,request_digest,1,repeat('a',32),'active',now()
         FROM stand_operations WHERE id=$1`,
       [operation.id],
     );
@@ -1091,6 +1091,11 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
     if (!admitted) throw new Error("The native command was not retained");
     const command = admitted.value;
 
+    expect(command.envelope.payload.before).toEqual({
+      invocationId: "a".repeat(32),
+      state: "active",
+    });
+    expect(command.row.payload.before).toEqual(command.envelope.payload.before);
     expect(await claimDelivering(db, command.row.id, 0)).toMatchObject({
       changed: true,
     });
