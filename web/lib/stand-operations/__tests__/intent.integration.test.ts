@@ -22,6 +22,7 @@ import {
 import { resolveInstalledAgentDefinition } from "@/lib/agents/effective";
 import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
 import {
+  appendSpecialistAssignmentInput,
   cancelSpecialistAssignment,
   createSpecialistAssignment,
 } from "@/lib/specialist-assignments/store";
@@ -89,6 +90,7 @@ async function createRegistryFixture() {
       "targets:restart",
       "assignments:read",
       "assignments:submit",
+      "assignments:update",
       "assignments:cancel",
     ],
     idempotencyKey: randomUUID(),
@@ -525,6 +527,11 @@ it("IT-CBO-02 IT-CBO-03 retains one restart intent across aliases and approves o
     );
 
   expect((await approveIntent("f".repeat(64))).status).toBe(409);
+  // Native clarification/HITL can park the assignment without changing its input.
+  await database.pool.query(
+    "UPDATE specialist_assignments SET status='waiting_input',revision=revision+1 WHERE id=$1",
+    [winner.id],
+  );
   const approved = await approveIntent(accepted.requestDigest);
 
   expect(approved.status).toBe(201);
@@ -539,6 +546,19 @@ it("IT-CBO-02 IT-CBO-03 retains one restart intent across aliases and approves o
 
   expect(replayedApproval.status).toBe(200);
   expect(await replayedApproval.json()).toEqual(approval);
+  const clarified = await appendSpecialistAssignmentInput(
+    database.db,
+    userId,
+    winner.id,
+    {
+      expectedRevision: winner.revision + 1,
+      input: "Clarification supersedes the original input.",
+      references: [],
+    },
+  );
+
+  expect(clarified.inputRevision).toBe(winner.inputRevision + 1);
+  expect((await approveIntent(accepted.requestDigest)).status).toBe(409);
   await expect(
     database.pool.query(
       "UPDATE stand_restart_approvals SET request_digest=repeat('f',64) WHERE operation_id=$1",
@@ -559,7 +579,7 @@ it("IT-CBO-02 IT-CBO-03 retains one restart intent across aliases and approves o
     database.db,
     userId,
     winner.id,
-    winner.revision,
+    clarified.revision,
     "Retire the interrupted stand assignment",
   );
   expect((await createOperation(loser, loserComponent)).status).toBe(403);

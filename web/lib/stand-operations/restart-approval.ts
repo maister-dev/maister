@@ -11,6 +11,7 @@ import { readStandRunbookDigest } from "./target-registry";
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import { installationCompany } from "@/lib/company/grants";
 import {
+  specialistAssignments,
   standComponents,
   standOperations,
   standRestartApprovals,
@@ -22,7 +23,6 @@ import { contentDigest } from "@/lib/evaluations/digest";
 import {
   beginAssignmentTransaction,
   getSpecialistAssignmentInputInTransaction,
-  lockSpecialistAssignment,
 } from "@/lib/specialist-assignments/store";
 
 const log = pino({
@@ -109,13 +109,15 @@ export async function approveStandRestart(
           { details: { reason: "stand_operation_unavailable" } },
         );
       const { operation, target, component } = stored;
-      const head = await lockSpecialistAssignment(
-        tx,
-        operation.assignmentId,
-        operation.assignmentRevision,
-      );
-
-      await getSpecialistAssignmentInputInTransaction(
+      const [head] = await tx
+        .select({
+          inputRevision: specialistAssignments.inputRevision,
+          status: specialistAssignments.status,
+        })
+        .from(specialistAssignments)
+        .where(eq(specialistAssignments.id, operation.assignmentId))
+        .for("share");
+      const captured = await getSpecialistAssignmentInputInTransaction(
         tx,
         userId,
         operation.assignmentId,
@@ -140,7 +142,9 @@ export async function approveStandRestart(
         current.effectState !== "not_dispatched" ||
         current.revision !== input.expectedRevision ||
         current.requestDigest !== input.requestDigest ||
-        ["completed", "failed", "cancelled"].includes(String(head.status))
+        head?.inputRevision !== operation.inputRevision ||
+        captured.digest !== operation.inputSha256 ||
+        ["completed", "failed", "cancelled"].includes(head.status)
       )
         throw new MaisterError(
           "CONFLICT",
