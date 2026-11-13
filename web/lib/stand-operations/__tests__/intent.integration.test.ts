@@ -1157,6 +1157,62 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
       await expect(
         authorize({ ...body, nonce: randomUUID() }),
       ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+      const issued = permits.find((permit) => permit.status === "fulfilled");
+
+      if (!issued) throw new Error("The dispatch permit was not retained");
+      const { adoptStandTargetReceipt, retainStandUnknown } =
+        await import("../receipt-adoption");
+      const result = {
+        operationId: operation.id,
+        targetIncarnation: input.incarnationId,
+        requestDigest: operation.requestDigest,
+        receiptRevision: 3,
+        sequence: 4,
+        effectState: "confirmed_applied",
+        permitId: issued.value.permitId,
+        beforeInvocation: "a".repeat(32),
+        afterInvocation: "b".repeat(32),
+        observedState: "active",
+        capturedAt: new Date().toISOString(),
+        reason: null,
+      };
+
+      await expect(
+        adoptStandTargetReceipt(db, operation.id, {
+          ...result,
+          permitId: randomUUID(),
+        }),
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+      await expect(
+        retainStandUnknown(db, operation.id, body.ownerEpoch),
+      ).resolves.toMatchObject({ effectState: "unknown" });
+      const adoptedEffect = await adoptStandTargetReceipt(
+        db,
+        operation.id,
+        result,
+      );
+
+      expect(adoptedEffect).toMatchObject({
+        effectState: "confirmed_applied",
+        verificationState: "not_checked",
+        disposition: "proved_applied",
+        receiptIds: [expect.any(String)],
+      });
+      expect(await adoptStandTargetReceipt(db, operation.id, result)).toEqual(
+        adoptedEffect,
+      );
+      await expect(
+        database.pool.query(
+          "DELETE FROM stand_operation_receipts WHERE operation_id=$1",
+          [operation.id],
+        ),
+      ).rejects.toMatchObject({ code: "23514" });
+      await expect(
+        adoptStandTargetReceipt(db, operation.id, {
+          ...result,
+          afterInvocation: "c".repeat(32),
+        }),
+      ).rejects.toMatchObject({ code: "CONFLICT" });
       const { claimStandReadAuthority } = await import("../read-authority");
 
       expect(

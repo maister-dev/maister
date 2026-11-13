@@ -7,6 +7,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { standOperationInputSchema } from "./operation-types";
+import { readStandReceiptIds } from "./receipt-queries";
 import { readStandRunbookDigest } from "./target-registry";
 
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
@@ -36,6 +37,7 @@ const terminalAssignments = new Set(["completed", "failed", "cancelled"]);
 export function operationDto(
   operation: typeof standOperations.$inferSelect,
   successorId: string | null = null,
+  receiptIds: readonly string[] = [],
 ): StandOperation {
   return {
     id: operation.id,
@@ -46,7 +48,7 @@ export function operationDto(
     effectState: operation.effectState,
     verificationState: operation.verificationState,
     disposition: operation.disposition,
-    receiptIds: [],
+    receiptIds,
     verificationIds: [],
     predecessorId: operation.predecessorId,
     successorId,
@@ -124,7 +126,14 @@ export async function createStandOperation(
             "The stand operation delivery key already names different input",
           );
 
-        return { operation: operationDto(previous), duplicate: true };
+        return {
+          operation: operationDto(
+            previous,
+            null,
+            await readStandReceiptIds(tx, previous.id),
+          ),
+          duplicate: true,
+        };
       }
       await lockSpecialistAssignment(tx, assignmentId, input.expectedRevision);
       const assignment = await getSpecialistAssignmentInTransaction(
@@ -334,6 +343,10 @@ export async function getStandOperation(
       .from(standOperations)
       .where(eq(standOperations.predecessorId, operationId));
 
-    return operationDto(operation.stand_operations, successor?.id ?? null);
+    return operationDto(
+      operation.stand_operations,
+      successor?.id ?? null,
+      await readStandReceiptIds(tx, operationId),
+    );
   });
 }

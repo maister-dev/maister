@@ -3464,6 +3464,24 @@ table stand_operation_observations {
   }
 }
 
+table stand_operation_receipts {
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  operation_id text [not null]
+  target_receipt_revision integer [not null]
+  target_sequence bigint [not null]
+  permit_id text
+  receipt jsonb [not null]
+  receipt_digest text [not null]
+  captured_at "timestamp with time zone" [not null]
+  received_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (operation_id, target_receipt_revision) [name: 'stand_operation_receipts_revision_unique', unique]
+    (operation_id, target_sequence) [name: 'stand_operation_receipts_sequence_unique', unique]
+
+  }
+}
+
 table stand_operations {
   id text [pk, not null, default: `gen_random_uuid()::text`]
   assignment_id text [not null]
@@ -5168,6 +5186,10 @@ ref stand_authorization_permits_operation_id_stand_operations_id_fk: stand_autho
 ref stand_components_target_revision_fk: stand_components.(target_id, config_revision) > stand_target_revisions.(target_id, revision) [delete: restrict, update: no action]
 
 ref stand_operation_observations_identity_fk: stand_operation_observations.(operation_id, target_incarnation, resource_key, request_digest) > stand_operations.(id, target_incarnation, resource_key, request_digest) [delete: restrict, update: no action]
+
+ref stand_operation_receipts_operation_id_stand_operations_id_fk: stand_operation_receipts.operation_id > stand_operations.id [delete: restrict, update: no action]
+
+ref stand_operation_receipts_permit_id_stand_authorization_permits_id_fk: stand_operation_receipts.permit_id > stand_authorization_permits.id [delete: restrict, update: no action]
 
 ref stand_operations_initiating_user_id_users_id_fk: stand_operations.initiating_user_id > users.id [delete: restrict, update: no action]
 

@@ -75,6 +75,32 @@ export const standRecoveryDecisionSchema = z
   })
   .strict();
 
+const invocationIdSchema = z
+  .string()
+  .regex(/^[a-f0-9]{32}$/)
+  .nullable();
+
+export const standTargetReceiptSchema = z
+  .object({
+    operationId: z.uuid(),
+    targetIncarnation: z.uuid(),
+    requestDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    receiptRevision: z.number().int().positive(),
+    sequence: z.number().int().positive(),
+    effectState: z.enum(STAND_EFFECT_STATES),
+    permitId: z.uuid().nullable(),
+    beforeInvocation: invocationIdSchema,
+    afterInvocation: invocationIdSchema,
+    observedState: z.enum(["active", "inactive", "failed", "unknown"]),
+    capturedAt: z.iso.datetime(),
+    reason: z
+      .enum(["authority_refused", "before_state_changed", "effect_unknown"])
+      .nullable(),
+  })
+  .strict();
+
+export type StandTargetReceipt = z.infer<typeof standTargetReceiptSchema>;
+
 export type StandPermitCheck = z.infer<typeof standPermitCheckSchema>;
 
 export type StandAction = (typeof STAND_ACTIONS)[number];

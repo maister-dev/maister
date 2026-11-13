@@ -75,6 +75,7 @@ import type {
 } from "@/lib/run-results/types";
 import type { BudgetState, ExecutionPolicy } from "@/lib/runs/execution-policy";
 import type { TaskQueueSettings } from "@/lib/tasks/queue-settings";
+import type { StandTargetReceipt } from "@/lib/stand-operations/operation-types";
 import type {
   AutoPromotionConfig,
   LaneClass,
@@ -11132,6 +11133,45 @@ export const standAuthorizationPermits = pgTable(
       sql`${t.ownerEpoch} BETWEEN 1 AND 9007199254740991 AND ${t.purpose} IN ('dispatch','reconcile','logs','verify')
         AND ${t.nonce} ~ '^[A-Za-z0-9._:-]{8,128}$'
         AND ${t.expiresAt} > ${t.issuedAt} AND ${t.expiresAt} <= ${t.issuedAt} + interval '5 seconds'`,
+    ),
+  }),
+);
+
+export const standOperationReceipts = pgTable(
+  "stand_operation_receipts",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    operationId: text("operation_id")
+      .notNull()
+      .references(() => standOperations.id, { onDelete: "restrict" }),
+    targetReceiptRevision: integer("target_receipt_revision").notNull(),
+    targetSequence: bigint("target_sequence", { mode: "number" }).notNull(),
+    permitId: text("permit_id").references(() => standAuthorizationPermits.id, {
+      onDelete: "restrict",
+    }),
+    receipt: jsonb("receipt").$type<StandTargetReceipt>().notNull(),
+    receiptDigest: text("receipt_digest").notNull(),
+    capturedAt: timestamp("captured_at", { withTimezone: true }).notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    revision: unique("stand_operation_receipts_revision_unique").on(
+      t.operationId,
+      t.targetReceiptRevision,
+    ),
+    sequence: unique("stand_operation_receipts_sequence_unique").on(
+      t.operationId,
+      t.targetSequence,
+    ),
+    shape: check(
+      "stand_operation_receipts_shape_check",
+      sql`${t.targetReceiptRevision} BETWEEN 1 AND 3
+      AND ${t.targetSequence} BETWEEN 1 AND 9007199254740991
+      AND ${t.receiptDigest} ~ '^[a-f0-9]{64}$' AND jsonb_typeof(${t.receipt})='object'`,
     ),
   }),
 );

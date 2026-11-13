@@ -2185,6 +2185,20 @@
       "when": 1794606478018,
       "tag": "0315_stand_read_permit_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 316,
+      "version": "7",
+      "when": 1794606478019,
+      "tag": "0316_stand_operation_receipts",
+      "breakpoints": true
+    },
+    {
+      "idx": 317,
+      "version": "7",
+      "when": 1794606478020,
+      "tag": "0317_stand_receipt_guards",
+      "breakpoints": true
     }
   ]
 }
