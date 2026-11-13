@@ -19,6 +19,7 @@ import {
 } from "./gate-store";
 import { lockFlowPromptOwner } from "./prompt-owner-authority";
 import { settleCrashedPermissionPark } from "./permission-park-crash";
+import { parkCheckpointedGatePermission } from "./prompt-permission";
 import { prepareNodePrompt } from "./node-prompt-owner";
 import { prepareConsensusPrompt } from "./consensus/prompt-owner";
 
@@ -405,6 +406,7 @@ export const flowPromptOwnerAdapter = definePromptOwnerAdapter(
 
     return {
       apply: async (tx) => {
+        if (await parkCheckpointedGatePermission(tx, command)) return "applied";
         if (!(await lockFlowPromptOwner(tx, ref, command.targetSessionId)))
           return "superseded";
         const [run] = await tx

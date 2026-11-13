@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
+import type { ExecutionCommand } from "@/lib/db/schema";
 import type { BoundClient, SupervisorEvent } from "@/lib/execution-host";
 import type { PreparedInput } from "@/lib/execution-host/client";
 import type { FlowActionResume } from "./action-resume";
@@ -11,6 +12,7 @@ import type { GatePromptOwner } from "./prompt-owner";
 import { randomUUID } from "node:crypto";
 
 import { and, desc, eq, isNull, sql, type SQL } from "drizzle-orm";
+import pino from "pino";
 import { z } from "zod";
 
 import { canonicalCommandJson } from "../../../../runtime/command-json";
@@ -32,9 +34,15 @@ import {
   gateResults,
   hitlRequests,
   nodeAttempts,
+  runSessionIncarnations,
   runs,
 } from "@/lib/db/schema";
-import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
+import {
+  PromptOwnerDeferred,
+  PromptOwnerInvariantError,
+} from "@/lib/execution-host/prompt-owners";
+import { checkpointInterruptionReason } from "@/lib/execution-host/checkpoint-interruption";
+import { markCheckpointedFromExit } from "@/lib/runs/state-transitions";
 import { nextKeepaliveAt } from "@/lib/runs/keepalive-config";
 import {
   createHitlAssignmentForRun,
@@ -54,6 +62,11 @@ const permissionEnvelopeSchema = z.object({
   flowPrompt: flowPermissionSourceSchema,
   supervisorSessionId: z.string().min(1),
   requestId: z.string().min(1),
+});
+
+const log = pino({
+  name: "flow-prompt-permission",
+  level: process.env.LOG_LEVEL ?? "info",
 });
 
 async function readPermissionResume(
@@ -301,6 +314,80 @@ export async function hasPendingFlowPermission(
     .limit(1);
 
   return pending !== undefined;
+}
+
+/** Preserve the open answer and gate evaluation when its own session parks.
+ * Both owner application and reattachment use the same fenced transition.
+ */
+export async function parkCheckpointedGatePermission(
+  tx: Db,
+  command: Readonly<ExecutionCommand>,
+): Promise<boolean> {
+  const ref = command.ownerRef;
+
+  if (
+    command.kind !== "session.prompt" ||
+    command.ownerKind !== "flow_node_attempt" ||
+    command.state !== "failed" ||
+    !command.lastError ||
+    checkpointInterruptionReason(command.lastError) !== "checkpoint" ||
+    !command.targetSessionId ||
+    (ref?.variant !== "gate_ai" && ref?.variant !== "gate_skill") ||
+    !(await lockFlowPromptOwner(tx, ref, command.targetSessionId))
+  )
+    return false;
+
+  const [pending] = await tx
+    .select({
+      schema: hitlRequests.schema,
+      state: runSessionIncarnations.state,
+    })
+    .from(hitlRequests)
+    .innerJoin(runs, eq(runs.id, hitlRequests.runId))
+    .innerJoin(
+      runSessionIncarnations,
+      eq(runSessionIncarnations.id, ref.incarnationId),
+    )
+    .where(
+      and(
+        eq(runs.id, ref.runId),
+        eq(runs.status, "NeedsInput"),
+        eq(hitlRequests.kind, "permission"),
+        isNull(hitlRequests.respondedAt),
+        isNull(hitlRequests.supersededAt),
+        sql`${hitlRequests.schema}->'flowPrompt'->>'commandId' = ${command.id}`,
+      ),
+    )
+    .limit(1);
+
+  if (!pending) return false;
+  const schema = parseOwnedPermission(pending.schema);
+
+  if (
+    !schema ||
+    schema.supervisorSessionId !== command.targetSessionId ||
+    schema.flowPrompt.incarnationId !== ref.incarnationId
+  )
+    throw new PromptOwnerInvariantError("gate_checkpoint_permission_source");
+  await assertFlowPermissionDelivery(tx, schema);
+  if (pending.state === "created" || pending.state === "active")
+    throw new PromptOwnerDeferred("gate_permission_checkpoint_projection");
+  if (pending.state !== "checkpointed") return false;
+
+  const parked = await markCheckpointedFromExit(ref.runId, { db: tx });
+
+  if (parked.ok)
+    log.info(
+      {
+        runId: ref.runId,
+        commandId: command.id,
+        evaluationId: ref.evaluationId,
+        incarnationId: ref.incarnationId,
+      },
+      "gate permission parked after session checkpoint",
+    );
+
+  return parked.ok;
 }
 
 /** A permission belongs to one accepted turn. A run/step match alone cannot

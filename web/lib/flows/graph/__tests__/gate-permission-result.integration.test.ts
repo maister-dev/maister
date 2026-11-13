@@ -31,6 +31,7 @@ import { startProjectionWorker } from "@/lib/execution-host/events/projection-wo
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-worker";
+import { reportExternalGate } from "@/lib/flows/graph/gate-store";
 import { prepareFlowPermissionResult } from "@/lib/flows/graph/permission-resume";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { interruptPermissionInputAcknowledgement } from "@/test-support/permission-ack-fault";
@@ -153,6 +154,14 @@ async function seedGateFlow(
               : { prompt: "Complete the parent action once." },
           pre_finish: {
             gates: [
+              { id: "artifact", kind: "artifact_required", mode: "blocking" },
+              {
+                id: "local-check",
+                kind: "command_check",
+                mode: "blocking",
+                command: "printf 'checked\\n' >> gate-permission-check.txt",
+              },
+              { id: "external", kind: "external_check", mode: "blocking" },
               {
                 id: "review",
                 kind: gateKind,
@@ -282,7 +291,12 @@ describe("Owned Flow completed gate permission result", () => {
         const [evaluation] = await db
           .select()
           .from(gateResults)
-          .where(eq(gateResults.runId, seeded.runId));
+          .where(
+            and(
+              eq(gateResults.runId, seeded.runId),
+              eq(gateResults.gateId, "review"),
+            ),
+          );
         const [attempt] = await db
           .select()
           .from(nodeAttempts)
@@ -291,6 +305,21 @@ describe("Owned Flow completed gate permission result", () => {
           .select()
           .from(runSessionIncarnations)
           .where(eq(runSessionIncarnations.id, source.incarnationId));
+        const priorGates = await db
+          .select()
+          .from(gateResults)
+          .where(eq(gateResults.nodeAttemptId, attempt.id));
+
+        expect(priorGates).toHaveLength(4);
+        await reportExternalGate(
+          {
+            runId: seeded.runId,
+            gateId: "external",
+            status: "passed",
+            verdict: { verdict: "pass", reasons: ["external check passed"] },
+          },
+          db,
+        );
 
         startRuntimeEventConsumer({
           db,
@@ -632,12 +661,27 @@ describe("Owned Flow completed gate permission result", () => {
               "utf8",
             ),
           ).toBe("work\n");
+        const finalGates = await db
+          .select()
+          .from(gateResults)
+          .where(eq(gateResults.runId, seeded.runId));
+
+        expect(finalGates).toHaveLength(4);
+        for (const prior of priorGates) {
+          expect(finalGates).toContainEqual(
+            expect.objectContaining({
+              id: prior.id,
+              nodeAttemptId: attempt.id,
+              status: "passed",
+            }),
+          );
+        }
         expect(
-          await db
-            .select()
-            .from(gateResults)
-            .where(eq(gateResults.runId, seeded.runId)),
-        ).toHaveLength(1);
+          await readFile(
+            `${seeded.worktreePath}/gate-permission-check.txt`,
+            "utf8",
+          ),
+        ).toBe("checked\n");
       } finally {
         driver.child.kill("SIGKILL");
         await driver.exited;

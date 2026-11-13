@@ -33,6 +33,7 @@ import {
 } from "./artifact-store";
 import {
   createGateResult,
+  getGateResultsForNodeAttempt,
   markGateFailed,
   markGatePassed,
   markGateSkipped,
@@ -114,11 +115,9 @@ function summarize(s: string | null | undefined): string {
     : s.slice(0, VERDICT_EVIDENCE_CAP);
 }
 
-// Run one node's `pre_finish.gates` in declared order, writing a gate_results
-// row per gate. A `blocking` gate that fails aborts the node finish (caller
-// fails the run); an `advisory` gate records its verdict and the node
-// continues. Deferred kinds (artifact_required, external_check) are recorded as
-// skipped/pending — never silently passed. (ADR-028)
+// Run one node's `pre_finish.gates` in declared order. A re-entry consumes
+// decisions recorded on this attempt. A blocking failure aborts node finish;
+// an advisory failure records evidence and lets the node continue. (ADR-028)
 export async function runNodeGates(
   node: CompiledNode,
   nodeAttemptId: string,
@@ -151,6 +150,11 @@ export async function runNodeGates(
           .where(eq(gateResults.nodeAttemptId, crashRecovery.sourceAttempt.id))
       : [];
   let beforeCrashedGate = inheritedGateRows.length > 0;
+  const existingRows = await getGateResultsForNodeAttempt(
+    nodeAttemptId,
+    ctx.db,
+  );
+  const latestByGate = new Map(existingRows.map((row) => [row.gateId, row]));
 
   for (const gate of node.gates) {
     const verdictSink: { verdict?: GateVerdict } = {};
@@ -191,6 +195,7 @@ export async function runNodeGates(
           context,
           ctx,
           checks,
+          latestByGate.get(gate.id),
           verdictSink,
         );
       }
@@ -342,6 +347,7 @@ async function runOneGate(
   context: FlowContext,
   ctx: GateRunContext,
   checks: CheckStrictness,
+  previous: GateResult | undefined,
   // M38 (ADR-103): a mutable sink the ai_judgment/skill_check arm writes the
   // parsed verdict into, so `runNodeGates` can surface it for a `decide` table
   // WITHOUT a gate_results re-read. Undefined for callers that don't route.
@@ -360,13 +366,45 @@ async function runOneGate(
     staleFrom: gate.staleFrom,
     db: ctx.db,
   };
+  const policySkipped = isPolicySkippedGate(checks, gate.kind);
+  const awaitsExternalReport = gate.kind === "external_check" && !policySkipped;
+  const ownsPrompt =
+    !policySkipped &&
+    (gate.kind === "ai_judgment" || gate.kind === "skill_check");
+
+  // Prompt gates also reconcile outstanding permission delivery, even when
+  // their verdict has already been recorded.
+  if (!ownsPrompt && previous) {
+    // External reports govern readiness; traversal only registers the check.
+    const savedStatus = awaitsExternalReport ? "pending" : previous.status;
+
+    if (savedStatus !== "running" && savedStatus !== "stale") {
+      log.debug(
+        {
+          runId: base.runId,
+          nodeAttemptId,
+          gateId: gate.id,
+          gateResultId: previous.id,
+          status: previous.status,
+        },
+        "reused gate result for the current attempt",
+      );
+
+      return savedStatus === "overridden" ? "passed" : savedStatus;
+    }
+  }
+
+  const startEvaluation = async (): Promise<string> =>
+    previous?.status === "running"
+      ? previous.id
+      : (await createGateResult(base)).id;
 
   // Execution-policy check-strictness `skip` (axis A3): a non-review check gate
   // is not evaluated. Record it `skipped` (never silently absent — same
   // discipline as the human_review/default arms) so the evidence graph shows
   // the policy decision.
-  if (isPolicySkippedGate(checks, gate.kind)) {
-    const { id } = await createGateResult({ ...base, status: "running" });
+  if (policySkipped) {
+    const id = await startEvaluation();
 
     await markGateSkipped(
       id,
@@ -396,7 +434,7 @@ async function runOneGate(
 
   switch (gate.kind) {
     case "command_check": {
-      const { id } = await createGateResult({ ...base, status: "running" });
+      const id = await startEvaluation();
 
       if (!gate.command) {
         await markGateFailed(
@@ -623,7 +661,7 @@ async function runOneGate(
     }
 
     case "artifact_required": {
-      const { id } = await createGateResult({ ...base, status: "running" });
+      const id = await startEvaluation();
       const requiredIds = gate.inputArtifacts ?? [];
       const outputRef = gate.output?.id ?? undefined;
 
@@ -733,7 +771,7 @@ async function runOneGate(
       // (Phase 5), not as a pre_finish gate. Record skipped so it is never
       // silently treated as passed.
       await markGateSkipped(
-        (await createGateResult({ ...base, status: "running" })).id,
+        await startEvaluation(),
         {
           verdict: "deferred",
           reasons: ["human_review handled at node finish (Phase 5)"],
@@ -749,8 +787,6 @@ async function runOneGate(
     }
 
     default: {
-      await createGateResult({ ...base, status: "skipped" });
-
       // FSM (none) → skipped: an unknown/unsupported gate kind cannot be
       // evaluated. If it declares an output artifact, surface that output as
       // explicitly `skipped` rather than silently absent (forward-compat for
@@ -770,6 +806,7 @@ async function runOneGate(
           ctx.db,
         );
       }
+      await markGateSkipped(await startEvaluation(), undefined, ctx.db);
 
       return "skipped";
     }

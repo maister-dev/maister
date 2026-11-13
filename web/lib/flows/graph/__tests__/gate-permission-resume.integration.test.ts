@@ -33,6 +33,7 @@ import { startProjectionWorker } from "@/lib/execution-host/events/projection-wo
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-worker";
+import { runFlow } from "@/lib/flows/runner";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { resumeRun } from "@/lib/runs/resume";
 import { respondToHitl } from "@/lib/services/hitl";
@@ -70,7 +71,11 @@ beforeAll(async () => {
   journalPath = await mkdtemp(path.join(tmpdir(), "gate-permission-journal-"));
   supervisor = await startRealSupervisor({
     fixture: "mock-acp-adapter-resumable.mjs",
-    env: { MOCK_ACP_REQUEST_PERMISSION: "1", MOCK_ACP_STATE_DIR: journalPath },
+    env: {
+      MOCK_ACP_REQUEST_PERMISSION: "1",
+      MOCK_ACP_STATE_DIR: journalPath,
+      MAISTER_PERMISSION_MAX_HOURS: "0.0025",
+    },
   });
   restoreUrl = useRealSupervisorUrl(supervisor.url);
   vi.stubEnv("MAISTER_RUNTIME_ROOT", supervisor.runtimeRoot);
@@ -190,6 +195,7 @@ describe("Owned Flow checkpointed gate permission resume", () => {
   it.each([
     { gateKind: "ai_judgment", parentKind: "cli", window: "live" },
     { gateKind: "ai_judgment", parentKind: "cli", window: "response" },
+    { gateKind: "ai_judgment", parentKind: "cli", window: "permission cap" },
     { gateKind: "skill_check", parentKind: "cli", window: "live" },
     { gateKind: "ai_judgment", parentKind: "ai_coding", window: "live" },
     { gateKind: "skill_check", parentKind: "cli", window: "claim SIGKILL" },
@@ -413,11 +419,13 @@ describe("Owned Flow checkpointed gate permission resume", () => {
         });
         expect(evaluation.status).toBe("running");
         expect(attempt.actionCompletion?.result.ok).toBe(true);
-        await db
-          .update(runs)
-          .set({ keepaliveUntil: new Date(Date.now() - 1_000) })
-          .where(eq(runs.id, seeded.runId));
-        await runSweepTick({ db, executionHosts: hosts });
+        if (window !== "permission cap") {
+          await db
+            .update(runs)
+            .set({ keepaliveUntil: new Date(Date.now() - 1_000) })
+            .where(eq(runs.id, seeded.runId));
+          await runSweepTick({ db, executionHosts: hosts });
+        }
         await expect
           .poll(() => driver.child.exitCode, { timeout: 30_000 })
           .toBe(0);
@@ -427,6 +435,71 @@ describe("Owned Flow checkpointed gate permission resume", () => {
           .where(eq(runs.id, seeded.runId));
 
         expect(idle.status).toBe("NeedsInputIdle");
+        if (window === "permission cap") {
+          const [parkedEvaluation] = await db
+            .select()
+            .from(gateResults)
+            .where(eq(gateResults.id, evaluation.id));
+          const [parkedIncarnation] = await db
+            .select()
+            .from(runSessionIncarnations)
+            .where(eq(runSessionIncarnations.id, incarnation.id));
+
+          expect(parkedEvaluation).toMatchObject({
+            status: "running",
+            verdict: null,
+          });
+          expect(parkedIncarnation).toMatchObject({
+            state: "checkpointed",
+            terminalReason: { reason: "checkpoint", cause: "permission_cap" },
+          });
+          const [applied] = await db
+            .select()
+            .from(executionCommands)
+            .where(eq(executionCommands.id, command.id));
+
+          expect(applied).toMatchObject({
+            state: "failed",
+            applicationState: "applied",
+            lastError: {
+              code: "CHECKPOINT",
+              details: { reason: "session_checkpointed" },
+            },
+          });
+          // Restore the legacy shape observed before this fix: the applied
+          // checkpoint left a failed evaluation and a live delivery target.
+          await db.transaction(async (tx) => {
+            await tx
+              .update(runs)
+              .set({ status: "NeedsInput", checkpointAt: null })
+              .where(eq(runs.id, seeded.runId));
+            await tx
+              .update(executionAssignments)
+              .set({ state: "active", releasedReason: null, endedAt: null })
+              .where(
+                eq(executionAssignments.id, command.executionAssignmentId),
+              );
+            await tx
+              .update(gateResults)
+              .set({
+                status: "failed",
+                verdict: { verdict: "unparseable", reasons: [""] },
+                endedAt: new Date(),
+              })
+              .where(eq(gateResults.id, evaluation.id));
+          });
+          await runFlow(seeded.runId, {
+            db,
+            runtimeRoot: supervisor.runtimeRoot,
+            executionHosts: hosts,
+          });
+          const [repaired] = await db
+            .select()
+            .from(runs)
+            .where(eq(runs.id, seeded.runId));
+
+          expect(repaired.status).toBe("NeedsInputIdle");
+        }
         const file = path.join(journalPath, `${incarnation.acpSessionId}.json`);
         const journal = JSON.parse(await readFile(file, "utf8")) as Record<
           string,
@@ -465,7 +538,7 @@ describe("Owned Flow checkpointed gate permission resume", () => {
           expect(claimProcess.child.kill("SIGKILL")).toBe(true);
           await claimProcess.exited;
           expect(claimProcess.child.signalCode).toBe("SIGKILL");
-        } else if (window === "response") {
+        } else if (window === "response" || window === "permission cap") {
           const result = await respondToHitl(
             {
               runId: seeded.runId,
@@ -581,7 +654,7 @@ describe("Owned Flow checkpointed gate permission resume", () => {
               .where(eq(nodeAttempts.id, parent.id));
           }
         }
-        if (window !== "response")
+        if (window !== "response" && window !== "permission cap")
           continuation = startFlowContinuationWorker({
             db,
             runtimeRoot: supervisor.runtimeRoot,
