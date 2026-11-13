@@ -1,0 +1,58 @@
+{
+  "platform": "275861232",
+  "status": "passed_selected_real_systemd_cases",
+  "guest": {
+    "distribution": "Ubuntu Minimal 24.04 LTS arm64",
+    "kernel": "6.8.0-147-generic",
+    "systemd": "255.4-1ubuntu8.18",
+    "node": "24.15.0",
+    "imageSha256": "3dc8370d923978d4b610fa7964d1b36ba040eefb43198809ca5bc8ac51777b18",
+    "network": "none",
+    "unit": "maister-disposable-pilot.service"
+  },
+  "standConnectorSources": {
+    "authority-client.ts": "dabcf878ceece90940b83c1c149b588826c85cbf74dc55d0550804cf7cb716fc",
+    "health.ts": "7f97d53ddc13271ccdea77c0b527af9ea8422f3b9b49d04c311c9c98d068b0f2",
+    "helper.ts": "0a1adbbc1f49580f8c576b908063a24443d4ee1263c63504a4fc8d94ae2ea40e",
+    "main.ts": "8eb2836a7629260ff3aa36c17942d4bf55b28108fb4e9d78d97011bdaee8229e",
+    "restart-journal.ts": "16cbae6e19c0594983d37332e041b93ba4a72bdb348da7761d5c9ee3db2899a0",
+    "restart-service.ts": "5895a3833d0c2d1b3985f5011553e50706e0c77fcaa0f30d7b5c016cc12ff5ad",
+    "systemd.ts": "536d93e97af1d07bfb5e887aed3f34ddf1628b3b2bff8dce5d067f5e96e396ad"
+  },
+  "checks": {
+    "nativeDriver": {
+      "operationId": "60a6d642-38c2-4f6a-b607-d2618a26629f",
+      "before": "0c1cef849db74b9bb1280c5bc5c465de",
+      "after": "29be280555184165b1bf7a3d7d23b9d0",
+      "receiptRevision": 3,
+      "effectSequence": 3,
+      "verificationSequence": 4,
+      "state": "healthy"
+    },
+    "authorityRefusal": {
+      "operationId": "e5c08fd7-ebe4-4478-aaa0-911d050ff5cc",
+      "effect": "confirmed_not_applied"
+    },
+    "droppedAcknowledgement": {
+      "operationId": "01c6a90a-1c02-4f36-82b0-68c2774e020c",
+      "before": "29be280555184165b1bf7a3d7d23b9d0",
+      "after": "d5fff3725ce24547acb97205699ea553",
+      "effectSequence": 6,
+      "verificationId": "0197cdc0-3e56-4247-81da-5b80f9af50e0",
+      "verificationSequence": 7,
+      "duplicateDidNotRestart": true
+    },
+    "crashedAfterEffect": {
+      "operationId": "b7699776-d731-4d6b-baf1-8c9d4a2fa148",
+      "before": "d5fff3725ce24547acb97205699ea553",
+      "afterObserved": "21bd7ed0f0224813abf7d0d769d9b2a6",
+      "retainedEffect": "unknown",
+      "competingRestartHttpStatus": 409,
+      "duplicateDidNotRestart": true
+    }
+  },
+  "limits": [
+    "The actual helper and Linux systemd ran inside a disposable VM. The mTLS authority peer was an isolated fixture; Web/PostgreSQL and supervisor transport were covered by separate owning suites.",
+    "The selected VM cases do not complete the whole T35 fault matrix or the installed specialist/Flow acceptance gate."
+  ]
+}
