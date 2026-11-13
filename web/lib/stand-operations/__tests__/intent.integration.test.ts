@@ -28,7 +28,10 @@ import {
   createSpecialistAssignment,
 } from "@/lib/specialist-assignments/store";
 import { MaisterError } from "@/lib/errors";
-import { startMainAndBrainPostgresTestDb } from "@/test-support/pg-container";
+import {
+  applyMainMigration,
+  startMainAndBrainPostgresTestDb,
+} from "@/test-support/pg-container";
 
 let database: StartedPostgresTestDb;
 let fixtureRoot: string;
@@ -607,6 +610,24 @@ it("IT-CBO-02 IT-CBO-03 retains one restart intent across aliases and approves o
   );
 
   expect(await retained.json()).toEqual(accepted);
+  const retainedState = () =>
+    database.pool.query(
+      `SELECT to_jsonb(operation) AS operation,to_jsonb(claim) AS claim
+       FROM stand_operations operation JOIN stand_resource_claims claim ON claim.operation_id=operation.id
+       WHERE operation.id=$1`,
+      [accepted.id],
+    );
+  const beforeUpgrade = (await retainedState()).rows;
+
+  // Reinstall the migration at its real populated boundary, with older rows intact.
+  await database.db.transaction(async (tx) => {
+    await tx.execute(
+      sql`DROP TRIGGER stand_effect_transition_guard ON stand_operations`,
+    );
+    await tx.execute(sql`DROP FUNCTION guard_stand_effect_transition()`);
+    await applyMainMigration(tx, "0305_stand_effect_transition_guards");
+  });
+  expect((await retainedState()).rows).toEqual(beforeUpgrade);
 
   await createCompanyGrants(database.db, administratorId, {
     principalKind: "user",
@@ -614,7 +635,34 @@ it("IT-CBO-02 IT-CBO-03 retains one restart intent across aliases and approves o
     actions: ["targets:restart"],
     idempotencyKey: randomUUID(),
   });
+  await expect(
+    database.pool.query(
+      "UPDATE stand_operations SET effect_state='confirmed_applied',disposition='proved_applied',revision=revision+1 WHERE id=$1",
+      [accepted.id],
+    ),
+  ).rejects.toMatchObject({ code: "23514" });
   // The connector qualification owns creation of the actual target receipt.
+  await database.db.transaction(async (tx) => {
+    await tx.execute(sql`
+      UPDATE stand_operations SET effect_state='dispatching',revision=revision+1 WHERE id=${accepted.id}
+    `);
+    await tx.execute(sql`
+      UPDATE stand_operations SET effect_state='unknown',disposition='unresolved_hold',
+        revision=revision+1 WHERE id=${accepted.id}
+    `);
+  });
+  await expect(
+    database.pool.query(
+      "UPDATE stand_resource_claims SET unresolved=false WHERE operation_id=$1",
+      [accepted.id],
+    ),
+  ).rejects.toMatchObject({ code: "23514" });
+  await expect(
+    database.pool.query(
+      "UPDATE stand_operations SET disposition='proved_applied',revision=revision+1 WHERE id=$1",
+      [accepted.id],
+    ),
+  ).rejects.toMatchObject({ code: "23514" });
   await database.db.transaction(async (tx) => {
     await tx.execute(sql`
       UPDATE stand_operations SET effect_state='confirmed_not_applied',
@@ -624,6 +672,12 @@ it("IT-CBO-02 IT-CBO-03 retains one restart intent across aliases and approves o
       UPDATE stand_resource_claims SET unresolved=false WHERE operation_id=${accepted.id}
     `);
   });
+  await expect(
+    database.pool.query(
+      "UPDATE stand_operations SET effect_state='confirmed_applied',disposition='proved_applied',revision=revision+1 WHERE id=$1",
+      [accepted.id],
+    ),
+  ).rejects.toMatchObject({ code: "23514" });
   const next = await createOperation(loser, loserComponent);
 
   expect(next.status).toBe(202);
