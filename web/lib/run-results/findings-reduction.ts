@@ -228,6 +228,8 @@ export async function inspectFindingsReduction(
     WHERE child.parent_run_id=${runId} AND (
       (child.result_contract->>'nativeContract'=${FINDINGS_CONTRACT}
         AND child.result_contract->>'kind' IN ('agent_profile','flow_export'))
+      OR (child.result_contract->>'nativeContract'=${OPERATIONAL_EVIDENCE_CONTRACT}
+        AND child.result_contract->>'kind'='flow_export')
       OR (child.result_contract->>'kind'='agent_operational'
         AND child.result_contract->>'contractName'=${OPERATIONAL_EVIDENCE_CONTRACT})
     ) AND result.first_collected_at IS NOT NULL

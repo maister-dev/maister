@@ -1,17 +1,20 @@
-import type { FindingsContract } from "./findings-contract";
+import type { FlowNativeContract } from "./flow-native-contract";
 import type { RunResultContract } from "@/lib/run-results/types";
 
 import { createHash } from "node:crypto";
 
 import {
-  findingsContractSchema,
-  FINDINGS_ENGINE_MIN,
-} from "./findings-contract";
+  FLOW_NATIVE_CONTRACT_ENGINE_MIN,
+  flowNativeContractSchema,
+} from "./flow-native-contract";
+import { OPERATIONAL_EVIDENCE_FORM_SCHEMA } from "./operational-schema";
 
+import { OPERATIONAL_EVIDENCE_CONTRACT } from "@/lib/agents/kind";
 import { semverGte } from "@/lib/flows/semver";
 import { readFormSchemaDocWithBytes } from "@/lib/config";
 import { MaisterError } from "@/lib/errors";
 import { buildFlowExportContract } from "@/lib/run-results/contract";
+import { contentDigest } from "@/lib/evaluations/digest";
 
 // ADR-165 (T4.1): ONE resolver for a flow's `result.export`, shared by the
 // canonical launcher (where it is DECISIVE — it writes `runs.result_contract`)
@@ -38,7 +41,7 @@ export function declaredResultExport(manifest: unknown): {
   schema: string;
   from: string[];
   required: boolean;
-  nativeContract?: FindingsContract;
+  nativeContract?: FlowNativeContract;
 } | null {
   const block = (manifest as { result?: unknown } | null)?.result;
   const declared =
@@ -61,7 +64,7 @@ export function declaredResultExport(manifest: unknown): {
     return null;
   }
 
-  const native = findingsContractSchema
+  const native = flowNativeContractSchema
     .optional()
     .safeParse(declared.native_contract);
 
@@ -71,16 +74,22 @@ export function declaredResultExport(manifest: unknown): {
       "Pinned result export selects an unsupported native contract",
     );
   if (native.data !== undefined) {
+    const minimum = FLOW_NATIVE_CONTRACT_ENGINE_MIN[native.data];
     const engineMin = (manifest as { compat?: { engine_min?: unknown } }).compat
       ?.engine_min;
 
+    if (typeof engineMin !== "string" || !semverGte(engineMin, minimum))
+      throw new MaisterError(
+        "CONFIG",
+        `Native result exports require compat.engine_min >= ${minimum}`,
+      );
     if (
-      typeof engineMin !== "string" ||
-      !semverGte(engineMin, FINDINGS_ENGINE_MIN)
+      native.data === OPERATIONAL_EVIDENCE_CONTRACT &&
+      declared.required === false
     )
       throw new MaisterError(
         "CONFIG",
-        `Native result exports require compat.engine_min >= ${FINDINGS_ENGINE_MIN}`,
+        "Operational evidence export must be required",
       );
   }
 
@@ -128,6 +137,15 @@ export async function resolveFlowExportContract(args: {
       { cause: err as Error },
     );
   }
+
+  if (
+    declared.nativeContract === OPERATIONAL_EVIDENCE_CONTRACT &&
+    contentDigest(schema) !== contentDigest(OPERATIONAL_EVIDENCE_FORM_SCHEMA)
+  )
+    throw new MaisterError(
+      "CONFIG",
+      "Operational evidence export must use the canonical result fields",
+    );
 
   return buildFlowExportContract({
     flowRefId: args.flowRefId,

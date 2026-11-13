@@ -1,4 +1,5 @@
 import type { FindingsContract } from "./findings-contract";
+import type { FlowNativeContract } from "./flow-native-contract";
 import type { FormSchema } from "@/lib/config.schema";
 import type { ParsedAgentDefinition } from "@/lib/agents/definition";
 import type { PackageInstallManifest } from "@/lib/packages/attach";
@@ -45,7 +46,7 @@ export type RunResultArtifactRef = {
 export type RunResultContract =
   | {
       kind: "flow_export";
-      nativeContract?: FindingsContract;
+      nativeContract?: FlowNativeContract;
       schemaRef: string;
       schemaVersion: number;
       sha256: string;

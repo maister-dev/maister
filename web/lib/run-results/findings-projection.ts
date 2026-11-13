@@ -2,19 +2,18 @@ import type { EvidenceFindingsV1 } from "./findings-types";
 import type { RunResultContract } from "./types";
 
 import { evidenceFindingsV1Schema } from "./findings-types";
-import { isNativeFindingsContract } from "./contract";
+import {
+  isNativeFindingsContract,
+  isOperationalEvidenceContract,
+} from "./contract";
 
-import { OPERATIONAL_EVIDENCE_CONTRACT } from "@/lib/agents/kind";
 import { MaisterError } from "@/lib/errors";
 
 export function parseNativeFindings(
   contract: RunResultContract,
   value: unknown,
 ) {
-  if (
-    contract.kind === "agent_operational" &&
-    contract.contractName === OPERATIONAL_EVIDENCE_CONTRACT
-  )
+  if (isOperationalEvidenceContract(contract))
     return evidenceFindingsV1Schema.safeParse(
       typeof value === "object" && value !== null && "findings" in value
         ? value.findings

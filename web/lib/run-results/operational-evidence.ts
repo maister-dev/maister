@@ -7,6 +7,7 @@ import type { RunResultContract } from "./types";
 import pino from "pino";
 
 import { operationalEvidenceV2Schema } from "./operational-schema";
+import { isOperationalEvidenceContract } from "./contract";
 
 import { OPERATIONAL_EVIDENCE_CONTRACT } from "@/lib/agents/kind";
 import { invalidStandResultEvidence } from "@/lib/stand-operations/result-evidence";
@@ -23,22 +24,25 @@ export async function validateOperationalEvidenceReferences(
   contract: RunResultContract | null,
   decision: AgentResultDecision,
 ): Promise<AgentResultDecision> {
-  if (
-    decision.kind !== "valid" ||
-    contract?.kind !== "agent_operational" ||
-    contract.contractName !== OPERATIONAL_EVIDENCE_CONTRACT
-  )
+  if (decision.kind !== "valid" || !isOperationalEvidenceContract(contract))
     return decision;
 
-  const value = operationalEvidenceV2Schema.parse(decision.value);
-  const path = await invalidStandResultEvidence(tx, runId, value);
+  const value = operationalEvidenceV2Schema.safeParse(decision.value);
+
+  if (!value.success)
+    return {
+      kind: "invalid",
+      reason: "schema_mismatch",
+      message: "Output does not match operational evidence v2",
+    };
+  const path = await invalidStandResultEvidence(tx, runId, value.data);
 
   if (path === null) return decision;
 
   log.warn(
     {
       runId,
-      contract: contract.contractName,
+      contract: OPERATIONAL_EVIDENCE_CONTRACT,
       schemaSha256: contract.sha256,
       path,
     },

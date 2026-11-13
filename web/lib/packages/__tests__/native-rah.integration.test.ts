@@ -21,6 +21,7 @@ import {
   trustPackageRevision,
 } from "@/lib/packages/attach";
 import { evidenceFindingsV1Schema } from "@/lib/run-results/findings-types";
+import { resolveFlowExportContract } from "@/lib/run-results/flow-export";
 import { initRepo } from "@/test-support/git-fixture";
 import { startMainPostgresTestDb } from "@/test-support/pg-container";
 
@@ -31,6 +32,8 @@ const slug = `native-rah-${projectId.slice(0, 8)}`;
 const source =
   process.env.NATIVE_RAH_CANDIDATE ?? resolve("test-fixtures/rah-native");
 const version = process.env.NATIVE_RAH_VERSION ?? "rah/fixture";
+const standSource = process.env.STAND_PACKAGE_CANDIDATE;
+const standRevision = process.env.STAND_PACKAGE_REVISION;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => database.db }));
 
@@ -61,6 +64,53 @@ afterAll(async () => {
     vi.restoreAllMocks();
   }
 });
+
+it.skipIf(!standSource || !standRevision)(
+  "installs the real pinned stand Flow with its required operational evidence export",
+  async () => {
+    const installed = await installPackageRevision({
+      source: standSource!,
+      version: "stand-operations/v0.1.0",
+      path: "packages/stand-operations",
+      db: database.db,
+    });
+
+    expect(installed).toMatchObject({
+      name: "stand-operations",
+      resolvedRevision: standRevision,
+    });
+    const {
+      rows: [flow],
+    } = await database.pool.query<{
+      id: string;
+      installed_path: string;
+      resolved_revision: string;
+      manifest: unknown;
+    }>(
+      "SELECT id,installed_path,resolved_revision,manifest FROM flow_revisions WHERE flow_ref_id='stand-maintenance' AND resolved_revision=$1",
+      [standRevision],
+    );
+
+    expect(flow).toBeDefined();
+    const contract = await resolveFlowExportContract({
+      flowRefId: "stand-maintenance",
+      manifest: flow!.manifest,
+      revision: {
+        id: flow!.id,
+        installedPath: flow!.installed_path,
+        resolvedRevision: flow!.resolved_revision,
+      },
+    });
+
+    expect(contract).toMatchObject({
+      kind: "flow_export",
+      nativeContract: "operational_evidence_v2",
+      schemaVersion: 2,
+      required: true,
+      producerNodeIds: ["coordinate"],
+    });
+  },
+);
 
 it("IT-CBE-04 installs exact native RAH contracts without combining install, trust, enablement or execution", async () => {
   const installed = await installPackageRevision({

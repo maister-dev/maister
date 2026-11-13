@@ -18,6 +18,7 @@ import {
   FINDINGS_ENGINE_MIN,
 } from "@/lib/run-results/findings-contract";
 import { semverGte } from "@/lib/flows/semver";
+import { flowNativeContractSchema } from "@/lib/run-results/flow-native-contract";
 
 // Replicated from flow-paths.ts to avoid pulling the `server-only` constraint
 // (and its transitive MaisterError dep) into config.schema.ts, which must remain
@@ -1377,7 +1378,7 @@ export const flowYamlV1Schema = graphOnlyManifestInputSchema.pipe(
           export: z
             .object({
               schema: packageRootSchemaRefSchema,
-              native_contract: findingsContractSchema.optional(),
+              native_contract: flowNativeContractSchema.optional(),
               from: z.array(z.string().min(1)).min(1),
               required: z.boolean().default(true),
             })

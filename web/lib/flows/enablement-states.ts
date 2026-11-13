@@ -1,7 +1,5 @@
 import type { FlowYamlV1 } from "@/lib/config.schema";
 
-import { FINDINGS_CONTRACT } from "@/lib/run-results/findings-contract";
-
 /**
  * The explicit allow-list of project-flow enablement states that may launch a
  * run (ADR-021).
@@ -22,5 +20,5 @@ export const LAUNCHABLE_FLOW_ENABLEMENT_STATES: ReadonlySet<string> =
 export function requiresExplicitNativeFindingsEnablement(
   manifest: Pick<FlowYamlV1, "result">,
 ): boolean {
-  return manifest.result?.export?.native_contract === FINDINGS_CONTRACT;
+  return manifest.result?.export?.native_contract !== undefined;
 }

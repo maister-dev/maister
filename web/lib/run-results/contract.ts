@@ -1,4 +1,5 @@
 import type { FindingsContract } from "./findings-contract";
+import type { FlowNativeContract } from "./flow-native-contract";
 import type { FormSchema } from "@/lib/config.schema";
 import type { RunResultContract } from "@/lib/run-results/types";
 import type { KnowledgeAccessCapture } from "@/lib/company/types";
@@ -34,9 +35,22 @@ export function usesStructuredKnowledgeContext(
 ): boolean {
   return (
     isNativeFindingsContract(run.resultContract) ||
-    (run.resultContract?.kind === "agent_operational" &&
-      run.resultContract.contractName === OPERATIONAL_EVIDENCE_CONTRACT) ||
+    isOperationalEvidenceContract(run.resultContract) ||
     (run.knowledgeAccess !== undefined && run.knowledgeAccess !== null)
+  );
+}
+
+export function isOperationalEvidenceContract(
+  contract: RunResultContract | null | undefined,
+): contract is Extract<
+  RunResultContract,
+  { kind: "flow_export" | "agent_operational" }
+> {
+  return (
+    (contract?.kind === "agent_operational" &&
+      contract.contractName === OPERATIONAL_EVIDENCE_CONTRACT) ||
+    (contract?.kind === "flow_export" &&
+      contract.nativeContract === OPERATIONAL_EVIDENCE_CONTRACT)
   );
 }
 
@@ -73,7 +87,7 @@ export function buildFlowExportContract(args: {
   resolvedRevision: string;
   flowRevisionId: string;
   schemaPath: string;
-  nativeContract?: FindingsContract;
+  nativeContract?: FlowNativeContract;
   schema: FormSchema;
   sha256: string;
   required: boolean;
@@ -89,7 +103,10 @@ export function buildFlowExportContract(args: {
       resolvedRevision: args.resolvedRevision,
       schemaStem: schemaStemFromPath(args.schemaPath),
     }),
-    schemaVersion: args.schema.schemaVersion,
+    schemaVersion:
+      args.nativeContract === OPERATIONAL_EVIDENCE_CONTRACT
+        ? 2
+        : args.schema.schemaVersion,
     sha256: args.sha256,
     required: args.required,
     producerNodeIds: [...args.producerNodeIds],

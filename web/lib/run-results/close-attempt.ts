@@ -14,6 +14,7 @@ import {
   recordInvalidRunResult,
 } from "@/lib/run-results/ledger";
 import { validateFindingsReferences } from "@/lib/run-results/findings-references";
+import { validateOperationalEvidenceReferences } from "@/lib/run-results/operational-evidence";
 import { MaisterError } from "@/lib/errors";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches lib/services/tasks.ts).
@@ -108,7 +109,7 @@ export async function closeSucceededAttemptWithResult(
       value: structuredOutput.value as Record<string, unknown>,
       valueBytes: structuredOutput.valueBytes ?? 0,
     };
-    const decision = usesStructuredKnowledgeContext(args)
+    const findings = usesStructuredKnowledgeContext(args)
       ? await validateFindingsReferences(
           tx,
           args.runId,
@@ -117,6 +118,12 @@ export async function closeSucceededAttemptWithResult(
           args.nodeAttemptId,
         )
       : validated;
+    const decision = await validateOperationalEvidenceReferences(
+      tx,
+      args.runId,
+      args.resultContract,
+      findings,
+    );
 
     if (decision.kind === "invalid") {
       await markNodeFailed(
