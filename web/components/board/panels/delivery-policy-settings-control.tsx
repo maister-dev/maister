@@ -1,22 +1,16 @@
 "use client";
 
 import type { Key, ReactElement } from "react";
+import type {
+  DeliveryPolicyPush,
+  DeliveryPolicyStrategy,
+  DeliveryPolicyTrigger,
+  StoredDeliveryPolicy,
+} from "@/lib/runs/delivery-policy";
 
 import { Button, Input, ListBox, Select } from "@heroui/react";
 import { useId, useState } from "react";
 import { useTranslations } from "next-intl";
-
-type DeliveryPolicyStrategy =
-  "merge" | "rebase_merge" | "pull_request" | "ai_rebase_merge";
-type DeliveryPolicyPush = "never" | "on_success";
-type DeliveryPolicyTrigger = "manual" | "auto_on_ready";
-
-type StoredDeliveryPolicy = {
-  strategy: DeliveryPolicyStrategy;
-  push: DeliveryPolicyPush;
-  trigger: DeliveryPolicyTrigger;
-  targetBranch: string | null;
-};
 
 type Props = {
   projectSlug: string;
@@ -127,6 +121,14 @@ export function DeliveryPolicySettingsControl({
     { id: "rebase_merge", label: t("deliveryStrategyRebaseMerge") },
     { id: "pull_request", label: t("deliveryStrategyPullRequest") },
     { id: "ai_rebase_merge", label: t("deliveryStrategyAiRebaseMerge") },
+    ...(strategy === "publish_branch"
+      ? [
+          {
+            id: "publish_branch" as const,
+            label: t("deliveryStrategyPublishBranch"),
+          },
+        ]
+      : []),
   ];
   const pushOptions: Array<SelectOption<DeliveryPolicyPush>> = [
     { id: "never", label: t("deliveryPushNever") },

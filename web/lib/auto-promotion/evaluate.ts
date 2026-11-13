@@ -92,7 +92,7 @@ export interface AutoPromotionRunView {
   taskId: string | null;
   parentRunId: string | null;
   workspaceMode: string | null;
-  deliveryPolicySnapshot: { trigger?: string | null } | null;
+  deliveryPolicySnapshot: { trigger?: string | null; strategy?: string } | null;
   executionPolicy: unknown;
   promotionHold: PromotionHold | null;
   reviewEnteredAt: Date | null;
@@ -177,7 +177,10 @@ export async function evaluateAutoPromotion(
 
   // Term 8: already auto-delivering (either OR-combined knob) — the existing
   // autopilot owns it.
-  if (isAutoOnReady(run)) {
+  if (
+    run.deliveryPolicySnapshot?.strategy === "publish_branch" ||
+    isAutoOnReady(run)
+  ) {
     return { verdict: "not_applicable", reason: "auto_on_ready" };
   }
 

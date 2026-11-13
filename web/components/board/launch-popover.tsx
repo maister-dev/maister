@@ -3,6 +3,12 @@
 import type { Key, ReactElement } from "react";
 import type { FlowRunnerSlotPreview } from "@/lib/acp-runners/flow-preflight";
 import type { ConsensusRunnerSlotPreview } from "@/lib/acp-runners/consensus-preflight";
+import type {
+  DeliveryPolicy,
+  DeliveryPolicyPush,
+  DeliveryPolicyStrategy,
+  DeliveryPolicyTrigger,
+} from "@/lib/runs/delivery-policy";
 import type { TaskLaunchReceipt } from "@/lib/tasks/launch-types";
 import type { TaskQualificationSummary } from "@/lib/tasks/qualification-queries";
 import type { NodeEnforcementRefusal } from "@/lib/flows/enforcement-refusal";
@@ -46,6 +52,7 @@ import {
 
 import { useModalFocusTrap } from "@/components/feedback/use-modal-focus-trap";
 import { TaskQualificationSourceFailureNotice } from "@/components/agents/task-qualification-source-failure-notice";
+import { deliveryPolicyForLaunch } from "@/lib/runs/delivery-policy";
 import { readLaunchErrorDetails } from "@/lib/runs/launch-progress";
 import {
   blindShipLockedOptions,
@@ -53,19 +60,6 @@ import {
 } from "@/lib/runs/execution-policy";
 import { describeScheduledLaunchTime } from "@/lib/scheduled-launches/time";
 import { useIsClient } from "@/lib/use-is-client";
-
-type DeliveryPolicyStrategy =
-  "merge" | "rebase_merge" | "pull_request" | "ai_rebase_merge";
-
-type DeliveryPolicyPush = "never" | "on_success";
-type DeliveryPolicyTrigger = "manual" | "auto_on_ready";
-
-type DeliveryPolicy = {
-  strategy: DeliveryPolicyStrategy;
-  push: DeliveryPolicyPush;
-  trigger: DeliveryPolicyTrigger;
-  targetBranch: string;
-};
 
 type LaunchFlowOption = {
   id: string;
@@ -946,13 +940,15 @@ export function LaunchPopover({
       ).focus();
   }, [open, tracking, loadingOptions, optionsError]);
 
+  const publishesBranch = policyStrategy === "publish_branch";
   const currentPolicy = useMemo<DeliveryPolicy>(
-    () => ({
-      strategy: policyStrategy,
-      push: policyPush,
-      trigger: policyTrigger,
-      targetBranch: targetBranch || baseBranch || "main",
-    }),
+    () =>
+      deliveryPolicyForLaunch({
+        strategy: policyStrategy,
+        push: policyPush,
+        trigger: policyTrigger,
+        targetBranch: targetBranch || baseBranch || "main",
+      }),
     [baseBranch, policyPush, policyStrategy, policyTrigger, targetBranch],
   );
 
@@ -1303,6 +1299,7 @@ export function LaunchPopover({
     { id: "rebase_merge", label: t("strategyRebaseMerge") },
     { id: "pull_request", label: t("strategyPullRequest") },
     { id: "ai_rebase_merge", label: t("strategyAiRebaseMerge") },
+    { id: "publish_branch", label: t("strategyPublishBranch") },
   ];
   const pushOptions: Array<SelectOption<DeliveryPolicyPush>> = [
     { id: "never", label: t("pushNever") },
@@ -1488,10 +1485,12 @@ export function LaunchPopover({
                       {t(hasRuns ? "title" : "titleFirst")}
                     </h2>
                     <p className="mt-1 font-mono text-[11px] text-mute">
-                      {t("summary", {
-                        branch: targetBranch || "-",
-                        base: baseBranch || "-",
-                      })}
+                      {publishesBranch
+                        ? t("publishBranchSummary", { base: baseBranch || "-" })
+                        : t("summary", {
+                            branch: targetBranch || "-",
+                            base: baseBranch || "-",
+                          })}
                     </p>
                   </div>
                   <button
@@ -1904,22 +1903,26 @@ export function LaunchPopover({
                             onChange={setBaseBranch}
                           />
                         </label>
-                        <label className="flex flex-col gap-1">
-                          <span className={fieldLabelClass}>
-                            {tRun("targetBranch")}
-                            {targetBranch !==
-                            (options.defaultTargetBranch ??
-                              branchFallback(options)) ? (
-                              <b className="ml-2 text-amber">{t("override")}</b>
-                            ) : null}
-                          </span>
-                          <LaunchSelect
-                            label={tRun("targetBranch")}
-                            options={branchOptions}
-                            value={targetBranch}
-                            onChange={setTargetBranch}
-                          />
-                        </label>
+                        {!publishesBranch ? (
+                          <label className="flex flex-col gap-1">
+                            <span className={fieldLabelClass}>
+                              {tRun("targetBranch")}
+                              {targetBranch !==
+                              (options.defaultTargetBranch ??
+                                branchFallback(options)) ? (
+                                <b className="ml-2 text-amber">
+                                  {t("override")}
+                                </b>
+                              ) : null}
+                            </span>
+                            <LaunchSelect
+                              label={tRun("targetBranch")}
+                              options={branchOptions}
+                              value={targetBranch}
+                              onChange={setTargetBranch}
+                            />
+                          </label>
+                        ) : null}
                       </div>
 
                       {runnerResolutionWarnings.length > 0 ? (
@@ -2076,26 +2079,32 @@ export function LaunchPopover({
                               onChange={setPolicyStrategy}
                             />
                           </label>
-                          <label className="flex flex-col gap-1">
-                            <span className={fieldLabelClass}>{t("push")}</span>
-                            <LaunchSelect
-                              label={t("push")}
-                              options={pushOptions}
-                              value={policyPush}
-                              onChange={setPolicyPush}
-                            />
-                          </label>
-                          <label className="flex flex-col gap-1">
-                            <span className={fieldLabelClass}>
-                              {t("trigger")}
-                            </span>
-                            <LaunchSelect
-                              label={t("trigger")}
-                              options={triggerOptions}
-                              value={policyTrigger}
-                              onChange={setPolicyTrigger}
-                            />
-                          </label>
+                          {!publishesBranch ? (
+                            <>
+                              <label className="flex flex-col gap-1">
+                                <span className={fieldLabelClass}>
+                                  {t("push")}
+                                </span>
+                                <LaunchSelect
+                                  label={t("push")}
+                                  options={pushOptions}
+                                  value={currentPolicy.push}
+                                  onChange={setPolicyPush}
+                                />
+                              </label>
+                              <label className="flex flex-col gap-1">
+                                <span className={fieldLabelClass}>
+                                  {t("trigger")}
+                                </span>
+                                <LaunchSelect
+                                  label={t("trigger")}
+                                  options={triggerOptions}
+                                  value={currentPolicy.trigger}
+                                  onChange={setPolicyTrigger}
+                                />
+                              </label>
+                            </>
+                          ) : null}
                         </div>
                       </div>
                     </details>

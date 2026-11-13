@@ -18887,6 +18887,12 @@ paths:
                 maxProperties: 64
                 x-propertyNames: { type: string, minLength: 1, maxLength: 256 }
                 additionalProperties: { type: string, enum: [keep, try_once] }
+        - in: query
+          name: deliveryPolicy
+          description: Delivery settings for an agent or agent-backed Flow preview. Include the same selection when accepting the launch.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeliveryPolicy" }
       responses:
         "200":
           description: Current source-free options; Cache-Control is no-store.
@@ -23323,7 +23329,7 @@ components:
       properties:
         strategy:
           type: string
-          enum: [merge, rebase_merge, pull_request, ai_rebase_merge]
+          enum: [merge, rebase_merge, pull_request, ai_rebase_merge, publish_branch]
         push:
           type: string
           enum: [never, on_success]
@@ -23343,7 +23349,7 @@ components:
       properties:
         strategy:
           type: string
-          enum: [merge, rebase_merge, pull_request, ai_rebase_merge]
+          enum: [merge, rebase_merge, pull_request, ai_rebase_merge, publish_branch]
         push:
           type: string
           enum: [never, on_success]
@@ -26561,7 +26567,7 @@ components:
           description: |
             (M18, Implemented) The target-branch HEAD commit the ReviewPanel
             rendered the promote surface against (commit-sha shape).
-            Required by the flow promote service for manual ReviewPanel
+            Required by the flow promote service for manual merge and PR
             promotions — compared to the live target HEAD at claim time
             (optimistic concurrency). A mismatch is refused `PRECONDITION`
             ("target advanced since review") unless `allowTargetDrift` is set;
@@ -26595,9 +26601,16 @@ components:
         mode:
           type: string
           enum:
-            [local_merge, pull_request, merge, rebase_merge, ai_rebase_merge]
+            [local_merge, pull_request, merge, rebase_merge, ai_rebase_merge, publish_branch]
         deliveryPolicy: { $ref: "#/components/schemas/DeliveryPolicy" }
         commit: { type: string, nullable: true }
+        publication:
+          type: object
+          description: Published destination for publish_branch delivery.
+          required: [remote, remoteBranch]
+          properties:
+            remote: { type: string }
+            remoteBranch: { type: string }
         pullRequestUrl:
           type: string
           format: uri

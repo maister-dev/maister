@@ -1,12 +1,8 @@
-export type PromotionMode =
-  "merge" | "rebase_merge" | "pull_request" | "ai_rebase_merge";
+import type { DeliveryPolicy, DeliveryPolicyStrategy } from "./delivery-policy";
 
-export interface PromotionDeliveryPolicy {
-  strategy: PromotionMode;
-  push: "never" | "on_success";
-  trigger: "manual" | "auto_on_ready";
-  targetBranch: string;
-}
+export type PromotionMode = DeliveryPolicyStrategy;
+
+export type PromotionDeliveryPolicy = DeliveryPolicy;
 
 export interface PromotionOperationInput {
   targetBranch: string | null;
@@ -33,9 +29,9 @@ export type PromotionBlockReason =
   | "legacy-needs-relaunch";
 
 export interface PromotionRequestBody {
-  targetBranch: string;
-  deliveryPolicyOverride: PromotionDeliveryPolicy;
-  reviewedTargetCommit: string;
+  targetBranch?: string;
+  deliveryPolicyOverride?: PromotionDeliveryPolicy;
+  reviewedTargetCommit?: string;
   allowTargetDrift?: true;
   autoFinalize?: true;
 }
@@ -43,14 +39,17 @@ export interface PromotionRequestBody {
 export function promotionBlockReason(
   input: PromotionOperationInput,
 ): PromotionBlockReason | null {
-  if (!input.targetBranch) return "missing-target";
+  const publishesBranch = input.mode === "publish_branch";
+
+  if (!publishesBranch && !input.targetBranch) return "missing-target";
   if (input.legacyNeedsRelaunch) return "legacy-needs-relaunch";
   if (!input.canPromote) return "not-authorized";
   if (!input.reviewReady) return "review-not-ready";
   if (input.diffTruncated && !input.truncationAcknowledged) {
     return "diff-truncated";
   }
-  if (!input.reviewedTargetCommit) return "missing-review-target";
+  if (!publishesBranch && !input.reviewedTargetCommit)
+    return "missing-review-target";
 
   return null;
 }
@@ -60,6 +59,7 @@ export function buildPromotionRequestBody(
   allowTargetDrift = false,
 ): PromotionRequestBody | null {
   if (promotionBlockReason(input) !== null) return null;
+  if (input.mode === "publish_branch") return {};
 
   return {
     targetBranch: input.targetBranch as string,

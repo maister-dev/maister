@@ -83,7 +83,8 @@ export async function deliverRunIfAutoReady(
     run !== undefined &&
     run.status === "Review" &&
     (run.deliveryPolicySnapshot?.trigger === "auto_on_ready" ||
-      promotionFromSnapshot(run.executionPolicy) === "auto_on_ready");
+      (run.deliveryPolicySnapshot?.strategy !== "publish_branch" &&
+        promotionFromSnapshot(run.executionPolicy) === "auto_on_ready"));
 
   if (!run || !autoOnReady || !run.deliveryPolicySnapshot) {
     return;
@@ -119,6 +120,9 @@ export async function deliverRunIfAutoReady(
       {
         sessionUser: { id: run.createdByUserId },
         authorize: async () => undefined,
+        ...(run.deliveryPolicySnapshot.strategy === "publish_branch"
+          ? { actor: { kind: "system" as const } }
+          : {}),
       },
       db,
     );

@@ -5510,6 +5510,12 @@ export const workspaces = pgTable(
       withTimezone: true,
       mode: "date",
     }),
+    // Pin the destination before pushing so a reclaimed attempt can find it
+    // even when the remote update landed without a local upstream.
+    branchDelivery: jsonb("branch_delivery").$type<{
+      target: { remote: string; remoteBranch: string } | null;
+      error: string | null;
+    }>(),
   },
   (t) => ({
     lifecycleClaimIndex: index("workspaces_lifecycle_claim_idx").on(

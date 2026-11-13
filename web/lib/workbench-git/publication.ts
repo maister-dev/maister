@@ -126,6 +126,10 @@ export function resolvePublishName(input: PublishNameInput): {
 // fact all read the branch back from here.
 export type PublishedTarget = { remote: string; remoteBranch: string };
 
+export function defaultPublicationRemote(remotes: string[]): string | null {
+  return remotes.includes("origin") ? "origin" : (remotes[0] ?? null);
+}
+
 export function publishedTarget(workspace: {
   branch: string;
   publishedBranch?: string | null;

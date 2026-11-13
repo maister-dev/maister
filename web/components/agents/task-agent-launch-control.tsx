@@ -1,5 +1,6 @@
 "use client";
 
+import type { StoredDeliveryPolicy } from "@/lib/runs/delivery-policy";
 import type { ReactElement } from "react";
 import type { TaskLaunchOptionsSnapshot } from "@/lib/tasks/launch-options";
 import type { NodeEnforcementRefusal } from "@/lib/flows/enforcement-refusal";
@@ -18,6 +19,13 @@ import { TaskQualificationSourceFailureNotice } from "@/components/agents/task-q
 
 type AgentWorkspace = "none" | "repo_read" | "worktree";
 const WORKSPACES: readonly AgentWorkspace[] = ["none", "repo_read", "worktree"];
+
+const PUBLISH_BRANCH_POLICY: StoredDeliveryPolicy = {
+  strategy: "publish_branch",
+  push: "on_success",
+  trigger: "auto_on_ready",
+  targetBranch: null,
+};
 
 function isWorkspace(value: string): value is AgentWorkspace {
   return WORKSPACES.some((workspace) => workspace === value);
@@ -43,6 +51,7 @@ export function TaskAgentLaunchControl({
   const [workspace, setWorkspace] = useState<AgentWorkspace>(
     target.kind === "agent" ? target.workspace : "worktree",
   );
+  const [publishBranch, setPublishBranch] = useState(false);
   const [runnerId, setRunnerId] = useState("");
   const [reload, setReload] = useState(0);
   const [preview, setPreview] = useState<{
@@ -66,24 +75,33 @@ export function TaskAgentLaunchControl({
       : null;
   const tracking =
     !replacementCurrent && Boolean(intent.receipt || intent.uncertain);
+  const canPublishBranch = target.kind === "flow" || workspace === "worktree";
+  const selectPublishBranch = canPublishBranch && publishBranch;
   const selection = useMemo(
     () => ({
       taskId,
       agentId,
       ...(target.kind === "agent" ? { workspace } : {}),
       ...(runnerId ? { runnerId } : {}),
+      ...(selectPublishBranch ? { deliveryPolicy: PUBLISH_BRANCH_POLICY } : {}),
     }),
-    [taskId, agentId, workspace, runnerId, target.kind],
+    [taskId, agentId, workspace, runnerId, target.kind, selectPublishBranch],
   );
   const key = JSON.stringify(selection);
   const currentPreview = preview?.key === key ? preview.snapshot : null;
+  const publishesBranch =
+    currentPreview?.target?.deliveryPolicy.strategy === "publish_branch";
   const enforcementRefusal =
     previewEnforcement?.key === key ? previewEnforcement.refusal : null;
 
   useEffect(() => {
     if (!open || tracking || intent.attempt || intent.busy) return;
     const controller = new AbortController();
-    const query = new URLSearchParams(selection);
+    const { deliveryPolicy, ...params } = selection;
+    const query = new URLSearchParams(params);
+
+    if (deliveryPolicy)
+      query.set("deliveryPolicy", JSON.stringify(deliveryPolicy));
 
     void fetch(`/api/task-launch-intents/options?${query}`, {
       cache: "no-store",
@@ -294,6 +312,17 @@ export function TaskAgentLaunchControl({
                   </select>
                 </label>
               ) : null}
+              {canPublishBranch ? (
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    checked={publishBranch}
+                    disabled={intent.busy}
+                    type="checkbox"
+                    onChange={(event) => setPublishBranch(event.target.checked)}
+                  />
+                  {t("strategyPublishBranch")}
+                </label>
+              ) : null}
               {currentPreview?.target ? (
                 <>
                   {currentPreview.target.flowRefId ? (
@@ -316,30 +345,35 @@ export function TaskAgentLaunchControl({
                       <dt className="text-mute">{t("admission.delivery")}</dt>
                       <dd>
                         {t(
-                          currentPreview.target.deliveryPolicy.strategy ===
-                            "pull_request"
-                            ? "strategyPullRequest"
+                          publishesBranch
+                            ? "strategyPublishBranch"
                             : currentPreview.target.deliveryPolicy.strategy ===
-                                "rebase_merge"
-                              ? "strategyRebaseMerge"
+                                "pull_request"
+                              ? "strategyPullRequest"
                               : currentPreview.target.deliveryPolicy
-                                    .strategy === "ai_rebase_merge"
-                                ? "strategyAiRebaseMerge"
-                                : "strategyMerge",
+                                    .strategy === "rebase_merge"
+                                ? "strategyRebaseMerge"
+                                : currentPreview.target.deliveryPolicy
+                                      .strategy === "ai_rebase_merge"
+                                  ? "strategyAiRebaseMerge"
+                                  : "strategyMerge",
                         )}
                       </dd>
                     </div>
-                    <div>
-                      <dt className="text-mute">{t("admission.target")}</dt>
-                      <dd>{currentPreview.target.targetBranch}</dd>
-                    </div>
+                    {!publishesBranch ? (
+                      <div>
+                        <dt className="text-mute">{t("admission.target")}</dt>
+                        <dd>{currentPreview.target.targetBranch}</dd>
+                      </div>
+                    ) : null}
                     <div>
                       <dt className="text-mute">{t("admission.promotion")}</dt>
                       <dd>
                         {t(
-                          currentPreview.target.autoPromote &&
-                            currentPreview.target.deliveryPolicy.trigger ===
-                              "auto_on_ready"
+                          publishesBranch ||
+                            (currentPreview.target.autoPromote &&
+                              currentPreview.target.deliveryPolicy.trigger ===
+                                "auto_on_ready")
                             ? "triggerAutoOnReady"
                             : "triggerManual",
                         )}

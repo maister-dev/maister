@@ -80,6 +80,7 @@ import {
   type WorkbenchGitPolicyInput,
 } from "@/lib/workbench-git/policy";
 import {
+  defaultPublicationRemote,
   recordPublished,
   resolvePublishName,
   type PublishNameSource,
@@ -618,12 +619,6 @@ function checkoutCommands(args: {
   ];
 }
 
-function defaultRemoteFor(remotes: string[]): string | null {
-  if (remotes.includes("origin")) return "origin";
-
-  return remotes[0] ?? null;
-}
-
 function baseRefFor(
   ctx: LifecycleContext,
   workspace: LifecycleWorkspace,
@@ -1079,7 +1074,7 @@ export async function getWorkbenchHandoffMetadata(
     dirtyState(workspace, deps),
     deps.listRemotes({ projectRepoPath: workspace.parentRepoPath }),
   ]);
-  const defaultRemote = defaultRemoteFor(remotes);
+  const defaultRemote = defaultPublicationRemote(remotes);
   const suggestedBranch = suggestedHandoffBranch(runId);
 
   log.info(

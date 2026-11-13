@@ -37,6 +37,7 @@ import { parseExecutableStoredFlowManifest } from "@/lib/flows/manifest-parser";
 import { resolveFlowRef } from "@/lib/flows/resolve-flow-ref";
 import { assertFlowLaunchable } from "@/lib/flows/launchability-gate";
 import {
+  deliveryPolicyForLaunch,
   resolveDeliveryPolicy,
   legacyPromotionModeFromStrategy,
   strategyFromLegacyPromotionMode,
@@ -430,18 +431,20 @@ async function resolveFlowLaunchSettingsForSource(
     selection.deliveryPolicy?.targetBranch ??
     task.targetBranch ??
     baseBranch;
-  const deliveryPolicy = resolveDeliveryPolicy({
-    projectDefault: project.deliveryPolicyDefault,
-    projectPromotionMode: project.promotionMode,
-    projectMainBranch: project.mainBranch,
-    launchOverride: {
-      ...(task.promotionMode
-        ? { strategy: strategyFromLegacyPromotionMode(task.promotionMode) }
-        : {}),
-      ...selection.deliveryPolicy,
-      targetBranch,
-    },
-  });
+  const deliveryPolicy = deliveryPolicyForLaunch(
+    resolveDeliveryPolicy({
+      projectDefault: project.deliveryPolicyDefault,
+      projectPromotionMode: project.promotionMode,
+      projectMainBranch: project.mainBranch,
+      launchOverride: {
+        ...(task.promotionMode
+          ? { strategy: strategyFromLegacyPromotionMode(task.promotionMode) }
+          : {}),
+        ...selection.deliveryPolicy,
+        targetBranch,
+      },
+    }),
+  );
   const basePolicy = resolveExecutionPolicy({
     launchOverride: selection.executionPolicy,
     taskDefault: task.executionPolicy,
@@ -473,10 +476,7 @@ async function resolveFlowLaunchSettingsForSource(
     targetBranch,
     deliveryPolicy,
     executionPolicy,
-    promotionMode:
-      deliveryPolicy.strategy === "ai_rebase_merge"
-        ? "rebase_merge"
-        : legacyPromotionModeFromStrategy(deliveryPolicy.strategy),
+    promotionMode: legacyPromotionModeFromStrategy(deliveryPolicy.strategy),
     autoPromote: selection.autoPromote ?? true,
     brainContext: selection.brainContext ?? null,
     packageVersions: selection.packageVersions ?? {},

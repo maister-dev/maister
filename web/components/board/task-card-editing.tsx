@@ -99,6 +99,7 @@ const DELIVERY_STRATEGY_LABEL: Record<DeliveryPolicyStrategy, string> = {
   rebase_merge: "strategyRebaseMerge",
   pull_request: "strategyPullRequest",
   ai_rebase_merge: "strategyAiRebaseMerge",
+  publish_branch: "strategyPublishBranch",
 };
 
 const EXECUTION_PRESET_LABEL: Record<ExecutionPreset, string> = {

@@ -51,9 +51,26 @@ export function readTaskLaunchOptions(
       );
     }
   }
+  let deliveryPolicy: unknown;
+
+  if (raw.deliveryPolicy !== undefined) {
+    try {
+      deliveryPolicy = JSON.parse(raw.deliveryPolicy);
+    } catch (cause) {
+      throw new MaisterError(
+        "CONFIG",
+        "Delivery policy must be a JSON object",
+        {
+          cause,
+          details: { reason: "launch_options_invalid" },
+        },
+      );
+    }
+  }
   const result = taskLaunchOptionsSchema.safeParse({
     ...raw,
     ...(raw.packageVersions !== undefined ? { packageVersions } : {}),
+    ...(raw.deliveryPolicy !== undefined ? { deliveryPolicy } : {}),
   });
 
   if (!result.success)

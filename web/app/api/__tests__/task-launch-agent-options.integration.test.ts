@@ -201,11 +201,18 @@ it("previews the declared Flow facade without inventing a standalone workspace o
     taskId,
     agentId: "launch-options:driver",
     packageVersions: { [agentInstallId]: "keep" },
+    deliveryPolicy: {
+      strategy: "publish_branch",
+      push: "on_success",
+      trigger: "auto_on_ready",
+      targetBranch: null,
+    },
   };
   const response = await GET(
     preview({
       ...selection,
       packageVersions: JSON.stringify(selection.packageVersions),
+      deliveryPolicy: JSON.stringify(selection.deliveryPolicy),
     }),
   );
 
@@ -217,6 +224,7 @@ it("previews the declared Flow facade without inventing a standalone workspace o
     agentId: selection.agentId,
     flowId: fixture.flowId,
     workspace: "worktree",
+    deliveryPolicy: { strategy: "publish_branch", trigger: "auto_on_ready" },
   });
   const unavailablePackage = await GET(
     preview({
@@ -252,6 +260,11 @@ it("previews the declared Flow facade without inventing a standalone workspace o
 
   expect(intent.settingsSnapshot).toMatchObject({
     packageVersions: selection.packageVersions,
+    deliveryPolicy: {
+      strategy: "publish_branch",
+      push: "on_success",
+      trigger: "auto_on_ready",
+    },
     serverExecution: { execution: { agentId: selection.agentId } },
   });
 });
