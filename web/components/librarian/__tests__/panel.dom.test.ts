@@ -95,6 +95,8 @@ const message = (
 });
 
 let serverMessages: Msg[] = [];
+let historyGeneration = 0;
+let hasOlderMessages = false;
 let availability = "ready";
 let activeTurn: Record<string, unknown> | null = null;
 let serverCards: LibrarianCardView[] = [];
@@ -165,7 +167,7 @@ function conversationView() {
       resetState: "none",
       readThroughSeq: String(serverMessages.length),
       lastSeq: String(serverMessages.length),
-      historyGeneration: 0,
+      historyGeneration,
       memoryEnabledNextSegment: true,
       createdAt: new Date().toISOString(),
     },
@@ -208,7 +210,7 @@ const fetchMock = vi.fn(
       );
 
       return json({
-        historyGeneration: 0,
+        historyGeneration,
         nextCursor: null,
         items: fixtureHistory().filter((item) =>
           collection === "tasks"
@@ -233,8 +235,8 @@ const fetchMock = vi.fn(
           usedMemoryItemIds: row.usedMemoryItemIds ?? [],
           createdAt: new Date().toISOString(),
         })),
-        hasMore: false,
-        historyGeneration: 0,
+        hasMore: hasOlderMessages,
+        historyGeneration,
         currentSegmentId: "seg",
         receiptAttachments: {},
       });
@@ -315,6 +317,8 @@ beforeEach(() => {
   FakeEventSource.instances = [];
   fetchMock.mockClear();
   serverMessages = [message(1, "owner"), message(2)];
+  historyGeneration = 0;
+  hasOlderMessages = false;
   availability = "ready";
   activeTurn = null;
   serverCards = [];
@@ -332,6 +336,63 @@ beforeEach(() => {
 });
 
 describe("IT-LUI-10: linked work and confirmation cards", () => {
+  it("discards a delayed older page after another tab clears history", async () => {
+    hasOlderMessages = true;
+    const fetchPage = fetchMock.getMockImplementation()!;
+    let completeOlder!: (response: Response) => void;
+    const older = new Promise<Response>((resolve) => {
+      completeOlder = resolve;
+    });
+
+    fetchMock.mockImplementation((input, init) =>
+      String(input).includes("beforeSeq=") ? older : fetchPage(input, init),
+    );
+    try {
+      await mount();
+      await openPanel();
+      expect(q("librarian-transcript")?.textContent).toContain("message 2");
+      await clickHistory("history.olderMessages");
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          String(input).includes("beforeSeq=1"),
+        ),
+      ).toBe(true);
+
+      historyGeneration = 1;
+      hasOlderMessages = false;
+      serverMessages = [];
+      await act(async () => {
+        FakeEventSource.instances
+          .at(-1)
+          ?.emit({ type: "librarian.work", reason: "work" });
+      });
+      await flush();
+      expect(q("librarian-transcript")?.textContent).not.toContain("message 2");
+
+      await act(async () =>
+        completeOlder(
+          new Response(
+            JSON.stringify({
+              messages: [
+                { ...message(0), body: "cleared older page", segmentId: "seg" },
+              ],
+              hasMore: false,
+              historyGeneration: 0,
+              currentSegmentId: "seg",
+              receiptAttachments: {},
+            }),
+          ),
+        ),
+      );
+      await flush();
+      expect(q("librarian-transcript")?.textContent).not.toContain(
+        "cleared older page",
+      );
+    } finally {
+      fetchMock.mockImplementation(fetchPage);
+    }
+  });
+
   it("shows a statement diff, records the owner's click, and updates the card state", async () => {
     serverCards = [
       {
