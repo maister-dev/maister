@@ -293,7 +293,7 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
         idempotencyKey: randomUUID(),
       },
     }),
-    z.object({ witness: knowledgeWitnessSchema }),
+    knowledgeWitnessSchema,
   );
   const proposal = await read(
     await request.post("/api/knowledge/proposals", {
@@ -311,8 +311,8 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
               relation: "supports",
               reference: {
                 kind: "witness",
-                id: proof.witness.id,
-                sha256: proof.witness.sha256,
+                id: proof.id,
+                sha256: proof.sha256,
               },
             },
           ],
@@ -323,7 +323,7 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
     }),
     id,
   );
-  const runbook = await read(
+  await read(
     await request.post(`/api/knowledge/proposals/${proposal.id}/decision`, {
       data: {
         expectedRevision: 1,
@@ -332,7 +332,12 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
         idempotencyKey: randomUUID(),
       },
     }),
+    z.object({ status: z.literal("accepted") }),
+  );
+  const runbook = await read(
+    await request.get(`/api/knowledge/proposals/${proposal.id}`),
     z.object({
+      status: z.literal("accepted"),
       acceptedRecordId: z.string(),
       acceptedRecordRevision: z.number().int(),
     }),
@@ -350,7 +355,7 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
             runbook: {
               recordId: runbook.acceptedRecordId,
               revision: runbook.acceptedRecordRevision,
-              witnessId: proof.witness.id,
+              witnessId: proof.id,
             },
           },
         ],
