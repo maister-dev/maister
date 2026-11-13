@@ -1,4 +1,5 @@
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
+import type { Db } from "@/lib/execution-host/db";
 
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -487,6 +488,8 @@ it("IT-CBO-02 IT-CBO-03 retains one restart intent across aliases and approves o
     disposition: "pending",
   });
   const { authenticateStandOperationPeer } = await import("../authority-peer");
+  const { authorizeStandCallback } = await import("../authority-permit");
+
   await expect(
     database.pool.query(
       `INSERT INTO stand_authorization_permits(operation_id,nonce,purpose,owner_epoch,issued_at,expires_at)
@@ -511,6 +514,41 @@ it("IT-CBO-02 IT-CBO-03 retains one restart intent across aliases and approves o
 
   process.env.STAND_TEST_HELPER_TOKEN = peerToken;
   try {
+    const permitRequest = {
+      operationId: accepted.id,
+      peerFingerprint,
+      helperToken: peerToken,
+      body: {
+        targetIncarnation: input.incarnationId,
+        resourceKey: "a".repeat(64),
+        requestDigest: accepted.requestDigest,
+        ownerEpoch: 1,
+        nonce: randomUUID(),
+        purpose: "dispatch",
+      },
+    };
+
+    await expect(
+      authorizeStandCallback(database.db as Db, permitRequest),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
+    const [resource] = (
+      await database.pool.query<{ resource_key: string }>(
+        "SELECT resource_key FROM stand_operations WHERE id=$1",
+        [accepted.id],
+      )
+    ).rows;
+
+    await expect(
+      authorizeStandCallback(database.db as Db, {
+        ...permitRequest,
+        body: { ...permitRequest.body, resourceKey: resource!.resource_key },
+      }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "assignment_fenced" },
+    });
     const authenticate = (fingerprint: string, token: string) =>
       database.db.transaction((tx) =>
         authenticateStandOperationPeer(tx, accepted.id, fingerprint, token),
