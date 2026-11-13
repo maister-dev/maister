@@ -12,9 +12,11 @@ import { eq, sql } from "drizzle-orm";
 
 import { captureKnowledgeSource } from "@/lib/brain/knowledge-source-capture";
 import {
+  confirmKnowledgeRecord,
   createKnowledgeProposal,
   reviewKnowledgeProposal,
 } from "@/lib/brain/knowledge-proposals";
+import { getKnowledgeRecord } from "@/lib/brain/knowledge-records";
 import { createCompanyGrants, revokeCompanyGrant } from "@/lib/company/grants";
 import { requireActiveUserById, type SessionUser } from "@/lib/authz";
 import {
@@ -2098,6 +2100,37 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
           }),
         ]),
       });
+      const reviewer = { kind: "user" as const, userId };
+      const publication = await reviewKnowledgeProposal(db, {
+        principal: reviewer,
+        proposalId: proposal.id,
+        expectedRevision: proposal.revision,
+        decision: "accept",
+        reason: "Retain the independently verified maintenance observation.",
+        idempotencyKey: randomUUID(),
+      });
+      const recordId = publication.acceptedRecordId;
+      const revision = publication.acceptedRecordRevision;
+
+      if (recordId === null || revision === null)
+        throw new Error("Review did not publish an exact knowledge revision");
+      await expect(
+        getKnowledgeRecord(db, reviewer, { recordId, revision }),
+      ).resolves.toMatchObject({
+        attribution: { kind: "user", id: userId, runId },
+        confirmation: { state: "unconfirmed" },
+      });
+      await expect(
+        confirmKnowledgeRecord(db, {
+          principal: reviewer,
+          recordId,
+          expectedRevision: revision,
+          decision: "confirm",
+          witnessIds: [proof.id],
+          reason: "Check whether review also grants factual confirmation.",
+          idempotencyKey: randomUUID(),
+        }),
+      ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
       await expect(
         getSpecialistAssignment(db, userId, assignment.id),
       ).resolves.toMatchObject({

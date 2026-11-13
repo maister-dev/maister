@@ -3,8 +3,12 @@ import type { EvidenceFindingsV1 } from "./findings-types";
 
 import { z } from "zod";
 
-import { isNativeFindingsContract } from "./contract";
+import {
+  isNativeFindingsContract,
+  isOperationalEvidenceContract,
+} from "./contract";
 import { evidenceFindingsV1Schema } from "./findings-types";
+import { operationalEvidenceV2Schema } from "./operational-schema";
 
 const LEAF_RESULT_EXAMPLE = {
   schemaVersion: 1,
@@ -42,12 +46,46 @@ ${["```json maister:output", JSON.stringify(LEAF_RESULT_EXAMPLE), "```"].join("\
 Native result JSON Schema:
 ${JSON.stringify(z.toJSONSchema(evidenceFindingsV1Schema, { target: "draft-07", io: "input" }))}`;
 
+const operationalExample: z.input<typeof operationalEvidenceV2Schema> = {
+  schemaVersion: 2,
+  outcome: "success",
+  summary: "Bounded read-only work finished.",
+  coverage: { state: "complete", remainingKnown: 0 },
+  counts: {
+    scanned: 1,
+    attempted: 0,
+    completed: 0,
+    failed: 0,
+    skipped: 0,
+    created: 0,
+  },
+  references: [],
+  diagnostics: [],
+  findings: LEAF_RESULT_EXAMPLE,
+  operationIds: [],
+  verificationIds: [],
+};
+const OPERATIONAL_APPENDIX = `Native completion contract: operational_evidence_v2.
+For the completing turn, use the exact json maister:output fence and object shape below. This example illustrates shape only. Replace its text and local finding ID with your actual result. All objects reject extra fields.
+Put knowledge, witness and result references inside the nested findings. A knowledge or result citation requires its exact revision; an immutable witness ID is sufficient when its version or digest was not requested. Keep report limitations and missing evidence explicit. A direct child's finding is identified by its exact childRunId, resultRevision and findingId. Preserve original evidence when filling findings.selection; a leaf leaves selection and each sourceFindings array empty.
+Use top-level operationIds and verificationIds only for exact retained stand identities. Keep top-level references empty when there are only Brain or stand references. Successful outcomes require complete coverage, remainingKnown 0, no failed work and no error diagnostic. A blocked outcome includes an actionable error diagnostic. The example does not supply evidence or authorize any action.
+Native operational result example (shape only):
+${["```json maister:output", JSON.stringify(operationalExample), "```"].join("\n")}
+Native operational result JSON Schema:
+${JSON.stringify(z.toJSONSchema(operationalEvidenceV2Schema, { target: "draft-07", io: "input" }))}`;
+
 /** Supply the versioned nested grammar even when a package's FormSchema uses opaque JSON fields. */
 export function nativeFindingsCompletionPrompt(
   contract: RunResultContract | null | undefined,
   prompt: string,
 ): string {
-  if (!isNativeFindingsContract(contract)) return prompt;
+  const appendix = isNativeFindingsContract(contract)
+    ? APPENDIX
+    : isOperationalEvidenceContract(contract)
+      ? OPERATIONAL_APPENDIX
+      : null;
 
-  return prompt.endsWith(APPENDIX) ? prompt : `${prompt}\n\n${APPENDIX}`;
+  return !appendix || prompt.includes(`\n\n${appendix}`)
+    ? prompt
+    : `${prompt}\n\n${appendix}`;
 }

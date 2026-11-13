@@ -9,6 +9,7 @@ import {
 } from "@/lib/agents/launch";
 import { evidenceFindingsV1Schema } from "@/lib/run-results/findings-types";
 import { extractSentinelBlock } from "@/lib/flows/graph/node-output";
+import { operationalEvidenceV2Schema } from "@/lib/run-results/operational-schema";
 
 type PromptTaskRow = {
   number: number;
@@ -250,6 +251,71 @@ describe("buildAgentPrompt", () => {
           proposal.additionalProperties === false,
       ),
     ).toBe(true);
+  });
+
+  it("supplies the actual nested operational grammar on a native result producer", async () => {
+    const prompt = await buildAgentPrompt(emptyPromptDb(), parsed, {
+      id: "operational-evidence-prompt",
+      projectId: null,
+      taskId: null,
+      triggerType: "manual",
+      triggerPayload: {},
+      resultContract: {
+        kind: "agent_operational",
+        contractName: "operational_evidence_v2",
+      },
+    });
+    const exampleMarker = "Native operational result example (shape only):\n";
+    const grammarMarker = "Native operational result JSON Schema:\n";
+
+    expect(prompt).toContain(exampleMarker);
+    expect(prompt).toContain(grammarMarker);
+    const example = extractSentinelBlock(
+      prompt.slice(
+        prompt.indexOf(exampleMarker) + exampleMarker.length,
+        prompt.indexOf(grammarMarker),
+      ),
+      1024 * 1024,
+    );
+
+    expect(example.kind).toBe("value");
+    if (example.kind !== "value")
+      throw new Error("Operational result example is not a sentinel block");
+    const parsedResult = operationalEvidenceV2Schema.parse(example.value);
+
+    expect(parsedResult.findings.findings[0]?.missingEvidence).not.toHaveLength(
+      0,
+    );
+    expect(parsedResult.references).toEqual([]);
+    expect(
+      JSON.parse(
+        prompt.slice(prompt.indexOf(grammarMarker) + grammarMarker.length),
+      ),
+    ).toMatchObject({
+      additionalProperties: false,
+      properties: {
+        coverage: {
+          properties: {
+            state: { enum: ["complete", "incomplete", "not_started"] },
+          },
+        },
+        findings: {
+          additionalProperties: false,
+          properties: {
+            findings: {
+              items: {
+                additionalProperties: false,
+                required: expect.arrayContaining([
+                  "sourceFindings",
+                  "missingEvidence",
+                  "basis",
+                ]),
+              },
+            },
+          },
+        },
+      },
+    });
   });
 
   it("injects the Effective configuration block from the run snapshot (ADR-111)", async () => {
