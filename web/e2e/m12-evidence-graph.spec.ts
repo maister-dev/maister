@@ -25,6 +25,8 @@
 //     current → approve → run reaches Review — Done is the M18 promotion path,
 //     not the graph terminal).
 import { readFileSync } from "node:fs";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 import { Pool } from "pg";
@@ -93,6 +95,86 @@ test("E2 opens a result payload from the list and retains the selected graph add
   await page.getByRole("link", { name: "Provenance graph" }).click();
   await expect(page.getByTestId("evidence-graph")).toBeVisible();
   await expect(page).toHaveURL(/evidenceView=graph/);
+});
+
+test("E2 renders typed evidence and keeps unknown payloads generic", async ({
+  page,
+}) => {
+  const { projectSlug, runId } = loadM12Fixture();
+  const reportId = randomUUID();
+  const genericId = randomUUID();
+  const markdownId = randomUUID();
+  const filename = `${markdownId}.md`;
+  const directory = path.resolve(
+    "e2e/.runtime/.maister",
+    projectSlug,
+    "runs",
+    runId,
+  );
+  const markdownPath = path.join(directory, filename);
+  const report = {
+    basis: "node",
+    evaluated: true,
+    touched: ["src/check.ts"],
+    violations: ["Prohibited path"],
+    truncated: false,
+    nodeRange: { base: "abc", head: "def" },
+    mustTouch: { globs: [], matched: [], matchedTruncated: false },
+    restrictions: { checked: [], unmatchable: [] },
+  };
+
+  await mkdir(directory, { recursive: true });
+  await writeFile(
+    markdownPath,
+    "# Evidence notes\n\nReviewed **result**.",
+    "utf8",
+  );
+  await withDb((pool) =>
+    pool.query(
+      `INSERT INTO artifact_instances(id,run_id,kind,producer,locator,validity)
+     VALUES($1,$4,'mutation_report','runner',$5,'current'),
+           ($2,$4,'human_note','runner',$6,'current'),
+           ($3,$4,'generic_file','runner',$7,'current')`,
+      [
+        reportId,
+        genericId,
+        markdownId,
+        runId,
+        { kind: "inline", text: JSON.stringify(report) },
+        { kind: "inline", text: "Unknown payload\n<em>literal</em>" },
+        { kind: "file", path: filename },
+      ],
+    ),
+  );
+  try {
+    await page.goto(`/runs/${runId}?wb=evidence&evidenceItem=art:${reportId}`);
+    const preview = page.getByTestId("result-payload");
+
+    await expect(preview.getByRole("listitem")).toHaveText("Prohibited path");
+    await expect(preview.locator("pre")).toHaveCount(0);
+    await page.goto(`/runs/${runId}?wb=evidence&evidenceItem=art:${genericId}`);
+    await expect(preview.locator("pre")).toContainText("<em>literal</em>");
+    await expect(preview.locator("em")).toHaveCount(0);
+    await page.goto(
+      `/runs/${runId}?wb=evidence&evidenceItem=art:${markdownId}`,
+    );
+    await expect(
+      preview.getByRole("heading", { name: "Evidence notes" }),
+    ).toBeVisible();
+    await rm(markdownPath);
+    await page.reload();
+    await expect(page.getByText("The retained payload is gone.")).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Evidence notes" }),
+    ).toHaveCount(0);
+  } finally {
+    await rm(markdownPath, { force: true });
+    await withDb((pool) =>
+      pool.query("DELETE FROM artifact_instances WHERE id = ANY($1::text[])", [
+        [reportId, genericId, markdownId],
+      ]),
+    );
+  }
 });
 
 test("UX-03C/D evidence filters fit artifacts and the board readiness badge tracks stale/merge-blocked", async ({
