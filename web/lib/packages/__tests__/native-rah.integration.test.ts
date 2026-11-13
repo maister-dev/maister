@@ -7,12 +7,16 @@ import { join, resolve } from "node:path";
 
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
+import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
+import { createCompanySpecialistBinding } from "@/lib/agents/company-bindings";
+import { createCompanyFlowBinding } from "@/lib/agents/company-flow-bindings";
 import {
   resolveEffectiveAgentDefinition,
   resolveInstalledAgentDefinition,
 } from "@/lib/agents/effective";
 import { attachAgent } from "@/lib/agents/project-links";
 import { loadFlowManifest, readAndValidateFormSchemaDoc } from "@/lib/config";
+import { createCompanyGrants } from "@/lib/company/grants";
 import { assertNodeLaunchable } from "@/lib/flows/enforcement";
 import { deriveSessionEnforcementProfile } from "@/lib/flows/enforcement-profile";
 import { enableRevision } from "@/lib/flows/lifecycle";
@@ -105,8 +109,9 @@ it.skipIf(!standSource || !standRevision)(
       installed_path: string;
       resolved_revision: string;
       manifest: unknown;
+      manifest_digest: string;
     }>(
-      "SELECT id,installed_path,resolved_revision,manifest FROM flow_revisions WHERE flow_ref_id='stand-maintenance' AND resolved_revision=$1",
+      "SELECT id,installed_path,resolved_revision,manifest,manifest_digest FROM flow_revisions WHERE flow_ref_id='stand-maintenance' AND resolved_revision=$1",
       [standRevision],
     );
 
@@ -127,6 +132,60 @@ it.skipIf(!standSource || !standRevision)(
       schemaVersion: 2,
       required: true,
       producerNodeIds: ["execute", "declined"],
+    });
+    const reviewerId = randomUUID();
+
+    await database.pool.query(
+      "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'admin','active')",
+      [reviewerId, `${reviewerId}@example.test`],
+    );
+    const grant = await createCompanyGrants(database.db, reviewerId, {
+      principalKind: "user",
+      principalId: reviewerId,
+      actions: ["specialists:read", "specialists:manage", "assignments:answer"],
+      idempotencyKey: randomUUID(),
+    });
+    const definition = await resolveInstalledAgentDefinition(database.db, {
+      agentId: "stand-operations:coordinator",
+      packageInstallId: installed.id,
+    });
+    const { specialist } = await createCompanySpecialistBinding(
+      database.db,
+      reviewerId,
+      definition.parsed.id,
+      {
+        owner: { kind: "company", companyId: grant.page.companyId },
+        packageInstallId: installed.id,
+        packageRevision: installed.resolvedRevision,
+        definitionSha256: agentDefinitionSha256(definition.parsed),
+        coordinatorFlowRevisionId: flow!.id,
+        configuration: {},
+        grantActions: ["assignments:read", "targets:read"],
+        enabled: true,
+        idempotencyKey: randomUUID(),
+      },
+    );
+
+    await expect(
+      createCompanyFlowBinding(database.db, reviewerId, {
+        owner: specialist.owner,
+        specialistBindingId: specialist.bindingId,
+        specialistRevision: specialist.configRevision,
+        flowRevisionId: flow!.id,
+        manifestSha256: flow!.manifest_digest,
+        execution: { workspace: "none", completion: "result" },
+        enabled: true,
+        roleMappings: { operator: [reviewerId] },
+        idempotencyKey: randomUUID(),
+      }),
+    ).resolves.toMatchObject({
+      binding: {
+        configuration: {
+          enabled: true,
+          roleMappings: { operator: [reviewerId] },
+          routingAuthority: [{ userId: reviewerId }],
+        },
+      },
     });
   },
 );
