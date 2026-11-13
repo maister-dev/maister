@@ -2,7 +2,7 @@ import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 import type { Db } from "@/lib/execution-host/db";
 
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { join, resolve } from "node:path";
 
@@ -23,6 +23,15 @@ import {
 } from "@/lib/packages/attach";
 import { resolveInstalledAgentDefinition } from "@/lib/agents/effective";
 import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
+import { createCompanySpecialistBinding } from "@/lib/agents/company-bindings";
+import { claimDelivering } from "@/lib/execution-host/commands";
+import { platformAcpRunners } from "@/lib/db/schema";
+import { tryStartRun } from "@/lib/scheduler";
+import {
+  createFakeExecutionHost,
+  fakeExecutionHosts,
+} from "@/test-support/fake-execution-host";
+import { reserveCompanyManualAssignment } from "@/lib/specialist-assignments/company-manual-intake";
 import {
   appendSpecialistAssignmentInput,
   cancelSpecialistAssignment,
@@ -868,4 +877,216 @@ it("IT-CBO-02 IT-CBO-03 retains one restart intent across aliases and approves o
     { operation_id: newOperation.id, owner_epoch: "2", unresolved: true },
   ]);
   browser.user = null;
+});
+
+it("IT-CBO-02 issues at most one permit for a native approved restart command and refuses a revoked professional", async () => {
+  const { administratorId, userId, owner, input, request } =
+    await createRegistryFixture();
+  const db = database.db as Db;
+  const { createStandOperation } = await import("../operation-intake");
+  const { approveStandRestart } = await import("../restart-approval");
+  const { prepareStandRestartDispatch } = await import("../restart-dispatch");
+  const { authorizeStandCallback } = await import("../authority-permit");
+  const { POST } = await import("@/app/api/stands/route");
+
+  browser.user = await requireActiveUserById(userId);
+  try {
+    const targetResponse = await POST(request(input));
+
+    expect(targetResponse.status).toBe(201);
+    const target: { id: string } = await targetResponse.json();
+    const source = join(fixtureRoot, "stand-permit-package");
+
+    await mkdir(join(source, "maister-agents"), { recursive: true });
+    await writeFile(
+      join(source, "maister-package.yaml"),
+      'schemaVersion: 1\nname: stand-permit-fixture\ncompat: {engine_min: "3.12.0"}\nflows: []\n',
+    );
+    await writeFile(
+      join(source, "maister-agents/operator.md"),
+      "---\nname: Stand permit fixture\ndescription: Exercise scoped restart authority.\nkind: operational\ncompletion: {contract: operational_v1}\nspecialist: {responsibilities: [Verify stand operation authority], targetClasses: [stand]}\nmode: session\nworkspace: none\ntriggers: [manual]\nrisk_tier: standard\n---\nReturn the fixture observation.\n",
+    );
+    const installed = await installPackageRevision({
+      source,
+      version: "stand-permit-fixture/v1.0.0",
+      db,
+    });
+
+    await trustPackageRevision({ packageInstallId: installed.id, db });
+    const agentId = "stand-permit-fixture:operator";
+    const role = await resolveInstalledAgentDefinition(db, {
+      agentId,
+      packageInstallId: installed.id,
+    });
+    const runnerId = randomUUID();
+
+    await db.insert(platformAcpRunners).values({
+      id: runnerId,
+      adapter: "claude",
+      capabilityAgent: "claude",
+      model: "stand-permit-fixture",
+      provider: { kind: "anthropic" },
+      readinessStatus: "Ready",
+    });
+    await createCompanyGrants(db, administratorId, {
+      principalKind: "user",
+      principalId: userId,
+      actions: ["specialists:read", "specialists:manage"],
+      idempotencyKey: randomUUID(),
+    });
+    const professional = await createCompanyGrants(db, administratorId, {
+      principalKind: "agent",
+      principalId: agentId,
+      actions: ["assignments:read", "targets:restart"],
+      idempotencyKey: randomUUID(),
+    });
+    const binding = await createCompanySpecialistBinding(db, userId, agentId, {
+      owner,
+      packageInstallId: installed.id,
+      packageRevision: installed.resolvedRevision,
+      definitionSha256: agentDefinitionSha256(role.parsed),
+      configuration: {},
+      enabled: true,
+      grantActions: ["assignments:read", "targets:restart"],
+      runnerId,
+      idempotencyKey: randomUUID(),
+    });
+    const { hosts } = await fakeExecutionHosts(db, {
+      fake: createFakeExecutionHost(),
+    });
+    const { assignment } = await reserveCompanyManualAssignment(
+      db,
+      userId,
+      {
+        owner,
+        specialistBindingId: binding.specialist.bindingId,
+        objective: "Verify controlled restart authorization",
+        expectedOutcome: "One bound authorization",
+        input: "Only the registered fixture resource.",
+        targetIds: [target.id],
+        inputRefs: [],
+        constraints: [],
+        verification: [],
+        idempotencyKey: randomUUID(),
+      },
+      hosts,
+    );
+    const runId = assignment.runIds[0]!;
+
+    expect(await tryStartRun(runId, { db })).toEqual({ started: true });
+    const { operation } = await createStandOperation(
+      db,
+      userId,
+      assignment.id,
+      {
+        expectedRevision: assignment.revision,
+        inputRevision: assignment.inputRevision,
+        componentId: "api",
+        action: "restart",
+        idempotencyKey: randomUUID(),
+      },
+    );
+
+    await approveStandRestart(db, userId, operation.id, {
+      expectedRevision: operation.revision,
+      requestDigest: operation.requestDigest,
+      reason: "Approve the fixture intent.",
+      idempotencyKey: randomUUID(),
+    });
+    await database.pool.query(
+      `INSERT INTO stand_operation_observations(
+        operation_id,target_incarnation,resource_key,request_digest,target_sequence,invocation_id,observed_state,captured_at
+      ) SELECT id,target_incarnation,resource_key,request_digest,1,'fixture-invocation','active',now()
+        FROM stand_operations WHERE id=$1`,
+      [operation.id],
+    );
+    const identity = {
+      operationId: operation.id,
+      runId,
+      nodeAttemptId: null,
+    };
+    const preparations = await Promise.allSettled([
+      prepareStandRestartDispatch(db, identity),
+      prepareStandRestartDispatch(db, identity),
+    ]);
+    const admitted = preparations.find(
+      (result) => result.status === "fulfilled",
+    );
+
+    expect(preparations.map((result) => result.status).sort()).toEqual([
+      "fulfilled",
+      "rejected",
+    ]);
+    if (!admitted) throw new Error("The native command was not retained");
+    const command = admitted.value;
+
+    expect(await claimDelivering(db, command.row.id, 0)).toMatchObject({
+      changed: true,
+    });
+    const helperToken = randomBytes(32).toString("base64url");
+    const previousToken = process.env.STAND_TEST_HELPER_TOKEN;
+
+    process.env.STAND_TEST_HELPER_TOKEN = helperToken;
+    try {
+      const body = {
+        targetIncarnation: input.incarnationId,
+        resourceKey: command.envelope.payload.resourceKey,
+        requestDigest: operation.requestDigest,
+        ownerEpoch: command.envelope.payload.ownerEpoch,
+        purpose: "dispatch",
+        nonce: randomUUID(),
+      };
+      const authorize = (value: typeof body) =>
+        authorizeStandCallback(db, {
+          operationId: operation.id,
+          peerFingerprint: input.helperCertificateSha256,
+          helperToken,
+          body: value,
+        });
+
+      await expect(
+        authorize({ ...body, ownerEpoch: body.ownerEpoch - 1 }),
+      ).rejects.toMatchObject({
+        code: "CONFLICT",
+      });
+      const permits = await Promise.allSettled([
+        authorize(body),
+        authorize({ ...body, nonce: randomUUID() }),
+      ]);
+
+      expect(
+        permits.filter((permit) => permit.status === "fulfilled"),
+      ).toMatchObject([
+        {
+          value: {
+            operationId: operation.id,
+            allowed: true,
+            ownerEpoch: body.ownerEpoch,
+            purpose: "dispatch",
+          },
+        },
+      ]);
+      expect(
+        permits.filter((permit) => permit.status === "rejected"),
+      ).toMatchObject([{ reason: { code: "CONFLICT" } }]);
+      const grant = professional.page.items.find(
+        (entry) => entry.action === "targets:restart",
+      )!;
+
+      await revokeCompanyGrant(db, administratorId, grant.id, {
+        expectedRevision: grant.revision,
+        reason: "Revoke fixture restart authority.",
+        idempotencyKey: randomUUID(),
+      });
+      await expect(
+        authorize({ ...body, nonce: randomUUID() }),
+      ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    } finally {
+      if (previousToken === undefined)
+        delete process.env.STAND_TEST_HELPER_TOKEN;
+      else process.env.STAND_TEST_HELPER_TOKEN = previousToken;
+    }
+  } finally {
+    browser.user = null;
+  }
 });
