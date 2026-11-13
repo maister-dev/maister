@@ -141,6 +141,7 @@ const PAYLOAD_PROJECTION: Readonly<Record<CommandKind, Projection>> = {
         "ownerEpoch",
         "businessOwnerEpoch",
         "beforeObservationId",
+        "predecessorId",
       ]),
       nodeAttemptId:
         typeof p.nodeAttemptId === "string" ? p.nodeAttemptId : null,

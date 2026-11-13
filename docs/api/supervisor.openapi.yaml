@@ -4881,6 +4881,7 @@ components:
             businessOwnerEpoch: { type: integer, minimum: 1, maximum: 9007199254740991 }
             nodeAttemptId: { type: string, format: uuid, nullable: true }
             beforeObservationId: { type: string, format: uuid }
+            predecessorId: { type: string, format: uuid }
             before:
               type: object
               additionalProperties: false

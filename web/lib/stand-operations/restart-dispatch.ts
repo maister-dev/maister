@@ -266,6 +266,9 @@ export async function prepareStandRestartDispatch(
         businessOwnerEpoch: witness.epoch,
         nodeAttemptId,
         beforeObservationId: observation.id,
+        ...(operation.predecessorId
+          ? { predecessorId: operation.predecessorId }
+          : {}),
         before: {
           invocationId: observation.invocationId,
           state: observation.observedState,
@@ -313,6 +316,7 @@ type RestartCommandPayload = Readonly<{
   businessOwnerEpoch: number;
   nodeAttemptId: string | null;
   beforeObservationId: string;
+  predecessorId?: string;
   before: Readonly<{
     invocationId: string | null;
     state: "active" | "inactive" | "failed";

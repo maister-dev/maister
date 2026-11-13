@@ -23,12 +23,17 @@ export type RestartIntent = Readonly<{
   resourceKey: string;
   requestDigest: string;
   ownerEpoch: number;
+  predecessorId?: string;
 }>;
 export type ServiceObservation = Readonly<{
   invocationId: string | null;
   state: ServiceState;
 }>;
-export type RestartPermit = Readonly<{ permitId: string; expiresAt: string }>;
+export type RestartPermit = Readonly<{
+  permitId: string;
+  expiresAt: string;
+  predecessorId?: string;
+}>;
 export type RestartResult =
   | Readonly<{ acknowledgement: "received"; after: ServiceObservation }>
   | Readonly<{
@@ -52,6 +57,7 @@ export type RestartJournal = Readonly<{
   admit(
     intent: RestartIntent,
     before: ServiceObservation,
+    permit?: RestartPermit,
   ): {
     created: boolean;
     entry: RestartEntry;
@@ -147,6 +153,7 @@ type JournalRow = Readonly<{
   after_invocation: string | null;
   after_state: ServiceState | null;
   reason: ReceiptReason | null;
+  predecessor_id: string | null;
 }>;
 
 function entryFromRow(
@@ -159,6 +166,7 @@ function entryFromRow(
     resourceKey: row.resource_key,
     requestDigest: row.request_digest,
     ownerEpoch: row.owner_epoch,
+    ...(row.predecessor_id ? { predecessorId: row.predecessor_id } : {}),
     revision: row.revision,
     sequence: row.sequence,
     capturedAt: row.captured_at,
@@ -177,7 +185,8 @@ function assertSameIntent(current: RestartEntry, intent: RestartIntent): void {
   if (
     current.requestDigest !== intent.requestDigest ||
     current.resourceKey !== intent.resourceKey ||
-    current.ownerEpoch !== intent.ownerEpoch
+    current.ownerEpoch !== intent.ownerEpoch ||
+    current.predecessorId !== intent.predecessorId
   )
     throw new RestartJournalError("operation_conflict");
 }
@@ -218,7 +227,7 @@ function initialize(
         targetIncarnation,
       );
       db.exec("PRAGMA user_version=1");
-    } else if (version !== 1 && version !== 2) {
+    } else if (version !== 1 && version !== 2 && version !== 3) {
       throw new RestartJournalError("journal_corrupt");
     }
     const identity = db
@@ -229,9 +238,14 @@ function initialize(
 
     if (identity?.target_incarnation !== targetIncarnation)
       throw new RestartJournalError("target_identity_mismatch");
-    if (version !== 2) {
+    if (version === 0 || version === 1) {
       db.exec(VERIFICATION_SCHEMA);
-      db.exec("PRAGMA user_version=2");
+    }
+    if (version !== 3) {
+      db.exec(
+        "ALTER TABLE restart_operations ADD COLUMN predecessor_id TEXT CHECK (predecessor_id<>id)",
+      );
+      db.exec("PRAGMA user_version=3");
     }
   });
 }
@@ -267,8 +281,8 @@ export function openRestartJournal(
   );
   const insert = db.prepare(`
     INSERT INTO restart_operations
-      (id,resource_key,request_digest,owner_epoch,revision,sequence,captured_at,phase,before_invocation,before_state)
-    VALUES (?,?,?,?,1,?,?,'intent_retained',?,?)
+      (id,resource_key,request_digest,owner_epoch,revision,sequence,captured_at,phase,before_invocation,before_state,predecessor_id)
+    VALUES (?,?,?,?,1,?,?,'intent_retained',?,?,?)
   `);
   const consume = db.prepare(`
     UPDATE restart_operations SET phase='effect_started',permit_id=?,revision=2,sequence=?,captured_at=?
@@ -351,6 +365,7 @@ export function openRestartJournal(
     admit(
       intent: RestartIntent,
       before: ServiceObservation,
+      permit?: RestartPermit,
     ): { created: boolean; entry: RestartEntry } {
       assertTarget(intent);
 
@@ -373,9 +388,16 @@ export function openRestartJournal(
         if (latest && latest.owner_epoch >= intent.ownerEpoch)
           throw new RestartJournalError("stale_owner");
         if (
+          intent.predecessorId &&
+          (permit?.predecessorId !== intent.predecessorId ||
+            !(Date.parse(permit.expiresAt) > Date.now()))
+        )
+          throw new RestartJournalError("resource_conflict");
+        if (
           latest &&
           latest.phase !== "confirmed_not_applied" &&
-          latest.phase !== "confirmed_applied"
+          latest.phase !== "confirmed_applied" &&
+          latest.id !== intent.predecessorId
         )
           throw new RestartJournalError("resource_conflict");
 
@@ -388,6 +410,7 @@ export function openRestartJournal(
           new Date().toISOString(),
           before.invocationId,
           before.state,
+          intent.predecessorId ?? null,
         );
 
         return { created: true, entry: retained(intent.operationId) };
@@ -398,6 +421,8 @@ export function openRestartJournal(
         atPhase(intent, "intent_retained");
         const now = new Date();
 
+        if (permit.predecessorId !== intent.predecessorId)
+          throw new RestartJournalError("operation_conflict");
         if (!(Date.parse(permit.expiresAt) > now.getTime()))
           throw new RestartJournalError("authority_expired");
         consume.run(

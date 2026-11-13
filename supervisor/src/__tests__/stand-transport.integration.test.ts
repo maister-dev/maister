@@ -30,6 +30,7 @@ it("IT-CBO-04 sends one exact restart request, validates the pinned peer and lea
     businessOwnerEpoch: 1,
     nodeAttemptId: null,
     beforeObservationId: randomUUID(),
+    predecessorId: randomUUID(),
     before: { state: "active" as const, invocationId: "c".repeat(32) },
   };
   let deliveries = 0;
@@ -180,6 +181,7 @@ it("IT-CBO-04 sends one exact restart request, validates the pinned peer and lea
           requestDigest: payload.requestDigest,
           ownerEpoch: payload.ownerEpoch,
           before: payload.before,
+          predecessorId: payload.predecessorId,
         });
         deliveries++;
         request.socket.destroy();

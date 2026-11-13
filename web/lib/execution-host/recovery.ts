@@ -505,6 +505,12 @@ export async function recoverExecutionCommands(
   const recoverRow = async (row: ExecutionCommand): Promise<void> => {
     const at = now();
 
+    if (row.kind === "stand.dispatch") {
+      // Only the retained stand receipt and resource fence can settle a restart.
+      summary.skippedInFlight += 1;
+
+      return;
+    }
     if (ageMs(row, at) < graceMs) {
       summary.skippedInFlight += 1;
 

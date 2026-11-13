@@ -194,9 +194,10 @@ async function readRestart(request: IncomingMessage): Promise<RestartRequest> {
   const before = objectValue(input.before);
   const { invocationId, state } = before;
   const { requestDigest, ownerEpoch } = input;
+  const extraFields = Object.hasOwn(input, "predecessorId") ? 1 : 0;
 
   if (
-    Object.keys(input).length !== requestFields.length ||
+    Object.keys(input).length !== requestFields.length + extraFields ||
     requestFields.some((key) => !Object.hasOwn(input, key)) ||
     Object.keys(before).length !== 2 ||
     input.action !== "restart" ||
@@ -220,6 +221,9 @@ async function readRestart(request: IncomingMessage): Promise<RestartRequest> {
     componentId: requiredIdentity(input.componentId),
     requestDigest,
     ownerEpoch,
+    ...(extraFields
+      ? { predecessorId: requiredIdentity(input.predecessorId) }
+      : {}),
     before: { invocationId, state },
   };
 }
@@ -576,6 +580,14 @@ export function createStandHelper(options: StandHelperOptions): Server {
     const resourceKey = canonicalResourceKey(target, component);
     const service = createRestartService(options.journal, {
       inspect: () => options.manager.inspect(component),
+      ...(options.manager.requireQuiescent
+        ? {
+            requireQuiescent: options.manager.requireQuiescent.bind(
+              undefined,
+              component,
+            ),
+          }
+        : {}),
       authorize: options.authorize,
       restart: () => options.manager.restart(component),
     });

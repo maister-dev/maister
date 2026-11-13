@@ -44,6 +44,7 @@ test("IT-CBO-02 exchanges the exact dispatch nonce over TLS and rejects a change
     resourceKey: "a".repeat(64),
     requestDigest: "b".repeat(64),
     ownerEpoch: 1,
+    predecessorId: randomUUID(),
   };
   const permitId = randomUUID();
   let requests = 0;
@@ -73,6 +74,7 @@ test("IT-CBO-02 exchanges the exact dispatch nonce over TLS and rejects a change
       response.end(
         JSON.stringify({
           ...body,
+          predecessorId: requests === 3 ? randomUUID() : intent.predecessorId,
           ...(requests === 2 ? { nonce: randomUUID() } : {}),
           operationId: intent.operationId,
           permitId,
@@ -101,5 +103,6 @@ test("IT-CBO-02 exchanges the exact dispatch nonce over TLS and rejects a change
   if (accepted.decision === "allowed")
     assert.equal(accepted.permit.permitId, permitId);
   await assert.rejects(client.authorize(intent), { reason: "invalid_permit" });
-  assert.equal(requests, 2);
+  await assert.rejects(client.authorize(intent), { reason: "invalid_permit" });
+  assert.equal(requests, 3);
 });

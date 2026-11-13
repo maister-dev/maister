@@ -391,6 +391,10 @@ components:
           type: integer
           minimum: 1
           maximum: 9007199254740991
+        predecessorId:
+          type: string
+          format: uuid
+          description: Exact unresolved predecessor named by the online successor permit.
         before:
           type: object
           description: Exact before-effect witness. An active unit requires a non-null invocation ID.

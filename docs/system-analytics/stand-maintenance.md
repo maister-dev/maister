@@ -205,6 +205,11 @@ An operator needs current restart and recovery grants. After the dispatch
 lease and its permit window expire, one transaction creates a new operation
 ID and transfers the unresolved resource claim to the next epoch. The
 successor requires its own restart approval and before-effect observation.
+The helper accepts a predecessor ID only in an online permit bound to the
+successor. The new observation must match the inspected invocation and
+advance the target sequence. The helper checks for an empty systemd job
+slot and uses the fail-on-conflicting-job mode for restart. The original
+target journal entry remains available.
 
 | Window | Persisted state | Recovery and exclusion |
 | --- | --- | --- |

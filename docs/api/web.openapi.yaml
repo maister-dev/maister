@@ -41098,6 +41098,10 @@ components:
         - expiresAt
         - allowed
       properties:
+        predecessorId:
+          type: string
+          format: uuid
+          description: Present only for a dispatch permit naming the exact inspected predecessor.
         permitId:
           type: string
           minLength: 1

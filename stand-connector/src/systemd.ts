@@ -18,7 +18,10 @@ type LogExcerpt = Readonly<{ text: string; truncated: boolean }>;
 
 export class SystemdError extends Error {
   readonly reason:
-    "unsupported_config" | "service_unavailable" | "logs_unavailable";
+    | "unsupported_config"
+    | "service_unavailable"
+    | "logs_unavailable"
+    | "service_job_pending";
 
   constructor(reason: SystemdError["reason"]) {
     super(reason);
@@ -107,6 +110,7 @@ function sanitize(text: string, secrets: readonly string[]): string {
 }
 
 export type SystemdDriver = Readonly<{
+  requireQuiescent?(unit: SystemdUnit): Promise<void>;
   inspect(unit: SystemdUnit): Promise<ServiceObservation>;
   restart(unit: SystemdUnit): Promise<"received" | "uncertain">;
   logs(unit: SystemdUnit): Promise<LogExcerpt>;
@@ -125,6 +129,31 @@ export function createSystemdDriver(
     throw new SystemdError("unsupported_config");
 
   return {
+    async requireQuiescent(unit: SystemdUnit): Promise<void> {
+      checkUnit(unit);
+      const result = await run(
+        binaries.systemctl,
+        [
+          `--${unit.scope}`,
+          "--no-pager",
+          "--all",
+          "show",
+          "--property=Id",
+          "--property=Job",
+          "--",
+          unit.unit,
+        ],
+        unit,
+        3000,
+        4096,
+      );
+      const lines = result.stdout.split("\n");
+
+      if (!result.succeeded || !lines.includes(`Id=${unit.unit}`))
+        throw new SystemdError("service_unavailable");
+      if (!lines.includes("Job=0"))
+        throw new SystemdError("service_job_pending");
+    },
     async inspect(unit: SystemdUnit): Promise<ServiceObservation> {
       checkUnit(unit);
       const result = await run(
@@ -178,7 +207,14 @@ export function createSystemdDriver(
       checkUnit(unit);
       const result = await run(
         binaries.systemctl,
-        [`--${unit.scope}`, "--no-pager", "restart", "--", unit.unit],
+        [
+          `--${unit.scope}`,
+          "--no-pager",
+          "--job-mode=fail",
+          "restart",
+          "--",
+          unit.unit,
+        ],
         unit,
         45_000,
         16_384,

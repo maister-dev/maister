@@ -9,6 +9,87 @@ import type { ServiceObservation } from "../src/restart-journal.ts";
 import { openRestartJournal } from "../src/restart-journal.ts";
 import { createRestartService } from "../src/restart-service.ts";
 
+test("IT-CBO-07 transfers a retained unknown effect only to an online-approved successor", async (context) => {
+  const directory = mkdtempSync(join(tmpdir(), "maister-stand-successor-"));
+  const path = join(directory, "state.sqlite");
+  const targetIncarnation = randomUUID();
+  const predecessor = {
+    operationId: randomUUID(),
+    targetIncarnation,
+    resourceKey: "a".repeat(64),
+    requestDigest: "b".repeat(64),
+    ownerEpoch: 1,
+  };
+  const before = { invocationId: "a".repeat(32), state: "active" } as const;
+  const original = openRestartJournal(path, targetIncarnation, 256);
+  const freshPermit = () => ({
+    permitId: randomUUID(),
+    expiresAt: new Date(Date.now() + 5000).toISOString(),
+  });
+
+  original.admit(predecessor, before);
+  const effectStarted = original.consumePermit(predecessor, freshPermit());
+  original.close();
+  const journal = openRestartJournal(path, targetIncarnation, 256);
+
+  context.after(() => {
+    journal.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+  const successor = {
+    ...predecessor,
+    operationId: randomUUID(),
+    ownerEpoch: 3,
+    requestDigest: "c".repeat(64),
+    predecessorId: predecessor.operationId,
+  };
+  let effects = 0;
+  let allowedPredecessor: string | undefined;
+  let pendingJob = false;
+  const service = createRestartService(journal, {
+    inspect: async () =>
+      effects ? { ...before, invocationId: "b".repeat(32) } : before,
+    requireQuiescent: async () => {
+      if (pendingJob) throw new Error("fixture pending systemd job");
+    },
+    authorize: async () => ({
+      decision: "allowed",
+      permit: {
+        ...freshPermit(),
+        ...(allowedPredecessor ? { predecessorId: allowedPredecessor } : {}),
+      },
+    }),
+    restart: async () => {
+      effects++;
+      assert.equal(
+        journal.read(successor.operationId)?.phase,
+        "effect_started",
+      );
+      return "received";
+    },
+  });
+
+  await assert.rejects(() => service.execute(successor, before), {
+    reason: "resource_conflict",
+  });
+  assert.equal(journal.read(successor.operationId), null);
+  assert.equal(effects, 0);
+
+  allowedPredecessor = predecessor.operationId;
+  pendingJob = true;
+  await assert.rejects(
+    () => service.execute(successor, before),
+    /fixture pending systemd job/,
+  );
+  pendingJob = false;
+  const settled = await service.execute(successor, before);
+
+  assert.equal(settled.phase, "confirmed_applied");
+  assert.deepEqual(await service.execute(successor, before), settled);
+  assert.equal(effects, 1);
+  assert.deepEqual(journal.read(predecessor.operationId), effectStarted);
+});
+
 test("IT-CBO-02 checks the recorded before state and online authority before one effect", async (context) => {
   const directory = mkdtempSync(join(tmpdir(), "maister-stand-restart-"));
   const targetIncarnation = randomUUID();

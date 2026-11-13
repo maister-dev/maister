@@ -12,11 +12,13 @@ import {
   standComponents,
   standOperationObservations,
   standOperations,
+  standRecoveryDecisions,
   standResourceClaims,
   standTargets,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { contentDigest } from "@/lib/evaluations/digest";
+import { markFenced } from "@/lib/execution-host/commands";
 import {
   getSpecialistAssignmentInTransaction,
   getSpecialistAssignmentInputInTransaction,
@@ -181,6 +183,11 @@ export async function transferStandResource(
   predecessor: Operation,
   successor: Operation,
 ): Promise<void> {
+  const [original] = await tx
+    .select({ ownerId: standResourceClaims.ownerId })
+    .from(standResourceClaims)
+    .where(eq(standResourceClaims.operationId, predecessor.id))
+    .for("no key update");
   const [transferred] = await tx
     .update(standResourceClaims)
     .set({
@@ -204,4 +211,82 @@ export async function transferStandResource(
       "CONFLICT",
       "Wait for the original dispatch and permit to expire before authorizing a successor",
     );
+  if (original && original.ownerId !== predecessor.id)
+    await markFenced(tx, original.ownerId, null, {
+      code: "CONFLICT",
+      reason: "stand_recovery_authorized_successor",
+      operationId: predecessor.id,
+    });
+}
+
+/** A successor can dispatch only while the recovery authority and observed precondition still hold. */
+export async function requireStandSuccessorDispatchAuthority(
+  tx: Db,
+  operation: Operation,
+  companyId: string,
+  before: typeof standOperationObservations.$inferSelect,
+): Promise<void> {
+  const [recovery] = await tx
+    .select({
+      decision: standRecoveryDecisions,
+      predecessor: standOperations,
+      inspection: standOperationObservations,
+    })
+    .from(standOperations)
+    .innerJoin(
+      standRecoveryDecisions,
+      and(
+        eq(standRecoveryDecisions.operationId, standOperations.id),
+        eq(standRecoveryDecisions.operationRevision, standOperations.revision),
+        eq(standRecoveryDecisions.decision, "authorize_successor"),
+      ),
+    )
+    .innerJoin(
+      standOperationObservations,
+      and(
+        eq(standOperationObservations.operationId, standOperations.id),
+        sql`${standOperationObservations.id}=${standRecoveryDecisions.inspectionIds}->>0`,
+      ),
+    )
+    .where(
+      and(
+        eq(standOperations.id, operation.predecessorId ?? ""),
+        eq(standOperations.effectState, "unknown"),
+        eq(standOperations.disposition, "authorized_successor"),
+        sql`${standOperationObservations.receivedAt}>=clock_timestamp()-interval '5 minutes'`,
+      ),
+    );
+
+  if (
+    !recovery ||
+    recovery.decision.actorId !== operation.initiatingUserId ||
+    before.observedState !== recovery.inspection.observedState ||
+    before.invocationId !== recovery.inspection.invocationId ||
+    before.targetSequence <= recovery.inspection.targetSequence
+  )
+    throw new MaisterError(
+      "CONFLICT",
+      "The successor needs the current inspected service precondition",
+    );
+  const current = await authorizeCompanyUserAction(
+    tx,
+    recovery.decision.actorId,
+    companyId,
+    "targets:recover",
+  );
+
+  if (
+    current.witness.authorityId !== recovery.decision.authority.authorityId ||
+    current.witness.revision !== recovery.decision.authority.revision
+  )
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "The inspected recovery authority is no longer current",
+    );
+  await getSpecialistAssignmentInputInTransaction(
+    tx,
+    current.actor.id,
+    recovery.predecessor.assignmentId,
+    recovery.predecessor.inputRevision,
+  );
 }

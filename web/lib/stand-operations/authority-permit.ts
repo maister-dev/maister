@@ -9,6 +9,7 @@ import pino from "pino";
 import { authenticateStandOperationPeer } from "./authority-peer";
 import { standPermitCheckSchema } from "./operation-types";
 import { authorizeStandReadOwner } from "./read-authority";
+import { requireStandSuccessorDispatchAuthority } from "./recovery-successor";
 import { authorizeStandRestartProfessional } from "./restart-dispatch";
 import { readStandRunbookDigest } from "./target-registry";
 
@@ -44,12 +45,14 @@ type StandPermit = StandPermitCheck &
     operationId: string;
     expiresAt: string;
     allowed: true;
+    predecessorId?: string;
   }>;
 
 async function retainPermit(
   tx: Pick<Db, "insert">,
   operationId: string,
   input: StandPermitCheck,
+  predecessorId?: string,
 ): Promise<StandPermit> {
   const [issued] = await tx
     .insert(standAuthorizationPermits)
@@ -72,6 +75,7 @@ async function retainPermit(
     permitId: issued.id,
     expiresAt: issued.expiresAt.toISOString(),
     allowed: true,
+    ...(predecessorId ? { predecessorId } : {}),
   };
 }
 
@@ -173,6 +177,7 @@ export async function authorizeStandCallback(
       if (
         !command ||
         typeof observationId !== "string" ||
+        (command.payload.predecessorId ?? null) !== operation.predecessorId ||
         (nodeAttemptId !== null && typeof nodeAttemptId !== "string")
       )
         throw new MaisterError(
@@ -263,7 +268,20 @@ export async function authorizeStandCallback(
           );
       }
 
-      return retainPermit(tx, operation.id, input);
+      if (operation.predecessorId)
+        await requireStandSuccessorDispatchAuthority(
+          tx,
+          operation,
+          target.companyId,
+          observation,
+        );
+
+      return retainPermit(
+        tx,
+        operation.id,
+        input,
+        operation.predecessorId ?? undefined,
+      );
     });
 
     log.info(

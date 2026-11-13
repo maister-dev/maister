@@ -25,6 +25,7 @@ import {
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { contentDigest } from "@/lib/evaluations/digest";
+import { markSucceeded } from "@/lib/execution-host/commands";
 
 function conflict(reason: string): MaisterError {
   return new MaisterError(
@@ -287,6 +288,11 @@ export async function adoptStandTargetReceipt(
           .update(standResourceClaims)
           .set({ unresolved: false })
           .where(eq(standResourceClaims.operationId, operationId));
+      if (confirmed && readEpoch !== undefined)
+        await markSucceeded(tx, claim.ownerId, null, {
+          operationId,
+          effectState,
+        });
 
       return operationDto(updated, null, receiptIds);
     });

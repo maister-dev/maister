@@ -14,6 +14,7 @@ export const StandDispatchPayloadSchema = z
     businessOwnerEpoch: z.number().int().min(1),
     nodeAttemptId: z.uuid().nullable(),
     beforeObservationId: z.uuid(),
+    predecessorId: z.uuid().optional(),
     before: z
       .object({
         invocationId: z

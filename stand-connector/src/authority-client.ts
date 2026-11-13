@@ -162,11 +162,14 @@ export function createAuthorityClient(
       throw new AuthorityClientError("authority_unavailable");
     const permit = decodePermit(reply.text);
     const { permitId, expiresAt } = permit;
+    const predecessorId =
+      purpose === "dispatch" ? intent.predecessorId : undefined;
     const now = Date.now();
     const expiry = typeof expiresAt === "string" ? Date.parse(expiresAt) : NaN;
 
     if (
-      Object.keys(permit).length !== 10 ||
+      Object.keys(permit).length !== (predecessorId ? 11 : 10) ||
+      permit.predecessorId !== predecessorId ||
       permit.allowed !== true ||
       permit.operationId !== operationId ||
       Object.entries(identity).some(
@@ -179,7 +182,14 @@ export function createAuthorityClient(
     )
       throw new AuthorityClientError("invalid_permit");
 
-    return { decision: "allowed", permit: { permitId, expiresAt } };
+    return {
+      decision: "allowed",
+      permit: {
+        permitId,
+        expiresAt,
+        ...(predecessorId ? { predecessorId } : {}),
+      },
+    };
   }
 
   return {

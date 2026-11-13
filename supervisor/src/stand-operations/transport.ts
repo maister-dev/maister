@@ -167,6 +167,7 @@ function sendRestart(
     requestDigest,
     ownerEpoch,
     before,
+    predecessorId,
   } = payload;
   const body = JSON.stringify({
     operationId,
@@ -176,6 +177,7 @@ function sendRestart(
     requestDigest,
     ownerEpoch,
     before,
+    ...(predecessorId ? { predecessorId } : {}),
   });
 
   return requestReceipt(target, payload, {
