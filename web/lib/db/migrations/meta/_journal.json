@@ -2269,6 +2269,13 @@
       "when": 1794606478030,
       "tag": "0327_stand_recovery_inspection_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 328,
+      "version": "7",
+      "when": 1794606478031,
+      "tag": "0328_stand_successor_recovery_guards",
+      "breakpoints": true
     }
   ]
 }

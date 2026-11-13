@@ -105,7 +105,11 @@ cases:
     value:
       expectedRevision: 5
       decision: authorize_successor
-      inspectionIds: [inspection_example]
+      inspectionIds: [b468dafe-f8ce-4d76-99f8-57f56108404f]
+      successor:
+        assignmentId: 28587739-c37c-42a2-a112-d9b1c7f1e6b4
+        expectedRevision: 7
+        inputRevision: 2
       reason: Request a separate permitted operation after inspecting current target state.
       idempotencyKey: recovery_example_001
   - id: ownership-cannot-name-company-and-project

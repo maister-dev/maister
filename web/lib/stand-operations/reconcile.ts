@@ -55,7 +55,8 @@ export async function reconcileStandRestart(
     );
   if (
     operation.effectState === "confirmed_applied" ||
-    operation.effectState === "confirmed_not_applied"
+    operation.effectState === "confirmed_not_applied" ||
+    operation.disposition === "authorized_successor"
   )
     return getStandOperation(db, userId, operationId);
   let rawReceipt: unknown;

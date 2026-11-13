@@ -25,7 +25,10 @@ import { resolveInstalledAgentDefinition } from "@/lib/agents/effective";
 import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
 import { createCompanySpecialistBinding } from "@/lib/agents/company-bindings";
 import { releaseAssignmentForRun } from "@/lib/execution-host/assignments";
-import { setDefaultTransportForTests } from "@/lib/execution-host/default-transport";
+import {
+  defaultTransport,
+  setDefaultTransportForTests,
+} from "@/lib/execution-host/default-transport";
 import { platformAcpRunners, runs } from "@/lib/db/schema";
 import { tryStartRun } from "@/lib/scheduler";
 import {
@@ -365,7 +368,7 @@ it("IT-CBO-01 registers a versioned company target with a runbook and canonical 
   browser.user = null;
 });
 
-it("IT-CBO-02 IT-CBO-03 retains one restart intent across aliases and approves only its exact digest", async () => {
+it("IT-CBO-02 IT-CBO-03 IT-CBO-07 retains one restart intent across aliases and approves only its exact digest", async () => {
   const { administratorId, userId, owner, authority, input, request } =
     await createRegistryFixture();
   const { POST: createTarget } = await import("@/app/api/stands/route");
@@ -904,7 +907,7 @@ it("IT-CBO-02 IT-CBO-03 retains one restart intent across aliases and approves o
         decision: "authorize_successor",
       })
     ).status,
-  ).toBe(409);
+  ).toBe(400);
   await expect(
     database.pool.query(
       "DELETE FROM stand_recovery_decisions WHERE operation_id=$1",
@@ -947,6 +950,138 @@ it("IT-CBO-02 IT-CBO-03 retains one restart intent across aliases and approves o
   ).toEqual([
     { operation_id: newOperation.id, owner_epoch: "2", unresolved: true },
   ]);
+
+  // Transfer a separate unknown operation to an explicitly appointed open assignment.
+  const { inspectStandRecovery } = await import("../observe");
+  const recoveryToken = randomBytes(32).toString("base64url");
+
+  vi.stubEnv("STAND_TEST_HELPER_TOKEN", recoveryToken);
+  try {
+    await database.db.transaction(async (tx) => {
+      await tx.execute(
+        sql`UPDATE stand_operations SET effect_state='dispatching',revision=revision+1 WHERE id=${newOperation.id}`,
+      );
+      await tx.execute(
+        sql`UPDATE stand_operations SET effect_state='unknown',revision=revision+1 WHERE id=${newOperation.id}`,
+      );
+      await tx.execute(
+        sql`UPDATE stand_resource_claims SET expires_at=clock_timestamp()-interval '6 seconds' WHERE operation_id=${newOperation.id}`,
+      );
+    });
+    const sequence = 7;
+
+    setDefaultTransportForTests({
+      ...defaultTransport(),
+      observeStandOperation: async (selector) => {
+        await authorizeStandCallback(database.db, {
+          operationId: selector.operationId,
+          peerFingerprint: input.helperCertificateSha256,
+          helperToken: recoveryToken,
+          body: {
+            targetIncarnation: selector.targetIncarnation,
+            resourceKey: selector.resourceKey,
+            requestDigest: selector.requestDigest,
+            ownerEpoch: selector.ownerEpoch,
+            nonce: randomUUID(),
+            purpose: "reconcile",
+          },
+        });
+
+        return {
+          sequence,
+          invocationId: "a".repeat(32),
+          state: "active",
+          operationId: selector.operationId,
+          targetIncarnation: selector.targetIncarnation,
+          requestDigest: selector.requestDigest,
+          resourceKey: selector.resourceKey,
+          capturedAt: new Date().toISOString(),
+        };
+      },
+    });
+    const inspected = await inspectStandRecovery(
+      database.db,
+      userId,
+      newOperation.id,
+      newOperation.revision + 2,
+    );
+    const decideSuccessor = (inspectionId: string, idempotencyKey: string) =>
+      decideRecovery(
+        new NextRequest(
+          `http://localhost/api/stand-operations/${newOperation.id}/recovery-decisions`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Origin: "http://localhost",
+            },
+            body: JSON.stringify({
+              expectedRevision: newOperation.revision + 2,
+              decision: "authorize_successor",
+              inspectionIds: [inspectionId],
+              successor: {
+                assignmentId: loser.id,
+                expectedRevision: loser.revision,
+                inputRevision: loser.inputRevision,
+              },
+              reason: "Proceed after inspecting current service state.",
+              idempotencyKey,
+            }),
+          },
+        ),
+        { params: Promise.resolve({ operationId: newOperation.id }) },
+      );
+    const forgedInspection = await decideSuccessor(randomUUID(), randomUUID());
+
+    expect(forgedInspection.status).toBe(409);
+    const deliveryKey = randomUUID();
+    const [authorized, duplicateSuccessor] = await Promise.all([
+      decideSuccessor(inspected.id, deliveryKey),
+      decideSuccessor(inspected.id, deliveryKey),
+    ]);
+
+    expect([authorized.status, duplicateSuccessor.status].sort()).toEqual([
+      200, 202,
+    ]);
+    const original = await authorized.json();
+
+    expect(original).toMatchObject({
+      effectState: "unknown",
+      disposition: "authorized_successor",
+      successorId: expect.any(String),
+    });
+    expect(await duplicateSuccessor.json()).toEqual(original);
+    const successor = await GET(
+      new NextRequest(
+        `http://localhost/api/stand-operations/${original.successorId}`,
+      ),
+      {
+        params: Promise.resolve({ operationId: original.successorId }),
+      },
+    );
+
+    expect(await successor.json()).toMatchObject({
+      predecessorId: newOperation.id,
+      effectState: "not_dispatched",
+      verificationState: "not_checked",
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT operation_id,owner_epoch,unresolved FROM stand_resource_claims",
+        )
+      ).rows,
+    ).toEqual([
+      {
+        operation_id: original.successorId,
+        owner_epoch: "3",
+        unresolved: true,
+      },
+    ]);
+  } finally {
+    setDefaultTransportForTests(null);
+    vi.unstubAllEnvs();
+  }
   browser.user = null;
 });
 

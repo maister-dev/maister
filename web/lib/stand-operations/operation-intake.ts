@@ -26,7 +26,7 @@ import {
   standTargets,
 } from "@/lib/db/schema";
 import { redactQueryError } from "@/lib/db/pg-error";
-import { MaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 import { contentDigest } from "@/lib/evaluations/digest";
 import {
   beginAssignmentTransaction,
@@ -377,14 +377,51 @@ export async function getStandOperation(
       operation.stand_operations.assignmentId,
       operation.stand_operations.inputRevision,
     );
-    const [successor] = await tx
-      .select({ id: standOperations.id })
+    const current = operation.stand_operations;
+    const linked = await tx
+      .select({
+        id: standOperations.id,
+        assignmentId: standOperations.assignmentId,
+        inputRevision: standOperations.inputRevision,
+      })
       .from(standOperations)
-      .where(eq(standOperations.predecessorId, operationId));
+      .where(
+        current.predecessorId
+          ? sql`${standOperations.id}=${current.predecessorId} OR ${standOperations.predecessorId}=${operationId}`
+          : eq(standOperations.predecessorId, operationId),
+      );
+    const visible = new Set<string>();
+
+    for (const entry of linked) {
+      try {
+        await getSpecialistAssignmentInputInTransaction(
+          tx,
+          userId,
+          entry.assignmentId,
+          entry.inputRevision,
+        );
+        visible.add(entry.id);
+      } catch (error) {
+        if (
+          !isMaisterError(error) ||
+          !["UNAUTHORIZED", "PRECONDITION"].includes(error.code)
+        )
+          throw error;
+      }
+    }
+    const successor = linked.find(
+      (entry) => entry.id !== current.predecessorId,
+    );
 
     return operationDto(
-      operation.stand_operations,
-      successor?.id ?? null,
+      {
+        ...current,
+        predecessorId:
+          current.predecessorId && visible.has(current.predecessorId)
+            ? current.predecessorId
+            : null,
+      },
+      successor && visible.has(successor.id) ? successor.id : null,
       await readStandReceiptIds(tx, operationId),
       await readStandVerificationIds(tx, operationId),
     );

@@ -17910,40 +17910,81 @@ components:
           minimum: 1
           maximum: 2147483647
     CBRecoveryDecision:
-      type: object
-      additionalProperties: false
-      required:
-        - expectedRevision
-        - decision
-        - inspectionIds
-        - reason
-        - idempotencyKey
-      properties:
-        expectedRevision:
-          type: integer
-          minimum: 1
-          maximum: 2147483647
-        decision:
-          type: string
-          enum:
-            - hold
-            - authorize_successor
-        inspectionIds:
-          type: array
-          items:
-            type: string
-            minLength: 1
-            maxLength: 128
-          maxItems: 16
-        reason:
-          type: string
-          minLength: 1
-          maxLength: 2000
-        idempotencyKey:
-          type: string
-          minLength: 8
-          maxLength: 128
-          pattern: ^[A-Za-z0-9._:-]+$
+      oneOf:
+        -
+          type: object
+          additionalProperties: false
+          required: [expectedRevision, decision, inspectionIds, reason, idempotencyKey]
+          properties:
+            expectedRevision:
+              type: integer
+              minimum: 1
+              maximum: 2147483647
+            decision:
+              type: string
+              enum: [hold]
+            inspectionIds:
+              type: array
+              minItems: 0
+              maxItems: 0
+              items:
+                type: string
+                format: uuid
+            reason:
+              type: string
+              minLength: 1
+              maxLength: 2000
+              pattern: '\S'
+            idempotencyKey:
+              type: string
+              minLength: 8
+              maxLength: 128
+              pattern: ^[A-Za-z0-9._:-]+$
+        -
+          type: object
+          additionalProperties: false
+          required: [expectedRevision, decision, inspectionIds, reason, idempotencyKey, successor]
+          properties:
+            expectedRevision:
+              type: integer
+              minimum: 1
+              maximum: 2147483647
+            decision:
+              type: string
+              enum: [authorize_successor]
+            inspectionIds:
+              type: array
+              minItems: 1
+              maxItems: 1
+              items:
+                type: string
+                format: uuid
+            reason:
+              type: string
+              minLength: 1
+              maxLength: 2000
+              pattern: '\S'
+            idempotencyKey:
+              type: string
+              minLength: 8
+              maxLength: 128
+              pattern: ^[A-Za-z0-9._:-]+$
+            successor:
+              type: object
+              additionalProperties: false
+              required: [assignmentId, expectedRevision, inputRevision]
+              properties:
+                assignmentId:
+                  type: string
+                  format: uuid
+                expectedRevision:
+                  type: integer
+                  minimum: 1
+                  maximum: 2147483647
+                inputRevision:
+                  type: integer
+                  minimum: 1
+                  maximum: 2147483647
     CBFindings:
       type: object
       additionalProperties: false

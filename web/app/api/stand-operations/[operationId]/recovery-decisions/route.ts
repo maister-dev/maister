@@ -10,7 +10,7 @@ import {
 import { getDb } from "@/lib/db/client";
 import { readBoundedJson } from "@/lib/http/bounded-json";
 import { STAND_OPERATION_BODY_MAX_BYTES } from "@/lib/stand-operations/operation-types";
-import { recordStandRecoveryHold } from "@/lib/stand-operations/recovery-hold";
+import { recordStandRecoveryDecision } from "@/lib/stand-operations/recovery-decision";
 import { assertInteractiveLaunchOrigin } from "@/lib/tasks/launch-http";
 
 export async function POST(
@@ -22,7 +22,7 @@ export async function POST(
 
     assertInteractiveLaunchOrigin(request);
     const { operationId } = await params;
-    const receipt = await recordStandRecoveryHold(
+    const receipt = await recordStandRecoveryDecision(
       getDb(),
       user.id,
       operationId,

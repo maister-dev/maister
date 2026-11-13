@@ -3,11 +3,19 @@ import "server-only";
 import type { Db } from "@/lib/execution-host/db";
 import type { StandOperation } from "./operation-types";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { operationDto } from "./operation-intake";
 import { standRecoveryDecisionSchema } from "./operation-types";
+import {
+  readStandReceiptIds,
+  readStandVerificationIds,
+} from "./receipt-queries";
+import {
+  retainStandSuccessor,
+  transferStandResource,
+} from "./recovery-successor";
 
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import { installationCompany } from "@/lib/company/grants";
@@ -23,15 +31,16 @@ import { contentDigest } from "@/lib/evaluations/digest";
 import {
   beginAssignmentTransaction,
   getSpecialistAssignmentInputInTransaction,
+  lockSpecialistAssignment,
 } from "@/lib/specialist-assignments/store";
 
 const log = pino({
-  name: "stand-recovery-hold",
+  name: "stand-recovery-decision",
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-/** Retain an operator decision while preserving the unknown effect and its exclusion claim. */
-export async function recordStandRecoveryHold(
+/** Retain a human decision and preserve the unknown effect across the resource transition. */
+export async function recordStandRecoveryDecision(
   db: Db,
   userId: string,
   operationId: string,
@@ -59,6 +68,9 @@ export async function recordStandRecoveryHold(
       );
 
       await authorizeCompanyUserAction(tx, userId, companyId, "targets:read");
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`stand-recovery:${operationId}`},0))`,
+      );
       const [stored] = await tx
         .select({ operation: standOperations })
         .from(standOperations)
@@ -78,6 +90,23 @@ export async function recordStandRecoveryHold(
             details: { reason: "stand_operation_unavailable" },
           },
         );
+      const [previous] = await tx
+        .select({ digest: standRecoveryDecisions.decisionDigest })
+        .from(standRecoveryDecisions)
+        .where(
+          and(
+            eq(standRecoveryDecisions.operationId, operationId),
+            eq(standRecoveryDecisions.actorId, authority.actor.id),
+            eq(standRecoveryDecisions.deliveryKey, input.idempotencyKey),
+          ),
+        );
+
+      if (!previous && input.decision === "authorize_successor")
+        await lockSpecialistAssignment(
+          tx,
+          input.successor.assignmentId,
+          input.successor.expectedRevision,
+        );
       const captured = await getSpecialistAssignmentInputInTransaction(
         tx,
         userId,
@@ -95,17 +124,6 @@ export async function recordStandRecoveryHold(
           "CONFLICT",
           "The retained operation input witness is unavailable",
         );
-      const [previous] = await tx
-        .select({ digest: standRecoveryDecisions.decisionDigest })
-        .from(standRecoveryDecisions)
-        .where(
-          and(
-            eq(standRecoveryDecisions.operationId, operationId),
-            eq(standRecoveryDecisions.actorId, authority.actor.id),
-            eq(standRecoveryDecisions.deliveryKey, input.idempotencyKey),
-          ),
-        );
-
       if (previous) {
         if (previous.digest !== decisionDigest)
           throw new MaisterError(
@@ -113,29 +131,44 @@ export async function recordStandRecoveryHold(
             "The recovery delivery key already names a different decision",
           );
         const [successor] = await tx
-          .select({ id: standOperations.id })
+          .select()
           .from(standOperations)
           .where(eq(standOperations.predecessorId, operationId));
 
+        if (successor) {
+          await authorizeCompanyUserAction(
+            tx,
+            userId,
+            companyId,
+            "targets:restart",
+          );
+          await getSpecialistAssignmentInputInTransaction(
+            tx,
+            userId,
+            successor.assignmentId,
+            successor.inputRevision,
+          );
+        }
+
         return {
-          operation: operationDto(current, successor?.id),
+          operation: operationDto(
+            current,
+            successor?.id,
+            await readStandReceiptIds(tx, operationId),
+            await readStandVerificationIds(tx, operationId),
+          ),
           duplicate: true,
         };
       }
-      if (input.decision !== "hold" || input.inspectionIds.length !== 0)
-        throw new MaisterError(
-          "CONFLICT",
-          "This recovery decision requires authenticated target inspections",
-        );
-
       if (
         current.action !== "restart" ||
         current.revision !== input.expectedRevision ||
-        current.effectState !== "unknown"
+        current.effectState !== "unknown" ||
+        current.disposition === "authorized_successor"
       )
         throw new MaisterError(
           "CONFLICT",
-          "A recovery hold requires the current unknown restart operation",
+          "A recovery decision requires the current unknown restart operation",
         );
 
       const [claim] = await tx
@@ -156,6 +189,10 @@ export async function recordStandRecoveryHold(
         );
 
       const revision = current.revision + 1;
+      const successor =
+        input.decision === "authorize_successor"
+          ? await retainStandSuccessor(tx, current, companyId, userId, input)
+          : null;
 
       await tx.insert(standRecoveryDecisions).values({
         operationId,
@@ -170,7 +207,10 @@ export async function recordStandRecoveryHold(
       });
       const [updated] = await tx
         .update(standOperations)
-        .set({ disposition: "unresolved_hold", revision })
+        .set({
+          disposition: successor ? "authorized_successor" : "unresolved_hold",
+          revision,
+        })
         .where(eq(standOperations.id, operationId))
         .returning();
 
@@ -180,17 +220,28 @@ export async function recordStandRecoveryHold(
           "The retained operation could not be updated",
         );
 
-      return { operation: operationDto(updated), duplicate: false };
+      if (successor) await transferStandResource(tx, current, successor);
+
+      return {
+        operation: operationDto(
+          updated,
+          successor?.id,
+          await readStandReceiptIds(tx, operationId),
+          await readStandVerificationIds(tx, operationId),
+        ),
+        duplicate: false,
+      };
     });
 
     log.info(
       {
         operationId,
         actorId: userId,
+        decision: input.decision,
         revision: result.operation.revision,
         duplicate: result.duplicate,
       },
-      "stand recovery hold retained",
+      "stand recovery decision retained",
     );
 
     return result;

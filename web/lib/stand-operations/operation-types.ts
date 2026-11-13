@@ -65,15 +65,36 @@ export const standPermitCheckSchema = z
   })
   .strict();
 
-export const standRecoveryDecisionSchema = z
+const recoveryDecision = z
   .object({
     expectedRevision: knowledgeRevisionSchema,
-    decision: z.enum(["hold", "authorize_successor"]),
-    inspectionIds: z.array(postgresTextSchema.min(1).max(128)).max(16),
     reason: postgresTextSchema.min(1).max(2000).regex(/\S/),
     idempotencyKey: knowledgeDeliveryKeySchema,
   })
   .strict();
+
+export const standRecoveryDecisionSchema = z.discriminatedUnion("decision", [
+  recoveryDecision.extend({
+    decision: z.literal("hold"),
+    inspectionIds: z.tuple([]),
+  }),
+  recoveryDecision.extend({
+    decision: z.literal("authorize_successor"),
+    inspectionIds: z.tuple([z.uuid()]),
+    successor: z
+      .object({
+        assignmentId: z.uuid(),
+        expectedRevision: knowledgeRevisionSchema,
+        inputRevision: knowledgeRevisionSchema,
+      })
+      .strict(),
+  }),
+]);
+
+export type StandSuccessorDecision = Extract<
+  z.infer<typeof standRecoveryDecisionSchema>,
+  { decision: "authorize_successor" }
+>;
 
 const invocationIdSchema = z
   .string()

@@ -22278,19 +22278,19 @@ paths:
           $ref: "#/components/responses/CBFailure"
         "413":
           $ref: "#/components/responses/CBFailure"
-        "422":
+        "400":
           $ref: "#/components/responses/CBFailure"
         "503":
           $ref: "#/components/responses/CBFailure"
   /api/stand-operations/{operationId}/recovery-decisions:
     post:
       operationId: standOperationRecovery
-      summary: Record a hold on an unknown restart
-      description: A same-origin session with current targets:read, targets:recover and retained assignment source
-        access can hold an unknown restart at its exact revision. The effect and resource claim are preserved.
-        Hold currently accepts an empty inspection list. Inspected decisions and successor authorization
-        require the target inspection flow and currently return 409. Exact replay returns current operation
-        state under current authority; changed input with the same delivery key conflicts.
+      summary: Hold an unknown restart or authorize a new intent after inspection
+      description: A same-origin session with current target read, recovery and assignment access can hold an
+        unknown restart. Successor authorization also requires current restart authority, the latest fresh
+        known-active inspection, an expired dispatch fence, and exact input on an open assignment for the
+        same component. The transaction retains the original unknown effect and transfers the resource
+        to a new intent requiring separate restart approval. Exact replay remains subject to current access.
       x-implementation-status: Implemented
       x-required-scope: targets:recover
       requestBody:
@@ -22307,7 +22307,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/CBOperation"
         "202":
-          description: Durable hold accepted. The effect remains unknown and the resource stays excluded.
+          description: Durable recovery decision accepted. The historical effect remains unknown and the resource stays excluded.
           content:
             application/json:
               schema:
@@ -40971,40 +40971,81 @@ components:
           type: string
           format: date-time
     CBRecoveryDecision:
-      type: object
-      additionalProperties: false
-      required:
-        - expectedRevision
-        - decision
-        - inspectionIds
-        - reason
-        - idempotencyKey
-      properties:
-        expectedRevision:
-          type: integer
-          minimum: 1
-          maximum: 2147483647
-        decision:
-          type: string
-          enum:
-            - hold
-            - authorize_successor
-        inspectionIds:
-          type: array
-          items:
-            type: string
-            minLength: 1
-            maxLength: 128
-          maxItems: 16
-        reason:
-          type: string
-          minLength: 1
-          maxLength: 2000
-        idempotencyKey:
-          type: string
-          minLength: 8
-          maxLength: 128
-          pattern: ^[A-Za-z0-9._:-]+$
+      oneOf:
+        -
+          type: object
+          additionalProperties: false
+          required: [expectedRevision, decision, inspectionIds, reason, idempotencyKey]
+          properties:
+            expectedRevision:
+              type: integer
+              minimum: 1
+              maximum: 2147483647
+            decision:
+              type: string
+              enum: [hold]
+            inspectionIds:
+              type: array
+              minItems: 0
+              maxItems: 0
+              items:
+                type: string
+                format: uuid
+            reason:
+              type: string
+              minLength: 1
+              maxLength: 2000
+              pattern: '\S'
+            idempotencyKey:
+              type: string
+              minLength: 8
+              maxLength: 128
+              pattern: ^[A-Za-z0-9._:-]+$
+        -
+          type: object
+          additionalProperties: false
+          required: [expectedRevision, decision, inspectionIds, reason, idempotencyKey, successor]
+          properties:
+            expectedRevision:
+              type: integer
+              minimum: 1
+              maximum: 2147483647
+            decision:
+              type: string
+              enum: [authorize_successor]
+            inspectionIds:
+              type: array
+              minItems: 1
+              maxItems: 1
+              items:
+                type: string
+                format: uuid
+            reason:
+              type: string
+              minLength: 1
+              maxLength: 2000
+              pattern: '\S'
+            idempotencyKey:
+              type: string
+              minLength: 8
+              maxLength: 128
+              pattern: ^[A-Za-z0-9._:-]+$
+            successor:
+              type: object
+              additionalProperties: false
+              required: [assignmentId, expectedRevision, inputRevision]
+              properties:
+                assignmentId:
+                  type: string
+                  format: uuid
+                expectedRevision:
+                  type: integer
+                  minimum: 1
+                  maximum: 2147483647
+                inputRevision:
+                  type: integer
+                  minimum: 1
+                  maximum: 2147483647
     CBPermitCheck:
       type: object
       additionalProperties: false

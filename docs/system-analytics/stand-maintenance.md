@@ -199,6 +199,12 @@ authenticated inspection at the exact unknown revision. The retained
 observation records current service state, target sequence, and the
 reconciliation read epoch. It leaves the effect and verification states
 unchanged. Successor authorization requires authenticated inspections.
+The decision names one latest known-active inspection received within five
+minutes, plus an exact input on an open assignment for the same component.
+An operator needs current restart and recovery grants. After the dispatch
+lease and its permit window expire, one transaction creates a new operation
+ID and transfers the unresolved resource claim to the next epoch. The
+successor requires its own restart approval and before-effect observation.
 
 | Window | Persisted state | Recovery and exclusion |
 | --- | --- | --- |
