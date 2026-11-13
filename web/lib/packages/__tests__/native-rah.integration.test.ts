@@ -18,7 +18,10 @@ import { attachAgent } from "@/lib/agents/project-links";
 import { loadFlowManifest, readAndValidateFormSchemaDoc } from "@/lib/config";
 import { createCompanyGrants } from "@/lib/company/grants";
 import { platformAcpRunners, platformRuntimeSettings } from "@/lib/db/schema";
-import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
+import {
+  fakeExecutionHosts,
+  scriptAgentTurn,
+} from "@/test-support/fake-execution-host";
 import { reserveCompanyManualAssignment } from "@/lib/specialist-assignments/company-manual-intake";
 import { assertNodeLaunchable } from "@/lib/flows/enforcement";
 import { deriveSessionEnforcementProfile } from "@/lib/flows/enforcement-profile";
@@ -34,6 +37,8 @@ import { evidenceFindingsV1Schema } from "@/lib/run-results/findings-types";
 import { resolveFlowExportContract } from "@/lib/run-results/flow-export";
 import { initRepo } from "@/test-support/git-fixture";
 import { startMainPostgresTestDb } from "@/test-support/pg-container";
+import { runFlow } from "@/lib/flows/runner";
+import { tryStartRun } from "@/lib/scheduler";
 
 let database: StartedPostgresTestDb;
 let root: string;
@@ -494,7 +499,39 @@ it.skipIf(!standSource || !standRevision)(
         },
       },
     });
-    const { hosts } = await fakeExecutionHosts(database.db);
+    const { hosts, fake } = await fakeExecutionHosts(database.db);
+    const smoke = {
+      status: "ok" as const,
+      reason: null,
+      checkedAt: new Date().toISOString(),
+      protocolVersion: 1,
+    };
+
+    fake.setDiagnostics({
+      kind: "ready",
+      diagnostics: {
+        status: "ready",
+        version: "fixture",
+        checkedAt: smoke.checkedAt,
+        envRefs: [],
+        adapters: [
+          {
+            id: "claude",
+            binary: "fixture-claude",
+            source: "path",
+            path: null,
+            available: true,
+            version: null,
+            error: null,
+            smoke: {
+              ...smoke,
+              capabilityEnforcement: smoke,
+              readOnlySession: { ...smoke, probeVersion: 2, staleReason: null },
+            },
+          },
+        ],
+      },
+    });
     const { assignment } = await reserveCompanyManualAssignment(
       database.db,
       reviewerId,
@@ -529,5 +566,40 @@ it.skipIf(!standSource || !standRevision)(
         contract: "operational_evidence_v2",
       },
     ]);
+    const runId = assignment.runIds[0]!;
+    const operationId = randomUUID();
+    const { prompts } = scriptAgentTurn(fake, {
+      text:
+        "```json maister:output\n" +
+        JSON.stringify({ operationId }) +
+        "\n```\n",
+    });
+
+    await expect(
+      tryStartRun(runId, { db: database.db }),
+    ).resolves.toMatchObject({ started: true });
+    await runFlow(runId, {
+      db: database.db,
+      executionHosts: hosts,
+      runtimeRoot: root,
+    });
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain(assignment.id);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status,current_step_id FROM runs WHERE id=$1",
+          [runId],
+        )
+      ).rows,
+    ).toEqual([{ status: "NeedsInput", current_step_id: "authorize" }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT step_id,kind FROM hitl_requests WHERE run_id=$1 AND responded_at IS NULL",
+          [runId],
+        )
+      ).rows,
+    ).toEqual([{ step_id: "authorize", kind: "human" }]);
   },
 );
