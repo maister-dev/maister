@@ -251,6 +251,7 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
             configuration: {},
             grantActions: actions,
             runnerId: runner.id,
+            executionPolicy: { preset: "assisted" },
             coordinatorFlowRevisionId:
               role === "coordinator" ? pinned.flow_id : null,
             enabled: true,
@@ -323,6 +324,7 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
     }),
     id,
   );
+
   await read(
     await request.post(`/api/knowledge/proposals/${proposal.id}/decision`, {
       data: {
