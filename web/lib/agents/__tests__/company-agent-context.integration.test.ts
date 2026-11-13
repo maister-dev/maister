@@ -242,6 +242,7 @@ import { submitProjectEventAssignment } from "@/lib/specialist-assignments/proje
 import { prepareCompanySpecialistAssignment } from "@/lib/specialist-assignments/company-intake";
 import { reserveCompanyCronAssignment } from "@/lib/specialist-assignments/company-cron-intake";
 import { reserveCompanyEventAssignment } from "@/lib/specialist-assignments/company-event-intake";
+import { reserveCompanyManualAssignment } from "@/lib/specialist-assignments/company-manual-intake";
 import { wakePendingSpecialistAssignment } from "@/lib/specialist-assignments/admission-wake";
 import { specialistAssignmentSchema } from "@/lib/specialist-assignments/types";
 import { POST as stopRunPost } from "@/app/api/runs/[runId]/stop/route";
@@ -12550,6 +12551,44 @@ for (const stop of ["budget", "parent interruption"] as const) {
     qualifyCompanyCooperation(stop));
 }
 
+async function recordAssignmentBudgetUsage(
+  db: Db,
+  runId: string,
+  inputTokens: number,
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    const [allocated] = await tx
+      .update(runs)
+      .set({
+        nextExecutionEventSequence: sql`${runs.nextExecutionEventSequence} + 1`,
+      })
+      .where(eq(runs.id, runId))
+      .returning({ next: runs.nextExecutionEventSequence });
+
+    await tx.insert(executionEvents).values({
+      id: randomUUID(),
+      source: "manager",
+      sourceKey: `assignment-budget:${runId}`,
+      runId,
+      eventType: "usage.recorded",
+      payloadSchema: "maister.usage.recorded.v1",
+      payload: {
+        sessionName: "default",
+        model: "budget-fixture",
+        inputTokens,
+        outputTokens: 0,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0,
+        resumed: false,
+      },
+      occurredAt: new Date(),
+      receivedAt: new Date(),
+      runSequence: allocated!.next - 1n,
+      ingestDisposition: "accepted",
+    });
+  });
+}
+
 async function qualifyCompanyCooperation(
   stop: "budget" | "parent interruption",
 ): Promise<void> {
@@ -12703,6 +12742,7 @@ async function qualifyCompanyCooperation(
     let receipt: Awaited<ReturnType<typeof retain>>;
     let parkedGraphRunId: string | undefined;
     let pendingNestedRunId: string | undefined;
+    let qualifyParkedRootBudget: (() => Promise<void>) | undefined;
 
     try {
       await database.db.transaction(async (tx) => {
@@ -13291,6 +13331,7 @@ async function qualifyCompanyCooperation(
         };
         let nestedChildRunId: string | undefined;
         let drivingGraphRunId = graph.childRunId;
+        let drivingGraphAssignmentId = assignment.id;
         const graphBearer = (): string => {
           const create = fake
             .callsOf("createSession")
@@ -13341,7 +13382,7 @@ async function qualifyCompanyCooperation(
             const current = await getSpecialistAssignment(
               db,
               userId,
-              assignment.id,
+              drivingGraphAssignmentId,
             );
             const requestBody = {
               target: { agentId: receivingRoleId },
@@ -13350,6 +13391,8 @@ async function qualifyCompanyCooperation(
               assignmentWork: {
                 selector: {
                   ...workRequest.selector,
+                  assignmentId: current.id,
+                  inputRevision: current.inputRevision,
                   expectedRevision: current.revision,
                   contextRevision: current.contextRevision,
                   logicalWorkId:
@@ -13891,6 +13934,91 @@ async function qualifyCompanyCooperation(
         expect(parkedGraph?.status).toBe("WaitingOnChildren");
         expect(nestedChildRunId).toBeDefined();
         pendingNestedRunId = nestedChildRunId!;
+
+        qualifyParkedRootBudget = async () => {
+          const { expectedResult: _expectedResult, ...objective } =
+            assignmentInput.objectiveInput;
+          const rootCoordinator = await reserveCompanyManualAssignment(
+            db,
+            userId,
+            {
+              ...objective,
+              owner: graphRole.specialist.owner,
+              specialistBindingId: graphRole.specialist.bindingId,
+              idempotencyKey: randomUUID(),
+            },
+            hosts,
+          );
+          const rootRunId = rootCoordinator.assignment.runIds[0]!;
+
+          drivingGraphRunId = rootRunId;
+          drivingGraphAssignmentId = rootCoordinator.assignment.id;
+          nestedChildRunId = undefined;
+          scriptAgentTurn(fake, graphTurn);
+          const hostOverride = vi
+            .spyOn(executionHostServices, "createExecutionHosts")
+            .mockReturnValue(hosts);
+
+          process.env.MAISTER_MAX_CONCURRENT_RUNS = "100";
+          try {
+            expect(await tryStartRun(rootRunId, { db })).toEqual({
+              started: true,
+            });
+            await runFlow(rootRunId, { db, executionHosts: hosts });
+            await fake.waitForCanonicalEvents();
+          } finally {
+            hostOverride.mockRestore();
+            if (savedFlowCap === undefined)
+              delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
+            else process.env.MAISTER_MAX_CONCURRENT_RUNS = savedFlowCap;
+          }
+          expect(nestedChildRunId).toBeDefined();
+          const before = await database.pool.query(
+            "SELECT status,current_step_id FROM runs WHERE id=$1",
+            [rootRunId],
+          );
+
+          expect(before.rows).toEqual([
+            {
+              status: "WaitingOnChildren",
+              current_step_id: expect.any(String),
+            },
+          ]);
+          await recordAssignmentBudgetUsage(
+            db,
+            rootRunId,
+            prepared.bounds.maxTokens,
+          );
+          await runSweepTick({ db, executionHosts: hosts });
+          await runSweepTick({ db, executionHosts: hosts });
+          const outcomes = await database.pool.query(
+            `SELECT run.id,run.status,event.payload->'cause'->>'code' AS cause_code
+             FROM runs run JOIN domain_events event ON event.run_id=run.id
+             WHERE run.id=ANY($1::text[]) AND event.kind IN ('run.failed','run.abandoned')
+             ORDER BY event.id`,
+            [[nestedChildRunId, rootRunId]],
+          );
+
+          expect(outcomes.rows).toEqual([
+            { id: nestedChildRunId, status: "Abandoned", cause_code: null },
+            { id: rootRunId, status: "Failed", cause_code: "BUDGET_EXCEEDED" },
+          ]);
+          const ledger = await database.pool.query(
+            `SELECT node.status,node.error_code,run.current_step_id,run.failed_child_wake_at
+             FROM node_attempts node JOIN runs run ON run.id=node.run_id
+             WHERE node.run_id=$1`,
+            [rootRunId],
+          );
+
+          expect(ledger.rows).toEqual([
+            {
+              status: "Failed",
+              error_code: "BUDGET_EXCEEDED",
+              current_step_id: null,
+              failed_child_wake_at: null,
+            },
+          ]);
+        };
       } finally {
         graphHost.mockRestore();
       }
@@ -13973,37 +14101,11 @@ async function qualifyCompanyCooperation(
         reason: "launch",
       }),
     );
-    await db.transaction(async (tx) => {
-      const [allocated] = await tx
-        .update(runs)
-        .set({
-          nextExecutionEventSequence: sql`${runs.nextExecutionEventSequence} + 1`,
-        })
-        .where(eq(runs.id, appointment.runId))
-        .returning({ next: runs.nextExecutionEventSequence });
-
-      await tx.insert(executionEvents).values({
-        id: randomUUID(),
-        source: "manager",
-        sourceKey: `assignment-budget:${appointment.runId}`,
-        runId: appointment.runId,
-        eventType: "usage.recorded",
-        payloadSchema: "maister.usage.recorded.v1",
-        payload: {
-          sessionName: "default",
-          model: "budget-fixture",
-          inputTokens: prepared.bounds.maxTokens,
-          outputTokens: 0,
-          cacheReadInputTokens: 0,
-          cacheCreationInputTokens: 0,
-          resumed: false,
-        },
-        occurredAt: new Date(),
-        receivedAt: new Date(),
-        runSequence: allocated!.next - 1n,
-        ingestDisposition: "accepted",
-      });
-    });
+    await recordAssignmentBudgetUsage(
+      db,
+      appointment.runId,
+      prepared.bounds.maxTokens,
+    );
     await runSweepTick({ db, executionHosts: hosts });
     const [budgetRoot] = await db
       .select({ status: runs.status })
@@ -14049,6 +14151,7 @@ async function qualifyCompanyCooperation(
       { decision: "accept", count: 2 },
       { decision: "rework", count: 1 },
     ]);
+    await qualifyParkedRootBudget!();
   } finally {
     await revoke(initiating);
   }

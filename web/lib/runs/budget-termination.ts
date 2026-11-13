@@ -166,7 +166,18 @@ export async function claimBudgetTermination(
 
     // Preserve a result/failure committed before the stop request. Only an open
     // action is interrupted; a budget observer cannot relabel its old failure.
-    if (attempt && attempt.status !== "Running") return null;
+    const parkedAssignmentCoordinator =
+      run.companyId !== null &&
+      run.runKind === "flow" &&
+      run.status === "WaitingOnChildren" &&
+      assignmentBudget !== null &&
+      input.nodeDurationAttemptId === undefined &&
+      input.sessionId === null &&
+      attempt?.status === "NeedsInput" &&
+      (attempt.nodeType === "orchestrator" || attempt.nodeType === "consensus");
+
+    if (attempt && attempt.status !== "Running" && !parkedAssignmentCoordinator)
+      return null;
     if (input.nodeDurationAttemptId) {
       if (
         run.status !== "Running" ||
@@ -183,7 +194,10 @@ export async function claimBudgetTermination(
 
       if (evidence === "pending_application" || evidence === "applying")
         return null;
-    } else if (input.sessionId || input.nodeId) {
+    } else if (
+      !parkedAssignmentCoordinator &&
+      (input.sessionId || input.nodeId)
+    ) {
       const [terminalPrompt] = await tx
         .select({ state: executionCommands.state })
         .from(executionCommands)

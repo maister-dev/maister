@@ -45,6 +45,7 @@ import { gcAgeDays } from "@/lib/instance-config";
 import { disposeOperationalRun } from "@/lib/gc/operational-disposition";
 import { MaisterError } from "@/lib/errors";
 import { currentBudgetTermination } from "@/lib/runs/budget-termination";
+import { markNodeFailed } from "@/lib/flows/graph/ledger";
 import { isTerminalRunStatus } from "@/lib/runs/run-status-sets";
 
 const log = pino({
@@ -115,6 +116,12 @@ export async function finalizeCompanyFlowRun(
       );
     if (args.requested === "Abandoned")
       return companyFlowCanAbandon(current.status);
+    if (
+      args.requested === "Failed" &&
+      args.budgetTerminationId &&
+      current.status === "WaitingOnChildren"
+    )
+      return true;
 
     return TERMINAL_CAS_SOURCE[args.requested].includes(current.status);
   };
@@ -283,6 +290,15 @@ export async function finalizeCompanyFlowRun(
       );
     if (dispatched) await assertAgentSessionBindingsQuiescent(tx, current);
     else await assertAgentCancellationBindingsQuiescent(tx, current);
+    if (current.status === "WaitingOnChildren" && args.requested === "Failed") {
+      if (!budgetStop?.specialistAssignmentId || !budgetStop.nodeAttemptId)
+        return false;
+      await markNodeFailed(
+        budgetStop.nodeAttemptId,
+        { errorCode: "BUDGET_EXCEEDED" },
+        tx,
+      );
+    }
     // A resumed graph can also fail in loadRun. Only a virgin traversal can
     // prove that the refused preflight preceded every execution boundary.
     const beforeDispatch =
@@ -315,6 +331,7 @@ export async function finalizeCompanyFlowRun(
               checkpointAt: null,
               keepaliveUntil: null,
               resumeRequestedAt: null,
+              failedChildWakeAt: null,
             }
           : {}),
         operationalCleanup: cleanup,
@@ -395,9 +412,11 @@ export async function finalizeCompanyFlowRun(
             ? "operator"
             : orphan
               ? "reconcile"
-              : status === "Abandoned"
-                ? "orchestrator"
-                : "graph",
+              : budgetStop
+                ? "sweeper"
+                : status === "Abandoned"
+                  ? "orchestrator"
+                  : "graph",
       };
 
       await emitDomainEvent({

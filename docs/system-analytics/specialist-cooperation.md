@@ -323,6 +323,11 @@ The wake transaction checks the immediate parent and assignment root under
 shared locks before reserving capacity. A terminal ancestor or a retained
 cancellation or budget stop blocks the wake. If an ancestor is locked by
 another transaction, the wake yields so reconciliation can reconsider it.
+When the assignment budget is exhausted while the company root is parked,
+the budget sweeper can claim the retained waiting attempt. It settles children
+before closing that attempt and the root with `BUDGET_EXCEEDED` in the same
+terminal transaction. The completed prompt from before the park remains in the
+command ledger, and the terminal transition clears the pending wake markers.
 
 | Run status | Agent child after owner loss | Flow child after owner loss | Coordinator recovery |
 | --- | --- | --- | --- |
