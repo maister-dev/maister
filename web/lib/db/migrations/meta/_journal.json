@@ -2059,6 +2059,13 @@
       "when": 1794606478000,
       "tag": "0297_project_webhook_replacement_retry",
       "breakpoints": true
+    },
+    {
+      "idx": 298,
+      "version": "7",
+      "when": 1794606478001,
+      "tag": "0298_project_readonly_replacement_retry",
+      "breakpoints": true
     }
   ]
 }

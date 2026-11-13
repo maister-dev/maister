@@ -58,6 +58,10 @@ export type ProjectSpecialistReplacement = SpecialistReplacementWitness & {
     baseBranch: string;
     repositorySha256: string;
   }>;
+  readOnly?: Readonly<{
+    commit: string;
+    repositorySha256: string;
+  }>;
 };
 
 export type ProjectAgentRetryRecipe = AgentRetryRecipeFields &

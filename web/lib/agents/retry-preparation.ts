@@ -48,7 +48,7 @@ import { resolveAgentConfig } from "@/lib/agents/config";
 import { parseScheduledRequestSnapshot } from "@/lib/agents/scheduled-request";
 import { buildAgentActivitySnapshot } from "@/lib/agents/activity-snapshot";
 import { loadTaskQualificationInput } from "@/lib/tasks/qualification";
-import { resolveBaseCommit } from "@/lib/worktree";
+import { resolveBaseCommit, statusPorcelain } from "@/lib/worktree";
 
 export const RETRY_PREVIEW_WINDOW_MS = 5 * 60_000;
 const log = pino({
@@ -337,6 +337,21 @@ export async function prepareAgentRetry(
         retryDigest(resolveAgentContextExecutionPolicy(context)))
   )
     reason = "retry_context_changed";
+  if (replacement?.witness.readOnly && !reason) {
+    const { repoPath } = context.project;
+    const { commit, repositorySha256 } = replacement.witness.readOnly;
+
+    if (
+      retryDigest(repoPath) !== repositorySha256 ||
+      (context.effective.parsed.workspaceRef === null &&
+        ((await resolveBaseCommit({
+          projectRepoPath: repoPath,
+          baseRef: "HEAD",
+        })) !== commit ||
+          (await statusPorcelain({ worktreePath: repoPath })).trim()))
+    )
+      reason = "retry_context_changed";
+  }
   const taskRevision = task?.qualificationInputRevision ?? null;
   const contextValues = {
     definition,

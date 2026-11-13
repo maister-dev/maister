@@ -28,6 +28,7 @@ const log = pino({
 const identity = postgresTextSchema.min(1).max(128);
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const revision = z.number().int().positive().max(2147483647);
+const commit = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);
 const replacementWitness = z.object({
   sourceRunId: identity,
   assignmentRevision: revision,
@@ -49,17 +50,22 @@ export const projectSpecialistReplacementSchema = replacementWitness
     worktree: z
       .object({
         workspaceId: identity,
-        baseCommit: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
+        baseCommit: commit,
         baseBranch: postgresTextSchema.min(1).max(1024),
         repositorySha256: digest,
       })
       .strict()
       .optional(),
+    readOnly: z
+      .object({ commit, repositorySha256: digest })
+      .strict()
+      .optional(),
   })
   .strict()
   .refine(
-    ({ cron, event, comment, webhook }) =>
-      [cron, event, comment, webhook].filter(Boolean).length <= 1,
+    ({ cron, event, comment, webhook, worktree, readOnly }) =>
+      [cron, event, comment, webhook].filter(Boolean).length <= 1 &&
+      !(worktree && readOnly),
   );
 const common = z.object({
   scheduledRequestSnapshot: scheduledRequestSnapshotSchema.optional(),

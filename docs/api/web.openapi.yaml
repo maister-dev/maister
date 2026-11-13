@@ -635,6 +635,9 @@ paths:
         has advanced.
         A project webhook replacement keeps the authenticated delivery receipt and
         initiating user. Current submission and recovery authority are required.
+        A read-only repository replacement needs a retained integrity baseline.
+        Detached checkout uses the recorded commit. A shared checkout must still
+        be clean at that commit.
         For a project specialist, the existing retry sweep rechecks the same witnesses
         before reserving a continuation through project admission. Pending assignment
         updates defer that sweep without consuming an admission attempt.

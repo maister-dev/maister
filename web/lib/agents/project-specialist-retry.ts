@@ -92,7 +92,8 @@ export async function prepareProjectSpecialistReplacement(
     source.runKind !== "agent" ||
     source.agentKind !== "operational" ||
     (source.agentWorkspace !== "none" &&
-      source.agentWorkspace !== "worktree") ||
+      source.agentWorkspace !== "worktree" &&
+      source.agentWorkspace !== "repo_read") ||
     source.workspaceMode === "shared" ||
     (source.taskId && !comment) ||
     source.parentRunId ||
@@ -142,8 +143,10 @@ export async function prepareProjectSpecialistReplacement(
       'sourceRunId',source.id,'assignmentId',subject.id,'inputRevision',input.revision,'inputSha256',input.digest,
       'assignmentRevision',subject.revision,'contextRevision',subject.context_revision,'ownerEpoch',owner.epoch,
       'resultSha256',task_launch_admission_digest(source.result_contract),'sourceSha256',company_retry_source_digest(source)
-    ) || CASE WHEN source.agent_workspace='worktree'
-      THEN jsonb_build_object('worktree',project_worktree_retry_source(source.id)) ELSE '{}'::jsonb END AS witness,
+    ) || CASE source.agent_workspace
+      WHEN 'worktree' THEN jsonb_build_object('worktree',project_worktree_retry_source(source.id))
+      WHEN 'repo_read' THEN jsonb_build_object('readOnly',project_readonly_retry_source(source.id))
+      ELSE '{}'::jsonb END AS witness,
     session.runner_id, session.runner_snapshot,
     CASE WHEN source.trigger_source='webhook' THEN project_webhook_retry_receipt(source.id,${userId}) END AS webhook_receipt,
     company_retry_has_dispatch_witness(source.id) AS before_dispatch,
@@ -169,6 +172,7 @@ export async function prepareProjectSpecialistReplacement(
   if (
     !witness.success ||
     (source.agentWorkspace === "worktree" && !witness.data.worktree) ||
+    (source.agentWorkspace === "repo_read" && !witness.data.readOnly) ||
     typeof row?.runner_id !== "string" ||
     !row.runner_snapshot
   )

@@ -324,6 +324,9 @@ An owned worktree replacement allocates a new checkout from the source Run's
 retained base commit. The current project repository must match the recorded
 repository. Dispatch checks the admitted workspace identity and pristine checkout
 before preparing the agent. A moved branch does not change the retained commit.
+Read-only repository replacement requires a retained integrity baseline.
+The detached checkout uses its commit directly. Shared read-only checkout
+recovery requires the same clean source commit at preview and dispatch.
 
 ### Crash/transaction boundaries
 

@@ -64,6 +64,11 @@ canonical delivery key and endpoint identity, project, original input,
 trigger payload and submitting user. The original receipt remains the deduplication
 record across token rotation and Run replacement.
 
+Main `0298_project_readonly_replacement_retry` uses the original Run's retained
+repository integrity baseline for read-only replacement. Its witness includes
+the observed commit and repository path digest. A source with an unavailable
+baseline remains ineligible. Existing intents retain their original bytes.
+
 Index all hot project/agent/task/due/status and keyset paths; bounded scans use dueAt/id or timestamp/id. All current pointers, receipt uniqueness, payload comparison, state CHECKs and same-project relationships are database/service invariants with direct-write negative tests. Source run precedes task and agent-advisory/episode locks; task-only human writes do not lock a run later. No Git/host/network effect inside PostgreSQL transactions.
 
 ## Migration and recovery

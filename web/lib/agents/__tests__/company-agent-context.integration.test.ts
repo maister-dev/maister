@@ -73,6 +73,8 @@ import {
   prepareAgentRunFinalization,
   prepareUndispatchedAgentFailure,
 } from "../finalization";
+import { settleAgentPreparationFailure } from "../create-failure";
+import { openAgentPreparation } from "../preparation-workspace";
 import {
   reserveCompanyAgentRun,
   reserveCompanyAgentRunInTransaction,
@@ -11756,7 +11758,7 @@ it("IT-CBC-03 preserves the original company event and its producing Run evidenc
   }
 });
 
-it.each(["none", "worktree"] as const)(
+it.each(["none", "worktree", "repo_read"] as const)(
   "IT-CBC-03 preserves an exact native project appointment through the existing retry sweep (%s)",
   async (workspace) => {
     const db: Db = database.db;
@@ -11794,10 +11796,11 @@ it.each(["none", "worktree"] as const)(
     const link = await attachAgent(
       {
         projectId: project.id,
-        agentId:
-          workspace === "worktree"
-            ? "rah:worktree-retry-observer"
-            : "rah:wire-observer",
+        agentId: {
+          none: "rah:wire-observer",
+          worktree: "rah:worktree-retry-observer",
+          repo_read: "rah:repo-observer",
+        }[workspace],
         runnerOverrideId: runnerId,
       },
       db,
@@ -11822,12 +11825,64 @@ it.each(["none", "worktree"] as const)(
       const [sourceRunId] = receipt.assignment.runIds;
 
       expect(sourceRunId).toBeDefined();
-      const failure = await prepareUndispatchedAgentFailure(sourceRunId, {
-        db,
-        reason: "agent_dispatch_failed",
-      });
+      if (workspace === "repo_read") {
+        await database.pool.query(
+          "DELETE FROM execution_host_pressure WHERE execution_host_id=$1",
+          [host.id],
+        );
+        expect(await tryStartRun(sourceRunId, { db })).toMatchObject({
+          started: true,
+        });
+        const [source] = await db
+          .select()
+          .from(runs)
+          .where(eq(runs.id, sourceRunId));
+        const context = await operationalWorkspace(db, source);
+        const preparation = await openAgentPreparation(db, {
+          ...context,
+          runId: source.id,
+          assignmentId: source.executionAssignmentId!,
+        });
 
-      await db.transaction(failure.apply);
+        try {
+          const baseline = await captureOperationalBaseline(
+            context.cwd,
+            context.resourceKind,
+          );
+
+          await preparation.publishBaseline({
+            ...baseline,
+            owner: {
+              cwd: context.cwd,
+              repoPath: repo,
+              projectSlug: project.slug,
+            },
+          });
+          await settleAgentPreparationFailure(
+            db,
+            source.id,
+            preparation,
+            new MaisterError(
+              "PRECONDITION",
+              "Controlled interruption before session creation",
+            ),
+            { runId: source.id, stage: "baseline" },
+          );
+        } finally {
+          await preparation.release();
+          await database.pool.query(
+            "INSERT INTO execution_host_pressure(execution_host_id,pressured_since) VALUES($1,now()) ON CONFLICT DO NOTHING",
+            [host.id],
+          );
+        }
+      } else {
+        const failure = await prepareUndispatchedAgentFailure(sourceRunId, {
+          db,
+          reason: "agent_dispatch_failed",
+        });
+
+        await db.transaction(failure.apply);
+      }
       const sourceWorkspace =
         workspace === "worktree"
           ? (
@@ -11861,6 +11916,22 @@ it.each(["none", "worktree"] as const)(
         reason: null,
         selectedRunnerId: runnerId,
       });
+      if (workspace === "repo_read") {
+        await git(
+          repo,
+          "commit",
+          "--allow-empty",
+          "-m",
+          "Advance the shared read-only checkout",
+        );
+        await expect(
+          getAgentRetryOptions(db, sourceRunId, userId),
+        ).resolves.toMatchObject({
+          eligible: false,
+          reason: "retry_context_changed",
+        });
+        await git(repo, "reset", "--hard", "HEAD^");
+      }
       const request = {
         runnerId,
         requestKey: randomUUID(),

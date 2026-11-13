@@ -1784,13 +1784,19 @@ async function launchAgentRunWithAdmission(
   // is skipped and the ref must resolve NOW (launch-surface PRECONDITION).
   if (workspace === "repo_read") {
     if (ctx.effective.parsed.workspaceRef) {
-      await resolveWorkspaceRefCommittish(_db, {
-        agentId: input.agentId,
-        workspaceRef: ctx.effective.parsed.workspaceRef,
-        taskQualificationSnapshot,
-        repoPath: ctx.project.repoPath,
-        trigger: input.trigger,
-      });
+      if (replacement?.readOnly)
+        await resolveBaseCommit({
+          projectRepoPath: ctx.project.repoPath,
+          baseRef: replacement.readOnly.commit,
+        });
+      else
+        await resolveWorkspaceRefCommittish(_db, {
+          agentId: input.agentId,
+          workspaceRef: ctx.effective.parsed.workspaceRef,
+          taskQualificationSnapshot,
+          repoPath: ctx.project.repoPath,
+          trigger: input.trigger,
+        });
     } else {
       const porcelain = await statusPorcelain({
         worktreePath: ctx.project.repoPath,
@@ -4672,6 +4678,9 @@ async function driveAgentSession(
     return;
   }
 
+  const replacementReadOnly =
+    retryRecipe?.version === 2 ? retryRecipe.replacement?.readOnly : undefined;
+
   // M37 (ADR-100): use the workspace axis the run ACTUALLY launched with
   // (persisted at insert — a delegation override OR the agent-def default), not a
   // re-derivation from the agent def, which would diverge from an overriding
@@ -4820,6 +4829,21 @@ async function driveAgentSession(
     }
     let cwd: string;
 
+    if (
+      replacementReadOnly &&
+      [project.repoPath, preparationWorkspace?.repoPath].some(
+        (repoPath) =>
+          contentDigest(repoPath) !== replacementReadOnly.repositorySha256,
+      )
+    )
+      throw new MaisterError(
+        "PRECONDITION",
+        "The read-only replacement repository changed after admission",
+        {
+          details: { reason: "launch_workspace_changed" },
+        },
+      );
+
     if (companyWorkspace) {
       cwd = companyWorkspace.cwd;
       await mkdir(cwd, { recursive: true });
@@ -4829,6 +4853,7 @@ async function driveAgentSession(
       cwd =
         preparationWorkspace?.cwd ??
         agentReadOnlyWorkdirPath(project.slug, runId);
+      if (replacementReadOnly) preparationCommit = replacementReadOnly.commit;
 
       try {
         if (!(
@@ -4836,6 +4861,7 @@ async function driveAgentSession(
           run.operationalIntegrityBaseline
         )) {
           const committish =
+            replacementReadOnly?.commit ??
             preparation?.operation.resolvedCommit ??
             (await resolveWorkspaceRefCommittish(_db, {
               agentId: run.agentId as string,
@@ -4946,6 +4972,21 @@ async function driveAgentSession(
       }
     } else if (workspace === "repo_read") {
       cwd = preparationWorkspace?.cwd ?? project.repoPath;
+      if (replacementReadOnly) {
+        preparationCommit = replacementReadOnly.commit;
+        assertPreparationCommit(
+          preparationCommit,
+          await resolveBaseCommit({ projectRepoPath: cwd, baseRef: "HEAD" }),
+        );
+        if ((await statusPorcelain({ worktreePath: cwd })).trim())
+          throw new MaisterError(
+            "PRECONDITION",
+            "The read-only replacement checkout must remain clean",
+            {
+              details: { reason: "launch_workspace_changed" },
+            },
+          );
+      }
     } else if (workspace === "worktree") {
       // M37 Phase 10 (ADR-099): a shared-mode child resolves the tree from its
       // root_run_id (a reusing sibling has NO workspaces row of its own — the
