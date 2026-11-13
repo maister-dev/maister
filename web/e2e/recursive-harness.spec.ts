@@ -363,7 +363,10 @@ test("recursive harness: depth-2 tree → result-only Done children → the root
   // ---- The run detail renders the result plane. ---------------------------
   await page.goto(`/runs/${runId}`);
 
-  const panel = page.getByTestId("run-public-result").filter({ visible: true });
+  const panel = page.getByRole("region", {
+    name: "Public result",
+    exact: true,
+  }).filter({ visible: true });
 
   await expect(panel).toBeVisible();
   await expect(panel).toHaveAttribute("data-result-status", "valid");

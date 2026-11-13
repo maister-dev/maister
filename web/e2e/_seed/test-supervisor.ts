@@ -44,6 +44,9 @@ import {
   type ServerResponse,
 } from "node:http";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+
+import pino from "pino";
 
 import {
   parseCommandReceiptV2,
@@ -90,6 +93,9 @@ import { qualificationFixture } from "@/test-support/task-qualification";
 const STUB_RELEASE_BACKSTOP_MS = 15_000;
 const STUB_RELEASE_POLL_MS = 150;
 const E2E_HOLD_TURN_BACKSTOP_MS = 120_000;
+const DELEGATION_CONTENTION_RETRY_MS = 100;
+const DELEGATION_CONTENTION_DEADLINE_MS = 10_000;
+const delegationLog = pino({ name: "e2e-delegation" });
 const STAGE_B_STREAM_ID = "9de93d52-7097-44df-977f-d912143f09e8";
 
 const EVENT_PAYLOAD_SCHEMAS = {
@@ -341,8 +347,7 @@ function readFacade(mcpServers: AgentMcpServer[]): {
 }
 
 // Default delegation hook (browser-e2e): the agent's facade would POST the ext
-// delegate route; replicate that over real HTTP. A non-2xx throws so the test
-// supervisor surfaces it as a crash (loud failure).
+// delegate route; replicate that over real HTTP.
 const httpDelegateHook: DelegateHook = async (req) => {
   if (!req.facadeToken || !req.apiBaseUrl) {
     throw new Error(
@@ -355,7 +360,7 @@ const httpDelegateHook: DelegateHook = async (req) => {
   const resolved = (await req.resolveDelegation?.()) ?? {
     target: { agentId: process.env.MAISTER_TEST_CHILD_AGENT_ID },
   };
-  const res = await fetch(`${req.apiBaseUrl}/api/v1/ext/runs/delegate`, {
+  const request: RequestInit = {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -371,14 +376,40 @@ const httpDelegateHook: DelegateHook = async (req) => {
         ? { resultProfile: resolved.resultProfile }
         : {}),
     }),
-  });
+  };
+  const deadline = performance.now() + DELEGATION_CONTENTION_DEADLINE_MS;
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "<no body>");
-
-    throw new Error(
-      `test-supervisor: delegate route returned ${res.status}: ${text}`,
+  for (let attempt = 1; ; attempt += 1) {
+    const res = await fetch(
+      `${req.apiBaseUrl}/api/v1/ext/runs/delegate`,
+      request,
     );
+
+    if (res.ok) return;
+    const body: { code?: string; details?: { reason?: string } } | null =
+      res.status === 409
+        ? await res
+            .clone()
+            .json()
+            .catch(() => null)
+        : null;
+
+    // Admission reports this conflict before writing the child. Reuse the
+    // exact request and surface every other error, including an uncertain send.
+    if (
+      body?.code !== "CONFLICT" ||
+      body.details?.reason !== "delegation_execution_busy" ||
+      performance.now() >= deadline
+    )
+      throw new Error(
+        `test-supervisor: delegate route returned ${res.status}: ${await res.text()}`,
+      );
+    await res.body?.cancel();
+    delegationLog.warn(
+      { runId: req.orchestratorRunId, childIndex: req.index, attempt },
+      "fixture delegation yielded to the current execution writer",
+    );
+    await delay(DELEGATION_CONTENTION_RETRY_MS);
   }
 };
 

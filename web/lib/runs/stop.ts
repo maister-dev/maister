@@ -13,7 +13,10 @@ import {
   TERMINAL_CAS_SOURCE,
 } from "@/lib/agents/finalization";
 import { isCompanyFlowResource } from "@/lib/agents/operational-context";
-import { finalizeCompanyFlowRun } from "@/lib/run-results/company-flow-terminal";
+import {
+  companyFlowCanAbandon,
+  finalizeCompanyFlowRun,
+} from "@/lib/run-results/company-flow-terminal";
 import { ensureCompanyUserActor } from "@/lib/assignments/service";
 import { requireActiveSession } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
@@ -50,7 +53,9 @@ async function authorizeCompanyStop(
       );
       if (
         run.status !== "Abandoned" &&
-        !TERMINAL_CAS_SOURCE.Abandoned.includes(run.status)
+        !(isCompanyFlowResource(run)
+          ? companyFlowCanAbandon(run.status)
+          : TERMINAL_CAS_SOURCE.Abandoned.includes(run.status))
       )
         throw new MaisterError(
           "CONFLICT",

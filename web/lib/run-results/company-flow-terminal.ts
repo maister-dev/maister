@@ -51,6 +51,13 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
+export function companyFlowCanAbandon(status: Run["status"]): boolean {
+  return (
+    status === "WaitingOnChildren" ||
+    TERMINAL_CAS_SOURCE.Abandoned.includes(status)
+  );
+}
+
 function terminalWitness(run: Run): string {
   return contentDigest({
     owner: run.companyExecutionSnapshot,
@@ -92,9 +99,12 @@ export async function finalizeCompanyFlowRun(
       "PRECONDITION",
       "Company graph finalization requires its exact retained execution owner",
     );
-  const sourceStatuses = TERMINAL_CAS_SOURCE[args.requested];
+  const canSettle = (status: Run["status"]): boolean =>
+    args.requested === "Abandoned"
+      ? companyFlowCanAbandon(status)
+      : TERMINAL_CAS_SOURCE[args.requested].includes(status);
 
-  if (!sourceStatuses.includes(run.status)) return false;
+  if (!canSettle(run.status)) return false;
   const operatorId = args.requested === "Abandoned" ? args.userId : undefined;
 
   if (operatorId !== undefined)
@@ -204,7 +214,7 @@ export async function finalizeCompanyFlowRun(
       .where(eq(runs.id, run.id))
       .for("update");
 
-    if (!current || !sourceStatuses.includes(current.status)) return false;
+    if (!current || !canSettle(current.status)) return false;
     const budgetStop = await currentBudgetTermination(tx, current);
 
     if (budgetStop?.id !== args.budgetTerminationId) return false;
@@ -276,6 +286,13 @@ export async function finalizeCompanyFlowRun(
         status,
         endedAt,
         currentStepId: null,
+        ...(current.status === "WaitingOnChildren"
+          ? {
+              checkpointAt: null,
+              keepaliveUntil: null,
+              resumeRequestedAt: null,
+            }
+          : {}),
         operationalCleanup: cleanup,
       })
       .where(and(eq(runs.id, run.id), eq(runs.status, current.status)));

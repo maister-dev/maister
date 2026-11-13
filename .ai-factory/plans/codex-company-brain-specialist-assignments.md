@@ -766,6 +766,10 @@ Phase exit: full owning suites green and the actual scheduler/domain-event claim
 
   T30 delayed wake checkpoint (2026-11-13). When the settle event had not been consumed past the grace period, reconciliation tried to crash the parked company Flow through the project path. Reconciliation now submits its retained attempt through the existing coordinator wake claim. A PostgreSQL regression ages the real parked attempt, resumes it through reconciliation, then replays the terminal event. It observes one wake, the retained child result, successful rework and acceptance, and the existing assignment budget stop. The 111-case reconciliation classifier suite passes.
 
+  T30 parked cascade checkpoint (2026-11-13). The loaded company graph retained a pending child and parked before the root exceeded its assignment budget. The existing cascade settled the child, then stalled because the company graph finalizer did not admit the parked state. The graph finalizer now accepts authorized abandonment of that state and clears its wait markers. The integration regression observes children-first company terminal events and preserves completed work and acceptance receipts. The seven cooperation, bounds and prompt-owner suites passed 236 tests on `289fc7add`.
+
+  T30 browser checkpoint (2026-11-13). The initial Playwright run reproduced transient pre-admission conflict failures in the test supervisor and a result assertion matching hidden responsive content. The fixture retries the same delivery only on the typed pre-admission conflict, and the result assertion selects the accessible region. The isolated rerun passed all eight cases, including depth-two reduction and the bilingual knowledge surfaces.
+
 Phase exit: full owning suites green; no new orchestration engine, attempt ledger or capacity bypass. Explicit adversarial review of authority, admission, event ordering and every resulting fix cycle.
 
 ### Phase 7 — Narrow stand connector, durable operations and deployment

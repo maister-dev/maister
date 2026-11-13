@@ -12674,6 +12674,8 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
       (entry) => entry.action === "assignments:delegate",
     )!;
     let receipt: Awaited<ReturnType<typeof retain>>;
+    let parkedGraphRunId: string | undefined;
+    let pendingNestedRunId: string | undefined;
 
     try {
       await database.db.transaction(async (tx) => {
@@ -13189,7 +13191,6 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
         actions: ["assignments:read", "assignments:delegate"],
         idempotencyKey: randomUUID(),
       });
-      const head = await getSpecialistAssignment(db, userId, assignment.id);
       const graphObjective =
         "Review the child result against the retained observation";
       const graphHost = vi
@@ -13197,33 +13198,42 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
         .mockReturnValue(hosts);
 
       try {
-        const response = await delegateExternalRun(
-          new NextRequest("http://localhost/api/v1/ext/runs/delegate", {
-            method: "POST",
-            headers,
-            body: JSON.stringify({
-              target: { flowId: "rah-company-child" },
-              mode: "run",
-              prompt: graphObjective,
-              assignmentWork: {
-                selector: {
-                  ...workRequest.selector,
-                  expectedRevision: head.revision,
-                  contextRevision: head.contextRevision,
-                  logicalWorkId: "review-child",
+        const admitGraph = async (logicalWorkId: string) => {
+          const current = await getSpecialistAssignment(
+            db,
+            userId,
+            assignment.id,
+          );
+          const response = await delegateExternalRun(
+            new NextRequest("http://localhost/api/v1/ext/runs/delegate", {
+              method: "POST",
+              headers,
+              body: JSON.stringify({
+                target: { flowId: "rah-company-child" },
+                mode: "run",
+                prompt: graphObjective,
+                assignmentWork: {
+                  selector: {
+                    ...workRequest.selector,
+                    expectedRevision: current.revision,
+                    contextRevision: current.contextRevision,
+                    logicalWorkId,
+                  },
+                  expectedOutcome: "A pinned structured review",
                 },
-                expectedOutcome: "A pinned structured review",
-              },
+              }),
             }),
-          }),
-          {},
-        );
+            {},
+          );
 
-        expect(response.status).toBe(202);
-        const graph = (await response.json()) as {
-          childRunId: string;
-          status: string;
+          expect(response.status).toBe(202);
+
+          return (await response.json()) as {
+            childRunId: string;
+            status: string;
+          };
         };
+        const graph = await admitGraph("review-child");
         const context = await db.transaction((tx) =>
           loadCompanyFlowSessionContext(tx, graph.childRunId),
         );
@@ -13244,10 +13254,11 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
           selection: [],
         };
         let nestedChildRunId: string | undefined;
+        let drivingGraphRunId = graph.childRunId;
         const graphBearer = (): string => {
           const create = fake
             .callsOf("createSession")
-            .filter((call) => call.envelope?.fence.runId === graph.childRunId)
+            .filter((call) => call.envelope?.fence.runId === drivingGraphRunId)
             .at(-1)?.envelope?.payload as
             | { mcpServers?: { name: string; env?: Record<string, string> }[] }
             | undefined;
@@ -13303,7 +13314,10 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
                   ...workRequest.selector,
                   expectedRevision: current.revision,
                   contextRevision: current.contextRevision,
-                  logicalWorkId: "cross-check",
+                  logicalWorkId:
+                    drivingGraphRunId === graph.childRunId
+                      ? "cross-check"
+                      : "interrupted-cross-check",
                 },
                 expectedOutcome: "Independent observation",
               },
@@ -13807,6 +13821,32 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
           browserSession.user = null;
           await revoke(acceptGrant);
         }
+        const parked = await admitGraph("interrupted-review");
+
+        parkedGraphRunId = parked.childRunId;
+        drivingGraphRunId = parkedGraphRunId;
+        nestedChildRunId = undefined;
+        scriptAgentTurn(fake, graphTurn);
+        process.env.MAISTER_MAX_CONCURRENT_RUNS = "100";
+        try {
+          expect(await tryStartRun(parkedGraphRunId, { db })).toEqual({
+            started: true,
+          });
+          await runFlow(parkedGraphRunId, { db, executionHosts: hosts });
+          await fake.waitForCanonicalEvents();
+        } finally {
+          if (savedFlowCap === undefined)
+            delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
+          else process.env.MAISTER_MAX_CONCURRENT_RUNS = savedFlowCap;
+        }
+        const [parkedGraph] = await db
+          .select({ status: runs.status })
+          .from(runs)
+          .where(eq(runs.id, parkedGraphRunId));
+
+        expect(parkedGraph?.status).toBe("WaitingOnChildren");
+        expect(nestedChildRunId).toBeDefined();
+        pendingNestedRunId = nestedChildRunId!;
       } finally {
         graphHost.mockRestore();
       }
@@ -13868,6 +13908,21 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
       .where(eq(runs.id, appointment.runId));
 
     expect(budgetRoot).toEqual({ status: "Failed" });
+    const { rows: abandoned } = await database.pool.query(
+      `SELECT event.run_id, event.company_id, run.status
+       FROM domain_events event JOIN runs run ON run.id=event.run_id
+       WHERE event.kind='run.abandoned' AND event.run_id=ANY($1::text[])
+       ORDER BY event.id`,
+      [[pendingNestedRunId, parkedGraphRunId]],
+    );
+
+    expect(abandoned).toEqual(
+      [pendingNestedRunId, parkedGraphRunId].map((id) => ({
+        run_id: id,
+        company_id: request.companyId,
+        status: "Abandoned",
+      })),
+    );
     expect(
       (
         await database.pool.query(
@@ -13876,6 +13931,7 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
         )
       ).rows,
     ).toEqual([
+      { status: "Abandoned", terminal: "Abandoned" },
       { status: "Done", terminal: "Done" },
       { status: "Done", terminal: "Done" },
     ]);
