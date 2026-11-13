@@ -233,6 +233,9 @@ web/lib/supervisor-client ──HTTP──► supervisor/src/http-api  ──►
   existing result, domain-event, execution-host and workspace lifecycle ledgers.
   [Operational contracts](../docs/system-analytics/operational-agents.md) own
   their validated combinations and recovery semantics.
+- `lib/stand-operations/` owns reviewed stand configurations. The registry
+  retains current company authority, exact runbook witnesses and one canonical
+  systemd resource identity for aliases of the same configured unit.
 - `lib/specialist-assignments/` owns business assignment state and immutable
   input/authority snapshots. It links the existing execution/result ledgers
   and emits content-free facts on the existing domain outbox. Current action

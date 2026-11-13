@@ -2066,6 +2066,20 @@
       "when": 1794606478001,
       "tag": "0298_project_readonly_replacement_retry",
       "breakpoints": true
+    },
+    {
+      "idx": 299,
+      "version": "7",
+      "when": 1794606478002,
+      "tag": "0299_stand_target_registry",
+      "breakpoints": true
+    },
+    {
+      "idx": 300,
+      "version": "7",
+      "when": 1794606478003,
+      "tag": "0300_stand_target_registry_guards",
+      "breakpoints": true
     }
   ]
 }

@@ -21784,13 +21784,10 @@ paths:
   /api/stands:
     get:
       operationId: standsList
-      summary: Designed — List accessible configured stands
-      description: Designed; no implementation is implied. Requires current targets:read. URL identifiers are
-        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
-        target endpoint and execution ownership are derived from authenticated context/server state. Writes
-        compare canonical payload digest and expected revision; exact replay returns the original currently
-        accessible receipt, changed payload conflicts.
-      x-implementation-status: Designed
+      summary: List accessible configured stands
+      description: |
+        Current targets:read is required. The opaque cursor is bound to the current grant and page size. Returns private target metadata.
+      x-implementation-status: Implemented
       x-required-scope: targets:read
       responses:
         "200":
@@ -21832,13 +21829,10 @@ paths:
             default: 20
     post:
       operationId: standCreate
-      summary: Designed — Register explicit stand component policy
-      description: Designed; no implementation is implied. Requires current targets:manage. URL identifiers are
-        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
-        target endpoint and execution ownership are derived from authenticated context/server state. Writes
-        compare canonical payload digest and expected revision; exact replay returns the original currently
-        accessible receipt, changed payload conflicts.
-      x-implementation-status: Designed
+      summary: Register explicit stand component policy
+      description: |
+        Current targets:manage, targets:read and runbook read authority are required. Retains the complete reviewed configuration and attribution. An exact delivery-key replay returns its original revision. A changed payload conflicts.
+      x-implementation-status: Implemented
       x-required-scope: targets:manage
       requestBody:
         required: true
@@ -21876,16 +21870,22 @@ paths:
           $ref: "#/components/responses/CBFailure"
       security:
         - sessionCookie: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+            pattern: ^[A-Za-z0-9._:-]+$
   /api/stands/{targetId}:
     get:
       operationId: standGet
-      summary: Designed — Inspect configured logical target
-      description: Designed; no implementation is implied. Requires current targets:read. URL identifiers are
-        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
-        target endpoint and execution ownership are derived from authenticated context/server state. Writes
-        compare canonical payload digest and expected revision; exact replay returns the original currently
-        accessible receipt, changed payload conflicts.
-      x-implementation-status: Designed
+      summary: Inspect configured logical target
+      description: |
+        Current targets:read is required. Returns the current configuration revision and component identities without exposing endpoint or credential references.
+      x-implementation-status: Implemented
       x-required-scope: targets:read
       responses:
         "200":
@@ -21921,20 +21921,17 @@ paths:
           description: URL selector resolved and authorized against server state; no filesystem path.
     patch:
       operationId: standUpdate
-      summary: Designed — Update reviewed stand configuration
-      description: Designed; no implementation is implied. Requires current targets:manage. URL identifiers are
-        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
-        target endpoint and execution ownership are derived from authenticated context/server state. Writes
-        compare canonical payload digest and expected revision; exact replay returns the original currently
-        accessible receipt, changed payload conflicts.
-      x-implementation-status: Designed
+      summary: Update reviewed stand configuration
+      description: |
+        Current targets:manage, targets:read and runbook read authority are required. Requires the current configuration revision and unchanged incarnation. An exact delivery-key replay returns its original revision. A changed payload conflicts.
+      x-implementation-status: Implemented
       x-required-scope: targets:manage
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CBTargetInput"
+              $ref: "#/components/schemas/CBTargetUpdate"
       responses:
         "200":
           description: Authorized explicit DTO or idempotent safe existing receipt.
@@ -21959,6 +21956,14 @@ paths:
       security:
         - sessionCookie: []
       parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+            pattern: ^[A-Za-z0-9._:-]+$
         - name: targetId
           in: path
           required: true
@@ -40399,12 +40404,12 @@ components:
           $ref: "#/components/schemas/CBCompanyOwner"
         incarnationId:
           type: string
-          minLength: 1
-          maxLength: 128
+          format: uuid
         endpoint:
           type: string
           format: uri
           maxLength: 2048
+          description: HTTPS origin without user info, query, fragment or non-root path.
         serverIdentity:
           type: string
           minLength: 1
@@ -40430,7 +40435,64 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/CBComponentConfig"
+          minItems: 1
           maxItems: 32
+          description: Distinct component IDs.
+    CBTargetUpdate:
+      type: object
+      additionalProperties: false
+      required:
+        - owner
+        - incarnationId
+        - endpoint
+        - serverIdentity
+        - caEnv
+        - certificateEnv
+        - keyEnv
+        - platformCredentialEnv
+        - helperCredentialEnv
+        - enabled
+        - components
+        - expectedRevision
+      properties:
+        owner:
+          $ref: "#/components/schemas/CBCompanyOwner"
+        incarnationId:
+          type: string
+          format: uuid
+        endpoint:
+          type: string
+          format: uri
+          maxLength: 2048
+          description: HTTPS origin without user info, query, fragment or non-root path.
+        serverIdentity:
+          type: string
+          minLength: 1
+          maxLength: 256
+        caEnv:
+          type: string
+          pattern: ^env:[A-Z_][A-Z0-9_]{0,127}$
+        certificateEnv:
+          type: string
+          pattern: ^env:[A-Z_][A-Z0-9_]{0,127}$
+        keyEnv:
+          type: string
+          pattern: ^env:[A-Z_][A-Z0-9_]{0,127}$
+        platformCredentialEnv:
+          type: string
+          pattern: ^env:[A-Z_][A-Z0-9_]{0,127}$
+        helperCredentialEnv:
+          type: string
+          pattern: ^env:[A-Z_][A-Z0-9_]{0,127}$
+        enabled:
+          type: boolean
+        components:
+          type: array
+          items:
+            $ref: "#/components/schemas/CBComponentConfig"
+          minItems: 1
+          maxItems: 32
+          description: Distinct component IDs.
         expectedRevision:
           type: integer
           minimum: 1
@@ -40452,6 +40514,7 @@ components:
           type: string
           minLength: 1
           maxLength: 128
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
         serviceManager:
           type: string
           enum:
@@ -40463,12 +40526,12 @@ components:
             - user
         user:
           type: string
-          minLength: 1
-          maxLength: 128
+          pattern: ^(0|[1-9][0-9]{0,9})$
           nullable: true
+          description: Numeric systemd user UID through 4294967294 for user scope. Null for system scope.
         unit:
           type: string
-          pattern: ^[A-Za-z0-9_.@-]{1,240}\.service$
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.@-]{0,239}\.service$
         actions:
           type: array
           items:
@@ -40478,7 +40541,9 @@ components:
               - logs
               - restart
               - verify
+          minItems: 1
           maxItems: 4
+          uniqueItems: true
         runbook:
           type: object
           additionalProperties: false

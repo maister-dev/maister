@@ -1,13 +1,14 @@
 # Stand operation persistence
 
-**Designed — ADR-205.** [Stand maintenance](../system-analytics/stand-maintenance.md) owns exact authority/effect/health/recovery semantics. The `stand_operations` migration unit creates these entities after the specialist/cooperation units; a separately reviewed `company_brain_constraints` unit hardens cross-cutting references. Allocate their numeric prefixes from the current journal in the owning slice. Every owning unit includes its required invariants; these logical units are not applied schema.
+**Registry implemented, operation persistence designed — ADR-205.** [Stand maintenance](../system-analytics/stand-maintenance.md) owns exact authority, effect, health and recovery semantics. Main migrations `0299_stand_target_registry` and `0300_stand_target_registry_guards` add the company registry, reviewed revisions and component mappings. The operation, resource claim, permit, receipt, verification and recovery tables below describe the subsequent persistence work.
 
 The resource claim links uncertainty across all assignment attempts, while verification stays independent.
 
 ```mermaid
 erDiagram
     COMPANIES ||--o{ STAND_TARGETS : configures
-    STAND_TARGETS ||--o{ STAND_COMPONENTS : maps
+    STAND_TARGETS ||--o{ STAND_TARGET_REVISIONS : retains
+    STAND_TARGET_REVISIONS ||--o{ STAND_COMPONENTS : maps
     STAND_COMPONENTS ||--o{ STAND_OPERATIONS : receives
     SPECIALIST_ASSIGNMENTS ||--o{ STAND_OPERATIONS : requests
     STAND_OPERATIONS ||--o{ STAND_OPERATION_RECEIPTS : proves
@@ -20,20 +21,24 @@ erDiagram
         text company_id FK
         text incarnation_id
         integer config_revision
-        jsonb endpoint_credentials
         boolean enabled
     }
+    STAND_TARGET_REVISIONS {
+        text target_id PK
+        integer revision PK
+        jsonb connection
+        jsonb component_ids
+        text actor_id FK
+        jsonb authority
+        text request_digest
+    }
     STAND_COMPONENTS {
-        text id PK
-        text target_id FK
+        text target_id PK
+        integer config_revision PK
+        text component_id PK
         text canonical_resource_key
-        text service_manager
-        text unit_scope
-        text unit_user
-        text unit_name
-        jsonb allowed_actions
-        jsonb runbook_ref
-        jsonb health_probe
+        jsonb config
+        text runbook_sha256
     }
     STAND_OPERATIONS {
         text id PK
@@ -61,8 +66,9 @@ erDiagram
 
 | Entity | Keys/checks/limits | Persistence and lifetime |
 | --- | --- | --- |
-| `stand_targets` | Server ID, company FK, stable incarnation, positive config revision, explicit HTTPS/TLS/credential-ref config, enabled=false default | Company/id/config index; endpoint/cert identity versioned and administrative-only; secrets stay env/host config references |
-| `stand_components` | Target FK, exact systemd scope/user/unit, canonical resource key, actions/runbook/probe closed config | Alias rows may resolve same canonical key; actual resource claim uniqueness is on canonical identity, not component ID |
+| `stand_targets` | Server ID, company FK, unique stable incarnation, positive current config revision, enabled=false database default | Company keyset index and deferred check for a complete current configuration |
+| `stand_target_revisions` | Target/revision, exact reviewed HTTPS origin and TLS/environment references, immutable component IDs, actor and authority, actor/delivery key and content digest | Retains each accepted configuration. Endpoint and credential references are administrative configuration. Credential values stay in host configuration. |
+| `stand_components` | Target/revision FK, component ID, exact systemd scope/UID/unit, canonical resource key, actions/runbook/probe closed config, runbook witness digest | Aliases share the canonical key of the same target incarnation, service manager, scope, UID and unit. The revision's closed component list prevents later additions. |
 | `stand_operations` | Server ID; exact assignment/work/input/target/config/policy/runbook/digest; closed effect and verification axes; optional predecessor; before witness | UNIQUE assignment/logical-action/idempotency key and digest compare; history/effects RESTRICT cascade; no mutation of frozen intent |
 | `stand_resource_claims` | Canonical key PK, operation FK, positive epoch/owner/expiry and unresolved marker | Unknown remains exclusive after lease expiry; successor transfer is one transaction with risk decision/new intent; index reclaim candidates by unresolved/expiry |
 | `stand_operation_receipts` | Operation+target receipt revision unique; target incarnation, permit, sequence and attributable before/after witnesses; received/capture times distinct | Immutable accepted target receipt digest; exact ID/digest/version checked before adoption; result cleanup cannot delete it |

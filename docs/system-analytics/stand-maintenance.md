@@ -80,6 +80,14 @@ sequenceDiagram
 
 ### Configuration and runtime bounds
 
+The platform registry exposes `GET/POST /api/stands` and
+`GET/PATCH /api/stands/{targetId}`. Reads require current `targets:read`.
+Writes also require current `targets:manage`, a stable `Idempotency-Key`, and
+access to the exact active company procedure revision and supporting witness.
+Updates advance the expected configuration revision and retain the target's
+incarnation. The receipt identifies that exact revision and its component IDs.
+The platform derives one resource key for aliases of the same configured unit.
+
 Each target configuration is a versioned reviewed record: target incarnation ID; HTTPS URL (no userinfo/query/fragment); pinned TLS CA/server identity and mTLS client/helper identity; credential `env:` references; component IDs mapping to manager literal `systemd`, scope `system|user`, explicit user/UID for user scope, exact `.service` unit, allowed actions `inspect|logs|restart|verify`, pinned runbook record/revision and configured probe. No caller supplies endpoints/commands/paths/credentials. Unit IDs are allow-listed literals, not arbitrary systemctl arguments. Unsupported manager/scope/unit/action refuses before effect. Aliases map to one canonical actual unit/resource key.
 
 The helper binds configurable HTTPS address/port, default loopback:7443; remote deployment explicitly configures network reachability/firewall and mTLS. Credentials/cert/key/config/state paths are host service config, never prompts. Target process has only configured systemd privileges; no unrestricted bus/socket, arbitrary shell, package manager, upgrade or controller-self-restart capability. Target identity probes validate helper incarnation/component, not just HTTP liveness.

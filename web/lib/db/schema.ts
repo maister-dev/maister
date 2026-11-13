@@ -27,6 +27,7 @@ import type {
 } from "@/lib/specialist-assignments/types";
 import type { KnowledgeAttribution } from "@/lib/brain/record-types";
 import type {
+  CompanyGrantWitness,
   KnowledgeAccessCapture,
   KnowledgeAccessRestriction,
   NativeKnowledgeActor,
@@ -123,6 +124,10 @@ import type {
 } from "@/lib/agents/retry-types";
 import type { JsonValue } from "@/lib/hitl-response-contract";
 import type { ProjectSourceReview } from "@/lib/agents/project-source-review-types";
+import type {
+  StandComponentConfig,
+  StandTargetConnection,
+} from "@/lib/stand-operations/target-types";
 
 import { sql } from "drizzle-orm";
 import {
@@ -10750,6 +10755,100 @@ export const specialistInputRevisions = pgTable(
     scheduledRequest: check(
       "specialist_input_revisions_scheduled_check",
       scheduledRequestShape(t.scheduledRequest),
+    ),
+  }),
+);
+
+export const standTargets = pgTable(
+  "stand_targets",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    companyId: text("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "restrict" }),
+    incarnationId: text("incarnation_id").notNull(),
+    configRevision: integer("config_revision").notNull().default(1),
+    enabled: boolean("enabled").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    incarnation: unique("stand_targets_company_incarnation_unique").on(
+      t.companyId,
+      t.incarnationId,
+    ),
+    listing: index("stand_targets_company_created_idx").on(
+      t.companyId,
+      t.createdAt,
+      t.id,
+    ),
+    revision: check("stand_targets_revision_check", sql`${t.configRevision}>0`),
+    identity: check(
+      "stand_targets_incarnation_check",
+      sql`${t.incarnationId} ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'`,
+    ),
+  }),
+);
+
+export const standTargetRevisions = pgTable(
+  "stand_target_revisions",
+  {
+    targetId: text("target_id")
+      .notNull()
+      .references(() => standTargets.id, { onDelete: "restrict" }),
+    revision: integer("revision").notNull(),
+    enabled: boolean("enabled").notNull(),
+    connection: jsonb("connection").$type<StandTargetConnection>().notNull(),
+    componentIds: jsonb("component_ids").$type<readonly string[]>().notNull(),
+    actorId: text("actor_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    authority: jsonb("authority").$type<CompanyGrantWitness>().notNull(),
+    deliveryKey: text("delivery_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.targetId, t.revision] }),
+    delivery: unique("stand_target_revisions_actor_delivery_unique").on(
+      t.actorId,
+      t.deliveryKey,
+    ),
+    shape: check(
+      "stand_target_revisions_shape_check",
+      sql`${t.revision}>0 AND ${t.requestDigest} ~ '^[a-f0-9]{64}$' AND ${t.deliveryKey} ~ '^[A-Za-z0-9._:-]{8,128}$' AND jsonb_typeof(${t.connection})='object' AND jsonb_typeof(${t.authority})='object' AND jsonb_typeof(${t.componentIds})='array' AND jsonb_array_length(${t.componentIds}) BETWEEN 1 AND 32`,
+    ),
+  }),
+);
+
+export const standComponents = pgTable(
+  "stand_components",
+  {
+    targetId: text("target_id").notNull(),
+    configRevision: integer("config_revision").notNull(),
+    componentId: text("component_id").notNull(),
+    canonicalResourceKey: text("canonical_resource_key").notNull(),
+    config: jsonb("config").$type<StandComponentConfig>().notNull(),
+    runbookSha256: text("runbook_sha256").notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.targetId, t.configRevision, t.componentId] }),
+    targetRevision: foreignKey({
+      name: "stand_components_target_revision_fk",
+      columns: [t.targetId, t.configRevision],
+      foreignColumns: [
+        standTargetRevisions.targetId,
+        standTargetRevisions.revision,
+      ],
+    }).onDelete("restrict"),
+    shape: check(
+      "stand_components_shape_check",
+      sql`(${t.componentId} ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$' AND ${t.canonicalResourceKey} ~ '^[a-f0-9]{64}$' AND ${t.runbookSha256} ~ '^[a-f0-9]{64}$' AND ${t.config}->>'id'=${t.componentId}) IS TRUE`,
     ),
   }),
 );
