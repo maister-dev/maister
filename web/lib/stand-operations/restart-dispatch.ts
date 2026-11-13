@@ -2,8 +2,15 @@ import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
 import type { IssuedCommand } from "@/lib/execution-host/ledger";
+import type { StandOperation } from "./operation-types";
 
 import { and, desc, eq, sql } from "drizzle-orm";
+
+import { standTargetReceiptSchema } from "./operation-types";
+import {
+  adoptStandTargetReceipt,
+  retainStandUnknown,
+} from "./receipt-adoption";
 
 import {
   requireCompanyFlowNodeKnowledgeOwner,
@@ -22,7 +29,7 @@ import {
   standTargets,
 } from "@/lib/db/schema";
 import { redactQueryError } from "@/lib/db/pg-error";
-import { MaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 import { COMMAND_POLICY, deliverCommand } from "@/lib/execution-host/deliverer";
 import { defaultTransport } from "@/lib/execution-host/default-transport";
 import { issueCommand } from "@/lib/execution-host/ledger";
@@ -279,23 +286,64 @@ type RestartCommandPayload = Readonly<{
   }>;
 }>;
 
-/** Send the prepared native command once; its result still requires target-evidence validation. */
+/** Send the prepared native command once and settle the authenticated effect with its acknowledgement. */
 export async function deliverStandRestartCommand(
   db: Db,
   command: IssuedCommand<RestartCommandPayload>,
-): Promise<unknown> {
+): Promise<StandOperation> {
   const transport = defaultTransport();
+  const { operationId, targetIncarnation, requestDigest, ownerEpoch } =
+    command.envelope.payload;
+  const dispatchOwner = { dispatchEpoch: ownerEpoch };
+  let settled: StandOperation | undefined;
 
-  return deliverCommand({
-    db,
-    command: command.row,
-    envelope: command.envelope,
-    send: (envelope) =>
-      transport.dispatchStandRestart(envelope, {
-        timeoutMs: COMMAND_POLICY["stand.dispatch"].timeoutMs,
-      }),
-    resultSummary: () => ({
-      operationId: command.envelope.payload.operationId,
-    }),
-  });
+  try {
+    await deliverCommand({
+      db,
+      command: command.row,
+      envelope: command.envelope,
+      send: async (envelope) => {
+        const parsed = standTargetReceiptSchema.safeParse(
+          await transport.dispatchStandRestart(envelope, {
+            timeoutMs: COMMAND_POLICY["stand.dispatch"].timeoutMs,
+          }),
+        );
+
+        if (
+          !parsed.success ||
+          parsed.data.operationId !== operationId ||
+          parsed.data.targetIncarnation !== targetIncarnation ||
+          parsed.data.requestDigest !== requestDigest
+        )
+          throw new MaisterError(
+            "EXECUTOR_UNAVAILABLE",
+            "The restart response requires reconciliation",
+          );
+
+        return parsed.data;
+      },
+      resultSummary: () => ({ operationId }),
+      onAck: async (tx, receipt) => {
+        settled =
+          receipt.effectState === "not_dispatched" ||
+          receipt.effectState === "dispatching"
+            ? await retainStandUnknown(tx, operationId, dispatchOwner)
+            : await adoptStandTargetReceipt(tx, operationId, receipt);
+      },
+      onReject: async (tx) => {
+        await retainStandUnknown(tx, operationId, dispatchOwner);
+      },
+    });
+  } catch (error) {
+    if (
+      isMaisterError(error) &&
+      error.details?.reason === "delivery_budget_exhausted"
+    )
+      await retainStandUnknown(db, operationId, dispatchOwner);
+    throw error;
+  }
+  if (!settled)
+    throw new MaisterError("CRASH", "The restart command was not settled");
+
+  return settled;
 }

@@ -24,7 +24,6 @@ import {
 import { resolveInstalledAgentDefinition } from "@/lib/agents/effective";
 import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
 import { createCompanySpecialistBinding } from "@/lib/agents/company-bindings";
-import { claimDelivering } from "@/lib/execution-host/commands";
 import { releaseAssignmentForRun } from "@/lib/execution-host/assignments";
 import { setDefaultTransportForTests } from "@/lib/execution-host/default-transport";
 import { platformAcpRunners } from "@/lib/db/schema";
@@ -1121,9 +1120,6 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
       state: "active",
     });
     expect(command.row.payload.before).toEqual(command.envelope.payload.before);
-    expect(await claimDelivering(db, command.row.id, 0)).toMatchObject({
-      changed: true,
-    });
     const helperToken = randomBytes(32).toString("base64url");
     const previousToken = process.env.STAND_TEST_HELPER_TOKEN;
 
@@ -1145,48 +1141,74 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
           body: value,
         });
 
-      await expect(
-        authorize({ ...body, ownerEpoch: body.ownerEpoch - 1 }),
-      ).rejects.toMatchObject({
-        code: "CONFLICT",
-      });
-      const permits = await Promise.allSettled([
-        authorize(body),
-        authorize({ ...body, nonce: randomUUID() }),
-      ]);
+      const { deliverStandRestartCommand } =
+        await import("../restart-dispatch");
+      const { adoptStandTargetReceipt } = await import("../receipt-adoption");
+      let issuedPermit: string | undefined;
+      const sendRestart = vi.fn(async () => {
+        await expect(
+          authorize({ ...body, ownerEpoch: body.ownerEpoch - 1 }),
+        ).rejects.toMatchObject({
+          code: "CONFLICT",
+        });
+        const permits = await Promise.allSettled([
+          authorize(body),
+          authorize({ ...body, nonce: randomUUID() }),
+        ]);
 
-      expect(
-        permits.filter((permit) => permit.status === "fulfilled"),
-      ).toMatchObject([
-        {
-          value: {
-            operationId: operation.id,
-            allowed: true,
-            ownerEpoch: body.ownerEpoch,
-            purpose: "dispatch",
+        expect(
+          permits.filter((permit) => permit.status === "fulfilled"),
+        ).toMatchObject([
+          {
+            value: {
+              operationId: operation.id,
+              allowed: true,
+              ownerEpoch: body.ownerEpoch,
+              purpose: "dispatch",
+            },
           },
-        },
-      ]);
-      expect(
-        permits.filter((permit) => permit.status === "rejected"),
-      ).toMatchObject([{ reason: { code: "CONFLICT" } }]);
-      const grant = professional.page.items.find(
-        (entry) => entry.action === "targets:restart",
-      )!;
+        ]);
+        expect(
+          permits.filter((permit) => permit.status === "rejected"),
+        ).toMatchObject([{ reason: { code: "CONFLICT" } }]);
+        const grant = professional.page.items.find(
+          (entry) => entry.action === "targets:restart",
+        )!;
 
-      await revokeCompanyGrant(db, administratorId, grant.id, {
-        expectedRevision: grant.revision,
-        reason: "Revoke fixture restart authority.",
-        idempotencyKey: randomUUID(),
+        await revokeCompanyGrant(db, administratorId, grant.id, {
+          expectedRevision: grant.revision,
+          reason: "Revoke fixture restart authority.",
+          idempotencyKey: randomUUID(),
+        });
+        await expect(
+          authorize({ ...body, nonce: randomUUID() }),
+        ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+        const issued = permits.find((permit) => permit.status === "fulfilled");
+
+        if (!issued) throw new Error("The dispatch permit was not retained");
+        issuedPermit = issued.value.permitId;
+        throw new MaisterError(
+          "EXECUTOR_UNAVAILABLE",
+          "Lost fixture restart response",
+          {
+            details: { transport: "unknown_outcome" },
+          },
+        );
+      });
+
+      setDefaultTransportForTests({
+        ...fake.transport,
+        dispatchStandRestart: sendRestart,
       });
       await expect(
-        authorize({ ...body, nonce: randomUUID() }),
-      ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
-      const issued = permits.find((permit) => permit.status === "fulfilled");
-
-      if (!issued) throw new Error("The dispatch permit was not retained");
-      const { adoptStandTargetReceipt, retainStandUnknown } =
-        await import("../receipt-adoption");
+        deliverStandRestartCommand(db, command),
+      ).rejects.toMatchObject({
+        code: "EXECUTOR_UNAVAILABLE",
+        details: { reason: "delivery_budget_exhausted" },
+      });
+      expect(sendRestart).toHaveBeenCalledOnce();
+      if (!issuedPermit)
+        throw new Error("The dispatch permit was not observed");
       const result = {
         operationId: operation.id,
         targetIncarnation: input.incarnationId,
@@ -1194,7 +1216,7 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
         receiptRevision: 3,
         sequence: 4,
         effectState: "confirmed_applied",
-        permitId: issued.value.permitId,
+        permitId: issuedPermit,
         beforeInvocation: "a".repeat(32),
         afterInvocation: "b".repeat(32),
         observedState: "active",
@@ -1208,11 +1230,14 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
           permitId: randomUUID(),
         }),
       ).rejects.toMatchObject({ code: "CONFLICT" });
+      const { getStandOperation } = await import("../operation-intake");
+
       await expect(
-        retainStandUnknown(db, operation.id, {
-          dispatchEpoch: body.ownerEpoch,
-        }),
-      ).resolves.toMatchObject({ effectState: "unknown" });
+        getStandOperation(db, userId, operation.id),
+      ).resolves.toMatchObject({
+        effectState: "unknown",
+        verificationState: "not_checked",
+      });
       const read = await createCompanyGrants(db, administratorId, {
         principalKind: "user",
         principalId: userId,
