@@ -196,6 +196,22 @@ const TOOL_OP: Record<string, { method: string; path: string }> = {
     method: "get",
     path: "/api/v1/ext/specialist-assignments/{assignmentId}/context",
   },
+  stand_operation_get: {
+    method: "get",
+    path: "/api/v1/ext/stand-operations/{operationId}",
+  },
+  stand_operation_observe: {
+    method: "post",
+    path: "/api/v1/ext/stand-operations/{operationId}/observe",
+  },
+  stand_operation_dispatch: {
+    method: "post",
+    path: "/api/v1/ext/stand-operations/{operationId}/dispatch",
+  },
+  stand_operation_verify: {
+    method: "post",
+    path: "/api/v1/ext/stand-operations/{operationId}/verification",
+  },
   stand_operation_create: {
     method: "post",
     path: "/api/v1/ext/specialist-assignments/{assignmentId}/operations",

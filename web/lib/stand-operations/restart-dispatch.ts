@@ -6,6 +6,10 @@ import type { StandOperation } from "./operation-types";
 
 import { and, desc, eq, sql } from "drizzle-orm";
 
+import {
+  resolveStandCredential,
+  resolveStandExecutionActor,
+} from "./execution-actor";
 import { standTargetReceiptSchema } from "./operation-types";
 import {
   adoptStandTargetReceipt,
@@ -34,11 +38,11 @@ import { COMMAND_POLICY, deliverCommand } from "@/lib/execution-host/deliverer";
 import { defaultTransport } from "@/lib/execution-host/default-transport";
 import { issueCommand } from "@/lib/execution-host/ledger";
 
-type RestartDispatchIdentity = Readonly<{
-  operationId: string;
-  runId: string;
-  nodeAttemptId: string | null;
-}>;
+type RestartDispatchIdentity = Readonly<{ operationId: string }> &
+  (
+    | Readonly<{ tokenId: string }>
+    | Readonly<{ runId: string; nodeAttemptId: string | null }>
+  );
 
 /** Resolve the professional from the retained execution, including the current node for a Flow. */
 export async function authorizeStandRestartProfessional(
@@ -91,6 +95,26 @@ export async function prepareStandRestartDispatch(
 ): Promise<IssuedCommand<RestartCommandPayload>> {
   try {
     return await db.transaction(async (tx) => {
+      const token =
+        "tokenId" in identity
+          ? await resolveStandCredential(tx, identity.tokenId)
+          : null;
+      const runId = token
+        ? token.actor.runId
+        : "runId" in identity
+          ? identity.runId
+          : null;
+      const nodeAttemptId = token
+        ? token.actor.attemptId
+        : "nodeAttemptId" in identity
+          ? identity.nodeAttemptId
+          : null;
+
+      if (!runId)
+        throw new MaisterError(
+          "UNAUTHORIZED",
+          "A current specialist execution is required",
+        );
       const [actor] = await tx
         .select({
           runId: runs.id,
@@ -114,7 +138,7 @@ export async function prepareStandRestartDispatch(
         )
         .where(
           and(
-            eq(runs.id, identity.runId),
+            eq(runs.id, runId),
             eq(runs.status, "Running"),
             sql`${runs.companyCancellationIntent} IS NULL`,
             sql`${runs.budgetState}->'termination' IS NULL`,
@@ -163,10 +187,19 @@ export async function prepareStandRestartDispatch(
         );
       const { operation, target, approval } = selection;
 
+      if (token)
+        await resolveStandExecutionActor(
+          tx,
+          token,
+          operation.assignmentId,
+          operation.inputRevision,
+          "targets:restart",
+        );
+
       await authorizeStandRestartProfessional(
         tx,
         actor.runId,
-        identity.nodeAttemptId,
+        nodeAttemptId,
         target.companyId,
         operation.initiatingUserId,
       );
@@ -231,7 +264,7 @@ export async function prepareStandRestartDispatch(
         resourceKey: operation.resourceKey,
         ownerEpoch: claim.ownerEpoch + 1,
         businessOwnerEpoch: witness.epoch,
-        nodeAttemptId: identity.nodeAttemptId,
+        nodeAttemptId,
         beforeObservationId: observation.id,
         before: {
           invocationId: observation.invocationId,

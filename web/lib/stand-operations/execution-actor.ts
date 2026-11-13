@@ -5,7 +5,10 @@ import type { CompanyAction } from "@/lib/company/types";
 
 import { sql } from "drizzle-orm";
 
-import { resolveNativeTokenPrincipal } from "@/lib/brain/knowledge-access";
+import {
+  resolveNativeTokenPrincipal,
+  type KnowledgePrincipalIdentity,
+} from "@/lib/brain/knowledge-access";
 import { MaisterError } from "@/lib/errors";
 
 export type StandExecutionActor = Readonly<{
@@ -16,10 +19,34 @@ export type StandExecutionActor = Readonly<{
   companyId: string;
 }>;
 
+type CompanyExecution = Extract<
+  KnowledgePrincipalIdentity,
+  { kind: "company_agent" }
+>;
+
+export async function resolveStandCredential(
+  tx: Db,
+  tokenId: string,
+): Promise<CompanyExecution> {
+  const identity = await resolveNativeTokenPrincipal(
+    tx,
+    tokenId,
+    "targets:read",
+  );
+
+  if (identity.kind !== "company_agent")
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "A current specialist execution token is required",
+    );
+
+  return identity;
+}
+
 /** Bind a stand tool to the current token, specialist appointment and exact frozen input. */
 export async function resolveStandExecutionActor(
   tx: Db,
-  tokenId: string,
+  identity: CompanyExecution,
   assignmentId: string,
   inputRevision: number,
   action: Extract<
@@ -27,10 +54,7 @@ export async function resolveStandExecutionActor(
     "targets:read" | "targets:restart" | "targets:logs"
   >,
 ): Promise<StandExecutionActor> {
-  const identity = await resolveNativeTokenPrincipal(tx, tokenId, "targets:read");
-
   if (
-    identity.kind !== "company_agent" ||
     !identity.actionLimits.includes("assignments:read") ||
     !identity.actionLimits.includes("targets:read") ||
     !identity.actionLimits.includes(action)

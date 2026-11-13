@@ -5,6 +5,11 @@ import type { StandPermitCheck } from "./operation-types";
 
 import { and, eq, sql } from "drizzle-orm";
 
+import {
+  resolveStandCredential,
+  resolveStandExecutionActor,
+} from "./execution-actor";
+
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import { installationCompany } from "@/lib/company/grants";
 import { redactQueryError } from "@/lib/db/pg-error";
@@ -41,7 +46,7 @@ function actionForRead(
 /** Claim an independent read of this retained operation without renewing mutation ownership. */
 export async function claimStandReadAuthority(
   db: Db,
-  userId: string,
+  principal: string | Readonly<{ tokenId: string }>,
   operationId: string,
   purpose: StandReadPurpose,
   expectedRevision?: number,
@@ -50,6 +55,21 @@ export async function claimStandReadAuthority(
     return await db.transaction(async (tx) => {
       await beginAssignmentTransaction(tx);
       const companyId = await installationCompany(tx);
+      const execution =
+        typeof principal === "string"
+          ? null
+          : await resolveStandCredential(tx, principal.tokenId);
+      const tokenId = typeof principal === "string" ? null : principal.tokenId;
+      const userId =
+        typeof principal === "string"
+          ? principal
+          : execution?.initiatingUser.id;
+
+      if (!userId || (execution && execution.companyId !== companyId))
+        throw new MaisterError(
+          "UNAUTHORIZED",
+          "The current stand read principal is unavailable",
+        );
 
       await authorizeCompanyUserAction(tx, userId, companyId, "targets:read");
       const [stored] = await tx
@@ -73,6 +93,21 @@ export async function claimStandReadAuthority(
           "The retained stand operation is unavailable",
         );
       const { operation } = stored;
+
+      if (execution) {
+        if (userId !== operation.initiatingUserId)
+          throw new MaisterError(
+            "UNAUTHORIZED",
+            "The execution cannot read this operation",
+          );
+        await resolveStandExecutionActor(
+          tx,
+          execution,
+          operation.assignmentId,
+          operation.inputRevision,
+          purpose === "logs" ? "targets:logs" : "targets:read",
+        );
+      }
 
       if (
         expectedRevision !== undefined &&
@@ -102,6 +137,7 @@ export async function claimStandReadAuthority(
           operationId,
           purpose,
           actorId: userId,
+          tokenId,
           ownerEpoch: 1,
           authority: authority.witness,
           expiresAt: sql`clock_timestamp()+interval '30 seconds'`,
@@ -110,6 +146,7 @@ export async function claimStandReadAuthority(
           target: [standReadClaims.operationId, standReadClaims.purpose],
           set: {
             actorId: userId,
+            tokenId,
             ownerEpoch: sql`${standReadClaims.ownerEpoch}+1`,
             authority: authority.witness,
             expiresAt: sql`clock_timestamp()+interval '30 seconds'`,
@@ -136,11 +173,12 @@ export async function claimStandReadAuthority(
 
 /** Recheck the exact read owner, its original grant revision, and current source access. */
 export async function authorizeStandReadOwner(
-  tx: Pick<Db, "select" | "execute">,
+  tx: Db,
   operation: Operation,
   companyId: string,
   purpose: StandReadPurpose,
   ownerEpoch: number,
+  expectedTokenId?: string,
 ): Promise<{ actorId: string }> {
   const [owner] = await tx
     .select()
@@ -160,6 +198,30 @@ export async function authorizeStandReadOwner(
       "CONFLICT",
       "The current stand read owner is unavailable",
     );
+  if (expectedTokenId !== undefined && owner.tokenId !== expectedTokenId)
+    throw new MaisterError(
+      "CONFLICT",
+      "The current stand read credential changed",
+    );
+  if (owner.tokenId) {
+    const execution = await resolveStandCredential(tx, owner.tokenId);
+
+    if (
+      execution.companyId !== companyId ||
+      execution.initiatingUser.id !== owner.actorId
+    )
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "The retained stand reader is no longer current",
+      );
+    await resolveStandExecutionActor(
+      tx,
+      execution,
+      operation.assignmentId,
+      operation.inputRevision,
+      purpose === "logs" ? "targets:logs" : "targets:read",
+    );
+  }
   const action = actionForRead(purpose, operation);
   const current = await authorizeCompanyUserAction(
     tx,

@@ -1101,7 +1101,21 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
       reason: "Approve the fixture intent.",
       idempotencyKey: randomUUID(),
     });
-    const { observeBeforeStandRestart } = await import("../observe");
+    const { POST: specialistAction } =
+      await import("@/app/api/v1/ext/stand-operations/[operationId]/[action]/route");
+    const act = (action: string) =>
+      specialistAction(
+        new NextRequest(
+          `http://localhost/api/v1/ext/stand-operations/${operation.id}/${action}`,
+          {
+            method: "POST",
+            headers: { Authorization: `Bearer ${credential.secret}` },
+          },
+        ),
+        { params: Promise.resolve({ operationId: operation.id, action }) },
+      );
+
+    expect((await act("dispatch")).status).toBe(409);
     const observeTarget = vi.fn(
       async (
         selector: Parameters<typeof fake.transport.observeStandOperation>[0],
@@ -1122,21 +1136,12 @@ it("IT-CBO-02 issues at most one permit for a native approved restart command an
       observeStandOperation: observeTarget,
     });
     try {
-      await expect(
-        observeBeforeStandRestart(db, userId, operation.id, operation.revision),
-      ).resolves.toMatchObject({
-        operationId: operation.id,
-        observedState: "active",
-      });
+      expect((await act("observe")).status).toBe(200);
       expect(observeTarget).toHaveBeenCalledOnce();
     } finally {
       setDefaultTransportForTests(null);
     }
-    const identity = {
-      operationId: operation.id,
-      runId,
-      nodeAttemptId: null,
-    };
+    const identity = { operationId: operation.id, tokenId: credential.tokenId };
     const preparations = await Promise.allSettled([
       prepareStandRestartDispatch(db, identity),
       prepareStandRestartDispatch(db, identity),

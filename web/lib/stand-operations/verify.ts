@@ -48,13 +48,13 @@ const targetVerification = z
 /** A fresh independently issued probe can advance health only after the exact applied receipt. */
 export async function verifyStandRestart(
   db: Db,
-  userId: string,
+  principal: string | Readonly<{ tokenId: string }>,
   operationId: string,
   expectedRevision: number,
 ): Promise<StandOperation> {
   const { operation, ownerEpoch } = await claimStandReadAuthority(
     db,
-    userId,
+    principal,
     operationId,
     "verify",
     expectedRevision,
@@ -132,6 +132,7 @@ export async function verifyStandRestart(
         stored.target.companyId,
         "verify",
         ownerEpoch,
+        typeof principal === "string" ? undefined : principal.tokenId,
       );
       const [effect] = await tx
         .select()

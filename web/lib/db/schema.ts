@@ -11095,6 +11095,9 @@ export const standReadClaims = pgTable(
     actorId: text("actor_id")
       .notNull()
       .references(() => users.id, { onDelete: "restrict" }),
+    tokenId: text("token_id").references(() => projectTokens.id, {
+      onDelete: "cascade",
+    }),
     ownerEpoch: bigint("owner_epoch", { mode: "number" }).notNull(),
     authority: jsonb("authority").$type<CompanyGrantWitness>().notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),

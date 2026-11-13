@@ -6,7 +6,10 @@ import type { StandAction, StandOperation } from "./operation-types";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
-import { resolveStandExecutionActor } from "./execution-actor";
+import {
+  resolveStandCredential,
+  resolveStandExecutionActor,
+} from "./execution-actor";
 import { standOperationInputSchema } from "./operation-types";
 import {
   readStandReceiptIds,
@@ -95,7 +98,7 @@ export async function createStandOperation(
           ? null
           : await resolveStandExecutionActor(
               tx,
-              principal.tokenId,
+              await resolveStandCredential(tx, principal.tokenId),
               assignmentId,
               input.inputRevision,
               operationScope(input.action),

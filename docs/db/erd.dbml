@@ -3524,6 +3524,7 @@ table stand_read_claims {
   operation_id text [not null]
   purpose text [not null]
   actor_id text [not null]
+  token_id text
   owner_epoch bigint [not null]
   authority jsonb [not null]
   expires_at "timestamp with time zone" [not null]
@@ -5223,6 +5224,8 @@ ref stand_operations_component_fk: stand_operations.(target_id, config_revision,
 ref stand_read_claims_operation_id_stand_operations_id_fk: stand_read_claims.operation_id > stand_operations.id [delete: restrict, update: no action]
 
 ref stand_read_claims_actor_id_users_id_fk: stand_read_claims.actor_id > users.id [delete: restrict, update: no action]
+
+ref stand_read_claims_token_id_project_tokens_id_fk: stand_read_claims.token_id > project_tokens.id [delete: cascade, update: no action]
 
 ref stand_recovery_decisions_operation_id_stand_operations_id_fk: stand_recovery_decisions.operation_id > stand_operations.id [delete: restrict, update: no action]
 

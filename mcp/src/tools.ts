@@ -33,9 +33,37 @@ export type ToolSpec = {
   annotations?: Tool["annotations"];
 };
 
+const standOperationSelector: ToolSpec["inputSchema"] = {
+  type: "object",
+  additionalProperties: false,
+  required: ["operationId"],
+  properties: { operationId: { type: "string", minLength: 1, maxLength: 128 } },
+};
+
 export const TOOL_SPECS: Record<string, ToolSpec> = {
   ...TASK_LAUNCH_TOOL_SPECS,
   ...KNOWLEDGE_TOOL_SPECS,
+  stand_operation_get: {
+    description:
+      "Read the current effect, independent verification, and receipt IDs for an operation appointed to this specialist.",
+    inputSchema: standOperationSelector,
+    annotations: { readOnlyHint: true },
+  },
+  stand_operation_observe: {
+    description:
+      "Observe the exact configured service before an approved restart. Retains the target observation as evidence.",
+    inputSchema: standOperationSelector,
+  },
+  stand_operation_dispatch: {
+    description:
+      "Dispatch one already approved restart under the current execution fence. If delivery is uncertain, inspect the original operation and use the human recovery flow.",
+    inputSchema: standOperationSelector,
+  },
+  stand_operation_verify: {
+    description:
+      "Run a fresh independent health probe after the operation has a confirmed applied restart receipt.",
+    inputSchema: standOperationSelector,
+  },
   stand_operation_create: {
     description:
       "Retain one exact operation intent for a configured component appointed to this assignment. Reuse the same idempotency key and input on replay. A restart intent awaits exact human approval and current execution authorization.",
@@ -1447,7 +1475,7 @@ export async function dispatchTool(opts: {
       isLaunchAdmissionTool(name) ||
       isDelegationAdmissionTool(name) ||
       isKnowledgeTool(name) ||
-      name === "stand_operation_create"
+      name.startsWith("stand_operation_")
     )
       return structuredResponseToToolError(res);
 
@@ -1518,6 +1546,21 @@ function resolveRouting(
   if (isKnowledgeTool(name)) return knowledgeToolRouting(name, args);
 
   switch (name) {
+    case "stand_operation_get":
+    case "stand_operation_observe":
+    case "stand_operation_dispatch":
+    case "stand_operation_verify": {
+      const id = encodeURIComponent(String(args.operationId));
+      const path = `/api/v1/ext/stand-operations/${id}`;
+
+      if (name === "stand_operation_get") return { method: "GET", path };
+      const action =
+        name === "stand_operation_verify"
+          ? "verification"
+          : name.slice("stand_operation_".length);
+
+      return { method: "POST", path: `${path}/${action}` };
+    }
     case "stand_operation_create": {
       const { assignmentId, ...body } = args as {
         assignmentId: string;

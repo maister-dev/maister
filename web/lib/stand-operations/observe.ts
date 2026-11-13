@@ -40,13 +40,13 @@ type Observation = typeof standOperationObservations.$inferSelect;
 /** Record a live authenticated observation before admitting a restart command. */
 export async function observeBeforeStandRestart(
   db: Db,
-  userId: string,
+  principal: string | Readonly<{ tokenId: string }>,
   operationId: string,
   expectedRevision: number,
 ): Promise<Observation> {
   const { operation, ownerEpoch } = await claimStandReadAuthority(
     db,
-    userId,
+    principal,
     operationId,
     "reconcile",
     expectedRevision,
@@ -114,6 +114,7 @@ export async function observeBeforeStandRestart(
         stored.target.companyId,
         "reconcile",
         ownerEpoch,
+        typeof principal === "string" ? undefined : principal.tokenId,
       );
       const [retained] = await tx
         .insert(standOperationObservations)
