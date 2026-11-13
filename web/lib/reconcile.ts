@@ -15,6 +15,7 @@ import type {
   PromptEvidenceClass,
 } from "@/lib/reconcile-evidence";
 import type { WorktreeInfo } from "@/lib/worktree";
+import type { RunFlowOptions } from "@/lib/flows/graph/runner-core";
 
 import { randomUUID } from "node:crypto";
 
@@ -63,6 +64,10 @@ import {
   TERMINAL_RUN_STATUSES,
 } from "@/lib/runs/run-status-sets";
 import { findSharedTreeWorkspace } from "@/lib/runs/shared-tree";
+import {
+  currentCoordinator,
+  wakeParkedCoordinator,
+} from "@/lib/flows/graph/coordinator-wake";
 import { crashRunningRun } from "@/lib/runs/state-transitions";
 import { hasSyncDriver } from "@/lib/runs/sync-driver-registry";
 import {
@@ -121,6 +126,7 @@ export type ReconcileAction =
   // outcome still belongs to the run's own prompt owner.
   | "reobserve"
   | "redispatch"
+  | "wake-coordinator"
   // ADR-175: a COMMITTED crash-recover intent whose dispatcher died. Re-entered
   // through the recover driver itself — one owner for the whole evidence →
   // close → dispatch sequence, instead of a second copy of that ordering here.
@@ -185,6 +191,7 @@ export type ReconcileReason =
   // M36 (ADR-095) T7.1: a parked orchestrator that is still waiting on
   // non-terminal children (or whose session is live) → leave it parked.
   | "orchestrator-waiting"
+  | "company-coordinator-wake-ready"
   // ADR-177: the current attempt's owned prompt reached the ledger — the flow
   // continuation worker drives the next node, so age proves nothing.
   | "evidence-applied"
@@ -249,6 +256,7 @@ export interface ReconcileInput {
   // when the parked orchestrator still has at least one non-terminal child, so
   // it must stay parked (a later child-terminal event wakes it). Default false.
   hasPendingChildren?: boolean;
+  nativeCoordinator?: boolean;
   // ADR-141: true when this run has a non-terminal `run_sync_attempts`
   // row (an in-flight branch sync). Routes the run to branch-sync recovery BEFORE
   // the flow reattach/redispatch arms so a sync row is never mis-driven as a
@@ -395,6 +403,11 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
     if (input.hasPendingChildren) {
       return { action: "skip", reason: "orchestrator-waiting" };
     }
+    if (input.nativeCoordinator)
+      return {
+        action: "wake-coordinator",
+        reason: "company-coordinator-wake-ready",
+      };
 
     const anchorMs = mostRecentMs(
       input.resumeStartedAt,
@@ -707,7 +720,10 @@ export interface RunReconcileSweepOptions {
   // signal, so the injection point carries the runner's options.
   runFlow?: (
     runId: string,
-    opts?: { crashResume?: { targetStepId: string } },
+    opts?: Pick<
+      RunFlowOptions,
+      "crashResume" | "orchestratorResume" | "consensusResume"
+    >,
   ) => Promise<void> | void;
   now?: () => Date;
 }
@@ -845,6 +861,7 @@ type CandidateRow = {
   runKind: RunKind;
   status: string;
   retainedSpecialistWait?: boolean;
+  companyId?: string | null;
   assignmentId: string | null;
   acpSessionId: string | null;
   currentStepId: string | null;
@@ -1446,6 +1463,7 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
     runKind: RunKind;
     status: string;
     retainedSpecialistWait: boolean;
+    companyId: string | null;
     assignmentId: string | null;
     acpSessionId: string | null;
     currentStepId: string | null;
@@ -1462,6 +1480,7 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
       runKind: runs.runKind,
       status: runs.status,
       retainedSpecialistWait,
+      companyId: runs.companyId,
       assignmentId: runs.executionAssignmentId,
       currentStepId: runs.currentStepId,
       resumeStartedAt: runs.resumeStartedAt,
@@ -1735,7 +1754,7 @@ export async function runReconcileSweep(
     opts.runFlow ??
     (async (
       runId: string,
-      runOpts?: { crashResume?: { targetStepId: string } },
+      runOpts?: Parameters<NonNullable<RunReconcileSweepOptions["runFlow"]>>[1],
     ) => {
       const mod = await import("@/lib/flows/runner");
 
@@ -2081,6 +2100,13 @@ export async function runReconcileSweep(
       cand.status === "WaitingOnChildren"
         ? await hasPendingChildren(db, cand.runId)
         : false;
+    const nativeCoordinator =
+      cand.status === "WaitingOnChildren" &&
+      cand.companyId &&
+      !live &&
+      !pendingChildren
+        ? await currentCoordinator(db as ExecutionDb, cand.runId)
+        : null;
 
     const cliDriver =
       currentNodeKind === "cli" ? await observeCliDriver(db, cand.runId) : null;
@@ -2117,6 +2143,7 @@ export async function runReconcileSweep(
         parentRunId: cand.parentRunId,
         parentStatus,
         hasPendingChildren: pendingChildren,
+        nativeCoordinator: nativeCoordinator?.status === "WaitingOnChildren",
         activeSyncAttempt: cand.activeSyncAttempt,
         syncDriverActive: cand.activeSyncAttempt
           ? hasSyncDriver(cand.runId)
@@ -2135,6 +2162,21 @@ export async function runReconcileSweep(
     );
 
     switch (action) {
+      case "wake-coordinator": {
+        const result = await wakeParkedCoordinator({
+          db: db as ExecutionDb,
+          parentRunId: cand.runId,
+          cause: "reconcile",
+          expectedAttemptId: nativeCoordinator?.nodeAttemptId,
+          resumeFlow: opts.runFlow,
+          resumeOptions: { executionHosts: hosts },
+        });
+
+        if (result.kind === "woken") reattached += 1;
+        else skipped += 1;
+
+        return;
+      }
       case "crash": {
         if (
           reason === "orchestrator-stuck" ||

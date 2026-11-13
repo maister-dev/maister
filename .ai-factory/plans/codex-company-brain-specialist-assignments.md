@@ -764,6 +764,8 @@ Phase exit: full owning suites green and the actual scheduler/domain-event claim
 
   T30 company settlement checkpoint (2026-11-13). The loaded company orchestrator parked after delegating to an agent. Its committed child terminal event initially failed to wake it. The existing consumer now validates the actual child, terminal status, same-company parent and exact governed work appointment. The regression resumes the same node, collects the valid child result and verifies one wake across duplicate delivery. Wrong-company, wrong-child and mismatched-terminal events cannot wake it. The focused integration, TypeScript and documentation checks pass. Remaining cooperation, browser and interruption qualification stays open.
 
+  T30 delayed wake checkpoint (2026-11-13). When the settle event had not been consumed past the grace period, reconciliation tried to crash the parked company Flow through the project path. Reconciliation now submits its retained attempt through the existing coordinator wake claim. A PostgreSQL regression ages the real parked attempt, resumes it through reconciliation, then replays the terminal event. It observes one wake, the retained child result, successful rework and acceptance, and the existing assignment budget stop. The 111-case reconciliation classifier suite passes.
+
 Phase exit: full owning suites green; no new orchestration engine, attempt ledger or capacity bypass. Explicit adversarial review of authority, admission, event ordering and every resulting fix cycle.
 
 ### Phase 7 — Narrow stand connector, durable operations and deployment

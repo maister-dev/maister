@@ -12649,6 +12649,8 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
   const initiating = userGrant.page.items.find(
     (entry) => entry.action === "assignments:delegate",
   )!;
+  const fake = createFakeExecutionHost();
+  const { hosts, hostId } = await fakeExecutionHosts(db, { fake });
   const revoke = (grant: { id: string; revision: number }) =>
     revokeCompanyGrant(database.db, administratorId, grant.id, {
       expectedRevision: grant.revision,
@@ -12672,8 +12674,6 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
       (entry) => entry.action === "assignments:delegate",
     )!;
     let receipt: Awaited<ReturnType<typeof retain>>;
-    const fake = createFakeExecutionHost();
-    const { hosts, hostId } = await fakeExecutionHosts(db, { fake });
 
     try {
       await database.db.transaction(async (tx) => {
@@ -13385,8 +13385,10 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
           },
         });
         const savedFlowCap = process.env.MAISTER_MAX_CONCURRENT_RUNS;
+        const savedAgentCap = process.env.MAISTER_MAX_CONCURRENT_AGENTS;
 
         process.env.MAISTER_MAX_CONCURRENT_RUNS = "100";
+        process.env.MAISTER_MAX_CONCURRENT_AGENTS = "100";
         try {
           await expect(tryStartRun(graph.childRunId, { db })).resolves.toEqual({
             started: true,
@@ -13425,14 +13427,14 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
           });
           scriptAgentTurn(fake, graphTurn);
           const wokenRuns: string[] = [];
-          const consumer = buildOrchestratorResumeConsumer({
-            db,
-            resumeFlow: (runId, options) => {
-              wokenRuns.push(runId);
+          const resumeFlow: NonNullable<
+            Parameters<typeof runReconcileSweep>[0]
+          >["runFlow"] = (runId, options) => {
+            wokenRuns.push(runId);
 
-              return runFlow(runId, { ...options, db, executionHosts: hosts });
-            },
-          });
+            return runFlow(runId, { ...options, db, executionHosts: hosts });
+          };
+          const consumer = buildOrchestratorResumeConsumer({ db, resumeFlow });
 
           await consumer.handle([
             { ...settled, companyId: randomUUID() },
@@ -13440,13 +13442,29 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
             { ...settled, kind: "run.failed" },
           ]);
           expect(wokenRuns).toEqual([]);
-          await consumer.handle([settled]);
+          await db
+            .update(runs)
+            .set({ startedAt: new Date() })
+            .where(eq(runs.id, appointment.runId));
+          await db.execute(
+            sql`UPDATE node_attempts SET started_at=clock_timestamp()-interval '10 minutes' WHERE run_id=${graph.childRunId}`,
+          );
+          const reconcile = await runReconcileSweep({
+            db,
+            executionHosts: hosts,
+            runFlow: resumeFlow,
+          });
+
+          expect(reconcile).toMatchObject({ reattached: 1, crashed: 0 });
           await consumer.handle([settled]);
           expect(wokenRuns).toEqual([graph.childRunId]);
         } finally {
           if (savedFlowCap === undefined)
             delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
           else process.env.MAISTER_MAX_CONCURRENT_RUNS = savedFlowCap;
+          if (savedAgentCap === undefined)
+            delete process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+          else process.env.MAISTER_MAX_CONCURRENT_AGENTS = savedAgentCap;
         }
 
         expect(graphPrompts).toHaveLength(2);
@@ -13537,7 +13555,10 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
         try {
           const blocked = await sendRework(reworkBody);
 
-          expect(blocked.status).toBe(409);
+          expect(
+            blocked.status,
+            JSON.stringify(await blocked.clone().json()),
+          ).toBe(409);
           expect(await blocked.json()).toMatchObject({
             details: { reason: "assignment_budget_exhausted" },
           });
@@ -13809,26 +13830,36 @@ it("IT-CBC-01 IT-CBC-04 requires current company delegation grants and retains e
         reason: "launch",
       }),
     );
-    await db.insert(executionEvents).values({
-      id: randomUUID(),
-      source: "manager",
-      sourceKey: `assignment-budget:${appointment.runId}`,
-      runId: appointment.runId,
-      eventType: "usage.recorded",
-      payloadSchema: "maister.usage.recorded.v1",
-      payload: {
-        sessionName: "default",
-        model: "budget-fixture",
-        inputTokens: prepared.bounds.maxTokens,
-        outputTokens: 0,
-        cacheReadInputTokens: 0,
-        cacheCreationInputTokens: 0,
-        resumed: false,
-      },
-      occurredAt: new Date(),
-      receivedAt: new Date(),
-      runSequence: 0n,
-      ingestDisposition: "accepted",
+    await db.transaction(async (tx) => {
+      const [allocated] = await tx
+        .update(runs)
+        .set({
+          nextExecutionEventSequence: sql`${runs.nextExecutionEventSequence} + 1`,
+        })
+        .where(eq(runs.id, appointment.runId))
+        .returning({ next: runs.nextExecutionEventSequence });
+
+      await tx.insert(executionEvents).values({
+        id: randomUUID(),
+        source: "manager",
+        sourceKey: `assignment-budget:${appointment.runId}`,
+        runId: appointment.runId,
+        eventType: "usage.recorded",
+        payloadSchema: "maister.usage.recorded.v1",
+        payload: {
+          sessionName: "default",
+          model: "budget-fixture",
+          inputTokens: prepared.bounds.maxTokens,
+          outputTokens: 0,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+          resumed: false,
+        },
+        occurredAt: new Date(),
+        receivedAt: new Date(),
+        runSequence: allocated!.next - 1n,
+        ingestDisposition: "accepted",
+      });
     });
     await runSweepTick({ db, executionHosts: hosts });
     const [budgetRoot] = await db

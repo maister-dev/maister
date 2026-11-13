@@ -309,6 +309,9 @@ current coordinator wake claim. A company event can wake only the actual
 parent on the same company assignment and exact delegated work revision.
 Repeated delivery converges on the same wait-resume placement. The coordinator
 resumes its retained node and can collect the settled child's result revision.
+The reconcile sweep uses the same wake claim for a parked company coordinator
+whose children have settled, even after the grace period. Capacity refusal
+keeps the Run parked with its existing durable resume request.
 
 | Run status | Agent child after owner loss | Flow child after owner loss | Coordinator recovery |
 | --- | --- | --- | --- |

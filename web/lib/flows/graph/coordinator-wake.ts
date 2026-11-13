@@ -221,7 +221,7 @@ async function dispatchResume(
 export async function wakeParkedCoordinator(input: {
   db: Db;
   parentRunId: string;
-  cause: "settled_child" | "post_park" | "continuation_worker";
+  cause: "settled_child" | "post_park" | "continuation_worker" | "reconcile";
   allowFailedOrchestratorChild?: boolean;
   expectedAttemptId?: string;
   resumeFlow?: ResumeFlow;
