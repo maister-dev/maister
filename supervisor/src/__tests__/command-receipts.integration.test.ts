@@ -18,7 +18,7 @@ import {
   HOST_STATE_FILE,
   HOST_STATE_SCHEMA_VERSION,
 } from "../host-state";
-import { commandRequestDigest } from "../command-receipts";
+import { commandRequestDigest, REPLAYED_HEADER } from "../command-receipts";
 import { SESSION_EVENT_CHANNEL } from "../registry";
 import { pendingPermissions } from "../pending-permissions";
 import { signalOwnedSessionProcess } from "../execution-fence";
@@ -60,6 +60,60 @@ async function tempRoot(): Promise<string> {
 function fenceFor(host: BootedHost, runId: string, epoch = 1) {
   return { hostKey: host.hostState.hostKey, runId, assignmentEpoch: epoch };
 }
+
+it("IT-CBO-02 fences and retains exactly one stand dispatch on the existing command receipt path", async () => {
+  const root = await tempRoot();
+  let deliveries = 0;
+  const host = await bootHost({
+    runtimeRoot: root,
+    dispatchStandRestart: async (payload) => {
+      deliveries++;
+
+      return { operationId: payload.operationId, effectState: "unknown" };
+    },
+  });
+
+  booted.push(host);
+  const input = {
+    operationId: randomUUID(),
+    targetIncarnation: randomUUID(),
+    componentId: "fixture",
+    action: "restart",
+    requestDigest: "a".repeat(64),
+    resourceKey: "b".repeat(64),
+    ownerEpoch: 2,
+    businessOwnerEpoch: 1,
+    nodeAttemptId: null,
+    beforeObservationId: randomUUID(),
+    before: { invocationId: "c".repeat(32), state: "active" },
+  };
+  const runId = randomUUID();
+  const path = `${host.url}/stand-operations/dispatch`;
+  const command = envelope("stand.dispatch", fenceFor(host, runId, 2), input);
+
+  expect(
+    await postJson(path, {
+      ...command,
+      payload: { ...input, endpoint: "https://example.invalid" },
+    }),
+  ).toMatchObject({ status: 409, body: { code: "PRECONDITION" } });
+  expect((await postJson(path, command)).body).toEqual({
+    operationId: input.operationId,
+    effectState: "unknown",
+  });
+  expect((await postJson(path, command)).headers.get(REPLAYED_HEADER)).toBe(
+    "true",
+  );
+  expect(
+    (
+      await postJson(
+        path,
+        envelope("stand.dispatch", fenceFor(host, runId, 1), input),
+      )
+    ).status,
+  ).toBe(409);
+  expect(deliveries).toBe(1);
+});
 
 function canonicalRuntimeEvents(
   host: BootedHost,

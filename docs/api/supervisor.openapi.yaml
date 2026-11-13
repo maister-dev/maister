@@ -790,6 +790,32 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /stand-operations/dispatch:
+    post:
+      tags: [execution-host]
+      operationId: dispatchStandRestart
+      summary: Dispatch one fenced stand restart command
+      description: The existing execution-host fence and receipt ledger retain the exact command.
+        A replay observes that receipt. The operation can produce an unknown result requiring
+        a separate recovery read. The endpoint, credentials and service command are absent
+        from the payload.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StandDispatchCommand"
+      responses:
+        "200":
+          description: Existing command receipt or outcome of the admitted dispatch.
+          content:
+            application/json:
+              schema: { type: object }
+        "409":
+          description: Invalid command, stale placement fence or missing stand transport.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
   /workspaces/adopt:
     post:
       tags: [execution-host]
@@ -4660,6 +4686,42 @@ components:
               path: { type: string, minLength: 1, maxLength: 4096 }
               ref: { type: string, minLength: 1, maxLength: 255 }
               commit: { type: string, minLength: 7, maxLength: 64 }
+    StandDispatchCommand:
+      type: object
+      required: [command, fence, payload]
+      additionalProperties: false
+      properties:
+        command:
+          type: object
+          required: [id, kind, issuedAt]
+          additionalProperties: false
+          properties:
+            id: { type: string, format: uuid }
+            kind: { type: string, enum: [stand.dispatch] }
+            issuedAt: { type: string, format: date-time }
+        fence: { $ref: "#/components/schemas/CommandFence" }
+        payload:
+          type: object
+          additionalProperties: false
+          required: [operationId, targetIncarnation, componentId, action, requestDigest, resourceKey, ownerEpoch, businessOwnerEpoch, nodeAttemptId, beforeObservationId, before]
+          properties:
+            operationId: { type: string, format: uuid }
+            targetIncarnation: { type: string, format: uuid }
+            componentId: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$' }
+            action: { type: string, enum: [restart] }
+            requestDigest: { type: string, pattern: '^[a-f0-9]{64}$' }
+            resourceKey: { type: string, pattern: '^[a-f0-9]{64}$' }
+            ownerEpoch: { type: integer, minimum: 1, maximum: 9007199254740991 }
+            businessOwnerEpoch: { type: integer, minimum: 1, maximum: 9007199254740991 }
+            nodeAttemptId: { type: string, format: uuid, nullable: true }
+            beforeObservationId: { type: string, format: uuid }
+            before:
+              type: object
+              additionalProperties: false
+              required: [invocationId, state]
+              properties:
+                invocationId: { type: string, pattern: '^[a-f0-9]{32}$', nullable: true }
+                state: { type: string, enum: [active, inactive, failed] }
     AdoptWorkspaceRequest:
       type: object
       required: [command, fence, payload]

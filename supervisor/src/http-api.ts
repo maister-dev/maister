@@ -58,6 +58,10 @@ import {
   type CommandOutcome,
 } from "./command-receipts";
 import { takeContextMountPreamble } from "./context-mounts";
+import {
+  StandDispatchPayloadSchema,
+  type DispatchStandRestart,
+} from "./stand-operations/contracts";
 import { attachCost } from "./cost";
 import {
   applyFence,
@@ -239,6 +243,7 @@ export type RegisterRoutesOptions = {
   // ADR-167 amendment 2026-09-25: the per-boot `/runtime-events` subscriber
   // registry. Injected only so a suite can read what a subscriber buffers.
   runtimeEventSubscribers?: RuntimeEventSubscribers;
+  dispatchStandRestart?: DispatchStandRestart;
 };
 
 type SessionIdParams = { Params: { id: string } };
@@ -2454,6 +2459,33 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         name,
         present: Boolean(process.env[name]),
       })),
+    });
+  });
+
+  app.post("/stand-operations/dispatch", async (req, reply) => {
+    const parsed = parseCommandBody(
+      req.body,
+      "stand.dispatch",
+      StandDispatchPayloadSchema,
+      { route: "POST /stand-operations/dispatch" },
+    );
+
+    await runCommand({
+      reply,
+      parsed,
+      kind: "stand.dispatch",
+      execute: async () => {
+        if (!opts.dispatchStandRestart)
+          throw new SupervisorError(
+            "PRECONDITION",
+            "No stand transport is configured",
+          );
+
+        return {
+          status: 200,
+          body: await opts.dispatchStandRestart(parsed.payload),
+        };
+      },
     });
   });
 
