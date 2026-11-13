@@ -2,7 +2,7 @@
 
 ## Purpose
 
-**Designed — ADR-205.** Qualify configured stand maintenance through existing specialist/RAH execution and a narrow first-party helper. The initial action is a permitted systemd component restart, with durable effect identity and separate health evidence. Configuration changes/upgrades and controller self-update are excluded from this acceptance gate.
+**ADR-205.** The platform implements configured systemd diagnosis, bounded logs, one permitted component restart and a separate post-action health check. The native company coordinator uses a narrow first-party helper and durable operation identity. End-to-end qualification of the installed package and fault matrix is tracked in the [implementation plan](../../.ai-factory/plans/codex-company-brain-specialist-assignments.md). Configuration changes, upgrades and controller self-update are subsequent slices.
 
 ## Domain entities
 
@@ -101,7 +101,7 @@ execute. A lost response requires a separate read of the original target
 receipt. Target credential values are read from host files and excluded from
 the command ledger and inherited ACP environment.
 
-| Bound | Designed limit/policy |
+| Bound | Limit or policy |
 | --- | --- |
 | Platform/target intent body | <=65536 UTF-8 bytes, closed schema |
 | Inspect/receipt call | 5-second timeout, up to 3 read attempts with 200/500 ms backoff and structured warnings, then explicit last error |

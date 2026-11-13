@@ -106,6 +106,8 @@ research and control remain read-only. Inspect the resulting proposal in
 confirms its assertions. Review and factual confirmation require separate
 current authority.
 
+The [stand-maintenance guide](/guides/stand-maintenance) shows how to send a draft from an accepted assignment to Brain review with its operation and health evidence.
+
 ## Handle unavailable references and retries
 
 If a reference becomes unavailable, inspect current access with its owner.

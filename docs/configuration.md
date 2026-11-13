@@ -1694,9 +1694,9 @@ its provenance. Required-policy activation is an explicit editSettings action;
 upgraded intake/qualifier attachment enablement refuses an incompatible project
 before scheduling. Unrelated core capabilities remain installable in legacy projects.
 
-## Company specialist and stand configuration (Designed)
+## Company specialist and stand configuration
 
-Company bindings resolve installed pinned definitions/revisions without a repository. `execution: {workspace: none, completion: result}` is the designed engine-3.12.0 result-only Flow declaration; current engine support is not implied. [Runtime](system-analytics/specialist-runtime.md) defines the allowed nodes, current authority and separate immutable input planes.
+Company bindings resolve installed, trusted package revisions without a repository. Engine 3.12.0 supports `execution: {workspace: none, completion: result}` for the native company coordinator Flow and `operational_evidence_v2` for the stand result. Review the allowed actions, runner, and exact human role mappings with the binding. The `assisted` execution preset allows tools in the reviewed scope and retains human Flow gates. Exact restart approval is enforced independently of the preset. See the [specialist runtime](system-analytics/specialist-runtime.md).
 
 A stand target is managed through `/api/stands` with explicit incarnation, HTTPS/TLS identity, environment credential references, systemd manager/scope/user/unit, allowed actions, exact runbook revision and health probe. Read/propose grants are separate from review/confirmation and target mutation. Global administrators manage explicit company grants through `/api/company/grants`; this management authority does not implicitly disclose knowledge. Submitted source capture through `/api/knowledge/sources` records actual received bytes/version witness, not proof of assertion truth.
 

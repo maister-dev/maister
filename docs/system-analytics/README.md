@@ -30,7 +30,7 @@ One row per file — this table is the **canonical index** of the folder
 | Specialist assignments | [`specialist-assignments.md`](specialist-assignments.md) | Designed: durable business input and responsibility. |
 | Specialist cooperation | [`specialist-cooperation.md`](specialist-cooperation.md) | Designed: bounded delegation, context and recovery. |
 | Evidence findings | [`evidence-findings.md`](evidence-findings.md) | Designed: native findings, declared closure and access-safe reduction. |
-| Stand maintenance | [`stand-maintenance.md`](stand-maintenance.md) | Designed: configured restart, durable receipts and independent verification. |
+| Stand maintenance | [`stand-maintenance.md`](stand-maintenance.md) | Configured systemd restart, durable receipts and independent verification. Installed-package qualification is tracked separately. |
 | Company Brain qualification | [`company-brain-specialists-qualification.md`](company-brain-specialists-qualification.md) | Designed: migrations, transport and real-package release proof. |
 | Company Brain traceability | [`company-brain-specialists-traceability.md`](company-brain-specialists-traceability.md) | Requirement/edge tasks, primary tests and execution status. |
 | Scheduled agent requests | [`scheduled-agent-requests.md`](scheduled-agent-requests.md) | Implemented: immutable per-cron invocation input, delivery and protected history. |
