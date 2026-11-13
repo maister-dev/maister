@@ -30,6 +30,7 @@ const attachment = {
   id: "att-1",
   packageInstallId: "inst-1",
   packageName: "aif",
+  sourceLocalPackageName: null,
   versionLabel: "aif/v1.0.0",
   resolvedRevision: "a".repeat(40),
   trustStatus: "trusted_by_policy",
@@ -57,6 +58,7 @@ const installs = [
     compatible: true,
     incompatibilityReason: null,
     sourceLocalPackageId: "lp-9",
+    sourceLocalPackageName: "MAIster AIF — Codex High",
   },
   {
     id: "inst-3",
@@ -68,6 +70,7 @@ const installs = [
     compatible: true,
     incompatibilityReason: null,
     sourceLocalPackageId: null,
+    sourceLocalPackageName: null,
   },
 ];
 

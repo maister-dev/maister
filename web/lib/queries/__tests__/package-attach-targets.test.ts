@@ -5,7 +5,10 @@ const dbState = vi.hoisted(() => ({ rows: [] as unknown[] }));
 vi.mock("@/lib/db/client", () => ({
   getDb: () => ({
     select: () => ({
-      from: () => ({ where: () => Promise.resolve(dbState.rows) }),
+      from: () => ({
+        where: () => Promise.resolve(dbState.rows),
+        leftJoin: () => ({ where: () => Promise.resolve(dbState.rows) }),
+      }),
     }),
   }),
 }));
@@ -23,35 +26,43 @@ afterEach(() => {
 // carrying `source_local_package_id`) from upstream installs — the UI badges
 // them and routes the name-collision explainer to the fork's editor.
 describe("getAvailablePackageInstalls", () => {
-  it("carries sourceLocalPackageId: the fork-cut back-edge for cuts, null for upstream installs", async () => {
+  it("carries the source fork ID and name for cuts", async () => {
     dbState.rows = [
       {
-        id: "inst-up",
-        name: "aif",
-        versionLabel: "aif/v1.0.0",
-        resolvedRevision: "a".repeat(40),
-        trustStatus: "trusted_by_policy",
-        manifest: { spec: { flows: [{ id: "aif-dev" }] } },
-        sourceLocalPackageId: null,
+        install: {
+          id: "inst-up",
+          name: "aif",
+          versionLabel: "aif/v1.0.0",
+          resolvedRevision: "a".repeat(40),
+          trustStatus: "trusted_by_policy",
+          manifest: { spec: { flows: [{ id: "aif-dev" }] } },
+          sourceLocalPackageId: null,
+        },
+        sourceLocalPackageName: null,
       },
       {
-        id: "inst-cut",
-        name: "aif",
-        versionLabel: "local-abcdef123456",
-        resolvedRevision: "b".repeat(40),
-        trustStatus: "trusted_by_policy",
-        manifest: { spec: { flows: [{ id: "aif-dev" }] } },
-        sourceLocalPackageId: "lp-1",
+        install: {
+          id: "inst-cut",
+          name: "aif",
+          versionLabel: "local-abcdef123456",
+          resolvedRevision: "b".repeat(40),
+          trustStatus: "trusted_by_policy",
+          manifest: { spec: { flows: [{ id: "aif-dev" }] } },
+          sourceLocalPackageId: "lp-1",
+        },
+        sourceLocalPackageName: "MAIster AIF — Codex High",
       },
     ];
 
     const views = await getAvailablePackageInstalls();
 
     expect(views.map((v) => v.sourceLocalPackageId)).toEqual([null, "lp-1"]);
+    expect(views[0]?.sourceLocalPackageName).toBeNull();
     expect(views.find((v) => v.id === "inst-cut")).toMatchObject({
       name: "aif",
       versionLabel: "local-abcdef123456",
       sourceLocalPackageId: "lp-1",
+      sourceLocalPackageName: "MAIster AIF — Codex High",
       flows: ["aif-dev"],
     });
   });

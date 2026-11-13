@@ -35,11 +35,13 @@ describe("getProjectPackageContents", () => {
       {
         packageInstallId: "inst-1",
         packageName: "aif",
+        sourceLocalPackageName: "MAIster AIF — Codex High",
         versionLabel: "aif/v1.0.0",
       },
       {
         packageInstallId: "inst-missing",
         packageName: "ghost",
+        sourceLocalPackageName: null,
         versionLabel: "ghost/v1",
       },
     ]);
@@ -62,6 +64,7 @@ describe("getProjectPackageContents", () => {
       {
         packageInstallId: "inst-1",
         packageName: "aif",
+        sourceLocalPackageName: "MAIster AIF — Codex High",
         versionLabel: "aif/v1.0.0",
         flows: [flow],
         counts: { skills: 3, agents: 2, subagents: 1, mcps: 1, rules: 0 },

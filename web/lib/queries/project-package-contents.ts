@@ -10,6 +10,7 @@ import {
 export type ProjectPackageContentView = {
   packageName: string;
   packageInstallId: string;
+  sourceLocalPackageName: string | null;
   versionLabel: string;
   flows: PackageBomFlow[];
   counts: {
@@ -37,6 +38,7 @@ export async function getProjectPackageContents(
       return {
         packageName: att.packageName,
         packageInstallId: att.packageInstallId,
+        sourceLocalPackageName: att.sourceLocalPackageName,
         versionLabel: att.versionLabel,
         flows: bom.flows,
         counts: {

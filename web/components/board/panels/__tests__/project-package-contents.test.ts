@@ -38,7 +38,8 @@ describe("ProjectPackageContents", () => {
           {
             packageName: "aif",
             packageInstallId: "inst-1",
-            versionLabel: "aif/v1.0.0",
+            sourceLocalPackageName: "MAIster AIF — Codex High",
+            versionLabel: "local-abcdef123456",
             flows: [
               {
                 id: "dev",
@@ -64,6 +65,8 @@ describe("ProjectPackageContents", () => {
     );
 
     expect(markup).toContain("contentsTitle");
+    expect(markup).toContain("MAIster AIF — Codex High");
+    expect(markup).toContain("local-abcdef123456");
     expect(markup).toContain("/studio/packages/aif?install=inst-1");
     expect(markup).toContain("/projects/demo/packages/dev");
     // Each flow card also carries the Studio flow URL (right-aligned icon link).
