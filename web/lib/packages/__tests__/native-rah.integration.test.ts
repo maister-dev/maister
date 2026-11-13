@@ -7,7 +7,10 @@ import { join, resolve } from "node:path";
 
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
-import { resolveEffectiveAgentDefinition } from "@/lib/agents/effective";
+import {
+  resolveEffectiveAgentDefinition,
+  resolveInstalledAgentDefinition,
+} from "@/lib/agents/effective";
 import { attachAgent } from "@/lib/agents/project-links";
 import { loadFlowManifest, readAndValidateFormSchemaDoc } from "@/lib/config";
 import { assertNodeLaunchable } from "@/lib/flows/enforcement";
@@ -79,6 +82,22 @@ it.skipIf(!standSource || !standRevision)(
       name: "stand-operations",
       resolvedRevision: standRevision,
     });
+    await trustPackageRevision({
+      packageInstallId: installed.id,
+      db: database.db,
+    });
+    for (const role of ["coordinator", "diagnostic"]) {
+      const definition = await resolveInstalledAgentDefinition(database.db, {
+        agentId: `stand-operations:${role}`,
+        packageInstallId: installed.id,
+      });
+
+      expect(definition.parsed.specialist?.targetClasses).toEqual(["stand"]);
+      expect(definition.parsed.workspace).toBe("none");
+      expect(definition.parsed.flow).toBe(
+        role === "coordinator" ? "stand-maintenance" : null,
+      );
+    }
     const {
       rows: [flow],
     } = await database.pool.query<{
@@ -107,7 +126,7 @@ it.skipIf(!standSource || !standRevision)(
       nativeContract: "operational_evidence_v2",
       schemaVersion: 2,
       required: true,
-      producerNodeIds: ["coordinate"],
+      producerNodeIds: ["execute", "declined"],
     });
   },
 );
