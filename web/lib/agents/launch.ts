@@ -249,7 +249,7 @@ import { assertReadOnlySessionEvidence } from "@/lib/agents/runner-readonly-evid
 export { runnerCatalogEntry } from "@/lib/agents/runner-catalog";
 import {
   issueAgentRunToken,
-  issueCompanyAgentRunToken,
+  retainCompanyAgentSessionCredential,
 } from "@/lib/agents/tokens";
 import { nativeFindingsCompletionPrompt } from "@/lib/run-results/findings-prompt";
 import { nativeKnowledgeCaptureAtLaunch } from "@/lib/brain/knowledge-launch-capture";
@@ -5277,15 +5277,6 @@ async function driveAgentSession(
       // override branch below (which discards `basePrompt` and would otherwise
       // record provenance for a prompt that carried no memory).
       operationalSpawnStage = "prompt";
-      const issuedToken = companyContext
-        ? await issueCompanyAgentRunToken({ runId, db: _db })
-        : await issueAgentRunToken({
-            agentId: agent.id,
-            projectId: project.id,
-            runId,
-            db: _db,
-          });
-
       if (usesStructuredKnowledgeContext(run))
         await assertNativeRunKnowledgeInputs(_db, runId);
       const memoryText = companyContext
@@ -5406,16 +5397,31 @@ async function driveAgentSession(
       // `platform_mcp` (default true). If it is required but not runnable in this
       // deployment, fail loud rather than silently launch a tool-less agent that
       // burns tokens and a concurrency slot only to give up (the stand bug).
-      const facadeServer = effective.parsed.platformMcp
-        ? agentFacadeMcpServer(issuedToken.secret)
-        : null;
+      const appendFacade = (secret: string): AgentMcpServer[] => {
+        if (!effective.parsed.platformMcp) return [];
+        const facadeServer = agentFacadeMcpServer(secret);
 
-      if (effective.parsed.platformMcp && !facadeServer) {
-        throw new MaisterError(
-          "PRECONDITION",
-          `agent run ${runId} requires the MAIster MCP facade, but it is not runnable in this deployment. Build it (\`pnpm --filter @maister/mcp build\`) or set MAISTER_MCP_FACADE_COMMAND. Agents that use no MAIster tools can opt out with \`platform_mcp: false\`.`,
-        );
-      }
+        if (!facadeServer)
+          throw new MaisterError(
+            "PRECONDITION",
+            `Agent Run ${runId} requires the MAIster MCP facade. Build it with pnpm --filter @maister/mcp build or set MAISTER_MCP_FACADE_COMMAND.`,
+          );
+
+        return [facadeServer];
+      };
+      const projectFacade =
+        companyContext || !effective.parsed.platformMcp
+          ? []
+          : appendFacade(
+              (
+                await issueAgentRunToken({
+                  agentId: agent.id,
+                  projectId: project.id,
+                  runId,
+                  db: _db,
+                })
+              ).secret,
+            );
 
       if (run.agentKind !== "operational") await prepareAttachedContextMounts();
       if (usesStructuredKnowledgeContext(run))
@@ -5521,10 +5527,7 @@ async function driveAgentSession(
           ),
           // ADR-089 D9: the facade (gated by platform_mcp above) carries the
           // ephemeral token to the agent.
-          mcpServers: [
-            ...profileMcpServers,
-            ...(facadeServer ? [facadeServer] : []),
-          ],
+          mcpServers: [...profileMcpServers, ...projectFacade],
           // ADR-090 L1: none/repo_read agents run the whole session read-only.
           readOnlySession: workspace !== "worktree",
           agentKind: baseRun.agentKind ?? "code_delivery",
@@ -5553,6 +5556,15 @@ async function driveAgentSession(
             promptOrdinal: ownedTurn.ordinal,
           },
           async () => createPayload,
+          companyContext && effective.parsed.platformMcp
+            ? {
+                bindCredentials: async (tx) =>
+                  appendFacade(
+                    (await retainCompanyAgentSessionCredential(tx, runId))
+                      .secret,
+                  ),
+              }
+            : undefined,
         );
 
         operationalSpawnStage = "prompt_dispatch";

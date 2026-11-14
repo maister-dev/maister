@@ -366,26 +366,31 @@ export async function issueCompanyAgentRunToken(
   args: Readonly<{ runId: string; db?: SqlDatabase }>,
 ): Promise<IssuedAgentToken> {
   const db: SqlDatabase = args.db ?? getDb();
-  const issued = await db
-    .transaction(async (tx) => {
-      await tx.execute(
-        sql`SELECT id FROM runs WHERE id=${args.runId} FOR UPDATE`,
-      );
-      const owner = await requireCompanyRunCredentialOwner(tx, args.runId);
 
-      if (owner.snapshot.schemaVersion !== 1)
-        throw new MaisterError(
-          "UNAUTHORIZED",
-          "Company graph credentials require their exact current node; the standalone issuer cannot mint them",
-        );
-
-      return retainCompanyRunCredential(tx, owner, null);
-    })
+  return db
+    .transaction((tx) => retainCompanyAgentSessionCredential(tx, args.runId))
     .catch((error: unknown) => {
       throw redactQueryError(error);
     });
+}
 
-  return issued;
+/** The create owner retains its credential in the same transaction as the command. */
+export async function retainCompanyAgentSessionCredential(
+  tx: SqlTransaction,
+  runId: string,
+): Promise<IssuedAgentToken> {
+  await tx.execute(
+    sql`SELECT id FROM runs WHERE id=${runId} FOR NO KEY UPDATE`,
+  );
+  const owner = await requireCompanyRunCredentialOwner(tx, runId);
+
+  if (owner.snapshot.schemaVersion !== 1)
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "Company graph credentials require their exact current node; the standalone issuer cannot mint them",
+    );
+
+  return retainCompanyRunCredential(tx, owner, null);
 }
 
 // ADR-145 (Evaluation Lab) D12: a judge attempt runs as a dedicated agent Run

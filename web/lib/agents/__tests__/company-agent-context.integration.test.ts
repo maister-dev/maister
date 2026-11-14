@@ -9688,12 +9688,16 @@ it("CBS-02 uses the exact company binding runner and refuses its kill switch ins
 it("CBS-02 dispatches a company assignment through the existing owned agent driver and verifies its operational result", async () => {
   const db: Db = database.db;
   const fake = createFakeExecutionHost();
+  const promptEntered = Promise.withResolvers<void>();
+  const finishPrompt = Promise.withResolvers<void>();
   const { prompts } = scriptAgentTurn(fake, {
     text:
       "```json maister:output\n" +
       JSON.stringify(operationalSuccessFixture()) +
       "\n```",
-    onPrompt: ({ sessionId }) => {
+    onPrompt: async ({ sessionId }) => {
+      promptEntered.resolve();
+      await finishPrompt.promise;
       const session = fake.sessions.get(sessionId);
 
       if (!session)
@@ -9753,8 +9757,84 @@ it("CBS-02 dispatches a company assignment through the existing owned agent driv
       bytes: new TextEncoder().encode("Bounded company diagnostic evidence"),
     });
     await fake.waitForCanonicalEvents();
-    await startAgentSession(receipt.runId, { db, executionHosts: hosts });
+    const firstCreate = Promise.withResolvers<void>();
+    const keepCreateOpen = Promise.withResolvers<void>();
+    let createCalls = 0;
+    const executionHosts: typeof hosts = {
+      ...hosts,
+      async executionFor(...args) {
+        const execution = await hosts.executionFor(...args);
+
+        return {
+          ...execution,
+          client: {
+            ...execution.client,
+            async createOwnedSession(...createArgs) {
+              if (++createCalls === 1) {
+                firstCreate.resolve();
+                await keepCreateOpen.promise;
+              }
+
+              return execution.client.createOwnedSession(...createArgs);
+            },
+          },
+        };
+      },
+    };
+    const firstDriver = startAgentSession(receipt.runId, {
+      db,
+      executionHosts,
+    });
+    let secondDriver: Promise<void> | undefined;
+
+    try {
+      await Promise.race([
+        firstCreate.promise,
+        firstDriver.then(() => {
+          throw new Error("The first driver did not start creation");
+        }),
+      ]);
+      secondDriver = startAgentSession(receipt.runId, { db, executionHosts });
+      await Promise.race([
+        promptEntered.promise,
+        secondDriver.then(() => {
+          throw new Error("The second driver did not submit the owned prompt");
+        }),
+      ]);
+      const create = fake.callsOf("createSession")[0]?.envelope?.payload;
+      const descriptor = z
+        .object({
+          mcpServers: z.array(
+            z.object({
+              name: z.string(),
+              env: z.record(z.string(), z.string()).optional(),
+            }),
+          ),
+        })
+        .parse(create);
+      const credential = descriptor.mcpServers.find(
+        ({ name }) => name === "maister",
+      )?.env?.MAISTER_PROJECT_TOKEN;
+
+      if (!credential)
+        throw new Error("The original create did not bind a facade credential");
+      await expect(verifyToken(credential, db)).resolves.toMatchObject({
+        boundRunId: receipt.runId,
+      });
+    } finally {
+      keepCreateOpen.resolve();
+      finishPrompt.resolve();
+      await Promise.allSettled([firstDriver, secondDriver]);
+    }
     expect(fake.callsOf("createSession")).toHaveLength(1);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT id FROM project_tokens WHERE company_run_id=$1",
+          [receipt.runId],
+        )
+      ).rows,
+    ).toHaveLength(1);
     expect(fake.callsOf("createSession")[0].envelope?.payload).toMatchObject({
       readOnlySession: true,
       agentKind: "operational",
