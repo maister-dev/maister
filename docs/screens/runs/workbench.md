@@ -308,3 +308,10 @@ the localized source-access notice in English or Russian. Findings, files and
 transcript bytes are withheld. Artifact and transcript requests return a safe
 409; ongoing protected downloads stop before another unauthorized chunk.
 Historical runs with no native capture retain their existing access behavior.
+
+## Package 2 presentation (Implemented)
+
+Results and checks is the primary evidence view. The provenance graph remains available through the same workbench address and preserves existing filters.
+Results show every effective blocker, including a gate recorded before a newer
+check in the same slot. An artifact preview shows up to 64 KiB. When clipped it
+shows plain text, an explicit truncation label and the original download link.

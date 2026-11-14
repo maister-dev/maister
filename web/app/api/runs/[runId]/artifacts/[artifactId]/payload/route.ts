@@ -285,7 +285,7 @@ export async function GET(
           content.body,
         ),
         {
-          status: content.contentRange ? 206 : 200,
+          status: !preview && content.contentRange ? 206 : 200,
           headers,
         },
       );

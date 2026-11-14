@@ -328,6 +328,21 @@ export function artifactContentToTemplateText(
   }
 }
 
+// UTF-8-boundary-safe byte truncation. Returns the largest prefix whose UTF-8
+// encoding is <= maxBytes without splitting a multibyte sequence.
+export function boundArtifactText(
+  text: string,
+  maxBytes: number,
+): { text: string; truncated: boolean } {
+  if (Buffer.byteLength(text, "utf8") <= maxBytes)
+    return { text, truncated: false };
+
+  const buf = Buffer.alloc(maxBytes);
+  const bytesWritten = buf.write(text, 0, maxBytes, "utf8");
+
+  return { text: buf.toString("utf8", 0, bytesWritten), truncated: true };
+}
+
 // D3: cap a resolved body for prompt injection. Byte-bounded by `maxBytes`
 // (defaults to MAISTER_ARTIFACT_INLINE_MAX_BYTES, read fresh so an env override is
 // honored; the runner passes the same value it used to bound the file read so the

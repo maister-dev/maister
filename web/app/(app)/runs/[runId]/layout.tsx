@@ -454,7 +454,15 @@ export default async function RunDetailLayout({
     kind: "user",
     userId: user.id,
   });
-  const operational = publicResult?.operationalOutcome ?? null;
+  const isOperational =
+    detail.agentKind === "operational" || publicResult?.operationalOutcome != null;
+  const operational = isOperational
+    ? (publicResult?.operationalOutcome ??
+      (await loadOperationalOutcome(getDb(), runId, { kind: "user", userId: user.id })))
+    : null;
+  const tOperational = await getTranslations("operationalAgents");
+  const hasOperationalResult =
+    operational?.state === "terminal" || isLiveRunStatus(detail.status);
   const resultStatusLabels: Record<ResultStatus, string> = {
     pending: t("publicResultStatusPending"),
     valid: t("publicResultStatusValid"),
@@ -1550,6 +1558,74 @@ export default async function RunDetailLayout({
         )}
       </section>
     ) : null;
+
+  let nextAction: RunNextAction | undefined;
+
+  if (detail.pendingHitl && !isCutoverHistory) {
+    nextAction = {
+      label: t(
+        canAct ? "inspectorActionOpenPendingInput" : "outcomeInspectDecision",
+      ),
+      href: "#pending-input",
+      reason: t(canAct ? "outcomeDecisionRequired" : "outcomeReadOnly"),
+    };
+  } else if (
+    detail.continuation.claim ||
+    detail.continuation.reworkClaimAvailable ||
+    isHumanWorking
+  ) {
+    nextAction = {
+      label: t("handoff"),
+      href: "#run-handoff",
+      reason: t(canAct ? "outcomeHandoffAvailable" : "outcomeReadOnly"),
+    };
+  } else if (
+    isOperational &&
+    operational?.state === "terminal" &&
+    (!operational.successful || operational.cleanup?.state === "exhausted")
+  ) {
+    nextAction = {
+      label: tOperational("title"),
+      href: "#operation-result",
+      reason: t(canAct ? "outcomeOperationAttention" : "outcomeReadOnly"),
+    };
+  } else if (detail.status === "Crashed" && !isOperational) {
+    nextAction = {
+      label: t("crashTitle"),
+      href: "#run-recovery",
+      reason: t(
+        canAct && detail.recoverable
+          ? "crashRecoverableHint"
+          : canAct
+            ? "notRecoverable"
+            : "outcomeReadOnly",
+      ),
+    };
+  } else if (showReview && reviewData) {
+    nextAction = {
+      label: t("flowCenterReviewChanges"),
+      href: "#review-panel",
+      reason: t(
+        !canAct
+          ? "outcomeReadOnly"
+          : headerPromotionOperation
+            ? "outcomeDeliveryAvailable"
+            : "outcomeReviewRequired",
+      ),
+    };
+  }
+
+  const outcomeSummary = isOperational
+    ? hasOperationalResult && operational
+      ? tOperational(operational.effectiveOutcome ?? "pending")
+      : t("outcomeUnknown")
+    : publicResult
+      ? resultStatusLabels[publicResult.resultStatus]
+      : t(
+          isLiveRunStatus(detail.status)
+            ? "outcomeRunning"
+            : "outcomeNoStructuredResult",
+        );
 
   try {
     await assertRunKnowledgeDisclosure(

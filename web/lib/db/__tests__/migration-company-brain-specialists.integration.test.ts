@@ -41,14 +41,14 @@ afterAll(async () => {
 });
 
 it("IT-CBX-01 applies company migrations after the current master journal and preserves the workspace witness", async () => {
+  const baseline = "0229_librarian_history";
   const master = await startMainPostgresTestDbUpTo(
     { databaseName: "company_after_master" },
-    "0228_workspace_branch_delivery",
+    baseline,
   );
 
   try {
     await declareCurrentTestDatabaseWriter(master);
-    const baseline = "0228_workspace_branch_delivery";
     const journal = JSON.parse(
       await readFile("./lib/db/migrations/meta/_journal.json", "utf8"),
     ) as { entries: { tag: string; when: number }[] };
@@ -97,6 +97,17 @@ it("IT-CBX-01 applies company migrations after the current master journal and pr
 
     await migrate(master.db, { migrationsFolder: "./lib/db/migrations" });
     const upgraded = await ledger();
+
+    const indexes = await master.pool.query<{ indexname: string }>(
+      `SELECT indexname FROM pg_indexes WHERE schemaname='public' AND indexname IN
+         ('librarian_cards_history_idx','librarian_operations_history_idx','librarian_task_links_history_idx') ORDER BY indexname`,
+    );
+
+    expect(indexes.rows.map(({ indexname }) => indexname)).toEqual([
+      "librarian_cards_history_idx",
+      "librarian_operations_history_idx",
+      "librarian_task_links_history_idx",
+    ]);
 
     expect(upgraded.length).toBeGreaterThan(appliedMaster.length);
     expect(upgraded.slice(0, appliedMaster.length)).toEqual(appliedMaster);

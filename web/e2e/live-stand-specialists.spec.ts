@@ -8,9 +8,19 @@ import { expect, test } from "@playwright/test";
 import { z } from "zod";
 
 import { canonicalCommandJson } from "../../runtime/command-json";
+import {
+  captureOwnedAdapterProcess,
+  captureSupervisorProcessGroups,
+} from "../test-support/capture-supervisor-process-groups";
+import {
+  findProcessIdentity,
+  invocationFromEnvironment,
+  invocationRecords,
+  signalInvocationProcess,
+} from "../test-support/process-invocation";
 
 import { loadNativeCompanyBrainFixtures } from "./_seed/native-company-brain-fixtures";
-import { withE2EDb } from "./_seed/db";
+import { singleValue, withE2EDb } from "./_seed/db";
 
 import { parseAgentDefinition } from "@/lib/agents/definition";
 import {
@@ -122,12 +132,224 @@ async function grants(
   );
 }
 
+async function requireLiveWebProcess(excludePid?: number) {
+  const invocation = invocationFromEnvironment();
+
+  if (!invocation)
+    throw new Error("Stand interruption requires a test invocation");
+  const records = await invocationRecords(invocation);
+
+  for (const record of records) {
+    if (record.kind !== "process" || record.role !== "web") continue;
+    if (record.identity.pid === excludePid) continue;
+    const identity = await findProcessIdentity(invocation, record.identity.pid);
+
+    if (
+      identity?.owned &&
+      identity.inspected &&
+      !identity.zombie &&
+      identity.started === record.identity.started
+    )
+      return { invocation, identity, bootId: record.bootId };
+  }
+}
+
+const acceptedDiagnostic = z.object({
+  id: z.string(),
+  childRunId: z.string(),
+  inputRevision: z.number().int(),
+  workRevision: z.number().int(),
+  resultRevision: z.number().int(),
+});
+
+async function readAcceptedDiagnostic(assignmentId: string, runId: string) {
+  return acceptedDiagnostic.parse(
+    await singleValue<unknown>(
+      `SELECT jsonb_build_object('id',work.id,'childRunId',work.child_run_id,
+         'inputRevision',work.input_revision,'workRevision',work.work_revision,
+         'resultRevision',decision.result_revision) AS value
+       FROM specialist_work work JOIN specialist_work_decisions decision
+         ON decision.work_id=work.id AND decision.work_revision=work.work_revision
+       WHERE work.assignment_id=$1 AND work.parent_run_id=$2
+         AND work.decision_state='accepted' AND decision.decision='accept'`,
+      [assignmentId, runId],
+    ),
+  );
+}
+
+async function assertStandRuntimeModels(
+  runIds: readonly string[],
+  runner: Readonly<{ id: string; model: string }>,
+) {
+  const witnessed = await withE2EDb(async (pool) => {
+    const { rows } = await pool.query(
+      `SELECT session.run_id AS "runId",session.acp_session_id AS "sessionId",
+        session.runner_id AS "runnerId", session.runner_snapshot->>'model' AS "configuredModel",
+        ARRAY(SELECT DISTINCT event.payload->>'model' FROM execution_events event
+          JOIN run_session_incarnations incarnation ON incarnation.run_session_id=session.id
+            AND incarnation.run_id=event.run_id AND incarnation.execution_host_id=event.execution_host_id
+            AND incarnation.host_session_id=event.host_session_id
+          WHERE event.run_id=session.run_id AND event.source='host' AND event.event_type='usage.recorded'
+            AND jsonb_typeof(event.payload->'model')='string'
+          ORDER BY event.payload->>'model') AS "reportedModels"
+       FROM run_sessions session WHERE session.run_id=ANY($1::text[]) AND session.acp_session_id IS NOT NULL
+       ORDER BY session.run_id,session.acp_session_id`,
+      [runIds],
+    );
+
+    return z
+      .array(
+        z.object({
+          runId: z.string(),
+          sessionId: z.string(),
+          runnerId: z.string(),
+          configuredModel: z.string(),
+          reportedModels: z.array(z.string()),
+        }),
+      )
+      .parse(rows);
+  });
+
+  expect(new Set(witnessed.map((row) => row.runId))).toEqual(new Set(runIds));
+  for (const session of witnessed) {
+    expect(session.runnerId).toBe(runner.id);
+    expect(session.configuredModel).toBe(runner.model);
+    expect(
+      session.reportedModels,
+      `Actual usage for ${session.runId}/${session.sessionId}`,
+    ).toEqual([runner.model]);
+  }
+
+  return witnessed;
+}
+
+async function interruptDiagnostic(assignmentId: string, runId: string) {
+  const invocation = invocationFromEnvironment();
+
+  if (!invocation)
+    throw new Error("Stand interruption requires a test invocation");
+  const supervisorUrl = `http://127.0.0.1:${z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(65535)
+    .parse(required("MAISTER_SUPERVISOR_PORT"))}`;
+  const diagnosticAppointment = async () =>
+    z
+      .object({
+        childRunId: z.string(),
+        workId: z.string(),
+        revision: z.number().int(),
+        sessionId: z.string(),
+        placementId: z.string(),
+        placementEpoch: z.number().int(),
+      })
+      .nullable()
+      .parse(
+        await singleValue<unknown>(
+          `SELECT jsonb_build_object('childRunId',work.child_run_id,'workId',work.id,
+          'revision',work.work_revision,'sessionId',session.host_session_id,
+          'placementId',placement.id,'placementEpoch',placement.epoch) AS value
+         FROM specialist_work work JOIN run_sessions session ON session.run_id=work.child_run_id
+         JOIN execution_assignments placement ON placement.id=session.execution_assignment_id
+         JOIN execution_commands prompt ON prompt.run_id=work.child_run_id AND prompt.execution_assignment_id=placement.id
+          AND prompt.kind='session.prompt' AND prompt.state='accepted'
+         WHERE work.assignment_id=$1 AND work.parent_run_id=$2
+          AND work.logical_work_id='diagnose-stand' AND session.host_session_id IS NOT NULL`,
+          [assignmentId, runId],
+        ),
+      );
+
+  await expect
+    .poll(diagnosticAppointment, { timeout: 180_000, intervals: [150, 300] })
+    .not.toBeNull();
+  const work = (await diagnosticAppointment())!;
+  const inventory = await fetch(
+    `${supervisorUrl}/sessions?runId=${encodeURIComponent(work.childRunId)}`,
+    { signal: AbortSignal.timeout(3_000) },
+  );
+
+  expect(inventory.ok).toBe(true);
+  expect(inventory.headers.get("X-Maister-Session-Ownership-Version")).toBe(
+    "1",
+  );
+  const session = z
+    .array(z.object({ sessionId: z.string(), pid: z.number().int().gt(1) }))
+    .parse(await inventory.json())
+    .find((row) => row.sessionId === work.sessionId);
+
+  if (!session)
+    throw new Error("The diagnostic session is absent from its host");
+  const gate = await findProcessIdentity(invocation, session.pid);
+  const supervisor = gate && (await findProcessIdentity(invocation, gate.ppid));
+
+  if (
+    !gate?.owned ||
+    !gate.inspected ||
+    !supervisor?.owned ||
+    !supervisor.inspected
+  )
+    throw new Error(
+      "The diagnostic gate and supervisor must belong to this invocation",
+    );
+  const { adapter } = await captureOwnedAdapterProcess({
+    invocation,
+    supervisor: {
+      url: supervisorUrl,
+      pid: supervisor.pid,
+      captureOwnedSessionGroups: () =>
+        captureSupervisorProcessGroups({
+          invocation,
+          url: supervisorUrl,
+          supervisorPid: supervisor.pid,
+          runtimeRoot: join(
+            required("MAISTER_WORKTREES_ROOT"),
+            "runtime",
+            "supervisor",
+          ),
+          bootId: supervisor.started,
+          logFile: join(invocation.directory, "stand-adapter-interruption.log"),
+          caseName: "stand-diagnostic-interruption",
+        }),
+    },
+    sessionId: work.sessionId,
+    expected: {
+      runId: work.childRunId,
+      assignmentId: work.placementId,
+      assignmentEpoch: work.placementEpoch,
+    },
+  });
+
+  await signalInvocationProcess(invocation, adapter, "SIGKILL");
+  await expect
+    .poll(
+      async () => {
+        const identity = await findProcessIdentity(invocation, adapter.pid);
+
+        return (
+          !identity || identity.zombie || identity.started !== adapter.started
+        );
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+
+  return { ...work, adapterPid: adapter.pid };
+}
+
 test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disposable stand", async ({
   request,
   page,
   baseURL,
 }, testInfo) => {
-  test.setTimeout(1_200_000);
+  test.setTimeout(1_500_000);
+  const checkRecovery = process.env.E2E_STAND_RECOVERY === "1";
+  const checkConflict = process.env.E2E_STAND_RESOURCE_CONFLICT === "1";
+  const checkClarification = process.env.E2E_STAND_CLARIFICATION === "1";
+  const checkCoordinatorInterruption =
+    process.env.E2E_STAND_RESTART_WEB_ON_SIGKILL === "1";
+  const checkDiagnosticInterruption =
+    process.env.E2E_STAND_KILL_DIAGNOSTIC === "1";
   const sourceUrl = required("E2E_STAND_GIT_URL");
   const tag = required("E2E_STAND_TAG");
   const expectedCommit = z
@@ -288,7 +510,7 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
   };
   const coordinator = await bind("coordinator", coordinatorActions);
 
-  await bind("diagnostic", diagnosticActions);
+  const diagnostic = await bind("diagnostic", diagnosticActions);
   const inspector = await bind("inspector", [
     "assignments:read",
     "knowledge:read",
@@ -375,6 +597,12 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
     }),
   );
   const { component: configuredComponent, ...connection } = configured;
+  const aliasId = `${configuredComponent.id}-alias`;
+  const runbookReference = {
+    recordId: runbook.acceptedRecordId,
+    revision: runbook.acceptedRecordRevision,
+    witnessId: proof.id,
+  };
   const stand = await read(
     await request.post("/api/stands", {
       headers: { Origin: origin, "Idempotency-Key": randomUUID() },
@@ -384,12 +612,17 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
         components: [
           {
             ...configuredComponent,
-            runbook: {
-              recordId: runbook.acceptedRecordId,
-              revision: runbook.acceptedRecordRevision,
-              witnessId: proof.id,
-            },
+            runbook: runbookReference,
           },
+          ...(checkConflict
+            ? [
+                {
+                  ...configuredComponent,
+                  id: aliasId,
+                  runbook: runbookReference,
+                },
+              ]
+            : []),
         ],
       },
     }),
@@ -400,39 +633,74 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
   const expectedOutcome =
     "One confirmed restart, one independently healthy probe and an attributable reusable observation.";
 
-  await page.goto("/specialist-assignments");
-  await page
-    .getByLabel("Responsible specialist")
-    .selectOption(coordinator.bindingId);
-  await page
-    .getByLabel("Target component")
-    .selectOption(`${stand.id}/${configuredComponent.id}`);
-  await page.getByLabel("Objective", { exact: true }).fill(objective);
-  await page
-    .getByLabel("Expected outcome", { exact: true })
-    .fill(expectedOutcome);
-  await page
-    .getByLabel("Additional instructions")
-    .fill(
-      "Obtain the diagnostic specialist's bounded independent analysis before operator review. Keep the original operation on reconciliation and wait for approval. Prepare a reusable knowledge draft.",
+  const requestBody = {
+    owner,
+    specialistBindingId: coordinator.bindingId,
+    objective,
+    expectedOutcome,
+    input:
+      "Obtain an independent diagnostic before review. Prepare a reusable observation.",
+    targetIds: [stand.id],
+    inputRefs: [],
+    constraints: [],
+    verification: [
+      { kind: "effect", referenceId: stand.id, required: true },
+      { kind: "health", referenceId: stand.id, required: true },
+    ],
+    idempotencyKey: randomUUID(),
+  };
+  const submit = async () => {
+    if (checkClarification)
+      return {
+        body: requestBody,
+        assignment: await read(
+          await request.post("/api/specialist-assignments", {
+            data: requestBody,
+            headers: { Origin: origin },
+          }),
+          assignmentSchema,
+        ),
+      };
+
+    await page.goto("/specialist-assignments");
+    await page
+      .getByLabel("Responsible specialist")
+      .selectOption(coordinator.bindingId);
+    await page
+      .getByLabel("Target component")
+      .selectOption(`${stand.id}/${configuredComponent.id}`);
+    await page.getByLabel("Objective", { exact: true }).fill(objective);
+    await page
+      .getByLabel("Expected outcome", { exact: true })
+      .fill(expectedOutcome);
+    await page
+      .getByLabel("Additional instructions")
+      .fill(
+        "Obtain the diagnostic specialist's bounded independent analysis before operator review. Keep the original operation on reconciliation and wait for approval. Prepare a reusable knowledge draft.",
+      );
+
+    const submitted = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/specialist-assignments" &&
+        response.request().method() === "POST",
     );
 
-  const submitted = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname === "/api/specialist-assignments" &&
-      response.request().method() === "POST",
-  );
+    await page
+      .getByRole("button", { name: "Submit assignment", exact: true })
+      .click();
+    const submission = await submitted;
 
-  await page
-    .getByRole("button", { name: "Submit assignment", exact: true })
-    .click();
-  const submission = await submitted;
+    expect(submission.status()).toBe(201);
 
-  expect(submission.status()).toBe(201);
-  const assignment = assignmentSchema.parse(await submission.json());
+    return {
+      assignment: assignmentSchema.parse(await submission.json()),
+      body: submission.request().postDataJSON() as unknown,
+    };
+  };
+  const { assignment, body } = await submit();
   const duplicate = await read(
     await request.post("/api/specialist-assignments", {
-      data: submission.request().postDataJSON(),
+      data: body,
       headers: { Origin: origin },
     }),
     assignmentSchema,
@@ -447,6 +715,80 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
     if (message.type() === "error" && message.text().includes("MISSING_FORMAT"))
       browserLocaleErrors.push(message.text());
   });
+  if (checkClarification) {
+    const retainedQuestion = () =>
+      singleValue<{ id: string; prompt: string }>(
+        `SELECT jsonb_build_object('id',id,'prompt',prompt) AS value FROM hitl_requests
+       WHERE run_id=$1 AND specialist_assignment_id=$2 AND kind='agent_question'
+       AND activation_state='active' AND responded_at IS NULL AND superseded_at IS NULL`,
+        [runId, assignment.id],
+      );
+
+    await expect.poll(retainedQuestion, { timeout: 180_000 }).not.toBeNull();
+    const question = (await retainedQuestion())!;
+
+    expect(
+      await singleValue<number>(
+        "SELECT count(*)::int AS value FROM stand_operations WHERE assignment_id=$1",
+        [assignment.id],
+      ),
+    ).toBe(0);
+    await page.goto(`/specialist-assignments/${assignment.id}`);
+    await page.getByRole("link", { name: "Open Inbox", exact: true }).click();
+    const questionCard = page
+      .getByTestId("hitl-card")
+      .filter({ hasText: question.prompt });
+
+    await questionCard
+      .getByRole("button", { name: "Answer clarification", exact: true })
+      .click();
+    await questionCard
+      .getByRole("textbox", { name: /^Component ID(?: \*)?$/ })
+      .fill(configuredComponent.id);
+    const answerResponse = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+          `/api/runs/${runId}/hitl/${question.id}/respond` &&
+        response.request().method() === "POST",
+    );
+
+    await questionCard
+      .getByTestId("hitl-panel-context")
+      .getByRole("button", { name: "Answer clarification", exact: true })
+      .click();
+    expect((await answerResponse).ok()).toBe(true);
+    const acceptedInput = z
+      .object({
+        source: z.literal(assignment.inputRevision),
+        answer: z.literal(assignment.inputRevision + 1),
+        response: z.object({ componentId: z.literal(configuredComponent.id) }),
+      })
+      .parse(
+        await singleValue<unknown>(
+          `SELECT jsonb_build_object('source',specialist_input_revision,'answer',specialist_answer_input_revision,
+        'response',response) AS value FROM hitl_requests WHERE id=$1 AND run_id=$2 AND specialist_assignment_id=$3`,
+          [question.id, runId, assignment.id],
+        ),
+      );
+
+    await testInfo.attach("stand-clarification-proof", {
+      body: JSON.stringify({
+        assignmentId: assignment.id,
+        runId,
+        questionId: question.id,
+        ...acceptedInput,
+      }),
+      contentType: "application/json",
+    });
+  }
+  if (checkDiagnosticInterruption) {
+    const killed = await interruptDiagnostic(assignment.id, runId);
+
+    await testInfo.attach("stand-diagnostic-interruption", {
+      body: JSON.stringify({ assignmentId: assignment.id, runId, ...killed }),
+      contentType: "application/json",
+    });
+  }
   const approvedStep = async () =>
     withE2EDb(async (pool) => {
       const terminal = await pool.query(
@@ -514,6 +856,130 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
 
   await expect.poll(approvedStep, { timeout: 720_000 }).toBeDefined();
   const operation = (await approvedStep())!;
+  const preserved = checkCoordinatorInterruption
+    ? await readAcceptedDiagnostic(assignment.id, runId)
+    : undefined;
+
+  if (preserved) {
+    const oldWeb = await requireLiveWebProcess();
+
+    if (!oldWeb)
+      throw new Error("Could not prove the original Web process identity");
+    await signalInvocationProcess(
+      oldWeb.invocation,
+      oldWeb.identity,
+      "SIGKILL",
+    );
+    await expect
+      .poll(() => requireLiveWebProcess(oldWeb.identity.pid), {
+        timeout: 150_000,
+      })
+      .toBeDefined();
+    const newWeb = (await requireLiveWebProcess(oldWeb.identity.pid))!;
+
+    expect(newWeb.bootId).not.toBe(oldWeb.bootId);
+    await expect
+      .poll(
+        async () => {
+          try {
+            return (
+              await request.get(
+                `/api/specialist-assignments/${assignment.id}`,
+                {
+                  timeout: 3_000,
+                },
+              )
+            ).status();
+          } catch (error) {
+            if (
+              error instanceof Error &&
+              /ECONNREFUSED|ECONNRESET/.test(error.message)
+            )
+              return undefined;
+            throw error;
+          }
+        },
+        { timeout: 150_000 },
+      )
+      .toBe(200);
+    expect(await approvedStep()).toEqual(operation);
+    expect(await readAcceptedDiagnostic(assignment.id, runId)).toEqual(
+      preserved,
+    );
+    await testInfo.attach("stand-coordinator-interruption-proof", {
+      body: JSON.stringify({
+        assignmentId: assignment.id,
+        runId,
+        operationId: operation.id,
+        oldWebPid: oldWeb.identity.pid,
+        newWebPid: newWeb.identity.pid,
+        acceptedDiagnostic: preserved,
+      }),
+      contentType: "application/json",
+    });
+  }
+
+  if (checkConflict) {
+    const contender = await read(
+      await request.post("/api/specialist-assignments", {
+        data: {
+          ...requestBody,
+          specialistBindingId: diagnostic.bindingId,
+          objective:
+            "Assess the competing selector for the same disposable component.",
+          input: `Component ID: ${aliasId}`,
+          idempotencyKey: randomUUID(),
+        },
+        headers: { Origin: origin },
+      }),
+      assignmentSchema,
+    );
+
+    expect(contender.id).not.toBe(assignment.id);
+    const contenderCurrent = await read(
+      await request.get(`/api/specialist-assignments/${contender.id}`),
+      assignmentSchema,
+    );
+    const conflicting = await request.post(
+      `/api/specialist-assignments/${contender.id}/operations`,
+      {
+        headers: { Origin: origin },
+        data: {
+          expectedRevision: contenderCurrent.revision,
+          inputRevision: contender.inputRevision,
+          componentId: aliasId,
+          action: "restart",
+          idempotencyKey: randomUUID(),
+        },
+      },
+    );
+
+    expect(conflicting.status()).toBe(409);
+    expect(await conflicting.json()).toMatchObject({
+      details: { reason: "resource_conflict" },
+    });
+    expect(
+      await singleValue<number>(
+        "SELECT count(*)::int AS value FROM stand_operations WHERE assignment_id=$1",
+        [contender.id],
+      ),
+    ).toBe(0);
+    expect(
+      await singleValue<number>(
+        "SELECT count(*)::int AS value FROM execution_commands WHERE kind='stand.dispatch' AND run_id=$1",
+        [contender.runIds[0]],
+      ),
+    ).toBe(0);
+    await testInfo.attach("stand-conflict-proof", {
+      body: JSON.stringify({
+        contenderId: contender.id,
+        operationId: operation.id,
+        aliasId,
+        status: conflicting.status(),
+      }),
+      contentType: "application/json",
+    });
+  }
 
   const decisionPage = await page.goto(
     `/specialist-assignments/${assignment.id}`,
@@ -554,6 +1020,82 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
     }),
     z.unknown(),
   );
+  if (checkRecovery) {
+    const readOperation = async () =>
+      read(
+        await request.get(`/api/stand-operations/${operation.id}`),
+        z.object({
+          id: z.literal(operation.id),
+          effectState: z.string(),
+          revision: z.number().int(),
+          receiptIds: z.array(z.string()),
+        }),
+      );
+
+    await expect
+      .poll(async () => (await readOperation()).effectState, {
+        timeout: 210_000,
+      })
+      .toBe("unknown");
+    const unknown = await readOperation();
+
+    expect(unknown.receiptIds).toEqual([]);
+    const recoveryView = await page.goto(
+      `/specialist-assignments/${assignment.id}`,
+    );
+
+    expect(recoveryView?.ok()).toBe(true);
+    const reconciliationResponse = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+          `/api/stand-operations/${operation.id}/reconcile` &&
+        response.request().method() === "POST",
+    );
+
+    await page
+      .getByRole("button", { name: "Check the original receipt", exact: true })
+      .click();
+    const reconciliation = await reconciliationResponse;
+
+    expect(reconciliation.status()).toBe(200);
+    expect(reconciliation.request().postDataJSON()).toEqual({
+      expectedRevision: unknown.revision,
+    });
+    const reconciled = z
+      .object({
+        id: z.literal(operation.id),
+        effectState: z.literal("confirmed_applied"),
+        receiptIds: z.tuple([z.uuid()]),
+      })
+      .parse(await reconciliation.json());
+    const dispatch = await singleValue<{
+      commands: number;
+      permits: number;
+      distinctInvocations: boolean;
+    }>(
+      `SELECT jsonb_build_object('commands',(SELECT count(*) FROM execution_commands WHERE kind='stand.dispatch' AND run_id=$1),
+        'permits',(SELECT count(*) FROM stand_authorization_permits WHERE operation_id=$2 AND purpose='dispatch'),
+        'distinctInvocations', receipt->>'beforeInvocation' <> receipt->>'afterInvocation') AS value
+       FROM stand_operation_receipts WHERE id=$3 AND operation_id=$2`,
+      [runId, operation.id, reconciled.receiptIds[0]],
+    );
+
+    expect(dispatch).toEqual({
+      commands: 1,
+      permits: 1,
+      distinctInvocations: true,
+    });
+    await testInfo.attach("stand-reconciliation-proof", {
+      body: JSON.stringify({
+        operationId: operation.id,
+        runId,
+        unknown,
+        reconciled,
+        dispatch,
+      }),
+      contentType: "application/json",
+    });
+  }
   const current = () =>
     request
       .get(`/api/specialist-assignments/${assignment.id}`)
@@ -561,7 +1103,25 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
 
   try {
     await expect
-      .poll(async () => (await current()).status, { timeout: 420000 })
+      .poll(
+        async () => {
+          const head = await current();
+
+          if (head.status === "awaiting_acceptance") return head.status;
+          const execution = await singleValue<string>(
+            "SELECT status AS value FROM runs WHERE id=$1",
+            [runId],
+          );
+
+          if (execution && /^(Failed|Crashed|Abandoned)$/.test(execution))
+            throw new Error(
+              `The root Run settled ${execution} before assignment acceptance`,
+            );
+
+          return head.status;
+        },
+        { timeout: 420_000 },
+      )
       .toBe("awaiting_acceptance");
   } catch (error) {
     const snapshot = await withE2EDb(async (pool) => {
@@ -614,6 +1174,10 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
   expect(result.value.operationIds).toEqual([operation.id]);
   expect(result.value.verificationIds).toHaveLength(1);
   expect(result.value.findings.knowledgeProposals.length).toBeGreaterThan(0);
+  if (preserved)
+    expect(await readAcceptedDiagnostic(assignment.id, runId)).toEqual(
+      preserved,
+    );
   const execution = await withE2EDb(
     async (pool) =>
       (
@@ -657,6 +1221,19 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
 
   expect(accepted.ok()).toBe(true);
   expect(await accepted.json()).toMatchObject({ status: "completed" });
+  const originDelivery = () =>
+    singleValue<string>(
+      `SELECT notice.assignment_delivery_id AS value
+       FROM inbox_items notice JOIN specialist_delivery_receipts receipt
+         ON receipt.id=notice.assignment_delivery_id
+       WHERE notice.recipient_type='user' AND notice.recipient_id=$1
+         AND receipt.assignment_id=$2 AND receipt.run_id=$3 AND receipt.result_revision=$4`,
+      [admin.id, assignment.id, runId, result.revision],
+    );
+
+  await expect.poll(originDelivery, { timeout: 120_000 }).not.toBeNull();
+  const deliveryId = await originDelivery();
+
   await expect(
     page.getByRole("button", { name: "Submit retained knowledge drafts" }),
   ).toBeVisible();
@@ -744,6 +1321,7 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
         runId,
         operationId: operation.id,
         resultRevision: result.revision,
+        deliveryId,
         verificationIds: result.value.verificationIds,
         acceptedChildren: execution.accepted_children,
         knowledgeProposalId: workProposal.id,
@@ -801,6 +1379,29 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
   });
   const scheduled = async () =>
     withE2EDb(async (pool) => {
+      const failure = await pool.query<{
+        run_id: string;
+        status: string;
+        reason: string | null;
+      }>(
+        `SELECT execution.id AS run_id, execution.status, result.invalid_reason AS reason
+         FROM agent_trigger_attempts invocation JOIN runs execution ON execution.id=invocation.original_run_id
+         LEFT JOIN LATERAL (
+           SELECT invalid_reason FROM run_results WHERE run_id=execution.id ORDER BY revision DESC LIMIT 1
+         ) result ON true
+         WHERE invocation.schedule_id=$1 AND execution.status IN ('Failed','Crashed','Abandoned')`,
+        [scheduleId],
+      );
+
+      if (failure.rows[0]) {
+        await testInfo.attach("stand-inspection-failure", {
+          body: JSON.stringify(failure.rows[0]),
+          contentType: "application/json",
+        });
+        throw new Error(
+          "The scheduled inspection settled without a valid result",
+        );
+      }
       const found = await pool.query(
         `SELECT invocation.id AS attempt_id, execution.id AS run_id, execution.status,
         receipt.id AS delivery_id, event.fanout_at IS NOT NULL AND transport.id IS NULL AS suppressed,
@@ -849,6 +1450,16 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
   expect(browserLocaleErrors).toEqual([]);
   await testInfo.attach("stand-inspection-proof", {
     body: JSON.stringify({ scheduleId, ...inspection }),
+    contentType: "application/json",
+  });
+  const child = await readAcceptedDiagnostic(assignment.id, runId);
+  const modelWitnesses = await assertStandRuntimeModels(
+    [runId, child.childRunId, inspection.run_id],
+    runner,
+  );
+
+  await testInfo.attach("stand-runtime-model-proof", {
+    body: JSON.stringify(modelWitnesses),
     contentType: "application/json",
   });
 });

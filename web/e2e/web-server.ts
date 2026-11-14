@@ -23,7 +23,7 @@ if (!runtimeRoot || !worktreesRoot || !supervisorUrl)
 
 // Compile once before Chromium starts; route visits must not grow a dev compiler.
 await buildProductionWeb(path.join(invocation.directory, "e2e-next-build.log"));
-const web = await startRealWeb({
+let web = await startRealWeb({
   port,
   databaseUrl: resolvePostgresDbUrl(),
   runtimeRoot,
@@ -34,20 +34,31 @@ const web = await startRealWeb({
 });
 let requestShutdown: () => void = () => {};
 const shutdown = new Promise<void>((resolve) => {
-  requestShutdown = resolve;
+  requestShutdown = () => resolve();
 });
 
 process.once("SIGINT", requestShutdown);
 process.once("SIGTERM", requestShutdown);
+let restartOnKill = process.env.E2E_STAND_RESTART_WEB_ON_SIGKILL === "1";
+
 try {
-  await Promise.race([
-    shutdown,
-    web.exited.then(async (code) => {
-      throw new Error(
-        `E2E web server exited unexpectedly (${code})\n${await web.logTail()}`,
-      );
-    }),
-  ]);
+  for (;;) {
+    const result = await Promise.race([shutdown, web.outcome]);
+
+    if (!result) break;
+    if (
+      restartOnKill &&
+      result.kind === "observed" &&
+      result.signal === "SIGKILL"
+    ) {
+      restartOnKill = false;
+      web = await web.restart();
+      continue;
+    }
+    throw new Error(
+      `E2E web server exited unexpectedly (${JSON.stringify(result)})\n${await web.logTail()}`,
+    );
+  }
 } finally {
   await web.stop();
   process.off("SIGINT", requestShutdown);

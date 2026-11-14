@@ -1,0 +1,60 @@
+{
+  "sourceHead": "3cb2b2ff7b78cc20738d49f3cf945dd767a1bacd",
+  "candidateSha256": "9d3638e6349b8a989d7b0d3829b4373fea1fd686e4f695f7222a851d23d4c4e8",
+  "mcpBundleSha256": "34110420fedf1681685c92c79262c3932d8428e32ea50d81abf741a029cc6e80",
+  "packageTag": "stand-operations/v0.1.0",
+  "packageCommit": "9c3996d16514392b9094a35c0e6370b4198479fb",
+  "model": "glm-5.3",
+  "startedAt": "2026-11-14T13:51:57.470094+00:00",
+  "exitCode": 1,
+  "candidateUnchanged": true,
+  "finishedAt": "2026-11-14T13:53:51.363294+00:00",
+  "invocationId": "ad0b6802-d4cf-4930-9e31-4f30fe31fc18",
+  "status": "diagnostic_interruption_did_not_resume_original_assignment",
+  "observations": {
+    "stand-diagnostic-interruption": {
+      "assignmentId": "27604a4a-90ca-425a-b82c-cca098b1674e",
+      "runId": "c60e91fc-719c-4def-b32a-bc5255e5f4a2",
+      "childRunId": "010f71e0-c966-4bbe-a28d-75a8350512b1",
+      "workId": "ebfcb784-4d6c-4ec4-97c3-b7fcb50354df",
+      "revision": 1,
+      "sessionId": "c4ad5a79-77d0-47ee-b9f0-587f2b31f1d2",
+      "placementId": "4c5ed0c9-078f-4627-a4c1-8525f113aa21",
+      "placementEpoch": 1,
+      "adapterPid": 24007
+    },
+    "pilot-terminal-diagnostics": {
+      "id": "010f71e0-c966-4bbe-a28d-75a8350512b1",
+      "status": "Failed",
+      "cause": "operational_execution_failed",
+      "reason_codes": [
+        "result_missing",
+        "operational_execution_failed"
+      ],
+      "validation_diagnostics": [
+        {
+          "code": "result_missing",
+          "path": "$"
+        }
+      ],
+      "result_reason": "result_missing",
+      "credential_generations": [
+        {
+          "nodeAttemptId": null,
+          "issuedAt": "2026-11-14T13:53:12.565065+00:00",
+          "revokedAt": "2026-11-14T13:53:49.5423+00:00",
+          "reason": "revoked"
+        }
+      ]
+    }
+  },
+  "terminalPrompt": {
+    "commandId": "4bb1cf19-edc4-41e6-a290-7b83aa04df39",
+    "status": "crashed"
+  },
+  "cleanup": {
+    "outcome": "clean",
+    "leaks": 0
+  },
+  "scope": "Positive adapter SIGKILL before terminal output. Original work remained retained with no valid result. The installed package did not recover the diagnostic or obtain a restart approval. This is RED for AC-10."
+}

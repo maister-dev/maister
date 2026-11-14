@@ -8005,6 +8005,21 @@ paths:
                     reasons:
                       - all required checks passed
                     recommendedAction: merge
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "206":
+          description: Verified byte range for a raw execution-object download.
+          headers:
+            Content-Range:
+              schema: { type: string }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "400":
+          description: Unsupported or repeated view selector, or Range supplied for a preview.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "409":
           $ref: "#/components/responses/Precondition"
         "401":
