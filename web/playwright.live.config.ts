@@ -79,6 +79,7 @@ export default defineConfig({
       url: BASE_URL,
       timeout: 180_000,
       reuseExistingServer: false,
+      gracefulShutdown: { signal: "SIGTERM", timeout: 35_000 },
       env: {
         PORT: String(WEB_PORT),
         DB_URL: databaseUrl,
