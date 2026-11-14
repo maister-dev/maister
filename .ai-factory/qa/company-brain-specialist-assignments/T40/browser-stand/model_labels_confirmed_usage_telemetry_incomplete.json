@@ -1,0 +1,76 @@
+{
+  "sourceHead": "3cb2b2ff7b78cc20738d49f3cf945dd767a1bacd",
+  "candidateSha256": "7fafbbb8c62f6f457439384c042a1d827aa8034445daa2f96df36e01eb118396",
+  "mcpBundleSha256": "34110420fedf1681685c92c79262c3932d8428e32ea50d81abf741a029cc6e80",
+  "packageTag": "stand-operations/v0.1.0",
+  "packageCommit": "9c3996d16514392b9094a35c0e6370b4198479fb",
+  "model": "glm-5.3",
+  "startedAt": "2026-11-14T13:58:12.876577+00:00",
+  "exitCode": 1,
+  "candidateUnchanged": true,
+  "finishedAt": "2026-11-14T14:03:50.269123+00:00",
+  "invocationId": "3e393e26-d432-4787-9050-71e48cc14dac",
+  "status": "model_labels_confirmed_usage_telemetry_incomplete",
+  "providerSessionModels": [
+    {
+      "sessionId": "481f29eb-fbdc-40c8-aced-307deee3f548",
+      "reportedModels": [
+        "glm-5.3"
+      ]
+    },
+    {
+      "sessionId": "b7e221fc-b935-45cd-b71a-9297f591a691",
+      "reportedModels": [
+        "glm-5.3"
+      ]
+    },
+    {
+      "sessionId": "558ea765-fd67-4239-9a12-7d8de707403e",
+      "reportedModels": [
+        "glm-5.3"
+      ]
+    }
+  ],
+  "observations": {
+    "stand-pilot-proof": {
+      "packageTag": "stand-operations/v0.1.0",
+      "packageCommit": "9c3996d16514392b9094a35c0e6370b4198479fb",
+      "runner": {
+        "id": "cb-live-claude",
+        "model": "glm-5.3"
+      },
+      "assignmentId": "9383e72a-d5ce-4878-a9c1-f2443ee95920",
+      "runId": "e15d1030-0ad7-4094-9753-94c7d375a230",
+      "operationId": "bd223ba9-3307-4b02-9606-ff4827a14bdc",
+      "resultRevision": 1,
+      "deliveryId": "42a9aa28-64f0-4f91-9677-98aa8d3d86eb",
+      "verificationIds": [
+        "0fcb34b1-7f02-4719-9c20-c4bbfd6b0057"
+      ],
+      "acceptedChildren": 1,
+      "knowledgeProposalId": "c37d5221-7aaa-4eb9-abe6-0eac5d922362",
+      "knowledgeRecordId": "13b0610a-3b10-4683-9ecc-b7a6764e887d",
+      "knowledgeRecordRevision": 1,
+      "knowledgeConfirmation": "unconfirmed"
+    },
+    "stand-inspection-proof": {
+      "scheduleId": "1a872ec9-d348-4e80-b482-056cb4c5d08f",
+      "attempt_id": "941f80ae-3df0-4e69-9ab4-0f490062ad77",
+      "run_id": "0a29813c-3cc8-49fe-b0e7-1253f4c21136",
+      "status": "Done",
+      "delivery_id": "0f09ff16-5d13-4734-a511-83bfea9767fe",
+      "suppressed": true,
+      "operation_id": "1d540e13-8986-4e9f-80a4-ce8a5aadc415",
+      "verification_id": "5b9aa523-a763-4b32-9d1f-fa104e01d41d",
+      "commands": 0
+    }
+  },
+  "cleanup": {
+    "outcome": "clean",
+    "leaks": 0
+  },
+  "refusal": {
+    "source": "execution_events.usage.recorded",
+    "reason": "missing model label for inspector; exact SDK response separately names glm-5.3"
+  }
+}

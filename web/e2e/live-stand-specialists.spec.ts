@@ -1,7 +1,7 @@
 import type { APIRequestContext, APIResponse } from "@playwright/test";
 
 import { createHash, randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, test } from "@playwright/test";
@@ -211,16 +211,63 @@ async function assertStandRuntimeModels(
   });
 
   expect(new Set(witnessed.map((row) => row.runId))).toEqual(new Set(runIds));
+  const projects = join(required("CLAUDE_CONFIG_DIR"), "projects");
+  const projectPaths = (await readdir(projects, { withFileTypes: true }))
+    .filter((item) => item.isDirectory())
+    .map((item) => join(projects, item.name));
+  const transcripts = (
+    await Promise.all(
+      projectPaths.map(async (directory) =>
+        (await readdir(directory)).map((file) => ({ directory, file })),
+      ),
+    )
+  ).flat();
+  const assistantFrame = z.object({
+    type: z.literal("assistant"),
+    message: z.object({ model: z.string() }),
+  });
+  const proof = [];
+
   for (const session of witnessed) {
     expect(session.runnerId).toBe(runner.id);
     expect(session.configuredModel).toBe(runner.model);
     expect(
-      session.reportedModels,
-      `Actual usage for ${session.runId}/${session.sessionId}`,
+      session.reportedModels.every((model) => model === runner.model),
+    ).toBe(true);
+    const matches = transcripts.filter(
+      ({ file }) => file === `${session.sessionId}.jsonl`,
+    );
+
+    expect(matches, `Exact ACP transcript for ${session.runId}`).toHaveLength(
+      1,
+    );
+    const transcript = await readFile(
+      join(matches[0]!.directory, matches[0]!.file),
+      "utf8",
+    );
+    const sdkModels = [
+      ...new Set(
+        transcript
+          .split("\n")
+          .filter(Boolean)
+          .flatMap((line) => {
+            const frame = assistantFrame.safeParse(JSON.parse(line));
+
+            return frame.success && frame.data.message.model !== "<synthetic>"
+              ? [frame.data.message.model]
+              : [];
+          }),
+      ),
+    ];
+
+    expect(
+      sdkModels,
+      `Actual response model for ${session.runId}/${session.sessionId}`,
     ).toEqual([runner.model]);
+    proof.push({ ...session, sdkModels });
   }
 
-  return witnessed;
+  return proof;
 }
 
 async function interruptDiagnostic(assignmentId: string, runId: string) {
