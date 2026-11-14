@@ -8,7 +8,11 @@ import { sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
-import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
+import {
+  seedProjectRow,
+  seedRun,
+  seedWorkspace,
+} from "@/test-support/execution-host-seed";
 import {
   claimCronAgentAttempt,
   claimEventAgentAttempt,
@@ -34,6 +38,84 @@ beforeAll(async () => {
 afterAll(async () => {
   await database?.stop();
 });
+
+it("IT-CBX-01 applies company migrations after the current master journal and preserves the workspace witness", async () => {
+  const master = await startMainPostgresTestDbUpTo(
+    { databaseName: "company_after_master" },
+    "0228_workspace_branch_delivery",
+  );
+
+  try {
+    await declareCurrentTestDatabaseWriter(master);
+    const baseline = "0228_workspace_branch_delivery";
+    const journal = JSON.parse(
+      await readFile("./lib/db/migrations/meta/_journal.json", "utf8"),
+    ) as { entries: { tag: string; when: number }[] };
+    const cutoff = journal.entries.find(({ tag }) => tag === baseline);
+
+    if (!cutoff) throw new Error("Master's applied migration is unavailable");
+    const applied = readMigrationFiles({
+      migrationsFolder: "./lib/db/migrations",
+    }).filter(({ folderMillis }) => folderMillis <= cutoff.when);
+
+    await master.pool.query("CREATE SCHEMA drizzle");
+    await master.pool.query(
+      "CREATE TABLE drizzle.__drizzle_migrations (id serial PRIMARY KEY, hash text NOT NULL, created_at bigint)",
+    );
+    await master.pool.query(
+      "INSERT INTO drizzle.__drizzle_migrations(hash,created_at) SELECT * FROM unnest($1::text[],$2::bigint[])",
+      [
+        applied.map(({ hash }) => hash),
+        applied.map(({ folderMillis }) => folderMillis),
+      ],
+    );
+    const project = await seedProjectRow(master.db);
+    const runId = await seedRun(master.db, { projectId: project.id });
+    const workspaceId = await seedWorkspace(master.db, {
+      runId,
+      projectId: project.id,
+      worktreePath: "/unused-company-upgrade-worktree",
+      parentRepoPath: project.repoPath,
+    });
+    const evidence = {
+      target: { remote: "origin", remoteBranch: "reviewed-workspace" },
+      error: null,
+    };
+
+    await master.pool.query(
+      "UPDATE workspaces SET branch_delivery=$2::jsonb WHERE id=$1",
+      [workspaceId, JSON.stringify(evidence)],
+    );
+    const ledger = async () =>
+      (
+        await master.pool.query(
+          "SELECT hash, created_at FROM drizzle.__drizzle_migrations ORDER BY created_at, id",
+        )
+      ).rows;
+    const appliedMaster = await ledger();
+
+    await migrate(master.db, { migrationsFolder: "./lib/db/migrations" });
+    const upgraded = await ledger();
+
+    expect(upgraded.length).toBeGreaterThan(appliedMaster.length);
+    expect(upgraded.slice(0, appliedMaster.length)).toEqual(appliedMaster);
+    expect(
+      (await master.pool.query("SELECT id FROM companies")).rows,
+    ).toHaveLength(1);
+    expect(
+      (
+        await master.pool.query(
+          "SELECT branch_delivery FROM workspaces WHERE id=$1",
+          [workspaceId],
+        )
+      ).rows,
+    ).toEqual([{ branch_delivery: evidence }]);
+    await migrate(master.db, { migrationsFolder: "./lib/db/migrations" });
+    expect(await ledger()).toEqual(upgraded);
+  } finally {
+    await master.stop();
+  }
+}, 180_000);
 
 it("IT-CBX-01 event review upgrade retains historical approval without inventing enrollment or sharing and guards new claims", async () => {
   const legacy = await startMainPostgresTestDbUpTo(
