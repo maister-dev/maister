@@ -644,6 +644,7 @@ it.skipIf(!standSource || !standRevision)(
 
     const { submitProjectManualAssignment } =
       await import("@/lib/specialist-assignments/project-manual-intake");
+
     await attachPackage({
       projectId,
       projectSlug: slug,
@@ -684,6 +685,7 @@ it.skipIf(!standSource || !standRevision)(
       await import("@/lib/tasks/admission-types");
     const { prepareTaskLaunchIntent } =
       await import("@/lib/tasks/launch-dispatch");
+
     session.user = await requireActiveUserById(reviewerId);
     const principal = await interactiveTaskLaunchPrincipal();
     const projectReceipt = await submitProjectManualAssignment(
@@ -692,6 +694,7 @@ it.skipIf(!standSource || !standRevision)(
       projectWork,
       principal,
     );
+
     expect(projectReceipt.projectAdmission?.kind).toBe("accepted");
     if (projectReceipt.projectAdmission?.kind !== "accepted")
       throw new Error(
@@ -702,8 +705,10 @@ it.skipIf(!standSource || !standRevision)(
       database.db,
       intentId,
     );
+
     expect(projectPlacement.state).toBe("run_bound");
     const projectRunId = projectPlacement.runId;
+
     session.user = null;
 
     expect(projectRunId).toBeDefined();
@@ -722,6 +727,7 @@ it.skipIf(!standSource || !standRevision)(
       },
     ]);
     const originalIntentKey = projectReceipt.projectAdmission.receipt.intentId;
+
     expect(
       (
         await database.pool.query(
@@ -737,13 +743,55 @@ it.skipIf(!standSource || !standRevision)(
         [projectRunId],
       )
     ).rows[0]?.worktree_path;
+
     if (path) {
       const { removeWorktree } = await import("@/lib/worktree");
+
       await removeWorktree({
         projectRepoPath: join(root, "repository"),
         worktreePath: path,
         force: true,
       });
     }
+    const { issueOrchestratorRunToken } = await import("@/lib/agents/tokens");
+    const { verifyToken } = await import("@/lib/tokens/verify");
+
+    await database.pool.query(
+      "UPDATE runs SET current_step_id='coordinate' WHERE id=$1",
+      [projectRunId],
+    );
+    const projectAttempt = randomUUID();
+
+    await database.pool.query(
+      "INSERT INTO node_attempts(id,run_id,node_id,node_type,status) VALUES($1,$2,'coordinate','orchestrator','Running')",
+      [projectAttempt, projectRunId],
+    );
+    const capability = await issueOrchestratorRunToken({
+      db: database.db,
+      projectId,
+      runId: projectRunId!,
+      nodeAttemptId: projectAttempt,
+    });
+
+    expect(
+      (await verifyToken(capability.secret, database.db)).scopes,
+    ).toContain("assignments:accept");
+
+    const ordinaryAttempt = randomUUID();
+    await database.pool.query(
+      "INSERT INTO node_attempts(id,run_id,node_id,node_type,status) VALUES($1,$2,'execute','ai_coding','Pending')",
+      [ordinaryAttempt, projectRunId],
+    );
+    const { issueNativeNodeRunToken } = await import("@/lib/agents/tokens");
+    const ordinaryNode = await issueNativeNodeRunToken({
+      db: database.db,
+      projectId,
+      runId: projectRunId!,
+      nodeAttemptId: ordinaryAttempt,
+    });
+
+    expect(
+      (await verifyToken(ordinaryNode.secret, database.db)).scopes,
+    ).not.toContain("assignments:accept");
   },
 );

@@ -466,6 +466,27 @@ export async function issueNativeNodeRunToken(
   return issueNodeRunToken(args, AGENT_TOKEN_SCOPES);
 }
 
+/** Assign governed work decisions only to the appointed project's orchestrator node. */
+async function appointedProjectCoordinatorScope(
+  tx: SqlTransaction,
+  args: NodeRunTokenInput,
+): Promise<"assignments:accept"[]> {
+  if (!args.nodeAttemptId) return [];
+  const appoint = await tx.execute(sql`
+    SELECT 1 FROM runs execution
+    JOIN specialist_run_links link ON link.run_id=execution.id AND link.role IN ('coordinator','continuation','child')
+    JOIN specialist_assignments subject ON subject.id=link.assignment_id AND subject.project_id=execution.project_id
+    JOIN specialist_input_revisions input ON input.assignment_id=subject.id AND input.revision=subject.input_revision
+    JOIN node_attempts node ON node.run_id=execution.id AND node.id=${args.nodeAttemptId}
+      AND node.node_type='orchestrator' AND node.node_id=execution.current_step_id AND node.status='Running'
+    WHERE execution.id=${args.runId} AND execution.project_id=${args.projectId}
+      AND specialist_run_has_input(execution.id,subject.id,input.revision,input.digest)
+    LIMIT 1
+  `);
+
+  return appoint.rows.length ? ["assignments:accept"] : [];
+}
+
 async function issueNodeRunToken(
   args: NodeRunTokenInput,
   scopes: readonly (typeof TOKEN_SCOPES)[number][],
@@ -513,6 +534,9 @@ async function issueNodeRunToken(
       knowledge_node_attempt_id: args.nodeAttemptId ?? null,
       scopes: [
         ...scopes,
+        ...(scopes.includes("runs:delegate")
+          ? await appointedProjectCoordinatorScope(tx, args)
+          : []),
         ...(args.nodeAttemptId
           ? await projectStandScopes(tx, args.runId, args.nodeAttemptId)
           : []),
