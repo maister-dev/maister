@@ -181,6 +181,7 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | `web/app/api/specialist-assignments/` | Company/project specialist and coordinator manual submission, personal-token API, current authority and exact input inspection |
 | `web/app/(app)/specialist-assignments/` | EN/RU assignment intake, progress, evidence, recovery and verified acceptance |
 | `web/lib/specialist-assignments/store.ts` | Durable company/project assignment heads, frozen input history, current authority, CAS and existing-run links |
+| `web/lib/specialist-assignments/delegated-intake.ts` | Original logical work identity, exact work revisions and bounded continuation backed by retained results or a proved read-only child interruption |
 | `web/lib/stand-operations/` | Reviewed stand targets, exact restart intent, current authority, effect reconciliation and independent verification |
 | `stand-connector/src/main.ts` | Linux/systemd target helper with mTLS, bounded service operations and a durable SQLite journal |
 | `web/lib/stand-operations/target-registry.ts` | Reviewed company stand configurations, exact runbook witnesses and canonical systemd component identities |

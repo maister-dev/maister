@@ -1,0 +1,39 @@
+{
+  "head": "8159583e7",
+  "startedAt": "2026-11-14T12:55:42.769Z",
+  "finishedAt": "2026-11-14T15:37:33.786Z",
+  "mcpSha256": "34110420fedf1681685c92c79262c3932d8428e32ea50d81abf741a029cc6e80",
+  "outcome": {
+    "code": 1,
+    "signal": null
+  },
+  "sourceHeadUnchanged": true,
+  "candidateUnchanged": true,
+  "counts": {
+    "numTotalTestSuites": 1958,
+    "numPassedTestSuites": 1957,
+    "numFailedTestSuites": 1,
+    "numPendingTestSuites": 0,
+    "numTotalTests": 6380,
+    "numPassedTests": 6373,
+    "numFailedTests": 0,
+    "numPendingTests": 7,
+    "numTodoTests": 0
+  },
+  "failures": [
+    {
+      "suite": "app/api/v1/ext/evaluations/result/__tests__/route.integration.test.ts",
+      "failure": "beforeAll timeout at PostgreSQL setup"
+    }
+  ],
+  "cleanup": {
+    "removedLeakedContainers": 1,
+    "processLeaks": 0
+  },
+  "isolatedRetest": {
+    "sameRevision": true,
+    "passed": 4,
+    "exitCode": 0
+  },
+  "status": "complete_failed"
+}
