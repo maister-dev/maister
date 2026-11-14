@@ -27,4 +27,6 @@ Disable the old schedule and create a reviewed appointment when the target confi
 
 ## Recover an uncertain effect
 
+If the coordinator stops before restart dispatch, a user with current recovery access can select **Recover** on the assignment. The same Run continues after MAIster verifies that the previous session has stopped. The assignment keeps its operation intent and previously accepted work.
+
 If a restart response is lost, open the original operation and select **Check the original receipt**. Its effect can remain unknown and hold the resource. An authorized operator can inspect the current service state, leave the hold in place or approve a separate recovery assignment when eligible. A successor requires a new exact approval. When an applied receipt is available, use **Run health check** for independent evidence.

@@ -313,13 +313,22 @@ async function readWorkReworkBasis(
   )
     throw workConflict();
   const result = work.definition.objectiveInput.expectedResult;
+  const interrupted = decision.mode === "recover_interrupted";
+
+  if (interrupted && prompt !== work.definition.objectiveInput.objective)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Interrupted work recovery must keep its original objective",
+      { details: { reason: "work_rework_objective_changed" } },
+    );
   const [witness] = (
     await tx.execute(sql`
-      SELECT result.id,child.knowledge_access FROM run_results result
+      SELECT result.id,child.knowledge_access,
+        ${interrupted ? sql`specialist_interrupted_child_prompt(${work.id},${work.workRevision},result.id)` : sql`NULL`} AS interruption_command_id
+      FROM run_results result
       JOIN runs child ON child.id=result.run_id
-      WHERE child.id=${childRunId} AND child.status='Done'
-        AND result.revision=${decision.resultRevision} AND result.validity='valid'
-        AND result.first_collected_at IS NOT NULL
+      WHERE child.id=${childRunId} AND result.revision=${decision.resultRevision}
+        AND (${interrupted} OR (child.status='Done' AND result.validity='valid' AND result.first_collected_at IS NOT NULL))
         AND result.schema_ref=${result?.schemaRef ?? null}
         AND result.schema_version=${result?.schemaVersion ?? null}
         AND result.schema_sha256=${result?.sha256 ?? null}
@@ -333,18 +342,31 @@ async function readWorkReworkBasis(
   if (
     typeof witness?.id !== "string" ||
     !capture.success ||
-    capture.data.state !== "complete"
+    capture.data.state !== "complete" ||
+    (interrupted && typeof witness.interruption_command_id !== "string")
   )
     throw new MaisterError(
       "PRECONDITION",
-      "Native rework requires the exact collected result and available evidence",
-      { details: { reason: "work_rework_result_unavailable" } },
+      interrupted
+        ? "Interrupted work requires a retired read-only child and its exact failed prompt receipt"
+        : "Native rework requires the exact collected result and available evidence",
+      {
+        details: {
+          reason: interrupted
+            ? "work_rework_interruption_unproven"
+            : "work_rework_result_unavailable",
+        },
+      },
     );
 
   return {
     work,
     requestSha256,
     resultId: witness.id,
+    interruptionCommandId:
+      typeof witness.interruption_command_id === "string"
+        ? witness.interruption_command_id
+        : null,
     restrictions: capture.data.restrictions,
     duplicate: previous !== undefined,
   };
@@ -413,8 +435,9 @@ export async function prepareDelegatedWorkRework(
       prepared: {
         objectiveInput: {
           ...work.definition.objectiveInput,
-          objective: input.prompt,
-          input: input.prompt,
+          ...(input.decision.mode === "recover_interrupted"
+            ? {}
+            : { objective: input.prompt, input: input.prompt }),
         },
         target: work.definition.target,
         bounds: work.bounds,
@@ -501,6 +524,10 @@ export async function retainDelegatedWorkInTransaction(
     rework &&
     (rework.work.logicalWorkId !== logicalWorkId ||
       rework.work.workRevision + 1 !== workRevision ||
+      (rework.interruptionCommandId &&
+        (rework.work.inputRevision !== inputRevision ||
+          contentDigest(rework.work.definition.objectiveInput) !==
+            contentDigest(objectiveInput))) ||
       contentDigest(rework.work.definition.target) !== contentDigest(target))
   )
     throw workConflict();
@@ -638,9 +665,9 @@ export async function retainDelegatedWorkInTransaction(
     const { decision } = input.rework;
 
     await tx.execute(sql`INSERT INTO specialist_work_decisions
-      (work_id,work_revision,expected_revision,input_revision,actor,authority_snapshot,decision,result_id,result_revision,request_key,request_sha256,reason)
+      (work_id,work_revision,expected_revision,input_revision,actor,authority_snapshot,decision,result_id,result_revision,interruption_command_id,request_key,request_sha256,reason)
       VALUES(${workId},${decision.workRevision},${decision.expectedRevision},${decision.inputRevision},${JSON.stringify(actor)}::jsonb,${JSON.stringify(authority)}::jsonb,
-        'rework',${rework.resultId},${decision.resultRevision},${decision.requestKey},${rework.requestSha256},${objectiveInput.objective})`);
+        'rework',${rework.resultId},${decision.resultRevision},${rework.interruptionCommandId},${decision.requestKey},${rework.requestSha256},${objectiveInput.objective})`);
     await tx.execute(sql`UPDATE specialist_work SET decision_state='rework_requested',revision=revision+1
       WHERE id=${workId} AND work_revision=${decision.workRevision} AND revision=${decision.expectedRevision}`);
   }

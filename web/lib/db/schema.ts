@@ -11623,6 +11623,10 @@ export const specialistWorkDecisions = pgTable(
       .notNull()
       .references(() => runResults.id, { onDelete: "restrict" }),
     resultRevision: integer("result_revision").notNull(),
+    interruptionCommandId: text("interruption_command_id").references(
+      () => executionCommands.id,
+      { onDelete: "restrict" },
+    ),
     requestKey: text("request_key").notNull(),
     requestSha256: text("request_sha256").notNull(),
     reason: text("reason").notNull(),

@@ -2325,6 +2325,13 @@
       "when": 1794623208080,
       "tag": "0335_company_pending_pool_index",
       "breakpoints": true
+    },
+    {
+      "idx": 336,
+      "version": "7",
+      "when": 1794667910922,
+      "tag": "0336_specialist_interrupted_work",
+      "breakpoints": true
     }
   ]
 }

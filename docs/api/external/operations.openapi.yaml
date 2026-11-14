@@ -2616,6 +2616,10 @@ paths:
                     workRevision: { type: integer, minimum: 1, maximum: 2147483647 }
                     inputRevision: { type: integer, minimum: 1, maximum: 2147483647 }
                     resultRevision: { type: integer, minimum: 1, maximum: 2147483647 }
+                    mode:
+                      type: string
+                      enum: [recover_interrupted]
+                      description: Recover only the first read-only company child with an exact retired crash and missing-result receipt. Keep the original objective and input. An ordinary missing or invalid result is insufficient.
                     requestKey: { type: string, pattern: '^[A-Za-z0-9._:-]{8,128}$' }
       responses:
         "202":
@@ -12179,6 +12183,10 @@ components:
           description: |
             (Implemented — ADR-165) 1-based revision number of the row `result`
             came from; null when there is no result row.
+        recoveryMode:
+          type: string
+          enum: [recover_interrupted]
+          description: The retired first read-only company attempt has a causal interruption receipt; rework still checks current authority and budget.
         assignmentWork:
           type: object
           additionalProperties: false

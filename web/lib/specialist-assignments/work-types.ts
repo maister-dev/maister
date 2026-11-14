@@ -37,6 +37,7 @@ export const assignmentWorkReworkSchema = z
     workRevision: knowledgeRevisionSchema,
     inputRevision: knowledgeRevisionSchema,
     resultRevision: knowledgeRevisionSchema,
+    mode: z.literal("recover_interrupted").optional(),
     requestKey: logicalWorkIdSchema.min(8),
   })
   .strict();

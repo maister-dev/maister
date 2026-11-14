@@ -66,6 +66,7 @@ export type CollectResult = {
   resultStatus: ResultStatus;
   result: PublicRunResult | null;
   resultRevision: number | null;
+  recoveryMode?: "recover_interrupted";
   assignmentWork?: CollectedWorkRevision;
   resultFailure: { reason: RunResultInvalidReason; message: string } | null;
   artifacts: CollectArtifact[];
@@ -258,6 +259,16 @@ export async function collectChild(
   const outputText = outputTextFromArtifacts(artifactRows);
 
   const servedRow = resultStatus === "valid" ? valid : null;
+  const recoveryMode =
+    args.companyId !== undefined &&
+    assignmentWork &&
+    newest?.invalidReason === "result_missing"
+      ? (
+          await db.execute(sql`
+            SELECT specialist_interrupted_child_prompt(${assignmentWork.id},${assignmentWork.workRevision},${newest.id}) IS NOT NULL AS supported
+          `)
+        ).rows[0]?.supported === true
+      : false;
 
   return {
     servedResultId: servedRow?.id ?? null,
@@ -279,6 +290,7 @@ export async function collectChild(
         ? { schemaRef: servedRow.schemaRef, value: servedRow.value }
         : null,
       resultRevision: valid?.revision ?? newest?.revision ?? null,
+      ...(recoveryMode ? { recoveryMode: "recover_interrupted" as const } : {}),
       ...(assignmentWork ? { assignmentWork } : {}),
       // The invalid row is the ONE durable source. A failure-terminal child that
       // simply died (W4) has none, and reports null rather than a guess.

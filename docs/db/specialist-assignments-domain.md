@@ -338,6 +338,10 @@ immutable while recipient-owned read timestamps use the existing mutations.
 There is no Brain FK, new execution ledger or second transport-attempt ledger.
 
 
+### Interrupted company child work
+
+Main `0336_specialist_interrupted_work` adds a nullable command reference to the existing immutable `specialist_work_decisions` row. Ordinary rework, acceptance and rejection still require the exact collected valid result. Interrupted rework requires an original result-only, read-only company agent with a released placement, an applied failed prompt, a preceding accepted crash event in the same stream and an exact missing-result row. That row is failure evidence. It is never accepted as a result. The next work revision preserves the input digest, objective, result contract and receiving pin, and uses the existing Run and budget ledgers. Existing decisions receive no implied interruption evidence.
+
 ### Project source ownership before a Run (Implemented — locally qualified)
 
 Generated additive main `0267_specialist_source_handoff` extends only the existing

@@ -854,11 +854,15 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
       contentType: "application/json",
     });
   }
+  let interruptedDiagnosticRunId: string | null = null;
+
   if (checkDiagnosticInterruption) {
     const killed = await interruptStandPrompt(
       () => findDiagnosticPrompt(assignment.id, runId),
       "stand-diagnostic-interruption",
     );
+
+    interruptedDiagnosticRunId = killed.runId;
 
     await testInfo.attach("stand-diagnostic-interruption", {
       body: JSON.stringify({
@@ -953,8 +957,14 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
         ) credentials ON true
         WHERE (execution.id=$1 OR execution.parent_run_id=$1)
           AND execution.status IN ('Failed','Crashed','Abandoned')
+          AND (execution.id IS DISTINCT FROM $2 OR NOT EXISTS (
+            SELECT 1 FROM specialist_work interrupted
+            JOIN run_results outcome ON outcome.run_id=interrupted.child_run_id
+            WHERE interrupted.child_run_id=execution.id
+              AND specialist_interrupted_child_prompt(interrupted.id,interrupted.work_revision,outcome.id) IS NOT NULL
+          ))
         ORDER BY (execution.id=$1) LIMIT 1`,
-        [runId],
+        [runId, interruptedDiagnosticRunId],
       );
 
       if (terminal.rows[0]) {
@@ -996,6 +1006,49 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
 
   await expect.poll(approvedStep, { timeout: 720_000 }).toBeDefined();
   const operation = (await approvedStep())!;
+
+  if (interruptedDiagnosticRunId) {
+    const originalRunId = interruptedDiagnosticRunId;
+    const continuation = await withE2EDb(
+      async (pool) =>
+        (
+          await pool.query(
+            `SELECT prior.child_run_id AS original_run_id, successor.child_run_id AS recovered_run_id,
+                prior.work_revision AS original_revision, successor.work_revision AS recovered_revision,
+                recovery.interruption_command_id, acceptance.result_revision
+         FROM specialist_work prior
+         JOIN specialist_work successor ON successor.id=prior.id AND successor.work_revision=prior.work_revision+1
+         JOIN specialist_work_decisions recovery ON recovery.work_id=prior.id AND recovery.work_revision=prior.work_revision
+         JOIN specialist_work_decisions acceptance ON acceptance.work_id=successor.id
+               AND acceptance.work_revision=successor.work_revision AND acceptance.decision='accept'
+         WHERE prior.child_run_id=$1 AND prior.parent_run_id=$2`,
+            [originalRunId, runId],
+          )
+        ).rows,
+    );
+
+    expect(continuation).toEqual([
+      {
+        original_run_id: originalRunId,
+        recovered_run_id: expect.not.stringMatching(
+          new RegExp(`^${originalRunId}$`),
+        ),
+        original_revision: 1,
+        recovered_revision: 2,
+        interruption_command_id: expect.any(String),
+        result_revision: 1,
+      },
+    ]);
+    await testInfo.attach("stand-diagnostic-recovery", {
+      body: JSON.stringify({
+        assignmentId: assignment.id,
+        runId,
+        operationId: operation.id,
+        ...continuation[0],
+      }),
+      contentType: "application/json",
+    });
+  }
   const preserved = checkCoordinatorInterruption
     ? await readAcceptedDiagnostic(assignment.id, runId)
     : undefined;

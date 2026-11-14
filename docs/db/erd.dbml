@@ -3406,6 +3406,7 @@ table specialist_work_decisions {
   decision text [not null]
   result_id text [not null]
   result_revision integer [not null]
+  interruption_command_id text
   request_key text [not null]
   request_sha256 text [not null]
   reason text [not null]
@@ -5230,6 +5231,8 @@ ref specialist_work_child_run_id_runs_id_fk: specialist_work.child_run_id > runs
 ref specialist_work_input_fk: specialist_work.(assignment_id, input_revision) > specialist_input_revisions.(assignment_id, revision) [delete: restrict, update: no action]
 
 ref specialist_work_decisions_result_id_run_results_id_fk: specialist_work_decisions.result_id > run_results.id [delete: restrict, update: no action]
+
+ref specialist_work_decisions_interruption_command_id_execution_commands_id_fk: specialist_work_decisions.interruption_command_id > execution_commands.id [delete: restrict, update: no action]
 
 ref specialist_work_decisions_work_fk: specialist_work_decisions.(work_id, work_revision) > specialist_work.(id, work_revision) [delete: restrict, update: no action]
 

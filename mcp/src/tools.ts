@@ -938,7 +938,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   run_rework: {
     description:
-      "Request rework from an exact direct child. For native result-only work, use assignmentWork with the work and result revisions returned by run_collect. The continued project agent, company agent or company Flow run keeps the original result and consumes the remaining assignment budget. Retry the same requestKey with identical input to read the same continuation. Legacy project rework uses a direct agent child in Review and resumes its existing worktree. Returns { childRunId, status }.",
+      "Request rework from an exact direct child. Native result-only work uses the work and result revisions from run_collect. For an interrupted first read-only company attempt, set assignmentWork.mode to recover_interrupted and supply the original objective as prompt. Recovery requires the platform's causal crash receipt and physical retirement, keeps the original input and consumes the remaining budget. Retry the same requestKey with identical input to read the same continuation. Legacy project rework resumes a direct agent child in Review. Returns { childRunId, status }.",
     inputSchema: {
       type: "object",
       properties: {
@@ -953,6 +953,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
             workRevision: { type: "integer", minimum: 1 },
             inputRevision: { type: "integer", minimum: 1 },
             resultRevision: { type: "integer", minimum: 1 },
+            mode: { type: "string", const: "recover_interrupted" },
             requestKey: { type: "string", pattern: "^[A-Za-z0-9._:-]{8,128}$" },
           },
           required: [

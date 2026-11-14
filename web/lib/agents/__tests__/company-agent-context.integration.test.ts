@@ -537,6 +537,14 @@ beforeAll(async () => {
     primarySource,
   );
   await writeFile(
+    join(source, "maister-agents/child-interruption-observer.md"),
+    primarySource,
+  );
+  await writeFile(
+    join(source, "maister-agents/child-interruption-receiver.md"),
+    primarySource,
+  );
+  await writeFile(
     join(source, "maister-agents/company-child-coordinator.md"),
     primarySource
       .replace(
@@ -12644,7 +12652,11 @@ it("IT-CBC-03 fences a company context writer at execution ownership handoff and
 
 const cooperationRunnerId = randomUUID();
 
-for (const stop of ["budget", "parent interruption"] as const) {
+for (const stop of [
+  "budget",
+  "parent interruption",
+  "child interruption",
+] as const) {
   it(`IT-CBC-01 IT-CBC-04 IT-CBC-05 requires current company delegation grants and retains exact results through Flow rework, acceptance and ${stop}`, () =>
     qualifyCompanyCooperation(stop));
 }
@@ -12688,7 +12700,7 @@ async function recordAssignmentBudgetUsage(
 }
 
 async function qualifyCompanyCooperation(
-  stop: "budget" | "parent interruption",
+  stop: "budget" | "parent interruption" | "child interruption",
 ): Promise<void> {
   const db: Db = database.db;
   const reviewedTokens = 750_000;
@@ -12699,11 +12711,15 @@ async function qualifyCompanyCooperation(
   const roleId =
     stop === "budget"
       ? "rah:delegating-observer"
-      : "rah:interrupted-cooperation-observer";
+      : stop === "parent interruption"
+        ? "rah:interrupted-cooperation-observer"
+        : "rah:child-interruption-observer";
   const receivingRoleId =
     stop === "budget"
       ? "rah:company-dispatch-observer"
-      : "rah:interrupted-dispatch-observer";
+      : stop === "parent interruption"
+        ? "rah:interrupted-dispatch-observer"
+        : "rah:child-interruption-receiver";
   const appointment = await reserveContextFixture(
     roleId,
     [
@@ -13058,6 +13074,168 @@ async function qualifyCompanyCooperation(
       expect(await collected.json()).toMatchObject([
         { childRunId: first.childRunId, status: "Pending" },
       ]);
+      const prematureRecovery = await reworkExternalRun(
+        new NextRequest("http://localhost/api/v1/ext/runs/rework", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            childRunId: first.childRunId,
+            prompt: prepared.objectiveInput.objective,
+            assignmentWork: {
+              schemaVersion: 1,
+              mode: "recover_interrupted",
+              expectedRevision: 2,
+              workRevision: 1,
+              inputRevision: assignment.inputRevision,
+              resultRevision: 1,
+              requestKey: "recover-interrupted-observer",
+            },
+          }),
+        }),
+        {},
+      );
+
+      expect(prematureRecovery.status).toBe(409);
+      expect(await prematureRecovery.json()).toMatchObject({
+        details: { reason: "work_rework_interruption_unproven" },
+      });
+      if (stop === "child interruption") {
+        fake.setStreamEvents([]);
+        fake.setPromptBehavior(async ({ sessionId, envelope }) => {
+          const session = fake.sessions.get(sessionId);
+
+          if (!session)
+            throw new Error("The appointed child session is missing");
+          await fake.publishCanonical(envelope, sessionId, {
+            type: "session.crashed",
+            sessionId,
+            monotonicId: 1,
+            exitCode: 1,
+            signal: null,
+          });
+          fake.sessions.set(sessionId, {
+            ...session,
+            status: "exited",
+            exitCode: 1,
+            exitedAt: new Date().toISOString(),
+          });
+          throw new MaisterError(
+            "ACP_PROTOCOL",
+            "The test adapter exited during its accepted prompt",
+          );
+        });
+        const previousCap = process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+
+        process.env.MAISTER_MAX_CONCURRENT_AGENTS = "100";
+        try {
+          await expect(tryStartRun(first.childRunId, { db })).resolves.toEqual({
+            started: true,
+          });
+          await startAgentSession(first.childRunId, {
+            db,
+            executionHosts: hosts,
+          });
+          await fake.waitForCanonicalEvents();
+          const readChild = (childRunId: string) =>
+            collectExternalRun(
+              new NextRequest("http://localhost/api/v1/ext/runs/collect", {
+                method: "POST",
+                headers,
+                body: JSON.stringify({ childRunId }),
+              }),
+              {},
+            );
+          const [terminal] = await (await readChild(first.childRunId)).json();
+
+          expect(terminal).toMatchObject({
+            status: "Failed",
+            result: null,
+            resultRevision: 1,
+            recoveryMode: "recover_interrupted",
+            resultFailure: { reason: "result_missing" },
+          });
+          const recovery = {
+            schemaVersion: 1,
+            mode: "recover_interrupted",
+            expectedRevision: terminal.assignmentWork.revision,
+            workRevision: terminal.assignmentWork.workRevision,
+            inputRevision: terminal.assignmentWork.inputRevision,
+            resultRevision: terminal.resultRevision,
+            requestKey: "recover-interrupted-observer",
+          };
+          const sendRecovery = (prompt: string) =>
+            reworkExternalRun(
+              new NextRequest("http://localhost/api/v1/ext/runs/rework", {
+                method: "POST",
+                headers,
+                body: JSON.stringify({
+                  childRunId: first.childRunId,
+                  prompt,
+                  assignmentWork: recovery,
+                }),
+              }),
+              {},
+            );
+
+          expect((await sendRecovery("Changed objective")).status).toBe(409);
+          const approved = await sendRecovery(
+            prepared.objectiveInput.objective,
+          );
+
+          expect(approved.status, await approved.clone().text()).toBe(202);
+          const continuation = await approved.json();
+
+          expect(continuation.childRunId).not.toBe(first.childRunId);
+          expect(
+            await (
+              await sendRecovery(prepared.objectiveInput.objective)
+            ).json(),
+          ).toEqual(continuation);
+          const replacement = await loadCompanyAgentSessionContext(
+            db,
+            continuation.childRunId,
+          );
+
+          expect(buildCompanyAgentPrompt(replacement)).toContain(
+            prepared.objectiveInput.input,
+          );
+          const witness = await database.pool.query(
+            `SELECT decisions.interruption_command_id,successor.work_revision,prompt.run_id AS original_run_id
+              FROM specialist_work successor
+              JOIN specialist_work_decisions decisions ON decisions.work_id=successor.id AND decisions.work_revision=1
+              JOIN execution_commands prompt ON prompt.id=decisions.interruption_command_id
+              WHERE successor.child_run_id=$1`,
+            [continuation.childRunId],
+          );
+
+          expect(witness.rows).toEqual([
+            {
+              interruption_command_id: expect.any(String),
+              work_revision: 2,
+              original_run_id: first.childRunId,
+            },
+          ]);
+          scriptAgentTurn(fake, scriptedTurn);
+          releasePrompt.resolve();
+          expect(
+            await tryStartRun(continuation.childRunId, { db }),
+          ).toMatchObject({ started: true });
+          await startAgentSession(continuation.childRunId, {
+            db,
+            executionHosts: hosts,
+          });
+          await fake.waitForCanonicalEvents();
+          expect(
+            await (await readChild(continuation.childRunId)).json(),
+          ).toMatchObject([{ status: "Done", resultStatus: "valid" }]);
+
+          return;
+        } finally {
+          if (previousCap === undefined)
+            delete process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+          else process.env.MAISTER_MAX_CONCURRENT_AGENTS = previousCap;
+        }
+      }
       const captureChildInput = () =>
         captureNativeChildInput(
           db,
