@@ -1657,6 +1657,14 @@ Supervisor boot requires Node >=24.15.0 <25. Runtime pressure and projection set
 
 Operational agents use the existing session/input/permission protocol and assignment fences. Multiple permission requests retain separate request IDs, choices and delivery receipts; checkpoint continuation does not grant unanswered requests. No operational-kind-specific supervisor wire field or automatic approval is introduced.
 
-## Configured stand operation transport (Designed)
+## Configured stand operation transport
 
-[Stand maintenance](system-analytics/stand-maintenance.md) extends the existing execution-host boundary with `/stand-operations/{operationId}/dispatch`, `/reconcile`, `/verify`; exact envelopes are in [supervisor OpenAPI](api/supervisor.openapi.yaml). Dispatch uses the active existing run fence and durable command identity. Read-only post-run reconciliation/verification uses an explicit operation-owner epoch/current recovery grant and historical origin run, not a released session fence. Both use existing command/receipt storage with a typed stand-operation owner, never a new command/attempt ledger. Receiver validates URL operation identity, digest, target incarnation and the applicable owner fence before target access. Target endpoint/credential/unit comes only from frozen server configuration. These routes are not implemented by the current supervisor.
+[Stand maintenance](system-analytics/stand-maintenance.md) extends the existing execution-host boundary with five routes; exact envelopes are in [supervisor OpenAPI](api/supervisor.openapi.yaml).
+
+- `POST /stand-operations/dispatch` sends one restart command under the active run fence. The existing command/receipt ledger retains it with a typed stand-operation owner, never a new command/attempt ledger.
+- `POST /stand-operations/receipt` reads the original helper receipt under a current recovery permit.
+- `POST /stand-operations/observe` observes the exact configured unit before a restart under a current reconciliation permit.
+- `POST /stand-operations/verify` observes independent health with a fresh platform nonce.
+- `POST /stand-operations/logs` reads sanitized logs under a current operation-bound logs permit.
+
+The read routes use an operation-bound permit and the historical origin run, not a released session fence. The target endpoint, credential and unit come only from frozen server configuration; the helper is resolved from the target incarnation and pinned.
