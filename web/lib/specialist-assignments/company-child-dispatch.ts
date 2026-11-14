@@ -26,6 +26,7 @@ import {
   resolveReviewedCompanyFlowSource,
 } from "@/lib/agents/company-flow-context";
 import { buildOperationalContract } from "@/lib/agents/launch-contract";
+import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
 import { MaisterError } from "@/lib/errors";
 import { lockDelegationParent } from "@/lib/orchestrator/admission";
 
@@ -123,9 +124,12 @@ export async function dispatchCompanyAssignmentChild(
     },
   );
 
-  return request.prepared.target.kind === "company_flow"
+  const receipt = await (request.prepared.target.kind === "company_flow"
     ? reserveCompanyDelegatedFlowRun(db, request)
-    : reserveCompanyDelegatedAgentRun(db, request);
+    : reserveCompanyDelegatedAgentRun(db, request));
+
+  if (receipt.status === "Pending") runEventWakeBus.wakeProjection();
+  return receipt;
 }
 
 type CompanyChildTarget = Readonly<{

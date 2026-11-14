@@ -13050,9 +13050,20 @@ async function qualifyCompanyCooperation(
           "DELETE FROM run_cost_rollups WHERE run_id=$1",
           [appointment.runId],
         );
-        await expect(tryStartRun(first.childRunId, { db })).resolves.toEqual({
-          started: true,
-        });
+        const { startTaskLaunchWorker } = await import("@/lib/tasks/launch-worker");
+        const launch = await import("@/lib/agents/launch");
+        const start = vi.spyOn(launch, "startAgentSession").mockResolvedValue(undefined);
+        const worker = startTaskLaunchWorker({ db });
+
+        try {
+          await vi.waitFor(() => expect(start).toHaveBeenCalledWith(first.childRunId, { db }), {
+            timeout: 6_000,
+          });
+          expect(start.mock.calls.filter(([id]) => id === first.childRunId)).toHaveLength(1);
+        } finally {
+          await worker.stop();
+          start.mockRestore();
+        }
       } finally {
         if (previousCap === undefined)
           delete process.env.MAISTER_MAX_CONCURRENT_AGENTS;

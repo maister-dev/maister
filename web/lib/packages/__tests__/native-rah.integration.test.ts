@@ -478,8 +478,12 @@ it.skipIf(!standSource || !standRevision)(
       readinessStatus: "Ready",
     });
     await database.db
-      .update(platformRuntimeSettings)
-      .set({ defaultRunnerId: runnerId });
+      .insert(platformRuntimeSettings)
+      .values({ id: "singleton", defaultRunnerId: runnerId })
+      .onConflictDoUpdate({
+        target: platformRuntimeSettings.id,
+        set: { defaultRunnerId: runnerId },
+      });
     const { specialist } = await createCompanySpecialistBinding(
       database.db,
       reviewerId,
@@ -637,5 +641,109 @@ it.skipIf(!standSource || !standRevision)(
         )
       ).rows,
     ).toEqual([{ step_id: "authorize", kind: "human" }]);
+
+    const { submitProjectManualAssignment } =
+      await import("@/lib/specialist-assignments/project-manual-intake");
+    await attachPackage({
+      projectId,
+      projectSlug: slug,
+      packageInstallId: installed.id,
+      workspaceRoot: root,
+      db: database.db,
+    });
+    await enableRevision({
+      projectId,
+      flowRefId: "stand-maintenance",
+      revisionId: flow!.id,
+      db: database.db,
+    });
+    const projectRole = await attachAgent(
+      {
+        projectId,
+        agentId: definition.parsed.id,
+        runnerOverrideId: runnerId,
+        enabled: true,
+      },
+      database.db,
+    );
+    const projectWork = {
+      owner: { kind: "project" as const, projectId },
+      specialistBindingId: projectRole.linkId,
+      objective: "Inspect a project-owned stand assignment.",
+      expectedOutcome:
+        "Retain the package's exact operational result contract.",
+      input:
+        "Ask for clarification if an operator has not appointed a component.",
+      targetIds: [],
+      inputRefs: [],
+      constraints: [],
+      verification: [{ kind: "result", required: true, referenceId: null }],
+      idempotencyKey: randomUUID(),
+    };
+    const { interactiveTaskLaunchPrincipal } =
+      await import("@/lib/tasks/admission-types");
+    const { prepareTaskLaunchIntent } =
+      await import("@/lib/tasks/launch-dispatch");
+    session.user = await requireActiveUserById(reviewerId);
+    const principal = await interactiveTaskLaunchPrincipal();
+    const projectReceipt = await submitProjectManualAssignment(
+      database.db,
+      reviewerId,
+      projectWork,
+      principal,
+    );
+    expect(projectReceipt.projectAdmission?.kind).toBe("accepted");
+    if (projectReceipt.projectAdmission?.kind !== "accepted")
+      throw new Error(
+        "The live project package did not enter the native admission queue",
+      );
+    const intentId = projectReceipt.projectAdmission.receipt.intentId;
+    const projectPlacement = await prepareTaskLaunchIntent(
+      database.db,
+      intentId,
+    );
+    expect(projectPlacement.state).toBe("run_bound");
+    const projectRunId = projectPlacement.runId;
+    session.user = null;
+
+    expect(projectRunId).toBeDefined();
+    expect(
+      (
+        await database.pool.query(
+          "SELECT project_id,company_id,result_contract->>'nativeContract' AS contract FROM runs WHERE id=$1",
+          [projectRunId],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        project_id: projectId,
+        company_id: null,
+        contract: "operational_evidence_v2",
+      },
+    ]);
+    const originalIntentKey = projectReceipt.projectAdmission.receipt.intentId;
+    expect(
+      (
+        await database.pool.query(
+          "SELECT id FROM task_launch_intents WHERE project_id=$1 AND settings_snapshot->'serverExecution'->'execution'->'specialistAssignment'->>'assignmentId'=$2",
+          [projectId, projectReceipt.assignment.id],
+        )
+      ).rows,
+    ).toEqual([{ id: originalIntentKey }]);
+
+    const path = (
+      await database.pool.query<{ worktree_path: string | null }>(
+        "SELECT worktree_path FROM workspaces WHERE run_id=$1",
+        [projectRunId],
+      )
+    ).rows[0]?.worktree_path;
+    if (path) {
+      const { removeWorktree } = await import("@/lib/worktree");
+      await removeWorktree({
+        projectRepoPath: join(root, "repository"),
+        worktreePath: path,
+        force: true,
+      });
+    }
   },
 );

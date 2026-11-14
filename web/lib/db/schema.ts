@@ -2657,6 +2657,9 @@ export const runs = pgTable(
       "runs_company_agent_shape_check",
       sql`((${t.companyId} IS NULL AND ${t.companyExecutionSnapshot} IS NULL) OR (${t.companyId} IS NOT NULL AND ${t.companyExecutionSnapshot} IS NOT NULL AND ${t.projectId} IS NULL AND ${t.taskId} IS NULL AND ${t.flowId} IS NULL AND ${t.flowRevisionId} IS NULL AND ${t.localPackageId} IS NULL AND ${t.runKind}='agent' AND ${t.agentKind}='operational' AND ${t.agentWorkspace}='none' AND ${t.persistent}=false AND ${t.sourceAgentId} IS NOT NULL AND (${t.agentId} IS NULL OR ${t.agentId}=${t.sourceAgentId}) AND ${t.resultContract}->'definition'->>'id'=${t.sourceAgentId} AND ${companyAgentSnapshotShape(t.companyExecutionSnapshot, t.companyId)}) OR (${t.companyId} IS NOT NULL AND ${t.companyExecutionSnapshot} IS NOT NULL AND ${t.projectId} IS NULL AND ${t.taskId} IS NULL AND ${t.flowId} IS NULL AND ${t.localPackageId} IS NULL AND ${t.runKind}='flow' AND ${t.agentKind} IS NULL AND ${t.agentWorkspace}='none' AND ${t.persistent}=false AND ${t.sourceAgentId} IS NOT NULL AND (${t.agentId} IS NULL OR ${t.agentId}=${t.sourceAgentId}) AND ${t.flowRevisionId} IS NOT NULL AND ${t.resultContract}->>'kind'='flow_export' AND ${t.resultContract}->'required'='true'::jsonb AND ${t.resultContract}->>'flowRevisionId'=${t.flowRevisionId} AND ${t.resultContract}->>'sha256' ~ '^[a-f0-9]{64}$' AND jsonb_typeof(${t.resultContract}->'schema')='object' AND ${companyFlowSnapshotShape(t.companyExecutionSnapshot, t.companyId)})) IS TRUE`,
     ),
+    companyPendingPool: index("runs_company_pending_pool_idx")
+      .on(t.runKind)
+      .where(sql`${t.companyId} IS NOT NULL AND ${t.status}='Pending'`),
     companyHistoryIndex: index("runs_company_agent_history_idx")
       .on(t.companyId, t.sourceAgentId, t.activitySortAt.desc(), t.id.desc())
       .where(sql`${t.companyId} IS NOT NULL`),

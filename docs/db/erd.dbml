@@ -2926,6 +2926,7 @@ table runs {
 
   indexes {
 
+    run_kind [name: 'runs_company_pending_pool_idx']
     (company_id, source_agent_id, activity_sort_at, id) [name: 'runs_company_agent_history_idx']
 
 
