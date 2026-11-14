@@ -67,11 +67,20 @@ const assignmentSchema = z.object({
 const terminalSnapshot = z.object({
   id: z.string(),
   status: z.string(),
+  cause: z.string().nullable(),
   reason_codes: z.array(z.string()).nullable(),
   validation_diagnostics: z
     .array(z.object({ code: z.string(), path: z.string() }))
     .nullable(),
   result_reason: z.string().nullable(),
+  credential_generations: z.array(
+    z.object({
+      nodeAttemptId: z.string().nullable(),
+      issuedAt: z.string(),
+      revokedAt: z.string().nullable(),
+      reason: z.string().nullable(),
+    }),
+  ),
 });
 
 function required(name: string): string {
@@ -421,13 +430,24 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
     withE2EDb(async (pool) => {
       const terminal = await pool.query(
         `SELECT execution.id,execution.status,
+          execution.operational_terminal->>'cause' AS cause,
           execution.operational_terminal->'reasonCodes' AS reason_codes,
           execution.operational_terminal->'validationDiagnostics' AS validation_diagnostics,
-          result.invalid_reason AS result_reason
+          result.invalid_reason AS result_reason,
+          coalesce(credentials.generations,'[]'::jsonb) AS credential_generations
         FROM runs execution
         LEFT JOIN LATERAL (
           SELECT invalid_reason FROM run_results WHERE run_id=execution.id ORDER BY revision DESC LIMIT 1
         ) result ON true
+        LEFT JOIN LATERAL (
+          SELECT jsonb_agg(jsonb_build_object(
+            'nodeAttemptId',knowledge_node_attempt_id,
+            'issuedAt',created_at,
+            'revokedAt',revoked_at,
+            'reason',revocation_reason
+          ) ORDER BY created_at) AS generations
+          FROM project_tokens WHERE company_run_id=execution.id
+        ) credentials ON true
         WHERE (execution.id=$1 OR execution.parent_run_id=$1)
           AND execution.status IN ('Failed','Crashed','Abandoned')
         ORDER BY (execution.id=$1) LIMIT 1`,
