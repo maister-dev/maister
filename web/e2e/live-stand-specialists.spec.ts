@@ -587,6 +587,9 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
   await expect(
     page.getByRole("heading", { name: body.objective }),
   ).toBeVisible();
+  await page.getByText("Verification receipts (1)", { exact: true }).click({
+    timeout: 20_000,
+  });
   await expect(
     page.getByText(result.value.verificationIds[0]!, { exact: true }),
   ).toBeVisible();
