@@ -1,0 +1,26 @@
+{
+  "sourceHead": "cd936063b3dd3129b1eb03fa05c59fd11c5073a5",
+  "candidateSha256": "8861c20204888f72c087fdeafbcd2254af65e0dbe8ab98907f029f554a578e33",
+  "packageCommit": "084f68a587a91befd31f94c1ce7759e6b31d265a",
+  "packageTag": "stand-operations/v0.1.0",
+  "model": "glm-5.3",
+  "startedAt": "2026-11-14T16:57:35.591474+00:00",
+  "finishedAt": "2026-11-14T17:02:10.949347+00:00",
+  "exitCode": 1,
+  "candidateUnchanged": true,
+  "status": "fixture_failed_after_unknown_effect",
+  "failure": "The test queried the objective on the assignment head. PostgreSQL stores it in the current specialist input revision.",
+  "observed": {
+    "guest": {
+      "event": "qualification_effect_before_receipt",
+      "operationId": "90dbef8f-f5ac-4b6d-a2c2-60f76e41600e",
+      "invocationId": "cd0360680df8483da3ae44516ff3fdbc"
+    },
+    "platformEffectBeforeReconciliation": "unknown",
+    "initialFinalReceiptCount": 0
+  },
+  "cleanup": {
+    "outcome": "clean",
+    "leaks": 0
+  }
+}

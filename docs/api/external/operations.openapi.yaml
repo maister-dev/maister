@@ -6961,8 +6961,9 @@ paths:
       description: Requires a current execution-bound company specialist token with targets:read and an exact
         appointed assignment input. The server checks current professional and initiating-user grants for
         the selected action and derives the operation's attribution from the token. An exact replay returns
-        the operation; changed input conflicts. This endpoint records intent. A restart requires a separate
-        human approval and current dispatch permit.
+        the operation; changed input conflicts. An exact restart request can adopt a retained human-appointed
+        recovery operation for the same assignment input and component. This endpoint records or returns
+        intent. A restart requires a separate human approval and current dispatch permit.
       x-implementation-status: Implemented
       x-required-scope: targets:read
       requestBody:
@@ -6973,8 +6974,7 @@ paths:
               $ref: "#/components/schemas/CBOperationInput"
       responses:
         "200":
-          description: Exact content-guarded replay returns the currently accessible prior receipt without repeating
-            work; state remains explicit.
+          description: Exact replay or an already appointed recovery operation; no new effect or approval.
           content:
             application/json:
               schema:

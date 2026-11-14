@@ -22043,8 +22043,10 @@ paths:
         grant. The current open assignment must appoint the enabled stand, and its pinned component
         must allow the action. A restart request retains a resource claim before dispatch. This receipt
         records a pending intent. Dispatch requires a separately evidenced approval and current authority.
-        Same delivery and content return the existing intent. Changed content, stale input or a held
-        resource return 409. Responses are private, no-store.
+        Same delivery and content return the existing intent. A restart request matching an exact
+        human-appointed recovery operation for this assignment input and component returns that
+        operation without creating another intent. Changed content, stale input or a held resource
+        without a matching appointment return 409. Responses are private, no-store.
       x-implementation-status: Implemented
       x-required-scope: targets:read
       requestBody:
@@ -22055,8 +22057,7 @@ paths:
               $ref: "#/components/schemas/CBOperationInput"
       responses:
         "200":
-          description: Exact content-guarded replay returns the currently accessible prior receipt without repeating
-            work; state remains explicit.
+          description: Exact replay or an already appointed recovery operation; no new effect or approval.
           content:
             application/json:
               schema:

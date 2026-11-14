@@ -132,6 +132,137 @@ async function grants(
   );
 }
 
+/** Queue a real replacement Run, appoint its successor, then release normal scheduler admission. */
+async function appointPilotSuccessor(
+  request: APIRequestContext,
+  origin: string,
+  predecessorId: string,
+  requestBody: Record<string, unknown>,
+): Promise<{
+  assignment: z.infer<typeof assignmentSchema>;
+  operationId: string;
+  objective: string;
+}> {
+  const post = (path: string, data: unknown) =>
+    request.post(path, { headers: { Origin: origin }, data });
+  const original = () =>
+    request.get(`/api/stand-operations/${predecessorId}`).then((response) =>
+      read(
+        response,
+        z.object({
+          effectState: z.literal("unknown"),
+          revision: z.number().int(),
+          receiptIds: z.array(z.uuid()).max(1),
+          verificationIds: z.tuple([]),
+        }),
+      ),
+    );
+
+  await expect
+    .poll(
+      () =>
+        singleValue<boolean>(
+          "SELECT expires_at <= clock_timestamp() - interval '5 seconds' AS value FROM stand_resource_claims WHERE operation_id=$1",
+          [predecessorId],
+        ),
+      { timeout: 150_000 },
+    )
+    .toBe(true);
+  const before = await original();
+  const reconciled = await post(
+    `/api/stand-operations/${predecessorId}/reconcile`,
+    {
+      expectedRevision: before.revision,
+    },
+  );
+
+  expect(reconciled.ok()).toBe(true);
+  expect(await original()).toMatchObject({
+    effectState: "unknown",
+    verificationIds: [],
+  });
+  const unknown = await original();
+  const inspection = await read(
+    await post(`/api/stand-operations/${predecessorId}/recovery-inspections`, {
+      expectedRevision: unknown.revision,
+    }),
+    z.object({ id: z.uuid(), observedState: z.literal("active") }),
+  );
+
+  return withE2EDb(async (pool) => {
+    const barrier = await pool.connect();
+    const deliveryKey = randomUUID();
+    const replacement = {
+      ...requestBody,
+      objective: "Recover the disposable stand after an uncertain restart",
+      expectedOutcome:
+        "Independently verify one new approved action; the original effect remains unknown.",
+      input:
+        "Component ID: fixture\nUse the human-appointed restart. State that the predecessor effect remains unknown.",
+      idempotencyKey: deliveryKey,
+    };
+    const objective = `${replacement.objective} (${deliveryKey})`;
+    const submit = () =>
+      post("/api/specialist-assignments", { ...replacement, objective });
+
+    await barrier.query("SELECT pg_advisory_lock($1)", [0x6d61_6973]);
+    const pendingSubmission = submit();
+
+    void pendingSubmission.catch(() => {});
+    try {
+      const reserved = () =>
+        singleValue<string>(
+          `SELECT assignment.id AS value FROM specialist_assignments assignment
+           JOIN specialist_input_revisions input ON input.assignment_id=assignment.id
+             AND input.revision=assignment.input_revision
+           WHERE input.objective_input->>'objective'=$1`,
+          [objective],
+        );
+
+      await expect.poll(reserved, { timeout: 20_000 }).not.toBeNull();
+      const assignmentId = (await reserved())!;
+      const assignment = await read(
+        await request.get(`/api/specialist-assignments/${assignmentId}`),
+        assignmentSchema,
+      );
+      const outcome = await read(
+        await post(
+          `/api/stand-operations/${predecessorId}/recovery-decisions`,
+          {
+            expectedRevision: unknown.revision,
+            decision: "authorize_successor",
+            inspectionIds: [inspection.id],
+            successor: {
+              assignmentId,
+              expectedRevision: assignment.revision,
+              inputRevision: assignment.inputRevision,
+            },
+            reason:
+              "Original effect remains unknown; appoint one independently approved recovery action.",
+            idempotencyKey: randomUUID(),
+          },
+        ),
+        z.object({
+          effectState: z.literal("unknown"),
+          disposition: z.literal("authorized_successor"),
+          successorId: z.uuid(),
+          receiptIds: z.array(z.uuid()).max(1),
+          verificationIds: z.tuple([]),
+        }),
+      );
+
+      return { assignment, operationId: outcome.successorId, objective };
+    } finally {
+      try {
+        await barrier.query("SELECT pg_advisory_unlock($1)", [0x6d61_6973]);
+      } finally {
+        barrier.release();
+      }
+      await read(await pendingSubmission, assignmentSchema);
+    }
+  });
+}
+
 async function requireLiveWebProcess(excludePid?: number) {
   const invocation = invocationFromEnvironment();
 
@@ -411,6 +542,7 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
 }, testInfo) => {
   test.setTimeout(1_500_000);
   const checkRecovery = process.env.E2E_STAND_RECOVERY === "1";
+  const checkSuccessor = process.env.E2E_STAND_UNKNOWN_SUCCESSOR === "1";
   const checkConflict = process.env.E2E_STAND_RESOURCE_CONFLICT === "1";
   const checkClarification = process.env.E2E_STAND_CLARIFICATION === "1";
   const checkCoordinatorInterruption =
@@ -423,6 +555,7 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
   expect(checkAcpCoordinatorInterruption && checkDiagnosticInterruption).toBe(
     false,
   );
+  expect(checkRecovery && checkSuccessor).toBe(false);
   const sourceUrl = required("E2E_STAND_GIT_URL");
   const tag = required("E2E_STAND_TAG");
   const expectedCommit = z
@@ -703,6 +836,8 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
   );
   const objective =
     "Diagnose ambiguous fixture symptoms, restart the configured disposable component once and verify health.";
+  let acceptedObjective = objective;
+  let originalRecoveryRunId: string | null = null;
   const expectedOutcome =
     "One confirmed restart, one independently healthy probe and an attributable reusable observation.";
 
@@ -770,7 +905,9 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
       body: submission.request().postDataJSON() as unknown,
     };
   };
-  const { assignment, body } = await submit();
+  const submission = await submit();
+  let { assignment } = submission;
+  const { body } = submission;
   const duplicate = await read(
     await request.post("/api/specialist-assignments", {
       data: body,
@@ -778,7 +915,7 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
     }),
     assignmentSchema,
   );
-  const runId = assignment.runIds[0]!;
+  let runId = assignment.runIds[0]!;
 
   expect(duplicate.id).toBe(assignment.id);
   expect(duplicate.runIds).toEqual([runId]);
@@ -1005,7 +1142,7 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
     });
 
   await expect.poll(approvedStep, { timeout: 720_000 }).toBeDefined();
-  const operation = (await approvedStep())!;
+  let operation = (await approvedStep())!;
 
   if (interruptedDiagnosticRunId) {
     const originalRunId = interruptedDiagnosticRunId;
@@ -1174,45 +1311,119 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
     });
   }
 
-  const decisionPage = await page.goto(
-    `/specialist-assignments/${assignment.id}`,
-  );
+  async function approveAndContinue(): Promise<void> {
+    const decisionPage = await page.goto(
+      `/specialist-assignments/${assignment.id}`,
+    );
 
-  expect(decisionPage?.ok()).toBe(true);
-  const approval = page.locator("form").filter({
-    has: page.getByRole("button", {
-      name: "Approve this restart",
-      exact: true,
-    }),
-  });
+    expect(decisionPage?.ok()).toBe(true);
+    const approval = page.locator("form").filter({
+      has: page.getByRole("button", {
+        name: "Approve this restart",
+        exact: true,
+      }),
+    });
 
-  await expect(approval).toContainText(operation.request_digest);
-  await approval
-    .getByLabel("Reason", { exact: true })
-    .fill("Authorize this exact disposable qualification restart.");
-  const approvalResponse = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname ===
-        `/api/stand-operations/${operation.id}/approval` &&
-      response.request().method() === "POST",
-  );
+    await expect(approval).toContainText(operation.request_digest);
+    await approval
+      .getByLabel("Reason", { exact: true })
+      .fill("Authorize this exact disposable qualification restart.");
+    const approvalResponse = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+          `/api/stand-operations/${operation.id}/approval` &&
+        response.request().method() === "POST",
+    );
 
-  await approval
-    .getByRole("button", { name: "Approve this restart", exact: true })
-    .click();
-  const approved = await approvalResponse;
+    await approval
+      .getByRole("button", { name: "Approve this restart", exact: true })
+      .click();
+    const approved = await approvalResponse;
 
-  expect(approved.ok()).toBe(true);
-  expect(await approved.json()).toMatchObject({ operationId: operation.id });
-  await expect(
-    page.getByText("Restart approval recorded", { exact: false }),
-  ).toBeVisible();
-  await read(
-    await request.post(`/api/runs/${runId}/hitl/${operation.hitl_id}/respond`, {
-      data: { response: { decision: "continue" } },
-    }),
-    z.unknown(),
-  );
+    expect(approved.ok()).toBe(true);
+    expect(await approved.json()).toMatchObject({ operationId: operation.id });
+    await expect(
+      page.getByText("Restart approval recorded", { exact: false }),
+    ).toBeVisible();
+    await read(
+      await request.post(
+        `/api/runs/${runId}/hitl/${operation.hitl_id}/respond`,
+        {
+          data: { response: { decision: "continue" } },
+        },
+      ),
+      z.unknown(),
+    );
+  }
+
+  await approveAndContinue();
+  if (checkSuccessor) {
+    const predecessorId = operation.id;
+    originalRecoveryRunId = runId;
+
+    await expect
+      .poll(
+        () =>
+          singleValue<string>(
+            "SELECT effect_state AS value FROM stand_operations WHERE id=$1",
+            [predecessorId],
+          ),
+        { timeout: 100_000 },
+      )
+      .toBe("unknown");
+    const successor = await appointPilotSuccessor(
+      request,
+      origin,
+      predecessorId,
+      requestBody,
+    );
+
+    assignment = successor.assignment;
+    runId = assignment.runIds[0]!;
+    acceptedObjective = successor.objective;
+    await expect.poll(approvedStep, { timeout: 360_000 }).toBeDefined();
+    operation = (await approvedStep())!;
+    expect(operation.id).toBe(successor.operationId);
+    await approveAndContinue();
+    const qualified = () =>
+      singleValue<unknown>(
+        `SELECT jsonb_build_object(
+        'predecessorEffect', predecessor.effect_state,
+        'predecessorDisposition', predecessor.disposition,
+        'predecessorConfirmedReceipts', (SELECT count(*) FROM stand_operation_receipts WHERE operation_id=predecessor.id AND receipt->>'effectState'<>'unknown'),
+        'predecessorVerification', (SELECT count(*) FROM stand_verifications WHERE operation_id=predecessor.id),
+        'predecessorPermits', (SELECT count(*) FROM stand_authorization_permits WHERE operation_id=predecessor.id AND purpose='dispatch'),
+        'successorPermits', (SELECT count(*) FROM stand_authorization_permits WHERE operation_id=successor.id AND purpose='dispatch'),
+        'successorEffect', successor.effect_state,
+        'independentHealthy', EXISTS(SELECT 1 FROM stand_verifications probe
+          JOIN stand_operation_receipts receipt ON receipt.id=probe.effect_receipt_id AND receipt.operation_id=successor.id
+          WHERE probe.operation_id=successor.id AND probe.state='healthy' AND probe.target_sequence>receipt.target_sequence)
+      ) AS value FROM stand_operations predecessor JOIN stand_operations successor ON successor.predecessor_id=predecessor.id
+      WHERE predecessor.id=$1 AND successor.id=$2`,
+        [predecessorId, operation.id],
+      );
+
+    await expect.poll(qualified, { timeout: 180_000 }).toEqual({
+      predecessorEffect: "unknown",
+      predecessorDisposition: "authorized_successor",
+      predecessorConfirmedReceipts: 0,
+      predecessorVerification: 0,
+      predecessorPermits: 1,
+      successorPermits: 1,
+      successorEffect: "confirmed_applied",
+      independentHealthy: true,
+    });
+    await testInfo.attach("stand-unknown-successor-proof", {
+      body: JSON.stringify({
+        predecessorId,
+        originalRunId: originalRecoveryRunId,
+        successorId: operation.id,
+        successorRunId: runId,
+        evidence: await qualified(),
+      }),
+      contentType: "application/json",
+    });
+  }
   if (checkRecovery) {
     const readOperation = async () =>
       read(
@@ -1389,7 +1600,9 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
   const detail = await page.goto(`/specialist-assignments/${assignment.id}`);
 
   expect(detail?.status()).toBe(200);
-  await expect(page.getByRole("heading", { name: objective })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: acceptedObjective }),
+  ).toBeVisible();
   const acceptance = page.locator("form").filter({
     has: page.getByRole("heading", {
       name: "Accept verified outcome",
@@ -1647,7 +1860,22 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
   });
   const child = await readAcceptedDiagnostic(assignment.id, runId);
   const modelWitnesses = await assertStandRuntimeModels(
-    [runId, child.childRunId, inspection.run_id],
+    [
+      runId,
+      child.childRunId,
+      inspection.run_id,
+      ...(originalRecoveryRunId
+        ? [
+            originalRecoveryRunId,
+            (
+              await readAcceptedDiagnostic(
+                submission.assignment.id,
+                originalRecoveryRunId,
+              )
+            ).childRunId,
+          ]
+        : []),
+    ],
     runner,
   );
 

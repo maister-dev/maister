@@ -211,6 +211,10 @@ An operator needs current restart and recovery grants. After the dispatch
 lease and its permit window expire, one transaction creates a new operation
 ID and transfers the unresolved resource claim to the next epoch. The
 successor requires its own restart approval and before-effect observation.
+The specialist's restart-intent request for the same assignment input,
+component and actor returns the appointed operation. A new delivery key does
+not create a second intent or grant approval. A different assignment, input or
+alias cannot adopt the appointment.
 The helper accepts a predecessor ID only in an online permit bound to the
 successor. The new observation must match the inspected invocation and
 advance the target sequence. The helper checks for an empty systemd job

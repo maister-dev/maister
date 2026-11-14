@@ -5,8 +5,8 @@
     "docs/system-analytics/company-brain-specialists-qualification.md": "003d79c910fd5e6f87eaf663d5cdafcb46e4fa12c782c481b745c82f120603c3",
     "docs/system-analytics/company-brain-specialists-traceability.md": "bab7f935131ef076e38105146239ef50fb3b78014cface844728ad8f657c4fe5",
     "docs/system-analytics/specialist-cooperation.md": "4d901e6d2c37bcdf46f38099edb4d5e1f96a6650e7b7155185181088754318dc",
-    "docs/system-analytics/stand-maintenance.md": "84c7cda31f5c8ddb279eee875194235c3986f747f8ca18974ea76e0d761c5df9",
-    "docs/system-analytics/specialist-assignments.md": "68587a151e0938bb2f141dd62330cee57a8027737cad2ff7011ff78490670696"
+    "docs/system-analytics/stand-maintenance.md": "3269ae4543bb7577f809dfdeec21c84be04b397a9ebf64b23e1aec5ee87f8ac3",
+    "docs/system-analytics/specialist-assignments.md": "83287ae87f29e6f149002618142c3d66cb69f0021c773a384b8522398d43b1cb"
   },
   "receipts": {
     "CB0": {
@@ -38,6 +38,16 @@
       "path": "T41/web-integration-8159583e7/evidence.json",
       "sha256": "6c0e17bacca24742dced0c78f05dae7d30b4297fa8a8f464fe74adca7924d34b",
       "exitCode": 1
+    },
+    "CB1_successor": {
+      "path": "T40/unknown-successor/verified-glm53.json",
+      "sha256": "4d0c74b09ecbf878284498f237e4bc2755d6d107c74afd149ce62fa775a03fea",
+      "exitCode": 0
+    },
+    "CB1_successor_fixture_failed": {
+      "path": "T40/unknown-successor/initial-evidence.json",
+      "sha256": "f2ce379ffd511443d21ad2d23e8a2306f250b72151a380d966df56297ee510cf",
+      "exitCode": 1
     }
   },
   "currentMaster": {
@@ -48,7 +58,8 @@
     "lastMigration": "0336_specialist_interrupted_work",
     "drizzleCheck": "passed",
     "postgresMigrationCasesPassed": 7,
-    "fullWeb": "in_progress"
+    "fullWeb": "in_progress",
+    "candidatePatchSha256": "631386ce6ab8502f5b8c387655b6d32779c69ac5f0098627b90d5194825e8e0a"
   },
   "implementation": {
     "platform": "9647344d0",
@@ -60,7 +71,7 @@
     "supervisorOwnershipAndCausalityChecksPassed": 43,
     "coverageRules": 84,
     "erdTables": 193,
-    "fullWeb": "in_progress"
+    "fullWeb": "interrupted_without_report"
   },
   "releasePublished": false
 }

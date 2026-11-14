@@ -1077,6 +1077,27 @@ it("IT-CBO-02 IT-CBO-03 IT-CBO-07 retains one restart intent across aliases and 
       effectState: "not_dispatched",
       verificationState: "not_checked",
     });
+    const successorReplay = () =>
+      createOperation(loser, newOperation.componentId, randomUUID());
+    const otherAlias = newOperation.componentId === "api" ? "api-alias" : "api";
+
+    expect((await createOperation(loser, otherAlias)).status).toBe(409);
+    expect(
+      (await createOperation(winner, newOperation.componentId)).status,
+    ).toBe(409);
+    const adopted = await Promise.all([successorReplay(), successorReplay()]);
+
+    for (const response of adopted) {
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        id: original.successorId,
+        predecessorId: newOperation.id,
+        effectState: "not_dispatched",
+        verificationState: "not_checked",
+        receiptIds: [],
+        verificationIds: [],
+      });
+    }
     expect(
       (
         await database.pool.query(

@@ -72,7 +72,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   stand_operation_create: {
     description:
-      "Retain one exact operation intent for a configured component appointed to this assignment. Reuse the same idempotency key and input on replay. A restart intent awaits exact human approval and current execution authorization.",
+      "Retain one exact operation intent for a configured component appointed to this assignment, or adopt the exact restart successor already appointed by a human. Reuse the same idempotency key and input on replay. A restart intent awaits exact human approval and current execution authorization.",
     inputSchema: {
       type: "object",
       additionalProperties: false,

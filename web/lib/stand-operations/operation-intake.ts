@@ -4,7 +4,7 @@ import type { Db } from "@/lib/execution-host/db";
 import type { SqlTransaction } from "@/lib/db/sql-types";
 import type { StandAction, StandOperation } from "./operation-types";
 
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -101,6 +101,59 @@ function unavailableInspectionAppointment(): MaisterError {
     {
       details: { reason: "stand_target_unavailable" },
     },
+  );
+}
+
+/** A retained human decision can appoint a restart before the specialist asks for it. */
+async function readAppointedStandSuccessor(
+  tx: Db,
+  selection: Pick<
+    typeof standOperations.$inferSelect,
+    | "assignmentId"
+    | "inputRevision"
+    | "inputSha256"
+    | "targetId"
+    | "configRevision"
+    | "targetIncarnation"
+    | "componentId"
+    | "initiatingUserId"
+    | "resourceKey"
+  >,
+): Promise<StandOperation | null> {
+  const appointments = await tx
+    .select()
+    .from(standOperations)
+    .where(
+      and(
+        eq(standOperations.resourceKey, selection.resourceKey),
+        isNotNull(standOperations.predecessorId),
+        eq(standOperations.assignmentId, selection.assignmentId),
+        eq(standOperations.inputRevision, selection.inputRevision),
+        eq(standOperations.inputSha256, selection.inputSha256),
+        eq(standOperations.targetId, selection.targetId),
+        eq(standOperations.configRevision, selection.configRevision),
+        eq(standOperations.targetIncarnation, selection.targetIncarnation),
+        eq(standOperations.componentId, selection.componentId),
+        eq(standOperations.initiatingUserId, selection.initiatingUserId),
+        sql`NOT EXISTS (SELECT 1 FROM stand_operations next_operation WHERE next_operation.predecessor_id=${standOperations.id})`,
+      ),
+    )
+    .limit(2);
+
+  if (appointments.length > 1)
+    throw new MaisterError(
+      "CONFLICT",
+      "Multiple retained recovery operations match this assignment input",
+    );
+  const [operation] = appointments;
+
+  if (!operation) return null;
+
+  return operationDto(
+    operation,
+    null,
+    await readStandReceiptIds(tx, operation.id),
+    await readStandVerificationIds(tx, operation.id),
   );
 }
 
@@ -300,6 +353,38 @@ export async function createStandOperation(
           "CONFLICT",
           "The configured runbook witness has changed",
         );
+
+      const appointmentWitness = {
+        assignmentId,
+        inputRevision: input.inputRevision,
+        inputSha256: capturedInput.digest,
+        targetId: target.id,
+        configRevision: target.configRevision,
+        targetIncarnation: target.incarnationId,
+        componentId: input.componentId,
+        initiatingUserId: userId,
+        resourceKey: component.canonicalResourceKey,
+      };
+
+      if (input.action === "restart") {
+        const appointed = await readAppointedStandSuccessor(
+          tx,
+          appointmentWitness,
+        );
+
+        if (appointed) {
+          log.info(
+            {
+              operationId: appointed.id,
+              assignmentId,
+              predecessorId: appointed.predecessorId,
+            },
+            "stand restart uses the authorized successor",
+          );
+
+          return { operation: appointed, duplicate: true };
+        }
+      }
       const requestDigest = contentDigest({
         owner: assignment.owner,
         assignmentId,
@@ -318,17 +403,9 @@ export async function createStandOperation(
       const [operation] = await tx
         .insert(standOperations)
         .values({
-          assignmentId,
+          ...appointmentWitness,
           assignmentRevision: input.expectedRevision,
-          inputRevision: input.inputRevision,
-          inputSha256: capturedInput.digest,
-          targetId: target.id,
-          configRevision: target.configRevision,
-          componentId: input.componentId,
-          resourceKey: component.canonicalResourceKey,
-          targetIncarnation: target.incarnationId,
           action: input.action,
-          initiatingUserId: userId,
           initiatingExecution: execution,
           deliveryKey: input.idempotencyKey,
           deliveryDigest,
