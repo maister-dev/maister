@@ -2255,11 +2255,17 @@ export type DiffRangeArgs = {
 // promotion/review surface can block on it rather than silently render a prefix.
 export type DiffResult = { text: string; truncated: boolean };
 
-export async function diffRange(args: DiffRangeArgs): Promise<DiffResult> {
+function prepareDiffRange(args: DiffRangeArgs) {
   const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
   const base = validate(gitRefSchema, args.baseRef, "baseRef");
   const br = validate(branchNameSchema, args.branch, "branch");
   const diffArgs = ["diff", "--no-color", "--end-of-options", `${base}..${br}`];
+
+  return { wt, base, br, diffArgs };
+}
+
+export async function diffRange(args: DiffRangeArgs): Promise<DiffResult> {
+  const { wt, base, br, diffArgs } = prepareDiffRange(args);
 
   log.debug({ worktreePath: wt, baseRef: base, branch: br }, "diffRange");
 
@@ -2293,6 +2299,20 @@ export async function diffRange(args: DiffRangeArgs): Promise<DiffResult> {
       { cause: asError(err) },
     );
   }
+}
+
+export async function diffRangeBounded(
+  args: DiffRangeArgs,
+  maxBytes: number,
+): Promise<DiffResult> {
+  const { wt, base, br, diffArgs } = prepareDiffRange(args);
+
+  return streamGitTruncatedTo(
+    wt,
+    diffArgs,
+    maxBytes,
+    `git diff ${base}..${br}`,
+  );
 }
 
 // Stream `git -C <repo> <diffArgs>` and stop at EXEC_MAX_BUFFER bytes, returning
@@ -2331,11 +2351,10 @@ async function streamGitTruncatedTo(
         if (truncated) return;
         const remaining = maxBytes - bytes;
 
-        if (chunk.length >= remaining) {
+        if (chunk.length > remaining) {
           text += decoder.decode(chunk.subarray(0, remaining), {
             stream: true,
           });
-          text += decoder.decode();
           truncated = true;
           child.kill("SIGKILL");
 

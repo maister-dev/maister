@@ -9,6 +9,10 @@ import { useTranslations } from "next-intl";
 import { z } from "zod";
 
 import { MarkdownRichView } from "@/components/workbench/markdown-rich-view";
+import {
+  ARTIFACT_PREVIEW_MAX_BYTES,
+  ARTIFACT_PREVIEW_TRUNCATED_HEADER,
+} from "@/lib/http/artifact-preview";
 import { useTheme } from "@/lib/theme";
 
 import "@git-diff-view/react/styles/diff-view.css";
@@ -17,8 +21,6 @@ export type ArtifactPreviewItem = Pick<
   ResultItem,
   "label" | "artifactKind" | "format"
 > & { artifactId: string };
-
-const payloadLimit = 64 * 1024;
 
 const mutationReport = z.object({
   basis: z.enum(["node", "cumulative-fallback"]),
@@ -51,7 +53,10 @@ type Preview =
   | { state: "ready"; text: string; clipped: boolean };
 
 async function readPreview(url: string, signal: AbortSignal): Promise<Preview> {
-  const response = await fetch(url, { signal, cache: "no-store" });
+  const response = await fetch(`${url}?view=preview`, {
+    signal,
+    cache: "no-store",
+  });
 
   if (response.status === 401 || response.status === 403)
     return { state: "restricted" };
@@ -62,7 +67,9 @@ async function readPreview(url: string, signal: AbortSignal): Promise<Preview> {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let text = "";
-  let remaining = payloadLimit;
+  const clipped =
+    response.headers.get(ARTIFACT_PREVIEW_TRUNCATED_HEADER) === "true";
+  let remaining = ARTIFACT_PREVIEW_MAX_BYTES;
 
   try {
     for (;;) {
@@ -71,8 +78,8 @@ async function readPreview(url: string, signal: AbortSignal): Promise<Preview> {
       if (next.done)
         return {
           state: "ready",
-          text: text + decoder.decode(),
-          clipped: false,
+          text: clipped ? text : text + decoder.decode(),
+          clipped,
         };
       text += decoder.decode(next.value.subarray(0, remaining), {
         stream: true,
@@ -81,7 +88,7 @@ async function readPreview(url: string, signal: AbortSignal): Promise<Preview> {
       if (remaining < 0) {
         await reader.cancel();
 
-        return { state: "ready", text: text + decoder.decode(), clipped: true };
+        return { state: "ready", text, clipped: true };
       }
     }
   } finally {

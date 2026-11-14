@@ -7776,7 +7776,7 @@ paths:
   /api/runs/{runId}/artifacts/{artifactId}/payload:
     get:
       tags: [runs]
-      summary: (M12) Fetch the raw payload for one artifact
+      summary: (Implemented, M12) Fetch or preview one artifact payload
       description: |
         Requires project membership at `viewer` or above; an `execution-object`
         locator additionally requires `readRepoFiles` (`member`), the same
@@ -7800,6 +7800,12 @@ paths:
         `Cache-Control: private, no-store`; an object's catalogued MIME is never
         reflected. A locator outside its authorized binding is not found (404),
         never served.
+        `view=preview` applies the same authorization and errors. The server
+        returns at most 65,536 bytes from the start, with an explicit truncation
+        header. Structured values use compact JSON text and a clipped prefix may
+        be incomplete JSON. Files and Git output use bounded reads. Execution
+        objects use a server-owned verified range and preserve opaque bytes.
+        The host verifies the sealed representation before returning the range.
       operationId: getRunArtifactPayload
       parameters:
         - name: runId
@@ -7810,14 +7816,22 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - name: view
+          in: query
+          description: Omit to download the original. Supply once to fetch a bounded preview.
+          schema: { type: string, enum: [preview] }
         - name: Range
           in: header
           required: false
-          description: Single `bytes=start-end` range for an execution-object locator only.
+          description: Single `bytes=start-end` range for a raw execution-object download. Omit for a preview.
           schema: { type: string, pattern: "^bytes=[0-9]+-[0-9]*$" }
       responses:
         "200":
-          description: Raw artifact payload.
+          description: Raw artifact payload or bounded preview.
+          headers:
+            X-Artifact-Preview-Truncated:
+              description: Present for previews. True if the source exceeded the byte budget.
+              schema: { type: string, enum: ["true", "false"] }
           content:
             text/plain:
               schema: { type: string }
@@ -7836,6 +7850,21 @@ paths:
                     reasons:
                       - all required checks passed
                     recommendedAction: merge
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "206":
+          description: Verified byte range for a raw execution-object download.
+          headers:
+            Content-Range:
+              schema: { type: string }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "400":
+          description: Unsupported or repeated view selector, or Range supplied for a preview.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -7877,6 +7906,11 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "422":
           description: The execution object's representation or verified bytes failed their integrity check (`runtime_object_integrity_mismatch`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "500":
+          description: The payload could not be read.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }

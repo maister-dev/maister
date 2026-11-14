@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { afterAll, beforeAll, expect, it } from "vitest";
 
+import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
 import { readRunEvidence } from "@/lib/queries/evidence-graph";
 import {
   startMainPostgresTestDb,
@@ -29,7 +30,9 @@ it("E1 keeps recorded outcomes, retained output, policy and provenance separate"
     required,
     oldGate,
     external,
-  ] = Array.from({ length: 9 }, () => randomUUID());
+    staleCommand,
+    repeatedCommand,
+  ] = Array.from({ length: 11 }, () => randomUUID());
   const pool = database.pool;
 
   await pool.query(
@@ -57,8 +60,19 @@ it("E1 keeps recorded outcomes, retained output, policy and provenance separate"
            ($3,$4,$5,'external','external_check','blocking','stale',NULL,'{"commitSha":"0123456789012345678901234567890123456789","summary":"private"}')`,
     [required, oldGate, external, runId, latestAttempt, oldAttempt],
   );
+  await pool.query(
+    `INSERT INTO gate_results(id,run_id,node_attempt_id,gate_id,kind,mode,status,created_at)
+    VALUES ($1,$3,$4,'recheck','command_check','blocking','stale',now() - interval '1 second'),
+           ($2,$3,$4,'recheck','command_check','blocking','passed',now())`,
+    [staleCommand, repeatedCommand, runId, latestAttempt],
+  );
 
   const result = await readRunEvidence(runId, database.db);
+  const readiness = await assertEvidenceReady(runId, "merge", database.db);
+
+  expect(
+    readiness.reasons.some((reason) => reason.includes(staleCommand)),
+  ).toBe(true);
 
   expect(result).toMatchObject({
     results: {
@@ -80,6 +94,16 @@ it("E1 keeps recorded outcomes, retained output, policy and provenance separate"
           state: "stale",
           source: "external",
           blocking: true,
+        }),
+        expect.objectContaining({
+          id: `gate:${staleCommand}`,
+          state: "stale",
+          blocking: true,
+        }),
+        expect.objectContaining({
+          id: `gate:${repeatedCommand}`,
+          state: "passed",
+          blocking: false,
         }),
       ]),
       previous: expect.arrayContaining([

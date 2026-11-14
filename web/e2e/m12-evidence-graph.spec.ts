@@ -75,6 +75,10 @@ test("E2 opens a result payload from the list and retains the selected graph add
   const result = page
     .getByRole("region", { name: "Results and checks" })
     .locator(`a[href*="evidenceItem=art%3A${fx.implDiffArtifactId}"]`);
+  const downloadPath = `/api/runs/${fx.runId}/artifacts/${fx.implDiffArtifactId}/payload`;
+  const previewResponse = page.waitForResponse((response) =>
+    response.url().endsWith(`${downloadPath}?view=preview`),
+  );
 
   await result.focus();
   await page.keyboard.press("Enter");
@@ -83,12 +87,13 @@ test("E2 opens a result payload from the list and retains the selected graph add
   );
   const preview = page.getByTestId("result-payload");
 
+  expect(
+    (await previewResponse).headers()["x-artifact-preview-truncated"],
+  ).toBe("false");
+
   await expect(
     preview.getByRole("link", { name: "Download original" }),
-  ).toHaveAttribute(
-    "href",
-    `/api/runs/${fx.runId}/artifacts/${fx.implDiffArtifactId}/payload`,
-  );
+  ).toHaveAttribute("href", downloadPath);
   await expect(preview.getByTestId("result-diff")).toContainText(
     "export const x = 1;",
   );

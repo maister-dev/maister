@@ -396,9 +396,9 @@ sequenceDiagram
 | Evidence | Presentation authority |
 | --- | --- |
 | Artifact | Pinned definition and producing attempt give label and provenance. Validity, partial content, staleness and supersession remain independent of check status. |
-| Check | Latest applicable gate and canonical readiness policy give recorded verdict, applicability and current blocking contribution. Recorded standalone CLI outcomes are separate from attempt success. |
+| Check | The newest check in each slot and every current blocker are shown. The full gate set passes through canonical readiness before display grouping, so a newer passing verdict cannot hide an older verdict that still blocks the same attempt. Recorded standalone CLI outcomes are separate from attempt success. |
 | Human or agent decision | Human HITL decisions, agent reports and machine-recorded verdicts have separate provenance. Missing records do not establish success. |
-| Payload | The existing scoped payload route enforces access and retention. Markdown and diffs use existing renderers. Known versioned report shapes can be structured. Mixed legacy text has a generic presentation and a link to the original. |
+| Payload | The scoped payload route enforces access and retention. `view=preview` returns at most 64 KiB and declares truncation before rendering. File and Git reads are bounded. The host verifies the full sealed execution object before transferring the server-selected range. Render complete Markdown, diffs and known reports with their respective viewers. Show clipped content as text with a link to the original download. |
 | Graph | Start-time edges denote temporal order. Artifact, gate and supersession edges retain their recorded association semantics. |
 
 ## Expectations

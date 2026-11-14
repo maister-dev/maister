@@ -216,11 +216,7 @@ export function projectRunResultsAndChecks(
     ].map((gate) => gate.id),
   );
   const effectiveBlocking = new Set(
-    liveBlockingGates(
-      gates.filter((gate) => newest.has(gate.id)),
-      latestAttempts,
-      checks,
-    ).map((gate) => gate.id),
+    liveBlockingGates(gates, latestAttempts, checks).map((gate) => gate.id),
   );
 
   for (const gate of gates) {
@@ -251,7 +247,7 @@ export function projectRunResultsAndChecks(
       provenance: provenance(gate.commitSha),
     };
 
-    (newest.has(gate.id) ? checkItems : previous).push(row);
+    (newest.has(gate.id) || row.blocking ? checkItems : previous).push(row);
   }
 
   for (const decision of decisions) {

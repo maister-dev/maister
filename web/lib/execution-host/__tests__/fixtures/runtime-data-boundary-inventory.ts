@@ -3173,6 +3173,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ...wrappers("lib/worktree.ts", "repository-worktree", [
     ["abortSyncOperation", false],
     ["diffRange", false],
+    ["diffRangeBounded", false],
     ["diffRunWorkspace", false],
     ["diffWorkingTree", false],
     ["diffWorkingTreeChangeStats", false],
