@@ -2368,7 +2368,7 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 IT-CBU-03 recovers the original native restart
           ),
           { params: Promise.resolve({ operationId: operation.id }) },
         );
-      let probeState: "healthy" | "unhealthy" = "unhealthy";
+      let probeState: "healthy" | "unhealthy" | "inconclusive" = "unhealthy";
       const verifyTarget = vi.fn(
         async (selector: {
           operationId: string;
@@ -2398,7 +2398,7 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 IT-CBU-03 recovers the original native restart
                 : result.sequence + verifyTarget.mock.calls.length - 1,
             evidenceIds: [],
             reason:
-              probeState === "unhealthy" ? "verification_unhealthy" : null,
+              probeState === "healthy" ? null : `verification_${probeState}`,
           };
         },
       );
@@ -2446,8 +2446,21 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 IT-CBU-03 recovers the original native restart
           incidentId: openIncidents[0]?.id,
         }),
       ]);
+      probeState = "inconclusive";
+      const inconclusiveResponse = await verifyHealth(repeatedFailure.revision);
+
+      expect(inconclusiveResponse.status).toBe(200);
+      const inconclusiveProbe = await inconclusiveResponse.json();
+
+      expect(inconclusiveProbe).toMatchObject({
+        effectState: "confirmed_applied",
+        verificationState: "inconclusive",
+        receiptIds: adoptedEffect.receiptIds,
+      });
+      expect(sendRestart).toHaveBeenCalledOnce();
+
       probeState = "healthy";
-      const verifiedResponse = await verifyHealth(repeatedFailure.revision);
+      const verifiedResponse = await verifyHealth(inconclusiveProbe.revision);
 
       expect(verifiedResponse.status).toBe(200);
       const verified = await verifiedResponse.json();
@@ -2460,21 +2473,33 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 IT-CBU-03 recovers the original native restart
           expect.any(String),
           expect.any(String),
           expect.any(String),
+          expect.any(String),
         ],
       });
       const latestVerification = verified.verificationIds.slice(-1);
 
       expect(
-        await readStandIncidentEpisodes(db, userId, assignment.id),
+        (await readStandIncidentEpisodes(db, userId, assignment.id)).sort(
+          (left, right) => left.reason.localeCompare(right.reason),
+        ),
       ).toEqual([
         expect.objectContaining({
+          reason: "verification_inconclusive",
+          state: "resolved",
+          occurrenceCount: 1,
+        }),
+        expect.objectContaining({
           id: openIncidents[0]?.id,
+          reason: "verification_unhealthy",
           state: "resolved",
           occurrenceCount: 2,
         }),
       ]);
       expect(
-        (await readIncidentInbox()).map(({ eventKind }) => eventKind).sort(),
+        (await readIncidentInbox())
+          .filter(({ incidentId }) => incidentId === openIncidents[0]?.id)
+          .map(({ eventKind }) => eventKind)
+          .sort(),
       ).toEqual(["stand_incident_opened", "stand_incident_resolved"]);
       await expect(
         database.pool.query(
@@ -2491,7 +2516,7 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 IT-CBU-03 recovers the original native restart
           [operation.id],
         ),
       ).rejects.toMatchObject({ code: "23514" });
-      expect(verifyTarget).toHaveBeenCalledTimes(4);
+      expect(verifyTarget).toHaveBeenCalledTimes(5);
       const { validateOperationalEvidenceReferences } =
         await import("@/lib/run-results/operational-evidence");
       const [run] = await db

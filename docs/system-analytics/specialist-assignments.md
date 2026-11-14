@@ -514,11 +514,11 @@ existing pool scheduler after the reservation commits. Host pressure/capacity ca
 leave execution Pending. A replay can signal interrupted pending admission without
 allocating another execution. `GET /api/specialist-assignments/{id}` supports
 currently authorized company/project inspection; both responses are private and
-no-store. Personal user-token `POST /api/v1/ext/specialist-assignments` and exact GET reuse the same intake/reader and immutable manual identity, so switching between browser and API does not repeat work. Both require the corresponding token scope and current owner/source authority; project/agent/librarian tokens cannot impersonate the user. The existing token audit records authenticated success/refusal, CONFIG/JSON validation uses external 422, and responses remain private/no-store. Source-specific and governed agent-principal adapters remain Designed. Fresh company standalone submission is qualified through the actual
+no-store. Personal user-token `POST /api/v1/ext/specialist-assignments` and exact GET reuse the same intake/reader and immutable manual identity, so switching between browser and API does not repeat work. Both require the corresponding token scope and current owner/source authority; project/agent/librarian tokens cannot impersonate the user. The existing token audit records authenticated success/refusal, CONFIG/JSON validation uses external 422, and responses remain private/no-store. Source-specific adapters use the existing trigger and appointment ledgers. Governed delegation uses the scoped execution principal and an exact work appointment. Fresh company standalone submission is qualified through the actual
 session route, default scheduler dispatch, real supervisor/ACP process, validated
 operational result and physical cleanup. Completed HTTP replay issues no second
 create/prompt command. Coordinator intake is qualified through queued HTTP
-admission and its existing driver. Project coordinator intake uses the actual attached Flow, repository admission and native result-only terminal path; the stand pilot remains unqualified.
+admission and its existing driver. Project coordinator intake uses the actual attached Flow, repository admission and native result-only terminal path. The installed stand package passed the company pilot on the native coordinator path.
 
 
 ### Clarification and context
@@ -798,8 +798,8 @@ then exact-result event capture, internal duplicate/concurrent dispatch, current
 read revocation, native Inbox count/list/read, real local HTTP lost-ACK retry,
 changed recipient and bounded failure/recovery. These platform scenarios are
 locally qualified, including actual effect/ack rollback, expired leases, explicit
-replay and source/input/result supersession. Actual installed-package delivery
-remains T40; accepted-outcome publication remains T28.
+replay and source/input/result supersession. The installed stand pilot also
+qualified delivery of the accepted outcome to the originating context.
 
 ### Delivery and cancellation windows
 

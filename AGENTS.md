@@ -162,7 +162,7 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | `web/lib/agents/launch-contract.ts` | Immutable agent kind, definition and operational completion snapshots |
 | `web/lib/agents/trigger-binding-snapshot.ts` | Owner-aware trigger configuration witnesses; existing request snapshots stay v1 and company dispatch is separately gated |
 | `web/lib/agents/retry-snapshot.ts` | Retained v1/v2 project and v3 company retry reading without rewriting historical bytes |
-| `web/lib/agents/company-agent-context.ts` | Current company agent preflight and immutable server-owned execution capture; session dispatch pending |
+| `web/lib/agents/company-agent-context.ts` | Current company agent preflight and immutable server-owned execution capture |
 | `web/lib/agents/company-run-credential-owner.ts` | Current company run/input/configuration/account authority for ephemeral credentials |
 | `web/lib/agents/company-flow-bindings.ts` | Reviewed company coordinator pins and immutable configuration/routing receipts; execution remains separately gated |
 | `web/lib/agents/company-bindings.ts` | Explicit company role pins and immutable configuration receipts, independent of projects |
@@ -171,7 +171,7 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | `web/lib/agents/company-agent-launch.ts` | Atomic company Run reservation with exact input, frozen session and native host placement |
 | `web/lib/assignments/company-ownership.ts` | Existing human-work company ownership, stable user/system attribution and current claim/answer authority |
 | `web/lib/agents/company-flow-context.ts` | Exact company coordinator preflight, current authority and pinned result identity |
-| `web/lib/agents/company-flow-launch.ts` | Atomic native company graph reservation on existing Run/session/placement ledgers; dispatch remains gated |
+| `web/lib/agents/company-flow-launch.ts` | Atomic native company graph reservation on existing Run/session/placement ledgers |
 | `web/lib/agents/company-flow-session-context.ts` | Restore exact company graph input, current authority, pinned export and frozen runners without repository records |
 | `web/lib/agents/company-flow-persona.ts` | Resolve current reviewed company node professionals through the shared Flow persona/attestation path |
 | `web/lib/agents/company-flow-enforcement.ts` | Current attested role/limits enforce shared native MCP-only tool policy on company graph dispatch |

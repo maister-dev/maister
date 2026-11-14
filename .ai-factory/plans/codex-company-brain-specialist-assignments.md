@@ -1017,8 +1017,8 @@ These are checkpoints, not permission to mix unrelated changes or hide a red int
 
 Each gate requires a deterministic platform check *and* the stated actual-package proof. Screenshots/prose and fixtures alone cannot prove execution/effects. Qualification artifacts contain sanitized evidence with access controls, not private source/log dumps.
 
-| ID | Scenario | Platform/recovery test and expected observation | Actual package/target proof | Tasks  Requirement partitions |
-| --- | --- | --- | --- | ---  --- |
+| ID | Scenario | Platform/recovery test and expected observation | Actual package/target proof | Tasks / requirement partitions |
+| --- | --- | --- | --- | --- |
 | AC-01 | Real pinned RAH/specialist uses structured Brain | Authenticated structured recall/get returns record revision + witness; finding validated and linked to exact result revision | Installed `rah` and `stand-operations` definitions resolve exact commits/schemas/runner; real ACP tool calls and evidence-linked outputs | 10, 14–17, 36, 40  CBK-06,CBE-04,CBS-01,CBX-02,CBX-03 |
 | AC-02 | Evidence survives depth 2 | Direct-child collection only; bounded selection manifest accounts for consumed findings, retained conclusions preserve original support/relevant contradiction/missing/origin refs and server validation rejects laundering | Real depth-2 run root shows original witness and grandchild origin through its direct child's result, with inspectable intentional omissions | 14–17, 27–30, 40  CBE-05,CBC-01,CBC-02 |
 | AC-03 | Missing/stale/conflicting/unauthorized references | Explicit dispositions/limitations; forged refs fail; conflicts remain distinct; hidden text/URLs/counts are not exposed; revoked recipient cannot read retained summary | Run with edited/deleted source, conflicting claim and restricted evidence; inspect reduced output and UI under allowed/denied users | 07, 09–15, 23, 40  CBK-04,CBK-06,CBE-01,CBE-03,CBE-06,CBE-07 |

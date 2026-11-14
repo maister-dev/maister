@@ -2095,6 +2095,7 @@ it("settles a company coordinator crash under its retained owner without project
 
     try {
       const response = await recover();
+
       expect(response.status).toBe(409);
       expect(await response.json()).toMatchObject({
         code: "CONFLICT",
@@ -2102,6 +2103,7 @@ it("settles a company coordinator crash under its retained owner without project
       });
     } finally {
       const grant = grantReceipt.page.items[0]!;
+
       await revokeCompanyGrant(database.db, administratorId, grant.id, {
         expectedRevision: grant.revision,
         idempotencyKey: randomUUID(),
@@ -2124,7 +2126,7 @@ it("settles a company coordinator crash under its retained owner without project
   }
 }, 90_000);
 
-it("CBS-03 cancels a Pending company Flow with current authority, one attributed outcome and no ACP effect", async () => {
+it("IT-CBS-03 cancels a Pending company Flow with current authority, one attributed outcome and no ACP effect", async () => {
   const supervisor = await startRealSupervisor({
     runtimeRoot: join(root, "reservation-host"),
     workspaceRoots: [join(root, "worktrees")],
@@ -2281,7 +2283,7 @@ it("CBS-03 cancels a Pending company Flow with current authority, one attributed
   }
 }, 120000);
 
-it("CBS-03 executes a native company graph through the existing driver, real supervisor and controlled ACP process without repository records", async () => {
+it("IT-CBS-03 executes a native company graph through the existing driver, real supervisor and controlled ACP process without repository records", async () => {
   const hostRoot = join(root, "reservation-host");
   const previousRuntimeRoot = process.env.MAISTER_RUNTIME_ROOT;
 
@@ -4350,7 +4352,7 @@ it("IT-CBA-05 parks and resumes the same native company Flow node after an assig
   }
 }, 60000);
 
-it("CBS-03 cancels live native graph work once without allowing its completed output to win the stop intent", async () => {
+it("IT-CBS-03 cancels live native graph work once without allowing its completed output to win the stop intent", async () => {
   const hostRoot = join(root, "reservation-host");
 
   await writeCompanyCapabilityCache(hostRoot);
@@ -4583,7 +4585,7 @@ it("CBS-03 cancels live native graph work once without allowing its completed ou
   }
 }, 90000);
 
-it("CBS-03 recovers a published native result after terminal preparation interruption without repeating the completed prompt", async () => {
+it("IT-CBS-03 recovers a published native result after terminal preparation interruption without repeating the completed prompt", async () => {
   const hostRoot = join(root, "reservation-host");
 
   await writeCompanyCapabilityCache(hostRoot);
@@ -4780,7 +4782,7 @@ it("CBS-03 recovers a published native result after terminal preparation interru
   }
 }, 90000);
 
-it("CBS-03 preserves unexpected native source as bounded host evidence before releasing its failed directory", async () => {
+it("IT-CBS-03 preserves unexpected native source as bounded host evidence before releasing its failed directory", async () => {
   const hostRoot = join(root, "reservation-host");
 
   await writeCompanyCapabilityCache(hostRoot);
@@ -4931,7 +4933,7 @@ it("CBS-03 preserves unexpected native source as bounded host evidence before re
   }
 }, 90000);
 
-it("CBS-03 resumes native form and human waits through the same company assignment and frozen result contract", async () => {
+it("IT-CBS-03 resumes native form and human waits through the same company assignment and frozen result contract", async () => {
   const hostRoot = join(root, "reservation-host");
 
   await writeCompanyCapabilityCache(hostRoot);
@@ -5283,7 +5285,7 @@ it("CBS-03 resumes native form and human waits through the same company assignme
   }
 }, 120000);
 
-it("CBS-03 retains native permission consent, refuses revoked replay and delivers the same owned input after authority is restored", async () => {
+it("IT-CBS-03 retains native permission consent, refuses revoked replay and delivers the same owned input after authority is restored", async () => {
   const db: Db = database.db;
   const hostRoot = join(root, "reservation-host");
 
@@ -5613,7 +5615,7 @@ it("CBS-03 retains native permission consent, refuses revoked replay and deliver
   }
 }, 90000);
 
-it("CBS-03 resumes a checkpointed native permission after retained-host restart without losing input, consent or capacity fences", async () => {
+it("IT-CBS-03 resumes a checkpointed native permission after retained-host restart without losing input, consent or capacity fences", async () => {
   const db: Db = database.db;
   const hostRoot = join(root, "reservation-host");
   const previousSettings = (await db.select().from(platformRuntimeSettings))[0];

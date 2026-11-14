@@ -1030,7 +1030,7 @@ it("IT-CBC-01 fails closed on incomplete work witnesses and retains company sour
   ).toEqual(before);
 });
 
-it("CBS-02 preflights a real pinned company specialist and exact assignment input without a project or admission effects", async () => {
+it("IT-CBS-02 preflights a real pinned company specialist and exact assignment input without a project or admission effects", async () => {
   const context = await database.db.transaction((tx) =>
     prepareCompanyAgentContext(tx, userId, request),
   );
@@ -1057,7 +1057,7 @@ it("CBS-02 preflights a real pinned company specialist and exact assignment inpu
   ).toEqual({ projects: 0, runs: 0, tokens: 0 });
 });
 
-it("CBS-02 adopts the server-resolved company directory through the real supervisor wire and retains its owner", async () => {
+it("IT-CBS-02 adopts the server-resolved company directory through the real supervisor wire and retains its owner", async () => {
   const db: Db = database.db;
   const supervisor = await startRealSupervisor({
     runtimeRoot: join(root, "adoption-host"),
@@ -8588,7 +8588,7 @@ it("IT-CBA-02 submits project specialist work through its actual attachment, ori
 }, 240000);
 
 it.each(["live", "checkpointed", "cancelled"] as const)(
-  "CBS-02 routes a real company permission through current human authority and the existing owned delivery (%s)",
+  "IT-CBS-02 routes a real company permission through current human authority and the existing owned delivery (%s)",
   async (delivery) => {
     const db: Db = database.db;
     let supervisor = await startRealSupervisor({
@@ -9114,7 +9114,7 @@ it.each(["live", "checkpointed", "cancelled"] as const)(
   90000,
 );
 
-it("CBS-02 shares the existing bounded agent pool across project and company work and promotes a queued company run once", async () => {
+it("IT-CBS-02 shares the existing bounded agent pool across project and company work and promotes a queued company run once", async () => {
   const db: Db = database.db;
   const previousCap = process.env.MAISTER_MAX_CONCURRENT_AGENTS;
 
@@ -9202,7 +9202,7 @@ it("CBS-02 shares the existing bounded agent pool across project and company wor
   }
 });
 
-it("CBS-02 atomically reserves one company execution with frozen session and placement under concurrent admission", async () => {
+it("IT-CBS-02 atomically reserves one company execution with frozen session and placement under concurrent admission", async () => {
   const db: Db = database.db;
   const { hosts, hostId } = await fakeExecutionHosts(db);
   const runnerId = randomUUID();
@@ -9350,7 +9350,7 @@ it("CBS-02 atomically reserves one company execution with frozen session and pla
   }
 });
 
-it("CBS-02 serializes company cancellation and budget termination by their first retained owner", async () => {
+it("IT-CBS-02 serializes company cancellation and budget termination by their first retained owner", async () => {
   const db: Db = database.db;
   const { hosts } = await fakeExecutionHosts(db);
   const host = await localHost({ db, transport: hosts.transport });
@@ -9450,7 +9450,7 @@ it("CBS-02 serializes company cancellation and budget termination by their first
   ).rejects.toBe(rollback);
 });
 
-it("CBS-02 cancels a native Pending company Run only under current cancellation authority and retains one terminal outcome", async () => {
+it("IT-CBS-02 cancels a native Pending company Run only under current cancellation authority and retains one terminal outcome", async () => {
   const db: Db = database.db;
   const { hosts } = await fakeExecutionHosts(db);
   const runnerId = randomUUID();
@@ -9597,7 +9597,7 @@ it("CBS-02 cancels a native Pending company Run only under current cancellation 
   }
 });
 
-it("CBS-02 uses the exact company binding runner and refuses its kill switch instead of choosing a ready platform default", async () => {
+it("IT-CBS-02 uses the exact company binding runner and refuses its kill switch instead of choosing a ready platform default", async () => {
   const db: Db = database.db;
   const { hosts } = await fakeExecutionHosts(db);
   const runnerId = randomUUID();
@@ -9693,7 +9693,7 @@ it("CBS-02 uses the exact company binding runner and refuses its kill switch ins
   }
 });
 
-it("CBS-02 dispatches a company assignment through the existing owned agent driver and verifies its operational result", async () => {
+it("IT-CBS-02 dispatches a company assignment through the existing owned agent driver and verifies its operational result", async () => {
   const db: Db = database.db;
   const fake = createFakeExecutionHost();
   const promptEntered = Promise.withResolvers<void>();
@@ -9970,7 +9970,7 @@ it("CBS-02 dispatches a company assignment through the existing owned agent driv
   }
 }, 60000);
 
-it("CBS-02 refuses revoked current assignment authority after reservation before workspace or session effects", async () => {
+it("IT-CBS-02 refuses revoked current assignment authority after reservation before workspace or session effects", async () => {
   const db: Db = database.db;
   const { hosts, fake } = await fakeExecutionHosts(db);
   const initiatorId = randomUUID();
@@ -10064,7 +10064,7 @@ it("CBS-02 refuses revoked current assignment authority after reservation before
   }
 });
 
-it("CBS-02 refuses a frozen runner disabled after reservation and preserves the requested work", async () => {
+it("IT-CBS-02 refuses a frozen runner disabled after reservation and preserves the requested work", async () => {
   const db: Db = database.db;
   const { hosts, fake } = await fakeExecutionHosts(db);
   const runnerId = randomUUID();
@@ -10239,7 +10239,7 @@ it("rejects a changed installed definition witness and an assignment with a diff
   });
 });
 
-it("CBS-02 refuses assignment authority that differs from the reviewed specialist policy and accepts equivalent normalized policy", async () => {
+it("IT-CBS-02 refuses assignment authority that differs from the reviewed specialist policy and accepts equivalent normalized policy", async () => {
   for (const executionPolicy of [
     { preset: "unattended" as const },
     {
@@ -10636,7 +10636,7 @@ it("reserves company run ownership and its exact immutable assignment input link
   ).rejects.toMatchObject({ code: "23514" });
 });
 
-it("CBS-02 retains company human work in the existing assignment/actor ledger and refuses a foreign project actor", async () => {
+it("IT-CBS-02 retains company human work in the existing assignment/actor ledger and refuses a foreign project actor", async () => {
   const { runId, snapshot } = await reserveCompanyFixtureRun();
   const hitlRequestId = randomUUID();
 
@@ -11116,7 +11116,7 @@ it("rotates exact company run credentials with current grants, scope limits and 
   ).rejects.toMatchObject({ kind: "revoked" });
 });
 
-it("CBS-02 authorizes only the executing specialist's exact assignment input without implying Company Brain read access", async () => {
+it("IT-CBS-02 authorizes only the executing specialist's exact assignment input without implying Company Brain read access", async () => {
   const { runId, snapshot } = await reserveCompanyFixtureRun();
   const reference = {
     kind: "assignment_input" as const,
@@ -15018,7 +15018,7 @@ it("IT-CBA-04 attributes agent context edits to the current execution and refuse
   }
 });
 
-it("CBS-02 reads retained company execution content under current explicit reader authority independently of specialist availability", async () => {
+it("IT-CBS-02 reads retained company execution content under current explicit reader authority independently of specialist availability", async () => {
   const { runId, snapshot } = await reserveCompanyFixtureRun();
   const unavailable = { details: { reason: "run_unavailable" } };
 
@@ -15118,7 +15118,7 @@ it("CBS-02 reads retained company execution content under current explicit reade
   browserSession.user = null;
 });
 
-it("CBS-02 pages company history under current source authority before LIMIT and binds the existing cursor to its reader", async () => {
+it("IT-CBS-02 pages company history under current source authority before LIMIT and binds the existing cursor to its reader", async () => {
   const project = await seedProjectRow(database.db);
 
   await database.pool.query(
@@ -15342,7 +15342,7 @@ it("CBS-02 pages company history under current source authority before LIMIT and
   }
 });
 
-it("CBS-02 preserves nested assignment source restrictions and lets the source project be deleted without Brain blocking it", async () => {
+it("IT-CBS-02 preserves nested assignment source restrictions and lets the source project be deleted without Brain blocking it", async () => {
   const project = await seedProjectRow(database.db);
 
   await database.pool.query(
@@ -15956,7 +15956,7 @@ it("uses company Brain through current user and agent authority while retaining 
   ).toBe(1);
 });
 
-it("CBS-02 resolves and inspects an owned company plain directory without a project and rejects retargeted baseline paths", async () => {
+it("IT-CBS-02 resolves and inspects an owned company plain directory without a project and rejects retargeted baseline paths", async () => {
   const { runId } = await reserveCompanyFixtureRun();
   const [run] = await database.db.select().from(runs).where(eq(runs.id, runId));
   const context = await operationalWorkspace(database.db, run);
@@ -16084,7 +16084,7 @@ async function seedCompanyOperationalTerminal(): Promise<
   return { runId, assignmentId, context };
 }
 
-it("CBS-02 atomically finalizes company result evidence, revokes credentials and releases plain materialization without completing the assignment", async () => {
+it("IT-CBS-02 atomically finalizes company result evidence, revokes credentials and releases plain materialization without completing the assignment", async () => {
   const db: Db = database.db;
   const { runId, assignmentId, context } =
     await seedCompanyOperationalTerminal();
@@ -16247,7 +16247,7 @@ it("CBS-02 atomically finalizes company result evidence, revokes credentials and
   );
 });
 
-it("CBS-02 refuses company completion without its required result and retains failed source bytes for evidence recovery", async () => {
+it("IT-CBS-02 refuses company completion without its required result and retains failed source bytes for evidence recovery", async () => {
   const db: Db = database.db;
   const { runId, assignmentId, context } =
     await seedCompanyOperationalTerminal();
@@ -16310,7 +16310,7 @@ it("CBS-02 refuses company completion without its required result and retains fa
   ).toBe("queued");
 });
 
-it("CBS-02 governs company operational acknowledgement and exhausted cleanup rearm through current grants and existing receipts", async () => {
+it("IT-CBS-02 governs company operational acknowledgement and exhausted cleanup rearm through current grants and existing receipts", async () => {
   const db: Db = database.db;
   const { runId, assignmentId, context } =
     await seedCompanyOperationalTerminal();
@@ -16499,7 +16499,7 @@ it("CBS-02 governs company operational acknowledgement and exhausted cleanup rea
   }
 });
 
-it("CBS-02 quarantines a company specialist source violation and preserves failed bytes instead of accepting a valid-looking result", async () => {
+it("IT-CBS-02 quarantines a company specialist source violation and preserves failed bytes instead of accepting a valid-looking result", async () => {
   const db: Db = database.db;
   const { runId, context } = await seedCompanyOperationalTerminal();
   const credential = await issueCompanyAgentRunToken({ db, runId });

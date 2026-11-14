@@ -148,8 +148,9 @@ request revision under the same logical work ID. The original result remains
 attached to its original Run. The continuation uses the original receiving
 pin, current source authorization and the remaining assignment budget. The
 existing scheduler and driver run the new child. Native project work uses the
-attached workspace-none agent and existing project authority. Rework for
-external-effect obligations remains open.
+attached workspace-none agent and existing project authority. Stand effects use
+the durable operation identity. A continued coordinator reconciles the existing
+effect and needs an explicitly approved successor to attempt a new restart.
 
 ### Decisive execution fences (T27)
 
@@ -250,7 +251,8 @@ appointment all apply. Main `0276` adds rejection under the same current
 review authority. The rejected work revision retains its collected result,
 and the attributed working context carries the reviewer’s reason without
 adding accepted findings. Result-only assignment completion uses its separate
-root acceptance. Independent effect verification remains open. Forward migration `0269` closes
+root acceptance. Stand assignment acceptance also requires the independently
+verified effect defined by the [stand contract](stand-maintenance.md). Forward migration `0269` closes
 nullable source/context/target comparisons under the
 [persistence guard contract](../db/specialist-assignments-domain.md#backfill-guards-and-lifetime);
 retained company source identity survives catalog FK removal.

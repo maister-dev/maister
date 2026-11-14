@@ -3,10 +3,10 @@
   "status": "locally_qualified",
   "specs": {
     "docs/system-analytics/company-brain-specialists-qualification.md": "003d79c910fd5e6f87eaf663d5cdafcb46e4fa12c782c481b745c82f120603c3",
-    "docs/system-analytics/company-brain-specialists-traceability.md": "51f98af273c2dce65eab07e2c8949b783226f8bf7144975f84283d83a7869929",
-    "docs/system-analytics/specialist-cooperation.md": "4d901e6d2c37bcdf46f38099edb4d5e1f96a6650e7b7155185181088754318dc",
+    "docs/system-analytics/company-brain-specialists-traceability.md": "eb7a8356e494d3637b8ad2b4e6621a88b7181dffbb35601657c02584285bd805",
+    "docs/system-analytics/specialist-cooperation.md": "fb6bb3d8925d5dfc4ab8877c376dd6e26332fb27a0a93d7c3a9457c81922391e",
     "docs/system-analytics/stand-maintenance.md": "3269ae4543bb7577f809dfdeec21c84be04b397a9ebf64b23e1aec5ee87f8ac3",
-    "docs/system-analytics/specialist-assignments.md": "d5252d16380619e013a740c2773f010f3d69a9a25c064b0af7974b2ef8bd7407"
+    "docs/system-analytics/specialist-assignments.md": "bb433bbc614078fdc56991a563c6768f79fe2d29d4e6b2c0bb8ce1af510f46fa"
   },
   "receipts": {
     "CB0": {
@@ -81,5 +81,11 @@
     "webUnitPassed": 9057,
     "mcpUnitAndIntegrationPassed": 489
   },
-  "releasePublished": false
+  "releasePublished": false,
+  "finalContractAudit": {
+    "testOnlyChangesAfterFullWeb": true,
+    "standPostgresTestsPassed": 5,
+    "connectorTestsPassed": 9,
+    "healthDeadline": "A stalled real HTTP peer returns inconclusive after the configured deadline. The owning PostgreSQL scenario retains the existing applied effect and sends no second restart."
+  }
 }

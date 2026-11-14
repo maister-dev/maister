@@ -6,8 +6,9 @@ import { test } from "node:test";
 
 import { checkHealth } from "../src/health.ts";
 
-test("IT-CBO-05 checks configured HTTP identity and status and bounds the response", async (context) => {
+test("IT-CBO-05 EDGE-CBC-05 checks HTTP identity, status, size and the probe deadline", async (context) => {
   const server = createServer((request, response) => {
+    if (request.url === "/stalled") return;
     response.setHeader(
       "X-Maister-Health-Identity",
       request.url === "/wrong" ? "other" : "fixture",
@@ -40,4 +41,5 @@ test("IT-CBO-05 checks configured HTTP identity and status and bounds the respon
   assert.equal(await probe("/wrong"), "unhealthy");
   assert.equal(await probe("/failed"), "unhealthy");
   assert.equal(await probe("/large"), "inconclusive");
+  assert.equal(await probe("/stalled"), "inconclusive");
 });
