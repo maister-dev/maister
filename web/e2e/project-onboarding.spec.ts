@@ -545,7 +545,11 @@ test("E2E-CPC-04: board save retains its receipt and push review across status r
   const receipt = await saved;
 
   expect(receipt.status()).toBe(200);
-  const { commitSha } = (await receipt.json()) as { commitSha: string };
+  const savedReceipt = (await receipt.json()) as {
+    commitSha: string;
+    operationId: string;
+  };
+  const { commitSha, operationId } = savedReceipt;
   const refreshed = page.waitForResponse(
     (response) =>
       response.url().endsWith("/persist-config?view=workflow") &&
@@ -622,6 +626,43 @@ test("E2E-CPC-04: board save retains its receipt and push review across status r
       encoding: "utf8",
     }).trim(),
   ).toBe(commitSha);
+
+  await page.unroute(`${base}/*/push`);
+  const receiptReads: string[] = [];
+  let pushState = "pending";
+
+  await page.route(`${base}/${operationId}`, (route) => {
+    receiptReads.push(route.request().method());
+
+    return route.fulfill({ json: { ...savedReceipt, pushState } });
+  });
+  await dialog
+    .getByTestId("config-observation-details")
+    .locator("summary")
+    .click();
+  const refresh = dialog.getByRole("button", { name: "Refresh status" });
+  const recover = dialog.getByRole("button", {
+    name: "Inspect and recover this operation",
+  });
+
+  await refresh.click();
+  await expect(dialog.getByTestId("config-push-state")).toContainText(
+    "The accepted push needs its outcome checked.",
+  );
+  await expect(recover).toHaveCount(0);
+  pushState = "unknown";
+  await refresh.click();
+  await expect(recover).toBeVisible();
+  pushState = "succeeded";
+  await refresh.click();
+  await expect(dialog.getByTestId("config-push-state")).toContainText(
+    "Reviewed commit published successfully.",
+  );
+  await expect(recover).toHaveCount(0);
+  await expect(dialog.getByTestId("config-commit-success")).toContainText(
+    commitSha,
+  );
+  expect(receiptReads).toEqual(["GET", "GET", "GET"]);
   await dialog.getByTestId("config-persist-close").click();
   await expect(dialog).toHaveCount(0);
   await expect(

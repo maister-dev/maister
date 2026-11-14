@@ -24,13 +24,11 @@ export function ConfigPersistDialog({
   controller: c,
   status,
   error,
-  refreshStatus,
   operation,
 }: {
   controller: ConfigPersistenceController;
   status: ConfigStatus | null;
   error: boolean;
-  refreshStatus: () => Promise<void>;
   operation: Extract<
     ConfigWorkflow["operation"],
     { state: "available" }
@@ -49,10 +47,12 @@ export function ConfigPersistDialog({
       ? c.pushResult?.state
       : undefined) ?? c.receipt?.pushState;
   const uncertainPush = pushState && ["pending", "unknown"].includes(pushState);
+  const unresolvedOperation =
+    c.uncertainId !== null && c.uncertainId !== c.receipt?.operationId;
   const localNeedsRecovery =
     c.receipt?.state === "recovery_required" ||
     c.receipt?.cleanupState === "retained" ||
-    (c.uncertainId && !c.receipt);
+    unresolvedOperation;
   const needsRecovery = localNeedsRecovery || pushState === "unknown";
 
   return (
@@ -96,7 +96,7 @@ export function ConfigPersistDialog({
             className={buttonClass}
             isDisabled={c.busy}
             type="button"
-            onPress={() => void refreshStatus()}
+            onPress={() => void c.refreshObservation()}
           >
             {t("refreshStatus")}
           </Button>
@@ -185,7 +185,7 @@ export function ConfigPersistDialog({
           ) : null}
         </div>
       ) : null}
-      {c.uncertainId && !c.receipt ? (
+      {unresolvedOperation ? (
         <p className="break-all text-sm">
           {t("operation")}: {c.uncertainId}
         </p>
@@ -202,6 +202,7 @@ export function ConfigPersistDialog({
       ) : null}
       {c.receipt?.state === "committed" &&
       c.receipt.commitSha &&
+      !localNeedsRecovery &&
       !uncertainPush &&
       !c.pushReview ? (
         <Button
@@ -214,7 +215,7 @@ export function ConfigPersistDialog({
           {t("reviewPush")}
         </Button>
       ) : null}
-      {c.pushReview ? (
+      {c.pushReview && !localNeedsRecovery && !uncertainPush ? (
         <section
           aria-label={t("pushTitle")}
           className="space-y-3 border-t border-line pt-3"

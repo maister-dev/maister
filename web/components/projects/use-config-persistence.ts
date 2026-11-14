@@ -131,9 +131,10 @@ export function useConfigPersistence(
     router.refresh();
   };
 
-  function acceptReceipt(value: ConfigReceipt): void {
+  function recordReceipt(value: ConfigReceipt): void {
+    if (receipt?.operationId !== value.operationId) setPushReview(null);
     setReceipt(value);
-    setPreview(null);
+    setPushResult(null);
     if (
       ["committed", "noop", "stale", "failed"].includes(value.state) &&
       !["pending", "unknown"].includes(value.pushState)
@@ -141,6 +142,11 @@ export function useConfigPersistence(
       window.sessionStorage.removeItem(storageKey);
       setUncertainId(null);
     }
+  }
+
+  function acceptReceipt(value: ConfigReceipt): void {
+    recordReceipt(value);
+    setPreview(null);
   }
 
   async function run(action: () => Promise<void>): Promise<void> {
@@ -170,6 +176,19 @@ export function useConfigPersistence(
     });
   }
 
+  async function refreshObservation(): Promise<void> {
+    const id = uncertainId ?? receipt?.operationId;
+
+    await run(async () => {
+      try {
+        if (id)
+          recordReceipt(await request<ConfigReceipt>(`${base}/${id}`, "GET"));
+      } finally {
+        await refreshStatus();
+      }
+    });
+  }
+
   async function show(operationId?: string): Promise<void> {
     if (locked.current) return;
     setOpen(true);
@@ -178,19 +197,16 @@ export function useConfigPersistence(
     if (saved) {
       setUncertainId(saved);
       await run(async () => {
-        acceptReceipt(await request<ConfigReceipt>(`${base}/${saved}`, "GET"));
+        recordReceipt(await request<ConfigReceipt>(`${base}/${saved}`, "GET"));
       });
     } else if (operationId) await readReceipt(operationId);
-    else if (!receipt && !pushReview) await freshPreview();
+    else if (receipt) await refreshObservation();
+    else if (!pushReview) await freshPreview();
   }
 
   async function readReceipt(id: string): Promise<void> {
     setOpen(true);
     await run(async () => {
-      if (receipt && receipt.operationId !== id) {
-        setPushReview(null);
-        setPushResult(null);
-      }
       acceptReceipt(await request<ConfigReceipt>(`${base}/${id}`, "GET"));
     });
   }
@@ -223,7 +239,7 @@ export function useConfigPersistence(
   }
 
   async function recover(): Promise<void> {
-    const id = receipt?.operationId ?? uncertainId;
+    const id = uncertainId ?? receipt?.operationId;
 
     if (!id) return;
     await run(async () => {
@@ -295,6 +311,7 @@ export function useConfigPersistence(
     uncertainId,
     show,
     readReceipt,
+    refreshObservation,
     freshPreview,
     confirm,
     recover,
@@ -315,6 +332,7 @@ export type ConfigPersistenceController = {
   uncertainId: string | null;
   show: (operationId?: string) => Promise<void>;
   readReceipt: (id: string) => Promise<void>;
+  refreshObservation: () => Promise<void>;
   freshPreview: () => Promise<void>;
   confirm: () => Promise<void>;
   recover: () => Promise<void>;

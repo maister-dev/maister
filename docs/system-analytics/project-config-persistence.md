@@ -196,6 +196,7 @@ outside MAIster; path repair never becomes persistence-status authority.
 | Missing or pending export, ready checkout | Open and review the complete dedicated configuration diff. |
 | Observed checkout blocker | Show the actual reason and next step. Another active owner is shown only as a blocker. |
 | Owned in-flight or uncertain effect | Inspect the durable receipt. Recovery remains explicit and operates on that identity. |
+| Refresh status with a receipt open | Re-read the checkout summary and GET the same operation receipt. Apply pending, unknown and terminal push observations to the displayed receipt while preserving active reviews. Show recovery when the push becomes unknown and remove it when the push settles. |
 | Local commit with failed, pending or unknown push | Show local success and remote publication separately. Only a confirmed push receipt proves publication of that SHA. |
 | Checkout unavailable, owned receipt readable | Keep receipt access and label checkout unavailable. |
 

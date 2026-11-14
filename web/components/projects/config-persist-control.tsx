@@ -178,7 +178,6 @@ export function ConfigPersistControl({
         controller={controller}
         error={observationUnavailable}
         operation={operation}
-        refreshStatus={refresh}
         status={status}
       />
     </>
