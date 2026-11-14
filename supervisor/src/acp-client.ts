@@ -1034,6 +1034,7 @@ export async function createAcpConnection(
     source: stdoutSource,
     stdin,
     client: clientImpl,
+    adapter: args.adapter,
     onLine: emitLine,
     async onUpdateFrame(params, line) {
       if (

@@ -1483,6 +1483,12 @@ unit spawn test.
 
 ## ACP Wire Lifecycle
 
+Claude ACP 0.95 may report an unknown context-window count as
+`usage_update.used: null` when an Anthropic-compatible provider omits cache
+counters. The supervisor retains this advisory frame in the raw stream and
+does not publish a numeric context measurement. It still validates the
+terminal prompt response and records any available token usage separately.
+
 The supervisor speaks JSON-RPC via
 `@agentclientprotocol/sdk@0.22.1`'s `ClientSideConnection` for every
 session. `POST /sessions` creates the adapter process and ACP session;

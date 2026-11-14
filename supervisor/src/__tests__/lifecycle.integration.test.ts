@@ -499,6 +499,37 @@ describe("supervisor lifecycle integration", () => {
     expect(Number(lines[1].id)).toBeLessThan(Number(lines[2].id));
   });
 
+  it("retains Claude's unknown context meter without rejecting its completed turn", async () => {
+    const host = await bootFor([
+      "--hang",
+      "--lines",
+      "1",
+      "--context-usage",
+      "null",
+    ]);
+    const sessionId = await createSession(host);
+
+    await sendPrompt(host, sessionId);
+
+    const events = host.registry.snapshotEvents(sessionId);
+    const telemetry = events.find(
+      (event) =>
+        event.type === "session.line" && event.line.includes('"usage_update"'),
+    );
+
+    expect(telemetry).toMatchObject({
+      type: "session.line",
+      line: expect.stringContaining('"used":null'),
+    });
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        type: "session.update",
+        update: expect.objectContaining({ sessionUpdate: "usage_update" }),
+      }),
+    );
+    expect(host.registry.get(sessionId)?.record.status).toBe("live");
+  });
+
   it("session.crashed when fixture exits non-zero", async () => {
     const host = await bootFor([
       "--controlled-exit",

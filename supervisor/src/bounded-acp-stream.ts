@@ -1,4 +1,5 @@
 import type { FrameAdmission, LogWriteAdmission } from "./producer-pressure";
+import type { ExecutorAgent } from "./types";
 import type {
   AnyMessage,
   SessionNotification,
@@ -21,11 +22,15 @@ import { finished } from "node:stream/promises";
 import { ReadableStream, WritableStream } from "node:stream/web";
 import { setImmediate as nextTurn } from "node:timers/promises";
 
+import { z } from "zod";
+
 // The SDK's `exports` map publishes no zod subpath (only the JSON schema), yet
 // these generated validators are exactly the inbound contract this producer
 // boundary enforces. A relative file import bypasses the exports map.
 import {
+  zCost,
   zRequestPermissionRequest,
+  zSessionId,
   zSessionNotification,
 } from "../node_modules/@agentclientprotocol/sdk/dist/v1/unstable/schema/zod.gen.js";
 
@@ -36,6 +41,18 @@ export const MAX_ACP_FRAME_BYTES = 1_048_576;
 const MAX_PRODUCERS = 20;
 const PRODUCER_BUFFER_BYTES = 144 * 1024;
 const DECODE_BUFFER_BYTES = 7 * 1024 * 1024;
+
+// Claude 0.95 can sum absent provider cache counters to NaN, which JSON
+// encodes as null. Preserve the raw advisory without inventing a measurement.
+const claudeUnknownContextUsage = z.object({
+  sessionId: zSessionId,
+  update: z.object({
+    sessionUpdate: z.literal("usage_update"),
+    used: z.null(),
+    size: z.number().positive(),
+    cost: zCost.nullish(),
+  }),
+});
 
 // One decoder/publication slot plus twenty bounded pipe/chunk/ring reservations fits
 // below 10 MiB. Partial lines live on disk and never hold the decoder permit.
@@ -502,6 +519,7 @@ export function boundedAcpStream(input: {
   source: NodeReadable;
   stdin: NodeWritable;
   client: BoundedAcpClient;
+  adapter?: ExecutorAgent;
   onLine?: (line: string) => void;
   onUpdateFrame?: (params: SessionNotification, line: string) => Promise<void>;
   onFailure: (error: SupervisorError) => void;
@@ -571,6 +589,12 @@ export function boundedAcpStream(input: {
 
     if (!parsed.success) {
       input.onLine?.(line);
+      if (
+        input.adapter === "claude" &&
+        claudeUnknownContextUsage.safeParse(params).success
+      )
+        return;
+
       throw incomplete("producer_update_invalid");
     }
     toolCalls.observe(parsed.data);

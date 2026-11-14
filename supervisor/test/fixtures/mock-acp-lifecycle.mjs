@@ -32,6 +32,7 @@ let hangPrompt = false;
 let hangPermission = false;
 let exitDelayMs = 0;
 let emitUsage = false;
+let contextUsage;
 let supportsResume = false;
 let sessionStateDir;
 let invocationLog;
@@ -89,6 +90,8 @@ for (let i = 0; i < args.length; i += 1) {
     exitDelayMs = Number.parseInt(args[++i], 10);
   } else if (arg === "--emit-usage") {
     emitUsage = true;
+  } else if (arg === "--context-usage") {
+    contextUsage = JSON.parse(args[++i]);
   } else if (arg === "--supports-resume") {
     supportsResume = true;
   } else if (arg === "--session-state-dir") {
@@ -794,6 +797,18 @@ class LifecycleAgent {
                 },
               }
             : {}),
+        },
+      });
+    }
+
+    if (contextUsage !== undefined) {
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "usage_update",
+          used: contextUsage,
+          size: 200000,
+          cost: { amount: 0.1, currency: "USD" },
         },
       });
     }
