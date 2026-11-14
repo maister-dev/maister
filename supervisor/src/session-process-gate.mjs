@@ -73,7 +73,13 @@ process.once("message", (message) => {
     child.once("spawn", () =>
       process.send?.({ kind: "execution_started", adapterPid: child.pid }),
     );
-    child.once("exit", (code) => process.exit(code ?? 1));
+    child.once("exit", (code, signal) => {
+      // This gate still leads the group it started. A signalled adapter can
+      // leave descendants running after its stdio closes; stop them before
+      // letting the leader exit. The supervisor still checks group retirement.
+      if (signal !== null) process.kill(-process.pid, "SIGKILL");
+      process.exit(code ?? 1);
+    });
   } catch (error) {
     reportSpawnFailure(error);
   }
