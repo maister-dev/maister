@@ -848,20 +848,23 @@ calls `pendingPermissions.cancel(sessionId, requestId, "checkpoint")`
 — the same wire-level outcome shape the operator-cancel path produces,
 plus a supervisor-side `reason` marker that propagates onto the
 `session.exited` event. The supervisor then `markIntentionalShutdown`s
-the session with `reason="checkpoint"`, SIGTERMs the child, and waits
-for graceful exit up to `MAISTER_KILL_GRACE_MS`. If the grace expires
-the supervisor SIGKILLs and returns `503 EXECUTOR_UNAVAILABLE` — the
-web sweeper treats this as retryable and re-attempts on the next tick.
+the session with `reason="checkpoint"` and uses the owned session teardown.
+After SIGTERM it waits for terminal output and positive retirement of the
+process group. If the leader stays alive past `MAISTER_KILL_GRACE_MS`,
+teardown can escalate through the still-owned leader and verify retirement
+within a second grace window. When retirement remains uncertain, Web retains
+the pending checkpoint and reconciles it on the next sweep.
 
 Status codes:
 
 - `200 { alreadyCheckpointed: boolean, sessionId, monotonicId }` —
-  graceful exit completed (or idempotent ack if the session was
-  already in `exited`/`crashed`).
+  terminal output and group retirement confirmed. The same proof applies to a
+  new checkpoint command for an already exited or crashed session.
 - `404 { code: "PRECONDITION" }` — unknown sessionId.
 - `409 { code: "PRECONDITION" }` — body contained unknown keys.
-- `503 { code: "EXECUTOR_UNAVAILABLE" }` — SIGTERM grace expired,
-  SIGKILL was issued; sweeper retries.
+- `503 { code: "EXECUTOR_UNAVAILABLE" }` — the owned session did not retire
+  within the available grace. The response includes the stage requiring
+  reconciliation.
 
 #### Checkpoint + Resume lifecycle
 

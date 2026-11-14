@@ -357,9 +357,13 @@ it("keeps an inherited descendant in physical ownership after its adapter exits 
   }
 });
 
-it.each(["within grace", "at deadline"] as const)(
-  "DELETE waits for an inherited descendant after the leader exits, then durably replays success (%s)",
-  async (retirement) => {
+it.each([
+  { method: "DELETE", retirement: "within grace" },
+  { method: "DELETE", retirement: "at deadline" },
+  { method: "POST", retirement: "within grace" },
+] as const)(
+  "$method waits for an inherited descendant after the leader exits, then durably replays success ($retirement)",
+  async ({ method, retirement }) => {
     const owner = await ownedHost({
       fixture: "retiring-descendant-acp.mjs",
       killGraceMs: 2_000,
@@ -445,32 +449,37 @@ it.each(["within grace", "at deadline"] as const)(
         return observation;
       },
     );
-    const command = envelope("session.delete", fenceFor(owner.host, runId));
-    const response = await postJson(
-      `${owner.host.url}/sessions/${sessionId}`,
-      command,
-      "DELETE",
+    const checkpoint = method === "POST";
+    const command = envelope(
+      checkpoint ? "session.checkpoint" : "session.delete",
+      fenceFor(owner.host, runId),
     );
+    const endpoint = `${owner.host.url}/sessions/${sessionId}${checkpoint ? "/checkpoint" : ""}`;
+    const expectedStatus = checkpoint ? 200 : 204;
+    const response = await postJson(endpoint, command, method);
 
     expect(observedLiveDescendant).toBe(true);
-    expect(response.status, JSON.stringify(response.body)).toBe(204);
+    expect(response.status, JSON.stringify(response.body)).toBe(expectedStatus);
     expect(await inspect(leader.identity.pgid)).toEqual({ state: "retired" });
     expect(owner.host.hostState.getReceipt(command.command.id)).toMatchObject({
       phase: "completed",
-      httpStatus: 204,
+      httpStatus: expectedStatus,
     });
+    if (checkpoint) {
+      const inventory = await fetch(
+        `${owner.host.url}/sessions?runId=${runId}`,
+      );
+
+      expect(inventory.status).toBe(200);
+    }
     expect(owner.host.hostState.sessionProcessesForRun(runId)[0]).toMatchObject(
       {
         phase: "released",
       },
     );
-    const replay = await postJson(
-      `${owner.host.url}/sessions/${sessionId}`,
-      command,
-      "DELETE",
-    );
+    const replay = await postJson(endpoint, command, method);
 
-    expect(replay.status).toBe(204);
+    expect(replay.status).toBe(expectedStatus);
     expect(replay.headers.get("x-maister-command-replayed")).toBe("true");
   },
 );
