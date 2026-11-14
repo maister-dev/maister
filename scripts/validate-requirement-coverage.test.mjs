@@ -57,11 +57,19 @@ test("CT-CBX-05 the release manifest identifies unchanged specifications and rec
     readFileSync(join(qualificationRoot, "T43/release-candidate.json"), "utf8"),
   );
   const digest = (data) => createHash("sha256").update(data).digest("hex");
-  const standReceipts = ["CB1_combined", "CB1_coordinator", "CB1_diagnostic"];
+  const standReceipts = [
+    "CB1_combined",
+    "CB1_coordinator",
+    "CB1_diagnostic",
+    "CB1_successor",
+  ];
 
   assert.ok(Object.keys(manifest.specs).length > 0);
   for (const role of ["CB0", ...standReceipts]) {
     assert.equal(manifest.receipts[role]?.exitCode, 0, role);
+  }
+  if (manifest.currentMaster.fullWeb === "passed") {
+    assert.equal(manifest.receipts.current_master_web?.exitCode, 0);
   }
   for (const [path, sha256] of Object.entries(manifest.specs)) {
     assert.equal(digest(readFileSync(join(repoRoot, path))), sha256, path);
@@ -75,6 +83,16 @@ test("CT-CBX-05 the release manifest identifies unchanged specifications and rec
     if (standReceipts.includes(role)) {
       assert.equal(receipt.packageCommit, manifest.implementation.companionCommit, path);
       assert.equal(receipt.packageTag, manifest.implementation.companionTag, path);
+    }
+    if (role === "current_master_web") {
+      assert.equal(receipt.master, manifest.currentMaster.commit, path);
+      assert.equal(receipt.revision, manifest.currentMaster.testedRevision, path);
+      assert.equal(receipt.committedCandidate, manifest.currentMaster.candidate, path);
+      assert.equal(receipt.patchSha256, manifest.currentMaster.candidatePatchSha256, path);
+      assert.ok(receipt.tests.passed > 0, path);
+      assert.equal(receipt.tests.failed, 0, path);
+      assert.equal(receipt.candidateUnchanged, true, path);
+      assert.deepEqual(receipt.cleanup, { processLeaks: 0, errors: [] }, path);
     }
   }
 });

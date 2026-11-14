@@ -1,0 +1,47 @@
+{
+  "revision": "a632bdee6e5f03cbb068a910cc291313dac92137",
+  "master": "b84f47eef9b66e02e60d4fd41fe8843e3838708e",
+  "committedCandidate": "f58859771a471ff2ce364784ae089fd128e74d49",
+  "patchSha256": "631386ce6ab8502f5b8c387655b6d32779c69ac5f0098627b90d5194825e8e0a",
+  "reportSha256": "22043e92b874ffe3e507e5f03721f07a6dcdc03c0200749c537d072e476b8ab9",
+  "buildId": "4D0bLE0GItlXaxrWrQTDj",
+  "invocationId": "74e07586-0e70-42eb-871a-6673c1281952",
+  "node": "24.15.0",
+  "maxWorkers": 2,
+  "startedAt": "2026-11-14T16:59:20.265Z",
+  "finishedAt": "2026-11-14T18:12:16.538Z",
+  "mcpSha256": "6f1772154e3425d9665948a2db4aae2ef426757080d4954166a07c25fda586ac",
+  "files": {
+    "passed": 694,
+    "skipped": 2,
+    "total": 696
+  },
+  "tests": {
+    "passed": 6390,
+    "failed": 0,
+    "skipped": 3,
+    "total": 6393
+  },
+  "skipped": [
+    {
+      "file": "web/lib/execution-host/__tests__/event-plane-load.integration.test.ts",
+      "test": "keeps host-to-manager lag flat with no stream close and one ACK per batch"
+    },
+    {
+      "file": "web/lib/execution-host/__tests__/host-span-load.integration.test.ts",
+      "test": "completes every node within seconds of its host terminal and confirms all six without a conflict"
+    },
+    {
+      "file": "web/lib/packages/__tests__/native-rah.integration.test.ts",
+      "test": "installs the real pinned stand Flow with its required operational evidence export"
+    }
+  ],
+  "exitCode": 0,
+  "sourceHeadUnchanged": true,
+  "candidateUnchanged": true,
+  "cleanup": {
+    "processLeaks": 0,
+    "errors": []
+  },
+  "candidateDelta": "The committed recovery code adds a whitespace-only change to operation-intake. A corrected SQL selector in the Playwright live spec is outside the Vitest integration project and passed the separately retained live qualification."
+}

@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "status": "pilot_passed_full_release_gate_open",
+  "status": "locally_qualified",
   "specs": {
     "docs/system-analytics/company-brain-specialists-qualification.md": "003d79c910fd5e6f87eaf663d5cdafcb46e4fa12c782c481b745c82f120603c3",
-    "docs/system-analytics/company-brain-specialists-traceability.md": "bab7f935131ef076e38105146239ef50fb3b78014cface844728ad8f657c4fe5",
+    "docs/system-analytics/company-brain-specialists-traceability.md": "51f98af273c2dce65eab07e2c8949b783226f8bf7144975f84283d83a7869929",
     "docs/system-analytics/specialist-cooperation.md": "4d901e6d2c37bcdf46f38099edb4d5e1f96a6650e7b7155185181088754318dc",
     "docs/system-analytics/stand-maintenance.md": "3269ae4543bb7577f809dfdeec21c84be04b397a9ebf64b23e1aec5ee87f8ac3",
-    "docs/system-analytics/specialist-assignments.md": "83287ae87f29e6f149002618142c3d66cb69f0021c773a384b8522398d43b1cb"
+    "docs/system-analytics/specialist-assignments.md": "d5252d16380619e013a740c2773f010f3d69a9a25c064b0af7974b2ef8bd7407"
   },
   "receipts": {
     "CB0": {
@@ -48,21 +48,27 @@
       "path": "T40/unknown-successor/initial-evidence.json",
       "sha256": "f2ce379ffd511443d21ad2d23e8a2306f250b72151a380d966df56297ee510cf",
       "exitCode": 1
+    },
+    "current_master_web": {
+      "path": "T41/web-integration-current-master/evidence.json",
+      "sha256": "bd5b2fdbaa55963e43c59b7f4d70adf0b24fd0e123921ee083165bcc3146de4b",
+      "exitCode": 0
     }
   },
   "currentMaster": {
     "commit": "b84f47eef9b66e02e60d4fd41fe8843e3838708e",
-    "candidate": "a632bdee6",
+    "candidate": "f58859771a471ff2ce364784ae089fd128e74d49",
     "existingMigrationsPreserved": 226,
     "nativeSuccessiveMigrations": 107,
     "lastMigration": "0336_specialist_interrupted_work",
     "drizzleCheck": "passed",
     "postgresMigrationCasesPassed": 7,
-    "fullWeb": "in_progress",
-    "candidatePatchSha256": "631386ce6ab8502f5b8c387655b6d32779c69ac5f0098627b90d5194825e8e0a"
+    "fullWeb": "passed",
+    "candidatePatchSha256": "631386ce6ab8502f5b8c387655b6d32779c69ac5f0098627b90d5194825e8e0a",
+    "testedRevision": "a632bdee6e5f03cbb068a910cc291313dac92137"
   },
   "implementation": {
-    "platform": "9647344d0",
+    "platform": "c47924dc3f280ce16bb24f03c5d1e8c927a4aae2",
     "companionCommit": "084f68a587a91befd31f94c1ce7759e6b31d265a",
     "companionTag": "stand-operations/v0.1.0",
     "packageInstallChecksPassed": 2,
@@ -71,7 +77,9 @@
     "supervisorOwnershipAndCausalityChecksPassed": 43,
     "coverageRules": 84,
     "erdTables": 193,
-    "fullWeb": "interrupted_without_report"
+    "fullWeb": "passed_on_current_master_candidate",
+    "webUnitPassed": 9057,
+    "mcpUnitAndIntegrationPassed": 489
   },
   "releasePublished": false
 }

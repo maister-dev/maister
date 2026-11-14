@@ -182,7 +182,7 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | `web/app/(app)/specialist-assignments/` | EN/RU assignment intake, progress, evidence, recovery and verified acceptance |
 | `web/lib/specialist-assignments/store.ts` | Durable company/project assignment heads, frozen input history, current authority, CAS and existing-run links |
 | `web/lib/specialist-assignments/delegated-intake.ts` | Original logical work identity, exact work revisions and bounded continuation backed by retained results or a proved read-only child interruption |
-| `web/lib/stand-operations/` | Reviewed stand targets, exact restart intent, current authority, effect reconciliation and independent verification |
+| `web/lib/stand-operations/` | Reviewed stand targets, exact restart intent, current authority, effect reconciliation, authorized recovery and independent verification |
 | `stand-connector/src/main.ts` | Linux/systemd target helper with mTLS, bounded service operations and a durable SQLite journal |
 | `web/lib/stand-operations/target-registry.ts` | Reviewed company stand configurations, exact runbook witnesses and canonical systemd component identities |
 | `web/lib/specialist-assignments/project-routed-manual-intake.ts` | Versioned existing project launch entry; server-resolved owner/attachment and shared manual delivery identity |
@@ -228,7 +228,7 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | Product View | `docs/PRODUCT_VIEW.md` | Lean Canvas, JTBD, gaps, MVP / Phase 2 / Later |
 | Architecture | `docs/architecture.md` | Current system architecture, C4 diagrams, data flows |
 | Decisions | `docs/decisions.md` | ADRs and locked technical decisions |
-| Company Brain design | `docs/system-analytics/company-brain.md` | Native structured ownership, review, evidence and EN/RU UI; CB0 locally qualified, CB1 pilot open |
+| Company Brain design | `docs/system-analytics/company-brain.md` | Native structured ownership, review, evidence and EN/RU UI; CB0 and installed CB1 pilot locally qualified |
 | Agent activity design | `docs/system-analytics/agent-activity-history.md` | Active executions and retained history |
 | Task qualification design | `docs/system-analytics/task-qualification.md` | Incoming requests and admission contracts |
 | Task launch admission | `docs/system-analytics/task-launch-admission.md` | Explicit manual authority and qualified automation |
