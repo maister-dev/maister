@@ -2214,11 +2214,28 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
       const { readAssignmentReview } =
         await import("@/lib/specialist-assignments/workspace-view");
       const published = await db.transaction(async (tx) => {
+        const retained = {
+          ...decision.value,
+          findings: {
+            ...decision.value.findings,
+            knowledgeProposals: decision.value.findings.knowledgeProposals.map(
+              (draft) => ({
+                ...draft,
+                evidence: [
+                  {
+                    relation: "derived_from",
+                    reference: { kind: "result", id: runId, revision: 1 },
+                  },
+                ],
+              }),
+            ),
+          },
+        };
         const row = await publishRunResult(tx, {
           runId,
           contract,
-          value: decision.value,
-          valueBytes: Buffer.byteLength(JSON.stringify(decision.value)),
+          value: retained,
+          valueBytes: Buffer.byteLength(JSON.stringify(retained)),
           producerKind: "agent_session",
           producerRef: "default",
         });
@@ -2319,26 +2336,51 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
         attribution: { kind: "user", id: userId, runId },
         evidence: [
           { relation: "derived_from", witness: { availability: "available" } },
+          { relation: "derived_from", witness: { availability: "available" } },
         ],
       });
-      const linkedEvidence = proposal.evidence[0];
-
-      if (!linkedEvidence || !("witness" in linkedEvidence))
-        throw new Error(
-          "The retained proposal is missing its exact work witness",
-        );
       const { getKnowledgeWitness } =
         await import("@/lib/brain/knowledge-witnesses");
-      const proof = await getKnowledgeWitness(
-        db,
-        { kind: "user", userId },
-        linkedEvidence.witness.id,
+      const linkedWitnesses = await Promise.all(
+        proposal.evidence.flatMap((entry) =>
+          "witness" in entry
+            ? [
+                getKnowledgeWitness(
+                  db,
+                  { kind: "user", userId },
+                  entry.witness.id,
+                ),
+              ]
+            : [],
+        ),
+      );
+      const proof = linkedWitnesses.find(({ excerpt }) =>
+        excerpt?.includes(accepted.id),
+      );
+
+      if (!proof)
+        throw new Error(
+          "The retained proposal is missing its acceptance witness",
+        );
+      expect(
+        linkedWitnesses.map(({ excerpt }) => JSON.parse(excerpt ?? "{}")),
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: published.id,
+            runId,
+            revision: published.revision,
+          }),
+        ]),
       );
 
       expect(JSON.parse(proof.excerpt ?? "{}")).toMatchObject({
         assignmentId: assignment.id,
         acceptanceId: accepted.id,
         result: { id: published.id, runId, revision: published.revision },
+        citedResults: [
+          { id: published.id, runId, revision: published.revision },
+        ],
         operations: expect.arrayContaining([
           expect.objectContaining({
             operationId: operation.id,

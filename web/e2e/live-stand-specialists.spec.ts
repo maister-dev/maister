@@ -596,9 +596,27 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
   await page
     .getByRole("button", { name: "Submit retained knowledge drafts" })
     .click({ timeout: 20_000 });
-  await page
-    .getByRole("link", { name: "Open proposal 1", exact: true })
-    .click();
+  const proposalLink = page.getByRole("link", {
+    name: "Open proposal 1",
+    exact: true,
+  });
+  const writeBackAlert = page
+    .locator("section")
+    .filter({
+      has: page.getByRole("button", {
+        name: "Submit retained knowledge drafts",
+      }),
+    })
+    .getByRole("alert");
+
+  await expect(proposalLink.or(writeBackAlert)).toBeVisible({
+    timeout: 20_000,
+  });
+  if (!(await proposalLink.isVisible()))
+    throw new Error(
+      `Knowledge write-back failed: ${await writeBackAlert.first().innerText()}`,
+    );
+  await proposalLink.click({ timeout: 20_000 });
   await expect(page.getByRole("main")).toContainText("Pending");
 
   const proposalId = decodeURIComponent(
