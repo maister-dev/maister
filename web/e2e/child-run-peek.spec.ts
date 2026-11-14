@@ -575,6 +575,9 @@ test("E2E-PKD-07: late A responses cannot overwrite B or a newer A selection", a
 
     await list.locator(`[data-child-run-id="${fixture.child}"] a`).click();
     await expect.poll(() => intercepted).toBe(true);
+    await expect(
+      peek(page).getByRole("heading", { level: 2 }).first(),
+    ).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(peek(page)).toHaveCount(0);
     await list.locator(`[data-child-run-id="${fixture.sibling}"] a`).click();

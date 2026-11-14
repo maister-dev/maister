@@ -72,7 +72,7 @@ contract:
 | `fileView=preview\|source` | Files | Preview/source mode for the selected file. |
 | `diffFile=<repo-relative-path>` | Diff | Selected changed file in the Diff tab. This must not trigger source-file reads. |
 | `diffview=split\|unified` | Diff | Diff renderer mode. |
-| `git=tree\|publish\|update\|pr\|reattach` | Git panel | (ADR-181 — Implemented) Opens the run git panel at that section ([`git-panel.md`](git-panel.md)). Card, rail and inspector menu items link here instead of mutating. Invalid values open the default section. |
+| `git=open\|tree\|publish\|update\|pr\|reattach` | Git panel | (ADR-181 — Implemented) Opens the panel or the named section ([`git-panel.md`](git-panel.md)). Card, rail and inspector menu items use the section links. |
 | `diffbody=rich\|raw` | Diff | Selected-file rendering mode inside the per-file diff: rich rendered/highlighted view or raw source view. It must not replace the file renderer with a raw unified patch dump. |
 | `diffFiles=shown\|hidden` | Diff | Changed-file tree visibility. The tree is rooted at project-relative paths and includes an in-place file-name filter. The default is `shown`; hiding the tree keeps the selected file body visible. |
 | `scope=run\|review\|since-last-review\|last-node\|uncommitted` | Diff / inspector | Diff and change-summary scope. `review` is the current Flow-review source and is selected by `wb=review`. |
@@ -302,3 +302,6 @@ Evidence filtering follows the [Evidence viewport contract](../../system-analyti
 ## Package 2 presentation (Implemented)
 
 Results and checks is the primary evidence view. The provenance graph remains available through the same workbench address and preserves existing filters.
+Results show every effective blocker, including a gate recorded before a newer
+check in the same slot. An artifact preview shows up to 64 KiB. When clipped it
+shows plain text, an explicit truncation label and the original download link.

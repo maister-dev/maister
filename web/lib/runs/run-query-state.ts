@@ -1,3 +1,5 @@
+import type { GitPanelSection } from "@/lib/workbench-git/panel-link";
+
 import { RUN_DIFF_SCOPES, type RunDiffScope } from "@/lib/runs/diff-scopes";
 
 export { RUN_DIFF_SCOPES, type RunDiffScope } from "@/lib/runs/diff-scopes";
@@ -63,6 +65,7 @@ export interface RunQueryPatch {
   flow?: RunFlowState | null;
   evidenceView?: "list" | "graph" | null;
   evidenceItem?: string | null;
+  git?: "open" | GitPanelSection | null;
 }
 
 function enumOrDefault<T extends string>(
@@ -173,6 +176,7 @@ export function buildRunSearchParams(
   setOptionalParam(params, "flow", patch.flow);
   setOptionalParam(params, "evidenceView", patch.evidenceView);
   setOptionalParam(params, "evidenceItem", patch.evidenceItem);
+  setOptionalParam(params, "git", patch.git);
   if (patch.flow === "fullscreen") {
     params.delete("peek");
     params.delete("peekView");

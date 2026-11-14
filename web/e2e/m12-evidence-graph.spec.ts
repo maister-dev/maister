@@ -109,6 +109,8 @@ test("E2 renders typed evidence and keeps unknown payloads generic", async ({
   const reportId = randomUUID();
   const genericId = randomUUID();
   const markdownId = randomUUID();
+  const oversized =
+    "# Evidence notes\n\n" + "Z".repeat(64 * 1024) + "outside preview";
   const filename = `${markdownId}.md`;
   const directory = path.resolve(
     "e2e/.runtime/.maister",
@@ -166,6 +168,17 @@ test("E2 renders typed evidence and keeps unknown payloads generic", async ({
     await expect(
       preview.getByRole("heading", { name: "Evidence notes" }),
     ).toBeVisible();
+    await writeFile(markdownPath, oversized);
+    await page.reload();
+    await expect(preview.getByText("The preview is truncated.")).toBeVisible();
+    await expect(
+      preview.getByRole("heading", { name: "Evidence notes" }),
+    ).toHaveCount(0);
+    const download = preview.getByRole("link", { name: "Download original" });
+    const href = `/api/runs/${runId}/artifacts/${markdownId}/payload`;
+
+    await expect(download).toHaveAttribute("href", href);
+    expect(await (await page.request.get(href)).text()).toBe(oversized);
     await rm(markdownPath);
     await page.reload();
     await expect(page.getByText("The retained payload is gone.")).toBeVisible();

@@ -42,7 +42,8 @@ authority (`requireProjectAction("promoteRun")` for mutations,
   the drift card's Sync branch) open the Update section; board card, portfolio
   and left-rail menus and the inspector Actions tab link to
   `/runs/{runId}?git=<section>` — never a blind mutation from a card.
-- **Within:** sections are anchored; `?git=` selects one on open.
+- **Within:** `?git=open` keeps the panel open during Run refresh and reload.
+  A named section in `git` also scrolls to that section.
 - **Exit:** closing the panel keeps the run page; a published branch or an
   opened PR links out to the provider; Finalize returns the run page in `Done`.
 
