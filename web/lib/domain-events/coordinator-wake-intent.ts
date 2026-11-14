@@ -60,3 +60,15 @@ export async function clearFailedCoordinatorWake(
     .set({ failedChildWakeAt: null })
     .where(eq(runs.id, runId));
 }
+
+export async function hasFailedCoordinatorWake(
+  db: Db,
+  runId: string,
+): Promise<boolean> {
+  const [run] = await db
+    .select({ failedChildWakeAt: runs.failedChildWakeAt })
+    .from(runs)
+    .where(eq(runs.id, runId));
+
+  return run?.failedChildWakeAt != null;
+}

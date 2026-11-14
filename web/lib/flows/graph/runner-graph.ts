@@ -263,7 +263,10 @@ import {
   unboundChildLaunchReceipts,
   observeCompletedChildLaunchPrompt,
 } from "@/lib/orchestrator/child-obligations";
-import { clearFailedCoordinatorWake } from "@/lib/domain-events/coordinator-wake-intent";
+import {
+  clearFailedCoordinatorWake,
+  hasFailedCoordinatorWake,
+} from "@/lib/domain-events/coordinator-wake-intent";
 import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import { companyAgentWorkdirPath } from "@/lib/agents/workspace-paths";
@@ -430,7 +433,11 @@ async function runOrchestratorStep(
 
   const pending = await countPendingChildren(db, runId);
 
-  if (pending > 0 || (await hasUnobservedChildOutcome(db, runId))) {
+  if (
+    pending > 0 ||
+    (await hasFailedCoordinatorWake(db, runId)) ||
+    (await hasUnobservedChildOutcome(db, runId))
+  ) {
     log2.info(
       { runId, pendingChildren: pending },
       "orchestrator turn ended with pending children — parking",
@@ -4028,6 +4035,7 @@ export async function runGraph(
           .for("update");
         if (
           (await childObligationCounts(tx, runId)).pending > 0 ||
+          (await hasFailedCoordinatorWake(tx, runId)) ||
           (await hasUnobservedChildOutcome(tx, runId))
         )
           return false;

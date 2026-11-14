@@ -1471,6 +1471,32 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
       .toEqual(["WaitingOnChildren", null]);
     expect((await getRun(sibling.runId)).status).toBe("Running");
   }, 90_000);
+  it("lets the coordinator observe a last child that fails before the current turn parks", async () => {
+    const { runId } = await seedOrchestratorRun();
+    const child = await seedChild(runId, "Running");
+    const { hosts } = await bindCoordinatorHost(runId);
+    const { runAgentStep } = await import("@/lib/flows/runner-agent");
+    const { runFlow } = await import("@/lib/flows/runner");
+
+    vi.mocked(runAgentStep).mockImplementationOnce(async (_step, ctx) => {
+      await ctx.prepareSessionCapabilities?.();
+      await failChild(runId, child);
+
+      return {
+        ok: true,
+        stdout: "",
+        vars: {},
+        durationMs: 1,
+        acpSessionId: "acp-coordinator-1",
+      };
+    });
+    await runFlow(runId, {
+      db,
+      runtimeRoot: process.cwd(),
+      executionHosts: hosts,
+    });
+    await expect.poll(() => waitResumeCount(runId), RE_ENTRY_POLL).toBe(1);
+  }, 90_000);
   it("keeps a failed-child intent out of answered-idle C3 admission", async () => {
     const { runId } = await seedOrchestratorRun();
     const failed = await seedChild(runId, "Running");
