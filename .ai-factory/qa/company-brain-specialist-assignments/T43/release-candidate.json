@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "status": "pilot_passed_full_release_gate_open",
+  "specs": {
+    "docs/system-analytics/company-brain-specialists-qualification.md": "003d79c910fd5e6f87eaf663d5cdafcb46e4fa12c782c481b745c82f120603c3",
+    "docs/system-analytics/company-brain-specialists-traceability.md": "d8ff02884ef6ab2e8c4a60eacf8999814f010ac0213d33451e41ea3c2da8f626",
+    "docs/system-analytics/specialist-cooperation.md": "4d901e6d2c37bcdf46f38099edb4d5e1f96a6650e7b7155185181088754318dc",
+    "docs/system-analytics/stand-maintenance.md": "84c7cda31f5c8ddb279eee875194235c3986f747f8ca18974ea76e0d761c5df9"
+  },
+  "receipts": {
+    "CB0": {
+      "path": "review-fixes/qualification/installed-package-glm53-duration-owner/evidence.json",
+      "sha256": "328d405b3d80c8e1ee69078319cf2a012cd11ba58890c1be627f2c4cc2c48373",
+      "exitCode": 0
+    },
+    "CB1_combined": {
+      "path": "T40/browser-stand/verified-glm53-084f68a.json",
+      "sha256": "5e858e7b034bcb7e7448983d1e226f7b04377b9928226418ea4d918484603d06",
+      "exitCode": 0
+    },
+    "CB1_coordinator": {
+      "path": "T40/coordinator-acp-interruption/verified-glm53.json",
+      "sha256": "da8e76ea85b8086fb2ad38a610cbf4cf82239551f390855757afff348e7f9461",
+      "exitCode": 0
+    },
+    "CB1_diagnostic": {
+      "path": "T40/diagnostic-interruption/verified-glm53.json",
+      "sha256": "bef47a69b35d8a04c0ffc53bb1f21a8a1ce71bbe2795ae0dc696b82a8f772350",
+      "exitCode": 0
+    },
+    "earlier_web_green": {
+      "path": "T41/web-integration-a1f07b100/evidence.json",
+      "sha256": "162bf19ed1ed1a6f633ca648de1b3e73df39e631f07d1f0abcd63e3f3b3aa090",
+      "exitCode": 0
+    },
+    "later_web_failed": {
+      "path": "T41/web-integration-8159583e7/evidence.json",
+      "sha256": "6c0e17bacca24742dced0c78f05dae7d30b4297fa8a8f464fe74adca7924d34b",
+      "exitCode": 1
+    }
+  },
+  "currentMaster": {
+    "commit": "b84f47eef9b66e02e60d4fd41fe8843e3838708e",
+    "candidate": "034da5d9a",
+    "existingMigrationsPreserved": 226,
+    "nativeSuccessiveMigrations": 107,
+    "lastMigration": "0336_specialist_interrupted_work",
+    "drizzleCheck": "passed",
+    "postgresMigrationCasesPassed": 7,
+    "fullWeb": "in_progress"
+  },
+  "implementation": {
+    "platform": "278f2967d",
+    "companionCommit": "084f68a587a91befd31f94c1ce7759e6b31d265a",
+    "companionTag": "stand-operations/v0.1.0",
+    "packageInstallChecksPassed": 2,
+    "webRecoveryAndProjectChecksPassed": 18,
+    "orchestratorChecksPassed": 27,
+    "supervisorOwnershipAndCausalityChecksPassed": 43,
+    "coverageRules": 84,
+    "erdTables": 193,
+    "fullWeb": "in_progress"
+  },
+  "releasePublished": false
+}
