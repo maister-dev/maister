@@ -8,6 +8,9 @@ import { NextRequest } from "next/server";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
 import { POST } from "@/app/api/runs/route";
+import { PATCH as saveMapping } from "@/app/api/projects/[slug]/flow-runner-remaps/route";
+import { POST as preview } from "@/app/api/runs/launch-options/route";
+import { POST as ACCEPT } from "@/app/api/task-launch-intents/route";
 import { POST as CONCURRENT } from "@/app/api/task-launch-intents/concurrent/route";
 import { MaisterError } from "@/lib/errors";
 import {
@@ -16,6 +19,7 @@ import {
   taskLaunchIntents,
   flows,
   flowRevisions,
+  platformAcpRunners,
 } from "@/lib/db/schema";
 import {
   taskLaunchSettingsToken,
@@ -103,6 +107,273 @@ function request(
     body: JSON.stringify(payload),
   });
 }
+
+it("L2 previews and freezes a one-run primary without saving it on the task", async () => {
+  const input = await body();
+  const [flow] = await database.db
+    .select()
+    .from(flows)
+    .where(eq(flows.id, fixture.flowId));
+  const [configured] = await database.db
+    .select()
+    .from(platformAcpRunners)
+    .where(eq(platformAcpRunners.id, fixture.runnerId));
+  const override = randomUUID();
+
+  await database.db
+    .insert(platformAcpRunners)
+    .values({ ...configured, id: override });
+  const flowRunnerDraft = {
+    flowRevisionId: flow.enabledRevisionId,
+    primaryRunnerId: override,
+  };
+  const selection = { taskId: input.taskId, flowRunnerDraft };
+
+  const options = await preview(request(selection));
+
+  expect(options.status).toBe(200);
+  expect(options.headers.get("cache-control")).toBe("no-store");
+  const previewBody = await options.json();
+
+  expect(previewBody.selectedFlowRevisionId).toBe(flow.enabledRevisionId);
+  expect(previewBody.options.selectedRunnerId).toBe(override);
+  expect(await countIntents(input.taskId)).toBe(0);
+  const payload = {
+    ...input,
+    flowRunnerDraft,
+    expectedSettingsToken: previewBody.options.settingsToken,
+  };
+
+  expect((await POST(request(payload))).status).toBe(400);
+  const key = randomUUID();
+  const accepted = await ACCEPT(request(payload, key));
+
+  expect(accepted.status).toBe(202);
+  const receipt = await accepted.json();
+
+  expect(await (await ACCEPT(request(payload, key))).json()).toEqual(receipt);
+  const mismatched = await ACCEPT(
+    request(
+      {
+        ...payload,
+        flowRunnerDraft: {
+          ...flowRunnerDraft,
+          primaryRunnerId: fixture.runnerId,
+        },
+      },
+      key,
+    ),
+  );
+
+  expect(mismatched.status).toBe(409);
+  expect(await countIntents(input.taskId)).toBe(1);
+  const [intent] = await database.db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.taskId, input.taskId));
+  const [task] = await database.db
+    .select()
+    .from(tasks)
+    .where(eq(tasks.id, input.taskId));
+
+  expect(intent.settingsSnapshot).toMatchObject({
+    sessions: [{ runnerId: override }],
+  });
+  expect(task.runnerId).toBe(fixture.runnerId);
+
+  const stale = await body();
+  const beforeDrift = await preview(
+    request({ taskId: stale.taskId, flowRunnerDraft }),
+  );
+  const stalePreview = await beforeDrift.json();
+
+  expect(beforeDrift.status).toBe(200);
+  await database.db
+    .update(platformAcpRunners)
+    .set({ model: "updated-model" })
+    .where(eq(platformAcpRunners.id, override));
+  const refused = await ACCEPT(
+    request({
+      ...stale,
+      flowRunnerDraft,
+      expectedSettingsToken: stalePreview.options.settingsToken,
+    }),
+  );
+
+  expect(refused.status).toBe(409);
+  expect(await refused.json()).toMatchObject({
+    details: { reason: "launch_settings_changed" },
+  });
+  expect(await countIntents(stale.taskId)).toBe(0);
+});
+it("L2 bounds interactive preview input and requires same-origin JSON", async () => {
+  const input = await body();
+  const send = (payload: string, origin = "http://localhost") =>
+    preview(
+      new NextRequest("http://localhost/api/runs/launch-options", {
+        method: "POST",
+        headers: { Origin: origin, "Content-Type": "application/json" },
+        body: payload,
+      }),
+    );
+
+  const refusals = await Promise.all([
+    send(JSON.stringify({ taskId: input.taskId }), "https://foreign.invalid"),
+    send(JSON.stringify({ taskId: input.taskId, runnerId: fixture.runnerId })),
+    send(JSON.stringify({ taskId: input.taskId }) + " ".repeat(65_536)),
+  ]);
+
+  expect(refusals.map((response) => response.status)).toEqual([403, 400, 400]);
+  expect(
+    await Promise.all(refusals.map((response) => response.json())),
+  ).toMatchObject([
+    {
+      code: "UNAUTHORIZED",
+      details: { reason: "launch_interactive_origin_required" },
+    },
+    { code: "CONFIG", details: { reason: "launch_request_invalid" } },
+    { code: "CONFIG", details: { reason: "launch_request_invalid" } },
+  ]);
+  for (const response of refusals)
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(await countIntents(input.taskId)).toBe(0);
+});
+
+it("L2 a settings writer cannot pair runner choices from one snapshot with the next token", async () => {
+  const input = await body();
+  const [runner] = await database.db
+    .select({ model: platformAcpRunners.model })
+    .from(platformAcpRunners)
+    .where(eq(platformAcpRunners.id, fixture.runnerId));
+  const writer = await database.pool.connect();
+  let open = true;
+
+  try {
+    const { rows } = await writer.query<{ pid: number }>(
+      "SELECT pg_backend_pid() AS pid",
+    );
+
+    await writer.query("BEGIN");
+    await writer.query(
+      "LOCK TABLE platform_acp_runners IN ACCESS EXCLUSIVE MODE",
+    );
+    const reader = preview(request({ taskId: input.taskId }));
+
+    await expect
+      .poll(async () => {
+        const result = await database.pool.query<{ count: number }>(
+          "SELECT count(*)::int FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)) AND query ILIKE '%platform_acp_runners%'",
+          [rows[0].pid],
+        );
+
+        return result.rows[0].count;
+      })
+      .toBe(1);
+    await writer.query(
+      "UPDATE platform_acp_runners SET model='race-after' WHERE id=$1",
+      [fixture.runnerId],
+    );
+    await writer.query("COMMIT");
+    open = false;
+
+    const during = await reader;
+    const before = await during.json();
+    const after = await (
+      await preview(request({ taskId: input.taskId }))
+    ).json();
+
+    expect(during.status).toBe(200);
+    expect(JSON.stringify(before.options)).not.toContain("race-after");
+    expect(JSON.stringify(after.options)).toContain("race-after");
+    expect(before.options.settingsToken).toBe(input.expectedSettingsToken);
+    expect(after.options.settingsToken).not.toBe(before.options.settingsToken);
+    expect(await countIntents(input.taskId)).toBe(0);
+  } finally {
+    if (open) await writer.query("ROLLBACK");
+    else
+      await writer.query(
+        "UPDATE platform_acp_runners SET model=$1 WHERE id=$2",
+        [runner.model, fixture.runnerId],
+      );
+    writer.release();
+  }
+});
+
+it("L3 refuses a mapping save that loses the enabled revision lock", async () => {
+  const [oldRevision] = await database.db
+    .select()
+    .from(flowRevisions)
+    .where(eq(flowRevisions.flowRefId, fixture.flowId));
+  const newRevisionId = randomUUID();
+
+  await database.db.insert(flowRevisions).values({
+    ...oldRevision,
+    id: newRevisionId,
+    resolvedRevision: "replacement",
+    versionLabel: "v2",
+  });
+
+  const writer = await database.pool.connect();
+  let response: Promise<Response> | undefined;
+
+  try {
+    await writer.query("BEGIN");
+    const {
+      rows: [writerSession],
+    } = await writer.query<{ pid: number }>("SELECT pg_backend_pid() AS pid");
+
+    await writer.query("UPDATE flows SET enabled_revision_id=$1 WHERE id=$2", [
+      newRevisionId,
+      fixture.flowId,
+    ]);
+    response = saveMapping(
+      new NextRequest(
+        "http://localhost/api/projects/fixture/flow-runner-remaps",
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            flowRevisionId: oldRevision.id,
+            slotKey: "session:default",
+            mappedRunnerId: fixture.runnerId,
+          }),
+        },
+      ),
+      { params: Promise.resolve({ slug: fixture.projectId }) },
+    );
+
+    await vi.waitFor(
+      async () => {
+        const {
+          rows: [locks],
+        } = await database.pool.query<{ n: number }>(
+          "SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)) AND query LIKE '%for update%'",
+          [writerSession.pid],
+        );
+
+        expect(locks.n).toBe(1);
+      },
+      { timeout: 5000 },
+    );
+    await writer.query("COMMIT");
+
+    expect((await response).status).toBe(409);
+    const mappings = await database.pool.query(
+      "SELECT id FROM flow_runner_remaps WHERE project_id=$1 AND flow_revision_id=$2",
+      [fixture.projectId, oldRevision.id],
+    );
+
+    expect(mappings.rows).toEqual([]);
+  } finally {
+    await writer.query("ROLLBACK");
+    writer.release();
+    await response;
+    await database.db
+      .update(flows)
+      .set({ enabledRevisionId: oldRevision.id })
+      .where(eq(flows.id, fixture.flowId));
+  }
+});
+
 async function countIntents(taskId: string): Promise<number> {
   return (
     await database.pool.query<{ n: number }>(

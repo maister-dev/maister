@@ -413,7 +413,16 @@ test("E2E-L-02 E2E-LOP-04: duplicate search precedes two accepted, linked tasks"
       true,
     );
   });
-  await expect(page.getByTestId("librarian-operation-receipt")).toHaveCount(3);
+  await page
+    .getByRole("button", { name: "Action history", exact: true })
+    .click();
+  const history = page.getByTestId("librarian-action-history");
+
+  for (const title of titles)
+    await expect(
+      history.getByRole("link", { name: new RegExp(title) }),
+    ).toBeVisible();
+  await history.getByRole("button", { name: "Close history" }).click();
 });
 
 test("E2E-L-03: create only, launch, and triage-only remain distinct", async ({
@@ -1184,9 +1193,32 @@ test("E2E-L-09: reset starts fresh context while keeping tasks and personal memo
   });
 
   expect(before).toBeDefined();
-  const reset = await page.request.post("/api/librarian/reset");
+  const panel = page.getByTestId("librarian-panel");
+  const attached = panel
+    .getByRole("list", { name: "Action receipts" })
+    .getByRole("link", { name: new RegExp(title) });
 
-  expect(reset.ok()).toBe(true);
+  await expect(attached).toBeVisible();
+  await panel
+    .getByRole("button", { name: "Reset context", exact: true })
+    .click();
+  await page
+    .getByTestId("librarian-reset-confirm")
+    .getByRole("button", { name: "Reset context", exact: true })
+    .click();
+  await expect(attached).toHaveCount(0);
+  await page.reload();
+  await page.getByTestId("librarian-trigger").click();
+  await expect(attached).toHaveCount(0);
+  await panel
+    .getByRole("button", { name: "Action history", exact: true })
+    .click();
+  const history = page.getByTestId("librarian-action-history");
+
+  await expect(
+    history.getByRole("link", { name: new RegExp(title) }),
+  ).toBeVisible();
+  await history.getByRole("button", { name: "Close history" }).click();
   await sendScript(
     page,
     [{ tool: "librarian_history_search", args: { q: marker } }],
@@ -1226,6 +1258,7 @@ test("E2E-L-09: reset starts fresh context while keeping tasks and personal memo
 
 test("E2E-L-10 E2E-TST-06: forget removes a memory and clear deletes private history only", async ({
   page,
+  context,
 }) => {
   const marker = randomUUID().slice(0, 8);
   const title = `Clear survivor ${marker}`;
@@ -1285,11 +1318,31 @@ test("E2E-L-10 E2E-TST-06: forget removes a memory and clear deletes private his
   };
 
   expect(preview.messages).toBeGreaterThan(0);
-  const cleared = await page.request.post("/api/librarian/history/clear", {
-    data: { previewDigest: preview.previewDigest },
-  });
+  const second = await context.newPage();
 
-  expect(cleared.ok()).toBe(true);
+  try {
+    await second.goto("/");
+    await second.getByTestId("librarian-trigger").click();
+    const otherPanel = second.getByTestId("librarian-panel");
+    const cachedReply = otherPanel.getByText(/^Task before clear /);
+
+    await expect(cachedReply).toBeVisible();
+    const cleared = await page.request.post("/api/librarian/history/clear", {
+      data: { previewDigest: preview.previewDigest },
+    });
+
+    expect(cleared.ok()).toBe(true);
+    await expect(cachedReply).toHaveCount(0);
+    await otherPanel.getByRole("button", { name: "Action history" }).click();
+    await otherPanel
+      .getByRole("button", { name: "Related tasks", exact: true })
+      .click();
+    await expect(
+      otherPanel.getByRole("link", { name: new RegExp(title) }),
+    ).toBeVisible();
+  } finally {
+    await second.close();
+  }
   await withE2EDb(async (pool) => {
     const task = await pool.query(`SELECT id FROM tasks WHERE title = $1`, [
       title,

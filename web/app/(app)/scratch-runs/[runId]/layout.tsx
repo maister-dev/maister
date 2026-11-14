@@ -9,6 +9,7 @@ import {
   type RunInspectorChangeSummary,
   type RunInspectorLabels,
 } from "@/components/runs/run-inspector";
+import { RunOutcome } from "@/components/runs/run-outcome";
 import { RunShell, type RunShellLabels } from "@/components/runs/run-shell";
 import { ScratchConversation } from "@/components/scratch/scratch-conversation";
 import { ScratchInspectorActions } from "@/components/scratch/scratch-inspector-actions";
@@ -256,18 +257,31 @@ export default async function ScratchRunDetailLayout({
         </div>
       }
       labels={shellLabels}
+      outcome={
+        <RunOutcome
+          heading={t("outcomeHeading")}
+          next={{
+            label: t("scratchOpenConversation"),
+            href: "#scratch-conversation",
+          }}
+          noAction={t("outcomeNoAction")}
+          summary={t("scratchOutcome")}
+        />
+      }
       projectHref={`/projects/${detail.projectSlug}`}
       projectLabel={t("backToBoard")}
       status={detail.status}
       subtitle={shellSubtitle}
       targetBranch={targetBranch}
-      title={detail.branch}
+      title={session?.name ?? detail.branch}
     >
       <div className="grid min-w-0 max-w-full gap-5">
-        <ScratchConversation
-          canAct={role === "owner" || role === "admin" || role === "member"}
-          runId={detail.runId}
-        />
+        <div id="scratch-conversation" tabIndex={-1}>
+          <ScratchConversation
+            canAct={role === "owner" || role === "admin" || role === "member"}
+            runId={detail.runId}
+          />
+        </div>
 
         <section className="min-w-0 max-w-full" data-testid="run-workbench">
           <WorkbenchPanel

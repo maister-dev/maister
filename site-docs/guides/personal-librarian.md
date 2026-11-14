@@ -130,3 +130,7 @@ already completed; check **Recent operations** before retrying.
 - [Configure runners and librarian limits](/administration/runners-and-models#configure-the-personal-librarian)
 - [Tasks, statements, and clarifications](/product-tour/tasks-and-runs)
 - [Human-in-the-loop decisions](/guides/human-in-the-loop)
+
+## Action history (Designed)
+
+Action history keeps completed actions and related tasks accessible after a context reset. Confirmations and operations with uncertain outcomes remain visible in the attention cue.

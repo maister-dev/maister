@@ -12,7 +12,14 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { openRuntimeObjectContent } from "@/lib/execution-host/runtime-objects";
-import { resolveArtifactContent } from "@/lib/flows/graph/artifact-content";
+import {
+  boundArtifactText,
+  resolveArtifactContent,
+} from "@/lib/flows/graph/artifact-content";
+import {
+  ARTIFACT_PREVIEW_MAX_BYTES,
+  ARTIFACT_PREVIEW_TRUNCATED_HEADER,
+} from "@/lib/http/artifact-preview";
 import { safeDownloadHeaders } from "@/lib/http/safe-download";
 import { CONSENSUS_AGENT_OUTPUT_ARTIFACT_DEFS } from "@/lib/flows/graph/consensus/artifact-defs";
 import { parseSingleByteRange } from "@/lib/http/single-byte-range";
@@ -42,6 +49,23 @@ function artifactDownloadHeaders(
   return safeDownloadHeaders({
     fileName: `${artifact.kind}-${artifact.id}.${mediaClass === "json" ? "json" : "txt"}`,
     mediaClass,
+  });
+}
+
+function textPreview(
+  artifact: ArtifactInstance,
+  text: string,
+  sourceTruncated?: true,
+): NextResponse {
+  const bounded = boundArtifactText(text, ARTIFACT_PREVIEW_MAX_BYTES);
+
+  return new NextResponse(bounded.text, {
+    headers: {
+      ...artifactDownloadHeaders(artifact, "text"),
+      [ARTIFACT_PREVIEW_TRUNCATED_HEADER]: String(
+        sourceTruncated === true || bounded.truncated,
+      ),
+    },
   });
 }
 
@@ -169,38 +193,47 @@ export async function GET(
 
     const locator = artifact.locator as ArtifactLocator;
 
-    // Inline consensus agent output (drafts, verifier raw output, synthesis
-    // generations) is session output like an execution object, so it needs the
-    // same repository-content grant rather than board evidence's `readBoard`.
+    // Execution objects and inline consensus output can quote private source.
+    // Both require the repository-content grant used by direct object reads.
     if (
-      locator.kind === "inline" &&
-      artifact.artifactDefId !== null &&
-      CONSENSUS_AGENT_OUTPUT_ARTIFACT_DEFS.has(artifact.artifactDefId)
+      locator.kind === "execution-object" ||
+      (locator.kind === "inline" &&
+        artifact.artifactDefId !== null &&
+        CONSENSUS_AGENT_OUTPUT_ARTIFACT_DEFS.has(artifact.artifactDefId))
     )
       await requireProjectAction(detail.projectId, "readRepoFiles");
+    const views = new URL(req.url).searchParams.getAll("view");
+    const preview = views.length === 1 && views[0] === "preview";
+
+    if (views.length && (!preview || req.headers.has("range"))) {
+      return NextResponse.json(
+        {
+          code: "CONFIG",
+          message:
+            "Artifact preview requires one view=preview and no Range header.",
+        },
+        { status: 400, headers: { "cache-control": "private, no-store" } },
+      );
+    }
 
     if (locator.kind === "execution-object") {
-      // An execution object is agent session output that can quote any file
-      // the agent read, so it carries the repository-content grant the direct
-      // content route requires (M22 ADR-053: a viewer cannot browse source).
-      // Diff/log/git/inline artifacts stay board evidence at `readBoard`.
-      await requireProjectAction(detail.projectId, "readRepoFiles");
       const { object, content } = await openRuntimeObjectContent({
         db: db as unknown as ExecutionHostDb,
         runId,
         objectId: locator.objectId,
         signal: req.signal,
-        range: parseSingleByteRange(req.headers.get("range"), {
-          syntax: "artifact payload Range must be one bounded byte range",
-          bounds: "artifact payload Range is invalid",
-        }),
+        range: preview
+          ? { start: 0, end: ARTIFACT_PREVIEW_MAX_BYTES - 1 }
+          : parseSingleByteRange(req.headers.get("range"), {
+              syntax: "artifact payload Range must be one bounded byte range",
+              bounds: "artifact payload Range is invalid",
+            }),
       });
       const headers = new Headers({
         ...safeDownloadHeaders({
           fileName: object.logicalName,
           mediaClass: "opaque",
         }),
-        "accept-ranges": "bytes",
       });
 
       log.debug(
@@ -217,38 +250,55 @@ export async function GET(
       }
       if (content.reprDigest) headers.set("repr-digest", content.reprDigest);
       if (content.etag) headers.set("etag", content.etag);
-      if (content.contentRange) {
-        headers.set("content-range", content.contentRange);
+      if (preview) {
+        headers.set(
+          ARTIFACT_PREVIEW_TRUNCATED_HEADER,
+          String(
+            object.sizeBytes !== null &&
+              object.sizeBytes > ARTIFACT_PREVIEW_MAX_BYTES,
+          ),
+        );
+      } else {
+        headers.set("accept-ranges", "bytes");
+        if (content.contentRange)
+          headers.set("content-range", content.contentRange);
       }
 
       return new Response(content.body, {
-        status: content.contentRange ? 206 : 200,
+        status: !preview && content.contentRange ? 206 : 200,
         headers,
       });
     }
 
     // ADR-120 (P2, D7): delegate to the SHARED resolver — the SAME locator
     // resolution the runner uses for prompt injection, so the two never drift.
-    // The route returns the FULL body (NO cap, NO json→text conversion); the
-    // 256 KiB inline cap lives only at the runner's injection seam. This keeps the
-    // HTTP contract byte-identical (incl. >256 KiB payloads + structured JSON).
+    // Downloads keep their full representation and passive content type.
     const resolved = await resolveArtifactContent(artifact, {
       worktreePath: detail.worktreePath,
       projectSlug: detail.projectSlug,
       runId,
       runtimeRoot: runtimeRoot(),
       db,
+      ...(preview ? { maxBytes: ARTIFACT_PREVIEW_MAX_BYTES } : {}),
     });
 
     switch (resolved.kind) {
       case "text":
+        if (preview)
+          return textPreview(artifact, resolved.text, resolved.truncated);
+
         return new NextResponse(resolved.text, {
           headers: artifactDownloadHeaders(artifact, "text"),
         });
-      case "json":
-        return new NextResponse(JSON.stringify(resolved.value), {
+      case "json": {
+        const body = JSON.stringify(resolved.value);
+
+        if (preview) return textPreview(artifact, body);
+
+        return new NextResponse(body, {
           headers: artifactDownloadHeaders(artifact, "json"),
         });
+      }
       case "gone":
         return gone();
       case "notfound":

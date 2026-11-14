@@ -8,16 +8,22 @@ import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
 const mocks = vi.hoisted(() => ({
   requireActiveSession: vi.fn(),
   requireProjectAction: vi.fn(),
+  requireProjectActionForUser: vi.fn(),
 }));
 
 type Row = Record<string, unknown>;
 type TableName =
-  "flow_runner_remaps" | "flows" | "platform_acp_runners" | "projects";
+  | "flow_revisions"
+  | "flow_runner_remaps"
+  | "flows"
+  | "platform_acp_runners"
+  | "projects";
 
 const state: {
   tables: Record<TableName, Row[]>;
 } = {
   tables: {
+    flow_revisions: [],
     flow_runner_remaps: [],
     flows: [],
     platform_acp_runners: [],
@@ -29,6 +35,7 @@ function tableNameOf(table: unknown): TableName {
   const tableName = getTableName(table as never);
 
   if (
+    tableName === "flow_revisions" ||
     tableName === "flow_runner_remaps" ||
     tableName === "flows" ||
     tableName === "platform_acp_runners" ||
@@ -40,31 +47,51 @@ function tableNameOf(table: unknown): TableName {
   throw new Error(`unknown table: ${tableName}`);
 }
 
-const fakeDb = {
+const fakeQueries = {
   select: () => ({
     from: (table: unknown) => ({
-      where: async () => state.tables[tableNameOf(table)],
-    }),
-  }),
-  update: (table: unknown) => ({
-    set: (values: Row) => ({
-      where: async () => {
-        for (const row of state.tables[tableNameOf(table)]) {
-          Object.assign(row, values);
-        }
-      },
+      where: () =>
+        Object.assign(
+          Promise.resolve(
+            tableNameOf(table) === "flow_revisions"
+              ? state.tables.flows
+              : state.tables[tableNameOf(table)],
+          ),
+          {
+            for: async () => state.tables[tableNameOf(table)],
+          },
+        ),
     }),
   }),
   insert: (table: unknown) => ({
-    values: async (row: Row) => {
-      state.tables[tableNameOf(table)].push(row);
-    },
+    values: (row: Row) => ({
+      onConflictDoUpdate: async ({ set }: { set: Row }) => {
+        const rows = state.tables[tableNameOf(table)];
+        const existing = rows.find(
+          (entry) =>
+            entry.projectId === row.projectId &&
+            entry.flowRevisionId === row.flowRevisionId &&
+            entry.slotKey === row.slotKey,
+        );
+
+        if (existing) Object.assign(existing, set);
+        else rows.push(row);
+      },
+    }),
   }),
+};
+
+const fakeDb = {
+  ...fakeQueries,
+  transaction: async <T>(
+    action: (tx: typeof fakeQueries) => Promise<T>,
+  ): Promise<T> => action(fakeQueries),
 };
 
 vi.mock("@/lib/authz", () => ({
   requireActiveSession: mocks.requireActiveSession,
   requireProjectAction: mocks.requireProjectAction,
+  requireProjectActionForUser: mocks.requireProjectActionForUser,
 }));
 vi.mock("@/lib/db/client", () => ({ getDb: () => fakeDb }));
 
@@ -145,6 +172,7 @@ describe("project Flow runner remap API", () => {
     ];
     mocks.requireActiveSession.mockResolvedValue({ id: "user-1" });
     mocks.requireProjectAction.mockResolvedValue({ role: "admin" });
+    mocks.requireProjectActionForUser.mockResolvedValue({ role: "admin" });
   });
 
   it("binds a declared slot after project-scoped authz", async () => {
@@ -157,7 +185,8 @@ describe("project Flow runner remap API", () => {
 
     expect(res.status).toBe(200);
     expect(body.remap?.status).toBe("Mapped");
-    expect(mocks.requireProjectAction).toHaveBeenCalledWith(
+    expect(mocks.requireProjectActionForUser).toHaveBeenCalledWith(
+      "user-1",
       "project-1",
       "editSettings",
     );
@@ -307,7 +336,7 @@ describe("project Flow runner remap API", () => {
   });
 
   it("rejects callers without project settings authority", async () => {
-    mocks.requireProjectAction.mockRejectedValueOnce(
+    mocks.requireProjectActionForUser.mockRejectedValueOnce(
       new MaisterError("UNAUTHORIZED", "Requires project settings access"),
     );
 
@@ -333,6 +362,6 @@ describe("project Flow runner remap API", () => {
 
     expect(res.status).toBe(401);
     expect(body.code).toBe("UNAUTHENTICATED");
-    expect(mocks.requireProjectAction).not.toHaveBeenCalled();
+    expect(mocks.requireProjectActionForUser).not.toHaveBeenCalled();
   });
 });

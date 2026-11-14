@@ -5,16 +5,20 @@ import type { LibrarianSettings } from "./settings";
 
 import { isDeepStrictEqual } from "node:util";
 
-import { and, asc, eq, gt, inArray } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
-import { librarianIndicator, loadLatestTurn } from "./view";
+import { readEligibleConfirmationIds } from "./confirmation-availability";
+import { librarianActivityIndicator, loadLatestTurn } from "./view";
 import { readLibrarianSettings } from "./settings";
 
 import {
   librarianConversations,
   librarianMessages,
   librarianTurns,
+  projectMembers,
+  projects,
+  users,
 } from "@/lib/db/schema";
 
 const log = pino({
@@ -43,15 +47,54 @@ async function readConversation(db: Db, ownerId: string) {
   const [row] = await db
     .select({
       id: librarianConversations.id,
+      userId: librarianConversations.userId,
       lastSeq: librarianConversations.lastSeq,
       readThroughSeq: librarianConversations.readThroughSeq,
       resetState: librarianConversations.resetState,
-      segmentId: librarianConversations.currentSegmentId,
+      currentSegmentId: librarianConversations.currentSegmentId,
+      contextEpoch: librarianConversations.contextEpoch,
+      generation: librarianConversations.historyGeneration,
     })
     .from(librarianConversations)
     .where(eq(librarianConversations.userId, ownerId));
 
   return row ?? null;
+}
+
+async function workWitness(
+  db: Db,
+  ownerId: string,
+  conversation: Awaited<ReturnType<typeof readConversation>>,
+): Promise<{ access: string; work: string }> {
+  const conversationId = conversation?.id ?? null;
+  const {
+    rows: [row],
+  } = await db.execute<{ access: string; work: string }>(sql`
+    SELECT
+      md5(concat_ws('|', (SELECT role FROM ${users} WHERE id = ${ownerId}),
+        (SELECT string_agg(concat_ws(':', p.id, p.slug, pm.role, p.archived_at), ',' ORDER BY p.id)
+           FROM ${projects} p
+           LEFT JOIN ${projectMembers} pm ON pm.project_id = p.id AND pm.user_id = ${ownerId}
+          WHERE pm.user_id IS NOT NULL OR EXISTS (SELECT 1 FROM ${users} WHERE id = ${ownerId} AND role = 'admin'))
+      )) AS access,
+      md5(concat_ws('|', ${conversation?.currentSegmentId ?? null}::text, ${conversation?.generation ?? null}::integer,
+        ${conversation?.contextEpoch ?? null}::integer, ${conversation?.resetState ?? null}::text,
+        (SELECT sum(hashtextextended(concat_ws(':', id, status, settled_at, card_id, turn_id),0))::text
+           FROM librarian_operations WHERE conversation_id = ${conversationId}),
+        (SELECT sum(hashtextextended(concat_ws(':', id, status, decided_at, message_id, expires_at > now()),0))::text
+           FROM librarian_cards WHERE conversation_id = ${conversationId}),
+        (SELECT sum(hashtextextended(concat_ws(':', c.id, t.revision, r.status, h.xmin),0))::text
+           FROM librarian_cards c
+           LEFT JOIN tasks t ON t.id = c.target->>'taskId' AND t.project_id = c.target->>'projectId'
+           LEFT JOIN runs r ON r.id = c.target->>'runId' AND r.project_id = c.target->>'projectId'
+           LEFT JOIN hitl_requests h ON h.id = c.target->>'hitlRequestId' AND h.run_id = r.id
+          WHERE c.conversation_id = ${conversationId} AND c.status = 'pending' AND c.expires_at > now()),
+        (SELECT sum(hashtextextended(concat_ws(':', id, task_id, from_message_id, to_message_id),0))::text
+           FROM librarian_task_links WHERE conversation_id = ${conversationId})
+      )) AS work
+  `);
+
+  return row;
 }
 
 /** ADR-185 (LCV-12): the owner's conversation stream. A server-side poll of
@@ -88,6 +131,8 @@ export async function* librarianStreamFrames(input: {
   let lastIndicator: string | null = null;
   let lastReset: string | null = null;
   let lastSettings: LibrarianSettings | null = null;
+  let lastWork: Awaited<ReturnType<typeof workWitness>> | null = null;
+  let hasConfirmation = false;
   let lastFrameAt = Date.now();
   let lastHeartbeatAt = Date.now();
 
@@ -97,7 +142,31 @@ export async function* librarianStreamFrames(input: {
   );
   try {
     while (!input.signal.aborted) {
-      const conversation = await readConversation(input.db, input.ownerId);
+      const observation = await input.db.transaction(
+        async (tx) => {
+          const conversation = await readConversation(tx, input.ownerId);
+          const witness = await workWitness(tx, input.ownerId, conversation);
+          const change =
+            lastWork === null
+              ? "sync"
+              : lastWork.access !== witness.access
+                ? "access"
+                : lastWork.work !== witness.work
+                  ? "work"
+                  : null;
+          const pending = change
+            ? conversation !== null &&
+              (await readEligibleConfirmationIds(tx, conversation)).length > 0
+            : hasConfirmation;
+
+          return { conversation, witness, change, pending };
+        },
+        { isolationLevel: "repeatable read", accessMode: "read only" },
+      );
+      const { conversation, change } = observation;
+
+      lastWork = observation.witness;
+      hasConfirmation = observation.pending;
       let active = false;
 
       if (conversation) {
@@ -165,7 +234,9 @@ export async function* librarianStreamFrames(input: {
           .limit(1);
 
         active = activeTurn !== undefined;
-        const indicator = await librarianIndicator(input.db, conversation);
+        const indicator = hasConfirmation
+          ? "action_required"
+          : await librarianActivityIndicator(input.db, conversation);
 
         if (indicator !== lastIndicator) {
           lastIndicator = indicator;
@@ -175,7 +246,7 @@ export async function* librarianStreamFrames(input: {
           );
           lastFrameAt = Date.now();
         }
-        const resetKey = `${conversation.resetState}:${conversation.segmentId}`;
+        const resetKey = `${conversation.resetState}:${conversation.currentSegmentId}`;
 
         if (resetKey !== lastReset) {
           const first = lastReset === null;
@@ -189,8 +260,9 @@ export async function* librarianStreamFrames(input: {
                 seq,
                 resetState:
                   conversation.resetState === "none" ? "none" : "resetting",
-                ...(conversation.resetState === "none" && conversation.segmentId
-                  ? { segmentId: conversation.segmentId }
+                ...(conversation.resetState === "none" &&
+                conversation.currentSegmentId
+                  ? { segmentId: conversation.currentSegmentId }
                   : {}),
               },
               seq,
@@ -211,6 +283,10 @@ export async function* librarianStreamFrames(input: {
           { ownerId: input.ownerId, availability: settings.availability },
           "[FIX:librarian-runner] settings change notified",
         );
+      }
+      if (change) {
+        yield sse({ type: "librarian.work", reason: change }, null);
+        lastFrameAt = Date.now();
       }
       const now = Date.now();
 

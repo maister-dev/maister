@@ -5,7 +5,16 @@ import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { Project, RunKind, ScratchDialogStatus } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import {
+  and,
+  asc,
+  countDistinct,
+  desc,
+  eq,
+  inArray,
+  isNull,
+  sql,
+} from "drizzle-orm";
 
 import {
   getActiveAgentExecutions,
@@ -44,6 +53,8 @@ const {
   projects,
   runs,
   scratchRuns,
+  taskLaunchIntents,
+  tasks,
   users,
   workspaces,
 } = schema;
@@ -111,13 +122,24 @@ export interface ProjectMemberView {
   isAdmin: boolean;
 }
 
+export type ProjectWorkspace = PortfolioWorkspace &
+  Readonly<{
+    task: { id: string; key: string; title: string; number: number } | null;
+    displayName: string;
+    attemptNumber: number | null;
+    archived: boolean;
+    onDisk: boolean;
+    runStatus: string;
+  }>;
+
 export interface ProjectPageData {
   project: Project;
   flows: ProjectFlow[];
   runners: ProjectRunner[];
   flowRunnerRemaps: ProjectFlowRunnerRemap[];
   members: ProjectMemberView[];
-  activeWorkspaces: PortfolioWorkspace[];
+  activeWorkspaces: ProjectWorkspace[];
+  executingCount: number;
   activeExecutions: ActiveAgentExecution[];
   defaultRunnerId: string | null;
   effectiveDefaultRunnerId: string | null;
@@ -292,6 +314,7 @@ export async function getProjectPageData(
     platformRuntimeRows,
     memberRows,
     activeRunRows,
+    executingRows,
   ] = await Promise.all([
     getActiveAgentExecutions(client, [project.id]),
     client
@@ -336,6 +359,12 @@ export async function getProjectPageData(
     client
       .select({
         runId: runs.id,
+        taskId: tasks.id,
+        taskNumber: tasks.number,
+        taskTitle: tasks.title,
+        attemptNumber: sql<
+          number | null
+        >`case when jsonb_typeof(${taskLaunchIntents.preparationIdentity}->'taskAttemptNumber') = 'number' then (${taskLaunchIntents.preparationIdentity}->>'taskAttemptNumber')::integer end`,
         status: runs.status,
         runKind: runs.runKind,
         agentKind: runs.agentKind,
@@ -357,10 +386,25 @@ export async function getProjectPageData(
         prHasConflicts: workspaces.prHasConflicts,
         startedAt: runs.startedAt,
         scratchDialogStatus: scratchRuns.dialogStatus,
+        scratchName: scratchRuns.name,
+        agentDisplayName: sql<
+          string | null
+        >`${runs.agentActivitySnapshot}->>'displayName'`,
       })
       .from(runs)
       .innerJoin(workspaces, eq(workspaces.runId, runs.id))
       .leftJoin(scratchRuns, eq(scratchRuns.runId, runs.id))
+      .leftJoin(
+        tasks,
+        and(eq(tasks.id, runs.taskId), eq(tasks.projectId, project.id)),
+      )
+      .leftJoin(
+        taskLaunchIntents,
+        and(
+          eq(taskLaunchIntents.id, runs.taskLaunchIntentId),
+          eq(taskLaunchIntents.runId, runs.id),
+        ),
+      )
       .where(
         and(
           eq(runs.projectId, project.id),
@@ -369,7 +413,11 @@ export async function getProjectPageData(
           isNull(workspaces.removedAt),
         ),
       )
-      .orderBy(desc(runs.startedAt)),
+      .orderBy(desc(runs.startedAt), desc(runs.id)),
+    client
+      .select({ count: countDistinct(runs.id) })
+      .from(runs)
+      .where(and(eq(runs.projectId, project.id), eq(runs.status, "Running"))),
   ]);
 
   const enabledRevisionIds = flowRows.flatMap((flow) =>
@@ -470,8 +518,27 @@ export async function getProjectPageData(
     activeRunRows.map((row) => row.runId),
   );
   const presence = await presenceForRows(activeRunRows);
-  const activeWorkspaces: PortfolioWorkspace[] = activeRunRows.map((row) => ({
+  const activeWorkspaces: ProjectWorkspace[] = activeRunRows.map((row) => ({
     runId: row.runId,
+    task:
+      row.taskId && row.taskNumber !== null && row.taskTitle !== null
+        ? {
+            id: row.taskId,
+            key: project.taskKey,
+            title: row.taskTitle,
+            number: row.taskNumber,
+          }
+        : null,
+    displayName:
+      row.scratchName ??
+      row.agentDisplayName ??
+      row.agentId ??
+      row.branch ??
+      row.runId,
+    attemptNumber: row.attemptNumber,
+    archived: row.archivedBranch !== null,
+    onDisk: row.worktreePath ? presence.get(row.worktreePath) === true : false,
+    runStatus: row.status,
     runKind: row.runKind as RunKind,
     branch: row.branch ?? row.agentId ?? "—",
     agentId: row.agentId ?? null,
@@ -539,6 +606,7 @@ export async function getProjectPageData(
     flowRunnerRemaps: projectFlowRunnerRemaps,
     members,
     activeWorkspaces,
+    executingCount: executingRows[0]?.count ?? 0,
     activeExecutions,
     defaultRunnerId: project.defaultRunnerId,
     effectiveDefaultRunnerId,

@@ -100,7 +100,9 @@ test("E2E-PKN-01 E2E-PKN-03 E2E-PKN-07: nested navigation keeps the original Run
   page,
 }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
-  await page.goto(`/runs/${fixture.anchor}?wb=files&file=README.md#inspect`);
+  await page.goto(
+    `/runs/${fixture.anchor}?wb=files&file=README.md&inspector=open#inspect`,
+  );
   await expect(page.getByTestId("orchestrator-run-subtree")).toHaveCount(0);
   const children = page
     .getByTestId("run-inspector-child-runs")
@@ -178,7 +180,9 @@ test("E2E-PKN-04 E2E-PKN-08 E2E-PKN-10: parent file, inspector and librarian dra
   page,
 }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
-  await page.goto(`/runs/${fixture.anchor}?wb=files&file=README.md`);
+  await page.goto(
+    `/runs/${fixture.anchor}?wb=files&file=README.md&inspector=open`,
+  );
   await page
     .getByTestId("run-inspector")
     .getByRole("tab", { name: "Flow", exact: true })
@@ -227,6 +231,12 @@ test("E2E-PKN-04 E2E-PKN-08 E2E-PKN-10: parent file, inspector and librarian dra
   await expect(peek(page)).toHaveCount(0);
   await expect(librarian).toBeHidden();
   await expect(trigger).toBeFocused();
+  await page
+    .getByTestId("run-shell-inspector")
+    .getByRole("button", {
+      name: "Close inspector",
+    })
+    .click();
   await page.getByTestId("librarian-trigger").click();
   await expect(librarian.locator("textarea")).toHaveValue(
     "Keep this unsubmitted draft",
@@ -293,7 +303,7 @@ test("E2E-PKN-02 E2E-PKN-11: Russian entry labels, result availability and contr
     { name: "NEXT_LOCALE", value: "ru", domain: "localhost", path: "/" },
   ]);
   await page.setViewportSize({ width: 767, height: 900 });
-  await page.goto(`/runs/${fixture.anchor}`);
+  await page.goto(`/runs/${fixture.anchor}?inspector=open`);
   const trigger = page
     .getByTestId("run-inspector-child-runs")
     .filter({ visible: true })
@@ -470,7 +480,9 @@ test("E2E-PKD-07 E2E-PKD-09: child-list requests retire on switch and close whil
     }, parent);
 
   try {
-    await page.goto(`/runs/${fixture.anchor}?peek=${fixture.child}`);
+    await page.goto(
+      `/runs/${fixture.anchor}?inspector=open&peek=${fixture.child}`,
+    );
     await expect(peek(page)).toContainText("Conversation of Researcher Alpha");
     await expect
       .poll(async () => (await signals(fixture.child)).at(-1))
@@ -556,13 +568,16 @@ test("E2E-PKD-07: late A responses cannot overwrite B or a newer A selection", a
     await route.fulfill({ response });
   });
   try {
-    await page.goto(`/runs/${fixture.anchor}`);
+    await page.goto(`/runs/${fixture.anchor}?inspector=open`);
     const list = page
       .getByTestId("run-inspector-child-runs")
       .filter({ visible: true });
 
     await list.locator(`[data-child-run-id="${fixture.child}"] a`).click();
     await expect.poll(() => intercepted).toBe(true);
+    await expect(
+      peek(page).getByRole("heading", { level: 2 }).first(),
+    ).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(peek(page)).toHaveCount(0);
     await list.locator(`[data-child-run-id="${fixture.sibling}"] a`).click();
@@ -669,7 +684,7 @@ test("E2E-PKN-04 E2E-PKN-10: an unsent parent HITL draft survives child navigati
   );
   try {
     await page.setViewportSize({ width: 1600, height: 1000 });
-    await page.goto(`/runs/${all.runId}`);
+    await page.goto(`/runs/${all.runId}?inspector=open`);
     const draft = page.getByRole("textbox", {
       name: "Review comments",
       exact: true,
@@ -1152,7 +1167,9 @@ test("E2E-PKD-07 E2E-PKN-12: post-completion parent publication refreshes indepe
     ]),
   );
   try {
-    await page.goto(`/runs/${fixture.anchor}?peek=${fixture.child}`);
+    await page.goto(
+      `/runs/${fixture.anchor}?inspector=open&peek=${fixture.child}`,
+    );
     await expect(peek(page)).toContainText("Conversation of Researcher Alpha");
     const result = page
       .locator('[data-testid="run-shell"]:visible')
@@ -1552,7 +1569,9 @@ test("E2E-PKD-07 E2E-PKN-12: an agent main Run receives a post-terminal result w
       fixture.child,
     ]),
   );
-  await page.goto(`/runs/${fixture.child}?peek=${fixture.grandchild}`);
+  await page.goto(
+    `/runs/${fixture.child}?inspector=open&peek=${fixture.grandchild}`,
+  );
   await expect(peek(page)).toContainText("Conversation of Analyst Gamma");
   const result = page
     .locator('[data-testid="run-shell"]:visible')
@@ -1656,7 +1675,7 @@ test("E2E-PKN-04 E2E-PKN-10: a tall inspector cannot clamp the parent scroll whe
   page,
 }) => {
   await page.setViewportSize({ width: 1600, height: 900 });
-  await page.goto(`/runs/${fixture.anchor}`);
+  await page.goto(`/runs/${fixture.anchor}?inspector=open`);
   const shell = page.locator('[data-testid="run-shell"]:visible');
   const transcript = shell.getByTestId("run-transcript-history");
   const list = shell.getByTestId("run-inspector-child-runs");

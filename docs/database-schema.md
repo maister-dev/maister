@@ -1769,6 +1769,10 @@ ALTER TABLE tasks ADD CONSTRAINT tasks_created_via_operation_uq UNIQUE (created_
 - `created_via_operation_id` is the result column of the creating librarian
   operation: a racing retry hits the unique and returns the existing task.
 
+### `0229_librarian_history`
+
+Adds nonunique indexes on `(conversation_id, created_at DESC NULLS LAST, id DESC NULLS LAST)` to `librarian_operations`, `librarian_cards` and `librarian_task_links`. Owner-scoped history and stream observations share this access path. The transactional index build preserves existing ledger rows and constraints.
+
 ### `0187_librarian_operations` (Designed — ADR-187, ADR-188)
 
 ```sql

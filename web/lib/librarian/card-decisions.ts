@@ -15,6 +15,7 @@ import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
   cardTarget,
   librarianCardProposalSchema,
+  matchesFrozenCardTarget,
   type LibrarianCardProposal,
 } from "@/lib/librarian/cards";
 import {
@@ -82,13 +83,7 @@ async function assertCardTargetUnchanged(
     throw changed();
   }
 
-  if (
-    target.revision !== card.targetRevision ||
-    Object.keys(target.target).length !== Object.keys(card.target).length ||
-    Object.entries(target.target).some(
-      ([key, value]) => card.target[key] !== value,
-    )
-  ) {
+  if (!matchesFrozenCardTarget(card, target)) {
     log.warn({ cardId: card.id, kind: card.kind }, "card target drifted");
     throw changed();
   }

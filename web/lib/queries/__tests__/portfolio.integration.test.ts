@@ -491,6 +491,12 @@ describe("portfolio queries (integration)", () => {
       new Date(endedAt.getTime() + gcAgeDays() * 86_400_000),
     );
 
+    const executingWithoutWorkspace = randomUUID();
+
+    await testDatabase.pool.query(
+      "INSERT INTO runs (id,project_id,run_kind,status,flow_version) VALUES ($1,$2,'flow','Running','v1')",
+      [executingWithoutWorkspace, project],
+    );
     const { getProjectBySlug, getProjectPageData } =
       await import("@/lib/queries/project");
     const projectRow = await getProjectBySlug(`proj-${project.slice(0, 8)}`);
@@ -499,6 +505,12 @@ describe("portfolio queries (integration)", () => {
     const page = await getProjectPageData(projectRow!);
 
     expect(page.activeWorkspaces.some((w) => w.runId === runId)).toBe(true);
+    expect(page.executingCount).toBe(1);
+    expect(
+      page.activeWorkspaces.some(
+        (workspace) => workspace.runId === executingWithoutWorkspace,
+      ),
+    ).toBe(false);
 
     // Attention counters are unchanged: the run is not a crashed decision and
     // adds nothing to the decisions count.

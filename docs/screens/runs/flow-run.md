@@ -563,3 +563,7 @@ Descendant entries open the [read-only peek](child-run-peek.md); interactive act
 An agent-driven cron run retains its claimed request independently of task.prompt. Request-bearing Flow admission pins the checked revision and refuses any graph with a successful path that avoids a primary AI action. Supported node, AI-gate and consensus prompts receive literal input after ordinary rendering; permission-resume prompts and owned replay keep their existing contract. Execution history and the inspector expose the original text only with readRepoFiles, through the [scheduled input contract](../../system-analytics/scheduled-agent-requests.md).
 
 The Run layout follows the [Flow verification contract](../../system-analytics/readiness.md#run-page-verification-implemented).
+
+## Package 2 presentation (Implemented)
+
+The initial viewport shows the Run outcome and its next applicable action. Results and checks provides recorded verification and retained output even when execution fails.

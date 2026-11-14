@@ -1634,6 +1634,7 @@ table librarian_cards {
   created_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
+    (conversation_id, created_at, id) [name: 'librarian_cards_history_idx']
     conversation_id [name: 'librarian_cards_pending_idx']
 
 
@@ -1775,6 +1776,7 @@ table librarian_operations {
 
   indexes {
     (conversation_id, idempotency_key) [name: 'librarian_operations_key_uq', unique]
+    (conversation_id, created_at, id) [name: 'librarian_operations_history_idx']
     (segment_id, request_digest) [name: 'librarian_operations_segment_digest_idx']
 
 
@@ -1823,6 +1825,7 @@ table librarian_task_links {
   created_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
+    (conversation_id, created_at, id) [name: 'librarian_task_links_history_idx']
     task_id [name: 'librarian_task_links_task_idx']
 
   }

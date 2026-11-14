@@ -26,7 +26,32 @@ describe("run-query-state", () => {
       node: "n1",
       inspector: "closed",
       flow: "fullscreen",
+      evidenceView: "list",
+      evidenceItem: null,
     });
+  });
+
+  it("keeps legacy graph filters and explicit list selection across workbench changes", () => {
+    const initial =
+      "wb=evidence&kind=gate&state=failed&node=review&file=README.md&peek=child&evidenceItem=gate%3Ag1";
+
+    expect(parseRunQueryState(initial)).toMatchObject({
+      evidenceView: "graph",
+      evidenceItem: "gate:g1",
+    });
+    const list = buildRunSearchParams(initial, {
+      evidenceView: "list",
+      inspector: "open",
+    });
+
+    expect(parseRunQueryState(list)).toMatchObject({
+      evidenceView: "list",
+      evidenceItem: "gate:g1",
+      node: "review",
+      file: "README.md",
+      inspector: "open",
+    });
+    expect(list.get("peek")).toBe("child");
   });
 
   it("preserves the dedicated Flow review workspace state", () => {

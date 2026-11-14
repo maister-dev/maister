@@ -37,7 +37,11 @@ test("scratch detail lands on the conversation with an enabled composer", async 
 }) => {
   const fx = loadScratchDetailFixture();
 
+  await page.setViewportSize({ width: 1366, height: 768 });
   await page.goto(`/scratch-runs/${fx.scratchRunId}`);
+  await expect(
+    page.getByTestId("run-outcome").filter({ visible: true }),
+  ).toBeInViewport();
 
   // The conversation is the primary center; the seeded transcript renders.
   const conversation = page.locator('[data-testid="scratch-conversation"]');
@@ -127,7 +131,8 @@ test("scratch inspector toggles and surfaces change size + actions", async ({
 }) => {
   const fx = loadScratchDetailFixture();
 
-  await page.goto(`/scratch-runs/${fx.scratchRunId}`);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(`/scratch-runs/${fx.scratchRunId}?inspector=open`);
 
   await expect(
     page.getByRole("main").locator('[data-testid="run-shell"]'),

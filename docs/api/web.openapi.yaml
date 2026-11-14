@@ -1669,6 +1669,57 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    post:
+      tags: [runs]
+      operationId: postInteractiveRunLaunchOptions
+      summary: (Implemented) Preview a browser launch with a revision-scoped runner draft
+      description: |
+        Active session and same origin. Read-only. Every response carries
+        `Cache-Control: no-store`. Accepts up to
+        64 KiB of JSON. The project comes from the authorized task. The
+        selected revision, declared slots, catalog and settings token share
+        one database observation. The token grants no launch authority.
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InteractiveRunLaunchPreview" }
+            example:
+              taskId: task-1
+              flowId: flow-1
+              flowRunnerDraft:
+                flowRevisionId: revision-1
+                slots: { "session:reviewer": runner-2 }
+      responses:
+        "200":
+          description: Selected and enabled revision, effective runner slots, readiness and settings token.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InteractiveRunLaunchPreviewResult" }
+        "400":
+          description: Invalid body, incompatible draft shape or request limit exceeded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskLaunchError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Scoped resource is unavailable or the selected revision has changed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskLaunchError" }
+        "500":
+          description: Unexpected failure. Uses a redacted error body. Typed failures may carry a launch reason.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: Required launch evidence could not be read.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskLaunchError" }
+
   /api/projects/{slug}/settings:
     patch:
       tags: [projects]
@@ -2005,6 +2056,10 @@ paths:
         are no-store. Immutable actor/project-bound intents guard retries. See
         ../system-analytics/project-config-persistence.md.
       parameters:
+        - name: view
+          in: query
+          schema: { type: string, enum: [workflow] }
+          description: Designed. Requires editSettings and readRepoFiles. Returns independent checkout and owned-operation observations.
         - name: slug
           in: path
           required: true
@@ -2019,7 +2074,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ConfigPersistenceStatus"
+                oneOf:
+                  - $ref: "#/components/schemas/ConfigPersistenceStatus"
+                  - $ref: "#/components/schemas/ConfigPersistenceWorkflow"
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -7719,7 +7776,7 @@ paths:
   /api/runs/{runId}/artifacts/{artifactId}/payload:
     get:
       tags: [runs]
-      summary: (M12) Fetch the raw payload for one artifact
+      summary: (Implemented, M12) Fetch or preview one artifact payload
       description: |
         Requires project membership at `viewer` or above; an `execution-object`
         locator additionally requires `readRepoFiles` (`member`), the same
@@ -7743,6 +7800,12 @@ paths:
         `Cache-Control: private, no-store`; an object's catalogued MIME is never
         reflected. A locator outside its authorized binding is not found (404),
         never served.
+        `view=preview` applies the same authorization and errors. The server
+        returns at most 65,536 bytes from the start, with an explicit truncation
+        header. Structured values use compact JSON text and a clipped prefix may
+        be incomplete JSON. Files and Git output use bounded reads. Execution
+        objects use a server-owned verified range and preserve opaque bytes.
+        The host verifies the sealed representation before returning the range.
       operationId: getRunArtifactPayload
       parameters:
         - name: runId
@@ -7753,14 +7816,22 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - name: view
+          in: query
+          description: Omit to download the original. Supply once to fetch a bounded preview.
+          schema: { type: string, enum: [preview] }
         - name: Range
           in: header
           required: false
-          description: Single `bytes=start-end` range for an execution-object locator only.
+          description: Single `bytes=start-end` range for a raw execution-object download. Omit for a preview.
           schema: { type: string, pattern: "^bytes=[0-9]+-[0-9]*$" }
       responses:
         "200":
-          description: Raw artifact payload.
+          description: Raw artifact payload or bounded preview.
+          headers:
+            X-Artifact-Preview-Truncated:
+              description: Present for previews. True if the source exceeded the byte budget.
+              schema: { type: string, enum: ["true", "false"] }
           content:
             text/plain:
               schema: { type: string }
@@ -7779,6 +7850,21 @@ paths:
                     reasons:
                       - all required checks passed
                     recommendedAction: merge
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "206":
+          description: Verified byte range for a raw execution-object download.
+          headers:
+            Content-Range:
+              schema: { type: string }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "400":
+          description: Unsupported or repeated view selector, or Range supplied for a preview.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -7820,6 +7906,11 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "422":
           description: The execution object's representation or verified bytes failed their integrity check (`runtime_object_integrity_mismatch`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "500":
+          description: The payload could not be read.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -17900,12 +17991,20 @@ paths:
         Never refused for a disabled librarian or a missing runner: the
         response says so in `availability`, and nothing is deleted.
       operationId: getLibrarianConversation
+      parameters:
+        - name: view
+          in: query
+          schema: { type: string, enum: [work] }
+          description: (Implemented) Current work and the oldest eligible attention items, with a count before the display limit.
       responses:
         "200":
           description: The caller's conversation state.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/LibrarianConversationView" }
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/LibrarianConversationView"
+                  - $ref: "#/components/schemas/LibrarianWorkView"
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
     patch:
@@ -17952,6 +18051,10 @@ paths:
         `turnVariant: explain` and `body: null`; the UI shows a localized label.
       operationId: listLibrarianMessages
       parameters:
+        - name: view
+          in: query
+          schema: { type: string, enum: [work] }
+          description: (Implemented) Message page with scoped receipt attachments.
         - name: beforeSeq
           in: query
           required: false
@@ -17965,7 +18068,10 @@ paths:
           description: One page of messages.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/LibrarianMessagePage" }
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/LibrarianMessagePage"
+                  - $ref: "#/components/schemas/LibrarianWorkMessagePage"
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/Config" }
@@ -18287,6 +18393,49 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/librarian/history/actions:
+    get:
+      tags: [librarian]
+      operationId: listLibrarianActionHistory
+      summary: Read a page of the session owner's actions, tasks or attention
+      description: |
+        No-store. The read never creates a conversation. Authorization is
+        checked per target on every read. The cursor carries no authority.
+        A clear invalidates cursors from the previous history generation.
+        The oldest eligible attention item sorts first. History sorts newest first.
+        A pending card contributes to attention only while its authorization and
+        frozen target revision are current. A stale card remains in actions with
+        its recorded outcome and without a confirmation.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: collection
+          in: query
+          schema: { type: string, enum: [actions, tasks, attention], default: actions }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - name: cursor
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 1024 }
+      responses:
+        "200":
+          description: Page of authorized history or attention.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LibrarianActionHistoryPage" }
+              example: { historyGeneration: 2, items: [], nextCursor: null }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Cursor does not address the session owner's conversation.
+        "409":
+          description: Cursor belongs to an earlier history generation.
+        "422": { $ref: "#/components/responses/Config" }
+        "500":
+          description: Unexpected read failure.
+        "503":
+          description: History could not be read.
 
   /api/librarian/history/clear-preview:
     get:
@@ -18989,7 +19138,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/TaskLaunchBody"
+              $ref: "#/components/schemas/InteractiveTaskLaunchBody"
       responses:
         "202":
           description:
@@ -19075,7 +19224,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/TaskLaunchBody"
+              $ref: "#/components/schemas/InteractiveTaskLaunchBody"
       responses:
         "202":
           description:
@@ -19338,7 +19487,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/TaskLaunchReplaceBody"
+              $ref: "#/components/schemas/InteractiveTaskLaunchReplaceBody"
       responses:
         "202":
           description: Successor receipt with supersedesIntentId. Old cancellation remains retained.
@@ -19778,6 +19927,47 @@ components:
                 existing:
                   $ref: "#/components/schemas/TaskLaunchConflictReference"
       description: A scoped reservation conflict identifies earlier delivery work and its original basis. A deterministic strict-enforcement refusal identifies the compiled node and its resolved runner capability without raw error text or source contents; no intent or Run is accepted. These selectors grant no additional access. Asset-digest and capture refusals use PRECONDITION (409) with launch_flow_assets_changed, launch_capabilities_changed or launch_agent_package_changed; pinned or captured agent-definition read failures use launch_agent_definition_changed. Refusal before acceptance creates no intent or Run. These readers retain native I/O causes internally and never return filesystem paths, contents or raw error text.
+    FlowRunnerDraft:
+      type: object
+      additionalProperties: false
+      required: [flowRevisionId]
+      anyOf:
+        - required: [primaryRunnerId]
+        - required: [slots]
+      properties:
+        flowRevisionId: &runnerDraftIdentifier
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: '^[^\x00-\x1f\x7f]+$'
+        primaryRunnerId: *runnerDraftIdentifier
+        slots:
+          type: object
+          minProperties: 1
+          maxProperties: 64
+          x-propertyNames: *runnerDraftIdentifier
+          additionalProperties: *runnerDraftIdentifier
+    InteractiveRunLaunchPreview:
+      type: object
+      additionalProperties: false
+      required: [taskId]
+      properties:
+        taskId: { type: string, minLength: 1, maxLength: 256 }
+        flowId: { type: string, minLength: 1, maxLength: 256 }
+        relaunchOfRunId: { type: string, minLength: 1, maxLength: 256 }
+        packageVersions:
+          type: object
+          maxProperties: 64
+          additionalProperties: { type: string, enum: [keep, try_once] }
+        flowRunnerDraft: { $ref: "#/components/schemas/FlowRunnerDraft" }
+    InteractiveRunLaunchPreviewResult:
+      type: object
+      additionalProperties: false
+      required: [options, selectedFlowRevisionId, enabledFlowRevisionId]
+      properties:
+        options: { $ref: "#/components/schemas/TaskRunLaunchOptionsResponse" }
+        selectedFlowRevisionId: { type: string, nullable: true }
+        enabledFlowRevisionId: { type: string, nullable: true }
     TaskLaunchBody:
       type: object
       additionalProperties: false
@@ -19850,6 +20040,94 @@ components:
           additionalProperties:
             type: string
             enum: [keep, try_once]
+      anyOf:
+        - type: object
+          properties:
+            agentId: { not: {} }
+            workspace: { not: {} }
+        - type: object
+          required: [agentId]
+          properties:
+            flowId: { not: {} }
+            agentId: { type: string }
+    InteractiveTaskLaunchBody:
+      type: object
+      additionalProperties: false
+      required:
+        - taskId
+        - expectedTaskRevision
+        - expectedSettingsToken
+      properties:
+        taskId:
+          type: string
+          minLength: 1
+          maxLength: 256
+        expectedTaskRevision:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        expectedSettingsToken:
+          type: string
+          minLength: 1
+          maxLength: 256
+        flowId:
+          type: string
+          minLength: 1
+          maxLength: 256
+        agentId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: An actual attached code-delivery agent target; cannot be combined with flowId.
+        workspace:
+          type: string
+          enum: [none, repo_read, worktree]
+          description: Optional agent workspace selection; requires agentId and remains subject to the definition and runner compatibility checks.
+        relaunchOfRunId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Scoped settled source run for a new decision; retains scheduled and evaluation lineage, while task input is captured fresh. Include this selector when obtaining the settings token.
+        runnerId:
+          type: string
+          minLength: 1
+          maxLength: 256
+        baseBranch:
+          type: string
+          minLength: 1
+          maxLength: 256
+        baseCommit:
+          type: string
+          minLength: 7
+          maxLength: 64
+          pattern: ^[a-fA-F0-9]+$
+        targetBranch:
+          type: string
+          minLength: 1
+          maxLength: 256
+        deliveryPolicy:
+          $ref: "#/components/schemas/DeliveryPolicy"
+        executionPolicy:
+          $ref: "#/components/schemas/ExecutionPolicy"
+        autoPromote:
+          type: boolean
+        brainContext:
+          type: boolean
+          nullable: true
+        packageVersions:
+          type: object
+          maxProperties: 64
+          x-propertyNames: { type: string, minLength: 1, maxLength: 256 }
+          description: Existing immutable cut choices only; keys are package install identifiers of 1 to 256 characters. Adopt or create a cut through explicit setup before refreshing this preview.
+          additionalProperties:
+            type: string
+            enum: [keep, try_once]
+        flowRunnerDraft: { $ref: "#/components/schemas/FlowRunnerDraft" }
+      not:
+        anyOf:
+          - required: [flowRunnerDraft, runnerId]
+          - required: [flowRunnerDraft, agentId]
+          - required: [flowRunnerDraft, workspace]
       anyOf:
         - type: object
           properties:
@@ -19947,6 +20225,99 @@ components:
           type: integer
           minimum: 1
           maximum: 9007199254740991
+      anyOf:
+        - type: object
+          properties:
+            agentId: { not: {} }
+            workspace: { not: {} }
+        - type: object
+          required: [agentId]
+          properties:
+            flowId: { not: {} }
+            agentId: { type: string }
+    InteractiveTaskLaunchReplaceBody:
+      type: object
+      additionalProperties: false
+      required:
+        - taskId
+        - expectedTaskRevision
+        - expectedSettingsToken
+        - expectedStateVersion
+      properties:
+        taskId:
+          type: string
+          minLength: 1
+          maxLength: 256
+        expectedTaskRevision:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        expectedSettingsToken:
+          type: string
+          minLength: 1
+          maxLength: 256
+        flowId:
+          type: string
+          minLength: 1
+          maxLength: 256
+        agentId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: An actual attached code-delivery agent target; cannot be combined with flowId.
+        workspace:
+          type: string
+          enum: [none, repo_read, worktree]
+          description: Optional agent workspace selection; requires agentId and remains subject to the definition and runner compatibility checks.
+        relaunchOfRunId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Scoped settled source run for a new decision; retains scheduled and evaluation lineage, while task input is captured fresh. Include this selector when obtaining the settings token.
+        runnerId:
+          type: string
+          minLength: 1
+          maxLength: 256
+        baseBranch:
+          type: string
+          minLength: 1
+          maxLength: 256
+        baseCommit:
+          type: string
+          minLength: 7
+          maxLength: 64
+          pattern: ^[a-fA-F0-9]+$
+        targetBranch:
+          type: string
+          minLength: 1
+          maxLength: 256
+        deliveryPolicy:
+          $ref: "#/components/schemas/DeliveryPolicy"
+        executionPolicy:
+          $ref: "#/components/schemas/ExecutionPolicy"
+        autoPromote:
+          type: boolean
+        brainContext:
+          type: boolean
+          nullable: true
+        packageVersions:
+          type: object
+          maxProperties: 64
+          x-propertyNames: { type: string, minLength: 1, maxLength: 256 }
+          description: Existing immutable cut choices only; keys are package install identifiers of 1 to 256 characters. Adopt or create a cut through explicit setup before refreshing this preview.
+          additionalProperties:
+            type: string
+            enum: [keep, try_once]
+        expectedStateVersion:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        flowRunnerDraft: { $ref: "#/components/schemas/FlowRunnerDraft" }
+      not:
+        anyOf:
+          - required: [flowRunnerDraft, runnerId]
+          - required: [flowRunnerDraft, agentId]
+          - required: [flowRunnerDraft, workspace]
       anyOf:
         - type: object
           properties:
@@ -24995,6 +25366,8 @@ components:
               disabledReasonMessage: { type: string, nullable: true }
               isTaskDefault: { type: boolean }
         selectedFlowId: { type: string }
+        enabledFlowRevisionId: { type: string, nullable: true }
+        primarySessionName: { type: string }
         selectedFlowRevisionId: { type: string, nullable: true }
         canConfigureRunnerBindings:
           type: boolean
@@ -31077,6 +31450,7 @@ components:
           createdAt,
         ]
       properties:
+        historyGeneration: { type: integer, minimum: 0, nullable: true }
         id: { type: string, format: uuid }
         runId:
           type: string
@@ -31524,6 +31898,7 @@ components:
       additionalProperties: false
       required: [messages, hasMore]
       properties:
+        historyGeneration: { type: integer, minimum: 0, nullable: true }
         messages:
           type: array
           maxItems: 100
@@ -31563,6 +31938,126 @@ components:
           type: array
           description: The current segment's operations still `admitted` or `unknown`.
           items: { $ref: "#/components/schemas/LibrarianOperationReceipt" }
+
+    LibrarianHistoryTarget:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [state, href, label]
+          properties:
+            state: { type: string, enum: [visible] }
+            href: { type: string }
+            label: { type: string }
+            title: { type: string }
+        - type: object
+          additionalProperties: false
+          required: [state]
+          properties:
+            state: { type: string, enum: [unavailable] }
+    LibrarianHistoryEntry:
+      type: object
+      additionalProperties: false
+      required: [id, sourceKind, kind, outcome, createdAt, targets]
+      properties:
+        id: { type: string }
+        sourceKind: { type: string, enum: [operation, card, task] }
+        kind: { type: string }
+        outcome: { type: string }
+        createdAt: { type: string, format: date-time }
+        settledAt: { type: string, format: date-time, nullable: true }
+        targets:
+          type: array
+          maxItems: 2
+          items: { $ref: "#/components/schemas/LibrarianHistoryTarget" }
+        confirmation: { $ref: "#/components/schemas/LibrarianHistoryConfirmation" }
+    LibrarianHistoryConfirmation:
+      type: object
+      additionalProperties: false
+      description: An authorized pending decision projected for the owner. Other history entries omit this field.
+      required: [id, kind, status, action, available, target, targetRevision, payload, currentPrompt, proposedPrompt, hitlPrompt, runBranch, expiresAt]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [statement_proposal, confirmation, memory_suggestion] }
+        status: { type: string, enum: [pending] }
+        action: { type: string, enum: [statement_accept, memory_suggest, hitl_respond, run_promote, run_discard] }
+        available: { type: boolean, enum: [true] }
+        target:
+          type: object
+          additionalProperties: false
+          properties:
+            runId: { type: string }
+        targetRevision: { type: string, nullable: true }
+        payload:
+          type: object
+          description: The validated action-specific proposal for the authorized target.
+          required: [action]
+          properties:
+            action: { type: string, enum: [statement_accept, memory_suggest, hitl_respond, run_promote, run_discard] }
+        currentPrompt: { type: string, nullable: true }
+        proposedPrompt: { type: string, nullable: true }
+        hitlPrompt: { type: string, nullable: true }
+        runBranch: { type: string, nullable: true }
+        expiresAt: { type: string, format: date-time }
+    LibrarianActionHistoryPage:
+      type: object
+      additionalProperties: false
+      required: [historyGeneration, items, nextCursor]
+      properties:
+        historyGeneration: { type: integer, minimum: 0, nullable: true }
+        items:
+          type: array
+          maxItems: 50
+          items: { $ref: "#/components/schemas/LibrarianHistoryEntry" }
+        nextCursor: { type: string, maxLength: 1024, nullable: true }
+    LibrarianWorkView:
+      type: object
+      additionalProperties: false
+      required: [conversation, segment, indicator, availability, queuedMessages, activeTurn, currentWork, attention]
+      properties:
+        conversation: { $ref: "#/components/schemas/LibrarianConversation" }
+        segment: { $ref: "#/components/schemas/LibrarianSegment" }
+        indicator: { $ref: "#/components/schemas/LibrarianIndicator" }
+        availability: { $ref: "#/components/schemas/LibrarianAvailability" }
+        queuedMessages:
+          type: array
+          items: { $ref: "#/components/schemas/LibrarianMessage" }
+        activeTurn:
+          allOf:
+            - $ref: "#/components/schemas/LibrarianTurn"
+          nullable: true
+        currentWork:
+          type: array
+          maxItems: 20
+          items: { $ref: "#/components/schemas/LibrarianHistoryEntry" }
+        attention:
+          type: object
+          additionalProperties: false
+          required: [count, items]
+          properties:
+            count: { type: integer, minimum: 0 }
+            items:
+              type: array
+              maxItems: 20
+              items: { $ref: "#/components/schemas/LibrarianHistoryEntry" }
+    LibrarianWorkMessagePage:
+      type: object
+      additionalProperties: false
+      required: [historyGeneration, currentSegmentId, messages, hasMore, receiptAttachments]
+      properties:
+        historyGeneration: { type: integer, minimum: 0, nullable: true }
+        currentSegmentId: { type: string, nullable: true }
+        messages:
+          type: array
+          maxItems: 100
+          items: { $ref: "#/components/schemas/LibrarianMessage" }
+        hasMore: { type: boolean }
+        receiptAttachments:
+          type: object
+          maxProperties: 100
+          additionalProperties:
+            type: array
+            maxItems: 10
+            items: { $ref: "#/components/schemas/LibrarianHistoryEntry" }
 
     LibrarianPostMessageBody:
       type: object
@@ -31863,6 +32358,56 @@ components:
           type: string
           format: uuid
           description: Latest accepted or no-op operation owned by the current actor; an active local publication takes precedence, followed by a pending or unknown own push on its committed parent. A locator only; receipt access rechecks the stronger permissions. Omitted for other actors.
+    ConfigPersistenceWorkflow:
+      type: object
+      additionalProperties: false
+      required: [checkout, operation]
+      properties:
+        checkout:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [state, status]
+              properties:
+                state: { type: string, enum: [observed] }
+                status: { $ref: "#/components/schemas/ConfigPersistenceStatus" }
+            - type: object
+              additionalProperties: false
+              required: [state]
+              properties:
+                state: { type: string, enum: [unavailable] }
+        operation:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [state, operationId, localState, pushState, cleanupState, commitSha]
+              properties:
+                state: { type: string, enum: [available] }
+                operationId: { type: string, format: uuid }
+                localState:
+                  type: string
+                  enum: [previewed, preparing, prepared, publishing, committed, noop, stale, failed, recovery_required]
+                pushState:
+                  type: string
+                  enum: [not_requested, previewed, pending, succeeded, failed, unknown, stale]
+                cleanupState: { type: string, enum: [pending, complete, retained] }
+                reason: { $ref: "#/components/schemas/ConfigPersistenceReason" }
+                cleanupReason: { type: string, enum: [unexpected_private_content, cleanup_failed, operation_busy, recovery_required, authority_changed] }
+                commitSha: { type: string, nullable: true }
+            - type: object
+              additionalProperties: false
+              required: [state]
+              properties:
+                state: { type: string, enum: [none, unavailable] }
+      example:
+        checkout: { state: unavailable }
+        operation:
+          state: available
+          operationId: 3d6b2aa0-a61c-4e38-b229-fc81d66aa94f
+          localState: committed
+          pushState: unknown
+          cleanupState: complete
+          commitSha: 0b94166e410b05f98ee66b258ee9bed38ef4dd3f
     ConfigPersistenceEmptyBody:
       type: object
       additionalProperties: false

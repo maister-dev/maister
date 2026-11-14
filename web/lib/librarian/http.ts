@@ -3,7 +3,8 @@ import "server-only";
 import { NextResponse } from "next/server";
 import pino from "pino";
 
-import { isMaisterError } from "@/lib/errors";
+import { queryErrorDiagnostics } from "@/lib/db/pg-error";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 
 const log = pino({
   name: "librarian.http",
@@ -51,10 +52,24 @@ export function librarianErrorResponse(
       { status },
     );
   }
-  log.error(
-    { route, err: err instanceof Error ? err.message : String(err) },
-    "librarian route unhandled error",
-  );
+  const diagnostics = queryErrorDiagnostics(err);
+
+  log.error({ route, ...diagnostics }, "librarian route unhandled error");
+  if (
+    diagnostics.sqlState &&
+    (diagnostics.sqlState.startsWith("08") ||
+      ["53300", "57014", "57P01", "57P02", "57P03"].includes(
+        diagnostics.sqlState,
+      ))
+  ) {
+    return NextResponse.json(
+      {
+        code: "EXECUTOR_UNAVAILABLE",
+        message: "Librarian data is unavailable.",
+      },
+      { status: 503 },
+    );
+  }
 
   return NextResponse.json(
     { code: "CRASH", message: "internal error" },
@@ -64,6 +79,14 @@ export function librarianErrorResponse(
 
 export function invalidBody(message: string): NextResponse {
   return NextResponse.json({ code: "CONFIG", message }, { status: 422 });
+}
+
+export function librarianWorkRequested(params?: URLSearchParams): boolean {
+  const views = params?.getAll("view") ?? [];
+
+  if (!views.length) return false;
+  if (views.length === 1 && views[0] === "work") return true;
+  throw new MaisterError("CONFIG", "Invalid Librarian read view.");
 }
 
 const SEQ = /^(0|[1-9][0-9]{0,18})$/;

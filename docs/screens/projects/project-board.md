@@ -381,3 +381,7 @@ cancel reasons, the launch-hold reason — to `taskDetail`, with EN + RU parity.
   `web/lib/queries/board.ts`.
 
 New task follows the [modal interaction contract](../../system-analytics/tasks.md#new-task-modal-implemented).
+
+## Package 2 presentation (Implemented)
+
+The project header exposes tasks before retained work details. Open Runs and working copies for grouped attempts and individual workbench links.

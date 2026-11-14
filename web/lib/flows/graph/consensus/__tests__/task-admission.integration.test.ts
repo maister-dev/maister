@@ -5,10 +5,12 @@ import { randomUUID } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import { NextRequest } from "next/server";
 import { eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 
+import { POST as previewLaunch } from "@/app/api/runs/launch-options/route";
 import {
   flows,
   flowRevisions,
@@ -146,7 +148,7 @@ afterEach(async () => {
   }
 });
 
-async function runningConsensusParent() {
+async function runningConsensusParent(oneRunRunnerId?: string) {
   const taskId = randomUUID();
   const [flow] = await database.db
     .select()
@@ -205,13 +207,56 @@ async function runningConsensusParent() {
     flowId: fixture.flowId,
     runnerId: fixture.runnerId,
   });
+  const flowRunnerDraft = oneRunRunnerId
+    ? {
+        flowRevisionId: flow.enabledRevisionId!,
+        slots: {
+          "consensus:decide:architect": oneRunRunnerId,
+          "consensus:decide:synthesizer": oneRunRunnerId,
+        },
+      }
+    : undefined;
+  let expectedSettingsToken: string;
+
+  if (flowRunnerDraft) {
+    const response = await previewLaunch(
+      new NextRequest("http://localhost/api/runs/launch-options", {
+        method: "POST",
+        headers: {
+          Origin: "http://localhost",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ taskId, flowRunnerDraft }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const result = await response.json();
+
+    expect(result.options.runnerSlots).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          slotKey: "consensus:decide:architect",
+          runnerId: oneRunRunnerId,
+        }),
+        expect.objectContaining({
+          slotKey: "consensus:decide:synthesizer",
+          runnerId: oneRunRunnerId,
+        }),
+      ]),
+    );
+    expectedSettingsToken = result.options.settingsToken;
+  } else {
+    expectedSettingsToken = await taskLaunchSettingsToken(database.db, taskId);
+  }
   const accepted = await acceptInteractiveTaskLaunch(
     database.db,
     await interactiveTaskLaunchPrincipal(),
     {
       taskId,
       expectedTaskRevision: 0,
-      expectedSettingsToken: await taskLaunchSettingsToken(database.db, taskId),
+      expectedSettingsToken,
+      ...(flowRunnerDraft ? { flowRunnerDraft } : {}),
       autoPromote: false,
     },
     randomUUID(),
@@ -241,18 +286,18 @@ async function runningConsensusParent() {
 }
 
 it("consensus roles and real drafts retain the accepted runner after a binding changes and fail closed when that runner changes", async () => {
-  const { taskId, parentRunId, node, flow, participants } =
-    await runningConsensusParent();
-  const replacementRunnerId = randomUUID();
+  const oneRunRunnerId = randomUUID();
 
   await database.db
     .insert(platformAcpRunners)
     .values(
       testPlatformRunnerRow(
-        replacementRunnerId,
+        oneRunRunnerId,
         "codex",
       ) as typeof platformAcpRunners.$inferInsert,
     );
+  const { taskId, parentRunId, node, flow, participants } =
+    await runningConsensusParent(oneRunRunnerId);
   const bindingIds = [randomUUID(), randomUUID()];
 
   for (const [index, roleId] of ["architect", "synthesizer"].entries())
@@ -261,7 +306,7 @@ it("consensus roles and real drafts retain the accepted runner after a binding c
       projectId: fixture.projectId,
       flowRevisionId: flow.enabledRevisionId!,
       slotKey: `consensus:decide:${roleId}`,
-      mappedRunnerId: replacementRunnerId,
+      mappedRunnerId: fixture.runnerId,
       status: "Mapped",
     });
   const roleContext = {
@@ -280,7 +325,7 @@ it("consensus roles and real drafts retain the accepted runner after a binding c
   try {
     const runtime = await resolveConsensusRoleRuntime(roleContext);
 
-    expect(runtime.resolution.runnerId).toBe(fixture.runnerId);
+    expect(runtime.resolution.runnerId).toBe(oneRunRunnerId);
     await expect(
       resolveConsensusRoleRuntime({
         ...roleContext,
@@ -311,7 +356,7 @@ it("consensus roles and real drafts retain the accepted runner after a binding c
       .from(runSessions)
       .where(eq(runSessions.runId, result[0].runId));
 
-    expect(session.runnerId).toBe(fixture.runnerId);
+    expect(session.runnerId).toBe(oneRunRunnerId);
     expect(
       (
         await resolveConsensusRoleRuntime({
@@ -319,11 +364,11 @@ it("consensus roles and real drafts retain the accepted runner after a binding c
           parentRunId: result[0].runId,
         })
       ).resolution.runnerId,
-    ).toBe(fixture.runnerId);
+    ).toBe(oneRunRunnerId);
     await database.db
       .update(platformAcpRunners)
       .set({ enabled: false })
-      .where(eq(platformAcpRunners.id, fixture.runnerId));
+      .where(eq(platformAcpRunners.id, oneRunRunnerId));
     await expect(
       resolveConsensusRoleRuntime(roleContext),
     ).rejects.toMatchObject({
@@ -333,7 +378,7 @@ it("consensus roles and real drafts retain the accepted runner after a binding c
     await database.db
       .update(platformAcpRunners)
       .set({ enabled: true, model: "changed-after-acceptance" })
-      .where(eq(platformAcpRunners.id, fixture.runnerId));
+      .where(eq(platformAcpRunners.id, oneRunRunnerId));
     await expect(
       resolveConsensusRoleRuntime(roleContext),
     ).rejects.toMatchObject({
@@ -344,7 +389,7 @@ it("consensus roles and real drafts retain the accepted runner after a binding c
     await database.db
       .update(platformAcpRunners)
       .set({ enabled: true, model: "gpt-5-codex" })
-      .where(eq(platformAcpRunners.id, fixture.runnerId));
+      .where(eq(platformAcpRunners.id, oneRunRunnerId));
     for (const id of bindingIds)
       await database.db
         .delete(flowRunnerRemaps)

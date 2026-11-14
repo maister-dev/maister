@@ -2,12 +2,20 @@ import "server-only";
 
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 
+import {
+  projectRunResultsAndChecks,
+  type RunResultsAndChecks,
+} from "./run-results-and-checks";
+
+import { resolveManifest } from "@/lib/flows/graph/current-node-kind";
+import { checksFromSnapshot } from "@/lib/runs/execution-policy";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 
-const { nodeAttempts, gateResults, artifactInstances, hitlRequests } = schema;
+const { nodeAttempts, gateResults, artifactInstances, hitlRequests, runs } =
+  schema;
 
 export type EvidenceNodeKind =
   "task-input" | "node-attempt" | "artifact" | "gate" | "decision";
@@ -41,8 +49,27 @@ export async function buildEvidenceGraph(
   runId: string,
   db?: NodePgDatabase<typeof schema>,
 ): Promise<EvidenceGraph> {
-  const client: NodePgDatabase<typeof schema> = db ?? getDb();
+  return (await readRunEvidence(runId, db)).graph;
+}
 
+export async function readRunEvidence(
+  runId: string,
+  db?: NodePgDatabase<typeof schema>,
+): Promise<{ graph: EvidenceGraph; results: RunResultsAndChecks }> {
+  const client: NodePgDatabase<typeof schema> = db ?? getDb();
+  const [run] = await client
+    .select({
+      flowRevisionId: runs.flowRevisionId,
+      executionPolicy: runs.executionPolicy,
+    })
+    .from(runs)
+    .where(eq(runs.id, runId));
+  const manifest = run?.flowRevisionId
+    ? await resolveManifest(client, {
+        flowRevisionId: run.flowRevisionId,
+        flowId: null,
+      })
+    : null;
   const attemptRows = await client
     .select({
       id: nodeAttempts.id,
@@ -51,6 +78,9 @@ export async function buildEvidenceGraph(
       attempt: nodeAttempts.attempt,
       status: nodeAttempts.status,
       startedAt: nodeAttempts.startedAt,
+      exitCode: sql<
+        number | null
+      >`case when jsonb_typeof(${nodeAttempts.actionCompletion}->'result'->'exitCode') = 'number' then (${nodeAttempts.actionCompletion}->'result'->>'exitCode')::integer end`,
     })
     .from(nodeAttempts)
     .where(eq(nodeAttempts.runId, runId))
@@ -64,6 +94,12 @@ export async function buildEvidenceGraph(
       kind: gateResults.kind,
       mode: gateResults.mode,
       status: gateResults.status,
+      createdAt: gateResults.createdAt,
+      inputArtifactRefs: gateResults.inputArtifactRefs,
+      commitSha: sql<string | null>`${gateResults.verdict}->>'commitSha'`,
+      assertionFailed: sql<
+        boolean | null
+      >`${gateResults.verdict}->'payload'->'assertionFailed' = 'true'::jsonb`,
     })
     .from(gateResults)
     .where(eq(gateResults.runId, runId))
@@ -74,18 +110,33 @@ export async function buildEvidenceGraph(
       id: artifactInstances.id,
       defId: artifactInstances.artifactDefId,
       nodeAttemptId: artifactInstances.nodeAttemptId,
+      nodeId: artifactInstances.nodeId,
+      headRef: sql<
+        string | null
+      >`case when ${artifactInstances.locator}->>'kind' in ('git-range', 'git-log') then ${artifactInstances.locator}->>'headRef' end`,
+      markdown: sql<
+        boolean | null
+      >`case when ${artifactInstances.locator}->>'kind' = 'file' then lower(${artifactInstances.locator}->>'path') ~ '[.](md|markdown)$' end`,
+      partial: sql<
+        boolean | null
+      >`${artifactInstances.locator}->'partial' = 'true'::jsonb`,
+      truncated: sql<
+        boolean | null
+      >`${artifactInstances.locator}->'truncated' = 'true'::jsonb`,
       kind: artifactInstances.kind,
       validity: artifactInstances.validity,
       supersededById: artifactInstances.supersededById,
     })
     .from(artifactInstances)
-    .where(eq(artifactInstances.runId, runId));
+    .where(eq(artifactInstances.runId, runId))
+    .orderBy(asc(artifactInstances.createdAt), asc(artifactInstances.id));
 
   const hitlRows = await client
     .select({
       id: hitlRequests.id,
       kind: hitlRequests.kind,
       decision: hitlRequests.decision,
+      stepId: hitlRequests.stepId,
     })
     .from(hitlRequests)
     .where(eq(hitlRequests.runId, runId));
@@ -221,5 +272,16 @@ export async function buildEvidenceGraph(
     );
   }
 
-  return { nodes, edges };
+  return {
+    graph: { nodes, edges },
+    results: projectRunResultsAndChecks({
+      attempts: attemptRows,
+      artifacts: artifactRows,
+      gates: gateRows,
+      decisions: hitlRows,
+      checks: checksFromSnapshot(run?.executionPolicy ?? null),
+      manifest,
+      revision: run?.flowRevisionId ?? null,
+    }),
+  };
 }

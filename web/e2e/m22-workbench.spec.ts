@@ -145,7 +145,8 @@ test("run shell inspector toggles and workbench exposes evidence and timeline ta
 }) => {
   const fx = loadM22Fixture();
 
-  await page.goto(`/runs/${fx.runId}`);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(`/runs/${fx.runId}?inspector=open`);
 
   await expect(page.locator('[data-testid="run-shell"]:visible')).toBeVisible();
   await expect(
@@ -174,7 +175,9 @@ test("run shell inspector toggles and workbench exposes evidence and timeline ta
   ).toBeVisible();
 
   // Timeline/Evidence are the always-visible workbench tabs.
-  await expect(page.getByRole("tab", { name: "Evidence" })).toBeVisible();
+  await expect(
+    page.getByRole("tab", { name: "Results and checks" }),
+  ).toBeVisible();
   await expect(page.getByRole("tab", { name: "Timeline" })).toBeVisible();
 
   // Files/Diff moved inside the collapsed "Files / Diff" <details>, which only
@@ -189,9 +192,11 @@ test("run shell inspector toggles and workbench exposes evidence and timeline ta
   await expect(page.getByRole("tab", { name: "Files" })).toBeVisible();
   await expect(page.getByRole("tab", { name: "Diff" })).toBeVisible();
 
-  await page.getByRole("tab", { name: "Evidence" }).click();
+  await page.getByRole("tab", { name: "Results and checks" }).click();
   await page.waitForURL(/[?&]wb=evidence/);
-  await expect(page.locator('[data-testid="evidence-graph"]')).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Current results" }),
+  ).toBeVisible();
 
   await page.getByRole("tab", { name: "Timeline" }).click();
   await page.waitForURL(/[?&]wb=timeline/);

@@ -2,9 +2,12 @@
 
 import type { ReactNode } from "react";
 
-import { useState } from "react";
+import { useRef, useSyncExternalStore } from "react";
+import { useSearchParams } from "next/navigation";
 import clsx from "clsx";
 
+import { useModalA11y } from "@/components/use-modal-a11y";
+import { buildRunHref, parseRunQueryState } from "@/lib/runs/run-query-state";
 import { useRunPeek } from "@/components/runs/run-peek-controller";
 import { RunPeekPanel } from "@/components/runs/run-peek-panel";
 import {
@@ -37,9 +40,25 @@ export interface RunShellProps {
   promotionOperation?: RunHeaderProps["promotionOperation"];
   labels: RunShellLabels;
   defaultInspectorOpen?: boolean;
+  hideChangeSummary?: boolean;
+  outcome?: ReactNode;
   inspector: ReactNode;
   children?: ReactNode;
 }
+
+const compactInspectorQuery = "(max-width: 1279px)";
+
+function subscribeCompactInspector(notify: () => void): () => void {
+  const query = window.matchMedia(compactInspectorQuery);
+
+  query.addEventListener("change", notify);
+
+  return () => query.removeEventListener("change", notify);
+}
+
+const compactInspector = (): boolean =>
+  window.matchMedia(compactInspectorQuery).matches;
+const desktopInspector = (): boolean => false;
 
 export function RunShell({
   title,
@@ -62,13 +81,36 @@ export function RunShell({
   reviewHref,
   promotionOperation,
   labels,
-  defaultInspectorOpen = true,
+  defaultInspectorOpen = false,
+  hideChangeSummary = false,
+  outcome,
   inspector,
   children,
 }: RunShellProps): ReactNode {
   const peek = useRunPeek();
   const peeking = !!peek?.ready && peek.selected !== null;
-  const [inspectorOpen, setInspectorOpen] = useState(defaultInspectorOpen);
+  const search = useSearchParams();
+  const selected = parseRunQueryState(search).inspector;
+  const inspectorOpen =
+    selected === null ? defaultInspectorOpen : selected === "open";
+  const compact = useSyncExternalStore(
+    subscribeCompactInspector,
+    compactInspector,
+    desktopInspector,
+  );
+  const dialog = useRef<HTMLDivElement>(null);
+  const overlay = inspectorOpen && compact && !peeking;
+
+  function setInspectorOpen(open: boolean): void {
+    const { pathname, search, hash } = window.location;
+    const address = buildRunHref(pathname, search, {
+      inspector: open ? "open" : "closed",
+    });
+
+    window.history.pushState(null, "", `${address}${hash}`);
+  }
+
+  useModalA11y(dialog, () => setInspectorOpen(false), overlay);
 
   return (
     <section
@@ -85,6 +127,7 @@ export function RunShell({
         budgetStatus={budgetStatus}
         canReopen={canReopen}
         changeSummary={changeSummary}
+        hideChangeSummary={hideChangeSummary}
         inspectorDisabledReason={
           peeking ? peek.t("inspectorSuspended") : undefined
         }
@@ -104,7 +147,7 @@ export function RunShell({
         taskHref={taskHref}
         taskPrompt={taskPrompt}
         title={title}
-        onToggleInspector={() => setInspectorOpen((open) => !open)}
+        onToggleInspector={() => setInspectorOpen(!inspectorOpen)}
       />
       <div
         className={clsx(
@@ -118,15 +161,43 @@ export function RunShell({
         data-testid="run-shell-body"
       >
         <main className="min-w-0 max-w-full" data-testid="run-shell-main">
+          {outcome}
           {children}
         </main>
         {inspectorOpen ? (
           <aside
-            className="min-w-0 max-w-full border-t border-line pt-4 xl:border-l xl:border-t-0 xl:pl-4 xl:pt-0"
+            className={clsx(
+              "min-w-0 max-w-full",
+              overlay
+                ? "fixed inset-0 z-[150] bg-black/40 p-3"
+                : "border-l border-line pl-4",
+            )}
             data-testid="run-shell-inspector"
             hidden={peeking}
           >
-            {inspector}
+            <div
+              ref={dialog}
+              aria-label={overlay ? labels.closeInspector : undefined}
+              aria-modal={overlay || undefined}
+              className={
+                overlay
+                  ? "ml-auto flex h-full w-full max-w-lg flex-col overflow-auto rounded-xl bg-paper p-4 shadow-xl"
+                  : undefined
+              }
+              role={overlay ? "dialog" : undefined}
+              tabIndex={overlay ? -1 : undefined}
+            >
+              {overlay ? (
+                <button
+                  className="mb-3 self-end rounded-md border border-line px-3 py-1 text-sm"
+                  type="button"
+                  onClick={() => setInspectorOpen(false)}
+                >
+                  {labels.closeInspector}
+                </button>
+              ) : null}
+              {inspector}
+            </div>
           </aside>
         ) : null}
         {peeking ? <RunPeekPanel /> : null}

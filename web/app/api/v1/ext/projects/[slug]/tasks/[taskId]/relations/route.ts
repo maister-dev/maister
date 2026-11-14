@@ -475,6 +475,10 @@ async function handleMutation(
                     result: {
                       statusCode: mode === "add" ? 201 : 200,
                       body: response,
+                      relationProvenance: {
+                        fromTaskId: input.fromTaskId,
+                        toTaskId: input.toTaskId,
+                      },
                     },
                   }
                 : undefined,

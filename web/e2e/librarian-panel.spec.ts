@@ -212,3 +212,71 @@ test("E2E-LUI-09: the scratch launcher's Cmd/Ctrl+K still works beside the docke
   await expect(page.getByRole("dialog")).toBeVisible();
   await expect(panel(page)).toBeVisible();
 });
+
+test("B3 keeps history and attention scrollable without displacing the composer", async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  const response = await page.request.get("/api/librarian/conversation");
+  const view = await response.json();
+
+  await withE2EDb((pool) =>
+    pool.query(
+      `INSERT INTO librarian_operations(id,conversation_id,segment_id,idempotency_key,kind,request_digest,target,status,error_code,created_at)
+     SELECT $1 || '-browser-' || i,$1,$2,'browser-' || i,'task_create','browser-' || i,'{}',
+      (ARRAY['succeeded','admitted','unknown','refused','failed'])[i%5+1],
+      'PRECONDITION',now() + i * interval '1 second' FROM generate_series(1,30) i`,
+      [view.conversation.id, view.segment.id],
+    ),
+  );
+
+  for (const [width, height, locale, theme] of [
+    [390, 844, "en", "light"],
+    [390, 844, "ru", "dark"],
+    [1366, 768, "en", "light"],
+    [1366, 768, "ru", "dark"],
+    [1440, 1000, "en", "dark"],
+    [1440, 1000, "ru", "light"],
+  ] as const) {
+    await context.addCookies([
+      { name: "NEXT_LOCALE", value: locale, url: baseURL! },
+      { name: "theme", value: theme, url: baseURL! },
+    ]);
+    await page.setViewportSize({ width, height });
+    await page.goto("/");
+    await expect(page.locator("html")).toHaveClass(
+      new RegExp(`\\b${theme}\\b`),
+    );
+    await openPanel(page);
+    const composer = panel(page).locator("textarea");
+    const opener = panel(page).getByRole("button", {
+      name: locale === "ru" ? "История действий" : "Action history",
+    });
+
+    await expect(opener).toBeVisible();
+    const before = await composer.boundingBox();
+
+    await opener.focus();
+    await page.keyboard.press("Enter");
+    const history = page.getByTestId("librarian-action-history");
+    const statuses =
+      locale === "ru"
+        ? ["Результат неизвестен", "Готово", "Отказано", "Ошибка"]
+        : ["Outcome uncertain", "Done", "Refused", "Failed"];
+
+    await expect(history).toBeInViewport();
+    for (const status of statuses) {
+      await expect(
+        history.getByText(status, { exact: true }).first(),
+      ).toBeVisible();
+    }
+    expect((await history.boundingBox())?.height).toBeLessThanOrEqual(
+      Math.min(height * 0.55, 440),
+    );
+    expect((await composer.boundingBox())?.y).toBe(before?.y);
+    await page.keyboard.press("Escape");
+    await expect(history).toHaveCount(0);
+    await expect(opener).toBeFocused();
+  }
+});

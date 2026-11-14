@@ -8,10 +8,15 @@ import { z } from "zod";
 import { requireActiveSession } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { submitOwnerMessage } from "@/lib/librarian/admission";
+import {
+  readHistoryOwner,
+  readReceiptAttachments,
+} from "@/lib/librarian/action-history";
 import { listMessages } from "@/lib/librarian/conversation";
 import {
   invalidBody,
   librarianErrorResponse,
+  librarianWorkRequested,
   parseSeq,
 } from "@/lib/librarian/http";
 import {
@@ -36,20 +41,39 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return invalidBody("beforeSeq must be a canonical decimal");
     if (!Number.isInteger(limit) || limit < 1 || limit > 100)
       return invalidBody("limit must be an integer between 1 and 100");
-    const page = await listMessages(
-      user.id,
-      { beforeSeq, limit },
-      getDb() as unknown as Db,
+    const work = librarianWorkRequested(params);
+    const result = await getDb().transaction(
+      async (tx) => {
+        const conversation = await readHistoryOwner(tx, user.id);
+        const page = await listMessages(user.id, { beforeSeq, limit }, tx);
+        const messages = await librarianMessageDtos(page.messages, user.id, tx);
+
+        return {
+          historyGeneration: conversation?.historyGeneration ?? null,
+          messages,
+          hasMore: page.hasMore,
+          ...(work
+            ? {
+                currentSegmentId: conversation?.currentSegmentId ?? null,
+                receiptAttachments: conversation
+                  ? await readReceiptAttachments(
+                      tx,
+                      user.id,
+                      conversation,
+                      messages,
+                    )
+                  : {},
+              }
+            : {}),
+        };
+      },
+      { isolationLevel: "repeatable read", accessMode: "read only" },
     );
 
-    return NextResponse.json({
-      messages: await librarianMessageDtos(
-        page.messages,
-        user.id,
-        getDb() as unknown as Db,
-      ),
-      hasMore: page.hasMore,
-    });
+    return NextResponse.json(
+      result,
+      work ? { headers: { "Cache-Control": "no-store" } } : undefined,
+    );
   } catch (err) {
     return librarianErrorResponse(err, "GET /api/librarian/messages");
   }

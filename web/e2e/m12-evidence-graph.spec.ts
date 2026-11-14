@@ -25,6 +25,8 @@
 //     current → approve → run reaches Review — Done is the M18 promotion path,
 //     not the graph terminal).
 import { readFileSync } from "node:fs";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 import { Pool } from "pg";
@@ -64,6 +66,135 @@ async function withDb<T>(fn: (pool: Pool) => Promise<T>): Promise<T> {
   }
 }
 
+test("E2 opens a result payload from the list and retains the selected graph address", async ({
+  page,
+}) => {
+  const fx = loadM12Fixture();
+
+  await page.goto(`/runs/${fx.runId}?wb=evidence`);
+  const result = page
+    .getByRole("region", { name: "Results and checks" })
+    .locator(`a[href*="evidenceItem=art%3A${fx.implDiffArtifactId}"]`);
+  const downloadPath = `/api/runs/${fx.runId}/artifacts/${fx.implDiffArtifactId}/payload`;
+  const previewResponse = page.waitForResponse((response) =>
+    response.url().endsWith(`${downloadPath}?view=preview`),
+  );
+
+  await result.focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(
+    new RegExp(`evidenceItem=art%3A${fx.implDiffArtifactId}`),
+  );
+  const preview = page.getByTestId("result-payload");
+
+  expect(
+    (await previewResponse).headers()["x-artifact-preview-truncated"],
+  ).toBe("false");
+
+  await expect(
+    preview.getByRole("link", { name: "Download original" }),
+  ).toHaveAttribute("href", downloadPath);
+  await expect(preview.getByTestId("result-diff")).toContainText(
+    "export const x = 1;",
+  );
+  await page.getByRole("link", { name: "Provenance graph" }).click();
+  await expect(page.getByTestId("evidence-graph")).toBeVisible();
+  await expect(page).toHaveURL(/evidenceView=graph/);
+});
+
+test("E2 renders typed evidence and keeps unknown payloads generic", async ({
+  page,
+}) => {
+  const { projectSlug, runId } = loadM12Fixture();
+  const reportId = randomUUID();
+  const genericId = randomUUID();
+  const markdownId = randomUUID();
+  const oversized =
+    "# Evidence notes\n\n" + "Z".repeat(64 * 1024) + "outside preview";
+  const filename = `${markdownId}.md`;
+  const directory = path.resolve(
+    "e2e/.runtime/.maister",
+    projectSlug,
+    "runs",
+    runId,
+  );
+  const markdownPath = path.join(directory, filename);
+  const report = {
+    basis: "node",
+    evaluated: true,
+    touched: ["src/check.ts"],
+    violations: ["Prohibited path"],
+    truncated: false,
+    nodeRange: { base: "abc", head: "def" },
+    mustTouch: { globs: [], matched: [], matchedTruncated: false },
+    restrictions: { checked: [], unmatchable: [] },
+  };
+
+  await mkdir(directory, { recursive: true });
+  await writeFile(
+    markdownPath,
+    "# Evidence notes\n\nReviewed **result**.",
+    "utf8",
+  );
+  await withDb((pool) =>
+    pool.query(
+      `INSERT INTO artifact_instances(id,run_id,kind,producer,locator,validity)
+     VALUES($1,$4,'mutation_report','runner',$5,'current'),
+           ($2,$4,'human_note','runner',$6,'current'),
+           ($3,$4,'generic_file','runner',$7,'current')`,
+      [
+        reportId,
+        genericId,
+        markdownId,
+        runId,
+        { kind: "inline", text: JSON.stringify(report) },
+        { kind: "inline", text: "Unknown payload\n<em>literal</em>" },
+        { kind: "file", path: filename },
+      ],
+    ),
+  );
+  try {
+    await page.goto(`/runs/${runId}?wb=evidence&evidenceItem=art:${reportId}`);
+    const preview = page.getByTestId("result-payload");
+
+    await expect(preview.getByRole("listitem")).toHaveText("Prohibited path");
+    await expect(preview.locator("pre")).toHaveCount(0);
+    await page.goto(`/runs/${runId}?wb=evidence&evidenceItem=art:${genericId}`);
+    await expect(preview.locator("pre")).toContainText("<em>literal</em>");
+    await expect(preview.locator("em")).toHaveCount(0);
+    await page.goto(
+      `/runs/${runId}?wb=evidence&evidenceItem=art:${markdownId}`,
+    );
+    await expect(
+      preview.getByRole("heading", { name: "Evidence notes" }),
+    ).toBeVisible();
+    await writeFile(markdownPath, oversized);
+    await page.reload();
+    await expect(preview.getByText("The preview is truncated.")).toBeVisible();
+    await expect(
+      preview.getByRole("heading", { name: "Evidence notes" }),
+    ).toHaveCount(0);
+    const download = preview.getByRole("link", { name: "Download original" });
+    const href = `/api/runs/${runId}/artifacts/${markdownId}/payload`;
+
+    await expect(download).toHaveAttribute("href", href);
+    expect(await (await page.request.get(href)).text()).toBe(oversized);
+    await rm(markdownPath);
+    await page.reload();
+    await expect(page.getByText("The retained payload is gone.")).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Evidence notes" }),
+    ).toHaveCount(0);
+  } finally {
+    await rm(markdownPath, { force: true });
+    await withDb((pool) =>
+      pool.query("DELETE FROM artifact_instances WHERE id = ANY($1::text[])", [
+        [reportId, genericId, markdownId],
+      ]),
+    );
+  }
+});
+
 test("UX-03C/D evidence filters fit artifacts and the board readiness badge tracks stale/merge-blocked", async ({
   page,
 }) => {
@@ -81,8 +212,11 @@ test("UX-03C/D evidence filters fit artifacts and the board readiness badge trac
   // failing on. Clicking the tab is what a reader does; this is the URL that
   // tab links to.
   await page.goto(`/runs/${fx.runId}`);
-  await page.getByRole("tab", { name: "Evidence", exact: true }).click();
+  await page
+    .getByRole("tab", { name: "Results and checks", exact: true })
+    .click();
 
+  await page.getByRole("link", { name: "Provenance graph" }).click();
   await expect(page.locator('[data-testid="evidence-graph"]')).toBeVisible();
 
   const implDiff = page.locator(
@@ -144,7 +278,9 @@ test("UX-03C/D evidence filters fit artifacts and the board readiness badge trac
   const payload = page.locator('[data-testid="artifact-payload"]');
 
   await expect(payload).toBeVisible();
-  await expect(payload).toContainText("diff --git");
+  await expect(payload.getByTestId("result-diff")).toContainText(
+    "export const x = 1;",
+  );
 
   // Close the modal (Escape) before navigating on.
   await page.keyboard.press("Escape");

@@ -185,10 +185,8 @@ export function WorkbenchPanel({
           {timeline}
         </div>
       ) : null}
-      {tabs.includes("evidence") ? (
-        <div data-testid="evidence-pane" hidden={activeRegular !== "evidence"}>
-          {evidence}
-        </div>
+      {tabs.includes("evidence") && activeRegular === "evidence" ? (
+        <div data-testid="evidence-pane">{evidence}</div>
       ) : null}
       {collapsibleTabs.length > 0 && activeWorkbenchTab ? (
         <WorkbenchDisclosure

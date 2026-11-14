@@ -192,11 +192,17 @@ test("E2E-CPC-02: review precedes first commit, cancellation is inert and the Se
   expect(created.status()).toBe(201);
   const { slug } = (await created.json()) as { slug: string };
 
+  await page.setViewportSize({ width: 390, height: 600 });
   await page.goto(`/projects/${slug}?tab=settings`);
   await openConfigReview(page);
   const dialog = page.getByTestId("config-persist-dialog");
 
-  await dialog.locator("summary").click();
+  expect((await dialog.boundingBox())?.height).toBeLessThanOrEqual(600);
+
+  await dialog
+    .locator("summary")
+    .filter({ hasText: /maister\.yaml/ })
+    .click();
   await expect(dialog.getByTestId("config-persist-diff")).toHaveValue(
     /\+schemaVersion: 2/,
   );
@@ -255,7 +261,11 @@ test("E2E-CPC-02: review precedes first commit, cancellation is inert and the Se
   expect(submissions).toBe(1);
   await page.unroute(`**/api/projects/${slug}/persist-config`);
   await dialog.getByTestId("config-persist-close").click();
-  await openConfigReview(page);
+  await page
+    .getByTestId("config-persist-open")
+    .filter({ visible: true })
+    .click();
+  await dialog.getByTestId("config-persist-refresh").click();
   await expect(dialog.getByTestId("config-persist-noop")).toBeVisible();
   await expect(dialog.getByTestId("config-persist-confirm")).toHaveCount(0);
 });
@@ -301,7 +311,10 @@ test("E2E-CPC-03: RU stale review, lost receipt reload, explicit push failure an
   await expect(dialog.getByRole("alert")).toContainText("изменились");
   await expect(dialog.getByTestId("config-persist-confirm")).toHaveCount(0);
   await dialog.getByTestId("config-persist-refresh").click();
-  await dialog.locator("summary").click();
+  await dialog
+    .locator("summary")
+    .filter({ hasText: /maister\.yaml/ })
+    .click();
   await expect(dialog.getByTestId("config-persist-diff")).toHaveValue(
     /Changed after review/,
   );
@@ -342,8 +355,13 @@ test("E2E-CPC-03: RU stale review, lost receipt reload, explicit push failure an
   expect(committedSha).not.toBe("");
   expect(
     await page.evaluate(
-      (key) => sessionStorage.getItem(key),
-      `maister.config-operation.${slug}`,
+      (project) =>
+        Object.entries(sessionStorage).find(
+          ([key]) =>
+            key.startsWith("maister.config-operation.") &&
+            key.endsWith(`.${project}`),
+        )?.[1],
+      slug,
     ),
   ).toBe(operationId);
   await page.unroute(`${base}**`);
@@ -444,7 +462,7 @@ test("E2E-CPC-03: RU stale review, lost receipt reload, explicit push failure an
   ).toBeVisible();
   await expect(
     page.getByRole("main").getByTestId("config-persist-status"),
-  ).toContainText("отличается от Git");
+  ).toContainText("Изменения конфигурации для проверки");
   await page.unroute(`**/api/projects/${slug}/persist-config/${operationId}`);
   const pendingReview = await page.request.post(
     `/api/projects/${slug}/persist-config/${operationId}/push/preview`,
@@ -466,7 +484,11 @@ test("E2E-CPC-03: RU stale review, lost receipt reload, explicit push failure an
       [pending.pushPreviewId],
     );
   });
-  await page.reload();
+  await page.goto(`/projects/${slug}`);
+  await expect(
+    page.getByTestId("config-persist-open").filter({ visible: true }),
+  ).toHaveCount(1);
+  await page.goto(`/projects/${slug}?tab=settings`);
   await page
     .getByTestId("config-persist-open")
     .filter({ visible: true })
@@ -474,36 +496,16 @@ test("E2E-CPC-03: RU stale review, lost receipt reload, explicit push failure an
   await expect(dialog.getByTestId("config-push-state")).toContainText(
     "Результат push неизвестен",
   );
-  await expect(dialog.getByTestId("config-persist-refresh")).toBeVisible();
-  await dialog.getByTestId("config-persist-refresh").click();
-  await dialog.locator("summary").click();
-  await expect(dialog.getByTestId("config-persist-diff")).toHaveValue(
-    /Applied only/,
-  );
-  const nextSave = page.waitForResponse(
-    (value) =>
-      value.url().endsWith("/persist-config") &&
-      value.request().method() === "POST",
-  );
-
-  await dialog.getByTestId("config-persist-confirm").click();
-  expect((await nextSave).status()).toBe(200);
-  await expect(dialog.getByTestId("config-commit-success")).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: /Восстановить|восстановить/ }),
+  ).toBeVisible();
+  await expect(dialog.getByTestId("config-persist-confirm")).toHaveCount(0);
+  await expect(dialog.getByTestId("config-push-confirm")).toHaveCount(0);
   expect(
     execFileSync("git", ["-C", location, "rev-list", "--count", "HEAD"], {
       encoding: "utf8",
     }).trim(),
-  ).toBe("2");
-  await withE2EDb(async (pool) => {
-    expect(
-      (
-        await pool.query(
-          "SELECT state FROM project_config_push_intents WHERE id=$1",
-          [pending.pushPreviewId],
-        )
-      ).rows[0].state,
-    ).toBe("unknown");
-  });
+  ).toBe("1");
 });
 
 test("E2E-CPC-04: board save retains its receipt and push review across status refreshes", async ({
@@ -543,16 +545,20 @@ test("E2E-CPC-04: board save retains its receipt and push review across status r
   const receipt = await saved;
 
   expect(receipt.status()).toBe(200);
-  const { commitSha } = (await receipt.json()) as { commitSha: string };
+  const savedReceipt = (await receipt.json()) as {
+    commitSha: string;
+    operationId: string;
+  };
+  const { commitSha, operationId } = savedReceipt;
   const refreshed = page.waitForResponse(
     (response) =>
-      response.url().endsWith("/persist-config") &&
+      response.url().endsWith("/persist-config?view=workflow") &&
       response.request().method() === "GET",
   );
 
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   expect(await (await refreshed).json()).toMatchObject({
-    exportState: "in_sync",
+    checkout: { state: "observed", status: { exportState: "in_sync" } },
   });
   await expect(dialog.getByTestId("config-commit-success")).toContainText(
     commitSha,
@@ -560,12 +566,16 @@ test("E2E-CPC-04: board save retains its receipt and push review across status r
   await dialog.getByTestId("config-push-review").click();
   await expect(dialog.getByTestId("config-push-confirm")).toBeVisible();
 
-  await page.route(base, (route) =>
+  const workflowUrl = (url: URL): boolean =>
+    url.pathname.endsWith("/persist-config") &&
+    url.searchParams.get("view") === "workflow";
+
+  await page.route(workflowUrl, (route) =>
     route.fulfill({ status: 503, json: { code: "INTERNAL" } }),
   );
   const unavailable = page.waitForResponse(
     (response) =>
-      response.url().endsWith("/persist-config") && response.status() === 503,
+      workflowUrl(new URL(response.url())) && response.status() === 503,
   );
 
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
@@ -573,7 +583,7 @@ test("E2E-CPC-04: board save retains its receipt and push review across status r
   await expect(
     dialog.getByRole("textbox", { name: "Commits to publish" }),
   ).toHaveValue(commitSha);
-  await page.unroute(base);
+  await page.unroute(workflowUrl);
 
   let releasePush!: () => void;
   let enteredPush!: () => void;
@@ -594,13 +604,13 @@ test("E2E-CPC-04: board save retains its receipt and push review across status r
     await entered;
     const duringPush = page.waitForResponse(
       (response) =>
-        response.url().endsWith("/persist-config") &&
+        response.url().endsWith("/persist-config?view=workflow") &&
         response.request().method() === "GET",
     );
 
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
     expect(await (await duringPush).json()).toMatchObject({
-      exportState: "in_sync",
+      checkout: { state: "observed", status: { exportState: "in_sync" } },
     });
     await expect(dialog.getByTestId("config-persist-close")).toBeDisabled();
     await page.keyboard.press("Escape");
@@ -616,6 +626,43 @@ test("E2E-CPC-04: board save retains its receipt and push review across status r
       encoding: "utf8",
     }).trim(),
   ).toBe(commitSha);
+
+  await page.unroute(`${base}/*/push`);
+  const receiptReads: string[] = [];
+  let pushState = "pending";
+
+  await page.route(`${base}/${operationId}`, (route) => {
+    receiptReads.push(route.request().method());
+
+    return route.fulfill({ json: { ...savedReceipt, pushState } });
+  });
+  await dialog
+    .getByTestId("config-observation-details")
+    .locator("summary")
+    .click();
+  const refresh = dialog.getByRole("button", { name: "Refresh status" });
+  const recover = dialog.getByRole("button", {
+    name: "Inspect and recover this operation",
+  });
+
+  await refresh.click();
+  await expect(dialog.getByTestId("config-push-state")).toContainText(
+    "The accepted push needs its outcome checked.",
+  );
+  await expect(recover).toHaveCount(0);
+  pushState = "unknown";
+  await refresh.click();
+  await expect(recover).toBeVisible();
+  pushState = "succeeded";
+  await refresh.click();
+  await expect(dialog.getByTestId("config-push-state")).toContainText(
+    "Reviewed commit published successfully.",
+  );
+  await expect(recover).toHaveCount(0);
+  await expect(dialog.getByTestId("config-commit-success")).toContainText(
+    commitSha,
+  );
+  expect(receiptReads).toEqual(["GET", "GET", "GET"]);
   await dialog.getByTestId("config-persist-close").click();
   await expect(dialog).toHaveCount(0);
   await expect(

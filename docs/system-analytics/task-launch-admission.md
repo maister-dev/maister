@@ -352,6 +352,17 @@ means no work was accepted. Unknown non-database effects require reconciliation.
 
 No historic assessment/run receipt is rewritten. Writer floor fences v2 and intent-owned legacy tasks. `taskAdmissionCheckedAt` alone is not evidence that execution started or inputs were frozen. Queued/checked-but-undispatched v1 requests lacking immutable evidence are held; a live session is not killed to repair metadata, but an unreconstructible later prompt/resume is refused. Explicit legacy qualification opt-in preserves old receipts and enables future automatic qualification.
 
+## Browser runner drafts (Implemented)
+
+| Input or event | Required result |
+| --- | --- |
+| Browser preview with a draft | Resolve the requested revision, slots and effective runners in the same configuration observation that produces the token. Return safe runner identities and readiness, with zero settings or execution writes. |
+| Flow or package cut changes | Discard all one-run choices and request the new target using its configured runner. Keep runner and submit controls disabled until the new preview is available. The first launch after the change submits that preview's token without an earlier runner override. |
+| Missing grant, invalid slot, incompatible runner or stale revision | Refuse at the validation or acceptance boundary. An unready known runner yields a blocked preview. The action path never admits an unresolved slot. |
+| Ordinary, concurrent or replacement acceptance | Re-resolve under existing authority and acceptance fences. Store the exact selected revision and resolved runners in the V2 settings snapshot before waking the dispatcher. One-run choices never update the task runner or project remap. Existing Flow and branch writes still use task-edit authority. |
+| Request drift or uncertain response | Reject drift before writes. Replay the exact request with the same key, or read its receipt. A different payload under the same key conflicts. |
+| Scheduling or external API | These use their existing request shapes. The browser disables Schedule until one-run choices are removed. |
+
 ## Expectations
 
 Before orchestrator rework rewinds or recreates a checkout, a short transaction

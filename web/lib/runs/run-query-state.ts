@@ -1,3 +1,5 @@
+import type { GitPanelSection } from "@/lib/workbench-git/panel-link";
+
 import { RUN_DIFF_SCOPES, type RunDiffScope } from "@/lib/runs/diff-scopes";
 
 export { RUN_DIFF_SCOPES, type RunDiffScope } from "@/lib/runs/diff-scopes";
@@ -37,6 +39,8 @@ export interface RunQueryState {
   node: string | null;
   inspector: RunInspectorState | null;
   flow: RunFlowState | null;
+  evidenceView: "list" | "graph";
+  evidenceItem: string | null;
 }
 
 export type RunSearchParamsInput =
@@ -59,6 +63,9 @@ export interface RunQueryPatch {
   node?: string | null;
   inspector?: RunInspectorState | null;
   flow?: RunFlowState | null;
+  evidenceView?: "list" | "graph" | null;
+  evidenceItem?: string | null;
+  git?: "open" | GitPanelSection | null;
 }
 
 function enumOrDefault<T extends string>(
@@ -129,6 +136,10 @@ export function parseRunQueryState(input: RunSearchParamsInput): RunQueryState {
     node: params.get("node"),
     inspector: enumOrNull(params.get("inspector"), RUN_INSPECTOR_STATES),
     flow: enumOrNull(params.get("flow"), RUN_FLOW_STATES),
+    evidenceView:
+      enumOrNull(params.get("evidenceView"), ["list", "graph"]) ??
+      (params.get("kind") || params.get("state") ? "graph" : "list"),
+    evidenceItem: params.get("evidenceItem"),
   };
 }
 
@@ -163,6 +174,9 @@ export function buildRunSearchParams(
   setOptionalParam(params, "node", patch.node);
   setOptionalParam(params, "inspector", patch.inspector);
   setOptionalParam(params, "flow", patch.flow);
+  setOptionalParam(params, "evidenceView", patch.evidenceView);
+  setOptionalParam(params, "evidenceItem", patch.evidenceItem);
+  setOptionalParam(params, "git", patch.git);
   if (patch.flow === "fullscreen") {
     params.delete("peek");
     params.delete("peekView");

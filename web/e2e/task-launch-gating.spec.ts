@@ -72,6 +72,173 @@ test.describe("Manual task admission through the real browser and controlled pro
     }
   });
 
+  test("L1 keeps one-run drafts independent of project Save and Clear", async ({
+    page,
+  }) => {
+    const task = await createTask(
+      page,
+      "One-run runner draft",
+      "Keep the configured runner on this task",
+    );
+
+    await page.goto(`/projects/${fixture.slug}`);
+    const dialog = await openLaunch(page, task.title);
+    const preview = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/runs/launch-options" &&
+        response.request().method() === "POST",
+    );
+
+    await chooseLaunchOption(
+      page,
+      dialog,
+      /Runner \/ Model/,
+      new RegExp(fixture.failedRunnerId),
+    );
+    expect((await preview).status()).toBe(200);
+    await expect(
+      dialog.getByRole("button", { name: "Use configured runners" }),
+    ).toBeVisible();
+    await expect(
+      dialog.getByRole("button", { name: "Schedule run" }),
+    ).toBeDisabled();
+    await dialog
+      .getByRole("button", { name: "Use configured runners" })
+      .focus();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+
+    const closeDialog = await openLaunch(page, task.title);
+
+    await expect(
+      closeDialog.getByRole("button", { name: "Use configured runners" }),
+    ).toHaveCount(0);
+    await chooseLaunchOption(
+      page,
+      closeDialog,
+      /Runner \/ Model/,
+      new RegExp(fixture.failedRunnerId),
+    );
+    await closeDialog
+      .getByRole("button", { name: "Close", exact: true })
+      .click();
+    await expect(closeDialog).toHaveCount(0);
+
+    const backdropDialog = await openLaunch(page, task.title);
+
+    await expect(
+      backdropDialog.getByRole("button", { name: "Use configured runners" }),
+    ).toHaveCount(0);
+    await chooseLaunchOption(
+      page,
+      backdropDialog,
+      /Runner \/ Model/,
+      new RegExp(fixture.failedRunnerId),
+    );
+    await page.mouse.click(4, 4);
+    await expect(backdropDialog).toHaveCount(0);
+
+    const reopened = await openLaunch(page, task.title);
+
+    await expect(
+      reopened.getByRole("button", { name: "Use configured runners" }),
+    ).toHaveCount(0);
+    await reopened.getByRole("button", { name: "Schedule run" }).click();
+    await expect(reopened.getByLabel("Local date and time")).toBeVisible();
+    expect(await launchRows(task.taskId)).toEqual([]);
+    expect(
+      await withE2EDb(
+        async (pool) =>
+          (
+            await pool.query("SELECT runner_id FROM tasks WHERE id=$1", [
+              task.taskId,
+            ])
+          ).rows[0]?.runner_id,
+      ),
+    ).toBe(fixture.runnerId);
+    expect(
+      await withE2EDb(
+        async (pool) =>
+          (
+            await pool.query(
+              "SELECT id FROM flow_runner_remaps WHERE project_id=$1",
+              [fixture.projectId],
+            )
+          ).rows,
+      ),
+    ).toEqual([]);
+
+    await chooseLaunchOption(
+      page,
+      reopened,
+      /Runner \/ Model/,
+      new RegExp(fixture.failedRunnerId),
+    );
+    await expect(
+      reopened.getByRole("button", { name: "Use configured runners" }),
+    ).toBeVisible();
+    const mappingButton = reopened.getByRole("button", {
+      name: /^Save project runner mapping/,
+    });
+    const mapping = () =>
+      withE2EDb(
+        async (pool) =>
+          (
+            await pool.query(
+              "SELECT flow_revision_id,slot_key,mapped_runner_id,status FROM flow_runner_remaps WHERE project_id=$1",
+              [fixture.projectId],
+            )
+          ).rows,
+      );
+
+    const mappingPicker = reopened.getByRole("button", {
+      name: /Runner for default$/,
+    });
+    const mappingOptions = page.getByRole("listbox", {
+      name: /Runner for default/,
+    });
+
+    await mappingPicker.click();
+    await mappingOptions
+      .getByRole("option", { name: new RegExp(fixture.runnerId) })
+      .click();
+    expect(await mapping()).toEqual([]);
+    await mappingButton.click();
+    await expect.poll(mapping).toEqual([
+      {
+        flow_revision_id: fixture.revisionId,
+        slot_key: "session:default",
+        mapped_runner_id: fixture.runnerId,
+        status: "Mapped",
+      },
+    ]);
+    await expect(
+      reopened.getByRole("button", { name: "Use configured runners" }),
+    ).toBeVisible();
+    await mappingPicker.click();
+    await mappingOptions
+      .getByRole("option", { name: /^Clear mapping/ })
+      .click();
+    await mappingButton.click();
+    await expect.poll(mapping).toEqual([
+      {
+        flow_revision_id: fixture.revisionId,
+        slot_key: "session:default",
+        mapped_runner_id: null,
+        status: "Pending",
+      },
+    ]);
+    await expect(
+      reopened.getByRole("button", { name: "Use configured runners" }),
+    ).toBeVisible();
+    expect(await launchRows(task.taskId)).toEqual([]);
+    await withE2EDb((pool) =>
+      pool.query("DELETE FROM flow_runner_remaps WHERE project_id=$1", [
+        fixture.projectId,
+      ]),
+    );
+  });
+
   test("LA01/02/10/12: configured manual Launch without qualification survives a lost receipt and delivers a checked, human-reviewed PR (controlled provider)", async ({
     page,
     context,

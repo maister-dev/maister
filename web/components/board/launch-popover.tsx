@@ -1,5 +1,6 @@
 "use client";
 
+import type { FlowRunnerDraft } from "@/lib/tasks/launch-schema";
 import type { Key, ReactElement } from "react";
 import type { FlowRunnerSlotPreview } from "@/lib/acp-runners/flow-preflight";
 import type { ConsensusRunnerSlotPreview } from "@/lib/acp-runners/consensus-preflight";
@@ -144,6 +145,7 @@ type LaunchVerdict = {
 
 type LaunchOptions = {
   enforcementRefusal?: NodeEnforcementRefusal | null;
+  primarySessionName?: string;
   launchability: {
     launchable: boolean;
     reason: string;
@@ -158,6 +160,7 @@ type LaunchOptions = {
   runnerSlots?: FlowRunnerSlotPreview[];
   consensusRunnerSlots?: ConsensusRunnerSlotPreview[];
   selectedFlowRevisionId?: string | null;
+  enabledFlowRevisionId?: string | null;
   canConfigureRunnerBindings?: boolean;
   canManagePackages?: boolean;
   canCutPackages?: boolean;
@@ -222,6 +225,7 @@ type LaunchPreviewSelection = {
   flowId: string;
   runnerId: string;
   packageVersions?: string;
+  draftKey?: string;
 };
 
 export function launchPreviewMatches(
@@ -231,7 +235,8 @@ export function launchPreviewMatches(
   return (
     preview?.flowId === selection.flowId &&
     preview.runnerId === selection.runnerId &&
-    (preview.packageVersions ?? "") === (selection.packageVersions ?? "")
+    (preview.packageVersions ?? "") === (selection.packageVersions ?? "") &&
+    (preview.draftKey ?? "") === (selection.draftKey ?? "")
   );
 }
 
@@ -691,10 +696,23 @@ export function LaunchPopover({
   );
   const [savingBinding, setSavingBinding] = useState<string | null>(null);
   const [bindingFeedback, setBindingFeedback] = useState<
-    Record<string, "saving" | "saved" | "failed">
+    Record<string, "saving" | "saved" | "failed" | "unknown">
   >({});
   const [flowId, setFlowId] = useState("");
-  const [runnerId, setRunnerId] = useState("");
+  const [flowRunnerDraft, setFlowRunnerDraft] =
+    useState<FlowRunnerDraft | null>(null);
+  const draftKey = flowRunnerDraft ? JSON.stringify(flowRunnerDraft) : "";
+  const closeLaunch = (): void => {
+    setFlowRunnerDraft(null);
+    setBindingChoices({});
+    setBindingFeedback({});
+    setOptions(null);
+    setPreviewSelection(null);
+    setScheduleMode(false);
+    setOpen(false);
+  };
+  const runnerId =
+    flowRunnerDraft?.primaryRunnerId ?? options?.selectedRunnerId ?? "";
   const [baseBranch, setBaseBranch] = useState("");
   const [targetBranch, setTargetBranch] = useState("");
   const [policyStrategy, setPolicyStrategy] =
@@ -740,7 +758,7 @@ export function LaunchPopover({
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const dialogRef = useRef<HTMLElement | null>(null);
 
-  useModalFocusTrap(dialogRef, () => setOpen(false), open);
+  useModalFocusTrap(dialogRef, closeLaunch, open);
   const disabled =
     !isClient || busy || pending || (Boolean(disabledReason) && !tracking);
 
@@ -818,7 +836,6 @@ export function LaunchPopover({
 
         setOptions(payload);
         setFlowId(payload.selectedFlowId);
-        setRunnerId(payload.selectedRunnerId ?? "");
         setPreviewSelection({
           flowId: payload.selectedFlowId,
           runnerId: payload.selectedRunnerId ?? "",
@@ -872,45 +889,67 @@ export function LaunchPopover({
         flowId,
         runnerId,
         packageVersions: packagePreview,
+        draftKey,
       })
     )
       return;
 
     const controller = new AbortController();
-    const hasRunnerOverride =
-      Boolean(runnerId) &&
-      (flowId !== options.selectedFlowId ||
-        runnerId !== (options.selectedRunnerId ?? ""));
     const query = new URLSearchParams({ taskId });
 
     if (flowId) query.set("flowId", flowId);
-    if (hasRunnerOverride) query.set("runnerId", runnerId);
     if (packagePreview) query.set("packageVersions", packagePreview);
 
-    fetch(`/api/runs/launch-options?${query}`, { signal: controller.signal })
+    const request = flowRunnerDraft
+      ? fetch("/api/runs/launch-options", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            taskId,
+            flowId,
+            ...(packagePreview
+              ? { packageVersions: JSON.parse(packagePreview) }
+              : {}),
+            flowRunnerDraft,
+          }),
+          signal: controller.signal,
+        })
+      : fetch(`/api/runs/launch-options?${query}`, {
+          signal: controller.signal,
+        });
+
+    request
       .then(async (response) => {
         if (!response.ok) throw new Error(String(response.status));
 
-        return (await response.json()) as LaunchOptions;
+        if (!flowRunnerDraft) return (await response.json()) as LaunchOptions;
+        const result = (await response.json()) as {
+          options: LaunchOptions;
+          enabledFlowRevisionId: string | null;
+        };
+
+        return {
+          ...result.options,
+          enabledFlowRevisionId: result.enabledFlowRevisionId,
+        };
       })
       .then((payload) => {
         if (controller.signal.aborted) return;
-        const resolvedRunnerId = hasRunnerOverride
-          ? runnerId
-          : (payload.selectedRunnerId ?? "");
+        const resolvedRunnerId =
+          flowRunnerDraft?.primaryRunnerId ?? payload.selectedRunnerId ?? "";
 
         setOptions({
           ...payload,
           selectedFlowId: options.selectedFlowId,
-          selectedRunnerId: hasRunnerOverride
+          selectedRunnerId: flowRunnerDraft?.primaryRunnerId
             ? options.selectedRunnerId
             : payload.selectedRunnerId,
         });
-        if (!hasRunnerOverride) setRunnerId(resolvedRunnerId);
         setPreviewSelection({
           flowId,
           runnerId: resolvedRunnerId,
           packageVersions: packagePreview,
+          draftKey,
         });
       })
       .catch(() => {
@@ -925,6 +964,8 @@ export function LaunchPopover({
     flowId,
     runnerId,
     packagePreview,
+    draftKey,
+    flowRunnerDraft,
     taskId,
     previewRequestVersion,
   ]);
@@ -1035,12 +1076,39 @@ export function LaunchPopover({
       flowId,
       runnerId,
       packageVersions: packagePreview,
+      draftKey,
     });
-  const hasFailedBinding = runnerSlots.some(
-    (slot) =>
-      bindingFeedback[`${options?.selectedFlowRevisionId}:${slot.slotKey}`] ===
-      "failed",
-  );
+  const runnerTargetPending =
+    previewSelection?.flowId !== flowId ||
+    (previewSelection?.packageVersions ?? "") !== packagePreview;
+
+  function chooseRunnerForLaunch(slotKey: string | null, value: string): void {
+    const flowRevisionId = options?.selectedFlowRevisionId;
+
+    if (!flowRevisionId) return;
+    const existing =
+      flowRunnerDraft?.flowRevisionId === flowRevisionId
+        ? flowRunnerDraft
+        : null;
+    const slots = { ...existing?.slots };
+    const primaryRunnerId =
+      slotKey === null ? value : existing?.primaryRunnerId;
+
+    if (slotKey !== null) {
+      if (value) slots[slotKey] = value;
+      else delete slots[slotKey];
+    }
+    setOptionsError(false);
+    setFlowRunnerDraft(
+      primaryRunnerId || Object.keys(slots).length
+        ? {
+            flowRevisionId,
+            ...(primaryRunnerId ? { primaryRunnerId } : {}),
+            ...(Object.keys(slots).length ? { slots } : {}),
+          }
+        : null,
+    );
+  }
 
   async function saveRunnerBinding(
     slot: FlowRunnerSlotPreview,
@@ -1062,8 +1130,9 @@ export function LaunchPopover({
     const key = `${revisionId}:${slot.slotKey}`;
 
     if (
-      mappedRunnerId === (bindingChoices[key] ?? slot.mappedRunnerId ?? "") &&
-      bindingFeedback[key] !== "failed"
+      mappedRunnerId === (slot.mappedRunnerId ?? "") &&
+      bindingFeedback[key] !== "failed" &&
+      bindingFeedback[key] !== "unknown"
     )
       return;
 
@@ -1085,11 +1154,79 @@ export function LaunchPopover({
         },
       );
 
-      if (!response.ok) throw new Error("runner binding save failed");
+      if (!response.ok) {
+        setBindingFeedback((current) => ({
+          ...current,
+          [key]: response.status >= 500 ? "unknown" : "failed",
+        }));
+
+        return;
+      }
+      const result = (await response.json()) as {
+        remap?: {
+          flowRevisionId: string;
+          slotKey: string;
+          mappedRunnerId: string | null;
+        };
+      };
+
+      if (
+        result.remap?.flowRevisionId !== revisionId ||
+        result.remap.slotKey !== slot.slotKey ||
+        result.remap.mappedRunnerId !== (mappedRunnerId || null)
+      )
+        throw new Error("Runner mapping receipt was not confirmed");
       setBindingFeedback((current) => ({ ...current, [key]: "saved" }));
       setPreviewSelection(null);
     } catch {
-      setBindingFeedback((current) => ({ ...current, [key]: "failed" }));
+      setBindingFeedback((current) => ({ ...current, [key]: "unknown" }));
+    } finally {
+      setSavingBinding(null);
+    }
+  }
+
+  async function checkRunnerBinding(
+    slot: FlowRunnerSlotPreview,
+    selected: string,
+  ): Promise<void> {
+    const revisionId = options?.selectedFlowRevisionId;
+
+    if (!options?.canConfigureRunnerBindings || !revisionId || savingBinding)
+      return;
+    const key = `${revisionId}:${slot.slotKey}`;
+    const query = new URLSearchParams({ flowRevisionId: revisionId });
+
+    setSavingBinding(key);
+    try {
+      const response = await fetch(
+        `/api/projects/${encodeURIComponent(options.task.projectSlug)}/flow-runner-remaps?${query}`,
+        { cache: "no-store" },
+      );
+
+      if (!response.ok) return;
+      const { remaps } = (await response.json()) as {
+        remaps: ReadonlyArray<{
+          flowRevisionId: string;
+          slotKey: string;
+          mappedRunnerId: string | null;
+          status: "Mapped" | "Pending";
+        }>;
+      };
+      const confirmed = remaps.some(
+        (row) =>
+          row.flowRevisionId === revisionId &&
+          row.slotKey === slot.slotKey &&
+          row.status === (selected ? "Mapped" : "Pending") &&
+          row.mappedRunnerId === (selected || null),
+      );
+
+      setBindingFeedback((current) => ({
+        ...current,
+        [key]: confirmed ? "saved" : "failed",
+      }));
+      setPreviewSelection(null);
+    } catch {
+      setBindingFeedback((current) => ({ ...current, [key]: "unknown" }));
     } finally {
       setSavingBinding(null);
     }
@@ -1175,7 +1312,6 @@ export function LaunchPopover({
       !effectiveLaunchVerdict(options, forceRelaunch).launchable ||
       previewPending ||
       savingBinding !== null ||
-      hasFailedBinding ||
       optionsError
     )
       return;
@@ -1188,9 +1324,8 @@ export function LaunchPopover({
     const selection = buildLaunchBody({
       taskId,
       flowId,
-      runnerId,
-      initialRunnerId:
-        flowId === options.selectedFlowId ? options.selectedRunnerId : null,
+      runnerId: "",
+      initialRunnerId: null,
       baseBranch,
       targetBranch,
       deliveryPolicy: currentPolicy,
@@ -1205,6 +1340,7 @@ export function LaunchPopover({
 
     await intent.submit(endpoint, {
       ...selection,
+      ...(flowRunnerDraft ? { flowRunnerDraft } : {}),
       expectedTaskRevision: options.task.revision,
       expectedSettingsToken: options.settingsToken,
       autoPromote: currentPolicy.trigger === "auto_on_ready",
@@ -1215,12 +1351,12 @@ export function LaunchPopover({
   }
 
   async function scheduleLaunch(): Promise<void> {
-    if (!options || !scheduledLocalTime || !schedulePreview) return;
+    if (!options || !scheduledLocalTime || !schedulePreview || flowRunnerDraft)
+      return;
     if (
       !effectiveLaunchVerdict(options, forceRelaunch).launchable ||
       previewPending ||
       savingBinding !== null ||
-      hasFailedBinding ||
       optionsError
     ) {
       return;
@@ -1234,8 +1370,7 @@ export function LaunchPopover({
         taskId,
         flowId,
         runnerId,
-        initialRunnerId:
-          flowId === options.selectedFlowId ? options.selectedRunnerId : null,
+        initialRunnerId: options.selectedRunnerId,
         baseBranch,
         targetBranch,
         deliveryPolicy: currentPolicy,
@@ -1386,12 +1521,12 @@ export function LaunchPopover({
     !launchVerdict?.launchable ||
     previewPending ||
     savingBinding !== null ||
-    hasFailedBinding ||
     !flowId ||
     !baseBranch ||
     hasPackageSetup ||
     budgetInvalid;
-  const scheduleDisabled = createDisabled || schedulePreview === null;
+  const scheduleDisabled =
+    createDisabled || schedulePreview === null || flowRunnerDraft !== null;
   const budgetFieldLabels: Record<BudgetField, string> = {
     maxTokens: t("budgetMaxTokens"),
     hardMaxTokens: t("budgetHardMaxTokens"),
@@ -1465,7 +1600,7 @@ export function LaunchPopover({
                 tabIndex={-1}
                 type="button"
                 onClick={() => {
-                  setOpen(false);
+                  closeLaunch();
                   openerRef.current?.focus();
                 }}
               />
@@ -1492,6 +1627,11 @@ export function LaunchPopover({
                             base: baseBranch || "-",
                           })}
                     </p>
+                    {!forceRelaunch ? (
+                      <p className="mt-1 text-xs text-mute">
+                        {t("taskSettingsScope")}
+                      </p>
+                    ) : null}
                   </div>
                   <button
                     ref={closeRef}
@@ -1499,7 +1639,7 @@ export function LaunchPopover({
                     className="font-mono text-[14px] text-mute hover:text-ink"
                     type="button"
                     onClick={() => {
-                      setOpen(false);
+                      closeLaunch();
                       openerRef.current?.focus();
                     }}
                   >
@@ -1681,27 +1821,43 @@ export function LaunchPopover({
                           value={flowId}
                           onChange={(value) => {
                             setOptionsError(false);
+                            setFlowRunnerDraft(null);
                             setFlowId(value);
                           }}
                         />
+                        {options.selectedFlowRevisionId ? (
+                          <span className="break-all font-mono text-[10px] text-mute">
+                            {t("selectedFlowRevision", {
+                              revision: options.selectedFlowRevisionId,
+                            })}
+                          </span>
+                        ) : null}
                       </label>
 
                       {options.runners.length > 0 ? (
                         <label className="flex flex-col gap-1">
                           <span className={fieldLabelClass}>
-                            {t("runnerModel")}
+                            {t("runnerModel")} · {t("thisLaunch")}
                             {runnerId !== (options.selectedRunnerId ?? "") ? (
                               <b className="ml-2 text-amber">{t("override")}</b>
                             ) : null}
                           </span>
                           <LaunchSelect
-                            disabled={busy || pending || savingBinding !== null}
+                            disabled={
+                              busy ||
+                              pending ||
+                              savingBinding !== null ||
+                              runnerTargetPending
+                            }
                             label={t("runnerModel")}
                             options={runnerOptions}
                             value={runnerId}
                             onChange={(value) => {
                               setOptionsError(false);
-                              setRunnerId(value);
+                              chooseRunnerForLaunch(
+                                null,
+                                value === options.selectedRunnerId ? "" : value,
+                              );
                             }}
                           />
                           <span className="font-mono text-[10px] text-mute">
@@ -1715,6 +1871,22 @@ export function LaunchPopover({
                       ) : null}
                     </div>
 
+                    {flowRunnerDraft ? (
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <span>{t("runnerDraftScope")}</span>
+                        <Button
+                          size="sm"
+                          type="button"
+                          variant="outline"
+                          onClick={() => {
+                            setFlowRunnerDraft(null);
+                            setOptionsError(false);
+                          }}
+                        >
+                          {t("runnerDraftClear")}
+                        </Button>
+                      </div>
+                    ) : null}
                     {runnerSlots.length > 0 ? (
                       <div
                         className="rounded-[8px] border border-line-soft px-3 py-2 text-[12px]"
@@ -1726,6 +1898,12 @@ export function LaunchPopover({
                             options.canConfigureRunnerBindings
                               ? "runnerBindingScope"
                               : "runnerBindingAdminNeeded",
+                            {
+                              project: options.task.projectSlug,
+                              revision:
+                                options.enabledFlowRevisionId?.slice(0, 12) ??
+                                "—",
+                            },
                           )}
                         </p>
                         <ul className="mt-2 divide-y divide-line-soft">
@@ -1761,7 +1939,44 @@ export function LaunchPopover({
                                     : t("runnerBindingAutomatic")}
                                 </p>
                                 {options.canConfigureRunnerBindings &&
-                                options.selectedFlowRevisionId ? (
+                                slot.slotKey !==
+                                  `session:${options.primarySessionName ?? "default"}` ? (
+                                  <LaunchSelect
+                                    disabled={
+                                      busy ||
+                                      pending ||
+                                      savingBinding !== null ||
+                                      runnerTargetPending
+                                    }
+                                    label={t("runnerDraftSlot", {
+                                      role: slot.label,
+                                    })}
+                                    options={[
+                                      {
+                                        id: "",
+                                        label: t("runnerDraftInherit"),
+                                      },
+                                      ...runnerOptions.filter(
+                                        (option) => option.id !== "",
+                                      ),
+                                    ]}
+                                    value={
+                                      flowRunnerDraft?.slots?.[slot.slotKey] ??
+                                      ""
+                                    }
+                                    onChange={(value) =>
+                                      chooseRunnerForLaunch(slot.slotKey, value)
+                                    }
+                                  />
+                                ) : null}
+                                {options.canConfigureRunnerBindings &&
+                                options.selectedFlowRevisionId &&
+                                options.selectedFlowRevisionId ===
+                                  (options.enabledFlowRevisionId ??
+                                    options.selectedFlowRevisionId) &&
+                                !Object.values(packageVersions).includes(
+                                  "try_once",
+                                ) ? (
                                   <div className="mt-2 flex flex-wrap items-end gap-2">
                                     <label className="flex min-w-0 flex-1 flex-col gap-1">
                                       <span>
@@ -1783,7 +1998,7 @@ export function LaunchPopover({
                                         options={[
                                           {
                                             id: "",
-                                            label: t("runnerBindingAutomatic"),
+                                            label: t("runnerBindingClear"),
                                           },
                                           ...options.runners
                                             .filter(
@@ -1799,10 +2014,33 @@ export function LaunchPopover({
                                         ]}
                                         value={choice}
                                         onChange={(value) =>
-                                          void saveRunnerBinding(slot, value)
+                                          setBindingChoices((current) => ({
+                                            ...current,
+                                            [bindingKey]: value,
+                                          }))
                                         }
                                       />
                                     </label>
+                                    <Button
+                                      aria-label={t("runnerBindingSaveRole", {
+                                        role: slot.label,
+                                      })}
+                                      isDisabled={
+                                        busy ||
+                                        pending ||
+                                        savingBinding !== null ||
+                                        rowFeedback === "unknown" ||
+                                        choice === (slot.mappedRunnerId ?? "")
+                                      }
+                                      size="sm"
+                                      type="button"
+                                      variant="outline"
+                                      onClick={() =>
+                                        void saveRunnerBinding(slot, choice)
+                                      }
+                                    >
+                                      {t("runnerBindingSave")}
+                                    </Button>
                                   </div>
                                 ) : null}
                                 {savingBinding === bindingKey ? (
@@ -1829,18 +2067,26 @@ export function LaunchPopover({
                                     {t("runnerBindingSaved")}
                                   </p>
                                 ) : null}
-                                {rowFeedback === "failed" ? (
+                                {rowFeedback === "failed" ||
+                                rowFeedback === "unknown" ? (
                                   <div className="mt-2 flex flex-wrap items-center gap-2">
                                     <p
                                       className="flex-1 text-danger"
                                       role="alert"
                                     >
-                                      {t("runnerBindingSaveFailed")}
+                                      {t(
+                                        rowFeedback === "unknown"
+                                          ? "runnerBindingSaveUnknown"
+                                          : "runnerBindingSaveFailed",
+                                      )}
                                     </p>
                                     <Button
-                                      aria-label={t("runnerBindingRetryRole", {
-                                        role: slot.label,
-                                      })}
+                                      aria-label={t(
+                                        rowFeedback === "unknown"
+                                          ? "runnerBindingCheckRole"
+                                          : "runnerBindingRetryRole",
+                                        { role: slot.label },
+                                      )}
                                       className={retryButtonClass}
                                       isDisabled={
                                         busy ||
@@ -1853,14 +2099,23 @@ export function LaunchPopover({
                                       type="button"
                                       variant="outline"
                                       onClick={() =>
-                                        void saveRunnerBinding(slot, choice)
+                                        rowFeedback === "unknown"
+                                          ? void checkRunnerBinding(
+                                              slot,
+                                              choice,
+                                            )
+                                          : void saveRunnerBinding(slot, choice)
                                       }
                                     >
                                       <ArrowPathIcon
                                         aria-hidden="true"
                                         className="size-3"
                                       />
-                                      {t("runnerBindingRetry")}
+                                      {t(
+                                        rowFeedback === "unknown"
+                                          ? "runnerBindingCheck"
+                                          : "runnerBindingRetry",
+                                      )}
                                     </Button>
                                   </div>
                                 ) : null}
@@ -2005,12 +2260,14 @@ export function LaunchPopover({
                                     packageVersions[pkg.packageInstallId] ??
                                     "keep"
                                   }
-                                  onChange={(value: VersionChoice) =>
+                                  onChange={(value: VersionChoice) => {
+                                    setOptionsError(false);
+                                    setFlowRunnerDraft(null);
                                     setPackageVersions((prev) => ({
                                       ...prev,
                                       [pkg.packageInstallId]: value,
-                                    }))
-                                  }
+                                    }));
+                                  }}
                                 />
                                 {packageVersions[pkg.packageInstallId] ===
                                   "adopt" ||
@@ -2354,6 +2611,7 @@ export function LaunchPopover({
                         isDisabled={
                           busy ||
                           pending ||
+                          flowRunnerDraft !== null ||
                           (scheduleMode ? scheduleDisabled : createDisabled)
                         }
                         size="sm"

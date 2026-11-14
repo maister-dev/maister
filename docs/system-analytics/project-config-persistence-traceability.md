@@ -58,3 +58,7 @@ Status: Implemented. Each requirement and edge resolves to an executed primary o
 The requirement gate resolves primary IDs from real test titles. The implementation
 plan records executed suite receipts and source fingerprints; a matching ID or
 coverage row alone does not establish acceptance.
+
+## Package 2 coverage (Implemented)
+
+G1 maps to the persistence route integration suite. G2 maps to the reviewed save and dismissal journeys in project onboarding. The tests distinguish observations, local commit and push receipts.
