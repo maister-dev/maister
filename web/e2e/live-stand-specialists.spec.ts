@@ -563,10 +563,11 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
     .getByRole("link", { name: "Open proposal 1", exact: true })
     .click();
   await expect(page.getByRole("main")).toContainText("Pending");
+
   const proposalId = decodeURIComponent(
     new URL(page.url()).pathname.split("/").at(-1)!,
   );
-  const proposal = await read(
+  const workProposal = await read(
     await request.get(`/api/knowledge/proposals/${proposalId}`),
     z.object({
       id: z.literal(proposalId),
@@ -578,6 +579,7 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
       }),
     }),
   );
+
   await page
     .getByLabel("Decision reason", { exact: true })
     .fill(
@@ -614,7 +616,7 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
         resultRevision: result.revision,
         verificationIds: result.value.verificationIds,
         acceptedChildren: execution.accepted_children,
-        knowledgeProposalId: proposal.id,
+        knowledgeProposalId: workProposal.id,
         knowledgeRecordId: record.id,
         knowledgeRecordRevision: record.revision,
         knowledgeConfirmation: record.confirmation.state,
