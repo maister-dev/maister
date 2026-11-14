@@ -717,7 +717,6 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
     ),
     contentType: "application/json",
   });
-  const cronToken = required("MAISTER_CRON_TOKEN");
   await page.goto("/settings/specialists");
   const recurring = page.locator("form").filter({
     has: page.getByRole("heading", {
@@ -757,18 +756,9 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
       "UPDATE agent_schedules SET next_fire_at=clock_timestamp()-interval '1 second' WHERE id=$1",
       [selected],
     );
-    await pool.query(
-      "UPDATE scheduler_jobs SET next_run_at=clock_timestamp()-interval '1 second' WHERE id='agent_tick.dispatcher'",
-    );
 
     return selected;
   });
-  await read(
-    await request.post("/api/cron/tick?jobKind=agent_tick", {
-      headers: { "X-Maister-Cron-Token": cronToken },
-    }),
-    z.object({ succeededCount: z.number().int().min(1) }),
-  );
   const scheduled = async () =>
     withE2EDb(async (pool) => {
       const found = await pool.query(

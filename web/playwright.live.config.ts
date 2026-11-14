@@ -87,6 +87,8 @@ export default defineConfig({
         MAISTER_WORKTREES_ROOT: worktreesRoot,
         MAISTER_SUPERVISOR_URL: SUPERVISOR_URL,
         MAISTER_API_BASE_URL: BASE_URL,
+        MAISTER_SCHEDULER_TIMER_ENABLED: "true",
+        MAISTER_SCHEDULER_TICK_INTERVAL_SECONDS: "5",
         // The seeded e2e fixtures hold more than the default cap of live runs;
         // the live scratch launch must be admitted.
         MAISTER_MAX_CONCURRENT_RUNS:
