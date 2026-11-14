@@ -891,7 +891,13 @@ async function prepareAgentFinalization(
       return { finalized: false };
     }
 
-    const findingsDecision = usesStructuredKnowledgeContext({
+    const evidenceDecision = await validateOperationalEvidenceReferences(
+      tx,
+      runId,
+      resultContract,
+      resultDecision,
+    );
+    const referenceDecision = usesStructuredKnowledgeContext({
       resultContract,
       knowledgeAccess: current?.run.knowledgeAccess,
     })
@@ -899,15 +905,9 @@ async function prepareAgentFinalization(
           tx,
           runId,
           resultContract,
-          resultDecision,
+          evidenceDecision,
         )
-      : resultDecision;
-    const referenceDecision = await validateOperationalEvidenceReferences(
-      tx,
-      runId,
-      resultContract,
-      findingsDecision,
-    );
+      : evidenceDecision;
     const operationalContract =
       resultContract?.kind === "agent_operational"
         ? resultContract.contractName
