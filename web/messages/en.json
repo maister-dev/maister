@@ -825,6 +825,8 @@
   "inbox": {
     "resultRun": "Run",
     "resultAvailable": "Result available",
+    "standIncidentOpened": "Stand incident opened",
+    "standIncidentResolved": "Stand incident resolved",
     "company": "Company",
     "eyebrow": "Across all projects",
     "title": "Inbox",

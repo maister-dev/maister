@@ -8979,6 +8979,12 @@ export const taskSubscribers = pgTable(
 
 export type InboxSourceRef =
   | {
+      kind: "stand_incident";
+      incidentId: string;
+      operationId: string;
+      assignmentId: string;
+    }
+  | {
       kind: "assignment_delivery";
       assignmentId: string;
       deliveryId: string;
@@ -9019,8 +9025,17 @@ export const inboxItems = pgTable(
       () => specialistDeliveryReceipts.id,
       { onDelete: "restrict" },
     ),
+    standIncidentId: text("stand_incident_id").references(
+      () => standIncidentEpisodes.id,
+      { onDelete: "restrict" },
+    ),
     eventKind: text("event_kind", {
-      enum: [...TASK_ACTIVITY_EVENT_KINDS, "assignment_result_available"],
+      enum: [
+        ...TASK_ACTIVITY_EVENT_KINDS,
+        "assignment_result_available",
+        "stand_incident_opened",
+        "stand_incident_resolved",
+      ],
     }).notNull(),
     sourceRef: jsonb("source_ref").$type<InboxSourceRef>().notNull(),
     readAt: timestamp("read_at", { withTimezone: true, mode: "date" }),
@@ -9032,9 +9047,23 @@ export const inboxItems = pgTable(
     nativeIdentity: unique("inbox_items_assignment_delivery_uq").on(
       t.assignmentDeliveryId,
     ),
+    incidentIdentity: unique("inbox_items_stand_incident_transition_uq").on(
+      t.standIncidentId,
+      t.recipientId,
+      t.eventKind,
+    ),
     owner: check(
       "inbox_items_owner_check",
-      sql`(( ${t.assignmentDeliveryId} IS NULL AND ${t.companyId} IS NULL AND ${t.projectId} IS NOT NULL AND ${t.taskId} IS NOT NULL AND ${t.eventKind}<>'assignment_result_available') OR (${t.assignmentDeliveryId} IS NOT NULL AND ${t.eventKind}='assignment_result_available' AND ${t.recipientType}='user' AND ((${t.companyId} IS NOT NULL AND ${t.projectId} IS NULL AND ${t.taskId} IS NULL) OR (${t.companyId} IS NULL AND ${t.projectId} IS NOT NULL)))) IS TRUE`,
+      sql`(CASE WHEN ${t.standIncidentId} IS NOT NULL THEN
+        ${t.assignmentDeliveryId} IS NULL AND ${t.recipientType}='user' AND ${t.taskId} IS NULL
+        AND (${t.companyId} IS NULL)<>(${t.projectId} IS NULL)
+        AND ${t.eventKind} IN ('stand_incident_opened','stand_incident_resolved')
+      ELSE ((${t.assignmentDeliveryId} IS NULL AND ${t.companyId} IS NULL
+        AND ${t.projectId} IS NOT NULL AND ${t.taskId} IS NOT NULL
+        AND ${t.eventKind} NOT IN ('assignment_result_available','stand_incident_opened','stand_incident_resolved'))
+        OR (${t.assignmentDeliveryId} IS NOT NULL AND ${t.eventKind}='assignment_result_available'
+        AND ${t.recipientType}='user' AND ((${t.companyId} IS NOT NULL AND ${t.projectId} IS NULL AND ${t.taskId} IS NULL)
+        OR (${t.companyId} IS NULL AND ${t.projectId} IS NOT NULL)))) END) IS TRUE`,
     ),
     idxRecipient: index("inbox_items_recipient_idx").on(
       t.recipientType,
@@ -9048,7 +9077,7 @@ export const inboxItems = pgTable(
     ),
     eventKindCheck: check(
       "inbox_items_event_kind_check",
-      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged', 'clarification_requested', 'assignment_result_available')`,
+      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged', 'clarification_requested', 'assignment_result_available', 'stand_incident_opened', 'stand_incident_resolved')`,
     ),
   }),
 );

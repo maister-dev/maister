@@ -14,6 +14,7 @@ import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import { installationCompany } from "@/lib/company/grants";
 import { databaseTimestamp } from "@/lib/db/timestamp";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { retainStandIncidentNotification } from "@/lib/notifications/stand-incidents";
 
 const log = pino({
   name: "stand-incidents",
@@ -51,14 +52,20 @@ export async function applyStandVerificationIncident(
   );
 
   if (probe.state === "healthy") {
-    const { rows } = await tx.execute(sql`
+    const { rows } = await tx.execute<{ id: string }>(sql`
       UPDATE stand_incident_episodes SET state='resolved',resolved_at=${probe.observedAt},
         recovery_verification_id=${probe.id}
       WHERE resource_key=${operation.resourceKey} AND state='open' AND last_at<=${probe.observedAt}
       RETURNING id
     `);
 
-    for (const row of rows)
+    for (const row of rows) {
+      await retainStandIncidentNotification(
+        tx,
+        row.id,
+        operation.id,
+        "resolved",
+      );
       log.info(
         {
           episodeId: row.id,
@@ -67,6 +74,7 @@ export async function applyStandVerificationIncident(
         },
         "stand incident resolved",
       );
+    }
 
     return;
   }
@@ -74,7 +82,9 @@ export async function applyStandVerificationIncident(
     probe.state === "unhealthy"
       ? "verification_unhealthy"
       : "verification_inconclusive";
-  const { rows } = await tx.execute(sql`
+  const {
+    rows: [retained],
+  } = await tx.execute<{ id: string; occurrence_count: number }>(sql`
     INSERT INTO stand_incident_episodes(resource_key,reason,first_operation_id,last_operation_id,first_at,last_at)
     VALUES(${operation.resourceKey},${reason},${operation.id},${operation.id},${probe.observedAt},${probe.observedAt})
     ON CONFLICT(resource_key,reason) WHERE state='open' DO UPDATE SET
@@ -88,13 +98,26 @@ export async function applyStandVerificationIncident(
     RETURNING id,occurrence_count
   `);
 
+  if (!retained)
+    throw new MaisterError(
+      "CRASH",
+      "The stand incident observation was not retained",
+    );
+  if (retained.occurrence_count === 1)
+    await retainStandIncidentNotification(
+      tx,
+      retained.id,
+      operation.id,
+      "opened",
+    );
+
   log.info(
     {
-      episodeId: rows[0]?.id,
+      episodeId: retained.id,
       resourceKey: operation.resourceKey,
       verificationId: probe.id,
       reason,
-      occurrences: rows[0]?.occurrence_count,
+      occurrences: retained.occurrence_count,
     },
     "stand incident observation retained",
   );

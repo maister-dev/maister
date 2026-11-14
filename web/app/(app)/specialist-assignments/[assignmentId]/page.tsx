@@ -181,7 +181,7 @@ export default async function SpecialistAssignmentPage({
           <h2 className="font-semibold">{t("incidents")}</h2>
           <ul className="space-y-3 text-sm">
             {incidents.map((incident) => (
-              <li key={incident.id}>
+              <li key={incident.id} id={`stand-incident-${incident.id}`}>
                 <p>
                   {t(`incidentReason.${incident.reason}`)} ·{" "}
                   {t(`incidentState.${incident.state}`)}

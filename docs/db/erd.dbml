@@ -1814,6 +1814,7 @@ table inbox_items {
   project_id text
   task_id text
   assignment_delivery_id text
+  stand_incident_id text
   event_kind text [not null]
   source_ref jsonb [not null]
   read_at "timestamp with time zone"
@@ -1821,6 +1822,7 @@ table inbox_items {
 
   indexes {
     assignment_delivery_id [name: 'inbox_items_assignment_delivery_uq', unique]
+    (stand_incident_id, recipient_id, event_kind) [name: 'inbox_items_stand_incident_transition_uq', unique]
 
     (recipient_type, recipient_id, read_at, created_at) [name: 'inbox_items_recipient_idx']
 
@@ -4917,6 +4919,8 @@ ref inbox_items_project_id_projects_id_fk: inbox_items.project_id > projects.id 
 ref inbox_items_task_id_tasks_id_fk: inbox_items.task_id > tasks.id [delete: cascade, update: no action]
 
 ref inbox_items_assignment_delivery_id_specialist_delivery_receipts_id_fk: inbox_items.assignment_delivery_id > specialist_delivery_receipts.id [delete: restrict, update: no action]
+
+ref inbox_items_stand_incident_id_stand_incident_episodes_id_fk: inbox_items.stand_incident_id > stand_incident_episodes.id [delete: restrict, update: no action]
 
 ref librarian_cards_conversation_id_librarian_conversations_id_fk: librarian_cards.conversation_id > librarian_conversations.id [delete: cascade, update: no action]
 

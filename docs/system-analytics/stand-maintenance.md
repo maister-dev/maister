@@ -237,6 +237,12 @@ Reconciliation dispositions are proved_applied, proved_not_applied, unresolved_h
 
 Use existing incident/outbox ownership with scope key target incarnation/canonical resource/failure condition. Repeated unchanged failure updates one episode without independent alerts; meaningful change, needed human action and evidenced recovery drive notifications. Unchanged routine healthy/no-action checks remain quiet. Delivery rechecks current recipient access.
 
+Failed verification and independently proved recovery each retain at most one
+Inbox notification per episode, requester and transition. The notification
+commits with its exact probe, retains a link to the contributing assignment
+and opens the relevant incident. Current target and contributing input access
+control both the Inbox card and its unread count.
+
 Deployment is host-run web/supervisor plus target helper; Compose remains Postgres-only. New helper package/runtime wiring, configured port, TLS/env/config/state paths, systemd unit scope/user and allow-list are validated before mutation capability is enabled. Docker execution is not supported merely because the image builds; the target qualification explicitly proves the selected real service manager and helper journal survive restart. No production controller is used as a default test target.
 
 ## Expectations

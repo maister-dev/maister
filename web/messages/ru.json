@@ -825,6 +825,8 @@
   "inbox": {
     "resultRun": "Запуск",
     "resultAvailable": "Результат доступен",
+    "standIncidentOpened": "Инцидент на стенде открыт",
+    "standIncidentResolved": "Инцидент на стенде закрыт",
     "company": "Компания",
     "eyebrow": "По всем проектам",
     "title": "Входящие",

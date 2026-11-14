@@ -1952,6 +1952,19 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
           occurrenceCount: 2,
         }),
       ]);
+      const { getInboxItems } = await import("@/lib/queries/inbox");
+      const readIncidentInbox = async () =>
+        (await getInboxItems(userId, "member", { includeRead: true })).filter(
+          ({ eventKind }) => eventKind.startsWith("stand_incident_"),
+        );
+
+      expect(await readIncidentInbox()).toEqual([
+        expect.objectContaining({
+          eventKind: "stand_incident_opened",
+          assignmentId: assignment.id,
+          incidentId: openIncidents[0]?.id,
+        }),
+      ]);
       probeState = "healthy";
       const verifiedResponse = await verifyHealth(repeatedFailure.revision);
 
@@ -1979,6 +1992,18 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
           occurrenceCount: 2,
         }),
       ]);
+      expect(
+        (await readIncidentInbox()).map(({ eventKind }) => eventKind).sort(),
+      ).toEqual(["stand_incident_opened", "stand_incident_resolved"]);
+      await expect(
+        database.pool.query(
+          "UPDATE inbox_items SET recipient_id=$2 WHERE stand_incident_id=$1",
+          [openIncidents[0]?.id, administratorId],
+        ),
+      ).rejects.toMatchObject({
+        code: "23514",
+        constraint: "stand_incident_inbox_immutable",
+      });
       await expect(
         database.pool.query(
           "DELETE FROM stand_verifications WHERE operation_id=$1",
@@ -2343,6 +2368,7 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exa
         reason: "Remove current target evidence visibility.",
         idempotencyKey: randomUUID(),
       });
+      expect(await readIncidentInbox()).toEqual([]);
       await expect(
         getKnowledgeWitness(db, { kind: "user", userId }, proof.id),
       ).rejects.toMatchObject({ code: "PRECONDITION" });
