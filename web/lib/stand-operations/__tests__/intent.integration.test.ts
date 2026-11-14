@@ -2496,11 +2496,13 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 IT-CBU-03 recovers the original native restart
         }),
       ]);
       expect(
-        (await readIncidentInbox())
-          .filter(({ incidentId }) => incidentId === openIncidents[0]?.id)
-          .map(({ eventKind }) => eventKind)
-          .sort(),
-      ).toEqual(["stand_incident_opened", "stand_incident_resolved"]);
+        (await readIncidentInbox()).map(({ eventKind }) => eventKind).sort(),
+      ).toEqual([
+        "stand_incident_opened",
+        "stand_incident_opened",
+        "stand_incident_resolved",
+        "stand_incident_resolved",
+      ]);
       await expect(
         database.pool.query(
           "UPDATE inbox_items SET recipient_id=$2 WHERE stand_incident_id=$1",
