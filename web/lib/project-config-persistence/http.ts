@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { ConfigWorkflow } from "./contracts";
 import type { PersistenceDb } from "./store";
 import type { ConfigOperationIdentity } from "./store";
 
@@ -78,6 +79,65 @@ export async function requireConfigReviewAccess(
     context.projectId,
     "readRepoFiles",
   );
+}
+
+export function configWorkflowRequested(search: URLSearchParams): boolean {
+  const views = search.getAll("view");
+
+  if (!views.length) return false;
+  if (views.length === 1 && views[0] === "workflow") return true;
+  throw new MaisterError("CONFIG", "Invalid configuration status view.");
+}
+
+export async function observeConfigWorkflow(
+  checkout: () => Promise<ConfigWorkflow["checkout"]>,
+  operation: () => Promise<ConfigWorkflow["operation"]>,
+): Promise<ConfigWorkflow> {
+  const [checkoutResult, operationResult] = await Promise.allSettled([
+    checkout(),
+    operation(),
+  ]);
+
+  if (
+    checkoutResult.status === "rejected" &&
+    operationResult.status === "rejected"
+  )
+    throw checkoutResult.reason;
+  if (checkoutResult.status === "rejected") {
+    const error: unknown = checkoutResult.reason;
+
+    if (
+      !isMaisterError(error) ||
+      error.details?.reason !== "repository_unavailable"
+    )
+      throw error;
+    log.warn(
+      { code: error.code, reason: "repository_unavailable" },
+      "configuration checkout observation unavailable",
+    );
+  }
+  if (operationResult.status === "rejected") {
+    const error: unknown = operationResult.reason;
+
+    log.warn(
+      {
+        errorType: error instanceof Error ? error.name : typeof error,
+        sqlState: pgErrorOf(error)?.code,
+      },
+      "configuration operation observation unavailable",
+    );
+  }
+
+  return {
+    checkout:
+      checkoutResult.status === "fulfilled"
+        ? checkoutResult.value
+        : { state: "unavailable" },
+    operation:
+      operationResult.status === "fulfilled"
+        ? operationResult.value
+        : { state: "unavailable" },
+  };
 }
 
 /** Read at most the contract's 4 KiB; untrusted Content-Length is not an allocation bound. */

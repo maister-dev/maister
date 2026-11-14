@@ -9,7 +9,7 @@ import {
   taskLaunchErrorResponse,
   taskLaunchRequestKey,
 } from "@/lib/tasks/launch-http";
-import { taskLaunchBodySchema } from "@/lib/tasks/launch-schema";
+import { interactiveTaskLaunchBodySchema } from "@/lib/tasks/launch-schema";
 import { MaisterError } from "@/lib/errors";
 import { wakeAcceptedTaskLaunch } from "@/lib/tasks/launch-wake";
 
@@ -19,7 +19,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     assertInteractiveLaunchOrigin(request);
     const requestKey = taskLaunchRequestKey(request);
-    const parsed = taskLaunchBodySchema.safeParse(
+    const parsed = interactiveTaskLaunchBodySchema.safeParse(
       await readTaskLaunchBody(request),
     );
 

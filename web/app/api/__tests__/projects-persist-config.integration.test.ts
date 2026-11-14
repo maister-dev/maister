@@ -316,6 +316,10 @@ it("IT-CPC-09: owner access, viewer scalar status, strict bodies and revoked con
       (await GET(new NextRequest("http://localhost/"), params)).status,
     ).toBe(200);
     expect(
+      (await GET(new NextRequest("http://localhost/?view=workflow"), params))
+        .status,
+    ).toBe(403);
+    expect(
       (await POST(request({ previewId: review.previewId }), params)).status,
     ).toBe(403);
     expect(
@@ -440,6 +444,67 @@ it("IT-CPC-05: separate HTTP push review and confirmation project actual results
     );
 
     expect(status.operationId).toBe(review.previewId);
+    const workflowRequest = new NextRequest("http://localhost/?view=workflow");
+    const beforeHead = await git(project.repo, ["rev-parse", "HEAD"]);
+    const beforeIndex = await git(project.repo, ["write-tree"]);
+    const workflow = await statusGet(workflowRequest, params);
+
+    expect(workflow.headers.get("cache-control")).toBe("no-store");
+    expect(
+      contract("ConfigPersistenceWorkflow", await workflow.json()),
+    ).toMatchObject({
+      checkout: { state: "observed", status: { exportState: "in_sync" } },
+      operation: {
+        state: "available",
+        operationId: review.previewId,
+        localState: "committed",
+        pushState: "unknown",
+        commitSha: receipt.commitSha,
+      },
+    });
+    expect(await git(project.repo, ["rev-parse", "HEAD"])).toBe(beforeHead);
+    expect(await git(project.repo, ["write-tree"])).toBe(beforeIndex);
+
+    const otherActor = randomUUID();
+
+    await database.db.insert(users).values({
+      id: otherActor,
+      email: `${otherActor}@example.invalid`,
+      role: "admin",
+      accountStatus: "active",
+      mustChangePassword: false,
+    });
+    actingUserId = otherActor;
+    try {
+      const other = await statusGet(workflowRequest, params);
+      const otherBody = await other.json();
+
+      expect(other.status).toBe(200);
+      expect(otherBody.operation).toEqual({ state: "none" });
+      expect(JSON.stringify(otherBody)).not.toContain(review.previewId);
+    } finally {
+      actingUserId = actorUserId;
+    }
+
+    const detachedCheckout = join(root, "unavailable-checkout", project.id);
+
+    await database.db
+      .update(projects)
+      .set({ repoPath: detachedCheckout })
+      .where(eq(projects.id, project.id));
+    expect(
+      contract(
+        "ConfigPersistenceWorkflow",
+        await (await statusGet(workflowRequest, params)).json(),
+      ),
+    ).toMatchObject({
+      checkout: { state: "unavailable" },
+      operation: {
+        state: "available",
+        operationId: review.previewId,
+        pushState: "unknown",
+      },
+    });
   } finally {
     await database.pool.query(
       "DROP TRIGGER config_http_ack_fault ON project_config_push_intents",

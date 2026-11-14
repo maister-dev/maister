@@ -1,6 +1,10 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => new URLSearchParams(),
+}));
 
 import {
   formatRunChangeSummary,
@@ -53,7 +57,7 @@ describe("RunHeader", () => {
 });
 
 describe("RunShell", () => {
-  it("renders the inspector by default with responsive shell classes", () => {
+  it("renders an explicitly open inspector with responsive shell classes", () => {
     const html = renderToStaticMarkup(
       createElement(
         RunShell,
@@ -62,6 +66,7 @@ describe("RunShell", () => {
           status: "Running",
           branch: "maister/run-1",
           labels: LABELS,
+          defaultInspectorOpen: true,
           inspector: createElement("div", null, "Inspector"),
         },
         createElement("div", null, "Main"),
@@ -76,7 +81,7 @@ describe("RunShell", () => {
     expect(html).toContain("xl:grid-cols-[minmax(0,1fr)_380px]");
   });
 
-  it("can start collapsed without rendering the inspector region", () => {
+  it("starts collapsed without rendering the inspector region", () => {
     const html = renderToStaticMarkup(
       createElement(
         RunShell,
@@ -84,7 +89,6 @@ describe("RunShell", () => {
           title: "Run result",
           status: "Done",
           labels: LABELS,
-          defaultInspectorOpen: false,
           inspector: createElement("div", null, "Inspector"),
         },
         createElement("div", null, "Main"),

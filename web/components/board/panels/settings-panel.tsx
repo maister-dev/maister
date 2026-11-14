@@ -29,11 +29,13 @@ import { resolveEdgeDrain } from "@/lib/tasks/queue-settings";
 export interface SettingsPanelProps {
   data: ProjectPageData;
   isAdmin: boolean;
+  actorUserId: string;
 }
 
 export async function SettingsPanel({
   data,
   isAdmin,
+  actorUserId,
 }: SettingsPanelProps): Promise<ReactElement> {
   const t = await getTranslations("nav");
   const tCommon = await getTranslations("common");
@@ -191,6 +193,7 @@ export async function SettingsPanel({
       ) : null}
       {isAdmin ? (
         <ProjectGitSettingsControl
+          actorUserId={actorUserId}
           exportRevision={project.configExportRevision.toString()}
           mainBranch={project.mainBranch}
           projectSlug={project.slug}

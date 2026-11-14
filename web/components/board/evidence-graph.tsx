@@ -5,6 +5,8 @@ import type {
   EvidenceTextLabels,
 } from "@/lib/board/evidence-graph-layout";
 import type { EvidenceGraph as EvidenceGraphData } from "@/lib/queries/evidence-graph";
+import type { RunResultsAndChecks } from "@/lib/queries/run-results-and-checks";
+import type { ArtifactPreviewItem } from "@/components/workbench/artifact-result-preview";
 import type { EvidenceNodeKind } from "@/lib/queries/evidence-graph";
 import type { Edge, Node, NodeProps, NodeTypes, Viewport } from "@xyflow/react";
 import type {
@@ -13,7 +15,7 @@ import type {
   RefObject,
 } from "react";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Background, Handle, Position, ReactFlow } from "@xyflow/react";
 import { XMarkIcon } from "@heroicons/react/24/outline";
@@ -32,7 +34,8 @@ import {
   useGraphViewportLabels,
 } from "@/components/graphs/graph-viewport-controls";
 import { useTheme } from "@/lib/theme";
-import { useLatestRef } from "@/lib/use-latest-ref";
+import { useModalA11y } from "@/components/use-modal-a11y";
+import { ResultPayload } from "@/components/workbench/artifact-result-preview";
 
 import "@xyflow/react/dist/style.css";
 
@@ -42,9 +45,6 @@ export interface EvidenceGraphLabels extends EvidenceTextLabels {
   noMatches: string;
   clearFilters: string;
   openPayload: string;
-  payloadGone: string;
-  payloadError: string;
-  payloadLoading: string;
   close: string;
   filterNode: string;
   filterKind: string;
@@ -57,6 +57,7 @@ export interface EvidenceGraphProps {
   runId: string;
   graph: EvidenceGraphData;
   labels: EvidenceGraphLabels;
+  results: RunResultsAndChecks;
 }
 
 type ChipColor = "default" | "success" | "warning" | "danger" | "accent";
@@ -165,6 +166,7 @@ export default function EvidenceGraph({
   runId,
   graph,
   labels,
+  results,
 }: EvidenceGraphProps): ReactElement {
   const searchParams = useSearchParams();
 
@@ -226,6 +228,12 @@ export default function EvidenceGraph({
   const [payloadArtifactId, setPayloadArtifactId] = useState<string | null>(
     null,
   );
+
+  const selectedArtifact = payloadArtifactId
+    ? [...results.current, ...results.previous].find(
+        (item) => item.artifactId === payloadArtifactId,
+      )
+    : undefined;
 
   const openArtifact = useCallback((artifactId: string) => {
     setPayloadArtifactId(artifactId);
@@ -372,7 +380,12 @@ export default function EvidenceGraph({
 
       {payloadArtifactId ? (
         <PayloadModal
-          artifactId={payloadArtifactId}
+          key={payloadArtifactId}
+          item={{
+            label: labels.openPayload,
+            ...selectedArtifact,
+            artifactId: payloadArtifactId,
+          }}
           labels={labels}
           runId={runId}
           onClose={() => setPayloadArtifactId(null)}
@@ -482,117 +495,18 @@ function EvidenceCanvas({
 
 function PayloadModal({
   runId,
-  artifactId,
+  item,
   labels,
   onClose,
 }: {
   runId: string;
-  artifactId: string;
+  item: ArtifactPreviewItem;
   labels: EvidenceGraphLabels;
   onClose: () => void;
 }): ReactElement {
-  const [body, setBody] = useState<string>(labels.payloadLoading);
-
   const dialogRef = useRef<HTMLDivElement>(null);
-  const restoreFocusRef = useRef<HTMLElement | null>(null);
-  const onCloseRef = useLatestRef(onClose);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function load(): Promise<void> {
-      setBody(labels.payloadLoading);
-
-      try {
-        const res = await fetch(
-          `/api/runs/${runId}/artifacts/${artifactId}/payload`,
-        );
-
-        if (res.status === 410) {
-          if (!cancelled) setBody(labels.payloadGone);
-
-          return;
-        }
-
-        if (!res.ok) {
-          if (!cancelled) setBody(labels.payloadError);
-
-          return;
-        }
-
-        const text = await res.text();
-
-        if (!cancelled) setBody(text);
-      } catch {
-        if (!cancelled) setBody(labels.payloadError);
-      }
-    }
-
-    void load();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    runId,
-    artifactId,
-    labels.payloadLoading,
-    labels.payloadGone,
-    labels.payloadError,
-  ]);
-
-  useEffect(() => {
-    restoreFocusRef.current = document.activeElement as HTMLElement | null;
-
-    const focusable = (): HTMLElement[] =>
-      dialogRef.current
-        ? Array.from(
-            dialogRef.current.querySelectorAll<HTMLElement>(
-              'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])',
-            ),
-          )
-        : [];
-
-    focusable()[0]?.focus();
-
-    const previousOverflow = document.body.style.overflow;
-
-    document.body.style.overflow = "hidden";
-
-    function onKeyDown(event: KeyboardEvent): void {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onCloseRef.current();
-
-        return;
-      }
-
-      if (event.key !== "Tab") return;
-
-      const items = focusable();
-
-      if (items.length === 0) return;
-
-      const first = items[0];
-      const last = items[items.length - 1];
-
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    }
-
-    document.addEventListener("keydown", onKeyDown);
-
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      document.body.style.overflow = previousOverflow;
-      restoreFocusRef.current?.focus();
-    };
-  }, []);
+  useModalA11y(dialogRef, onClose);
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
@@ -627,15 +541,11 @@ function PayloadModal({
           </button>
         </div>
 
-        <div className="overflow-y-auto overscroll-contain px-5 py-5">
-          <pre
-            aria-live="polite"
-            className="max-h-[420px] overflow-auto rounded-[6px] border border-[color-mix(in_oklab,var(--accent-4)_30%,var(--line))] bg-ivory p-3 font-mono text-[11px] leading-[1.5] text-ink-2"
-            data-testid="artifact-payload"
-            role="status"
-          >
-            {body}
-          </pre>
+        <div
+          className="overflow-y-auto overscroll-contain px-5 py-5"
+          data-testid="artifact-payload"
+        >
+          <ResultPayload item={item} runId={runId} />
         </div>
       </div>
     </div>

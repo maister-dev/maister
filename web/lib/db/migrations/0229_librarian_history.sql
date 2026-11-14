@@ -1,0 +1,3 @@
+CREATE INDEX "librarian_cards_history_idx" ON "librarian_cards" USING btree ("conversation_id","created_at" DESC NULLS LAST,"id" DESC NULLS LAST);--> statement-breakpoint
+CREATE INDEX "librarian_operations_history_idx" ON "librarian_operations" USING btree ("conversation_id","created_at" DESC NULLS LAST,"id" DESC NULLS LAST);--> statement-breakpoint
+CREATE INDEX "librarian_task_links_history_idx" ON "librarian_task_links" USING btree ("conversation_id","created_at" DESC NULLS LAST,"id" DESC NULLS LAST);

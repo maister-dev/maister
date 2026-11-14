@@ -49,12 +49,14 @@ test.describe("run git panel (ADR-181)", () => {
     ).toBeVisible();
 
     // (2) The run's git panel, from the detail host.
-    await page.goto(`/runs/${fx.runId}`);
+    await page.goto(`/runs/${fx.runId}?inspector=closed`);
     await expect(runShell.getByTestId("run-header-status")).toContainText(
       "Failed",
     );
     await runShell.getByTestId("workbench-git-open").click();
     await expect(page.getByTestId("git-panel")).toBeVisible();
+    await expect(page).toHaveURL(/\bgit=open\b/);
+    await expect(page).toHaveURL(/\binspector=closed\b/);
 
     // (3) Commit the uncommitted change.
     await page.getByTestId("git-panel-action-snapshotCommit").click();
@@ -95,6 +97,7 @@ test.describe("run git panel (ADR-181)", () => {
 
     await page.getByTestId("git-panel-action-openPr").click();
     expect((await opened).status()).toBe(200);
+    await page.reload();
     await expect(page.getByTestId("git-panel-pr-chip")).toContainText("open");
     expect(
       readFakeGhState().creates.filter(

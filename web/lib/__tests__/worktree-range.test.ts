@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MaisterError } from "@/lib/errors";
 import {
   diffRange,
+  diffRangeBounded,
   logRange,
   logRangeBounded,
   resolveBaseRef,
@@ -222,11 +223,12 @@ describe("worktree range ops", () => {
 
   describe("diffRange", () => {
     it("returns the raw unified diff for base..branch", async () => {
-      const out = await diffRange({
+      const range = {
         worktreePath: repo,
         baseRef: baseSha,
         branch: "feature",
-      });
+      };
+      const out = await diffRange(range);
 
       expect(out.truncated).toBe(false);
       expect(out.text).toContain("diff --git");
@@ -234,6 +236,13 @@ describe("worktree range ops", () => {
       expect(out.text).toContain("b.txt");
       expect(out.text).toContain("+alpha");
       expect(out.text).toContain("+bravo");
+      await expect(
+        diffRangeBounded(range, Buffer.byteLength(out.text)),
+      ).resolves.toEqual(out);
+      await expect(diffRangeBounded(range, 28)).resolves.toEqual({
+        text: out.text.slice(0, 28),
+        truncated: true,
+      });
     });
 
     it("rejects a baseRef containing '..'", async () => {

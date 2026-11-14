@@ -99,7 +99,7 @@ async function assertOwnerAction(
   }
 }
 
-function hitlQuestionRevision(question: {
+export function hitlQuestionRevision(question: {
   id: string;
   kind: string;
   prompt: string;
@@ -119,11 +119,44 @@ function hitlQuestionRevision(question: {
     .digest("hex");
 }
 
+export type CardTarget = { target: Record<string, string>; revision: string };
+
+export function matchesFrozenCardTarget(
+  frozen: { target: Record<string, string>; targetRevision: string | null },
+  current: CardTarget,
+): boolean {
+  return (
+    frozen.targetRevision === current.revision &&
+    Object.keys(frozen.target).length === Object.keys(current.target).length &&
+    Object.entries(current.target).every(
+      ([key, value]) => frozen.target[key] === value,
+    )
+  );
+}
+
+export function runCardTarget(
+  proposal: Extract<
+    LibrarianCardProposal,
+    { action: "run_promote" | "run_discard" }
+  >,
+  run: { id: string; projectId: string; status: string },
+): CardTarget | null {
+  if (proposal.action === "run_promote" && run.status !== "Review") return null;
+
+  return {
+    target: { projectId: run.projectId, runId: run.id },
+    revision:
+      proposal.action === "run_promote"
+        ? `${run.status}:${proposal.reviewedTargetCommit}`
+        : run.status,
+  };
+}
+
 export async function cardTarget(
   proposal: LibrarianCardProposal,
   ownerUserId: string,
   db: Db,
-): Promise<{ target: Record<string, string>; revision: string }> {
+): Promise<CardTarget> {
   if (proposal.action === "memory_suggest") {
     const [conversation] = await db
       .select({ contextEpoch: librarianConversations.contextEpoch })
@@ -234,7 +267,9 @@ export async function cardTarget(
     };
   }
 
-  if (proposal.action === "run_promote" && run.status !== "Review") {
+  const target = runCardTarget(proposal, { ...run, projectId: run.projectId });
+
+  if (!target) {
     throw new MaisterError(
       "CONFLICT",
       "run left Review before the card was proposed",
@@ -244,13 +279,7 @@ export async function cardTarget(
     );
   }
 
-  return {
-    target: { projectId: run.projectId, runId: run.id },
-    revision:
-      proposal.action === "run_promote"
-        ? `${run.status}:${proposal.reviewedTargetCommit}`
-        : run.status,
-  };
+  return target;
 }
 
 export async function proposeLibrarianCard(

@@ -38,7 +38,9 @@ Cancel before confirmation has no repository effect. Busy confirmation blocks
 duplicate submit, Escape, backdrop and cancel. Focus remains within the dialog
 and returns to its opener. The client records operation identity before POST;
 reload after a lost response reads that receipt. Explicit recovery inspects the
-same accepted operation instead of creating another commit.
+same accepted operation. Refresh status updates the checkout and the selected
+receipt in place, including a push that becomes unknown or settles, while
+keeping the current review.
 
 After local success, separate push review shows origin URL, destination,
 recorded SHA, remote base and every outgoing commit. Its own confirmation
@@ -63,3 +65,7 @@ reasons and receipts. [Persistence analytics](../../system-analytics/project-con
 owns concurrency and crash recovery; [Git integration](../../system-analytics/git-integration.md)
 owns generic remotes. EN/RU copy uses `projects.configPersistence`, remote strings
 and localized guard feedback. Raw server errors never become user feedback.
+
+## Package 2 presentation (Implemented)
+
+Configuration in Git uses a compact notice on the board and the same review workflow in Settings. An action required by a new observation can appear after dismissal.

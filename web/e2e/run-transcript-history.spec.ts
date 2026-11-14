@@ -310,22 +310,14 @@ test("main history loads the latest portion, retries an automatic earlier load a
     expect(
       requests.every((url) => url.searchParams.get("limit") === "100"),
     ).toBe(true);
-    await scrollWithinDocument(reading, 0);
     await expect
-      .poll(async () => ({
-        ...(await transcript.evaluate((element) => ({
-          scrollTop: document.scrollingElement?.scrollTop,
-          firstTop: element
-            .querySelector("[data-transcript-message-id]")
-            ?.getBoundingClientRect().top,
-          tailTop: element
-            .querySelector('[data-testid="transcript-tail"]')
-            ?.getBoundingClientRect().top,
-          viewportHeight: window.innerHeight,
-        }))),
-        earlierRequests: boundaries.length,
-      }))
-      .toMatchObject({ earlierRequests: 1 });
+      .poll(async () => {
+        // The live initial load may still restore the tail after the first scroll.
+        if (boundaries.length === 0) await scrollWithinDocument(reading, 0);
+
+        return boundaries.length;
+      })
+      .toBe(1);
     await earlierRequested;
     await expect(
       transcript.getByTestId("transcript-history-loading"),

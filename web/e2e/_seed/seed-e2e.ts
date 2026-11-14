@@ -2487,7 +2487,7 @@ async function seedM12EvidenceFixture(
       "diff",
       {
         kind: "inline",
-        text: "diff --git a/src/x.ts b/src/x.ts\n+export const x = 1;\n",
+        text: "diff --git a/src/x.ts b/src/x.ts\n--- a/src/x.ts\n+++ b/src/x.ts\n@@ -1 +1 @@\n-export const x = 0;\n+export const x = 1;\n",
       },
     ],
     [

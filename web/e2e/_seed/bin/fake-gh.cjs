@@ -16,7 +16,9 @@ const argv = process.argv.slice(2);
 function flag(name) {
   const at = argv.indexOf(name);
 
-  return at >= 0 ? argv[at + 1] : undefined;
+  return at >= 0
+    ? argv[at + 1]
+    : argv.find((argument) => argument.startsWith(`${name}=`))?.slice(name.length + 1);
 }
 
 function readState() {
@@ -40,6 +42,11 @@ if (argv[0] === "--version") {
 if (!statePath) {
   process.stderr.write("fake gh: MAISTER_E2E_FAKE_GH_STATE is not set\n");
   process.exit(2);
+}
+
+if (argv[0] === "auth" && argv[1] === "token" && flag("--hostname") === "github.com") {
+  process.stdout.write("e2e-fake-github-token\n");
+  process.exit(0);
 }
 
 if (argv[0] === "pr" && argv[1] === "list") {

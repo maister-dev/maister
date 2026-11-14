@@ -1,6 +1,10 @@
 "use client";
 
 import type { ReactElement } from "react";
+import type {
+  ConfigStatus,
+  ConfigWorkflow,
+} from "@/lib/project-config-persistence/contracts";
 import type { ConfigPersistenceController } from "./use-config-persistence";
 
 import { useMemo, useState } from "react";
@@ -18,8 +22,17 @@ const buttonClass =
 
 export function ConfigPersistDialog({
   controller: c,
+  status,
+  error,
+  operation,
 }: {
   controller: ConfigPersistenceController;
+  status: ConfigStatus | null;
+  error: boolean;
+  operation: Extract<
+    ConfigWorkflow["operation"],
+    { state: "available" }
+  > | null;
 }): ReactElement | null {
   const t = useTranslations("projects.configPersistence");
 
@@ -34,8 +47,13 @@ export function ConfigPersistDialog({
       ? c.pushResult?.state
       : undefined) ?? c.receipt?.pushState;
   const uncertainPush = pushState && ["pending", "unknown"].includes(pushState);
-  const localNeedsRecovery = active || (c.uncertainId && !c.receipt);
-  const needsRecovery = localNeedsRecovery || uncertainPush;
+  const unresolvedOperation =
+    c.uncertainId !== null && c.uncertainId !== c.receipt?.operationId;
+  const localNeedsRecovery =
+    c.receipt?.state === "recovery_required" ||
+    c.receipt?.cleanupState === "retained" ||
+    unresolvedOperation;
+  const needsRecovery = localNeedsRecovery || pushState === "unknown";
 
   return (
     <ConfirmDialog
@@ -50,6 +68,50 @@ export function ConfigPersistDialog({
       <p aria-live="polite" className="text-sm text-mute">
         {c.busy ? t("working") : t("excluded")}
       </p>
+      <details
+        className="rounded border border-line p-2"
+        data-testid="config-observation-details"
+      >
+        <summary className="cursor-pointer text-sm font-semibold">
+          {t("workflow.details")}
+        </summary>
+        <div className="mt-2 grid gap-1 text-sm text-mute">
+          {status ? (
+            <>
+              <p>{t(`exportStates.${status.exportState}`)}</p>
+              <p>{t(`repositoryStates.${status.repositoryState}`)}</p>
+              {status.reason ? <p>{t(`reasons.${status.reason}`)}</p> : null}
+              {status.observedAt ? (
+                <p>
+                  {t("observedAt")}{" "}
+                  <time dateTime={status.observedAt}>
+                    {new Date(status.observedAt).toLocaleString()}
+                  </time>
+                </p>
+              ) : null}
+            </>
+          ) : null}
+          {error ? <p>{t("statusUnavailable")}</p> : null}
+          <Button
+            className={buttonClass}
+            isDisabled={c.busy}
+            type="button"
+            onPress={() => void c.refreshObservation()}
+          >
+            {t("refreshStatus")}
+          </Button>
+          {operation && c.receipt?.operationId !== operation.operationId ? (
+            <Button
+              className={buttonClass}
+              isDisabled={c.busy}
+              type="button"
+              onPress={() => void c.readReceipt(operation.operationId)}
+            >
+              {t("previousReceipt")}
+            </Button>
+          ) : null}
+        </div>
+      </details>
       {c.error ? (
         <p className="text-danger" role="alert">
           {c.error}
@@ -97,7 +159,7 @@ export function ConfigPersistDialog({
       ) : null}
       {c.receipt ? (
         <div className="space-y-2 text-sm" role="status">
-          {c.receipt.state === "committed" ? (
+          {c.receipt.state === "committed" && c.receipt.commitSha ? (
             <div data-testid="config-commit-success">
               <strong>{t("committed")}</strong>
               <p className="break-all font-mono">{c.receipt.commitSha}</p>
@@ -123,7 +185,7 @@ export function ConfigPersistDialog({
           ) : null}
         </div>
       ) : null}
-      {c.uncertainId && !c.receipt ? (
+      {unresolvedOperation ? (
         <p className="break-all text-sm">
           {t("operation")}: {c.uncertainId}
         </p>
@@ -138,7 +200,11 @@ export function ConfigPersistDialog({
           {t("recover")}
         </Button>
       ) : null}
-      {c.receipt?.state === "committed" && !uncertainPush && !c.pushReview ? (
+      {c.receipt?.state === "committed" &&
+      c.receipt.commitSha &&
+      !localNeedsRecovery &&
+      !uncertainPush &&
+      !c.pushReview ? (
         <Button
           className={buttonClass}
           data-testid="config-push-review"
@@ -149,7 +215,7 @@ export function ConfigPersistDialog({
           {t("reviewPush")}
         </Button>
       ) : null}
-      {c.pushReview ? (
+      {c.pushReview && !localNeedsRecovery && !uncertainPush ? (
         <section
           aria-label={t("pushTitle")}
           className="space-y-3 border-t border-line pt-3"
@@ -181,7 +247,11 @@ export function ConfigPersistDialog({
           </Button>
         </section>
       ) : null}
-      {!c.busy && !localNeedsRecovery && c.preview?.kind !== "ready" ? (
+      {!c.busy &&
+      !active &&
+      !localNeedsRecovery &&
+      !uncertainPush &&
+      c.preview?.kind !== "ready" ? (
         <Button
           className={buttonClass}
           data-testid="config-persist-refresh"

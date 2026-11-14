@@ -11,6 +11,8 @@ import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
 import { loadRunScheduledRequest } from "@/lib/agents/activity-queries";
 import { ScheduledRequestEvidence } from "@/components/agents/scheduled-request-evidence";
 import { AgentRetryControl } from "@/components/agents/agent-retry-control";
+import { RunOutcome, type RunNextAction } from "@/components/runs/run-outcome";
+import { loadOperationalOutcome } from "@/lib/run-results/operational-projection";
 import { OperationalRunResult } from "@/components/runs/operational-run-result";
 import {
   CRASH_RECOVER_DECISION,
@@ -24,7 +26,7 @@ import {
 } from "@/components/runs/run-public-result-panel";
 import { AssignmentActions } from "@/components/board/assignment-actions";
 import { PendingHitlFocusRestorer } from "@/components/board/pending-hitl-focus-restorer";
-import { EvidenceGraphSection } from "@/components/board/evidence-graph-section";
+import { RunResultsAndChecksView } from "@/components/workbench/run-results-and-checks";
 import { type EvidenceGraphLabels } from "@/components/board/evidence-graph";
 import { type FlowGraphViewLabels } from "@/components/board/flow-graph-view";
 import { FlowGraphViewSection } from "@/components/board/flow-graph-view-section";
@@ -121,7 +123,6 @@ import {
   type ReviewThreadCounts,
 } from "@/lib/review-comments/run-diff-source";
 import { PENDING_HITL_RUN_STATUS } from "@/lib/services/hitl";
-import { buildEvidenceGraph } from "@/lib/queries/evidence-graph";
 import { presentationLayout } from "@/lib/flows/graph/presentation-layout";
 import { buildGraphTopology } from "@/lib/queries/flow-graph-view";
 import { getRunNodeStatuses } from "@/lib/queries/run-node-status";
@@ -158,7 +159,10 @@ import {
   computeDirtySummary,
   type DirtySummary,
 } from "@/lib/runs/dirty-resolution";
-import { buildFlowRunResultReadModel } from "@/lib/runs/flow-result-read-model";
+import {
+  buildFlowRunResultReadModel,
+  readOptionalRunEvidence,
+} from "@/lib/runs/flow-result-read-model";
 import { getRunChangeSummary } from "@/lib/runs/change-summary";
 import {
   deriveInspectorActions,
@@ -389,7 +393,7 @@ export default async function RunDetailLayout({
   const settings = await getRunSettings(runId);
   const capabilityProfiles = await getRunCapabilityProfiles(runId);
   const resolvedSet = await getRunResolvedCapabilitySet(runId);
-  const evidence = await buildEvidenceGraph(runId);
+  const evidence = await readOptionalRunEvidence(runId, detail.projectId);
   const verification =
     detail.runKind === "flow"
       ? await getFlowRunVerification(runId, detail.projectId)
@@ -417,7 +421,15 @@ export default async function RunDetailLayout({
   // and the child glyphs share. `null` means "render no panel".
   const tActivity = await getTranslations("agentActivity");
   const publicResult = await loadRunPublicResult(getDb(), runId);
-  const operational = publicResult?.operationalOutcome ?? null;
+  const isOperational =
+    detail.runKind === "agent" && detail.agentKind === "operational";
+  const operational = isOperational
+    ? (publicResult?.operationalOutcome ??
+      (await loadOperationalOutcome(getDb(), runId)))
+    : null;
+  const tOperational = await getTranslations("operationalAgents");
+  const hasOperationalResult =
+    operational?.state === "terminal" || isLiveRunStatus(detail.status);
   const resultStatusLabels: Record<ResultStatus, string> = {
     pending: t("publicResultStatusPending"),
     valid: t("publicResultStatusValid"),
@@ -461,9 +473,6 @@ export default async function RunDetailLayout({
     noMatches: tEvidence("noMatches"),
     clearFilters: tEvidence("clearFilters"),
     openPayload: tEvidence("openPayload"),
-    payloadGone: tEvidence("payloadGone"),
-    payloadError: tEvidence("payloadError"),
-    payloadLoading: tEvidence("payloadLoading"),
     close: tEvidence("close"),
     filterNode: tEvidence("filterNode"),
     filterKind: tEvidence("filterKind"),
@@ -997,7 +1006,7 @@ export default async function RunDetailLayout({
         }
       : null,
     timeline,
-    evidence,
+    evidence: evidence?.graph ?? { nodes: [], edges: [] },
     readiness: verification?.rollup ?? null,
     cost: costSummary,
     settings,
@@ -1027,7 +1036,8 @@ export default async function RunDetailLayout({
     // eslint-disable-next-line react-hooks/purity -- async Server Component: one render per request reads the request clock.
     nowMs: Date.now(),
   });
-  const showAgentCenter = shouldRenderAgentRunCenter(flowResultDto);
+  const showAgentCenter =
+    isOperational || shouldRenderAgentRunCenter(flowResultDto);
 
   const wallDurationMs = detail.endedAt
     ? Math.max(0, detail.endedAt.getTime() - detail.startedAt.getTime())
@@ -1283,7 +1293,7 @@ export default async function RunDetailLayout({
     disabled: !action.enabled,
     disabledReason: action.enabled ? null : t("inspectorDisabled"),
   }));
-  const visiblePolicyActions = operational
+  const visiblePolicyActions = isOperational
     ? []
     : policyActions.filter((action) =>
         isCutoverHistory
@@ -1349,8 +1359,8 @@ export default async function RunDetailLayout({
       ]
     : [];
   const inspectorActions: RunInspectorAction[] = [
-    ...(operational ? [] : dirtyGateActions),
-    ...(operational ? [] : reviewGateActions),
+    ...(isOperational ? [] : dirtyGateActions),
+    ...(isOperational ? [] : reviewGateActions),
     ...pendingInputActions,
     ...gateChatActions,
     ...(showReview && !hasReviewGate
@@ -1367,7 +1377,12 @@ export default async function RunDetailLayout({
   const currentNodeLabel =
     flowGraphData?.topology.nodes.find((n) => n.id === detail.currentStepId)
       ?.displayLabel ?? null;
-  const shellTitle = detail.taskTitle ?? detail.taskRef ?? detail.branch;
+  const shellTitle =
+    detail.taskTitle ??
+    detail.taskRef ??
+    detail.sourceAgentDisplayName ??
+    detail.sourceAgentId ??
+    (isOperational ? tOperational("title") : detail.branch);
   const provenanceSuffix = packageProvenance
     ? ` · ${t("fromPackage", {
         name:
@@ -1431,7 +1446,7 @@ export default async function RunDetailLayout({
   const primaryResult =
     flowGraphData || showAgentCenter ? (
       <section className="min-w-0 max-w-full" data-testid="run-primary-result">
-        {flowGraphData ? (
+        {flowGraphData && !isOperational ? (
           <FlowRunCenter
             graphView={
               <FlowGraphViewSection
@@ -1482,12 +1497,18 @@ export default async function RunDetailLayout({
                 <AgentRetryControl runId={detail.runId} />
               ) : null}
             </div>
-            {operational ? (
-              <OperationalRunResult
-                canAct={canAct}
-                outcome={operational}
-                runId={detail.runId}
-              />
+            {isOperational ? (
+              <section id="operation-result" tabIndex={-1}>
+                {operational && hasOperationalResult ? (
+                  <OperationalRunResult
+                    canAct={canAct}
+                    outcome={operational}
+                    runId={detail.runId}
+                  />
+                ) : (
+                  <p className="text-sm text-mute">{t("outcomeUnknown")}</p>
+                )}
+              </section>
             ) : (
               <AgentRunCenter
                 labels={agentRunCenterLabels}
@@ -1504,6 +1525,74 @@ export default async function RunDetailLayout({
         )}
       </section>
     ) : null;
+
+  let nextAction: RunNextAction | undefined;
+
+  if (detail.pendingHitl && !isCutoverHistory) {
+    nextAction = {
+      label: t(
+        canAct ? "inspectorActionOpenPendingInput" : "outcomeInspectDecision",
+      ),
+      href: "#pending-input",
+      reason: t(canAct ? "outcomeDecisionRequired" : "outcomeReadOnly"),
+    };
+  } else if (
+    detail.continuation.claim ||
+    detail.continuation.reworkClaimAvailable ||
+    isHumanWorking
+  ) {
+    nextAction = {
+      label: t("handoff"),
+      href: "#run-handoff",
+      reason: t(canAct ? "outcomeHandoffAvailable" : "outcomeReadOnly"),
+    };
+  } else if (
+    isOperational &&
+    operational?.state === "terminal" &&
+    (!operational.successful || operational.cleanup?.state === "exhausted")
+  ) {
+    nextAction = {
+      label: tOperational("title"),
+      href: "#operation-result",
+      reason: t(canAct ? "outcomeOperationAttention" : "outcomeReadOnly"),
+    };
+  } else if (detail.status === "Crashed" && !isOperational) {
+    nextAction = {
+      label: t("crashTitle"),
+      href: "#run-recovery",
+      reason: t(
+        canAct && detail.recoverable
+          ? "crashRecoverableHint"
+          : canAct
+            ? "notRecoverable"
+            : "outcomeReadOnly",
+      ),
+    };
+  } else if (showReview && reviewData) {
+    nextAction = {
+      label: t("flowCenterReviewChanges"),
+      href: "#review-panel",
+      reason: t(
+        !canAct
+          ? "outcomeReadOnly"
+          : headerPromotionOperation
+            ? "outcomeDeliveryAvailable"
+            : "outcomeReviewRequired",
+      ),
+    };
+  }
+
+  const outcomeSummary = isOperational
+    ? hasOperationalResult && operational
+      ? tOperational(operational.effectiveOutcome ?? "pending")
+      : t("outcomeUnknown")
+    : publicResult
+      ? resultStatusLabels[publicResult.resultStatus]
+      : t(
+          isLiveRunStatus(detail.status)
+            ? "outcomeRunning"
+            : "outcomeNoStructuredResult",
+        );
 
   return (
     <RunPeekController
@@ -1533,10 +1622,11 @@ export default async function RunDetailLayout({
               }
             : undefined
         }
-        branch={detail.branch}
+        branch={isOperational ? null : detail.branch}
         budgetStatus={detail.budgetStatus}
         canReopen={canAct}
-        changeSummary={changeSummary}
+        changeSummary={isOperational ? null : changeSummary}
+        hideChangeSummary={isOperational}
         inspector={
           <>
             {scheduledRequest ? (
@@ -1549,7 +1639,7 @@ export default async function RunDetailLayout({
                 result contract and no rows — most runs. */}
             <RunPublicResultPanel
               labels={publicResultLabels}
-              result={operational ? null : publicResult}
+              result={isOperational ? null : publicResult}
             />
             <LiveRunInspector
               actions={inspectorActions}
@@ -1575,16 +1665,28 @@ export default async function RunDetailLayout({
         }
         keyRef={detail.taskRef}
         labels={shellLabels}
+        outcome={
+          <RunOutcome
+            heading={t("outcomeHeading")}
+            next={nextAction}
+            noAction={t(canAct ? "outcomeNoAction" : "outcomeReadOnly")}
+            summary={outcomeSummary}
+          />
+        }
         prHasConflicts={detail.prHasConflicts}
         projectHref={`/projects/${detail.projectSlug}`}
         projectLabel={t("backToBoard")}
         promotionOperation={headerPromotionOperation}
         prState={detail.prState}
-        reviewHref={showReview && reviewData ? "#review-panel" : null}
+        reviewHref={
+          nextAction?.href === "#review-panel" && headerPromotionOperation
+            ? "#review-panel"
+            : null
+        }
         runId={detail.runId}
         status={detail.status}
         subtitle={shellSubtitle}
-        targetBranch={detail.targetBranch}
+        targetBranch={isOperational ? null : detail.targetBranch}
         taskHref={
           detail.taskNumber != null
             ? `/projects/${detail.projectSlug}/tasks/${detail.taskNumber}`
@@ -1763,6 +1865,8 @@ export default async function RunDetailLayout({
             <section
               className="mb-6 rounded-[14px] border border-red-300 bg-red-50/60 p-5 dark:border-red-900/60 dark:bg-red-950/30"
               data-testid="run-crashed-section"
+              id="run-recovery"
+              tabIndex={-1}
             >
               <h2 className="mb-1 inline-flex items-center gap-2 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-red-500 before:content-['']">
                 {t("crashTitle")}
@@ -1788,10 +1892,12 @@ export default async function RunDetailLayout({
               {/* Discard is available for EVERY Crashed run (it is the only path
               into the GC countdown); Recover is hidden when there is no
               resumable session. */}
-              <RunRecoverActions
-                canRecover={detail.recoverable}
-                runId={detail.runId}
-              />
+              {canAct && !isOperational ? (
+                <RunRecoverActions
+                  canRecover={detail.recoverable}
+                  runId={detail.runId}
+                />
+              ) : null}
             </section>
           ) : null}
 
@@ -2067,7 +2173,7 @@ export default async function RunDetailLayout({
 
           {detail.pendingHitl && !isCutoverHistory ? primaryResult : null}
 
-          {!hasReviewGate && !operational ? (
+          {!hasReviewGate && !isOperational ? (
             <ReviewWorkspaceUnavailable
               message={t("reviewWorkspaceUnavailable")}
             />
@@ -2088,7 +2194,11 @@ export default async function RunDetailLayout({
           ) : null}
 
           {isHumanWorking && detail.continuation.claim === null ? (
-            <section className="mt-6 rounded-[14px] border border-[color-mix(in_oklab,var(--accent-4)_30%,var(--line))] bg-accent-4-soft/30 p-5">
+            <section
+              className="mt-6 rounded-[14px] border border-[color-mix(in_oklab,var(--accent-4)_30%,var(--line))] bg-accent-4-soft/30 p-5"
+              id="run-handoff"
+              tabIndex={-1}
+            >
               <h2 className="mb-3 inline-flex items-center gap-2 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-accent-4 before:content-['']">
                 {t("handoff")}
               </h2>
@@ -2108,7 +2218,11 @@ export default async function RunDetailLayout({
           detail.continuation.reworkClaimAvailable ||
           (detail.status === "Review" &&
             detail.continuation.disabledReason !== null) ? (
-            <section className="mt-6 rounded-[14px] border border-[color-mix(in_oklab,var(--accent-4)_30%,var(--line))] bg-accent-4-soft/30 p-5">
+            <section
+              className="mt-6 rounded-[14px] border border-[color-mix(in_oklab,var(--accent-4)_30%,var(--line))] bg-accent-4-soft/30 p-5"
+              id="run-handoff"
+              tabIndex={-1}
+            >
               <h2 className="mb-3 inline-flex items-center gap-2 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-accent-4 before:content-['']">
                 {t("handoff")}
               </h2>
@@ -2140,16 +2254,19 @@ export default async function RunDetailLayout({
                   />
                 }
                 evidence={
-                  <section>
-                    <h2 className="mb-3 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink">
-                      {evidenceLabels.title}
-                    </h2>
-                    <EvidenceGraphSection
-                      graph={evidence}
-                      labels={evidenceLabels}
+                  evidence ? (
+                    <RunResultsAndChecksView
+                      graph={evidence.graph}
+                      graphLabels={evidenceLabels}
+                      outcome={outcomeSummary}
+                      results={evidence.results}
                       runId={detail.runId}
                     />
-                  </section>
+                  ) : (
+                    <p className="p-3 text-sm text-mute" role="status">
+                      {tEvidence("results.unavailable")}
+                    </p>
+                  )
                 }
                 filesPane={children}
                 filesTree={
@@ -2160,7 +2277,7 @@ export default async function RunDetailLayout({
                 }
                 runId={detail.runId}
                 tabLabels={flowGraphData?.tabLabels ?? workbenchTabLabels}
-                tabs={operational ? ["timeline", "evidence"] : undefined}
+                tabs={isOperational ? ["timeline", "evidence"] : undefined}
                 timeline={
                   <RunTimeline
                     assignmentEvents={timeline.assignmentEvents}

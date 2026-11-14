@@ -108,18 +108,22 @@ test("readiness summary: badge on board/portfolio + panel on run-detail", async 
     await failedReason
       .getByRole("link", { name: "View gate evidence" })
       .click();
+    await expect(page.getByTestId("selected-result")).toContainText(fx.gateId);
+    await page.getByRole("link", { name: "Provenance graph" }).click();
     const graph = page.getByTestId("evidence-graph");
 
     await expect(graph.getByTestId("evidence-node")).toHaveCount(1);
     await expect(graph.getByTestId("evidence-node")).toContainText(fx.gateId);
     await expect(page).toHaveURL(
-      `/runs/${fx.failedRunId}?wb=evidence&evidenceItem=gate%3A${failedRowId}`,
+      `/runs/${fx.failedRunId}?wb=evidence&evidenceItem=gate%3A${failedRowId}&evidenceView=graph`,
     );
     await expect(
       page.getByText(`Evidence item · ${fx.gateId}`, { exact: true }),
     ).toBeVisible();
     await page.getByRole("button", { name: "Clear filters" }).click();
-    await expect(page).toHaveURL(`/runs/${fx.failedRunId}?wb=evidence`);
+    await expect(page).toHaveURL(
+      `/runs/${fx.failedRunId}?wb=evidence&evidenceView=graph`,
+    );
     await expect(
       graph.getByTestId("evidence-node").filter({ hasText: decoyLabel }),
     ).toBeVisible();

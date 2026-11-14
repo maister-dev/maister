@@ -176,11 +176,12 @@ async function invokeGet(
   artifactId: string,
   runId: string = RUN_ID,
   headers?: HeadersInit,
+  query = "",
 ) {
   const { GET } = await import("../route");
   const req = new NextRequest(
     new Request(
-      `http://localhost/api/runs/${runId}/artifacts/${artifactId}/payload`,
+      `http://localhost/api/runs/${runId}/artifacts/${artifactId}/payload${query}`,
       { method: "GET", headers },
     ),
   );
@@ -765,7 +766,9 @@ describe("GET /api/runs/[runId]/artifacts/[artifactId]/payload", () => {
   });
 
   it("file > 256 KiB → 200 returns the FULL untruncated body (no injection cap on the route)", async () => {
-    const big = "F".repeat(300 * 1024);
+    const previewLimit = 64 * 1024;
+    const prefix = "F".repeat(previewLimit - 1);
+    const big = prefix + "🧪" + "F".repeat(256 * 1024);
 
     process.env.MAISTER_ARTIFACT_INLINE_MAX_BYTES = "1024";
     writeFileSync(join(runDir(), "big.log"), big, "utf8");
@@ -779,8 +782,82 @@ describe("GET /api/runs/[runId]/artifacts/[artifactId]/payload", () => {
     const body = await res.text();
 
     expect(res.status).toBe(200);
-    expect(body.length).toBe(300 * 1024);
+    expect(body).toBe(big);
+
+    const preview = await invokeGet(
+      "art-bigfile",
+      RUN_ID,
+      undefined,
+      "?view=preview",
+    );
+
+    expect(preview.status).toBe(200);
+    expect(preview.headers.get("x-artifact-preview-truncated")).toBe("true");
+    expect(await preview.text()).toBe(prefix);
+
+    const exact = prefix + "F";
+
+    writeFileSync(join(runDir(), "big.log"), exact);
+    const complete = await invokeGet(
+      "art-bigfile",
+      RUN_ID,
+      undefined,
+      "?view=preview",
+    );
+
+    expect(complete.headers.get("x-artifact-preview-truncated")).toBe("false");
+    expect(await complete.text()).toBe(exact);
 
     delete process.env.MAISTER_ARTIFACT_INLINE_MAX_BYTES;
+  });
+
+  it("previews a verified execution-object prefix with a server-owned range", async () => {
+    const size = 64 * 1024;
+    const objectId = "object-preview";
+
+    seedArtifact({
+      id: "art-object-preview",
+      locator: { kind: "execution-object", objectId },
+    });
+    vi.mocked(openRuntimeObjectContent).mockResolvedValue({
+      object: { logicalName: "large.log", sizeBytes: size + 1 },
+      content: {
+        body: new Response(new Uint8Array(size)).body,
+        contentLength: size,
+        contentRange: `bytes 0-${size - 1}/${size + 1}`,
+        contentDigest: "sha-256=:prefix=:",
+        reprDigest: "sha-256=:whole=:",
+        etag: '"1-abc"',
+      },
+    } as never);
+    const bad = await invokeGet(
+      "art-object-preview",
+      RUN_ID,
+      { range: "bytes=1-3" },
+      "?view=preview",
+    );
+
+    expect(bad.status).toBe(400);
+    expect(bad.headers.get("cache-control")).toBe("private, no-store");
+    expect(openRuntimeObjectContent).not.toHaveBeenCalled();
+    const preview = await invokeGet(
+      "art-object-preview",
+      RUN_ID,
+      undefined,
+      "?view=preview",
+    );
+
+    expect(openRuntimeObjectContent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: RUN_ID,
+        objectId,
+        range: { start: 0, end: size - 1 },
+      }),
+    );
+    expect(preview.status).toBe(200);
+    expect(preview.headers.get("x-artifact-preview-truncated")).toBe("true");
+    expect(preview.headers.get("content-range")).toBeNull();
+    expect(preview.headers.get("content-digest")).toBe("sha-256=:prefix=:");
+    expect((await preview.arrayBuffer()).byteLength).toBe(size);
   });
 });

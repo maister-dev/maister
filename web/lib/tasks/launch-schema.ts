@@ -73,7 +73,65 @@ export const taskLaunchBodySchema = taskLaunchFieldsSchema
   .superRefine(validateTaskLaunchTarget)
   .meta(taskLaunchTargetContract);
 
-export type TaskLaunchRequest = z.infer<typeof taskLaunchBodySchema>;
+const draftIdentifier = identifier.regex(/^[^\u0000-\u001f\u007f]+$/u);
+
+const flowRunnerDraftSchema = z
+  .object({
+    flowRevisionId: draftIdentifier,
+    primaryRunnerId: draftIdentifier.optional(),
+    slots: z
+      .record(draftIdentifier, draftIdentifier)
+      .refine(
+        (slots) =>
+          Object.keys(slots).length >= 1 && Object.keys(slots).length <= 64,
+      )
+      .optional(),
+  })
+  .strict()
+  .refine(
+    (draft) => draft.primaryRunnerId !== undefined || draft.slots !== undefined,
+  );
+
+export type FlowRunnerDraft = z.infer<typeof flowRunnerDraftSchema>;
+
+const interactiveFields = taskLaunchFieldsSchema.extend({
+  flowRunnerDraft: flowRunnerDraftSchema.optional(),
+});
+
+function validateInteractiveTarget(
+  target: z.infer<typeof interactiveFields>,
+  context: z.RefinementCtx,
+): void {
+  validateTaskLaunchTarget(target, context);
+  if (
+    target.flowRunnerDraft &&
+    (target.runnerId || target.agentId || target.workspace)
+  )
+    context.addIssue({
+      code: "custom",
+      path: ["flowRunnerDraft"],
+      message:
+        "A Flow runner draft requires a Flow target and no legacy runner selection",
+    });
+}
+
+export const interactiveTaskLaunchBodySchema = interactiveFields.superRefine(
+  validateInteractiveTarget,
+);
+export const interactiveTaskLaunchReplaceBodySchema = interactiveFields
+  .extend({
+    expectedStateVersion: z.number().int().positive(),
+  })
+  .superRefine(validateInteractiveTarget);
+export const interactiveRunLaunchPreviewSchema = interactiveFields.pick({
+  taskId: true,
+  flowId: true,
+  relaunchOfRunId: true,
+  packageVersions: true,
+  flowRunnerDraft: true,
+});
+
+export type TaskLaunchRequest = z.infer<typeof interactiveTaskLaunchBodySchema>;
 
 export const taskLaunchOptionsSchema = taskLaunchFieldsSchema
   .pick({
@@ -106,5 +164,5 @@ export const taskLaunchReplaceBodySchema = taskLaunchFieldsSchema
   .superRefine(validateTaskLaunchTarget)
   .meta(taskLaunchTargetContract);
 export type TaskLaunchReplaceRequest = z.infer<
-  typeof taskLaunchReplaceBodySchema
+  typeof interactiveTaskLaunchReplaceBodySchema
 >;

@@ -138,6 +138,9 @@ export function toFlowGraph(graph: EvidenceGraph): {
       target: e.target,
       data: data as unknown as Record<string, unknown>,
       ...(dashed ? { style: { strokeDasharray: "6 4" } } : {}),
+      ...(e.kind === "flow"
+        ? { style: { strokeDasharray: "2 5", opacity: 0.65 } }
+        : {}),
     };
   });
 

@@ -94,6 +94,15 @@ export async function captureTaskLaunchFlowAssets(
 
   if (!revision) throw assetsChanged();
 
+  return captureTaskLaunchFlowAssetsFromRevision(revision);
+}
+
+export async function captureTaskLaunchFlowAssetsFromRevision(
+  revision: Pick<
+    typeof flowRevisions.$inferSelect,
+    "id" | "manifestDigest" | "installedPath"
+  >,
+): Promise<TaskLaunchFlowAssetsSnapshot> {
   return {
     version: 1,
     flowRevisionId: revision.id,

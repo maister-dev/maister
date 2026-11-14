@@ -4,9 +4,10 @@ import type { ReactElement } from "react";
 import type { TranscriptMessage } from "@/components/run-transcript/transcript-view";
 import type { LibrarianPanelMode } from "@/components/librarian/panel-mode";
 import type { LibrarianSubject } from "@/lib/librarian/types";
+import type { ReceiptAttachments } from "@/lib/librarian/action-history";
 import type { LibrarianCardView } from "@/lib/librarian/read-models";
 import type {
-  LibrarianConversationView,
+  LibrarianWorkView,
   LibrarianMessageDto,
   LibrarianUpdateDto,
 } from "@/lib/librarian/view";
@@ -31,11 +32,22 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLibrarian } from "@/components/librarian/librarian-provider";
 import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
 import { LibrarianMemoryDialog } from "@/components/librarian/librarian-memory-dialog";
-import { LibrarianWork } from "@/components/librarian/librarian-work";
+import {
+  LibrarianReceipt,
+  LibrarianWork,
+} from "@/components/librarian/librarian-work";
 import { librarianPanelMode } from "@/components/librarian/panel-mode";
 import { TranscriptView } from "@/components/run-transcript/transcript-view";
 import { useModalA11y } from "@/components/use-modal-a11y";
 import { useIsClient } from "@/lib/use-is-client";
+
+type WorkMessages = {
+  historyGeneration: number | null;
+  currentSegmentId: string | null;
+  messages: LibrarianMessageDto[];
+  hasMore: boolean;
+  receiptAttachments: ReceiptAttachments;
+};
 
 const STICK_THRESHOLD_PX = 32;
 const PAGE_LIMIT = 50;
@@ -99,7 +111,7 @@ export function refusalKey(body: RefusalBody): string {
 }
 
 function sendBlockOf(
-  view: LibrarianConversationView | null,
+  view: LibrarianWorkView | null,
   draft: string,
   sending: boolean,
 ): SendBlock | null {
@@ -153,7 +165,7 @@ function updateTaskPath(update: LibrarianUpdateDto | null): string | null {
 export function LibrarianPanel(): ReactElement | null {
   const librarian = useLibrarian();
 
-  return librarian ? <LibrarianPanelBody /> : null;
+  return librarian ? <LibrarianPanelBody key={librarian.ownerId} /> : null;
 }
 
 function LibrarianPanelBody(): ReactElement {
@@ -167,6 +179,7 @@ function LibrarianPanelBody(): ReactElement {
     suspended,
     ownerId,
     changeTick,
+    accessTick,
     hostComposerVisible,
     closePanel,
     takeOpener,
@@ -184,8 +197,17 @@ function LibrarianPanelBody(): ReactElement {
   const wasOpenRef = useRef(false);
   const [viewportWidth, setViewportWidth] = useState<number | null>(null);
   const [expanded, setExpanded] = useState(false);
-  const [view, setView] = useState<LibrarianConversationView | null>(null);
+  const [view, setView] = useState<LibrarianWorkView | null>(null);
   const [messages, setMessages] = useState<LibrarianMessageDto[]>([]);
+  const [attachments, setAttachments] = useState<ReceiptAttachments>({});
+  const [hasOlder, setHasOlder] = useState(false);
+  const [readingOlder, setReadingOlder] = useState(false);
+  const [appliedAccess, setAppliedAccess] = useState(-1);
+  const [reconcileTick, setReconcileTick] = useState(0);
+  const generation = useRef<number | null>(null);
+  const currentSegment = useRef<string | null>(null);
+  const accessVersion = useRef(accessTick);
+  const oldestLoadedSeq = useRef<string | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [draft, setDraft] = useState("");
   const [subject, setSubject] = useState<LibrarianSubject | null>(null);
@@ -237,43 +259,142 @@ function LibrarianPanelBody(): ReactElement {
     if (draftLoaded) writeDraft(ownerId, draft);
   }, [ownerId, draft, draftLoaded]);
 
-  const refresh = useCallback((): Promise<void> => {
+  const refresh = useCallback(async (): Promise<void> => {
     const refreshId = ++refreshIdRef.current;
+    const accessAtRequest = accessTick;
 
-    return Promise.all([
-      fetch("/api/librarian/conversation", { cache: "no-store" }),
-      fetch(`/api/librarian/messages?limit=${PAGE_LIMIT}`, {
-        cache: "no-store",
-      }),
-    ])
-      .then(async ([conversationRes, messagesRes]) => {
-        if (!conversationRes.ok || !messagesRes.ok) {
-          if (refreshId === refreshIdRef.current) setLoadFailed(true);
+    try {
+      const conversationRes = await fetch(
+        "/api/librarian/conversation?view=work",
+        { cache: "no-store" },
+      );
 
-          return;
+      if (!conversationRes.ok)
+        throw new Error("Librarian conversation read failed");
+      const nextView = (await conversationRes.json()) as LibrarianWorkView;
+      const nextGeneration = nextView.conversation.historyGeneration;
+
+      if (refreshId !== refreshIdRef.current) return;
+      if (nextGeneration === undefined)
+        throw new Error("Librarian history generation is unavailable");
+      if (generation.current !== null && nextGeneration < generation.current)
+        return;
+      const resetPage =
+        generation.current !== nextGeneration ||
+        accessVersion.current !== accessAtRequest;
+
+      if (resetPage) {
+        setMessages([]);
+        setAttachments({});
+        setHasOlder(false);
+      } else if (currentSegment.current !== nextView.segment.id) {
+        setAttachments({});
+      }
+      generation.current = nextGeneration;
+      currentSegment.current = nextView.segment.id;
+      const messagesRes = await fetch(
+        `/api/librarian/messages?limit=${PAGE_LIMIT}&view=work`,
+        { cache: "no-store" },
+      );
+
+      if (!messagesRes.ok) throw new Error("Librarian message read failed");
+      const page = (await messagesRes.json()) as WorkMessages;
+      const previousIds = new Set(page.messages.map((message) => message.id));
+
+      if (refreshId !== refreshIdRef.current) return;
+      if (
+        page.historyGeneration !== nextGeneration ||
+        page.currentSegmentId !== nextView.segment.id
+      ) {
+        if (
+          page.historyGeneration !== null &&
+          page.historyGeneration > nextGeneration
+        ) {
+          generation.current = page.historyGeneration;
+          setMessages([]);
+          setHasOlder(false);
         }
-        const nextView =
-          (await conversationRes.json()) as LibrarianConversationView;
-        const page = (await messagesRes.json()) as {
-          messages: LibrarianMessageDto[];
-        };
+        setAttachments({});
+        setView(null);
+        // A concurrent reset/clear changed the two snapshot reads. Resolve
+        // both again through the ordinary invalidation path.
+        setReconcileTick((value) => value + 1);
 
-        // A slower read from before a settings change must not restore
-        // stale availability after the live update has been applied.
-        if (refreshId !== refreshIdRef.current) return;
-        setView(nextView);
-        setIndicator(nextView.indicator.state);
-        setMessages((current) => mergeMessages(current, page.messages));
-        setLoadFailed(false);
-      })
-      .catch(() => {
-        if (refreshId === refreshIdRef.current) setLoadFailed(true);
-      });
-  }, [setIndicator]);
+        return;
+      }
+      setView(nextView);
+      accessVersion.current = accessAtRequest;
+      setAppliedAccess(accessAtRequest);
+      setIndicator(nextView.indicator.state);
+      setMessages((current) => mergeMessages(current, page.messages));
+      setAttachments((current) => ({
+        ...Object.fromEntries(
+          Object.entries(current).filter(([id]) => !previousIds.has(id)),
+        ),
+        ...page.receiptAttachments,
+      }));
+      const first = page.messages[0];
+      const oldest = oldestLoadedSeq.current;
+
+      setHasOlder((current) =>
+        resetPage || !first || !oldest || BigInt(first.seq) <= BigInt(oldest)
+          ? page.hasMore
+          : current,
+      );
+      if (resetPage || !oldest) {
+        oldestLoadedSeq.current = first?.seq ?? null;
+      }
+      setLoadFailed(false);
+    } catch {
+      if (refreshId === refreshIdRef.current) setLoadFailed(true);
+    }
+  }, [accessTick, setIndicator]);
 
   useEffect(() => {
-    if (open) void refresh();
-  }, [open, changeTick, refresh]);
+    if (!open) return;
+    let active = true;
+
+    queueMicrotask(() => {
+      if (active) void refresh();
+    });
+
+    return () => {
+      active = false;
+      refreshIdRef.current++;
+    };
+  }, [open, changeTick, reconcileTick, refresh]);
+
+  async function readOlderMessages(): Promise<void> {
+    const first = messages[0];
+    const request = refreshIdRef.current;
+
+    if (!first || readingOlder) return;
+    setReadingOlder(true);
+    try {
+      const response = await fetch(
+        `/api/librarian/messages?limit=${PAGE_LIMIT}&beforeSeq=${first.seq}&view=work`,
+        { cache: "no-store" },
+      );
+
+      if (!response.ok) throw new Error("Librarian message page read failed");
+      const page = (await response.json()) as WorkMessages;
+
+      if (
+        request !== refreshIdRef.current ||
+        page.historyGeneration !== generation.current ||
+        page.currentSegmentId !== currentSegment.current
+      )
+        return;
+      setMessages((current) => mergeMessages(current, page.messages));
+      setAttachments((current) => ({ ...current, ...page.receiptAttachments }));
+      oldestLoadedSeq.current = page.messages[0]?.seq ?? first.seq;
+      setHasOlder(page.hasMore);
+    } catch {
+      if (request === refreshIdRef.current) setLoadFailed(true);
+    } finally {
+      setReadingOlder(false);
+    }
+  }
 
   const transcript = useMemo<TranscriptMessage[]>(
     () =>
@@ -486,6 +607,7 @@ function LibrarianPanelBody(): ReactElement {
 
       if (!response.ok) setErrorKey("errorCardDecision");
       await refresh();
+      setReconcileTick((tick) => tick + 1);
     } catch {
       setErrorKey("errorCardDecision");
     } finally {
@@ -694,6 +816,16 @@ function LibrarianPanelBody(): ReactElement {
             role="log"
             onScroll={onListScroll}
           >
+            {hasOlder ? (
+              <button
+                className="mb-2 text-xs underline"
+                disabled={readingOlder}
+                type="button"
+                onClick={() => void readOlderMessages()}
+              >
+                {t("history.olderMessages")}
+              </button>
+            ) : null}
             {transcript.length === 0 &&
             !messages.some((message) => message.update) ? (
               <p className="m-0 text-[12.5px] text-mute">{t("empty")}</p>
@@ -715,16 +847,40 @@ function LibrarianPanelBody(): ReactElement {
                     messages.find((message) => message.id === messageId)
                       ?.usedMemoryItemIds ?? [];
 
-                  return usedIds.length > 0 ? (
-                    <button
-                      className="rounded-md border border-line px-2 py-1 text-xs text-mute"
-                      data-testid="librarian-used-memory"
-                      type="button"
-                      onClick={() => setMemoryOpen(true)}
-                    >
-                      {t("memoryUsedInReply", { count: usedIds.length })}
-                    </button>
-                  ) : null;
+                  const receipts =
+                    appliedAccess === accessTick
+                      ? (attachments[messageId] ?? [])
+                      : [];
+
+                  if (!usedIds.length && !receipts.length) return null;
+
+                  return (
+                    <>
+                      {receipts.length > 0 ? (
+                        <ul
+                          aria-label={t("history.receipts")}
+                          className="grid gap-1"
+                        >
+                          {receipts.map((item) => (
+                            <LibrarianReceipt
+                              key={`${item.sourceKind}:${item.id}`}
+                              item={item}
+                            />
+                          ))}
+                        </ul>
+                      ) : null}
+                      {usedIds.length > 0 ? (
+                        <button
+                          className="rounded-md border border-line px-2 py-1 text-xs text-mute"
+                          data-testid="librarian-used-memory"
+                          type="button"
+                          onClick={() => setMemoryOpen(true)}
+                        >
+                          {t("memoryUsedInReply", { count: usedIds.length })}
+                        </button>
+                      ) : null}
+                    </>
+                  );
                 }}
                 renderCustomMessage={(messageId) => {
                   const update = updatesById.get(messageId)?.update;
@@ -818,12 +974,14 @@ function LibrarianPanelBody(): ReactElement {
           ) : null}
         </div>
 
-        {view ? (
+        {view && appliedAccess === accessTick ? (
           <LibrarianWork
+            key={`${ownerId}:${view.conversation.historyGeneration}:${accessTick}`}
+            attention={view.attention}
             busyCardId={busyCardId}
-            cards={view.cards}
-            operations={view.operationReceipts}
-            tasks={view.relatedWork}
+            changeTick={changeTick + reconcileTick}
+            currentWork={view.currentWork}
+            generation={view.conversation.historyGeneration ?? 0}
             onDecide={(card, decision) => void decideCard(card, decision)}
           />
         ) : null}
@@ -1021,6 +1179,8 @@ function LibrarianPanelBody(): ReactElement {
                       throw new Error(`clear failed: ${response.status}`);
                     setClearPreview(null);
                     setMessages([]);
+                    setAttachments({});
+                    setView(null);
                     await refresh();
                   })
                   .catch(() => setErrorKey("errorClear"))

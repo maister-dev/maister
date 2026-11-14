@@ -16,6 +16,7 @@ import { artifactInlineMaxBytes } from "@/lib/instance-config";
 import {
   DIFF_TRUNCATED_MARKER,
   diffRange,
+  diffRangeBounded,
   logRange,
   logRangeBounded,
 } from "@/lib/worktree";
@@ -33,11 +34,10 @@ const log = pino({
 
 // ADR-120 (P2): the SHARED artifact-content layer. Three named, ordered steps —
 // the injection pipeline (D11) is resolve → convert → cap:
-//   resolveArtifactContent  (locator → RAW value; SRP, NO cap, NO divergence)
+//   resolveArtifactContent  (locator → value; optional I/O read budget)
 //   artifactContentToTemplateText  (json → pretty-print; D9)
 //   capForInline  (256 KiB body cap; D3 — applied ONLY at the injection seam)
-// The payload route uses ONLY resolveArtifactContent, so its HTTP contract stays
-// byte-identical (full body, no cap, structured JSON for json locators).
+// Downloads keep the raw representation. Explicit previews supply a read budget.
 
 // In-band marker appended when an injected body is cut at the inline cap. A
 // structured `{ truncated: true }` rides alongside (the consumer branches on it);
@@ -45,13 +45,13 @@ const log = pino({
 export const ARTIFACT_TRUNCATED_MARKER =
   "\n\n[maister: artifact body truncated — exceeded MAISTER_ARTIFACT_INLINE_MAX_BYTES]\n";
 
-// RAW resolver result — uncapped. `text` for text-shaped payloads, `value` for
+// `text` for text-shaped payloads, `value` for
 // JSON-shaped payloads (gate-verdict / hitl-response). `gone` = the payload
 // existed but is now missing (deleted file); `notfound` = the locator does not
 // resolve to anything readable (traversal, symlink escape, missing row, unknown
 // kind).
 export type ResolveArtifactContentResult =
-  | { kind: "text"; text: string }
+  | { kind: "text"; text: string; truncated?: true }
   | { kind: "json"; value: unknown }
   | { kind: "gone" }
   | { kind: "notfound" };
@@ -62,28 +62,46 @@ export type ResolveArtifactContentCtx = {
   runId: string;
   runtimeRoot: string;
   db: Db;
-  // ADR-120 (Codex finding #2): the injection path sets this to bound the `file`
-  // locator read to at most `maxBytes` bytes — so a multi-GB file artifact never
-  // allocates its full payload in the web process before `capForInline` trims it.
-  // The payload API route leaves it UNSET → full uncapped read (contract
-  // unchanged). The other locator kinds are already bounded (inline in-memory,
-  // git-range/git-log by EXEC_MAX_BUFFER, gate-verdict/hitl small JSON rows).
+  // Maximum retained source bytes for a file, Git, or runtime object read.
   maxBytes?: number;
 };
 
-// Reads at most `maxBytes` bytes from an already-confined real path without
-// loading the whole file (Codex finding #2). A multibyte UTF-8 sequence may be
-// split at the byte boundary — that lands only in the tail the caller's
-// `capForInline` trims (it reads `cap + 1`, then truncates to `cap` on a
-// codepoint boundary), so the injected text is always clean.
-async function readBounded(real: string, maxBytes: number): Promise<string> {
+type TextContent = Extract<ResolveArtifactContentResult, { kind: "text" }>;
+
+function textContent(text: string, truncated: boolean): TextContent {
+  return truncated
+    ? { kind: "text", text, truncated: true }
+    : { kind: "text", text };
+}
+
+async function readBounded(
+  real: string,
+  maxBytes: number,
+): Promise<TextContent> {
   const fh = await open(real, "r");
 
   try {
-    const buf = new Uint8Array(maxBytes);
-    const { bytesRead } = await fh.read(buf, 0, maxBytes, 0);
+    const buf = new Uint8Array(maxBytes + 1);
+    let offset = 0;
 
-    return new TextDecoder().decode(buf.subarray(0, bytesRead));
+    while (offset < buf.length) {
+      const { bytesRead } = await fh.read(
+        buf,
+        offset,
+        buf.length - offset,
+        offset,
+      );
+
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    const truncated = offset > maxBytes;
+    const text = new TextDecoder("utf-8", { ignoreBOM: true }).decode(
+      buf.subarray(0, Math.min(offset, maxBytes)),
+      { stream: truncated },
+    );
+
+    return textContent(text, truncated);
   } finally {
     await fh.close();
   }
@@ -93,7 +111,7 @@ async function readBounded(real: string, maxBytes: number): Promise<string> {
 // the route can delegate without contract drift. Lexical prefix check BEFORE any
 // fs access (a `../` traversal never touches the outside path), then a
 // symlink-realpath re-confinement. Reads the FULL file unless `maxBytes` bounds
-// it (injection path only — D3/Codex #2).
+// it.
 async function resolveFile(
   locatorPath: string,
   projectSlug: string,
@@ -135,17 +153,12 @@ async function resolveFile(
     return { kind: "notfound" };
   }
 
-  const body =
-    maxBytes === undefined
-      ? await readFile(real, "utf8")
-      : await readBounded(real, maxBytes);
-
-  return { kind: "text", text: body };
+  return maxBytes === undefined
+    ? { kind: "text", text: await readFile(real, "utf8") }
+    : readBounded(real, maxBytes);
 }
 
-// Pure locator → content resolution. RAW (no cap, no truncation here — D7). The
-// `git-range` case preserves diffRange's OWN truncation marker (pre-existing,
-// unrelated to the inline cap) so the route stays byte-identical.
+// Raw Git diffs retain their historical diffRange truncation marker.
 export async function resolveArtifactContent(
   artifact: Pick<ArtifactInstance, "locator">,
   ctx: ResolveArtifactContentCtx,
@@ -200,11 +213,18 @@ export async function resolveArtifactContent(
     }
 
     case "git-range": {
-      const range = await diffRange({
+      const args = {
         worktreePath: ctx.worktreePath,
         baseRef: locator.baseCommit,
         branch: locator.headRef,
-      });
+      };
+
+      if (ctx.maxBytes !== undefined) {
+        const bounded = await diffRangeBounded(args, ctx.maxBytes);
+
+        return textContent(bounded.text, bounded.truncated);
+      }
+      const range = await diffRange(args);
       const text = range.truncated
         ? range.text + DIFF_TRUNCATED_MARKER
         : range.text;
@@ -226,7 +246,7 @@ export async function resolveArtifactContent(
           ctx.maxBytes,
         );
 
-        return { kind: "text", text: bounded.text };
+        return textContent(bounded.text, bounded.truncated);
       }
 
       const out = await logRange({
@@ -258,10 +278,17 @@ export async function resolveArtifactContent(
             : { range: { start: 0, end: Math.max(0, ctx.maxBytes - 1) } }),
         });
 
-        return {
-          kind: "text",
-          text: new TextDecoder().decode(content.content.bytes),
-        };
+        const truncated =
+          ctx.maxBytes !== undefined &&
+          content.object.sizeBytes !== null &&
+          content.object.sizeBytes > ctx.maxBytes;
+
+        return textContent(
+          new TextDecoder().decode(content.content.bytes, {
+            stream: truncated,
+          }),
+          truncated,
+        );
       } catch (error) {
         if (error instanceof MaisterError && error.code === "PRECONDITION") {
           return { kind: "gone" };
@@ -302,42 +329,39 @@ export function artifactContentToTemplateText(
 
 // UTF-8-boundary-safe byte truncation. Returns the largest prefix whose UTF-8
 // encoding is <= maxBytes without splitting a multibyte sequence.
-function truncateUtf8(text: string, maxBytes: number): string {
-  const buf = Buffer.from(text, "utf8");
+export function boundArtifactText(
+  text: string,
+  maxBytes: number,
+): { text: string; truncated: boolean } {
+  if (Buffer.byteLength(text, "utf8") <= maxBytes)
+    return { text, truncated: false };
 
-  if (buf.length <= maxBytes) return text;
+  const buf = Buffer.alloc(maxBytes);
+  const bytesWritten = buf.write(text, 0, maxBytes, "utf8");
 
-  let end = maxBytes;
-
-  // Walk back off any continuation byte (0b10xxxxxx) so we cut on a code-point
-  // boundary — decoding the slice never yields a replacement char.
-  while (end > 0 && (buf[end] & 0xc0) === 0x80) end -= 1;
-
-  return buf.subarray(0, end).toString("utf8");
+  return { text: buf.toString("utf8", 0, bytesWritten), truncated: true };
 }
 
 // D3: cap a resolved body for prompt injection. Byte-bounded by `maxBytes`
 // (defaults to MAISTER_ARTIFACT_INLINE_MAX_BYTES, read fresh so an env override is
 // honored; the runner passes the same value it used to bound the file read so the
-// two stay consistent in one operation). UTF-8-safe, appends
-// ARTIFACT_TRUNCATED_MARKER on cut. Applied ONLY here — never in the resolver,
-// never on the payload route. Never throws on a large body.
+// two stay consistent in one operation). Appends ARTIFACT_TRUNCATED_MARKER
+// when either the source read or the final UTF-8 encoding was truncated.
 export function capForInline(
-  text: string,
+  input: string | TextContent,
   maxBytes: number = artifactInlineMaxBytes(),
 ): {
   text: string;
   truncated: boolean;
 } {
-  const max = maxBytes;
+  const bounded = boundArtifactText(
+    typeof input === "string" ? input : input.text,
+    maxBytes,
+  );
 
-  if (Buffer.byteLength(text, "utf8") <= max) {
-    return { text, truncated: false };
-  }
-
-  const head = truncateUtf8(text, max);
-
+  if (!(typeof input !== "string" && input.truncated) && !bounded.truncated)
+    return bounded;
   log.debug({ truncated: true }, "capForInline truncated artifact body");
 
-  return { text: head + ARTIFACT_TRUNCATED_MARKER, truncated: true };
+  return { text: bounded.text + ARTIFACT_TRUNCATED_MARKER, truncated: true };
 }

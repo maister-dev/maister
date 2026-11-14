@@ -1,5 +1,4 @@
 import type { ProjectTab } from "@/components/board/project-tabs";
-import type { PortfolioWorkspace } from "@/lib/queries/portfolio";
 import type { ReactElement } from "react";
 
 import Link from "next/link";
@@ -7,7 +6,7 @@ import { getTranslations } from "next-intl/server";
 import { notFound } from "next/navigation";
 
 import { IncomingRequests } from "@/components/agents/incoming-requests";
-import { ActiveAgentExecutions } from "@/components/agents/active-agent-executions";
+import { ProjectWorkspaces } from "@/components/projects/project-workspaces";
 import { ProjectAgentsPanel as AgentsAttachPanelLoader } from "@/components/agents/project-agents-panel";
 import { Board } from "@/components/board/board";
 import { BoardTools } from "@/components/board/board-tools";
@@ -28,7 +27,6 @@ import { ProjectMembersPanel } from "@/components/project/project-members-panel"
 import { ConfigPersistBanner } from "@/components/projects/config-persist-banner";
 import { SchedulesPanel } from "@/components/schedules/schedules-panel";
 import { AutomationsPanel } from "@/components/automations/automations-panel";
-import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
 import {
   getProjectRole,
   getSessionUser,
@@ -115,6 +113,10 @@ interface PageProps {
     audit_result?: string | string[];
     audit_page?: string | string[];
     brain_query?: string | string[];
+    workspaces?: string | string[];
+    workspaceGroup?: string | string[];
+    workspaceGroups?: string | string[];
+    workspaceAttempts?: string | string[];
   }>;
 }
 
@@ -129,6 +131,7 @@ export default async function ProjectBoardPage({
   searchParams,
 }: PageProps): Promise<ReactElement> {
   const { slug } = await params;
+  const search = await searchParams;
   const {
     tab: rawTab,
     file: rawFile,
@@ -142,7 +145,7 @@ export default async function ProjectBoardPage({
     audit_result: rawAuditResult,
     audit_page: rawAuditPage,
     brain_query: rawBrainQuery,
-  } = await searchParams;
+  } = search;
   const requestedTab = parseTab(rawTab);
   const one = (v: string | string[] | undefined): string | undefined =>
     typeof v === "string" && v.length > 0 ? v : undefined;
@@ -195,8 +198,6 @@ export default async function ProjectBoardPage({
   const t = await getTranslations("board");
   const tNewTask = await getTranslations("newtask");
   const tCommon = await getTranslations("common");
-  const tNav = await getTranslations("nav");
-  const tPortfolio = await getTranslations("portfolio");
   const tScratch = await getTranslations("scratch");
   const tWorkbench = await getTranslations("workbench");
   const tLog = await getTranslations("projectLog");
@@ -328,50 +329,70 @@ export default async function ProjectBoardPage({
 
   return (
     <>
-      {tab !== "settings" && isAdmin ? (
-        <ConfigPersistBanner
-          key={slug}
-          canEdit={isAdmin}
-          exportRevision={project.configExportRevision.toString()}
-          projectName={project.name}
-          settingsHref={`/projects/${slug}?tab=settings`}
-          slug={slug}
-        />
-      ) : null}
-      <header className="mb-6 grid grid-cols-1 items-start gap-6 border-b border-line pb-[22px] lg:grid-cols-[1fr_auto]">
+      <header
+        className="mb-3 flex flex-wrap items-start justify-between gap-3 border-b border-line pb-3"
+        data-testid="project-board-header"
+      >
         <div className="min-w-0">
-          <div className="mb-3 inline-flex items-center gap-2.5 font-mono text-[10.5px] font-semibold uppercase tracking-[0.14em] text-mute before:h-px before:w-[18px] before:bg-amber before:content-['']">
-            <span>{tNav("crumbProjects")}</span>
-            <span className="opacity-50">/</span>
-            <b className="text-[12.5px] font-bold normal-case tracking-normal text-ink-2">
-              {project.name}
-            </b>
+          <h1 className="m-0 break-words text-2xl font-semibold text-ink">
+            {project.name}
+          </h1>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <Count
+              label={t("workspaces.executing")}
+              tone="flight"
+              value={pageData.executingCount}
+            />
+            <Count
+              label={t("workspaces.decisions")}
+              tone="needs"
+              value={projectDecisions}
+            />
+            <Count
+              label={t("workspaces.retained")}
+              value={pageData.activeWorkspaces.length}
+            />
           </div>
-          <div className="mb-1.5 flex flex-wrap items-baseline gap-3.5">
-            <h1 className="m-0 text-[36px] font-semibold leading-[1.05] tracking-[-0.024em] text-ink">
-              {project.name}
-            </h1>
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-line bg-amber-soft py-1 pl-[9px] pr-2.5 font-mono text-[11px] font-semibold tracking-[0.04em] text-amber">
-              <span className="h-1.5 w-1.5 rounded-full bg-amber animate-[pulse-dot_2.2s_ease-out_infinite]" />
-              {board.inProd > 0 ? "running" : "idle"}
-            </span>
-          </div>
-          <p className="mt-2 max-w-[56ch] text-sm leading-[1.5] text-body">
-            {displayRepoPath}
-          </p>
+          <details className="mt-2 text-xs">
+            <summary className="cursor-pointer text-mute">
+              {t("workspaces.projectDetails")}
+            </summary>
+            <dl className="mt-1 grid gap-1 text-mute">
+              {canReadRepoFiles ? (
+                <div>
+                  <dt className="sr-only">{t("workspaces.repository")}</dt>
+                  <dd className="break-all">{displayRepoPath}</dd>
+                </div>
+              ) : null}
+              <div>
+                <dt className="inline">{t("defaultAgent")} · </dt>
+                <dd className="inline">
+                  {pageData.defaultRunnerLabel ?? pageData.defaultAgent ?? "—"}
+                </dd>
+              </div>
+              <div>
+                <dt className="inline">{t("flowsConfigured")} · </dt>
+                <dd className="inline">
+                  {pageData.flows.map((flow) => flow.ref).join(" · ") || "—"}
+                </dd>
+              </div>
+              <div>
+                <dt className="inline">{t("mcps")} · </dt>
+                <dd className="inline">{mcpHub.effectiveCount}</dd>
+              </div>
+              <div>
+                <dt className="inline">{t("team")} · </dt>
+                <dd className="inline">{pageData.members.length}</dd>
+              </div>
+            </dl>
+          </details>
         </div>
 
-        <div className="flex flex-col items-end gap-3.5">
-          <div className="flex items-center overflow-hidden rounded-[10px] border border-line bg-paper">
-            <Count label={t("needYou")} tone="needs" value={projectDecisions} />
-            <Count label={t("inProd")} tone="flight" value={board.inProd} />
-            <Count label={t("backlogCount")} value={board.backlog} />
-            <Count label={t("mergedDays")} value={board.merged7d} />
-          </div>
+        <div className="flex flex-col items-start gap-2 sm:items-end">
           {canAct ? (
             <div className="flex gap-2">
               <Link
-                className="inline-flex items-center rounded-md border border-line bg-ink px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-paper transition-colors hover:bg-ink-2"
+                className="inline-flex items-center rounded-md border border-line bg-paper px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-ink transition-colors hover:bg-ivory"
                 href={`/scratch-runs/new?projectId=${project.id}`}
               >
                 {tScratch("launch")}
@@ -400,49 +421,29 @@ export default async function ProjectBoardPage({
         </div>
       </header>
 
-      <div className="mb-6 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-line bg-line md:grid-cols-4">
-        <MetaCell
-          dot="bg-amber"
-          label={t("defaultAgent")}
-          sub={
-            pageData.defaultRunnerLabel
-              ? `${pageData.defaultRunnerLabel} · ${
-                  pageData.defaultRunnerSource ?? "inherited"
-                }`
-              : undefined
-          }
-          value={pageData.defaultAgent ?? "—"}
-        />
-        <MetaCell
-          dot="bg-accent-2"
-          label={t("flowsConfigured")}
-          sub={pageData.flows.map((f) => f.ref).join(" · ") || undefined}
-          value={String(pageData.flows.length)}
-        />
-        <MetaCell
-          dot="bg-accent-3"
-          label={t("mcps")}
-          value={String(mcpHub.effectiveCount)}
-        />
-        <MetaCell
-          dot="bg-accent-4"
-          label={t("team")}
-          value={`${pageData.members.length}`}
+      <div className="mb-3">
+        {tab !== "settings" && isAdmin ? (
+          <div className="mb-2">
+            <ConfigPersistBanner
+              key={slug}
+              actorUserId={user.id}
+              exportRevision={project.configExportRevision.toString()}
+              slug={slug}
+            />
+          </div>
+        ) : null}
+        <ProjectWorkspaces
+          active={pageData.activeExecutions}
+          attemptLimit={workspacePageLimit(one(search.workspaceAttempts))}
+          canAct={canAct}
+          groupLimit={workspacePageLimit(one(search.workspaceGroups))}
+          open={one(search.workspaces) === "open"}
+          retained={pageData.activeWorkspaces}
+          search={search}
+          selectedGroup={one(search.workspaceGroup)}
+          slug={slug}
         />
       </div>
-
-      <ActiveAgentExecutions items={pageData.activeExecutions} />
-      <ProjectActiveWorkspaces
-        activeLabel={tPortfolio("activeCount", {
-          count: pageData.activeWorkspaces.length,
-        })}
-        activeWorkspaces={pageData.activeWorkspaces}
-        noneLabel={tPortfolio("noneActive")}
-        title={tPortfolio("workspaces")}
-        workspaceActionLabel={(action) =>
-          tPortfolio(`workspaceAction.${action}`)
-        }
-      />
 
       <ProjectTabs
         active={tab}
@@ -835,7 +836,11 @@ export default async function ProjectBoardPage({
         <WebhooksPanel canWrite={canAct} slug={slug} />
       ) : null}
       {tab === "settings" ? (
-        <SettingsPanel data={pageData} isAdmin={isAdmin} />
+        <SettingsPanel
+          actorUserId={user.id}
+          data={pageData}
+          isAdmin={isAdmin}
+        />
       ) : null}
     </>
   );
@@ -844,85 +849,10 @@ export default async function ProjectBoardPage({
 // Project the stored `recommended` jsonb (faithful to the .md frontmatter, snake
 // `branch_base`) to the panel's camelCase view shape — mirrors
 // admin-shared.ts `projectRecommended` (the GET-route DTO path).
-function ProjectActiveWorkspaces({
-  activeWorkspaces,
-  title,
-  activeLabel,
-  noneLabel,
-  workspaceActionLabel,
-}: {
-  activeWorkspaces: PortfolioWorkspace[];
-  title: string;
-  activeLabel: string;
-  noneLabel: string;
-  workspaceActionLabel: (
-    action: Exclude<PortfolioWorkspace["scratchAction"], undefined>,
-  ) => string;
-}): ReactElement {
-  return (
-    <section className="mb-6 border-y border-line py-3">
-      <header className="mb-2 flex items-center justify-between font-mono text-[9.5px] font-semibold uppercase tracking-[0.12em] text-mute">
-        <span>{title}</span>
-        <span className="text-ink-2">
-          {activeWorkspaces.length > 0 ? activeLabel : noneLabel}
-        </span>
-      </header>
-      {activeWorkspaces.length > 0 ? (
-        <ul className="m-0 grid list-none grid-cols-1 gap-px overflow-hidden rounded-lg border border-line-soft bg-line-soft p-0 md:grid-cols-2 xl:grid-cols-3">
-          {activeWorkspaces.map((workspace) => (
-            <li key={workspace.runId} className="bg-paper">
-              <Link
-                className="grid grid-cols-[10px_1fr_auto_auto] items-center gap-2 px-3 py-2.5 font-mono text-[11px] transition-colors hover:bg-ivory"
-                href={workspace.href}
-              >
-                <span
-                  className={`h-[7px] w-[7px] rounded-full ${workspaceDot(workspace.status)}`}
-                />
-                <span className="truncate font-semibold tracking-[-0.005em] text-ink">
-                  {workspace.branch}
-                </span>
-                {workspace.runKind === "scratch" &&
-                workspace.scratchAction &&
-                workspace.scratchAction !== "none" ? (
-                  <span className="rounded-[3px] border border-amber-line bg-amber-soft px-1.5 py-px text-[9.5px] tracking-[0.02em] text-amber">
-                    {workspaceActionLabel(workspace.scratchAction)}
-                  </span>
-                ) : null}
-                {workspace.runKind === "agent" ? (
-                  <span className="rounded-[3px] border border-line bg-ivory px-1.5 py-px text-[9.5px] tracking-[0.02em] text-mute">
-                    agent
-                    {workspace.triggerSource
-                      ? ` · ${workspace.triggerSource}`
-                      : ""}
-                  </span>
-                ) : null}
-                <span className="text-[10px] tracking-[0.04em] text-mute-2">
-                  {workspace.time}
-                </span>
-              </Link>
-              {workspace.lifecycleActions.length > 0 ? (
-                <WorkbenchLifecycleActions
-                  workspaceAvailable
-                  actions={workspace.lifecycleActions}
-                  className="px-3 pb-2.5"
-                  runId={workspace.runId}
-                  runKind={workspace.runKind}
-                />
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </section>
-  );
-}
+function workspacePageLimit(value: string | undefined): number {
+  const count = Number(value);
 
-function workspaceDot(status: PortfolioWorkspace["status"]): string {
-  if (status === "needs") return "bg-amber";
-  if (status === "queued") return "bg-mute";
-  if (status === "done") return "bg-accent-3";
-
-  return "bg-accent-4";
+  return Number.isSafeInteger(count) && count > 0 ? Math.min(count, 100) : 1;
 }
 
 function Count({
@@ -948,46 +878,13 @@ function Count({
         : "text-mute";
 
   return (
-    <div className="flex flex-col gap-0.5 border-r border-line px-4 py-2.5 text-center font-mono last:border-r-0">
+    <div className="flex items-baseline gap-1 rounded-md border border-line px-2 py-1 font-mono">
       <span
-        className={`text-[18px] font-bold leading-none tracking-[-0.01em] ${numTone}`}
+        className={`text-sm font-bold leading-none tracking-[-0.01em] ${numTone}`}
       >
         {value}
       </span>
-      <span
-        className={`mt-[3px] text-[9px] font-semibold uppercase tracking-[0.12em] ${lblTone}`}
-      >
-        {label}
-      </span>
-    </div>
-  );
-}
-
-function MetaCell({
-  label,
-  value,
-  sub,
-  dot,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-  dot: string;
-}): ReactElement {
-  return (
-    <div className="flex cursor-pointer flex-col gap-1 bg-paper px-4 py-3 transition-colors hover:bg-ivory">
-      <span className="inline-flex items-center gap-1.5 font-mono text-[9.5px] font-semibold uppercase tracking-[0.12em] text-mute">
-        <span className={`h-[5px] w-[5px] rounded-full ${dot}`} />
-        {label}
-      </span>
-      <span className="flex items-center gap-2 font-mono text-[12.5px] font-semibold tracking-[-0.005em] text-ink">
-        {value}
-        {sub ? (
-          <span className="truncate text-[11px] font-normal text-mute">
-            · {sub}
-          </span>
-        ) : null}
-      </span>
+      <span className={`text-[10px] font-semibold ${lblTone}`}>{label}</span>
     </div>
   );
 }

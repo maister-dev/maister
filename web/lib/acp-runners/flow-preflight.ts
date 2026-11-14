@@ -15,6 +15,8 @@ import {
   toConsensusRunnerSlotPreview,
 } from "@/lib/acp-runners/consensus-preflight";
 import { resolveRunSessions } from "@/lib/acp-runners/resolve";
+import { resolveSlotConfig } from "@/lib/acp-runners/resolve";
+import { enumerateRunnerSlots } from "@/lib/acp-runners/runner-slots";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { compileManifest } from "@/lib/flows/graph/compile";
 
@@ -49,6 +51,10 @@ type FlowRunnerInspectionInput = Omit<
   readonly taskRunnerId?: string | null;
   readonly launchOverrideRunnerId?: string | null;
   readonly sessionRunnerOverrides?: Readonly<Record<string, string | null>>;
+  readonly draft?: {
+    primaryRunnerId?: string;
+    slots?: Readonly<Record<string, string>>;
+  };
 };
 
 /** Inspect every session and consensus role with the actual launch precedence. */
@@ -63,12 +69,56 @@ export function inspectFlowRunners(
   const primarySessionName =
     sessionSlots.find((session) => session.name === "default")?.name ??
     sessionSlots[0].name;
+  const draft = input.draft;
+  const draftOverrides = Object.entries(draft?.slots ?? {});
+
+  if (draft) {
+    const declarations = new Map(
+      enumerateRunnerSlots(input.manifest).map((slot) => [slot.slotKey, slot]),
+    );
+    const primaryKey = `session:${primarySessionName}`;
+    const invalid = (): never => {
+      throw new MaisterError(
+        "CONFIG",
+        "Runner draft does not match the selected Flow",
+        { details: { reason: "launch_request_invalid" } },
+      );
+    };
+
+    for (const [key] of draftOverrides)
+      if (key === primaryKey || !declarations.has(key)) invalid();
+    for (const [key, id] of [
+      ...draftOverrides,
+      ...(draft.primaryRunnerId ? [[primaryKey, draft.primaryRunnerId]] : []),
+    ]) {
+      const declared = declarations.get(key)?.runner;
+      const runner = input.runners.find((entry) => entry.id === id);
+
+      if (!runner) invalid();
+      if (declared === undefined) continue;
+      const literal =
+        typeof declared === "string"
+          ? input.runners.find((entry) => entry.id === declared)
+          : undefined;
+      const capability =
+        literal?.capabilityAgent ??
+        resolveSlotConfig(declared, input.manifest.runner_profiles)
+          .capability_agent;
+
+      if (runner?.capabilityAgent !== capability) invalid();
+    }
+  }
+  const primaryRunnerId =
+    draft?.primaryRunnerId ?? input.launchOverrideRunnerId;
   const ephemeralOverrides = {
     ...(input.taskRunnerId ? { [primarySessionName]: input.taskRunnerId } : {}),
     ...(input.sessionRunnerOverrides ?? {}),
-    ...(input.launchOverrideRunnerId
-      ? { [primarySessionName]: input.launchOverrideRunnerId }
-      : {}),
+    ...Object.fromEntries(
+      draftOverrides
+        .filter(([key]) => key.startsWith("session:"))
+        .map(([key, id]) => [key.slice(8), id]),
+    ),
+    ...(primaryRunnerId ? { [primarySessionName]: primaryRunnerId } : {}),
   };
   const sessions = sessionSlots.map((session): SessionRunnerInspection => {
     const slotKey = `session:${session.name}`;
@@ -89,7 +139,7 @@ export function inspectFlowRunners(
         ...input,
         sessions: [session],
         runnerProfiles: input.manifest.runner_profiles,
-        runDefaultRunnerId: input.launchOverrideRunnerId ?? input.taskRunnerId,
+        runDefaultRunnerId: primaryRunnerId ?? input.taskRunnerId,
         ephemeralOverrides,
       });
 
@@ -110,6 +160,7 @@ export function inspectFlowRunners(
   );
   const consensus = inspectConsensusRunners({
     ...input,
+    slotOverrides: draft?.slots,
     runDefaultRunnerId:
       primary?.status === "resolved" ? primary.resolution.runnerId : null,
   });

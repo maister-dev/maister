@@ -176,7 +176,7 @@ function button(label: string): HTMLButtonElement {
 
 function roleSelect(): HTMLSelectElement {
   const found = document.querySelector<HTMLSelectElement>(
-    "[data-testid=launch-runner-slots] select",
+    "[data-testid=launch-runner-slots] label select",
   );
 
   if (!found) throw new Error("consensus runner select not found");
@@ -303,356 +303,102 @@ describe("frozen execution policy", () => {
 });
 
 describe("consensus runner binding interaction", () => {
-  it("keeps preview current when selecting the same default and allows saving that runner as an explicit role binding", async () => {
-    const initial = preview("claude-platform");
-
-    mocks.fetch
-      .mockResolvedValueOnce(
-        Response.json({
-          ...initial,
-          runnerSlots: initial.consensusRunnerSlots.map((slot) => ({
-            ...slot,
-            mappedRunnerId: null,
-          })),
-        }),
-      )
-      .mockResolvedValueOnce(Response.json({}))
-      .mockResolvedValueOnce(
-        Response.json({
-          ...initial,
-          runnerSlots: initial.consensusRunnerSlots,
-        }),
-      )
-      .mockResolvedValueOnce(
-        Response.json({ code: "CONFIG" }, { status: 422 }),
-      );
-    await openDialog();
-    expect(primarySelect().value).toBe("claude-platform");
-    await choose(primarySelect(), "claude-platform");
-    expect(mocks.fetch).toHaveBeenCalledTimes(1);
-    expect(button("launch.createRun").disabled).toBe(false);
-    expect(document.body.textContent).not.toContain(
-      "launch.runnerBindingSaveRole",
-    );
-    await choose(roleSelect(), "claude-platform");
-    expect(JSON.parse(mocks.fetch.mock.calls[1][1].body)).toEqual({
-      flowRevisionId: "revision-1",
-      slotKey: SLOT_KEY,
-      mappedRunnerId: "claude-platform",
+  const receipt = (mappedRunnerId: string | null) =>
+    Response.json({
+      remap: {
+        flowRevisionId: "revision-1",
+        slotKey: SLOT_KEY,
+        mappedRunnerId,
+      },
     });
-    expect(primarySelect().value).toBe("claude-platform");
-    await choose(primarySelect(), "claude-platform");
-    expect(mocks.fetch).toHaveBeenCalledTimes(3);
-    expect(button("launch.createRun").disabled).toBe(false);
-    expect(document.body.textContent).not.toContain("launch.loading");
-    await click(button("launch.createRun"));
-    expect(mocks.fetch.mock.calls[3][1].method).toBe("POST");
-    expect(JSON.parse(mocks.fetch.mock.calls[3][1].body)).not.toHaveProperty(
-      "runnerId",
-    );
-  });
 
-  it("refreshes an untouched primary picker after saving its session binding without creating an ephemeral override", async () => {
-    const initial = preview("codex-ready");
-    const primary = {
-      slotKey: "session:default",
-      label: "default",
-      kind: "session",
-      mappedRunnerId: null,
-      runnerId: "claude-platform",
-      errorCode: null,
-    };
-
-    mocks.fetch
-      .mockResolvedValueOnce(
-        Response.json({ ...initial, runnerSlots: [primary] }),
-      )
-      .mockResolvedValueOnce(Response.json({}))
-      .mockResolvedValueOnce(
-        Response.json({
-          ...initial,
-          selectedRunnerId: "codex-other",
-          runnerSlots: [
-            {
-              ...primary,
-              runnerId: "codex-other",
-              mappedRunnerId: "codex-other",
-            },
-          ],
-        }),
-      )
-      .mockResolvedValueOnce(
-        Response.json({ code: "CONFIG" }, { status: 422 }),
-      );
-    await openDialog();
-    await choose(roleSelect(), "codex-other");
-    expect(
-      new URL(mocks.fetch.mock.calls[2][0], "http://test").searchParams.has(
-        "runnerId",
-      ),
-    ).toBe(false);
-    expect(primarySelect().value).toBe("codex-other");
-    expect(button("launch.createRun").disabled).toBe(false);
-    await click(button("launch.createRun"));
-    expect(mocks.fetch.mock.calls[3][1].method).toBe("POST");
-    expect(JSON.parse(mocks.fetch.mock.calls[3][1].body)).not.toHaveProperty(
-      "runnerId",
-    );
-  });
-
-  it("assigns an unresolved logical session and refreshes before enabling launch with consensus already resolved", async () => {
-    const initial = preview("codex-ready");
-    const session = {
-      slotKey: "session:cross",
-      label: "cross",
-      kind: "session",
-      mappedRunnerId: null,
-      runnerId: null,
-      errorCode: "CONFIG",
-    };
-    const refreshed = deferredResponse();
-
-    mocks.fetch
-      .mockResolvedValueOnce(
-        Response.json({
-          ...initial,
-          runnerSlots: [session, ...initial.consensusRunnerSlots],
-          launchability: {
-            launchable: false,
-            reason: "runner_unresolved",
-            blockers: [],
-          },
-          relaunch: { launchable: false, reason: "runner_unresolved" },
-        }),
-      )
-      .mockResolvedValueOnce(Response.json({}))
-      .mockReturnValueOnce(refreshed.promise);
-    await openDialog();
-    expect(button("launch.createRun").disabled).toBe(true);
-    const select = [
-      ...document.querySelectorAll<HTMLSelectElement>(
-        "select[aria-labelledby]",
-      ),
-    ].find(
-      (item) =>
-        document.getElementById(item.getAttribute("aria-labelledby") ?? "")
-          ?.textContent === "launch.runnerBindingRunner cross",
-    );
-
-    expect(select).toBeDefined();
-    await choose(select!, "codex-other");
-    expect(JSON.parse(mocks.fetch.mock.calls[1][1].body)).toEqual({
-      flowRevisionId: "revision-1",
-      slotKey: "session:cross",
-      mappedRunnerId: "codex-other",
-    });
-    expect(button("launch.createRun").disabled).toBe(true);
-    await act(async () =>
-      refreshed.resolve(
-        Response.json({
-          ...initial,
-          runnerSlots: [
-            {
-              ...session,
-              mappedRunnerId: "codex-other",
-              runnerId: "codex-other",
-              errorCode: null,
-            },
-            ...initial.consensusRunnerSlots,
-          ],
-        }),
-      ),
-    );
-    expect(button("launch.createRun").disabled).toBe(false);
-    expect(
-      mocks.fetch.mock.calls.filter(([, init]) => init?.method === "PATCH"),
-    ).toHaveLength(1);
-  });
-
-  it("saves exactly one selected binding, refreshes before enabling launch, and supports reset", async () => {
-    const save = deferredResponse();
-    const refreshed = deferredResponse();
-
+  it("saves a project mapping only after an explicit action", async () => {
     mocks.fetch
       .mockResolvedValueOnce(Response.json(preview(null)))
-      .mockReturnValueOnce(save.promise)
-      .mockReturnValueOnce(refreshed.promise)
-      .mockResolvedValueOnce(Response.json({}))
-      .mockResolvedValueOnce(Response.json(preview(null)));
-    await openDialog();
-    expect(button("launch.createRun").disabled).toBe(true);
-    expect(roleSelect().value).toBe("");
-    await choose(roleSelect(), "codex-other");
-
-    expect(mocks.fetch).toHaveBeenCalledTimes(2);
-    expect(mocks.fetch.mock.calls[1][0]).toBe(
-      "/api/projects/demo/flow-runner-remaps",
-    );
-    expect(JSON.parse(mocks.fetch.mock.calls[1][1].body)).toEqual({
-      flowRevisionId: "revision-1",
-      slotKey: SLOT_KEY,
-      mappedRunnerId: "codex-other",
-    });
-    expect(button("launch.createRun").disabled).toBe(true);
-    await act(async () => save.resolve(Response.json({})));
-    expect(mocks.fetch).toHaveBeenCalledTimes(3);
-    expect(button("launch.createRun").disabled).toBe(true);
-    await act(async () =>
-      refreshed.resolve(Response.json(preview("codex-other"))),
-    );
-    expect(button("launch.createRun").disabled).toBe(false);
-    expect(roleSelect().value).toBe("codex-other");
-    await choose(roleSelect(), "codex-other");
-    expect(mocks.fetch).toHaveBeenCalledTimes(3);
-
-    await choose(roleSelect(), "");
-    expect(
-      JSON.parse(mocks.fetch.mock.calls[3][1].body).mappedRunnerId,
-    ).toBeNull();
-    expect(button("launch.createRun").disabled).toBe(true);
-    expect(roleSelect().value).toBe("");
-  });
-
-  it("retains a failed selection and allows an explicit retry without optimistic unblocking", async () => {
-    mocks.fetch
-      .mockResolvedValueOnce(Response.json(preview(null)))
-      .mockResolvedValueOnce(
-        Response.json({ code: "PRECONDITION" }, { status: 409 }),
-      )
-      .mockResolvedValueOnce(Response.json({}))
+      .mockResolvedValueOnce(receipt("codex-ready"))
       .mockResolvedValueOnce(Response.json(preview("codex-ready")));
     await openDialog();
     await choose(roleSelect(), "codex-ready");
-    expect(roleSelect().value).toBe("codex-ready");
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+    await click(button(`launch.runnerBindingSaveRole ${ROLE}`));
+    expect(mocks.fetch.mock.calls[1][1].method).toBe("PATCH");
+    expect(JSON.parse(mocks.fetch.mock.calls[1][1].body)).toEqual({
+      flowRevisionId: "revision-1",
+      slotKey: SLOT_KEY,
+      mappedRunnerId: "codex-ready",
+    });
+    expect(mocks.fetch).toHaveBeenCalledTimes(3);
+    expect(document.body.textContent).toContain("launch.runnerBindingSaved");
+  });
+
+  it("retains a refused selection for intentional retry", async () => {
+    mocks.fetch
+      .mockResolvedValueOnce(Response.json(preview("codex-ready")))
+      .mockResolvedValueOnce(Response.json({}, { status: 409 }))
+      .mockResolvedValueOnce(receipt(null))
+      .mockResolvedValueOnce(Response.json(preview(null)));
+    await openDialog();
+    await choose(roleSelect(), "");
+    await click(button(`launch.runnerBindingSaveRole ${ROLE}`));
+    expect(roleSelect().value).toBe("");
     expect(document.querySelector("[role=alert]")?.textContent).toBe(
       "launch.runnerBindingSaveFailed",
     );
-    expect(button("launch.createRun").disabled).toBe(true);
-    await click(button(`launch.runnerBindingRetryRole ${ROLE}`));
     expect(button("launch.createRun").disabled).toBe(false);
+    await click(button(`launch.runnerBindingRetryRole ${ROLE}`));
+    expect(
+      JSON.parse(mocks.fetch.mock.calls[2][1].body).mappedRunnerId,
+    ).toBeNull();
   });
 
-  it("retries a failed preview after a saved binding while preserving the selection", async () => {
+  it("reads back an unconfirmed mapping without repeating the write", async () => {
     mocks.fetch
-      .mockResolvedValueOnce(Response.json(preview(null)))
-      .mockResolvedValueOnce(Response.json({}))
-      .mockResolvedValueOnce(Response.json({ code: "CRASH" }, { status: 500 }))
+      .mockResolvedValueOnce(Response.json(preview("codex-ready")))
+      .mockRejectedValueOnce(new TypeError("connection lost"))
+      .mockResolvedValueOnce(
+        Response.json({
+          remaps: [
+            {
+              flowRevisionId: "revision-1",
+              slotKey: SLOT_KEY,
+              status: "Mapped",
+              mappedRunnerId: "codex-other",
+            },
+          ],
+        }),
+      )
       .mockResolvedValueOnce(Response.json(preview("codex-other")));
     await openDialog();
     await choose(roleSelect(), "codex-other");
-    expect(button("launch.createRun").disabled).toBe(true);
-    expect(roleSelect().value).toBe("codex-other");
+    await click(button(`launch.runnerBindingSaveRole ${ROLE}`));
     expect(document.querySelector("[role=alert]")?.textContent).toBe(
-      "launch.optionsError",
+      "launch.runnerBindingSaveUnknown",
     );
-    expect(document.body.textContent).not.toContain("launch.loading");
-    await click(button("launch.retryPreview"));
-    expect(button("launch.createRun").disabled).toBe(false);
-    expect(roleSelect().value).toBe("codex-other");
+    await click(button(`launch.runnerBindingCheckRole ${ROLE}`));
+    expect(mocks.fetch.mock.calls[2][0]).toBe(
+      "/api/projects/demo/flow-runner-remaps?flowRevisionId=revision-1",
+    );
     expect(
       mocks.fetch.mock.calls.filter(([, init]) => init?.method === "PATCH"),
     ).toHaveLength(1);
+    expect(document.body.textContent).toContain("launch.runnerBindingSaved");
   });
 
-  it("keeps launch blocked by a failed autosave even after another role saves successfully", async () => {
-    const initial = preview("codex-ready");
-    const secondSlot = {
-      ...initial.consensusRunnerSlots[0],
-      slotKey: "session:cross",
-      label: "cross",
-      kind: "session",
-    };
-    const afterSecondSave = {
-      ...initial,
-      runnerSlots: [
-        initial.consensusRunnerSlots[0],
-        {
-          ...secondSlot,
-          mappedRunnerId: "codex-other",
-          runnerId: "codex-other",
-        },
-      ],
-    };
-
-    mocks.fetch
-      .mockResolvedValueOnce(
-        Response.json({
-          ...initial,
-          runnerSlots: [initial.consensusRunnerSlots[0], secondSlot],
-        }),
-      )
-      .mockResolvedValueOnce(Response.json({}, { status: 409 }))
-      .mockResolvedValueOnce(Response.json({}))
-      .mockResolvedValueOnce(Response.json(afterSecondSave))
-      .mockResolvedValueOnce(Response.json({}))
-      .mockResolvedValueOnce(
-        Response.json({
-          ...afterSecondSave,
-          runnerSlots: afterSecondSave.runnerSlots.map((slot) => ({
-            ...slot,
-            mappedRunnerId: "codex-other",
-            runnerId: "codex-other",
-          })),
-        }),
-      );
-    await openDialog();
-    expect(button("launch.createRun").disabled).toBe(false);
-    await choose(roleSelect(), "codex-other");
-    expect(button("launch.createRun").disabled).toBe(true);
-    expect(button("launch.scheduleRun").disabled).toBe(true);
-    const secondSelect = document.querySelectorAll<HTMLSelectElement>(
-      "[data-testid=launch-runner-slots] select",
-    )[1];
-
-    await choose(secondSelect, "codex-other");
-    expect(document.querySelector("[role=alert]")?.textContent).toBe(
-      "launch.runnerBindingSaveFailed",
-    );
-    expect(roleSelect().value).toBe("codex-other");
-    expect(button("launch.createRun").disabled).toBe(true);
-    await click(button(`launch.runnerBindingRetryRole ${ROLE}`));
-    expect(button("launch.createRun").disabled).toBe(false);
-    expect(
-      mocks.fetch.mock.calls.filter(([, init]) => init?.method === "PATCH"),
-    ).toHaveLength(3);
-  });
-
-  it("prevents binding edits and saves while a launch request is in flight", async () => {
-    const launch = deferredResponse();
-
-    mocks.fetch
-      .mockResolvedValueOnce(Response.json(preview("codex-ready")))
-      .mockReturnValueOnce(launch.promise);
-    await openDialog();
-    await click(button("launch.createRun"));
-    expect(roleSelect().disabled).toBe(true);
-    await choose(roleSelect(), "codex-other");
-    expect(mocks.fetch).toHaveBeenCalledTimes(2);
-    expect(mocks.fetch.mock.calls[1][1].method).toBe("POST");
-    await act(async () =>
-      launch.resolve(Response.json({ code: "CONFIG" }, { status: 400 })),
-    );
-    expect(roleSelect().disabled).toBe(false);
-  });
-
-  it("reverting a primary runner while refresh is pending restores the prior preview and ignores the stale response", async () => {
+  it("ignores a preview for a reverted primary runner", async () => {
     const pending = deferredResponse();
 
     mocks.fetch
       .mockResolvedValueOnce(Response.json(preview("codex-ready")))
       .mockReturnValueOnce(pending.promise);
     await openDialog();
-    expect(button("launch.createRun").disabled).toBe(false);
     await choose(primarySelect(), "codex-other");
     expect(button("launch.createRun").disabled).toBe(true);
+    expect(mocks.fetch.mock.calls[1][1].method).toBe("POST");
     await choose(primarySelect(), "claude-platform");
     expect(button("launch.createRun").disabled).toBe(false);
     expect(mocks.fetch.mock.calls[1][1].signal.aborted).toBe(true);
     await act(async () => pending.resolve(Response.json(preview(null))));
     expect(button("launch.createRun").disabled).toBe(false);
-    expect(document.querySelector("[role=status]")?.textContent).not.toBe(
-      "launch.loading",
-    );
   });
 
   it("shows status and the administrator requirement without mutation controls for members", async () => {
@@ -704,31 +450,54 @@ describe("explicit package setup and immutable one-time preview", () => {
     availablePackageVersions: [packageVersion],
   });
 
-  it("revalidates a try-once package selection before enabling launch", async () => {
+  it("discards the old runner when previewing and launching a different package cut", async () => {
     const refreshed = deferredResponse();
 
     mocks.fetch
       .mockResolvedValueOnce(Response.json(packageOptions()))
-      .mockReturnValueOnce(refreshed.promise);
+      .mockResolvedValueOnce(
+        Response.json({
+          options: { ...packageOptions(), selectedRunnerId: "codex-other" },
+          enabledFlowRevisionId: "revision-1",
+        }),
+      )
+      .mockReturnValueOnce(refreshed.promise)
+      .mockResolvedValueOnce(Response.json({}, { status: 409 }));
     await openDialog();
+    await choose(primarySelect(), "codex-other");
+    expect(primarySelect().value).toBe("codex-other");
     await choose(packageSelect(), "try_once");
     expect(button("launch.createRun").disabled).toBe(true);
-    expect(
-      JSON.parse(
-        new URL(mocks.fetch.mock.calls[1][0], "http://test").searchParams.get(
-          "packageVersions",
-        ) ?? "null",
-      ),
-    ).toEqual({ "package-old": "try_once" });
+    expect(primarySelect().disabled).toBe(true);
+    const query = new URL(mocks.fetch.mock.calls[2][0], "http://test")
+      .searchParams;
+
+    expect(JSON.parse(query.get("packageVersions") ?? "null")).toEqual({
+      "package-old": "try_once",
+    });
+    expect(query.has("runnerId")).toBe(false);
     await act(async () =>
       refreshed.resolve(
         Response.json({
           ...packageOptions(),
+          selectedFlowRevisionId: "revision-2",
+          selectedRunnerId: "codex-ready",
           settingsToken: "selected-cut-token",
         }),
       ),
     );
+    expect(primarySelect().value).toBe("codex-ready");
+    expect(primarySelect().disabled).toBe(false);
     expect(button("launch.createRun").disabled).toBe(false);
+    await click(button("launch.createRun"));
+    const submitted = JSON.parse(mocks.fetch.mock.calls[3][1].body);
+
+    expect(submitted).toMatchObject({
+      expectedSettingsToken: "selected-cut-token",
+      packageVersions: { "package-old": "try_once" },
+    });
+    expect(submitted).not.toHaveProperty("runnerId");
+    expect(submitted).not.toHaveProperty("flowRunnerDraft");
   });
 
   it("applies adoption separately, then refreshes settings without launching", async () => {

@@ -131,6 +131,49 @@ export function assertInteractiveLaunchOrigin(request: Request): void {
     refuseInteractiveOrigin();
 }
 
+/** Cap the interactive preview before buffering an untrusted body. */
+export async function readInteractiveLaunchPreview(
+  request: Request,
+): Promise<unknown> {
+  const reader = request.body?.getReader();
+  const invalid = () =>
+    new MaisterError("CONFIG", "Invalid interactive launch preview body", {
+      details: { reason: "launch_request_invalid" },
+    });
+
+  if (
+    !reader ||
+    !/^application\/json(?:;|$)/i.test(
+      request.headers.get("content-type") ?? "",
+    )
+  )
+    throw invalid();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+
+  try {
+    for (;;) {
+      const next = await reader.read();
+
+      if (next.done) break;
+      bytes += next.value.byteLength;
+      if (bytes > 65_536) {
+        await reader.cancel();
+        throw invalid();
+      }
+      chunks.push(next.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+  } catch (error) {
+    if (error instanceof SyntaxError) throw invalid();
+    throw error;
+  }
+}
+
 export async function readTaskLaunchBody(request: Request): Promise<unknown> {
   const text = await request.text();
 

@@ -12,8 +12,14 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { seedAgentTokenRunOwner } from "@/test-support/seed-token-run-owner";
 import * as schemaModule from "@/lib/db/schema";
 import { issueAgentRunToken } from "@/lib/agents/tokens";
+import { issueLibrarianTurnToken } from "@/lib/librarian/authority";
 import { createTask } from "@/lib/services/tasks";
 import { issueToken } from "@/lib/tokens/issue";
+import {
+  addProjectMember,
+  seedActiveUser,
+  seedLibrarianTurn,
+} from "@/test-support/librarian-seed";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -160,6 +166,68 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await testDatabase?.stop();
+});
+
+it("B1 keeps verified relation endpoints alongside the unchanged Librarian replay body", async () => {
+  const ownerUserId = await seedActiveUser(db);
+
+  await addProjectMember(db, {
+    userId: ownerUserId,
+    projectId: fx.projectId,
+    role: "member",
+  });
+  const turnId = await seedLibrarianTurn(db, ownerUserId);
+  const token = await issueLibrarianTurnToken(
+    {
+      ownerUserId,
+      turnId,
+      scopes: ["relations:create"],
+      expiresAt: new Date(Date.now() + 60_000),
+    },
+    testDatabase.db,
+  );
+  const from = await createTask(
+    { title: "Librarian relation source", prompt: "p", flowId: fx.flowId },
+    { projectId: fx.projectId, actorUserId: fx.ownerId },
+    db,
+  );
+  const post = (key: string, allowDuplicate: boolean) =>
+    POST(
+      new NextRequest("http://localhost/api/v1/ext/test", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token.secret}`,
+          "content-type": "application/json",
+          "idempotency-key": key,
+          ...(allowDuplicate ? { "X-Maister-Allow-Duplicate": "true" } : {}),
+        },
+        body: JSON.stringify({ kind: "blocks", toNumber: fx.toNumber }),
+      }),
+      routeParams(SLUG, from.taskId),
+    );
+  const [createKey, duplicateKey] = [randomUUID(), randomUUID()];
+
+  for (const [key, created] of [
+    [createKey, true],
+    [duplicateKey, false],
+  ] as const) {
+    const result = await post(key, !created);
+    const body = { ok: true, created };
+
+    expect(result.status).toBe(201);
+    expect(await result.json()).toEqual(body);
+    expect(await (await post(key, !created)).json()).toEqual(body);
+    const ledger = await pool.query(
+      "SELECT result FROM librarian_operations WHERE turn_id=$1 AND idempotency_key=$2",
+      [turnId, key],
+    );
+
+    expect(ledger.rows[0]?.result).toEqual({
+      statusCode: 201,
+      body,
+      relationProvenance: { fromTaskId: from.taskId, toTaskId: fx.toTaskId },
+    });
+  }
 });
 
 describe("ext relations ops", () => {

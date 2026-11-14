@@ -29,6 +29,7 @@ import {
   type WorkbenchGitSyncDefaults,
 } from "@/components/workbench/git-panel";
 import { isMaisterErrorCode } from "@/lib/errors-core";
+import { buildRunHref } from "@/lib/runs/run-query-state";
 import {
   gitPanelHref,
   gitPanelSectionFor,
@@ -429,7 +430,7 @@ function compactErrorText(
 }
 
 // ADR-181 D16: the run detail's entry into the git panel. Its own component so
-// that ONLY the detail surface subscribes to the URL (`?git=<section>` opens the
+// that ONLY the detail surface subscribes to the URL (`?git=open` or a section opens the
 // panel on load) and to the run stream — a rail row or a card never re-renders
 // on a query change.
 function DetailGitHost({
@@ -448,15 +449,15 @@ function DetailGitHost({
   const initialSection: GitPanelSection | null = isGitPanelSection(urlSection)
     ? urlSection
     : null;
-  const [open, setOpen] = useState(initialSection !== null);
+  const open = urlSection === "open" || initialSection !== null;
 
-  // A deep link on the same page (the review panel's "Sync branch") changes the
-  // query without remounting this host, so the section it names opens here.
-  const [linkedSection, setLinkedSection] = useState(initialSection);
+  function toggle(): void {
+    const { pathname, search, hash } = window.location;
+    const address = buildRunHref(pathname, search, {
+      git: open ? null : "open",
+    });
 
-  if (linkedSection !== initialSection) {
-    setLinkedSection(initialSection);
-    if (initialSection !== null) setOpen(true);
+    window.history.pushState(null, "", `${address}${hash}`);
   }
   // The run page's stream ticks re-read git-state (debounced in the panel).
   const { eventCount } = useRunPageStream(runId, false);
@@ -471,7 +472,7 @@ function DetailGitHost({
         )}
         data-testid="workbench-git-open"
         type="button"
-        onClick={() => setOpen((value) => !value)}
+        onClick={toggle}
       >
         <CodeBracketIcon aria-hidden="true" className="h-3.5 w-3.5" />
         {label}

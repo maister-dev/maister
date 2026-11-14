@@ -200,10 +200,14 @@ test.describe("operational results, history and attention", () => {
       await context.addCookies([
         { name: "NEXT_LOCALE", value: locale, url: baseURL! },
       ]);
+      await page.setViewportSize({ width: 1366, height: 768 });
       await page.goto(`/runs/${successId}`);
       const result = page.locator('[data-testid="operational-result"]:visible');
 
-      await expect(result).toBeVisible();
+      await expect(result).toBeInViewport();
+      await expect(
+        page.getByTestId("run-outcome").filter({ visible: true }),
+      ).toBeInViewport();
       await expect(
         page.locator('[data-testid="operational-outcome"]:visible'),
       ).toHaveText(locale === "en" ? "Done" : "Готово");
@@ -249,6 +253,9 @@ test.describe("operational results, history and attention", () => {
         page.locator(`a[href='/runs/${failedId}']`).first(),
       ).toBeVisible();
       await page.goto(`/runs/${codeId}`);
+      await expect(
+        page.getByTestId("run-outcome").filter({ visible: true }),
+      ).toBeInViewport();
       await expect(
         page.locator('[data-testid="agent-run-review-cta"]:visible'),
       ).toBeVisible();

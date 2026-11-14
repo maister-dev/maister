@@ -2,6 +2,7 @@ import "server-only";
 
 import pino from "pino";
 
+import { readRunEvidence } from "@/lib/queries/evidence-graph";
 import {
   buildFlowRunResultDto,
   type BuildFlowRunResultDtoInput,
@@ -12,6 +13,26 @@ const log = pino({
   name: "flow-result-read-model",
   level: process.env.LOG_LEVEL ?? "info",
 });
+
+export async function readOptionalRunEvidence(
+  runId: string,
+  projectId: string,
+) {
+  try {
+    return await readRunEvidence(runId);
+  } catch (error) {
+    log.warn(
+      {
+        runId,
+        projectId,
+        errorType: error instanceof Error ? error.name : typeof error,
+      },
+      "[flow-result-read-model] could not load Run evidence",
+    );
+
+    return null;
+  }
+}
 
 export function buildFlowRunResultReadModel(
   input: BuildFlowRunResultDtoInput,

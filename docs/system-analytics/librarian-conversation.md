@@ -207,6 +207,11 @@ flowchart LR
     H --> I["show current turn status and settled reply"]
 ```
 
+## Generation and refresh (Implemented)
+
+- Read the current segment, history generation and projected rows from a consistent snapshot. The panel discards an older-generation response and replaces local history after a clear. A same-generation context reset retains transcript messages.
+- A `librarian.work` event prompts a fresh authorized read without advancing message replay. An older effect settling, expiry of a pending card and changed grants each invalidate the relevant projection.
+
 ## Expectations
 
 - **LCV-01:** Exactly one `librarian_conversations` row MUST exist per user and no route or tool may create a second, enforced by UNIQUE `librarian_conversations_user_uq` behind `getOrCreateConversation` (Implemented).

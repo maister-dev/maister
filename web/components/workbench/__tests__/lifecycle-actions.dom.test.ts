@@ -3,7 +3,7 @@
 import type { WorkbenchLifecycleActionId } from "@/lib/workbench-lifecycle/policy";
 
 import { createElement } from "react";
-import { act } from "react";
+import { act, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -32,12 +32,19 @@ vi.mock("next-intl", async () => {
 
 const refreshMock = vi.fn();
 
-let searchParams = new URLSearchParams();
-
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: refreshMock }),
-  useSearchParams: () => searchParams,
+  useSearchParams: () =>
+    new URLSearchParams(
+      useSyncExternalStore(subscribeSearch, () => window.location.search),
+    ),
 }));
+
+function subscribeSearch(listener: () => void): () => void {
+  window.addEventListener("popstate", listener);
+
+  return () => window.removeEventListener("popstate", listener);
+}
 
 vi.mock("@/components/feedback/feedback-provider", () => ({
   useFeedback: () => ({ success: vi.fn(), error: vi.fn() }),
@@ -180,8 +187,14 @@ function metadataResponse(dirty = false): Response {
 beforeEach(() => {
   setupActEnvironment();
   refreshMock.mockReset();
-  searchParams = new URLSearchParams();
   vi.restoreAllMocks();
+  window.history.replaceState(null, "", "/");
+  const pushState = window.history.pushState.bind(window.history);
+
+  vi.spyOn(window.history, "pushState").mockImplementation((...args) => {
+    pushState(...args);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
   Object.defineProperty(navigator, "clipboard", {
     configurable: true,
     value: { writeText: vi.fn() },
@@ -683,7 +696,7 @@ describe("ADR-181 — git panel hosting and rail deep links", () => {
   });
 
   it("opens the panel on load when the URL names a git section", async () => {
-    searchParams = new URLSearchParams("git=publish");
+    window.history.replaceState(null, "", "/runs/run-1?git=publish");
     vi.stubGlobal(
       "fetch",
       vi.fn<FetchLike>(async () => gitStateResponse()),

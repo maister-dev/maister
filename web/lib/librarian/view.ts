@@ -7,6 +7,16 @@ import type { LibrarianSubject } from "./types";
 import { and, asc, desc, eq, gt, inArray, or } from "drizzle-orm";
 
 import { librarianTurnRef } from "./admission";
+import {
+  readCurrentWork,
+  readHistoryOwner,
+  type HistoryItem,
+  type WorkAttention,
+} from "./action-history";
+import {
+  readEligibleConfirmationIds,
+  type ConfirmationOwner,
+} from "./confirmation-availability";
 import { lockOwnerConversation } from "./conversation";
 import {
   readLibrarianSettings,
@@ -21,7 +31,7 @@ import {
 
 import {
   librarianConversations,
-  librarianCards,
+  librarianSegments,
   librarianContextSnapshots,
   librarianMemoryItems,
   librarianMessages,
@@ -391,21 +401,19 @@ export function librarianTurnDto(
 /** ADR-191 D2: pending owner confirmations precede running and unread state. */
 export async function librarianIndicator(
   db: Db,
-  conversation: { id: string; readThroughSeq: bigint | string },
+  conversation: ConfirmationOwner & { readThroughSeq: bigint },
 ): Promise<LibrarianIndicatorState> {
-  const [pendingCard] = await db
-    .select({ id: librarianCards.id })
-    .from(librarianCards)
-    .where(
-      and(
-        eq(librarianCards.conversationId, conversation.id),
-        eq(librarianCards.status, "pending"),
-        gt(librarianCards.expiresAt, new Date()),
-      ),
-    )
-    .limit(1);
+  const eligible = await readEligibleConfirmationIds(db, conversation);
 
-  if (pendingCard) return "action_required";
+  return eligible.length
+    ? "action_required"
+    : librarianActivityIndicator(db, conversation);
+}
+
+export async function librarianActivityIndicator(
+  db: Db,
+  conversation: { id: string; readThroughSeq: bigint },
+): Promise<LibrarianIndicatorState> {
   const [active] = await db
     .select({ id: librarianTurns.id })
     .from(librarianTurns)
@@ -424,7 +432,7 @@ export async function librarianIndicator(
     .where(
       and(
         eq(librarianMessages.conversationId, conversation.id),
-        gt(librarianMessages.seq, BigInt(conversation.readThroughSeq)),
+        gt(librarianMessages.seq, conversation.readThroughSeq),
         inArray(librarianMessages.authorKind, [
           "librarian",
           "update",
@@ -443,16 +451,14 @@ export async function readLibrarianIndicator(
   ownerId: string,
   db: Db,
 ): Promise<LibrarianIndicatorState> {
-  const [conversation] = await db
-    .select({
-      id: librarianConversations.id,
-      readThroughSeq: librarianConversations.readThroughSeq,
-    })
-    .from(librarianConversations)
-    .where(eq(librarianConversations.userId, ownerId))
-    .limit(1);
+  return db.transaction(
+    async (tx) => {
+      const conversation = await readHistoryOwner(tx, ownerId);
 
-  return conversation ? librarianIndicator(db, conversation) : "none";
+      return conversation ? librarianIndicator(tx, conversation) : "none";
+    },
+    { isolationLevel: "repeatable read", accessMode: "read only" },
+  );
 }
 
 export type LibrarianConversationView = {
@@ -462,6 +468,7 @@ export type LibrarianConversationView = {
     resetState: string;
     readThroughSeq: string;
     lastSeq: string;
+    historyGeneration?: number;
     memoryEnabledNextSegment: boolean;
     createdAt: string;
   };
@@ -477,6 +484,68 @@ export type LibrarianConversationView = {
   pendingOperations: LibrarianOperationView[];
 };
 
+type ConversationCommon = Pick<
+  LibrarianConversationView,
+  | "conversation"
+  | "segment"
+  | "indicator"
+  | "availability"
+  | "queuedMessages"
+  | "activeTurn"
+>;
+export type LibrarianWorkView = ConversationCommon & {
+  currentWork: HistoryItem[];
+  attention: WorkAttention;
+};
+
+export async function getLibrarianWorkView(
+  ownerId: string,
+  db: Db,
+): Promise<LibrarianWorkView> {
+  const existing = await readHistoryOwner(db, ownerId);
+
+  if (!existing?.currentSegmentId)
+    await db.transaction((tx) => lockOwnerConversation(tx, ownerId));
+
+  return db.transaction(
+    async (tx) => {
+      const conversation = await readHistoryOwner(tx, ownerId);
+      const [segment] = conversation?.currentSegmentId
+        ? await tx
+            .select()
+            .from(librarianSegments)
+            .where(
+              and(
+                eq(librarianSegments.id, conversation.currentSegmentId),
+                eq(librarianSegments.conversationId, conversation.id),
+              ),
+            )
+        : [];
+
+      if (!conversation || !segment)
+        throw new MaisterError(
+          "EXECUTOR_UNAVAILABLE",
+          "Librarian conversation is unavailable.",
+        );
+
+      const { hasConfirmation, ...work } = await readCurrentWork(
+        tx,
+        ownerId,
+        conversation,
+      );
+      const common = await librarianConversationCommon(
+        tx,
+        conversation,
+        segment,
+        hasConfirmation,
+      );
+
+      return { ...common, ...work };
+    },
+    { isolationLevel: "repeatable read", accessMode: "read only" },
+  );
+}
+
 /** One read that lets the panel resume after navigation or a reload. The
  * conversation is created by the first call; the owner is the caller. */
 export async function getLibrarianConversationView(
@@ -486,6 +555,53 @@ export async function getLibrarianConversationView(
   const { conversation, segment } = await db.transaction((tx) =>
     lockOwnerConversation(tx, ownerId),
   );
+  const [eligibleIds, linkedWork] = await Promise.all([
+    readEligibleConfirmationIds(db, conversation),
+    getLinkedWork(
+      ownerId,
+      db as unknown as ReturnType<typeof import("@/lib/db/client").getDb>,
+    ),
+  ]);
+  const eligible = new Set(eligibleIds);
+  const common = await librarianConversationCommon(
+    db,
+    conversation,
+    segment,
+    eligible.size > 0,
+  );
+
+  return {
+    ...common,
+    pendingCards: linkedWork.cards.filter((card) => eligible.has(card.id)),
+    cards: linkedWork.cards.map((card) =>
+      card.status === "pending" && !eligible.has(card.id)
+        ? {
+            ...card,
+            available: false,
+            payload: {},
+            target: {},
+            targetRevision: null,
+            currentPrompt: null,
+            proposedPrompt: null,
+            hitlPrompt: null,
+            runBranch: null,
+          }
+        : card,
+    ),
+    operationReceipts: linkedWork.operations,
+    relatedWork: linkedWork.tasks,
+    pendingOperations: linkedWork.operations.filter(
+      (operation) =>
+        operation.status === "admitted" || operation.status === "unknown",
+    ),
+  };
+}
+async function librarianConversationCommon(
+  db: Db,
+  conversation: typeof librarianConversations.$inferSelect,
+  segment: typeof librarianSegments.$inferSelect,
+  hasConfirmation: boolean,
+): Promise<ConversationCommon> {
   const settings = await readLibrarianSettings(db);
   const queued = await db
     .select()
@@ -508,10 +624,6 @@ export async function getLibrarianConversationView(
     )
     .limit(1);
   const activeRef = active ? await librarianTurnRef(db, active) : null;
-  const linkedWork = await getLinkedWork(
-    ownerId,
-    db as unknown as ReturnType<typeof import("@/lib/db/client").getDb>,
-  );
 
   return {
     conversation: {
@@ -520,6 +632,7 @@ export async function getLibrarianConversationView(
       resetState: conversation.resetState,
       readThroughSeq: conversation.readThroughSeq.toString(),
       lastSeq: conversation.lastSeq.toString(),
+      historyGeneration: conversation.historyGeneration,
       memoryEnabledNextSegment: conversation.memoryEnabledNextSegment,
       createdAt: conversation.createdAt.toISOString(),
     },
@@ -528,20 +641,16 @@ export async function getLibrarianConversationView(
       ordinal: segment.ordinal,
       startedAt: segment.startedAt.toISOString(),
     },
-    indicator: { state: await librarianIndicator(db, conversation) },
+    indicator: {
+      state: hasConfirmation
+        ? "action_required"
+        : await librarianActivityIndicator(db, conversation),
+    },
     availability: { state: settings.availability },
-    pendingCards: linkedWork.cards.filter((card) => card.status === "pending"),
-    cards: linkedWork.cards,
-    operationReceipts: linkedWork.operations,
-    relatedWork: linkedWork.tasks,
     queuedMessages: queued.map((row) => librarianMessageDto(row)),
     activeTurn: active
       ? librarianTurnDto(active, activeRef?.queuePosition ?? null)
       : null,
-    pendingOperations: linkedWork.operations.filter(
-      (operation) =>
-        operation.status === "admitted" || operation.status === "unknown",
-    ),
   };
 }
 

@@ -24,6 +24,7 @@ export interface ProjectGitSettingsControlProps {
   mainBranch: string;
   remotes: RemoteItem[];
   exportRevision: string;
+  actorUserId?: string;
   // ADR-141: branch-sync defaults + resolver-runner picker options.
   syncStrategyDefault: "rebase" | "merge";
   syncRunnerId: string | null;
@@ -292,6 +293,7 @@ export function ProjectGitSettingsControl(
         </div>
 
         <ConfigPersistControl
+          actorUserId={props.actorUserId ?? ""}
           exportRevision={props.exportRevision}
           slug={props.projectSlug}
         />

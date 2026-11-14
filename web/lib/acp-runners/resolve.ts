@@ -707,7 +707,7 @@ export function resolveRunnerSlot(
 
 export type ConsensusRunnerResolutionInput = Omit<
   RunnerSlotResolutionInput,
-  "slot" | "overrideRunnerId" | "preferredRunners"
+  "slot" | "preferredRunners"
 > & {
   readonly slot: RunnerSlot;
   readonly runDefaultRunnerId: string | null;

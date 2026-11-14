@@ -749,7 +749,11 @@ async function loadPlanReviewParentSchema(
     maxBytes: nodeOutputMaxBytes() + 1,
   });
 
-  if (content.kind !== "text") {
+  if (
+    content.kind !== "text" ||
+    content.truncated ||
+    Buffer.byteLength(content.text, "utf8") > nodeOutputMaxBytes()
+  ) {
     throw new MaisterError(
       "PRECONDITION",
       `Plan-review node ${node.id} cannot read its current review artifact`,
@@ -1449,9 +1453,12 @@ async function resolveNodeArtifactContents(
     // Throws CONFIG on gone/notfound (caller markNodeFailed + break). Skipped
     // gates were already excluded above, so a gone payload here belongs to the
     // action surface or a gate that WILL run — failing before spawn is correct.
-    const text = artifactContentToTemplateText(resolved, id);
+    const body =
+      resolved.kind === "text"
+        ? resolved
+        : artifactContentToTemplateText(resolved, id);
 
-    out[id] = capForInline(text, cap);
+    out[id] = capForInline(body, cap);
   }
 
   return out;

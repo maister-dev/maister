@@ -33,7 +33,10 @@ import {
   assertTaskLaunchUserAuthority,
   assertTaskLaunchReadAuthority,
 } from "./launch-authority";
-import { taskLaunchBodySchema } from "./launch-schema";
+import {
+  interactiveTaskLaunchBodySchema,
+  taskLaunchBodySchema,
+} from "./launch-schema";
 import { loadTaskSemanticInput } from "./launch-input";
 import {
   launchRefusal,
@@ -496,11 +499,17 @@ export async function prepareTaskLaunchRequest(
   requestKey: string,
 ): Promise<TaskLaunchPreparationOutcome> {
   assertUpgradeMaintenanceAllows("run_admission");
-  const parsed = taskLaunchBodySchema.safeParse(rawRequest);
+  const browser =
+    authority.basisKind === "manual" &&
+    !authority.serverSource &&
+    !authority[sourceHandoffAuthority];
+  const parsed = (
+    browser ? interactiveTaskLaunchBodySchema : taskLaunchBodySchema
+  ).safeParse(rawRequest);
 
   if (!parsed.success || requestKey.length < 1 || requestKey.length > 256)
     throw launchRefusal("launch_request_invalid", "CONFIG");
-  const request = parsed.data;
+  const request: TaskLaunchRequest = parsed.data;
   const payloadDigest = taskLaunchPayloadDigest(authority, request);
   const initial = await scopedTask(db, request.taskId);
 
@@ -516,7 +525,10 @@ export async function prepareTaskLaunchRequest(
       db,
       authority.serverSource.snapshot,
     );
-  await authority.assert(db, initial.project.id, ["launchRun"]);
+  await authority.assert(db, initial.project.id, [
+    "launchRun",
+    ...(request.flowRunnerDraft?.slots ? ["editSettings" as const] : []),
+  ]);
   const replay = await replayTaskLaunch(
     db,
     authority,
@@ -672,13 +684,13 @@ export async function applyPreparedTaskLaunch(
       tx,
       authority.serverSource.snapshot,
     );
-  await authority.assert(
-    tx,
-    projectId,
-    requiresLaunchUnattended(resolved.executionPolicy)
-      ? ["launchRun", "launchUnattended"]
-      : ["launchRun"],
-  );
+  await authority.assert(tx, projectId, [
+    "launchRun",
+    ...(requiresLaunchUnattended(resolved.executionPolicy)
+      ? ["launchUnattended" as const]
+      : []),
+    ...(request.flowRunnerDraft?.slots ? ["editSettings" as const] : []),
+  ]);
 
   if (request.relaunchOfRunId && authority.reservationLane === "ordinary") {
     await tx

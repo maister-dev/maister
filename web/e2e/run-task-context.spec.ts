@@ -181,6 +181,100 @@ test.describe("run & task context visibility", () => {
     await expect(taskBlock.locator("strong")).toContainText("timeout");
   });
 
+  test("R1/R2 keeps the outcome first and preserves inspector and Librarian navigation", async ({
+    page,
+  }) => {
+    const fx = await seedContextRun();
+
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await page.goto(`/runs/${fx.runId}`);
+    const title = page.getByRole("heading", { name: fx.title, exact: true });
+
+    await expect(title).toBeInViewport();
+    await expect(
+      page.getByTestId("run-outcome").filter({ visible: true }),
+    ).toBeInViewport();
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    const librarian = page.getByTestId("librarian-trigger");
+
+    await librarian.click();
+    await expect(page.getByTestId("librarian-composer")).toBeInViewport();
+    await page.keyboard.press("Escape");
+    await expect(librarian).toBeFocused();
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`/runs/${fx.runId}?wb=timeline&node=implement#run-outcome`);
+    const toggle = page
+      .getByTestId("run-header-inspector-toggle")
+      .filter({ visible: true });
+    const outcome = page.getByRole("region", {
+      name: "Outcome and next action",
+    });
+
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(outcome).toBeInViewport();
+    await toggle.click();
+    await expect(page).toHaveURL(/inspector=open#run-outcome$/);
+    const inspector = page.getByRole("dialog", { name: "Close inspector" });
+
+    await expect(inspector).toBeInViewport();
+    await page.keyboard.press("Escape");
+    await expect(inspector).toHaveCount(0);
+    await expect(toggle).toBeFocused();
+    await expect(page).toHaveURL(
+      /wb=timeline&node=implement&inspector=closed#run-outcome$/,
+    );
+    await page.goBack();
+    await expect(inspector).toBeVisible();
+  });
+
+  test("R1 gives viewers a first-screen recovery link without recovery actions", async ({
+    browser,
+  }) => {
+    const fx = await seedContextRun();
+    const { viewerEmail, viewerPassword } = loadFixtures().byKey.m22;
+
+    await withE2EDb((pool) =>
+      pool.query(
+        "UPDATE runs SET status='Crashed', ended_at=now() WHERE id=$1",
+        [fx.runId],
+      ),
+    );
+    const context = await browser.newContext({
+      storageState: { cookies: [], origins: [] },
+      viewport: { width: 1366, height: 768 },
+    });
+
+    try {
+      const page = await context.newPage();
+
+      await page.goto("/login");
+      await page.locator('input[name="email"]').fill(viewerEmail);
+      await page.locator('input[name="password"]').fill(viewerPassword);
+      await page.locator('form button[type="submit"]').click();
+      await page.waitForURL((url) => !url.pathname.startsWith("/login"));
+      await page.goto(`/runs/${fx.runId}`);
+
+      const outcome = page.getByRole("region", {
+        name: "Outcome and next action",
+      });
+
+      await expect(outcome).toBeInViewport();
+      await expect(outcome).toContainText(
+        "You have read-only access to this Run.",
+      );
+      await outcome.getByRole("link", { name: "This run crashed" }).click();
+      const recovery = page
+        .getByTestId("run-crashed-section")
+        .filter({ visible: true });
+
+      await expect(recovery).toBeInViewport();
+      await expect(recovery.getByRole("button")).toHaveCount(0);
+    } finally {
+      await context.close();
+    }
+  });
+
   test("run timeline exposes the per-attempt resolved-prompt disclosure", async ({
     page,
   }) => {

@@ -5,6 +5,7 @@ import type { NextRequest, NextResponse } from "next/server";
 import { currentConfigStatus } from "@/lib/project-config-persistence/status";
 import { confirmProjectConfiguration } from "@/lib/project-config-persistence/service";
 import {
+  actorConfigWorkflowOperation,
   settleConfigReceipt,
   latestActorConfigOperation,
 } from "@/lib/project-config-persistence/receipts";
@@ -14,6 +15,8 @@ import {
   configJson,
   configOperationIdentity,
   configRequestBody,
+  configWorkflowRequested,
+  observeConfigWorkflow,
   confirmConfigBody,
   requireConfigReviewAccess,
 } from "@/lib/project-config-persistence/http";
@@ -21,12 +24,31 @@ import {
 type RouteParams = { params: Promise<{ slug: string }> };
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: RouteParams,
 ): Promise<NextResponse> {
   try {
     const { slug } = await params;
     const context = await configHttpContext(slug);
+
+    if (configWorkflowRequested(request.nextUrl.searchParams)) {
+      await requireConfigReviewAccess(context);
+
+      return configJson(
+        await observeConfigWorkflow(
+          async () => ({
+            state: "observed",
+            status: await currentConfigStatus(context.db, context.projectId),
+          }),
+          () =>
+            actorConfigWorkflowOperation(
+              context.db,
+              context.projectId,
+              context.actorUserId,
+            ),
+        ),
+      );
+    }
     const status = await currentConfigStatus(context.db, context.projectId);
     const operationId = await latestActorConfigOperation(
       context.db,

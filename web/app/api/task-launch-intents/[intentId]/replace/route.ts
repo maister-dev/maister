@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db/client";
 import { interactiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
 import { replaceInteractiveTaskLaunch } from "@/lib/tasks/launch-replace";
-import { taskLaunchReplaceBodySchema } from "@/lib/tasks/launch-schema";
+import { interactiveTaskLaunchReplaceBodySchema } from "@/lib/tasks/launch-schema";
 import {
   assertInteractiveLaunchOrigin,
   readTaskLaunchBody,
@@ -22,7 +22,7 @@ export async function POST(
 
     assertInteractiveLaunchOrigin(request);
     const key = taskLaunchRequestKey(request);
-    const parsed = taskLaunchReplaceBodySchema.safeParse(
+    const parsed = interactiveTaskLaunchReplaceBodySchema.safeParse(
       await readTaskLaunchBody(request),
     );
 
