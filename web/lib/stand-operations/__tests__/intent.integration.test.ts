@@ -1743,7 +1743,7 @@ it("IT-CBO-09 retains the reviewed company stand appointment through a cron clai
   }
 });
 
-it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exact authority and independent verification", async () => {
+it("IT-CBO-02 IT-CBO-04 IT-CBO-05 IT-CBU-03 recovers the original native restart under exact authority and independent verification", async () => {
   const { administratorId, userId, owner, authority, input, request } =
     await createRegistryFixture();
   const db = database.db as Db;

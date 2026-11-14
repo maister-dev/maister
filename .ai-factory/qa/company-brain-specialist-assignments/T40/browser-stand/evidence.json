@@ -1,0 +1,57 @@
+{
+  "sourceHead": "a1f07b100d36f5378affdeda93d715671a4ab5d6",
+  "candidateSha256": "ceb4ada4c78f333741353aeaafef533ab841eddd978c28821ea3c9c68cc3634e",
+  "mcpBundleSha256": "34110420fedf1681685c92c79262c3932d8428e32ea50d81abf741a029cc6e80",
+  "packageTag": "stand-operations/v0.1.0",
+  "packageCommit": "61fab9b660157cfd2e4e4253a1e1a76b5ec0d4ea",
+  "model": "glm-5.3",
+  "startedAt": "2026-11-14T11:51:15.258219+00:00",
+  "exitCode": 1,
+  "candidateUnchanged": true,
+  "finishedAt": "2026-11-14T12:01:44.903277+00:00",
+  "invocationId": "58592496-1004-46a1-b0da-801262fe4fec",
+  "buildId": "AcTeZV4V5vKL6H2uOismY",
+  "status": "browser_assertions_passed_wrapper_failed",
+  "browserPassed": 2,
+  "browserUnexpected": 0,
+  "cleanup": {
+    "processesReaped": 1,
+    "role": "ACP descendant",
+    "webStoppedNormally": true,
+    "postgresStopped": true
+  },
+  "observations": {
+    "stand-pilot-proof": {
+      "packageTag": "stand-operations/v0.1.0",
+      "packageCommit": "61fab9b660157cfd2e4e4253a1e1a76b5ec0d4ea",
+      "runner": {
+        "id": "cb-live-claude",
+        "model": "glm-5.3"
+      },
+      "assignmentId": "bd98a2b6-a7b3-4fd5-87c7-357ef055942a",
+      "runId": "68c4a432-c503-41d2-8e34-26c9e1b4f298",
+      "operationId": "63ada2ce-5069-4b70-8ea4-28d1715daed7",
+      "resultRevision": 1,
+      "verificationIds": [
+        "2f1b6f2b-facd-408d-b178-3c75d9d1406e"
+      ],
+      "acceptedChildren": 1,
+      "knowledgeProposalId": "3cb450b0-c7dc-4a98-a41d-616533bae2ca",
+      "knowledgeRecordId": "6caf5788-a92d-4af1-93bc-4d36ce110f00",
+      "knowledgeRecordRevision": 1,
+      "knowledgeConfirmation": "unconfirmed"
+    },
+    "stand-inspection-proof": {
+      "scheduleId": "df4dbccd-e0a3-43cd-ad3e-7c331dd143f7",
+      "attempt_id": "3cbb67dc-efda-4f80-b147-574407a64ac2",
+      "run_id": "4e0b664f-b41d-4292-9d78-a7f932ed0214",
+      "status": "Done",
+      "delivery_id": "e58641a7-d77b-4c09-a8af-dde0960cfb9b",
+      "suppressed": true,
+      "operation_id": "ae7a6640-ca39-48d2-b1b0-43e1d24fe348",
+      "verification_id": "805defdc-5f68-4a67-aebd-d766fdcc36b8",
+      "commands": 0
+    }
+  },
+  "scope": "Functional browser proof at this package pin. Full wrapper, live faults and replacement require separate evidence."
+}

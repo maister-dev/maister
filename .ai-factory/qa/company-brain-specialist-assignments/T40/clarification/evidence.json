@@ -1,0 +1,30 @@
+{
+  "sourceHead": "3cb2b2ff7b78cc20738d49f3cf945dd767a1bacd",
+  "candidateSha256": "1afe305a5c0746dffa2479ed92703d995073932d6beed857db849a81e5e3d937",
+  "mcpBundleSha256": "34110420fedf1681685c92c79262c3932d8428e32ea50d81abf741a029cc6e80",
+  "packageTag": "stand-operations/v0.1.0",
+  "packageCommit": "2928ad0d4f47607cd04dff924a50c8c83a08ec8c",
+  "model": "glm-5.3",
+  "startedAt": "2026-11-14T12:12:45.335899+00:00",
+  "exitCode": 1,
+  "candidateUnchanged": true,
+  "finishedAt": "2026-11-14T12:18:55.020442+00:00",
+  "invocationId": "28f1c96f-568b-4074-acc8-d73b061ba67c",
+  "verdict": "clarification_observed_full_pilot_failed",
+  "clarification": {
+    "assignmentId": "36d13fce-692c-4b20-bbaa-0d7720b5a94f",
+    "runId": "7b588caf-3b7e-4097-bde2-6d9957d5501a",
+    "questionId": "2158e62a-2102-46ba-b3f1-502af7dd36ee",
+    "source": 1,
+    "answer": 2,
+    "response": {
+      "componentId": "fixture"
+    }
+  },
+  "subsequentOperation": {
+    "operationId": "58f86e8f-332a-4304-beda-f7ab337904b6",
+    "assignmentId": "36d13fce-692c-4b20-bbaa-0d7720b5a94f",
+    "requestDigest": "fb900256eb71047b4d2cc40d1634e3e94d2bf93d731c6d8d2e091282533629eb",
+    "effectState": "not_dispatched"
+  }
+}

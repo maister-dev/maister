@@ -2,7 +2,7 @@
 
 ## Purpose
 
-**Designed — ADR-202–203.** This contract qualifies native Company Brain and durable specialist cooperation, including the actual installable RAH/specialist packages. Passing synthetic schemas or platform fixtures alone is insufficient. Domain behavior belongs to the linked owning specifications; this document owns migration, boundary and release proof.
+**ADR-202–203.** This contract qualifies native Company Brain and durable specialist cooperation, including the actual installable RAH/specialist packages. Passing synthetic schemas or platform fixtures alone is insufficient. Domain behavior belongs to the linked owning specifications; this document owns migration, boundary and release proof.
 
 ## Domain entities
 
@@ -42,7 +42,7 @@ flowchart TD
 
 ### Migration execution manifest
 
-Assignment storage precedes binding storage (T18→T19). Execution resolves the current binding service; retained binding/pin references alone grant no authority. Main migrations through `0270_specialist_work_witness_guards` and Brain migrations through `0011_proposal_source_access` are implemented locally; journal presence does not establish deployment or installed-package qualification. The following units name actual journal tags in application order. Future work/acceptance, owner fencing and stand-operation migrations receive the next free number in their owning slices; their native writers are not implied by the storage foundation. Exact keys and guards belong to the linked [knowledge](../db/company-brain-domain.md), [assignment](../db/specialist-assignments-domain.md) and [operation](../db/stand-operations-domain.md) persistence contracts. Apply the complete main lineage before Brain; main-side knowledge pointers never FK a new Brain table. Recheck journal collisions before generation or integration.
+Assignment storage precedes binding storage (T18→T19). Execution resolves the current binding service; retained binding/pin references alone grant no authority. Main migrations through `0335_company_pending_pool_index` and Brain migrations through `0011_proposal_source_access` are implemented locally. The following units identify the migration boundaries and drill-down contracts. Deployment and installed-package qualification have separate evidence requirements. Exact keys and guards belong to the linked [knowledge](../db/company-brain-domain.md), [assignment](../db/specialist-assignments-domain.md) and [operation](../db/stand-operations-domain.md) persistence contracts. Apply the complete main lineage before Brain; main-side knowledge pointers never FK a new Brain table. Recheck journal collisions before generation or integration.
 
 | Unit | Dependency and responsible slice | Preservation and failure oracle |
 | --- | --- | --- |
@@ -87,8 +87,10 @@ Assignment storage precedes binding storage (T18→T19). Execution resolves the 
 | Main 0267 project_source_recovery | 0266; T26 | Interrupted unused intakes can recover exact source pointers; used/uncertain execution is never reset. |
 | Main 0268 specialist_logical_work | 0267; T27 foundation | Immutable logical work/intake/child witnesses are implemented; native dispatch, decisions and owner recovery remain their owning slices. |
 | Main 0269 specialist_work_witness_guards | 0268; T27 guard correction | Requires positive source/context/target matches, preserves immutable company source identity after optional catalog FK removal, and leaves retained rows unchanged. |
-| Main specialist_acceptance_and_ownership (Designed; next free units) | Logical work and existing results; T28–29 | Exact-result decisions and current business-owner fences must land with their real writers and recovery tests. |
-| Main stand_operations (Designed; next free units) | Governed cooperation; T31 | Target/operation/receipt/permit/probe/resource exclusion must preserve unknown effects independently of Run retirement. |
+| Main 0270–0277 | Logical work and existing results; T27–28 | Child reservations, result-only rework, exact work decisions and assignment acceptance retain existing Run/result witnesses. |
+| Main 0278–0297 | Operational evidence v2 and existing placement/retry; T28.1–30 | Immutable evidence contracts, executor fencing/renewal and source-specific replacement keep legacy snapshots and exact current assignments. |
+| Main 0298–0333 | Governed cooperation; T31–39 | Versioned target/operation/probe persistence, authenticated permit, resource exclusion, recovery, incident projection and scheduled read-only appointments preserve unknown effects independently of Run retirement. See [stand persistence](../db/stand-operations-domain.md). |
+| Main 0334 company_pending_pool_index | Native child reservation; T27/T41 | Lets the existing worker find pending company Runs within its bounded scan. Existing pool admission retains capacity and budget checks. |
 | Brain 0007 company_records | Main 0229; T06 | Stable IDs and honest legacy provenance; unknown authorship/basis/time never becomes confirmation or a historical acceptance event. |
 | Brain 0008 company_evidence | Brain 0007; T07/T08 | Immutable witnesses/observation groups remain separate from mutable anchors and cannot manufacture independent support. |
 | Brain 0009 knowledge_review | Brain 0008; T08/T09 | Existing improvement drafts remain intact; native add/correct/confirm receipts are attributable, idempotent and CAS protected. |
@@ -141,7 +143,7 @@ The [traceability matrix](company-brain-specialists-traceability.md) fixes prima
 
 Store compact JSON and raw assertion output under `.ai-factory/qa/company-brain-specialist-assignments/<task>/<slice>/`. Capture spec hash, base/implementation revision, exact command, test IDs, discovery/results counts, RED failure, GREEN/refactor rerun, safe diagnostic paths and package/runner/target witnesses where applicable. No secrets/raw private logs. No-refactor decisions state the concrete reason and retain the rerun. Platform gates cover actual services/DB/HTTP/MCP; live manifests additionally bind actual installed package digest, loader/ACP session, depth-2 result chain and independently observed target effect/probe. Fixture identities cannot substitute for live witnesses.
 
-CB0 qualification selects QL-CBX-03 without importing or requiring CB1 stand credentials. Full pilot selects QL-CBX-04 with configured helper identity/unit scope/action/runbook, current grants and an independent observer. Missing preflight fails actionably. The test retains operation ID before dispatch, drops the restart ACK, interrupts coordinator/child, resumes correct ownership, verifies one effect, and proves governed write-back. A failed qualification returns to its owning behavior slice and reruns; repair does not depend on an already passing qualification gate.
+CB0 qualification selects QL-CBX-03 without importing or requiring CB1 stand credentials. Full pilot selects QL-CBX-04 with configured helper identity/unit scope/action/runbook, current grants and an independent observer. Missing preflight fails actionably. The qualification requires the retained operation ID before dispatch, dropped restart acknowledgment, independent coordinator and child interruptions, correct ownership on continuation, one verified effect and governed write-back. The main browser journey and fault scenarios require separate exact runtime receipts. A failed qualification returns to its owning behavior slice and reruns; repair does not depend on an already passing qualification gate.
 
 ## Expectations
 

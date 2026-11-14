@@ -11,7 +11,7 @@
 | CBK-05 | [company-brain](./company-brain.md) | T06,T07,T08,T10,T09 | `IT-CBK-05` — `web/lib/brain/__tests__/company-records.integration.test.ts` (web integration) | Implemented |
 | CBK-06 | [company-brain](./company-brain.md) | T10,T11 | `IT-CBK-06` — `web/app/api/knowledge/__tests__/knowledge.integration.test.ts` (web integration) | Implemented |
 | CBU-01 | [company-brain](./company-brain.md) | T12,T13,T15 | `E2E-CBU-01` — `web/e2e/company-brain.spec.ts` (Playwright) | Implemented |
-| CBU-03 | [company-brain](./company-brain.md) | T38 | `IT-CBU-03` — `web/lib/specialist-assignments/__tests__/write-back.integration.test.ts` (web integration) | Planned |
+| CBU-03 | [company-brain](./company-brain.md) | T38 | `IT-CBU-03` — `web/lib/stand-operations/__tests__/intent.integration.test.ts` (web integration) | Planned |
 | EDGE-CBK-01 | [company-brain](./company-brain.md) | T06,T08 | `IT-CBK-02` — `web/lib/brain/__tests__/proposals.integration.test.ts` (web integration) | Implemented |
 | EDGE-CBK-02 | [company-brain](./company-brain.md) | T10,T11 | `IT-CBK-06` — `web/app/api/knowledge/__tests__/knowledge.integration.test.ts` (web integration) | Implemented |
 | EDGE-CBK-03 | [company-brain](./company-brain.md) | T08,T11 | `IT-CBK-03` — `web/lib/brain/__tests__/proposals.integration.test.ts` (web integration) | Implemented |
@@ -63,28 +63,28 @@
 | EDGE-CBC-04 | [specialist-cooperation](./specialist-cooperation.md) | T29,T30 | `IT-CBC-05` — `web/lib/flows/graph/__tests__/orchestrator-park.integration.test.ts` and `web/lib/domain-events/__tests__/orchestrator-resume-early-settle.test.ts` | Planned |
 | EDGE-CBC-05 | [specialist-cooperation](./specialist-cooperation.md) | T29,T30,T33 | `IT-CBC-05` — `web/lib/flows/graph/__tests__/prompt-owners.integration.test.ts` (prompt recovery); actual health read timeout remains a connector qualification | Planned |
 | CBO-01 | [stand-maintenance](./stand-maintenance.md) | T31,T32,T34 | `IT-CBO-01` — `web/lib/stand-operations/__tests__/intent.integration.test.ts` (web integration) | Planned |
-| CBO-02 | [stand-maintenance](./stand-maintenance.md) | T31,T32,T33 | `IT-CBO-02` — `web/lib/stand-operations/__tests__/connector.integration.test.ts` (web integration) | Planned |
-| CBO-03 | [stand-maintenance](./stand-maintenance.md) | T31,T32,T33 | `IT-CBO-03` — `web/lib/stand-operations/__tests__/connector.integration.test.ts` (web integration) | Planned |
-| CBO-04 | [stand-maintenance](./stand-maintenance.md) | T32,T33 | `IT-CBO-04` — `web/lib/stand-operations/__tests__/reconcile.integration.test.ts` (web integration) | Planned |
-| CBO-05 | [stand-maintenance](./stand-maintenance.md) | T33 | `IT-CBO-05` — `web/lib/stand-operations/__tests__/reconcile.integration.test.ts` (web integration) | Planned |
-| CBO-06 | [stand-maintenance](./stand-maintenance.md) | T32,T33 | `IT-CBO-06` — `web/lib/stand-operations/__tests__/connector.integration.test.ts` (web integration) | Planned |
-| CBO-07 | [stand-maintenance](./stand-maintenance.md) | T31,T33,T37 | `IT-CBO-07` — `web/lib/stand-operations/__tests__/reconcile.integration.test.ts` (web integration) | Planned |
+| CBO-02 | [stand-maintenance](./stand-maintenance.md) | T31,T32,T33 | `IT-CBO-02` — `web/lib/stand-operations/__tests__/intent.integration.test.ts` (web integration) | Planned |
+| CBO-03 | [stand-maintenance](./stand-maintenance.md) | T31,T32,T33 | `IT-CBO-03` — `web/lib/stand-operations/__tests__/intent.integration.test.ts` (web integration) | Planned |
+| CBO-04 | [stand-maintenance](./stand-maintenance.md) | T32,T33 | `IT-CBO-04` — `web/lib/stand-operations/__tests__/intent.integration.test.ts` (web integration) | Planned |
+| CBO-05 | [stand-maintenance](./stand-maintenance.md) | T33 | `IT-CBO-05` — `web/lib/stand-operations/__tests__/intent.integration.test.ts` (web integration) | Planned |
+| CBO-06 | [stand-maintenance](./stand-maintenance.md) | T32,T33 | `IT-CBO-06` — `web/lib/stand-operations/__tests__/intent.integration.test.ts` (web integration) | Planned |
+| CBO-07 | [stand-maintenance](./stand-maintenance.md) | T31,T33,T37 | `IT-CBO-07` — `web/lib/stand-operations/__tests__/intent.integration.test.ts` (web integration) | Planned |
 | CBO-08 | [stand-maintenance](./stand-maintenance.md) | T28.1,T33,T36 | `IT-CBO-08` — `web/lib/agents/__tests__/agent-run-result.integration.test.ts` and `web/lib/agents/__tests__/company-agent-context.integration.test.ts` (v1/v2 and missing/forged reference handling qualified; target receipts and pilot package remain open) | Planned |
-| CBO-09 | [stand-maintenance](./stand-maintenance.md) | T25,T39 | `IT-CBO-09` — `web/lib/runs/__tests__/agent-incidents.integration.test.ts` (web integration) | Planned |
-| EDGE-CBO-01 | [stand-maintenance](./stand-maintenance.md) | T31,T32,T33 | `IT-CBO-02` — `web/lib/stand-operations/__tests__/connector.integration.test.ts` (web integration) | Planned |
-| EDGE-CBO-02 | [stand-maintenance](./stand-maintenance.md) | T31,T32,T33 | `IT-CBO-03` — `web/lib/stand-operations/__tests__/connector.integration.test.ts` (web integration) | Planned |
-| EDGE-CBO-03 | [stand-maintenance](./stand-maintenance.md) | T32,T33 | `IT-CBO-04` — `web/lib/stand-operations/__tests__/reconcile.integration.test.ts` (web integration) | Planned |
-| EDGE-CBO-04 | [stand-maintenance](./stand-maintenance.md) | T33 | `IT-CBO-05` — `web/lib/stand-operations/__tests__/reconcile.integration.test.ts` (web integration) | Planned |
-| EDGE-CBO-05 | [stand-maintenance](./stand-maintenance.md) | T31,T32,T33 | `IT-CBO-02` — `web/lib/stand-operations/__tests__/connector.integration.test.ts` (web integration) | Planned |
-| EDGE-CBO-06 | [stand-maintenance](./stand-maintenance.md) | T31,T33,T37 | `IT-CBO-07` — `web/lib/stand-operations/__tests__/reconcile.integration.test.ts` (web integration) | Planned |
-| EDGE-CBO-07 | [stand-maintenance](./stand-maintenance.md) | T32,T33 | `IT-CBO-06` — `web/lib/stand-operations/__tests__/connector.integration.test.ts` (web integration) | Planned |
+| CBO-09 | [stand-maintenance](./stand-maintenance.md) | T25,T39 | `IT-CBO-09` — `web/lib/stand-operations/__tests__/intent.integration.test.ts` (web integration) | Planned |
+| EDGE-CBO-01 | [stand-maintenance](./stand-maintenance.md) | T31,T32,T33 | `IT-CBO-02` — `web/lib/stand-operations/__tests__/intent.integration.test.ts` (web integration) | Planned |
+| EDGE-CBO-02 | [stand-maintenance](./stand-maintenance.md) | T31,T32,T33 | `IT-CBO-03` — `web/lib/stand-operations/__tests__/intent.integration.test.ts` (web integration) | Planned |
+| EDGE-CBO-03 | [stand-maintenance](./stand-maintenance.md) | T32,T33 | `IT-CBO-04` — `web/lib/stand-operations/__tests__/intent.integration.test.ts` (web integration) | Planned |
+| EDGE-CBO-04 | [stand-maintenance](./stand-maintenance.md) | T33 | `IT-CBO-05` — `web/lib/stand-operations/__tests__/intent.integration.test.ts` (web integration) | Planned |
+| EDGE-CBO-05 | [stand-maintenance](./stand-maintenance.md) | T31,T32,T33 | `IT-CBO-02` — `web/lib/stand-operations/__tests__/intent.integration.test.ts` (web integration) | Planned |
+| EDGE-CBO-06 | [stand-maintenance](./stand-maintenance.md) | T31,T33,T37 | `IT-CBO-07` — `web/lib/stand-operations/__tests__/intent.integration.test.ts` (web integration) | Planned |
+| EDGE-CBO-07 | [stand-maintenance](./stand-maintenance.md) | T32,T33 | `IT-CBO-06` — `web/lib/stand-operations/__tests__/intent.integration.test.ts` (web integration) | Planned |
 | CBX-01 | [company-brain-specialists-qualification](./company-brain-specialists-qualification.md) | T04,T05,T06,T09,T18,T19.1,T31,T08.1 | `IT-CBX-01` — `web/lib/db/__tests__/migration-company-brain-specialists.integration.test.ts` (web integration) | Planned |
 | CBX-02 | [company-brain-specialists-qualification](./company-brain-specialists-qualification.md) | T10,T11,T14,T19,T20,T22.1,T24,T27 | `IT-CBX-02` — `mcp/src/__tests__/company-specialists.integration.test.ts` (MCP integration) | Planned |
 | CBX-03 | [company-brain-specialists-qualification](./company-brain-specialists-qualification.md) | T16,T17 | `QL-CBX-03` — `web/e2e/live-company-brain-specialists.spec.ts` (live-supervisor) | Implemented |
-| CBX-04 | [company-brain-specialists-qualification](./company-brain-specialists-qualification.md) | T35,T36,T40,T41 | `QL-CBX-04` — `web/e2e/live-company-brain-specialists.spec.ts` (live-supervisor) | Planned |
+| CBX-04 | [company-brain-specialists-qualification](./company-brain-specialists-qualification.md) | T35,T36,T40,T41 | `QL-CBX-04` — `web/e2e/live-stand-specialists.spec.ts` (live-supervisor) | Planned |
 | CBX-05 | [company-brain-specialists-qualification](./company-brain-specialists-qualification.md) | T04.1,T17,T42,T43 | `CT-CBX-05` — `scripts/validate-requirement-coverage.test.mjs` (Node) | Planned |
 | EDGE-CBX-01 | [company-brain-specialists-qualification](./company-brain-specialists-qualification.md) | T04,T05,T06,T09,T18,T19.1,T31 | `IT-CBX-01` — `web/lib/db/__tests__/migration-company-brain-specialists.integration.test.ts` (web integration) | Planned |
 | EDGE-CBX-02 | [company-brain-specialists-qualification](./company-brain-specialists-qualification.md) | T10,T11,T14,T19,T20,T22.1,T24,T27 | `IT-CBX-02` — `mcp/src/__tests__/company-specialists.integration.test.ts` (MCP integration) | Planned |
 | EDGE-CBX-03 | [company-brain-specialists-qualification](./company-brain-specialists-qualification.md) | T16,T17 | `QL-CBX-03` — `web/e2e/live-company-brain-specialists.spec.ts` (live-supervisor) | Implemented |
-| EDGE-CBX-04 | [company-brain-specialists-qualification](./company-brain-specialists-qualification.md) | T35,T36,T40,T41 | `QL-CBX-04` — `web/e2e/live-company-brain-specialists.spec.ts` (live-supervisor) | Planned |
+| EDGE-CBX-04 | [company-brain-specialists-qualification](./company-brain-specialists-qualification.md) | T35,T36,T40,T41 | `QL-CBX-04` — `web/e2e/live-stand-specialists.spec.ts` (live-supervisor) | Planned |
 | EDGE-CBX-05 | [company-brain-specialists-qualification](./company-brain-specialists-qualification.md) | T04.1,T17,T42,T43 | `CT-CBX-05` — `scripts/validate-requirement-coverage.test.mjs` (Node) | Planned |

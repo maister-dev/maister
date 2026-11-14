@@ -14,9 +14,9 @@ receipt requires cancellation authority without redisclosing inaccessible input.
 Input append preserves standing instructions, recurring request and result
 requirements, and refuses overflow rather than truncating. Recurring snapshots
 must identify the exact scheduled origin. Linking a successful run never
-completes its assignment. New company execution admission, intake receipt
-deduplication, context/HITL cooperation, owner fencing and verified acceptance
-remain in their owning slices; their public routes are still designed.
+completes its assignment. Company execution admission, intake deduplication, context and HITL, executor
+fencing and verified acceptance use the native services and retained receipts
+described below. Full installed-package qualification has its own gate.
 
 - Specialist assignment: objective, expected outcome, requester, responsible specialist/coordinator, company/project owner, targets, references, constraints, result/verification requirements and origin/destination.
 - Input/authority revision: immutable standing-definition, recurring-request, current assignment input, retrieved references and historical grants in separate fields.
