@@ -40,7 +40,7 @@ export const COVERAGE_GROUPS = {
     prefixes: ["CBK", "CBE", "CBS", "CBA", "CBC", "CBO", "CBU", "CBX"],
     matrixPath: "docs/system-analytics/company-brain-specialists-traceability.md",
     implementationPhases: /^T(?:04\.1|(?:0[5-9]|[1-3]\d|4[0-3])(?:\.\d+)?)$/,
-    testRoots: ["web", "supervisor", "mcp", "scripts"],
+    testRoots: ["web", "supervisor", "mcp", "scripts", "stand-connector/test"],
   },
   "run-peek": {
     label: "Child Run peek",

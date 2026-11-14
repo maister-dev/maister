@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
@@ -44,6 +45,37 @@ test("CT-CBX-05 qualification migration units resolve to their actual journal ta
       journal.entries.some((entry) => entry.tag === tag),
       `${lineage} ${tag} must match the actual journal`,
     );
+  }
+});
+
+test("CT-CBX-05 the release manifest identifies unchanged specifications and recorded qualification outcomes", () => {
+  const qualificationRoot = join(
+    repoRoot,
+    ".ai-factory/qa/company-brain-specialist-assignments",
+  );
+  const manifest = JSON.parse(
+    readFileSync(join(qualificationRoot, "T43/release-candidate.json"), "utf8"),
+  );
+  const digest = (data) => createHash("sha256").update(data).digest("hex");
+  const standReceipts = ["CB1_combined", "CB1_coordinator", "CB1_diagnostic"];
+
+  assert.ok(Object.keys(manifest.specs).length > 0);
+  for (const role of ["CB0", ...standReceipts]) {
+    assert.equal(manifest.receipts[role]?.exitCode, 0, role);
+  }
+  for (const [path, sha256] of Object.entries(manifest.specs)) {
+    assert.equal(digest(readFileSync(join(repoRoot, path))), sha256, path);
+  }
+  for (const [role, { path, sha256, exitCode }] of Object.entries(manifest.receipts)) {
+    const data = readFileSync(join(qualificationRoot, path));
+    const receipt = JSON.parse(data.toString("utf8"));
+
+    assert.equal(digest(data), sha256, path);
+    assert.equal(receipt.exitCode ?? receipt.outcome?.code, exitCode, path);
+    if (standReceipts.includes(role)) {
+      assert.equal(receipt.packageCommit, manifest.implementation.companionCommit, path);
+      assert.equal(receipt.packageTag, manifest.implementation.companionTag, path);
+    }
   }
 });
 

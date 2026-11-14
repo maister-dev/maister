@@ -830,7 +830,7 @@ Crash before intake commit leaves no assignment orphan; after commit reuses sour
 
 - [ADR-203](../decisions.md#adr-203-durable-specialist-assignments-and-company-coordinator-flows), [persistence](../db/specialist-assignments-domain.md), [runtime](specialist-runtime.md), [cooperation](specialist-cooperation.md).
 - [Human assignments](assignments.md), [HITL](hitl.md), [scheduled requests](scheduled-agent-requests.md), [web API](../api/web.openapi.yaml), [error taxonomy](../error-taxonomy.md).
-- Implementation: `web/lib/specialist-assignments/` (base store implemented), existing agent-question, prompt-owner, result and outbox services; invocation/cooperation remain designed.
+- Implementation: `web/lib/specialist-assignments/` and the existing agent-question, prompt-owner, result and outbox services own native intake, governed cooperation and verified acceptance. The [qualification contract](company-brain-specialists-qualification.md) distinguishes the live pilot from the full release gate.
 
 ### Native delivery inspection and replay (Implemented — locally qualified)
 

@@ -3,9 +3,10 @@
   "status": "pilot_passed_full_release_gate_open",
   "specs": {
     "docs/system-analytics/company-brain-specialists-qualification.md": "003d79c910fd5e6f87eaf663d5cdafcb46e4fa12c782c481b745c82f120603c3",
-    "docs/system-analytics/company-brain-specialists-traceability.md": "d8ff02884ef6ab2e8c4a60eacf8999814f010ac0213d33451e41ea3c2da8f626",
+    "docs/system-analytics/company-brain-specialists-traceability.md": "bab7f935131ef076e38105146239ef50fb3b78014cface844728ad8f657c4fe5",
     "docs/system-analytics/specialist-cooperation.md": "4d901e6d2c37bcdf46f38099edb4d5e1f96a6650e7b7155185181088754318dc",
-    "docs/system-analytics/stand-maintenance.md": "84c7cda31f5c8ddb279eee875194235c3986f747f8ca18974ea76e0d761c5df9"
+    "docs/system-analytics/stand-maintenance.md": "84c7cda31f5c8ddb279eee875194235c3986f747f8ca18974ea76e0d761c5df9",
+    "docs/system-analytics/specialist-assignments.md": "68587a151e0938bb2f141dd62330cee57a8027737cad2ff7011ff78490670696"
   },
   "receipts": {
     "CB0": {
@@ -41,7 +42,7 @@
   },
   "currentMaster": {
     "commit": "b84f47eef9b66e02e60d4fd41fe8843e3838708e",
-    "candidate": "034da5d9a",
+    "candidate": "a632bdee6",
     "existingMigrationsPreserved": 226,
     "nativeSuccessiveMigrations": 107,
     "lastMigration": "0336_specialist_interrupted_work",
@@ -50,7 +51,7 @@
     "fullWeb": "in_progress"
   },
   "implementation": {
-    "platform": "278f2967d",
+    "platform": "9647344d0",
     "companionCommit": "084f68a587a91befd31f94c1ce7759e6b31d265a",
     "companionTag": "stand-operations/v0.1.0",
     "packageInstallChecksPassed": 2,
