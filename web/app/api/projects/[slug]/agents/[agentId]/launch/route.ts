@@ -19,7 +19,7 @@ import {
   taskLaunchErrorResponse,
 } from "@/lib/tasks/launch-http";
 import { wakeAcceptedTaskLaunch } from "@/lib/tasks/launch-wake";
-import { knowledgeJson } from "@/lib/brain/knowledge-http";
+import { privateJson } from "@/lib/api/private-json";
 import { projectRoutedManualAssignmentRequestSchema } from "@/lib/specialist-assignments/intake-types";
 import { submitProjectRoutedManualAssignment } from "@/lib/specialist-assignments/project-routed-manual-intake";
 
@@ -98,7 +98,7 @@ export async function POST(
       if (receipt.projectAdmission?.kind === "accepted")
         wakeAcceptedTaskLaunch(db, receipt.projectAdmission.receipt);
 
-      return knowledgeJson(receipt.assignment, receipt.duplicate ? 200 : 201);
+      return privateJson(receipt.assignment, receipt.duplicate ? 200 : 201);
     }
 
     const input = {

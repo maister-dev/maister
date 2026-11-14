@@ -7,7 +7,7 @@ import {
   getSpecialistAssignmentAdmission,
   assertAssignmentAdmissionQuery,
 } from "@/lib/specialist-assignments/admission-read";
-import { knowledgeJson } from "@/lib/brain/knowledge-http";
+import { privateJson } from "@/lib/api/private-json";
 import { handlePersonalAssignmentExt } from "@/lib/specialist-assignments/external";
 
 export async function GET(
@@ -21,7 +21,7 @@ export async function GET(
     async (userId) => {
       assertAssignmentAdmissionQuery(request.url);
 
-      return knowledgeJson(
+      return privateJson(
         await getSpecialistAssignmentAdmission(
           getDb(),
           userId,

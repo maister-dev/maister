@@ -7,10 +7,7 @@ import {
   getSpecialistAssignmentAdmission,
   assertAssignmentAdmissionQuery,
 } from "@/lib/specialist-assignments/admission-read";
-import {
-  knowledgeJson,
-  knowledgeErrorResponse,
-} from "@/lib/brain/knowledge-http";
+import { privateErrorResponse, privateJson } from "@/lib/api/private-json";
 import { requireActiveSession } from "@/lib/authz";
 
 export async function GET(
@@ -22,7 +19,7 @@ export async function GET(
 
     assertAssignmentAdmissionQuery(request.url);
 
-    return knowledgeJson(
+    return privateJson(
       await getSpecialistAssignmentAdmission(
         getDb(),
         userId,
@@ -30,7 +27,7 @@ export async function GET(
       ),
     );
   } catch (error) {
-    return knowledgeErrorResponse(
+    return privateErrorResponse(
       error,
       "GET /api/specialist-assignments/:assignmentId/admission",
     );

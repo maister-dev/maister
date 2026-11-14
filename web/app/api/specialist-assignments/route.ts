@@ -8,12 +8,14 @@ import { requireActiveSession } from "@/lib/authz";
 import { wakeAcceptedTaskLaunch } from "@/lib/tasks/launch-wake";
 import { getDb } from "@/lib/db/client";
 import {
-  knowledgeErrorResponse,
-  knowledgeJson,
-  readKnowledgeJson,
-} from "@/lib/brain/knowledge-http";
+  privateErrorResponse,
+  privateJson,
+  readPrivateJson,
+} from "@/lib/api/private-json";
 import { submitManualSpecialistAssignment } from "@/lib/specialist-assignments/manual-intake";
 import { getSpecialistAssignment } from "@/lib/specialist-assignments/store";
+import { assignmentPageQuery } from "@/lib/specialist-assignments/http";
+import { listAccessibleSpecialistAssignments } from "@/lib/specialist-assignments/pages";
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
@@ -24,7 +26,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const receipt = await submitManualSpecialistAssignment(
       getDb(),
       user.id,
-      await readKnowledgeJson(request),
+      await readPrivateJson(request),
       principal,
     );
 
@@ -36,8 +38,24 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       receipt.assignment.id,
     );
 
-    return knowledgeJson(assignment, receipt.duplicate ? 200 : 201);
+    return privateJson(assignment, receipt.duplicate ? 200 : 201);
   } catch (error) {
-    return knowledgeErrorResponse(error, "POST /api/specialist-assignments");
+    return privateErrorResponse(error, "POST /api/specialist-assignments");
+  }
+}
+
+export async function GET(request: NextRequest): Promise<NextResponse> {
+  try {
+    const user = await requireActiveSession();
+
+    return privateJson(
+      await listAccessibleSpecialistAssignments(
+        getDb(),
+        user.id,
+        assignmentPageQuery(request),
+      ),
+    );
+  } catch (error) {
+    return privateErrorResponse(error, "GET /api/specialist-assignments");
   }
 }

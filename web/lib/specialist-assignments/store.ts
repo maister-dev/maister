@@ -774,54 +774,69 @@ export async function cancelSpecialistAssignment(
   try {
     return await db.transaction(async (tx) => {
       await beginAssignmentTransaction(tx);
-      const head = await lockSpecialistAssignment(
-        tx,
-        assignmentId,
-        expectedRevision,
-      );
 
-      await authorizeAssignment(
+      return cancelSpecialistAssignmentInTransaction(
         tx,
         userId,
-        knowledgeOwner(head),
-        "assignments:cancel",
-        { preset: "supervised" },
-      );
-      if (["completed", "failed", "cancelled"].includes(String(head.status)))
-        throw new MaisterError(
-          "CONFLICT",
-          "Assignment is already terminal; inspect its retained outcome",
-        );
-      await assertNoUnsettledAssignmentRuns(tx, assignmentId);
-      await tx.execute(
-        sql`UPDATE specialist_assignments SET status='cancelled',revision=revision+1,terminal_reason=${parsedReason.data},updated_at=clock_timestamp() WHERE id=${assignmentId}`,
-      );
-      await emitSpecialistAssignmentChange({
-        db: tx,
-        owner: knowledgeOwner(head),
         assignmentId,
-        revision: expectedRevision + 1,
-        previousStatus: specialistAssignmentSchema.shape.status.parse(
-          head.status,
-        ),
-        status: "cancelled",
-        cause: "cancelled",
-        actor: { type: "user", id: userId },
-      });
-      log.info(
-        { assignmentId, revision: expectedRevision + 1, actorId: userId },
-        "assignment cancellation retained",
+        expectedRevision,
+        parsedReason.data,
       );
-
-      return {
-        assignmentId,
-        revision: expectedRevision + 1,
-        status: "cancelled",
-      };
     });
   } catch (error) {
     throw redactQueryError(error);
   }
+}
+
+export async function cancelSpecialistAssignmentInTransaction(
+  tx: SqlTransaction,
+  userId: string,
+  assignmentId: string,
+  expectedRevision: number,
+  reason: string,
+): Promise<AssignmentStateReceipt> {
+  const head = await lockSpecialistAssignment(
+    tx,
+    assignmentId,
+    expectedRevision,
+  );
+
+  await authorizeAssignment(
+    tx,
+    userId,
+    knowledgeOwner(head),
+    "assignments:cancel",
+    { preset: "supervised" },
+  );
+  if (["completed", "failed", "cancelled"].includes(String(head.status)))
+    throw new MaisterError(
+      "CONFLICT",
+      "Assignment is already terminal; inspect its retained outcome",
+    );
+  await assertNoUnsettledAssignmentRuns(tx, assignmentId);
+  await tx.execute(
+    sql`UPDATE specialist_assignments SET status='cancelled',revision=revision+1,terminal_reason=${reason},updated_at=clock_timestamp() WHERE id=${assignmentId}`,
+  );
+  await emitSpecialistAssignmentChange({
+    db: tx,
+    owner: knowledgeOwner(head),
+    assignmentId,
+    revision: expectedRevision + 1,
+    previousStatus: specialistAssignmentSchema.shape.status.parse(head.status),
+    status: "cancelled",
+    cause: "cancelled",
+    actor: { type: "user", id: userId },
+  });
+  log.info(
+    { assignmentId, revision: expectedRevision + 1, actorId: userId },
+    "assignment cancellation retained",
+  );
+
+  return {
+    assignmentId,
+    revision: expectedRevision + 1,
+    status: "cancelled",
+  };
 }
 
 /** Reopening preserves the old state fact and inputs; it does not launch or repeat external effects. */
@@ -834,48 +849,63 @@ export async function recoverSpecialistAssignment(
   try {
     return await db.transaction(async (tx) => {
       await beginAssignmentTransaction(tx);
-      const head = await lockSpecialistAssignment(
+
+      return recoverSpecialistAssignmentInTransaction(
         tx,
+        userId,
         assignmentId,
         expectedRevision,
       );
-
-      await authorizeAssignment(
-        tx,
-        userId,
-        knowledgeOwner(head),
-        "assignments:recover",
-        { preset: "supervised" },
-      );
-      if (head.status !== "failed" && head.status !== "cancelled")
-        throw new MaisterError(
-          "CONFLICT",
-          "Only an explicitly failed or cancelled assignment can be reopened",
-        );
-      await assertNoUnsettledAssignmentRuns(tx, assignmentId);
-      await tx.execute(
-        sql`UPDATE specialist_assignments SET status='queued',revision=revision+1,terminal_reason=NULL,updated_at=clock_timestamp() WHERE id=${assignmentId}`,
-      );
-      await emitSpecialistAssignmentChange({
-        db: tx,
-        owner: knowledgeOwner(head),
-        assignmentId,
-        revision: expectedRevision + 1,
-        previousStatus: head.status,
-        status: "queued",
-        cause: "recovered",
-        actor: { type: "user", id: userId },
-      });
-      log.info(
-        { assignmentId, revision: expectedRevision + 1, actorId: userId },
-        "assignment recovery revision retained",
-      );
-
-      return { assignmentId, revision: expectedRevision + 1, status: "queued" };
     });
   } catch (error) {
     throw redactQueryError(error);
   }
+}
+
+export async function recoverSpecialistAssignmentInTransaction(
+  tx: SqlTransaction,
+  userId: string,
+  assignmentId: string,
+  expectedRevision: number,
+): Promise<AssignmentStateReceipt> {
+  const head = await lockSpecialistAssignment(
+    tx,
+    assignmentId,
+    expectedRevision,
+  );
+
+  await authorizeAssignment(
+    tx,
+    userId,
+    knowledgeOwner(head),
+    "assignments:recover",
+    { preset: "supervised" },
+  );
+  if (head.status !== "failed" && head.status !== "cancelled")
+    throw new MaisterError(
+      "CONFLICT",
+      "Only an explicitly failed or cancelled assignment can be reopened",
+    );
+  await assertNoUnsettledAssignmentRuns(tx, assignmentId);
+  await tx.execute(
+    sql`UPDATE specialist_assignments SET status='queued',revision=revision+1,terminal_reason=NULL,updated_at=clock_timestamp() WHERE id=${assignmentId}`,
+  );
+  await emitSpecialistAssignmentChange({
+    db: tx,
+    owner: knowledgeOwner(head),
+    assignmentId,
+    revision: expectedRevision + 1,
+    previousStatus: head.status,
+    status: "queued",
+    cause: "recovered",
+    actor: { type: "user", id: userId },
+  });
+  log.info(
+    { assignmentId, revision: expectedRevision + 1, actorId: userId },
+    "assignment recovery revision retained",
+  );
+
+  return { assignmentId, revision: expectedRevision + 1, status: "queued" };
 }
 
 /** Admission links its existing run and immutable input in the same transaction, without another attempt ledger. */

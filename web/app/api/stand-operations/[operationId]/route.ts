@@ -3,10 +3,7 @@ import "server-only";
 import type { NextRequest, NextResponse } from "next/server";
 
 import { requireActiveSession } from "@/lib/authz";
-import {
-  knowledgeErrorResponse,
-  knowledgeJson,
-} from "@/lib/brain/knowledge-http";
+import { privateErrorResponse, privateJson } from "@/lib/api/private-json";
 import { getDb } from "@/lib/db/client";
 import { getStandOperation } from "@/lib/stand-operations/operation-intake";
 
@@ -18,11 +15,9 @@ export async function GET(
     const user = await requireActiveSession();
     const { operationId } = await params;
 
-    return knowledgeJson(
-      await getStandOperation(getDb(), user.id, operationId),
-    );
+    return privateJson(await getStandOperation(getDb(), user.id, operationId));
   } catch (error) {
-    return knowledgeErrorResponse(
+    return privateErrorResponse(
       error,
       "GET /api/stand-operations/[operationId]",
     );

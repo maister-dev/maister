@@ -4,10 +4,7 @@ import type { NextRequest, NextResponse } from "next/server";
 
 import { requireActiveSession } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
-import {
-  knowledgeErrorResponse,
-  knowledgeJson,
-} from "@/lib/brain/knowledge-http";
+import { privateErrorResponse, privateJson } from "@/lib/api/private-json";
 import { readBoundedJson } from "@/lib/http/bounded-json";
 import {
   appendSpecialistAssignmentContext,
@@ -32,7 +29,7 @@ export async function GET(
       request.nextUrl.searchParams,
     );
 
-    return knowledgeJson(
+    return privateJson(
       await getSpecialistAssignmentContext(
         getDb(),
         user.id,
@@ -41,7 +38,7 @@ export async function GET(
       ),
     );
   } catch (error) {
-    return knowledgeErrorResponse(
+    return privateErrorResponse(
       error,
       "GET /api/specialist-assignments/[assignmentId]/context",
     );
@@ -65,9 +62,9 @@ export async function PATCH(
       await readBoundedJson(request, 32768),
     );
 
-    return knowledgeJson(context);
+    return privateJson(context);
   } catch (error) {
-    return knowledgeErrorResponse(
+    return privateErrorResponse(
       error,
       "PATCH /api/specialist-assignments/[assignmentId]/context",
     );

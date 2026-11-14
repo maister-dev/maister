@@ -4,10 +4,7 @@ import type { NextRequest } from "next/server";
 
 import { NextResponse } from "next/server";
 
-import {
-  knowledgeErrorResponse,
-  knowledgeJson,
-} from "@/lib/brain/knowledge-http";
+import { privateErrorResponse, privateJson } from "@/lib/api/private-json";
 import { getDb } from "@/lib/db/client";
 import { readBoundedJson } from "@/lib/http/bounded-json";
 import { decodeRouteParam } from "@/lib/route-params";
@@ -31,7 +28,7 @@ export async function POST(
     async ({ actor }) => {
       const { assignmentId, workId } = await params;
 
-      return knowledgeJson(
+      return privateJson(
         await decideSpecialistWorkByToken(getDb(), {
           tokenId: actor.tokenId,
           boundRunId: actor.boundRunId,
@@ -42,7 +39,7 @@ export async function POST(
       );
     },
     (error) => {
-      const response = knowledgeErrorResponse(error, endpoint);
+      const response = privateErrorResponse(error, endpoint);
 
       return response.status === 400
         ? new NextResponse(response.body, {

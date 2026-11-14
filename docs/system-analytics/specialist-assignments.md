@@ -807,31 +807,6 @@ Destinations are a task/comment thread, current user Inbox, or existing configur
 
 Crash before intake commit leaves no assignment orphan; after commit reuses source receipt/reserved run. Crash after answer intent but before ACK leaves delivery retryable under its exact binding. Crash after acceptance but before message delivery is owned by the existing outbox. Cancelling the assignment never deletes its operation/accepted evidence; reconciliation can continue under a dedicated current recovery grant without reviving the cancelled agent. Missing access results in a safe blocker and actionable authorized-owner incident.
 
-## Expectations
-
-- **CBA-01:** Assignment responsibility and all required request/result/origin fields survive retries/cancellation with existing run links, enforced by the assignment store and versioned input rows (`IT-CBA-01`).
-- **CBA-02:** All six origins classify duplicate/update/clarification/independent/missing/conflicting/unknown requests without losing work, enforced by canonical intake receipts and adapters (`IT-CBA-02`).
-- **CBA-03:** Standing, recurring, assignment, knowledge and authority inputs remain separately frozen and inspectable, enforced by launch/input snapshots (`IT-CBA-03`).
-- **CBA-04:** Context preserves attributed structured work and rejects conflicting updates, enforced by assignment-row lock and revision/epoch CAS (`IT-CBA-04`).
-- **CBA-05:** Clarification resumes the exact assignment/question/input and releases failed owned deferreds, enforced by existing human-ask/HITL delivery with assignment subjects (`IT-CBA-05`).
-- **CBA-06:** Origin delivery is current-access-filtered, durable and cannot repeat business effects, enforced by typed destinations/outbox receipts (`IT-CBA-06`).
-- **CBA-07:** Completion requires exact expected result and verification acceptance, enforced by transactional acceptance and terminal CHECKs (`IT-CBA-07`).
-- **CBU-02:** EN/RU assignment UX exposes responsibility, questions, children, accepted evidence and authorized recovery, enforced by existing agent/history/Inbox extensions (`E2E-CBU-02`).
-
-## Edge cases
-
-- **EDGE-CBA-01:** Identical and changed-payload retries are distinct; changed payload rolls back dependent writes (`IT-CBA-02`).
-- **EDGE-CBA-02:** Out-of-order/late answers cannot resume a newer input or different assignment (`IT-CBA-05`).
-- **EDGE-CBA-03:** Two context writers cannot silently lose a decision; loser sees `CONFLICT` with safe current revision (`IT-CBA-04`).
-- **EDGE-CBA-04:** Child Done, stale result or missing independent verification cannot satisfy completion (`IT-CBA-07`).
-- **EDGE-CBA-05:** Lost origin ACK repeats only delivery, not accepted work or external mutation (`IT-CBA-06`).
-
-## Linked artifacts
-
-- [ADR-203](../decisions.md#adr-203-durable-specialist-assignments-and-company-coordinator-flows), [persistence](../db/specialist-assignments-domain.md), [runtime](specialist-runtime.md), [cooperation](specialist-cooperation.md).
-- [Human assignments](assignments.md), [HITL](hitl.md), [scheduled requests](scheduled-agent-requests.md), [web API](../api/web.openapi.yaml), [error taxonomy](../error-taxonomy.md).
-- Implementation: `web/lib/specialist-assignments/` and the existing agent-question, prompt-owner, result and outbox services own native intake, governed cooperation and verified acceptance. The [qualification contract](company-brain-specialists-qualification.md) defines the local qualification gates for the installed pilot and platform.
-
 ### Native delivery inspection and replay (Implemented — locally qualified)
 
 The native surface selects delivery for a known assignment Run, rather than
@@ -1133,3 +1108,56 @@ actual source delivery, human assessment, registered consumers and the existing
 worker. The full Phase 5 integration probe qualifies the surrounding intake,
 context, clarification, delivery and legacy behavior. No installed-package or
 stand-pilot readiness is implied.
+
+### Operator controls and listing (Implemented)
+
+Web session clients and global personal user tokens share one control surface
+(see [web OpenAPI](../api/web.openapi.yaml) and [external operations
+OpenAPI](../api/external/operations.openapi.yaml)):
+
+- `GET …/specialist-assignments` lists assignments the caller can currently read,
+  newest first, behind an opaque access-bound keyset cursor. The store decides access
+  per row, so a page may hold fewer items than `limit` while `nextCursor` is set.
+- `POST …/{assignmentId}/inputs` appends one correlated input revision.
+- `POST …/{assignmentId}/continue` reopens failed or cancelled work as queued intent
+  (`202`); it never launches a Run or repeats an external effect.
+- `POST …/{assignmentId}/cancel` stops the assignment's live linked Runs through the
+  existing operator stop, then records the cancellation. Teardown that has not settled
+  answers `202` with the current revision and no receipt, so the caller retries with
+  the same key.
+- `GET …/{assignmentId}/work` lists delegated work. Its state derives from the
+  persisted decision plus the child Run and its validated results; no second
+  execution status exists.
+
+Input, continue and cancel carry an `idempotencyKey`. The first committed control
+writes one `specialist_assignment_control_receipts` row in the same transaction as
+the state change (migration `0338`). An exact replay returns that receipt with
+`duplicate: true` after rechecking current read access, and the same key with a
+different request refuses `CONFLICT` (`assignment_control_key_reused`). Token clients
+need `assignments:update`, `assignments:recover` or `assignments:cancel`
+respectively; cancellation and recovery are never in a machine grant set.
+
+## Expectations
+
+- **CBA-01:** Assignment responsibility and all required request/result/origin fields survive retries/cancellation with existing run links, enforced by the assignment store and versioned input rows (`IT-CBA-01`).
+- **CBA-02:** All six origins classify duplicate/update/clarification/independent/missing/conflicting/unknown requests without losing work, enforced by canonical intake receipts and adapters (`IT-CBA-02`).
+- **CBA-03:** Standing, recurring, assignment, knowledge and authority inputs remain separately frozen and inspectable, enforced by launch/input snapshots (`IT-CBA-03`).
+- **CBA-04:** Context preserves attributed structured work and rejects conflicting updates, enforced by assignment-row lock and revision/epoch CAS (`IT-CBA-04`).
+- **CBA-05:** Clarification resumes the exact assignment/question/input and releases failed owned deferreds, enforced by existing human-ask/HITL delivery with assignment subjects (`IT-CBA-05`).
+- **CBA-06:** Origin delivery is current-access-filtered, durable and cannot repeat business effects, enforced by typed destinations/outbox receipts (`IT-CBA-06`).
+- **CBA-07:** Completion requires exact expected result and verification acceptance, enforced by transactional acceptance and terminal CHECKs (`IT-CBA-07`).
+- **CBU-02:** EN/RU assignment UX exposes responsibility, questions, children, accepted evidence and authorized recovery, enforced by existing agent/history/Inbox extensions (`E2E-CBU-02`).
+
+## Edge cases
+
+- **EDGE-CBA-01:** Identical and changed-payload retries are distinct; changed payload rolls back dependent writes (`IT-CBA-02`).
+- **EDGE-CBA-02:** Out-of-order/late answers cannot resume a newer input or different assignment (`IT-CBA-05`).
+- **EDGE-CBA-03:** Two context writers cannot silently lose a decision; loser sees `CONFLICT` with safe current revision (`IT-CBA-04`).
+- **EDGE-CBA-04:** Child Done, stale result or missing independent verification cannot satisfy completion (`IT-CBA-07`).
+- **EDGE-CBA-05:** Lost origin ACK repeats only delivery, not accepted work or external mutation (`IT-CBA-06`).
+
+## Linked artifacts
+
+- [ADR-203](../decisions.md#adr-203-durable-specialist-assignments-and-company-coordinator-flows), [persistence](../db/specialist-assignments-domain.md), [runtime](specialist-runtime.md), [cooperation](specialist-cooperation.md).
+- [Human assignments](assignments.md), [HITL](hitl.md), [scheduled requests](scheduled-agent-requests.md), [web API](../api/web.openapi.yaml), [error taxonomy](../error-taxonomy.md).
+- Implementation: `web/lib/specialist-assignments/` and the existing agent-question, prompt-owner, result and outbox services own native intake, governed cooperation and verified acceptance. The [qualification contract](company-brain-specialists-qualification.md) defines the local qualification gates for the installed pilot and platform.

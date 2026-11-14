@@ -14,10 +14,10 @@ import {
   updateCompanySpecialistBinding,
 } from "@/lib/agents/company-binding-mutations";
 import {
-  knowledgeErrorResponse,
-  knowledgeJson,
-  readKnowledgeJson,
-} from "@/lib/brain/knowledge-http";
+  privateErrorResponse,
+  privateJson,
+  readPrivateJson,
+} from "@/lib/api/private-json";
 import { requireKnowledgeQueryKeys } from "@/lib/brain/knowledge-url";
 import { MaisterError } from "@/lib/errors";
 
@@ -35,7 +35,7 @@ export async function GET(
 
     requireKnowledgeQueryKeys(request.nextUrl.searchParams, []);
 
-    return knowledgeJson(
+    return privateJson(
       await getCompanySpecialistBinding(
         getDb(),
         user.id,
@@ -44,7 +44,7 @@ export async function GET(
       ),
     );
   } catch (error) {
-    return knowledgeErrorResponse(
+    return privateErrorResponse(
       error,
       "GET /api/specialists/:specialistId/bindings/:bindingId",
     );
@@ -59,7 +59,7 @@ export async function PATCH(
     const user = await requireActiveSession();
     const { specialistId, bindingId } = await context.params;
     const parsed = companyBindingUpdateSchema.safeParse(
-      await readKnowledgeJson(request),
+      await readPrivateJson(request),
     );
 
     if (!parsed.success)
@@ -75,9 +75,9 @@ export async function PATCH(
       parsed.data,
     );
 
-    return knowledgeJson(result.specialist);
+    return privateJson(result.specialist);
   } catch (error) {
-    return knowledgeErrorResponse(
+    return privateErrorResponse(
       error,
       "PATCH /api/specialists/:specialistId/bindings/:bindingId",
     );
@@ -92,7 +92,7 @@ export async function DELETE(
     const user = await requireActiveSession();
     const { specialistId, bindingId } = await context.params;
     const parsed = companyBindingDetachSchema.safeParse(
-      await readKnowledgeJson(request),
+      await readPrivateJson(request),
     );
 
     if (!parsed.success)
@@ -101,7 +101,7 @@ export async function DELETE(
         "The company specialist detach request is invalid",
       );
 
-    return knowledgeJson(
+    return privateJson(
       await detachCompanySpecialistBinding(
         getDb(),
         user.id,
@@ -111,7 +111,7 @@ export async function DELETE(
       ),
     );
   } catch (error) {
-    return knowledgeErrorResponse(
+    return privateErrorResponse(
       error,
       "DELETE /api/specialists/:specialistId/bindings/:bindingId",
     );

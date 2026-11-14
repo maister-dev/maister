@@ -10,10 +10,10 @@ import {
   companyGrantPageInputSchema,
 } from "@/lib/company/grant-types";
 import {
-  knowledgeJson,
-  knowledgeErrorResponse,
-  readKnowledgeJson,
-} from "@/lib/brain/knowledge-http";
+  privateErrorResponse,
+  privateJson,
+  readPrivateJson,
+} from "@/lib/api/private-json";
 import { requireKnowledgeQueryKeys } from "@/lib/brain/knowledge-url";
 import { MaisterError } from "@/lib/errors";
 
@@ -35,11 +35,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         "Invalid company authority page selector",
       );
 
-    return knowledgeJson(
-      await listCompanyGrants(getDb(), user.id, parsed.data),
-    );
+    return privateJson(await listCompanyGrants(getDb(), user.id, parsed.data));
   } catch (error) {
-    return knowledgeErrorResponse(error, "GET /api/company/grants");
+    return privateErrorResponse(error, "GET /api/company/grants");
   }
 }
 
@@ -47,7 +45,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     const user = await requireActiveSession();
     const parsed = companyGrantInputSchema.safeParse(
-      await readKnowledgeJson(request),
+      await readPrivateJson(request),
     );
 
     if (!parsed.success)
@@ -57,8 +55,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     const result = await createCompanyGrants(getDb(), user.id, parsed.data);
 
-    return knowledgeJson(result.page, result.duplicate ? 200 : 201);
+    return privateJson(result.page, result.duplicate ? 200 : 201);
   } catch (error) {
-    return knowledgeErrorResponse(error, "POST /api/company/grants");
+    return privateErrorResponse(error, "POST /api/company/grants");
   }
 }

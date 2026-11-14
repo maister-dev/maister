@@ -7,10 +7,10 @@ import { getDb } from "@/lib/db/client";
 import { revokeCompanyGrant } from "@/lib/company/grants";
 import { companyGrantRevokeSchema } from "@/lib/company/grant-types";
 import {
-  knowledgeJson,
-  knowledgeErrorResponse,
-  readKnowledgeJson,
-} from "@/lib/brain/knowledge-http";
+  privateErrorResponse,
+  privateJson,
+  readPrivateJson,
+} from "@/lib/api/private-json";
 import { MaisterError } from "@/lib/errors";
 
 export async function DELETE(
@@ -21,7 +21,7 @@ export async function DELETE(
     const user = await requireActiveSession();
     const { grantId } = await params;
     const parsed = companyGrantRevokeSchema.safeParse(
-      await readKnowledgeJson(request),
+      await readPrivateJson(request),
     );
 
     if (!parsed.success)
@@ -30,13 +30,10 @@ export async function DELETE(
         "Invalid exact-revision company authority revocation",
       );
 
-    return knowledgeJson(
+    return privateJson(
       await revokeCompanyGrant(getDb(), user.id, grantId, parsed.data),
     );
   } catch (error) {
-    return knowledgeErrorResponse(
-      error,
-      "DELETE /api/company/grants/[grantId]",
-    );
+    return privateErrorResponse(error, "DELETE /api/company/grants/[grantId]");
   }
 }

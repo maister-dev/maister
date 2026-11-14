@@ -2,10 +2,7 @@ import "server-only";
 
 import type { NextRequest, NextResponse } from "next/server";
 
-import {
-  knowledgeErrorResponse,
-  knowledgeJson,
-} from "@/lib/brain/knowledge-http";
+import { privateErrorResponse, privateJson } from "@/lib/api/private-json";
 import { getDb } from "@/lib/db/client";
 import { decodeRouteParam } from "@/lib/route-params";
 import { getSpecialistStand } from "@/lib/stand-operations/agent-actions";
@@ -21,13 +18,13 @@ export async function GET(
     request,
     { endpoint, scopeLabel: "targets:read", method: "GET" },
     async ({ actor }) =>
-      knowledgeJson(
+      privateJson(
         await getSpecialistStand(
           getDb(),
           actor.tokenId,
           decodeRouteParam((await params).operationId, "operationId"),
         ),
       ),
-    (error) => knowledgeErrorResponse(error, endpoint),
+    (error) => privateErrorResponse(error, endpoint),
   );
 }

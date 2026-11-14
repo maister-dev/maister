@@ -7,10 +7,10 @@ import { getDb } from "@/lib/db/client";
 import { companyBindingCreateSchema } from "@/lib/agents/company-binding-types";
 import { createCompanySpecialistBinding } from "@/lib/agents/company-bindings";
 import {
-  knowledgeErrorResponse,
-  knowledgeJson,
-  readKnowledgeJson,
-} from "@/lib/brain/knowledge-http";
+  privateErrorResponse,
+  privateJson,
+  readPrivateJson,
+} from "@/lib/api/private-json";
 import { MaisterError } from "@/lib/errors";
 
 type Context = Readonly<{ params: Promise<{ specialistId: string }> }>;
@@ -23,7 +23,7 @@ export async function POST(
     const user = await requireActiveSession();
     const { specialistId } = await context.params;
     const parsed = companyBindingCreateSchema.safeParse(
-      await readKnowledgeJson(request),
+      await readPrivateJson(request),
     );
 
     if (!parsed.success)
@@ -38,9 +38,9 @@ export async function POST(
       parsed.data,
     );
 
-    return knowledgeJson(result.specialist, result.duplicate ? 200 : 201);
+    return privateJson(result.specialist, result.duplicate ? 200 : 201);
   } catch (error) {
-    return knowledgeErrorResponse(
+    return privateErrorResponse(
       error,
       "POST /api/specialists/:specialistId/bindings",
     );

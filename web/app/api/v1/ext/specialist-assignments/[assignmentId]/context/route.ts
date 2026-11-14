@@ -6,10 +6,7 @@ import { NextResponse } from "next/server";
 import { readBoundedJson } from "@/lib/http/bounded-json";
 import { appendSpecialistAssignmentTokenContext } from "@/lib/specialist-assignments/context";
 import { getDb } from "@/lib/db/client";
-import {
-  knowledgeJson,
-  knowledgeErrorResponse,
-} from "@/lib/brain/knowledge-http";
+import { privateErrorResponse, privateJson } from "@/lib/api/private-json";
 import { getSpecialistAssignmentTokenContext } from "@/lib/specialist-assignments/context";
 import { handleOwnedExt } from "@/lib/tokens/owned-ext-handler";
 import { decodeRouteParam } from "@/lib/route-params";
@@ -31,7 +28,7 @@ export async function GET(
         request.nextUrl.searchParams,
       );
 
-      return knowledgeJson(
+      return privateJson(
         await getSpecialistAssignmentTokenContext(
           getDb(),
           actor.tokenId,
@@ -41,7 +38,7 @@ export async function GET(
       );
     },
     (error) => {
-      const response = knowledgeErrorResponse(
+      const response = privateErrorResponse(
         error,
         "GET /api/v1/ext/specialist-assignments/[assignmentId]/context",
       );
@@ -69,7 +66,7 @@ export async function PATCH(
       method: "PATCH",
     },
     async ({ actor }) =>
-      knowledgeJson(
+      privateJson(
         await appendSpecialistAssignmentTokenContext(
           getDb(),
           actor.tokenId,
@@ -78,7 +75,7 @@ export async function PATCH(
         ),
       ),
     (error) => {
-      const response = knowledgeErrorResponse(
+      const response = privateErrorResponse(
         error,
         "PATCH /api/v1/ext/specialist-assignments/[assignmentId]/context",
       );

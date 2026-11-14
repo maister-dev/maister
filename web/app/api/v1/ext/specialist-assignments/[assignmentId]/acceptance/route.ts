@@ -2,7 +2,7 @@ import "server-only";
 
 import type { NextRequest, NextResponse } from "next/server";
 
-import { knowledgeJson } from "@/lib/brain/knowledge-http";
+import { privateJson } from "@/lib/api/private-json";
 import { getDb } from "@/lib/db/client";
 import { readBoundedJson } from "@/lib/http/bounded-json";
 import { decodeRouteParam } from "@/lib/route-params";
@@ -23,7 +23,7 @@ export async function POST(
     "assignments:accept",
     endpoint,
     async (userId) =>
-      knowledgeJson(
+      privateJson(
         await acceptSpecialistAssignment(getDb(), {
           userId,
           assignmentId: decodeRouteParam(

@@ -342,7 +342,7 @@ export async function listStandTargets(
 
   if (!parsed.success)
     throw new MaisterError("CONFIG", "Invalid stand pagination query");
-  const { cursor, limit } = parsed.data;
+  const { cursor, limit, enabledOnly } = parsed.data;
 
   return db.transaction(async (tx) => {
     const companyId = await installationCompany(tx);
@@ -352,7 +352,11 @@ export async function listStandTargets(
       companyId,
       "targets:read",
     );
-    const scope = contentDigest({ authority, limit });
+    const scope = contentDigest({
+      authority,
+      limit,
+      ...(enabledOnly ? { enabledOnly } : {}),
+    });
     const after = cursor
       ? decodeKeysetCursor(cursorNamespace, cursor, scope)
       : null;
@@ -374,6 +378,7 @@ export async function listStandTargets(
       .where(
         and(
           eq(standTargets.companyId, companyId),
+          enabledOnly ? eq(standTargets.enabled, true) : undefined,
           sql`${standTargets.createdAt}<=${upper}::timestamptz`,
           after
             ? sql`(${standTargets.createdAt},${standTargets.id})>(${after.at}::timestamptz,${after.id})`

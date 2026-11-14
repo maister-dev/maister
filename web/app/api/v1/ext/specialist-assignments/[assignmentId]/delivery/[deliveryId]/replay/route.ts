@@ -2,7 +2,7 @@ import "server-only";
 
 import { type NextRequest, type NextResponse } from "next/server";
 
-import { knowledgeJson } from "@/lib/brain/knowledge-http";
+import { privateJson } from "@/lib/api/private-json";
 import { getDb } from "@/lib/db/client";
 import { replaySpecialistAssignmentDelivery } from "@/lib/specialist-assignments/delivery-read";
 import { readBoundedJson } from "@/lib/http/bounded-json";
@@ -30,7 +30,7 @@ export async function POST(
           "Replay requires schemaVersion and the exact expectedStateSha256 only",
         );
 
-      return knowledgeJson(
+      return privateJson(
         await replaySpecialistAssignmentDelivery(
           getDb(),
           userId,

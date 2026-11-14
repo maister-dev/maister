@@ -6,10 +6,10 @@ import { companyFlowBindingCreateSchema } from "@/lib/agents/company-flow-bindin
 import { createCompanyFlowBinding } from "@/lib/agents/company-flow-bindings";
 import { requireActiveSession } from "@/lib/authz";
 import {
-  knowledgeErrorResponse,
-  knowledgeJson,
-  readKnowledgeJson,
-} from "@/lib/brain/knowledge-http";
+  privateErrorResponse,
+  privateJson,
+  readPrivateJson,
+} from "@/lib/api/private-json";
 import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
 import { assertInteractiveLaunchOrigin } from "@/lib/tasks/launch-http";
@@ -20,7 +20,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     assertInteractiveLaunchOrigin(request);
     const parsed = companyFlowBindingCreateSchema.safeParse(
-      await readKnowledgeJson(request),
+      await readPrivateJson(request),
     );
 
     if (!parsed.success)
@@ -30,7 +30,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     const result = await createCompanyFlowBinding(getDb(), id, parsed.data);
 
-    return knowledgeJson(
+    return privateJson(
       {
         id: result.binding.id,
         revision: result.binding.revision,
@@ -40,6 +40,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       result.duplicate ? 200 : 201,
     );
   } catch (error) {
-    return knowledgeErrorResponse(error, "POST /api/company/flow-bindings");
+    return privateErrorResponse(error, "POST /api/company/flow-bindings");
   }
 }

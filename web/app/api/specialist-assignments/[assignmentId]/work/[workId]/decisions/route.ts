@@ -3,10 +3,7 @@ import "server-only";
 import type { NextRequest, NextResponse } from "next/server";
 
 import { requireActiveSession } from "@/lib/authz";
-import {
-  knowledgeErrorResponse,
-  knowledgeJson,
-} from "@/lib/brain/knowledge-http";
+import { privateErrorResponse, privateJson } from "@/lib/api/private-json";
 import { getDb } from "@/lib/db/client";
 import { readBoundedJson } from "@/lib/http/bounded-json";
 import { decodeRouteParam } from "@/lib/route-params";
@@ -27,7 +24,7 @@ export async function POST(
     const user = await requireActiveSession();
     const { assignmentId, workId } = await params;
 
-    return knowledgeJson(
+    return privateJson(
       await decideSpecialistWork(getDb(), {
         userId: user.id,
         assignmentId: decodeRouteParam(assignmentId, "assignmentId"),
@@ -36,6 +33,6 @@ export async function POST(
       }),
     );
   } catch (error) {
-    return knowledgeErrorResponse(error, endpoint);
+    return privateErrorResponse(error, endpoint);
   }
 }

@@ -18,13 +18,16 @@ import {
   finalizeCompanyFlowRun,
 } from "@/lib/run-results/company-flow-terminal";
 import { ensureCompanyUserActor } from "@/lib/assignments/service";
-import { requireActiveSession } from "@/lib/authz";
+import { requireActiveSession, requireActiveUserById } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { runs } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { createExecutionHosts } from "@/lib/execution-host";
 import { currentBudgetTermination } from "@/lib/runs/budget-termination";
-import { stopWorkbenchRun } from "@/lib/workbench-lifecycle/service";
+import {
+  stopWorkbenchRun,
+  workbenchLifecycleDepsForUser,
+} from "@/lib/workbench-lifecycle/service";
 
 const log = pino({ name: "run-stop", level: process.env.LOG_LEVEL ?? "info" });
 
@@ -132,14 +135,25 @@ export async function claimCompanyStop(
 
 /** Owner dispatch reuses the operational cancellation and project lifecycle owners. */
 export async function stopRun(runId: string): Promise<StopWorkbenchRunResult> {
-  const user = await requireActiveSession();
+  return stopRunForUser((await requireActiveSession()).id, runId);
+}
+
+/** The same stop for a principal a token or caller has already authenticated. */
+export async function stopRunForUser(
+  userId: string,
+  runId: string,
+): Promise<StopWorkbenchRunResult> {
+  const user = await requireActiveUserById(userId);
   const db: Db = getDb();
   const [owner] = await db
     .select({ companyId: runs.companyId })
     .from(runs)
     .where(eq(runs.id, runId));
 
-  if (owner?.companyId == null) return stopWorkbenchRun(runId);
+  if (owner?.companyId == null)
+    return stopWorkbenchRun(runId, {
+      deps: workbenchLifecycleDepsForUser(user.id),
+    });
   const run = await claimCompanyStop(db, user.id, runId);
 
   if (run.status === "Abandoned")

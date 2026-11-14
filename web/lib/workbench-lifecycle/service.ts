@@ -2183,6 +2183,25 @@ export async function stopThenDrop(
   return { ...drop, supervisorStopped: stop.supervisorStopped };
 }
 
+/** Lifecycle deps bound to an already-authenticated principal (token clients, assignment cancel). */
+export function workbenchLifecycleDepsForUser(
+  userId: string,
+): WorkbenchLifecycleDeps {
+  return {
+    ...defaultWorkbenchLifecycleDeps(),
+    requireActiveSession: async () => {
+      const { requireActiveUserById } = await import("@/lib/authz");
+
+      return { id: (await requireActiveUserById(userId)).id };
+    },
+    authorize: async (projectId, action) => {
+      const { requireProjectActionForUser } = await import("@/lib/authz");
+
+      await requireProjectActionForUser(userId, projectId, action);
+    },
+  };
+}
+
 function defaultWorkbenchLifecycleDeps(): WorkbenchLifecycleDeps {
   return {
     requireActiveSession: async () => {

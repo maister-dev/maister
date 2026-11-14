@@ -2,10 +2,7 @@ import "server-only";
 
 import { type NextRequest, NextResponse } from "next/server";
 
-import {
-  knowledgeJson,
-  knowledgeErrorResponse,
-} from "@/lib/brain/knowledge-http";
+import { privateErrorResponse, privateJson } from "@/lib/api/private-json";
 import { getDb } from "@/lib/db/client";
 import { decodeRouteParam } from "@/lib/route-params";
 import { getSpecialistAssignmentToken } from "@/lib/specialist-assignments/inspection";
@@ -23,7 +20,7 @@ export async function GET(
       method: "GET",
     },
     async ({ actor }) =>
-      knowledgeJson(
+      privateJson(
         await getSpecialistAssignmentToken(
           getDb(),
           actor.tokenId,
@@ -31,7 +28,7 @@ export async function GET(
         ),
       ),
     (error) => {
-      const response = knowledgeErrorResponse(
+      const response = privateErrorResponse(
         error,
         "GET /api/v1/ext/specialist-assignments/[assignmentId]",
       );

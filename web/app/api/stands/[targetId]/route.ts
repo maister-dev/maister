@@ -4,10 +4,10 @@ import type { NextRequest, NextResponse } from "next/server";
 
 import { requireActiveSession } from "@/lib/authz";
 import {
-  knowledgeErrorResponse,
-  knowledgeJson,
-  readKnowledgeJson,
-} from "@/lib/brain/knowledge-http";
+  privateErrorResponse,
+  privateJson,
+  readPrivateJson,
+} from "@/lib/api/private-json";
 import { getDb } from "@/lib/db/client";
 import {
   getStandTarget,
@@ -25,9 +25,9 @@ export async function GET(
     const user = await requireActiveSession();
     const { targetId } = await params;
 
-    return knowledgeJson(await getStandTarget(getDb(), user.id, targetId));
+    return privateJson(await getStandTarget(getDb(), user.id, targetId));
   } catch (error) {
-    return knowledgeErrorResponse(error, "GET /api/stands/[targetId]");
+    return privateErrorResponse(error, "GET /api/stands/[targetId]");
   }
 }
 
@@ -44,12 +44,12 @@ export async function PATCH(
       getDb(),
       user.id,
       request.headers.get("Idempotency-Key"),
-      await readKnowledgeJson(request),
+      await readPrivateJson(request),
       targetId,
     );
 
-    return knowledgeJson(receipt.target);
+    return privateJson(receipt.target);
   } catch (error) {
-    return knowledgeErrorResponse(error, "PATCH /api/stands/[targetId]");
+    return privateErrorResponse(error, "PATCH /api/stands/[targetId]");
   }
 }

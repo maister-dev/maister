@@ -3,7 +3,11 @@ import "server-only";
 import { NextResponse } from "next/server";
 import pino from "pino";
 
-import { requireActiveSession, httpStatusForAuthz } from "@/lib/authz";
+import {
+  httpStatusForCode,
+  notFoundResponse,
+} from "@/lib/api/project-route-helpers";
+import { requireActiveSession } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError } from "@/lib/errors";
 import {
@@ -29,21 +33,14 @@ export async function GET(
       revision: retainedResultRevision(revision),
     });
 
-    if (!result)
-      return NextResponse.json({ message: "not found" }, { status: 404 });
+    if (!result) return notFoundResponse("Retained result not found");
 
     return NextResponse.json(result, {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {
     if (isMaisterError(error)) {
-      const status =
-        httpStatusForAuthz(error.code) ??
-        (error.code === "CONFIG"
-          ? 400
-          : error.code === "PRECONDITION" || error.code === "CONFLICT"
-            ? 409
-            : 500);
+      const status = httpStatusForCode(error.code);
 
       log.warn(
         { code: error.code, status },

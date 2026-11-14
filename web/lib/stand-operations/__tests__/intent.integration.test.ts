@@ -2243,6 +2243,68 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 IT-CBU-03 recovers the original native restart
         settled: 0,
         pending: 0,
       });
+      // A read refused by current authority writes no read claim, so only the
+      // durable attempt marker can rotate it out of the bounded sweep head.
+      const userRead = authority.page.items.find(
+        ({ action }) => action === "targets:read",
+      )!;
+
+      await database.pool.query(
+        "UPDATE stand_read_claims SET expires_at=clock_timestamp()-interval '31 seconds' WHERE operation_id=$1 AND purpose='reconcile'",
+        [operation.id],
+      );
+      await database.pool.query(
+        "UPDATE stand_recovery_attempts SET next_attempt_at=last_attempt_at WHERE operation_id=$1",
+        [operation.id],
+      );
+      const claimBefore = await database.pool.query<{ owner_epoch: string }>(
+        "SELECT owner_epoch FROM stand_read_claims WHERE operation_id=$1 AND purpose='reconcile'",
+        [operation.id],
+      );
+
+      await revokeCompanyGrant(db, administratorId, userRead.id, {
+        expectedRevision: userRead.revision,
+        reason: "Refuse the fixture recovery read.",
+        idempotencyKey: randomUUID(),
+      });
+      const readsBeforeRefusal = readTarget.mock.calls.length;
+
+      await expect(recoverInterruptedStandOperations(db)).resolves.toEqual({
+        scanned: 1,
+        settled: 0,
+        pending: 1,
+      });
+      expect(readTarget).toHaveBeenCalledTimes(readsBeforeRefusal);
+      const refused = await database.pool.query<{
+        attempts: number;
+        owner_epoch: string;
+        backed_off: boolean;
+      }>(
+        `SELECT attempt.attempts,reader.owner_epoch,attempt.next_attempt_at>clock_timestamp()+interval '50 seconds' AS backed_off
+         FROM stand_recovery_attempts attempt
+         JOIN stand_read_claims reader ON reader.operation_id=attempt.operation_id AND reader.purpose='reconcile'
+         WHERE attempt.operation_id=$1`,
+        [operation.id],
+      );
+
+      expect(refused.rows).toEqual([
+        {
+          attempts: 2,
+          owner_epoch: claimBefore.rows[0]!.owner_epoch,
+          backed_off: true,
+        },
+      ]);
+      await expect(recoverInterruptedStandOperations(db)).resolves.toEqual({
+        scanned: 0,
+        settled: 0,
+        pending: 0,
+      });
+      const restoredRead = await createCompanyGrants(db, administratorId, {
+        principalKind: "user",
+        principalId: userId,
+        actions: ["targets:read"],
+        idempotencyKey: randomUUID(),
+      });
       const { POST: inspectRecovery } =
         await import("@/app/api/stand-operations/[operationId]/recovery-inspections/route");
       const inspect = (expectedRevision: number) =>
@@ -2907,7 +2969,7 @@ it("IT-CBO-02 IT-CBO-04 IT-CBO-05 IT-CBU-03 recovers the original native restart
       ).resolves.toMatchObject({
         acceptedResult: { id: published.id, revision: published.revision },
       });
-      const targetRead = authority.page.items.find(
+      const targetRead = restoredRead.page.items.find(
         (item) => item.action === "targets:read",
       );
 

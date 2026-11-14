@@ -4,7 +4,7 @@ import type { NextRequest, NextResponse } from "next/server";
 
 import { requireActiveSession } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
-import { knowledgeJson } from "@/lib/brain/knowledge-http";
+import { privateJson } from "@/lib/api/private-json";
 import { readBoundedJson } from "@/lib/http/bounded-json";
 import { decodeRouteParam } from "@/lib/route-params";
 import { answerAssignmentQuestion } from "@/lib/services/assignment-question-response";
@@ -31,7 +31,7 @@ export async function POST(
       await readBoundedJson(request, 32768),
     );
 
-    return knowledgeJson(receipt, receipt.idempotent ? 200 : 202);
+    return privateJson(receipt, receipt.idempotent ? 200 : 202);
   } catch (error) {
     return assignmentQuestionError(error, endpoint);
   }

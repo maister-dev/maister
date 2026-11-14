@@ -2,10 +2,7 @@ import "server-only";
 
 import type { NextRequest, NextResponse } from "next/server";
 
-import {
-  knowledgeErrorResponse,
-  knowledgeJson,
-} from "@/lib/brain/knowledge-http";
+import { privateErrorResponse, privateJson } from "@/lib/api/private-json";
 import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
 import { decodeRouteParam } from "@/lib/route-params";
@@ -34,12 +31,19 @@ export async function POST(
   const { operationId, action } = await params;
   const endpoint = "POST /api/v1/ext/stand-operations/[operationId]/[action]";
 
+  const scopeLabel =
+    action === "dispatch"
+      ? "targets:restart"
+      : action === "logs"
+        ? "targets:logs"
+        : "targets:read";
+
   return handleOwnedExt(
     request,
-    { endpoint, scopeLabel: "targets:read", method: "POST" },
+    { endpoint, scopeLabel, method: "POST" },
     async ({ actor }) => {
       if (action === "logs")
-        return knowledgeJson(
+        return privateJson(
           await readSpecialistStandLogs(
             getDb(),
             actor.tokenId,
@@ -60,11 +64,8 @@ export async function POST(
         decodeRouteParam(operationId, "operationId"),
       );
 
-      return knowledgeJson(
-        result,
-        result.effectState === "unknown" ? 202 : 200,
-      );
+      return privateJson(result, result.effectState === "unknown" ? 202 : 200);
     },
-    (error) => knowledgeErrorResponse(error, endpoint),
+    (error) => privateErrorResponse(error, endpoint),
   );
 }

@@ -5993,15 +5993,15 @@ paths:
   /api/v1/ext/specialists:
     get:
       operationId: extSpecialistsList
-      summary: Designed — List accessible specialist roles
-      description: Designed; no implementation is implied. Requires current specialists:read. URL identifiers are
+      summary: List accessible specialist roles
+      description: Requires current specialists:read. URL identifiers are
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
         422; PRECONDITION/CONFLICT remain 409. Scope authorization plus required transactional token audit
         apply.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       x-required-scope: specialists:read
       responses:
         "200":
@@ -6044,15 +6044,15 @@ paths:
   /api/v1/ext/specialist-assignments:
     get:
       operationId: extSpecialistAssignmentsList
-      summary: Designed — List accessible durable work
-      description: Designed; no implementation is implied. Requires current assignments:read. URL identifiers are
+      summary: List accessible durable work
+      description: Requires current assignments:read. URL identifiers are
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
         422; PRECONDITION/CONFLICT remain 409. Scope authorization plus required transactional token audit
         apply.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       x-required-scope: assignments:read
       responses:
         "200":
@@ -6356,15 +6356,15 @@ paths:
   /api/v1/ext/specialist-assignments/{assignmentId}/inputs:
     post:
       operationId: extSpecialistAssignmentInput
-      summary: Designed — Append correlated input revision
-      description: Designed; no implementation is implied. Requires current assignments:update. URL identifiers are
+      summary: Append correlated input revision
+      description: Requires current assignments:update. URL identifiers are
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
         422; PRECONDITION/CONFLICT remain 409. Scope authorization plus required transactional token audit
         apply.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       x-required-scope: assignments:update
       requestBody:
         required: true
@@ -6407,15 +6407,15 @@ paths:
   /api/v1/ext/specialist-assignments/{assignmentId}/continue:
     post:
       operationId: extSpecialistAssignmentContinue
-      summary: Designed — Continue authorized recoverable work
-      description: Designed; no implementation is implied. Requires current assignments:recover. URL identifiers are
+      summary: Continue authorized recoverable work
+      description: Requires current assignments:recover. URL identifiers are
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
         422; PRECONDITION/CONFLICT remain 409. Scope authorization plus required transactional token audit
         apply.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       x-required-scope: assignments:recover
       requestBody:
         required: true
@@ -6465,15 +6465,15 @@ paths:
   /api/v1/ext/specialist-assignments/{assignmentId}/cancel:
     post:
       operationId: extSpecialistAssignmentCancel
-      summary: Designed — Cancel owned execution while retaining effects
-      description: Designed; no implementation is implied. Requires current assignments:cancel. URL identifiers are
+      summary: Cancel owned execution while retaining effects
+      description: Requires current assignments:cancel. URL identifiers are
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
         422; PRECONDITION/CONFLICT remain 409. Scope authorization plus required transactional token audit
         apply.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       x-required-scope: assignments:cancel
       requestBody:
         required: true
@@ -6632,15 +6632,15 @@ paths:
   /api/v1/ext/specialist-assignments/{assignmentId}/work:
     get:
       operationId: extSpecialistWorkList
-      summary: Designed — Inspect bounded delegated work
-      description: Designed; no implementation is implied. Requires current assignments:read. URL identifiers are
+      summary: Inspect bounded delegated work
+      description: Requires current assignments:read. URL identifiers are
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
         422; PRECONDITION/CONFLICT remain 409. Scope authorization plus required transactional token audit
         apply.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       x-required-scope: assignments:read
       responses:
         "200":
@@ -7057,7 +7057,7 @@ paths:
       description: Requires an active specialist appointment, exact input and current professional and
         initiating user logs grants. The reader is checked again before disclosure.
       x-implementation-status: Implemented
-      x-required-scope: targets:read
+      x-required-scope: targets:logs
       security:
         - projectToken: []
       parameters:
@@ -7130,7 +7130,7 @@ paths:
       summary: Send one exact approved restart under the current specialist and placement fences. A replay returns the retained operation.
       description: Requires a current execution-bound company specialist token and appointed input.
       x-implementation-status: Implemented
-      x-required-scope: targets:read
+      x-required-scope: targets:restart
       security:
         - projectToken: []
       parameters:
@@ -7197,15 +7197,15 @@ paths:
   /api/v1/ext/stand-operations/{operationId}/reconcile:
     post:
       operationId: extStandOperationReconcile
-      summary: Designed — Reconcile same operation without blind retry
-      description: Designed; no implementation is implied. Requires current targets:recover. URL identifiers are
+      summary: Reconcile same operation without blind retry
+      description: Requires current targets:recover. URL identifiers are
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
         422; PRECONDITION/CONFLICT remain 409. Scope authorization plus required transactional token audit
         apply.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       x-required-scope: targets:recover
       requestBody:
         required: true
@@ -7255,15 +7255,15 @@ paths:
   /api/v1/ext/stand-operations/{operationId}/recovery-decisions:
     post:
       operationId: extStandOperationRecovery
-      summary: Designed — Record hold or inspected successor intent
-      description: Designed; no implementation is implied. Requires current targets:recover. URL identifiers are
+      summary: Record hold or inspected successor intent
+      description: Requires current targets:recover. URL identifiers are
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
         422; PRECONDITION/CONFLICT remain 409. Scope authorization plus required transactional token audit
         apply.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       x-required-scope: targets:recover
       requestBody:
         required: true

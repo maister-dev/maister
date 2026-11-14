@@ -5,10 +5,7 @@ import type { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { requireActiveSession } from "@/lib/authz";
-import {
-  knowledgeErrorResponse,
-  knowledgeJson,
-} from "@/lib/brain/knowledge-http";
+import { privateErrorResponse, privateJson } from "@/lib/api/private-json";
 import { knowledgeRevisionSchema } from "@/lib/brain/knowledge-types";
 import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
@@ -46,9 +43,9 @@ export async function POST(
       parsed.data.expectedRevision,
     );
 
-    return knowledgeJson(operation, 200);
+    return privateJson(operation, 200);
   } catch (error) {
-    return knowledgeErrorResponse(
+    return privateErrorResponse(
       error,
       "POST /api/stand-operations/[operationId]/verification",
     );

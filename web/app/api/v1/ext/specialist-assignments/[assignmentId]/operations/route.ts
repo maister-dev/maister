@@ -4,10 +4,7 @@ import type { NextRequest } from "next/server";
 
 import { NextResponse } from "next/server";
 
-import {
-  knowledgeErrorResponse,
-  knowledgeJson,
-} from "@/lib/brain/knowledge-http";
+import { privateErrorResponse, privateJson } from "@/lib/api/private-json";
 import { getDb } from "@/lib/db/client";
 import { readBoundedJson } from "@/lib/http/bounded-json";
 import { decodeRouteParam } from "@/lib/route-params";
@@ -35,13 +32,13 @@ export async function POST(
         await readBoundedJson(request, STAND_OPERATION_BODY_MAX_BYTES),
       );
 
-      return knowledgeJson(
+      return privateJson(
         await getSpecialistStand(getDb(), actor.tokenId, result.operation.id),
         result.duplicate ? 200 : 202,
       );
     },
     (error) => {
-      const response = knowledgeErrorResponse(error, endpoint);
+      const response = privateErrorResponse(error, endpoint);
 
       return response.status === 400
         ? new NextResponse(response.body, {

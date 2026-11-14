@@ -2,10 +2,7 @@ import "server-only";
 
 import { type NextRequest, type NextResponse } from "next/server";
 
-import {
-  knowledgeJson,
-  knowledgeErrorResponse,
-} from "@/lib/brain/knowledge-http";
+import { privateErrorResponse, privateJson } from "@/lib/api/private-json";
 import { getDb } from "@/lib/db/client";
 import { getSpecialistAssignmentDelivery } from "@/lib/specialist-assignments/delivery-read";
 import { parseAssignmentDeliverySelection } from "@/lib/specialist-assignments/delivery-read-types";
@@ -19,7 +16,7 @@ export async function GET(
     const userId = (await requireActiveSession()).id;
     const { assignmentId } = await params;
 
-    return knowledgeJson(
+    return privateJson(
       await getSpecialistAssignmentDelivery(
         getDb(),
         userId,
@@ -28,7 +25,7 @@ export async function GET(
       ),
     );
   } catch (error) {
-    return knowledgeErrorResponse(
+    return privateErrorResponse(
       error,
       "GET /api/specialist-assignments/:assignmentId/delivery",
     );

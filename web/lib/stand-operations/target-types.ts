@@ -127,6 +127,7 @@ export const standTargetPageInputSchema = z
   .object({
     cursor: z.string().min(1).max(2048).optional(),
     limit: z.coerce.number().int().min(1).max(50).default(20),
+    enabledOnly: z.literal(true).optional(),
   })
   .strict();
 

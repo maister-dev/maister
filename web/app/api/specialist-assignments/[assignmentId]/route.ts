@@ -5,10 +5,7 @@ import { type NextRequest, type NextResponse } from "next/server";
 import { requireActiveSession } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { getSpecialistAssignment } from "@/lib/specialist-assignments/store";
-import {
-  knowledgeErrorResponse,
-  knowledgeJson,
-} from "@/lib/brain/knowledge-http";
+import { privateErrorResponse, privateJson } from "@/lib/api/private-json";
 
 export async function GET(
   _request: NextRequest,
@@ -18,10 +15,10 @@ export async function GET(
     const user = await requireActiveSession();
     const { assignmentId } = await context.params;
 
-    return knowledgeJson(
+    return privateJson(
       await getSpecialistAssignment(getDb(), user.id, assignmentId),
     );
   } catch (error) {
-    return knowledgeErrorResponse(error, "GET /api/specialist-assignments/:id");
+    return privateErrorResponse(error, "GET /api/specialist-assignments/:id");
   }
 }

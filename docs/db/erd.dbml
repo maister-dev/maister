@@ -3186,6 +3186,23 @@ table specialist_acceptances {
   created_at "timestamp with time zone" [not null, default: `now()`]
 }
 
+table specialist_assignment_control_receipts {
+  assignment_id text [not null]
+  actor_user_id text [not null]
+  action text [not null]
+  idempotency_key text [not null]
+  request_sha256 text [not null]
+  revision integer [not null]
+  status text [not null]
+  reason text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (assignment_id, actor_user_id, action, idempotency_key) [pk]
+
+  }
+}
+
 table specialist_assignments {
   id text [pk, not null, default: `gen_random_uuid()::text`]
   company_id text
@@ -3560,6 +3577,18 @@ table stand_read_claims {
 
   indexes {
     (operation_id, purpose) [pk]
+
+  }
+}
+
+table stand_recovery_attempts {
+  operation_id text [pk, not null]
+  attempts integer [not null]
+  last_attempt_at "timestamp with time zone" [not null]
+  next_attempt_at "timestamp with time zone" [not null]
+
+  indexes {
+    next_attempt_at [name: 'stand_recovery_attempts_due_idx']
 
   }
 }
@@ -5194,6 +5223,10 @@ ref specialist_acceptances_run_id_runs_id_fk: specialist_acceptances.run_id > ru
 
 ref specialist_acceptances_input_fk: specialist_acceptances.(assignment_id, input_revision) > specialist_input_revisions.(assignment_id, revision) [delete: restrict, update: no action]
 
+ref specialist_assignment_control_receipts_assignment_id_specialist_assignments_id_fk: specialist_assignment_control_receipts.assignment_id > specialist_assignments.id [delete: cascade, update: no action]
+
+ref specialist_assignment_control_receipts_actor_user_id_users_id_fk: specialist_assignment_control_receipts.actor_user_id > users.id [delete: cascade, update: no action]
+
 ref specialist_assignments_company_id_companies_id_fk: specialist_assignments.company_id > companies.id [delete: restrict, update: no action]
 
 ref specialist_assignments_project_id_projects_id_fk: specialist_assignments.project_id > projects.id [delete: restrict, update: no action]
@@ -5265,6 +5298,8 @@ ref stand_read_claims_operation_id_stand_operations_id_fk: stand_read_claims.ope
 ref stand_read_claims_actor_id_users_id_fk: stand_read_claims.actor_id > users.id [delete: restrict, update: no action]
 
 ref stand_read_claims_token_id_project_tokens_id_fk: stand_read_claims.token_id > project_tokens.id [delete: cascade, update: no action]
+
+ref stand_recovery_attempts_operation_id_stand_operations_id_fk: stand_recovery_attempts.operation_id > stand_operations.id [delete: cascade, update: no action]
 
 ref stand_recovery_decisions_operation_id_stand_operations_id_fk: stand_recovery_decisions.operation_id > stand_operations.id [delete: restrict, update: no action]
 

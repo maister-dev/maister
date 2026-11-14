@@ -1,24 +1,25 @@
 import "server-only";
 
-import type { AssignmentAction } from "./access";
 import type { TokenActor } from "@/lib/tokens/verify";
 
 import { NextResponse } from "next/server";
 
-import { knowledgeErrorResponse } from "@/lib/brain/knowledge-http";
+import { privateErrorResponse } from "@/lib/api/private-json";
 import { MaisterError } from "@/lib/errors";
 import { handleOwnedExt } from "@/lib/tokens/owned-ext-handler";
 
 /** Human API clients retain their actual identity; machine delegation requires its own governed principal. */
 export async function handlePersonalAssignmentExt(
   request: Request,
-  scopeLabel: Extract<
-    AssignmentAction,
+  scopeLabel:
     | "assignments:read"
     | "assignments:submit"
+    | "assignments:update"
     | "assignments:recover"
     | "assignments:accept"
-  >,
+    | "assignments:cancel"
+    | "specialists:read"
+    | "targets:recover",
   endpoint: string,
   work: (userId: string) => Promise<NextResponse>,
 ): Promise<NextResponse> {
@@ -29,7 +30,7 @@ export async function handlePersonalAssignmentExt(
       return work(requirePersonalAssignmentUser(actor));
     },
     (error) => {
-      const response = knowledgeErrorResponse(error, endpoint);
+      const response = privateErrorResponse(error, endpoint);
 
       return response.status === 400
         ? new NextResponse(response.body, {

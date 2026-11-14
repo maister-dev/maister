@@ -66,6 +66,7 @@ export const TOKEN_SCOPES = [
   "knowledge:review",
   "knowledge:confirm",
   "knowledge:manage",
+  "specialists:read",
   // Assignment clients use current owner/source authority; context mutation requires read and update.
   "assignments:read",
   "assignments:submit",
@@ -75,9 +76,12 @@ export const TOKEN_SCOPES = [
   "assignments:answer",
   // Human delivery recovery is excluded from every machine grant set.
   "assignments:recover",
+  // Cancellation stops owned agents; like recovery it is never in a machine grant set.
+  "assignments:cancel",
   "targets:read",
   "targets:logs",
   "targets:restart",
+  "targets:recover",
   // ADR-152 (agent memory): the agent's OWN per-attachment memory.md. A SEPARATE
   // store from Project Brain — reusing `memory:write` would make one grant open
   // two stores, re-coupling exactly the axes ADR-152 separates. Access is
@@ -268,6 +272,7 @@ export const EXACT_ONLY_TOKEN_SCOPES: ReadonlySet<string> = new Set([
   "targets:read",
   "targets:logs",
   "targets:restart",
+  "targets:recover",
 ]);
 
 export const TOKEN_SCOPE_VALUES = [TOKEN_SCOPE_ALL, ...TOKEN_SCOPES] as const;

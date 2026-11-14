@@ -36,8 +36,8 @@ export default async function SpecialistAssignmentsPage({
   const [choices, requested, targets] = await Promise.all([
     listManualSpecialistChoices(db, user.id, project?.id),
     listRequestedSpecialistAssignments(db, user.id, project?.id),
-    listStandTargets(db, user.id, { limit: 50 })
-      .then(({ items }) => items.filter(({ enabled }) => enabled))
+    listStandTargets(db, user.id, { limit: 50, enabledOnly: true })
+      .then(({ items }) => items)
       .catch((error: unknown) => {
         if (isMaisterError(error) && error.code === "UNAUTHORIZED") return [];
         throw error;

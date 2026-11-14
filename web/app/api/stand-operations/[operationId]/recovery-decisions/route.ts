@@ -3,10 +3,7 @@ import "server-only";
 import type { NextRequest, NextResponse } from "next/server";
 
 import { requireActiveSession } from "@/lib/authz";
-import {
-  knowledgeErrorResponse,
-  knowledgeJson,
-} from "@/lib/brain/knowledge-http";
+import { privateErrorResponse, privateJson } from "@/lib/api/private-json";
 import { getDb } from "@/lib/db/client";
 import { readBoundedJson } from "@/lib/http/bounded-json";
 import { STAND_OPERATION_BODY_MAX_BYTES } from "@/lib/stand-operations/operation-types";
@@ -29,9 +26,9 @@ export async function POST(
       await readBoundedJson(request, STAND_OPERATION_BODY_MAX_BYTES),
     );
 
-    return knowledgeJson(receipt.operation, receipt.duplicate ? 200 : 202);
+    return privateJson(receipt.operation, receipt.duplicate ? 200 : 202);
   } catch (error) {
-    return knowledgeErrorResponse(
+    return privateErrorResponse(
       error,
       "POST /api/stand-operations/[operationId]/recovery-decisions",
     );

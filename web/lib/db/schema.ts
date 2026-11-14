@@ -10718,6 +10718,38 @@ export const specialistAssignments = pgTable(
   }),
 );
 
+/** Exact-replay receipts for operator input, continue and cancel controls on one assignment. */
+export const specialistAssignmentControlReceipts = pgTable(
+  "specialist_assignment_control_receipts",
+  {
+    assignmentId: text("assignment_id")
+      .notNull()
+      .references(() => specialistAssignments.id, { onDelete: "cascade" }),
+    actorUserId: text("actor_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    action: text("action").$type<"input" | "continue" | "cancel">().notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestSha256: text("request_sha256").notNull(),
+    revision: integer("revision").notNull(),
+    status: text("status").notNull(),
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    pk: primaryKey({
+      name: "specialist_assignment_control_receipts_pk",
+      columns: [t.assignmentId, t.actorUserId, t.action, t.idempotencyKey],
+    }),
+    shape: check(
+      "specialist_assignment_control_receipts_shape_check",
+      sql`${t.action} IN ('input','continue','cancel') AND ${t.revision} BETWEEN 1 AND 2147483647 AND ${t.requestSha256} ~ '^[0-9a-f]{64}$' AND ${t.idempotencyKey} ~ '^[A-Za-z0-9._:-]{8,128}$'`,
+    ),
+  }),
+);
+
 export const specialistOwnerClaims = pgTable(
   "specialist_owner_claims",
   {
@@ -11151,6 +11183,30 @@ export const standReadClaims = pgTable(
     shape: check(
       "stand_read_claims_shape_check",
       sql`${t.purpose} IN ('reconcile','logs','verify') AND ${t.ownerEpoch} BETWEEN 1 AND 9007199254740991 AND jsonb_typeof(${t.authority})='object'`,
+    ),
+  }),
+);
+
+/** Scheduler-only backoff marker: a refused or unsettled sweep attempt rotates the candidate out of the bounded head. */
+export const standRecoveryAttempts = pgTable(
+  "stand_recovery_attempts",
+  {
+    operationId: text("operation_id")
+      .primaryKey()
+      .references(() => standOperations.id, { onDelete: "cascade" }),
+    attempts: integer("attempts").notNull(),
+    lastAttemptAt: timestamp("last_attempt_at", {
+      withTimezone: true,
+    }).notNull(),
+    nextAttemptAt: timestamp("next_attempt_at", {
+      withTimezone: true,
+    }).notNull(),
+  },
+  (t) => ({
+    due: index("stand_recovery_attempts_due_idx").on(t.nextAttemptAt),
+    shape: check(
+      "stand_recovery_attempts_shape_check",
+      sql`${t.attempts} BETWEEN 1 AND 2147483647 AND ${t.nextAttemptAt}>=${t.lastAttemptAt}`,
     ),
   }),
 );

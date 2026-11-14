@@ -2332,6 +2332,20 @@
       "when": 1794667910922,
       "tag": "0336_specialist_interrupted_work",
       "breakpoints": true
+    },
+    {
+      "idx": 337,
+      "version": "7",
+      "when": 1794685260711,
+      "tag": "0337_stand_recovery_attempts",
+      "breakpoints": true
+    },
+    {
+      "idx": 338,
+      "version": "7",
+      "when": 1794693731614,
+      "tag": "0338_specialist_assignment_control_receipts",
+      "breakpoints": true
     }
   ]
 }

@@ -6,10 +6,7 @@ import { requireActiveSession } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { companyBindingPageInputSchema } from "@/lib/agents/company-binding-types";
 import { listCompanySpecialists } from "@/lib/agents/company-binding-list";
-import {
-  knowledgeErrorResponse,
-  knowledgeJson,
-} from "@/lib/brain/knowledge-http";
+import { privateErrorResponse, privateJson } from "@/lib/api/private-json";
 import { requireKnowledgeQueryKeys } from "@/lib/brain/knowledge-url";
 import { MaisterError } from "@/lib/errors";
 
@@ -31,10 +28,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         "The company specialist page selector is invalid",
       );
 
-    return knowledgeJson(
+    return privateJson(
       await listCompanySpecialists(getDb(), user.id, parsed.data),
     );
   } catch (error) {
-    return knowledgeErrorResponse(error, "GET /api/specialists");
+    return privateErrorResponse(error, "GET /api/specialists");
   }
 }

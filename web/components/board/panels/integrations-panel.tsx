@@ -114,6 +114,9 @@ export interface TokenLabels {
   scopeTargetsRead: string;
   scopeTargetsLogs: string;
   scopeTargetsRestart: string;
+  scopeTargetsRecover: string;
+  scopeAssignmentsCancel: string;
+  scopeSpecialistsRead: string;
   scopeMemoryRead: string;
   scopeMemoryWrite: string;
   scopeAgentMemoryWrite: string;
@@ -223,12 +226,18 @@ function scopeLabel(labels: TokenLabels, scope: string): string {
       return labels.scopeAssignmentsAnswer;
     case "assignments:recover":
       return labels.scopeAssignmentsRecover;
+    case "assignments:cancel":
+      return labels.scopeAssignmentsCancel;
+    case "specialists:read":
+      return labels.scopeSpecialistsRead;
     case "targets:read":
       return labels.scopeTargetsRead;
     case "targets:logs":
       return labels.scopeTargetsLogs;
     case "targets:restart":
       return labels.scopeTargetsRestart;
+    case "targets:recover":
+      return labels.scopeTargetsRecover;
     case "knowledge:read":
       return labels.scopeKnowledgeRead;
     case "knowledge:propose":
@@ -502,6 +511,9 @@ export async function IntegrationsPanel({
     scopeTargetsRead: t("scopeTargetsRead"),
     scopeTargetsLogs: t("scopeTargetsLogs"),
     scopeTargetsRestart: t("scopeTargetsRestart"),
+    scopeTargetsRecover: t("scopeTargetsRecover"),
+    scopeAssignmentsCancel: t("scopeAssignmentsCancel"),
+    scopeSpecialistsRead: t("scopeSpecialistsRead"),
     scopeMemoryRead: t("scopeMemoryRead"),
     scopeMemoryWrite: t("scopeMemoryWrite"),
     scopeAgentMemoryWrite: t("scopeAgentMemoryWrite"),

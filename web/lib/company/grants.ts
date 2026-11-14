@@ -282,7 +282,7 @@ export async function revokeCompanyGrant(
         throw new MaisterError(
           "PRECONDITION",
           "Company authority reference is unavailable",
-          { details: { reason: "knowledge_reference_unavailable" } },
+          { details: { reason: "company_grant_unavailable" } },
         );
       await lockPrincipalPolicy(
         tx,
@@ -300,7 +300,7 @@ export async function revokeCompanyGrant(
         throw new MaisterError(
           "PRECONDITION",
           "Company authority reference is unavailable",
-          { details: { reason: "knowledge_reference_unavailable" } },
+          { details: { reason: "company_grant_unavailable" } },
         );
       if (current.revoked_at !== null) {
         if (
@@ -383,7 +383,7 @@ export async function listCompanyGrants(
           : sql`(g.created_at,g.id)<(${cursor.at}::timestamptz,${cursor.id})`;
       const rows = (
         await tx.execute(
-          sql`SELECT g.*,to_char(g.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at FROM company_grants g WHERE g.company_id=${companyId} AND g.created_at<=${upper}::timestamptz AND ${after} ORDER BY g.created_at DESC,g.id DESC LIMIT ${limit + 1} FOR SHARE`,
+          sql`SELECT g.*,to_char(g.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at FROM company_grants g WHERE g.company_id=${companyId} AND g.created_at<=${upper}::timestamptz AND ${after} ORDER BY g.created_at DESC,g.id DESC LIMIT ${limit + 1}`,
         )
       ).rows;
       const items: CompanyGrantDto[] = [];

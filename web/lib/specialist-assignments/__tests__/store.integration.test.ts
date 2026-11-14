@@ -37,6 +37,7 @@ import {
   beginSpecialistExecutor,
   renewSpecialistExecutor,
 } from "../executor-lease";
+import { cancelAssignmentExecution } from "../controls";
 
 import { contentDigest } from "@/lib/evaluations/digest";
 import { authorizeSourceRestrictions } from "@/lib/brain/knowledge-restrictions";
@@ -48,6 +49,13 @@ import {
 import { issueUserAccessToken } from "@/lib/tokens/issue";
 import { issueAgentRunToken, revokeAgentRunToken } from "@/lib/agents/tokens";
 import { PATCH as externalContextPatch } from "@/app/api/v1/ext/specialist-assignments/[assignmentId]/context/route";
+import { GET as assignmentsGet } from "@/app/api/specialist-assignments/route";
+import { POST as inputsPost } from "@/app/api/specialist-assignments/[assignmentId]/inputs/route";
+import { POST as continuePost } from "@/app/api/specialist-assignments/[assignmentId]/continue/route";
+import { POST as cancelPost } from "@/app/api/specialist-assignments/[assignmentId]/cancel/route";
+import { GET as workGet } from "@/app/api/specialist-assignments/[assignmentId]/work/route";
+import { GET as externalAssignmentsGet } from "@/app/api/v1/ext/specialist-assignments/route";
+import { POST as externalCancelPost } from "@/app/api/v1/ext/specialist-assignments/[assignmentId]/cancel/route";
 import { seedProjectRow } from "@/test-support/execution-host-seed";
 import { MaisterError } from "@/lib/errors";
 import {
@@ -2164,6 +2172,261 @@ it("IT-CBA-03 retains cancellation and recovery facts and original input rather 
       [assignment.id, randomUUID()],
     ),
   ).rejects.toMatchObject({ code: "23514" });
+});
+
+it("IT-CBA-03 serves list, input, continue, cancel and work controls with exact replay over web and personal tokens", async () => {
+  const assignment = await createSpecialistAssignment(
+    database.db,
+    requesterId,
+    prepared,
+  );
+  const params = { params: Promise.resolve({ assignmentId: assignment.id }) };
+  const post = (handler: typeof inputsPost, segment: string, body: unknown) =>
+    handler(
+      new NextRequest(
+        `http://localhost/api/specialist-assignments/${assignment.id}/${segment}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Origin: "http://localhost",
+          },
+          body: JSON.stringify(body),
+        },
+      ),
+      params,
+    );
+
+  contextSession.userId = requesterId;
+  try {
+    const listed = await assignmentsGet(
+      new NextRequest("http://localhost/api/specialist-assignments?limit=50"),
+    );
+
+    expect(listed.status).toBe(200);
+    expect((await listed.json()).items).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: assignment.id })]),
+    );
+    expect(
+      (
+        await assignmentsGet(
+          new NextRequest("http://localhost/api/specialist-assignments?x=1"),
+        )
+      ).status,
+    ).toBe(400);
+    const inputKey = randomUUID();
+    const input = {
+      expectedRevision: 1,
+      input: "Include the staging stand in this check.",
+      references: [],
+      idempotencyKey: inputKey,
+    };
+    const appended = await post(inputsPost, "inputs", input);
+
+    expect(appended.status).toBe(200);
+    expect(await appended.json()).toEqual({
+      id: assignment.id,
+      revision: 2,
+      status: "queued",
+      duplicate: false,
+    });
+    const replayed = await post(inputsPost, "inputs", input);
+
+    expect(await replayed.json()).toMatchObject({
+      revision: 2,
+      duplicate: true,
+    });
+    expect(
+      (await post(inputsPost, "inputs", { ...input, input: "Changed." }))
+        .status,
+    ).toBe(409);
+    const work = await workGet(
+      new NextRequest(
+        `http://localhost/api/specialist-assignments/${assignment.id}/work`,
+      ),
+      params,
+    );
+
+    expect(work.status).toBe(200);
+    expect(await work.json()).toEqual({ items: [], nextCursor: null });
+    const cancelKey = randomUUID();
+    const cancel = {
+      expectedRevision: 2,
+      reason: "Requester withdrew the request.",
+      idempotencyKey: cancelKey,
+    };
+    const cancelled = await post(cancelPost, "cancel", cancel);
+
+    expect(cancelled.status).toBe(200);
+    expect(await cancelled.json()).toEqual({
+      id: assignment.id,
+      revision: 3,
+      status: "cancelled",
+      duplicate: false,
+    });
+    expect(await (await post(cancelPost, "cancel", cancel)).json()).toEqual({
+      id: assignment.id,
+      revision: 3,
+      status: "cancelled",
+      duplicate: true,
+    });
+    const continued = await post(continuePost, "continue", {
+      expectedRevision: 3,
+      reason: "Requester resumed the request.",
+      idempotencyKey: randomUUID(),
+    });
+
+    expect(continued.status).toBe(202);
+    expect(await continued.json()).toEqual({
+      id: assignment.id,
+      revision: 4,
+      status: "queued",
+      duplicate: false,
+    });
+  } finally {
+    contextSession.userId = null;
+  }
+  const readOnly = await issueUserAccessToken(
+    {
+      ownerUserId: requesterId,
+      name: "assignment-read-only",
+      scopes: ["assignments:read"],
+    },
+    database.db,
+  );
+  const canceller = await issueUserAccessToken(
+    {
+      ownerUserId: requesterId,
+      name: "assignment-cancel",
+      scopes: ["assignments:cancel"],
+    },
+    database.db,
+  );
+  const externalCancel = (secret: string) =>
+    externalCancelPost(
+      new NextRequest(
+        `http://localhost/api/v1/ext/specialist-assignments/${assignment.id}/cancel`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${secret}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            expectedRevision: 4,
+            reason: "Token client cancelled again.",
+            idempotencyKey: randomUUID(),
+          }),
+        },
+      ),
+      params,
+    );
+
+  try {
+    const page = await externalAssignmentsGet(
+      new NextRequest("http://localhost/api/v1/ext/specialist-assignments", {
+        headers: { Authorization: `Bearer ${readOnly.secret}` },
+      }),
+    );
+
+    expect(page.status).toBe(200);
+    expect((await externalCancel(readOnly.secret)).status).toBe(403);
+    const response = await externalCancel(canceller.secret);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      revision: 5,
+      status: "cancelled",
+    });
+  } finally {
+    await database.pool.query(
+      "UPDATE project_tokens SET revoked_at=now() WHERE id=ANY($1::text[])",
+      [[readOnly.tokenId, canceller.tokenId]],
+    );
+  }
+});
+
+it("IT-CBA-03 stops live linked runs before cancelling and reports unsettled teardown as pending intent", async () => {
+  const projectId = randomUUID();
+  const runId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO projects(id,slug,name,repo_path,maister_yaml_path,task_key) VALUES($1,$1,'Cancel owner',$2,$3,'CBX')",
+    [
+      projectId,
+      join(root, "cancel-repository"),
+      join(root, "cancel-repository/maister.yaml"),
+    ],
+  );
+  await database.pool.query(
+    "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'owner')",
+    [randomUUID(), projectId, requesterId],
+  );
+  await database.pool.query(
+    "INSERT INTO runs(id,project_id,run_kind,flow_version,status) VALUES($1,$2,'flow','cancel-live-run','Running')",
+    [runId, projectId],
+  );
+  const assignment = await createSpecialistAssignment(
+    database.db,
+    requesterId,
+    {
+      ...prepared,
+      owner: { kind: "project", projectId },
+    },
+  );
+
+  await linkSpecialistAssignmentRun(database.db, requesterId, assignment.id, {
+    expectedRevision: 1,
+    inputRevision: 1,
+    runId,
+    role: "coordinator",
+    work: null,
+  });
+  const control = {
+    expectedRevision: 2,
+    reason: "Stop the running maintenance.",
+    idempotencyKey: randomUUID(),
+  };
+  const unsettledStop = vi.fn(async () => undefined);
+
+  expect(
+    await cancelAssignmentExecution(
+      database.db,
+      requesterId,
+      assignment.id,
+      control,
+      unsettledStop,
+    ),
+  ).toEqual({
+    receipt: {
+      id: assignment.id,
+      revision: 2,
+      status: "active",
+      duplicate: false,
+    },
+    settled: false,
+  });
+  expect(unsettledStop).toHaveBeenCalledWith(runId);
+  const settlingStop = vi.fn(async (stopped: string) => {
+    await database.pool.query(
+      "UPDATE runs SET status='Abandoned',ended_at=now() WHERE id=$1",
+      [stopped],
+    );
+  });
+
+  expect(
+    await cancelAssignmentExecution(
+      database.db,
+      requesterId,
+      assignment.id,
+      control,
+      settlingStop,
+    ),
+  ).toMatchObject({
+    receipt: { revision: 3, status: "cancelled", duplicate: false },
+    settled: true,
+  });
+  expect(settlingStop).toHaveBeenCalledWith(runId);
 });
 
 it("IT-CBA-01 links existing same-owner runs exactly once, refuses project carriers for company work and never treats run success as assignment completion", async () => {
