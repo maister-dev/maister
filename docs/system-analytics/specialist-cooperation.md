@@ -236,23 +236,23 @@ an old label or an inherited assignment selector cannot manufacture a current
 appointment. Main-store reference guards validate available identities and version
 witnesses without a Brain FK. Source access, receiving-role authority and current
 coordinator ownership remain required checks in the T27 native service. Storage
-alone grants no delegation capability. Main migration `0268` requires atomic work
+alone grants no delegation capability. Main migration `0269` requires atomic work
 and attributed intake retention, refuses bare acceptance/rework decisions, and
 binds any executed child to its exact role/Flow pin and native Run link. Main
-`0272` records immutable result-only rework decisions and requires the
-exact next work revision in the same transaction. Main `0273` enables human
+`0274` records immutable result-only rework decisions and requires the
+exact next work revision in the same transaction. Main `0275` enables human
 acceptance of an exact collected result with a current acceptance grant.
 The same transaction records the work decision and a context revision with
 the child result and original finding identities. The assignment remains
-active. Forward main `0275` also allows the originating company professional
+active. Forward main `0276` also allows the originating company professional
 to accept exact work through the scoped bearer API and MCP. The reviewed
 scope, current role grant, current initiating-user grant and direct work
-appointment all apply. Main `0276` adds rejection under the same current
+appointment all apply. Main `0278` adds rejection under the same current
 review authority. The rejected work revision retains its collected result,
 and the attributed working context carries the reviewer’s reason without
 adding accepted findings. Result-only assignment completion uses its separate
 root acceptance. Stand assignment acceptance also requires the independently
-verified effect defined by the [stand contract](stand-maintenance.md). Forward migration `0269` closes
+verified effect defined by the [stand contract](stand-maintenance.md). Forward migration `0270` closes
 nullable source/context/target comparisons under the
 [persistence guard contract](../db/specialist-assignments-domain.md#backfill-guards-and-lifetime);
 retained company source identity survives catalog FK removal.

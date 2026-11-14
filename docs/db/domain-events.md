@@ -51,8 +51,8 @@ not a table.
 | Table | Constraint | Columns | Purpose |
 | ----- | ---------- | ------- | ------- |
 | `domain_events` | `CHECK` | `kind` | Code-owned taxonomy in `web/lib/domain-events/taxonomy.ts`, mirrored by the generated schema CHECK. |
-| `domain_events` | `CHECK` | `project_id`, `company_id` | Exactly one owner. Company metadata facts have no task/run; company terminal/cleanup/wait/attention facts require a run and no task (`0240`, `0244`, `0245`). |
-| `domain_events` | Trigger (`0240`/`0249`) | Company run/owner/kind | A run fact must reference an existing company operational agent or exact v2 result-only company Flow with the same owner. Company event ownership, run/task identity and kind cannot be retargeted. |
+| `domain_events` | `CHECK` | `project_id`, `company_id` | Exactly one owner. Company metadata facts have no task/run; company terminal/cleanup/wait/attention facts require a run and no task (`0242_company_run_terminal_events`, `0246_company_hitl_wait_events`, `0247_company_operational_attention`). |
+| `domain_events` | Trigger (`0242_company_run_terminal_events`/`0251_company_flow_runtime`) | Company run/owner/kind | A run fact must reference an existing company operational agent or exact v2 result-only company Flow with the same owner. Company event ownership, run/task identity and kind cannot be retargeted. |
 | `domain_events` | `CHECK` | `actor_type` | `user \| system \| agent` (NULL allowed). |
 | `domain_event_consumers` | `PK` | `consumer_id` | One cursor row per registered consumer. |
 

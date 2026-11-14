@@ -90,7 +90,7 @@ adoption remains responsible for proving each authorized transition.
 
 ### Scheduled appointment and health
 
-Migration `0332` adds nullable `stand_inspection` on the existing company cron schedule and its trigger attempts. The appointment records target ID, incarnation, configuration revision and component ID. Changing the target requires a new reviewed source. The immutable v1 scheduled request keeps its existing text and shape. Migration `0333` requires the exact appointed operation, permits a health-only result with no applied effect and keeps the restart verification guard on the original receipt. Existing sources and attempts retain null appointments.
+Migration `0333_scheduled_stand_inspection` adds nullable `stand_inspection` on the existing company cron schedule and its trigger attempts. The appointment records target ID, incarnation, configuration revision and component ID. Changing the target requires a new reviewed source. The immutable v1 scheduled request keeps its existing text and shape. Migration `0334_stand_inspection_health` requires the exact appointed operation, permits a health-only result with no applied effect and keeps the restart verification guard on the original receipt. Existing sources and attempts retain null appointments.
 
 ### Health incident episodes
 

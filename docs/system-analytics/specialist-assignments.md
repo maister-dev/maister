@@ -139,7 +139,7 @@ assignment to `awaiting_acceptance` when the appointed root Run is Done and
 its valid result matches the frozen contract. Required external effects and
 open child work prevent readiness. The session and personal bearer APIs
 verify the exact input, context, result and current reviewer authority.
-Main `0275` commits the acceptance receipt, completed state and state event
+Main `0277_specialist_assignment_acceptance` commits the acceptance receipt, completed state and state event
 together. Origin delivery of the accepted outcome and independent effect
 verification remain separate implementation slices.
 
