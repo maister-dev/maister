@@ -424,6 +424,10 @@ beforeAll(async () => {
     join(source, "maister-agents/no-tool-observer.md"),
     "---\nname: Tool-less observer\ndescription: Evaluate supplied assignment input without native tools\nspecialist:\n  responsibilities: [Evaluate supplied input]\n  targetClasses: [stand]\nmode: session\nworkspace: none\ntriggers: [manual, flow]\nrisk_tier: read_only\nplatform_mcp: false\nmemory: none\n---\nReturn a bounded result from supplied input without requesting tools.\n",
   );
+  await cp(
+    join(source, "maister-agents/migration-observer.md"),
+    join(source, "maister-agents/clarification-observer.md"),
+  );
   const dialoguePath = join(source, "flows/rah-company-dialogue");
 
   await cp(join(source, "flows/rah-control"), dialoguePath, {
@@ -3455,7 +3459,11 @@ it("IT-CBA-05 parks and resumes the same native company Flow node after an assig
         definitionSha256: agentDefinitionSha256(role.parsed),
         coordinatorFlowRevisionId: questionFlow.id,
         configuration: {},
-        grantActions: ["assignments:read", "assignments:update"],
+        grantActions: [
+          "assignments:read",
+          "assignments:update",
+          "assignments:delegate",
+        ],
         enabled: true,
         runnerId,
         idempotencyKey: randomUUID(),
@@ -3476,6 +3484,34 @@ it("IT-CBA-05 parks and resumes the same native company Flow node after an assig
     await createCompanyGrants(db, administratorId, {
       principalKind: "agent",
       principalId: role.parsed.id,
+      actions: ["assignments:read", "assignments:delegate"],
+      idempotencyKey: randomUUID(),
+    });
+    await createCompanyGrants(db, administratorId, {
+      principalKind: "user",
+      principalId: requesterId,
+      actions: ["assignments:delegate"],
+      idempotencyKey: randomUUID(),
+    });
+    const receiver = await resolveInstalledAgentDefinition(db, {
+      agentId: "rah:clarification-observer",
+      packageInstallId: role.packageInstallId,
+    });
+
+    await createCompanySpecialistBinding(db, requesterId, receiver.parsed.id, {
+      owner: binding.specialist.owner,
+      packageInstallId: receiver.packageInstallId,
+      packageRevision: receiver.resolvedRevision!,
+      definitionSha256: agentDefinitionSha256(receiver.parsed),
+      configuration: {},
+      grantActions: ["assignments:read"],
+      enabled: true,
+      runnerId,
+      idempotencyKey: randomUUID(),
+    });
+    await createCompanyGrants(db, administratorId, {
+      principalKind: "agent",
+      principalId: receiver.parsed.id,
       actions: ["assignments:read"],
       idempotencyKey: randomUUID(),
     });
@@ -3956,9 +3992,61 @@ it("IT-CBA-05 parks and resumes the same native company Flow node after an assig
       code: "23514",
       constraint: "specialist_flow_question_resume",
     });
+    const [head] = (
+      await database.pool.query<{ revision: number; context_revision: number }>(
+        "SELECT revision, context_revision FROM specialist_assignments WHERE id=$1",
+        [input.assignmentId],
+      )
+    ).rows;
+    const { dispatchCompanyAssignmentChild } =
+      await import("@/lib/specialist-assignments/company-child-dispatch");
+    const resumedCredential = await issueCompanyFlowNodeRunToken({
+      db,
+      runId,
+      nodeAttemptId: original.id,
+    });
+    const child = await dispatchCompanyAssignmentChild(db, {
+      companyId: input.companyId,
+      parentRunId: runId,
+      tokenId: resumedCredential.tokenId,
+      body: {
+        target: { agentId: receiver.parsed.id },
+        mode: "run",
+        prompt: "Inspect the clarified component without changing it.",
+        assignmentWork: {
+          selector: {
+            schemaVersion: 1,
+            assignmentId: input.assignmentId,
+            expectedRevision: head.revision,
+            inputRevision: answered.revision,
+            contextRevision: head.context_revision,
+            logicalWorkId: "clarified-diagnostics",
+            workRevision: 1,
+          },
+          expectedOutcome: "Return an authorized observation.",
+        },
+      },
+    });
+
+    expect(child.status).toBe("Pending");
+    const retainedSources = (
+      await database.pool.query(
+        "SELECT source FROM runs CROSS JOIN LATERAL jsonb_array_elements(knowledge_access->'restrictions') source WHERE id=$1 AND source->>'kind'='assignment_input' ORDER BY source->>'inputRevision'",
+        [child.childRunId],
+      )
+    ).rows.map(({ source }) => source);
+
+    expect(retainedSources).toMatchObject([
+      { assignmentId: input.assignmentId, inputRevision: 1 },
+      {
+        assignmentId: input.assignmentId,
+        inputRevision: 2,
+        inputSha256: answered.digest,
+      },
+    ]);
     const nextBody = {
       ...questionBody,
-      expectedRevision: assignment.revision + 2,
+      expectedRevision: head.revision + 1,
       inputRevision: 2,
       question:
         "Which health observation should follow this diagnostic result?",

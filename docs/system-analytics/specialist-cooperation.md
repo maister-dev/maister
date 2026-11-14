@@ -124,6 +124,9 @@ support this company scope through an active execution credential. Collection
 applies the same exact originating-role and source checks as project collection.
 The shared input admission service can capture source-bearing input for the
 exact same-company child when both roles still have current authority.
+After clarification, the child can use an older input revision only when the
+parent captured that exact digest and the retained child appointment includes
+it. Every inherited source still passes its own current access check.
 The existing scheduler and owned agent driver execute a standalone company
 child in its own company directory. Child credentials bind the receiving role
 and become unusable when its grant is revoked. A valid typed child result is

@@ -50,7 +50,9 @@ export function assignmentInputReadPolicy(
   if (identity.kind === "company_agent")
     return sql`((${assignmentId}=${identity.execution.assignment.id}
       AND (${revision})::text=${String(identity.execution.assignment.inputRevision)}
-      AND ${digest}=${identity.execution.assignment.inputSha256}) OR (${assignmentId}=${identity.execution.assignment.id} AND specialist_run_has_input(${identity.actor.runId},(${assignmentId})::text,(${revision})::integer,(${digest})::text)) OR (${companyEventInputReadPolicy(identity, assignmentId, revision, digest)}))`;
+      AND ${digest}=${identity.execution.assignment.inputSha256}) OR (${assignmentId}=${identity.execution.assignment.id} AND specialist_run_has_input(${identity.actor.runId},(${assignmentId})::text,(${revision})::integer,(${digest})::text))
+      OR (${companyWorkInputReadPolicy(identity, assignmentId, revision, digest)})
+      OR (${companyEventInputReadPolicy(identity, assignmentId, revision, digest)}))`;
 
   return sql`EXISTS (
     SELECT 1 FROM specialist_assignments source_assignment
@@ -59,6 +61,38 @@ export function assignmentInputReadPolicy(
       AND (${assignmentInputOwnerReadPolicy(identity, sql`source_assignment.company_id`, sql`source_assignment.project_id`)})
     FOR SHARE OF source_assignment,source_input
   )`;
+}
+
+/** A delegated appointment shares only historical inputs captured by its parent and frozen on that work. */
+function companyWorkInputReadPolicy(
+  identity: Extract<KnowledgePrincipalIdentity, { kind: "company_agent" }>,
+  assignmentId: SQL,
+  revision: SQL,
+  digest: SQL,
+): SQL {
+  if (!identity.actionLimits.includes("assignments:read")) return sql`false`;
+  const witness = sql`jsonb_build_array(jsonb_build_object(
+    'kind','assignment_input','assignmentId',(${assignmentId})::text,
+    'inputRevision',(${revision})::integer,'inputSha256',(${digest})::text))`;
+
+  return sql`(${assignmentId}=${identity.execution.assignment.id} AND EXISTS (
+    SELECT 1 FROM specialist_run_links link
+    JOIN specialist_work work ON work.id=link.work_id AND work.work_revision=link.work_revision
+      AND work.assignment_id=link.assignment_id AND work.input_revision=link.input_revision
+      AND work.child_run_id=link.run_id AND work.reserved_run_id=link.run_id
+      AND link.work_witness=jsonb_build_object('schemaVersion',1,'id',work.id,
+        'workRevision',work.work_revision,'definitionSha256',work.definition_sha256)
+    JOIN runs child ON child.id=link.run_id AND child.parent_run_id=work.parent_run_id
+    JOIN runs parent ON parent.id=work.parent_run_id AND parent.company_id=child.company_id
+    WHERE child.id=${identity.actor.runId} AND child.company_id=${identity.companyId}
+      AND child.project_id IS NULL AND parent.project_id IS NULL
+      AND link.assignment_id=${assignmentId} AND link.role IN ('child','continuation')
+      AND work.decision_state<>'cancelled'
+      AND work.source_restrictions @> ${witness}
+      AND parent.knowledge_access->>'state'='complete'
+      AND parent.knowledge_access->'restrictions' @> ${witness}
+    FOR SHARE OF link,work,parent
+  ))`;
 }
 
 /** An event appointment may share only the producing Run's classified source closure under an explicit current read grant and reviewed limit. */
