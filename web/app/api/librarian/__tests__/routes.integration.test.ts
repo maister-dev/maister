@@ -12,9 +12,14 @@ import { parse } from "yaml";
 
 import { MaisterError } from "@/lib/errors";
 import { submitOwnerMessage } from "@/lib/librarian/admission";
+import { cardTarget, proposeLibrarianCard } from "@/lib/librarian/cards";
+import {
+  forgetPersonalMemory,
+  rememberPersonalMemory,
+} from "@/lib/librarian/memory";
 import { librarianStreamFrames } from "@/lib/librarian/stream";
 import { updateLibrarianSettings } from "@/lib/librarian/settings";
-import { seedProjectRow } from "@/test-support/execution-host-seed";
+import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
   addProjectMember,
@@ -255,7 +260,7 @@ it("B1 counts unresolved work past the page cap and removes revoked target ident
   expect(JSON.stringify(second)).not.toContain("Private target");
 });
 
-it("B1 returns the documented confirmation shape for an eligible pending card", async () => {
+it("B1 invalidates stale confirmations independently of the transcript cursor", async () => {
   const owner = await seedActiveUser(db);
 
   session = { id: owner, role: "member" };
@@ -264,23 +269,51 @@ it("B1 returns the documented confirmation shape for an eligible pending card", 
   );
   const initial = await conversation.json();
   const cardId = randomUUID();
+  const memory = {
+    kind: "preference",
+    scope: "general",
+    content: "Keep replies brief",
+  } as const;
+  const proposal = { action: "memory_suggest", memory } as const;
+  const remembered = await rememberPersonalMemory(owner, memory, database.db);
+  const { revision } = await cardTarget(proposal, owner, database.db);
+  const project = await seedProjectRow(db);
+
+  await addProjectMember(db, {
+    userId: owner,
+    projectId: project.id,
+    role: "member",
+  });
+  const runId = await seedRun(db, {
+    projectId: project.id,
+    status: "NeedsInput",
+  });
+  const hitlRequestId = randomUUID();
 
   await database.pool.query(
-    `INSERT INTO librarian_cards(id,conversation_id,segment_id,kind,status,target,payload,payload_digest,requires_owner,expires_at)
-     VALUES($1,$2,$3,'memory_suggestion','pending','{}',$4,'fixture',true,now() + interval '1 hour')`,
-    [
-      cardId,
-      initial.conversation.id,
-      initial.segment.id,
-      {
-        action: "memory_suggest",
-        memory: {
-          kind: "preference",
-          scope: "general",
-          content: "Keep replies brief",
-        },
+    "INSERT INTO hitl_requests(id,run_id,step_id,kind,prompt) VALUES($1,$2,'review','human','Continue?')",
+    [hitlRequestId, runId],
+  );
+  const hitl = await proposeLibrarianCard(
+    {
+      conversationId: initial.conversation.id,
+      segmentId: initial.segment.id,
+      ownerUserId: owner,
+      proposal: {
+        action: "hitl_respond",
+        runId,
+        hitlRequestId,
+        response: { answer: "yes" },
       },
-    ],
+      recordCreated: async () => {},
+    },
+    database.db,
+  );
+
+  await database.pool.query(
+    `INSERT INTO librarian_cards(id,conversation_id,segment_id,kind,status,target,payload,payload_digest,requires_owner,expires_at,target_revision)
+     VALUES($1,$2,$3,'memory_suggestion','pending','{}',$4,'fixture',true,now() + interval '1 hour',$5)`,
+    [cardId, initial.conversation.id, initial.segment.id, proposal, revision],
   );
   const { GET } = await import("@/app/api/librarian/history/actions/route");
   const response = await GET(
@@ -296,15 +329,50 @@ it("B1 returns the documented confirmation shape for an eligible pending card", 
   });
 
   expect(response.status).toBe(200);
-  expect(result.items[0]).toMatchObject({
+  expect(
+    result.items.find((item: { id: string }) => item.id === cardId),
+  ).toMatchObject({
     id: cardId,
     confirmation: { action: "memory_suggest", available: true },
   });
+  expect(
+    result.items.find((item: { id: string }) => item.id === hitl.cardId),
+  ).toMatchObject({
+    confirmation: { action: "hitl_respond", available: true },
+  });
   expect(validate(result), JSON.stringify(validate.errors)).toBe(true);
-  await database.pool.query(
-    "UPDATE librarian_cards SET expires_at=now() - interval '1 second' WHERE id=$1",
-    [cardId],
-  );
+  const abort = new AbortController();
+  let ticks = 0;
+  const frames: string[] = [];
+
+  for await (const frame of librarianStreamFrames({
+    db: database.db,
+    ownerId: owner,
+    cursor: 0n,
+    signal: abort.signal,
+    sleep: async () => {
+      ticks++;
+      if (ticks === 1) {
+        await database.pool.query(
+          "UPDATE hitl_requests SET prompt='New question' WHERE id=$1",
+          [hitlRequestId],
+        );
+      } else if (ticks === 2) {
+        const attention = await (
+          await GET(
+            json("/api/librarian/history/actions?collection=attention", "GET"),
+          )
+        ).json();
+
+        expect(attention.items.map((item: { id: string }) => item.id)).toEqual([
+          cardId,
+        ]);
+        await forgetPersonalMemory(owner, remembered, database.db);
+      } else abort.abort();
+    },
+  })) {
+    if (frame.includes("librarian.work")) frames.push(frame);
+  }
   expect(
     await (
       await GET(
@@ -312,6 +380,35 @@ it("B1 returns the documented confirmation shape for an eligible pending card", 
       )
     ).json(),
   ).toMatchObject({ items: [] });
+  expect(
+    await (
+      await routes.conversation.GET(
+        json("/api/librarian/conversation?view=work", "GET"),
+      )
+    ).json(),
+  ).toMatchObject({ attention: { count: 0 }, indicator: { state: "none" } });
+  expect(
+    await (
+      await routes.conversation.GET(json("/api/librarian/conversation", "GET"))
+    ).json(),
+  ).toMatchObject({ pendingCards: [] });
+  const history = await (
+    await GET(json("/api/librarian/history/actions", "GET"))
+  ).json();
+
+  expect(history.items.map((item: { id: string }) => item.id)).toEqual(
+    expect.arrayContaining([cardId, hitl.cardId]),
+  );
+  expect(
+    history.items.every(
+      (item: { confirmation?: unknown }) => item.confirmation === undefined,
+    ),
+  ).toBe(true);
+  expect(frames).toEqual([
+    'data: {"type":"librarian.work","reason":"sync"}\n\n',
+    'data: {"type":"librarian.work","reason":"work"}\n\n',
+    'data: {"type":"librarian.work","reason":"work"}\n\n',
+  ]);
 });
 
 describe("IT-LAU-01: the owner comes from the session, never the request", () => {

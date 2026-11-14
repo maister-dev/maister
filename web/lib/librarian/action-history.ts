@@ -2,13 +2,16 @@ import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
 import type { LibrarianCardView } from "./read-models";
-import type { LibrarianCardProposal } from "./cards";
 import type { LibrarianMessageDto } from "./view";
 
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { librarianCardProposalSchema } from "./cards";
+import {
+  readEligibleConfirmationIds,
+  readLibrarianProjectAccess,
+} from "./confirmation-availability";
 
 import {
   librarianConversations,
@@ -17,13 +20,8 @@ import {
   runs,
   taskActivity,
   tasks,
-  users,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
-import {
-  getActionableProjectIds,
-  getVisibleProjects,
-} from "@/lib/queries/visible-projects";
 import { renderStatementPrompt } from "@/lib/tasks/statement";
 
 const collections = ["actions", "tasks", "attention"] as const;
@@ -150,7 +148,7 @@ const unavailable: HistoryTarget = { state: "unavailable" };
 
 function workRows(
   conversation: Owner,
-  projectIds: readonly string[],
+  eligibleCardIds: readonly string[],
   collection: HistoryCollection,
   page?: { cursor: Cursor | null; size: number },
 ) {
@@ -176,10 +174,7 @@ function workRows(
 
     return sql`${boundary} ORDER BY ${created} ${direction}, ${id} ${direction} LIMIT ${page.size}`;
   };
-  const actionable = sql`ARRAY[${sql.join(
-    projectIds.map((id) => sql`${id}`),
-    sql`, `,
-  )}]::text[]`;
+  const eligible = sql`c.id = ANY(${sql.param(eligibleCardIds)}::text[])`;
   const operationRows = sql`
     SELECT o.id, 'operation'::text AS source_kind, o.kind, o.status AS outcome,
            o.created_at, o.settled_at, o.target, o.result, o.segment_id,
@@ -206,23 +201,10 @@ function workRows(
            CASE WHEN c.status = 'pending' AND c.expires_at <= now() THEN 'expired' ELSE c.status END AS outcome,
            c.created_at, c.decided_at AS settled_at, c.target, NULL::jsonb AS result, c.segment_id,
            m.id AS attachment,
-           CASE WHEN c.status = 'pending' AND c.expires_at > now()
-             AND (c.segment_id = ${conversation.currentSegmentId} OR c.kind <> 'memory_suggestion')
-             AND (NOT (c.target ? 'taskId') OR (target_task.project_id = c.target->>'projectId' AND target_task.revision::text = c.target_revision))
-             AND (NOT (c.target ? 'runId') OR target_run.project_id = c.target->>'projectId')
-             AND (NOT (c.target ? 'hitlRequestId') OR (target_hitl.id IS NOT NULL AND target_hitl.responded_at IS NULL))
-             AND CASE c.payload->>'action'
-                   WHEN 'run_promote' THEN c.target_revision = target_run.status || ':' || (c.payload->>'reviewedTargetCommit') AND target_run.status = 'Review'
-                   WHEN 'run_discard' THEN c.target_revision = target_run.status
-                   ELSE true
-                 END
-             THEN c.payload END AS confirmation,
+           CASE WHEN ${eligible} THEN c.payload END AS confirmation,
            c.target_revision, c.expires_at
       FROM librarian_cards c
       LEFT JOIN librarian_messages m ON m.id = c.message_id AND m.conversation_id = c.conversation_id AND m.segment_id = c.segment_id
-      LEFT JOIN tasks target_task ON target_task.id = c.target->>'taskId'
-      LEFT JOIN runs target_run ON target_run.id = c.target->>'runId'
-      LEFT JOIN hitl_requests target_hitl ON target_hitl.id = c.target->>'hitlRequestId' AND target_hitl.run_id = target_run.id
      WHERE c.conversation_id = ${conversationId}
        AND NOT EXISTS (
          SELECT 1 FROM librarian_operations o WHERE o.conversation_id = c.conversation_id AND o.segment_id = c.segment_id
@@ -232,27 +214,7 @@ function workRows(
          SELECT 1 FROM librarian_operations o WHERE o.conversation_id = c.conversation_id AND o.segment_id = c.segment_id
            AND o.card_id = c.id
        )
-       ${
-         collection === "attention"
-           ? sql`
-         AND c.status = 'pending' AND c.expires_at > now()
-         AND (
-           (c.kind = 'memory_suggestion' AND NOT (c.target ? 'projectId'))
-           OR (c.target->>'projectId') = ANY(${actionable})
-         )
-         AND (NOT (c.target ? 'taskId') OR (target_task.project_id = c.target->>'projectId'
-           AND target_task.revision::text = c.target_revision))
-         AND (NOT (c.target ? 'runId') OR target_run.project_id = c.target->>'projectId')
-         AND (NOT (c.target ? 'hitlRequestId') OR (target_hitl.id IS NOT NULL AND target_hitl.responded_at IS NULL))
-         AND CASE c.payload->>'action'
-               WHEN 'run_promote' THEN c.target_revision = target_run.status || ':' || (c.payload->>'reviewedTargetCommit') AND target_run.status = 'Review'
-               WHEN 'run_discard' THEN c.target_revision = target_run.status
-               WHEN 'memory_suggest' THEN c.segment_id = ${conversation.currentSegmentId}
-               ELSE true
-             END
-       `
-           : sql``
-       }
+       ${collection === "attention" ? sql`AND ${eligible}` : sql``}
        ${pageSource("card", "c")}`;
   const taskRows = sql`
     SELECT l.id, 'task'::text AS source_kind, l.meaning AS kind, 'linked'::text AS outcome,
@@ -272,28 +234,6 @@ function workRows(
     : sql`(${operationRows}) UNION ALL (${cardRows})`;
 }
 
-async function grants(db: Db, ownerId: string) {
-  const [owner] = await db
-    .select({ role: users.role })
-    .from(users)
-    .where(eq(users.id, ownerId));
-
-  if (!owner)
-    throw new MaisterError(
-      "UNAUTHENTICATED",
-      "Librarian owner is unavailable.",
-    );
-  const [visible, actionable] = await Promise.all([
-    getVisibleProjects(ownerId, owner.role, db),
-    getActionableProjectIds(ownerId, owner.role, db),
-  ]);
-
-  return {
-    visible: new Map(visible.map((project) => [project.id, project.slug])),
-    actionable,
-  };
-}
-
 function textAt(
   object: Record<string, unknown> | null | undefined,
   key: string,
@@ -309,34 +249,10 @@ function record(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function matchesCardTarget(
-  proposal: LibrarianCardProposal,
-  target: HistoryRow["target"],
-  projectSlug: string | undefined,
-): boolean {
-  switch (proposal.action) {
-    case "memory_suggest":
-      return proposal.memory.scope === "general"
-        ? !textAt(target, "projectId")
-        : projectSlug !== undefined &&
-            proposal.memory.projectSlug === projectSlug;
-    case "statement_accept":
-      return proposal.taskId === textAt(target, "taskId");
-    case "hitl_respond":
-      return (
-        proposal.runId === textAt(target, "runId") &&
-        proposal.hitlRequestId === textAt(target, "hitlRequestId")
-      );
-    case "run_discard":
-    case "run_promote":
-      return proposal.runId === textAt(target, "runId");
-  }
-}
-
 async function presentRows(
   db: Db,
   rows: HistoryRow[],
-  access: Awaited<ReturnType<typeof grants>>,
+  access: Awaited<ReturnType<typeof readLibrarianProjectAccess>>,
 ): Promise<HistoryItem[]> {
   const relations = rows.filter(
     (row) =>
@@ -496,21 +412,12 @@ async function presentRows(
       targets: targets.slice(0, 2),
     };
     const proposal = librarianCardProposalSchema.safeParse(row.confirmation);
-    const project = textAt(row.target, "projectId");
 
     if (
       row.source_kind === "card" &&
       row.outcome === "pending" &&
       row.expires_at &&
       proposal.success &&
-      matchesCardTarget(
-        proposal.data,
-        row.target,
-        project ? access.visible.get(project) : undefined,
-      ) &&
-      (project
-        ? access.actionable.includes(project)
-        : proposal.data.action === "memory_suggest") &&
       targets.every((target) => target.state === "visible")
     ) {
       const task = ids[0] ? taskById.get(ids[0]) : undefined;
@@ -602,9 +509,13 @@ export async function readActionHistory(
           "Action history changed. Reload its first page.",
           { details: { reason: "history_generation_changed" } },
         );
-      const access = await grants(tx, ownerId);
+      const access = await readLibrarianProjectAccess(tx, ownerId);
       const ascending = collection === "attention";
-      const source = workRows(conversation, access.actionable, collection, {
+      const eligibleCardIds =
+        collection === "tasks"
+          ? []
+          : await readEligibleConfirmationIds(tx, conversation, access);
+      const source = workRows(conversation, eligibleCardIds, collection, {
         cursor,
         size: limit + 1,
       });
@@ -646,19 +557,28 @@ export async function readCurrentWork(
   db: Db,
   ownerId: string,
   conversation: Owner,
-): Promise<{ currentWork: HistoryItem[]; attention: WorkAttention }> {
-  const access = await grants(db, ownerId);
+): Promise<{
+  currentWork: HistoryItem[];
+  attention: WorkAttention;
+  hasConfirmation: boolean;
+}> {
+  const access = await readLibrarianProjectAccess(db, ownerId);
+  const eligibleCardIds = await readEligibleConfirmationIds(
+    db,
+    conversation,
+    access,
+  );
   const [tasks, attention] = await Promise.all([
     readRows(
       db,
-      workRows(conversation, access.actionable, "tasks"),
+      workRows(conversation, [], "tasks"),
       sql`segment_id = ${conversation.currentSegmentId}`,
       "desc",
       limitDefault,
     ),
     readRows(
       db,
-      workRows(conversation, access.actionable, "attention"),
+      workRows(conversation, eligibleCardIds, "attention"),
       sql`true`,
       "asc",
       limitDefault,
@@ -668,6 +588,7 @@ export async function readCurrentWork(
 
   return {
     currentWork: await presentRows(db, tasks, access),
+    hasConfirmation: eligibleCardIds.length > 0,
     attention: {
       count: attention[0]?.total ?? 0,
       items: await presentRows(db, attention, access),
@@ -689,8 +610,8 @@ export async function readReceiptAttachments(
     .map((message) => message.id);
 
   if (!ids.length) return {};
-  const access = await grants(db, ownerId);
-  const source = workRows(conversation, access.actionable, "actions");
+  const access = await readLibrarianProjectAccess(db, ownerId);
+  const source = workRows(conversation, [], "actions");
   const { rows } = await db.execute<HistoryRow>(sql`
     WITH work AS (${source}), ranked AS (
       SELECT work.*, row_number() OVER (PARTITION BY attachment ORDER BY created_at DESC, source_kind DESC, id DESC) AS rank

@@ -17961,7 +17961,7 @@ paths:
         - name: view
           in: query
           schema: { type: string, enum: [work] }
-          description: (Designed) Bounded Action history projection.
+          description: (Implemented) Current work and the oldest eligible attention items, with a count before the display limit.
       responses:
         "200":
           description: The caller's conversation state.
@@ -18020,7 +18020,7 @@ paths:
         - name: view
           in: query
           schema: { type: string, enum: [work] }
-          description: (Designed) Bounded Action history projection.
+          description: (Implemented) Message page with scoped receipt attachments.
         - name: beforeSeq
           in: query
           required: false
@@ -18370,6 +18370,9 @@ paths:
         checked per target on every read. The cursor carries no authority.
         A clear invalidates cursors from the previous history generation.
         The oldest eligible attention item sorts first. History sorts newest first.
+        A pending card contributes to attention only while its authorization and
+        frozen target revision are current. A stale card remains in actions with
+        its recorded outcome and without a confirmation.
       security: [{ sessionCookie: [] }]
       parameters:
         - name: collection

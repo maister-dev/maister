@@ -93,9 +93,12 @@ channels:
         response keeps its runner; the next response resolves current settings
         when it starts. Refreshing availability preserves the draft and history.
 
-        Designed — Action history: `librarian.work` requests a fresh authorized
+        Implemented — Action history: `librarian.work` requests a fresh authorized
         work read. `sync` is sent on connection, `work` on a durable work or
-        context change, and `access` on an authorization change. If work and
+        context change, and `access` on an authorization change. Work changes
+        include pending target changes, expiry, reset and memory epoch changes.
+        These frames carry no message cursor, target identifiers or payload.
+        If work and
         access change together, access takes precedence. The client discards
         cached target metadata on sync or access. Reset preserves transcript
         history. Clear replaces transcript and receipt caches with the new

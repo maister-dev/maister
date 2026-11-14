@@ -177,3 +177,5 @@ the scenarios the live-adapter qualification repeats against real runners also c
 ## Package 2 coverage (Implemented)
 
 B1 maps to the owner history route and receipt integration suites. B2 maps to reset and clear in Librarian acceptance. B3 maps to the panel disclosure and keyboard journey.
+
+The B1 confirmation route regression verifies independent HITL and memory invalidation, attention and indicator changes, retained history, and metadata-only SSE refreshes without advancing the transcript cursor.
